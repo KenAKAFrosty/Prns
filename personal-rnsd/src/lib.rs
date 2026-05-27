@@ -1,18 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![doc = "Thin host seam for driving the Personal Reticulum engine."]
+#![doc = "Runtime that drives the pure Reticulum engine against a host."]
 
-use personal_rns::engine::{tick, DeltaMillis, Input, InstantMillis, State};
-
-/// Platform body for the pure Reticulum engine.
-pub trait Host {
-    type Error;
-
-    fn now_millis(&mut self) -> Result<InstantMillis, Self::Error>;
-
-    fn receive_packet(&mut self, buffer: &mut [u8]) -> Result<Option<usize>, Self::Error>;
-
-    fn transmit_packet(&mut self, bytes: &[u8]) -> Result<(), Self::Error>;
-}
+use personal_rns::engine::{tick, DeltaMillis, Input, State};
+use personal_rns::host::Host;
 
 /// Drive the pure engine once using caller-owned host I/O buffers.
 pub fn drive_once<H: Host>(

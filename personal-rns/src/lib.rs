@@ -2,4 +2,5 @@
 #![doc = "Pure Reticulum engine and wire contract scaffold."]
 
 pub mod engine;
+pub mod host;
 pub mod wire;
