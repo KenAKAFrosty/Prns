@@ -19,7 +19,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use personal_rns::engine::{EngineState, InstantMillis};
+use personal_rns::engine::{EngineState, InboundPacket, InstantMillis};
 use personal_rns::host::Host;
 use personal_rns::runtime::step;
 
@@ -50,8 +50,8 @@ impl Host for SdkHost {
         Ok(InstantMillis(self.base.elapsed().as_millis() as u64))
     }
 
-    fn receive_packet(&mut self, _buffer: &mut [u8]) -> Result<Option<usize>, Self::Error> {
-        Ok(None)
+    fn drain_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+        Ok(&[])
     }
 
     fn transmit_packet(&mut self, _bytes: &[u8]) -> Result<(), Self::Error> {
@@ -62,8 +62,6 @@ impl Host for SdkHost {
 struct RuntimeInner {
     state: EngineState,
     host: SdkHost,
-    // Reticulum's MTU is 500 bytes; 512 gives a packet's worth of headroom.
-    buffer: [u8; 512],
 }
 
 /// SDK-facing runtime handle. Wraps the pure [`EngineState`] and the
@@ -81,22 +79,17 @@ impl ReticulumRuntime {
                 host: SdkHost {
                     base: Instant::now(),
                 },
-                buffer: [0u8; 512],
             }),
         }
     }
 
-    /// Advance one deterministic tick over the SDK clock host; returns
-    /// the packet count the tick emitted.
+    /// Drive one step over the SDK clock host (ingest the queue, then tick);
+    /// returns the packet count the periodic pass emitted.
     pub fn tick(&self) -> u64 {
         let mut inner = self.inner.lock().expect("ReticulumRuntime mutex poisoned");
-        let RuntimeInner {
-            state,
-            host,
-            buffer,
-        } = &mut *inner;
-        let output = step(state, host, buffer).expect("clock-only step cannot fail");
-        output.emitted_packet_count() as u64
+        let RuntimeInner { state, host } = &mut *inner;
+        let output = step(state, host).expect("clock-only step cannot fail");
+        output.tick.emitted_packet_count() as u64
     }
 
     /// Total ticks advanced since construction.

@@ -9,7 +9,7 @@ use esp_hal::main;
 use esp_hal::time::Instant;
 use esp_println::println;
 
-use personal_rns::engine::{EngineState, InstantMillis};
+use personal_rns::engine::{EngineState, InboundPacket, InstantMillis};
 use personal_rns::host::Host;
 use personal_rns::runtime::step;
 
@@ -33,8 +33,8 @@ impl Host for Esp32Host {
         Ok(InstantMillis(Instant::now().duration_since_epoch().as_millis()))
     }
 
-    fn receive_packet(&mut self, _buffer: &mut [u8]) -> Result<Option<usize>, Self::Error> {
-        Ok(None)
+    fn drain_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+        Ok(&[])
     }
 
     fn transmit_packet(&mut self, _bytes: &[u8]) -> Result<(), Self::Error> {
@@ -51,11 +51,10 @@ fn main() -> ! {
 
     let mut state = EngineState::default();
     let mut host = Esp32Host;
-    let mut buffer = [0u8; 64];
     let delay = Delay::new();
 
     for _ in 0..5 {
-        step(&mut state, &mut host, &mut buffer).expect("clock-only step cannot fail");
+        step(&mut state, &mut host).expect("clock-only step cannot fail");
         delay.delay_millis(10);
     }
     let now = host.now_millis().expect("c6 timer is readable");
@@ -68,7 +67,7 @@ fn main() -> ! {
     let mut heartbeat: u32 = 0;
     loop {
         heartbeat = heartbeat.wrapping_add(1);
-        step(&mut state, &mut host, &mut buffer).expect("clock-only step cannot fail");
+        step(&mut state, &mut host).expect("clock-only step cannot fail");
         println!(
             "ESP32C6_HOST_HEARTBEAT count={heartbeat} ticks={}",
             state.tick_count()

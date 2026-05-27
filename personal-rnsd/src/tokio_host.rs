@@ -25,9 +25,8 @@ pub fn run_multi_thread(ticks: u64, poll: Duration) -> u64 {
         tokio::spawn(async move {
             let mut state = EngineState::default();
             let mut host = StdHost::new();
-            let mut buffer = [0u8; 64];
             while state.tick_count() < ticks {
-                step(&mut state, &mut host, &mut buffer).expect("clock-only step cannot fail");
+                step(&mut state, &mut host).expect("clock-only step cannot fail");
                 tokio::time::sleep(poll).await;
             }
             state.tick_count()
