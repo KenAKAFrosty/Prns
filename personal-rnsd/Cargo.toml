@@ -18,11 +18,13 @@ default = ["std-host"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
 std-host = ["std"]
+tokio-host = ["std", "dep:tokio"]
 fixture-identity = []
 interfaces-host-shell = ["std"]
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
 
 [lints]
 workspace = true
