@@ -1,0 +1,21 @@
+[package]
+name = "rvt"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Reticulum Visual Toolkit (RVT): multi-node simulation + visual dev tooling for the Personal Reticulum engine. Sim mode now; live mode later."
+
+# Own workspace: keeps the (heavy) UI dep tree out of the core suite's build and
+# off the no_std gate. Depends on personal-rns by path across the boundary.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "rvt"
+path = "src/main.rs"
+
+[dependencies]
+personal-rns = { path = "../personal-rns" }
+dioxus = { version = "0.7", features = ["desktop"] }
