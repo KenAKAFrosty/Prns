@@ -1,0 +1,107 @@
+//! `AnnounceId` and its two halves — `AnnounceNonce` + `MonotonicTimebase`.
+//!
+//! The 10-byte field RNS calls `random_hash` on the wire is neither fully
+//! random nor a hash: the first 5 bytes are a per-emission random nonce (a
+//! replay/loop dedup tag), and the last 5 are the origin's clock at emission,
+//! big-endian — the monotonic "announce time" receivers compare per
+//! destination. Splitting at the type level keeps the names honest.
+
+pub const ANNOUNCE_ID_WIRE_LEN: usize = 10;
+const NONCE_LEN: usize = 5;
+const TIMEBASE_LEN: usize = 5;
+
+/// The per-emission random nonce — first half of an [`AnnounceId`].
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AnnounceNonce([u8; NONCE_LEN]);
+
+impl AnnounceNonce {
+    pub const fn new(bytes: [u8; NONCE_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; NONCE_LEN] {
+        &self.0
+    }
+}
+
+/// The origin's clock at announce emission: a 5-byte big-endian count
+/// (`0..=2^40-1`, ~34,800 years). Receivers only ever *compare* these, never
+/// add them to a wall-clock value, so the type stays distinct from epoch
+/// seconds; `Ord` is correct because big-endian byte order is unsigned numeric
+/// order.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MonotonicTimebase([u8; TIMEBASE_LEN]);
+
+impl MonotonicTimebase {
+    pub const fn from_wire(bytes: [u8; TIMEBASE_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_wire(&self) -> &[u8; TIMEBASE_LEN] {
+        &self.0
+    }
+
+    pub fn as_count(&self) -> u64 {
+        let mut buf = [0u8; 8];
+        buf[8 - TIMEBASE_LEN..].copy_from_slice(&self.0);
+        u64::from_be_bytes(buf)
+    }
+}
+
+impl core::fmt::Debug for MonotonicTimebase {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "MonotonicTimebase({})", self.as_count())
+    }
+}
+
+/// The per-emission announce identifier: `nonce ‖ timebase`, 10 contiguous
+/// bytes. The same value travels with a path-response rebroadcast of a cached
+/// announce, so peers recognise "this is the same announce I already saw" —
+/// identity in the strict sense, which the name reflects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AnnounceId {
+    pub nonce: AnnounceNonce,
+    pub timebase: MonotonicTimebase,
+}
+
+impl AnnounceId {
+    pub fn from_wire(bytes: [u8; ANNOUNCE_ID_WIRE_LEN]) -> Self {
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce.copy_from_slice(&bytes[..NONCE_LEN]);
+        let mut timebase = [0u8; TIMEBASE_LEN];
+        timebase.copy_from_slice(&bytes[NONCE_LEN..]);
+        Self {
+            nonce: AnnounceNonce(nonce),
+            timebase: MonotonicTimebase(timebase),
+        }
+    }
+
+    pub fn to_wire_bytes(&self) -> [u8; ANNOUNCE_ID_WIRE_LEN] {
+        let mut out = [0u8; ANNOUNCE_ID_WIRE_LEN];
+        out[..NONCE_LEN].copy_from_slice(&self.nonce.0);
+        out[NONCE_LEN..].copy_from_slice(&self.timebase.0);
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_and_splits_at_five() {
+        let id = AnnounceId::from_wire([1, 2, 3, 4, 5, 0, 0, 0, 0x01, 0x02]);
+        assert_eq!(id.nonce, AnnounceNonce::new([1, 2, 3, 4, 5]));
+        assert_eq!(id.timebase.as_count(), 0x0102);
+        assert_eq!(id.to_wire_bytes(), [1, 2, 3, 4, 5, 0, 0, 0, 0x01, 0x02]);
+    }
+
+    #[test]
+    fn timebase_orders_numerically() {
+        let lo = MonotonicTimebase::from_wire([0, 0, 0, 0, 10]);
+        let hi = MonotonicTimebase::from_wire([0, 0, 0, 1, 0]);
+        assert!(hi > lo);
+    }
+}
