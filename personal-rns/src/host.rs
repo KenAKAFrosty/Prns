@@ -7,7 +7,6 @@
 
 use crate::engine::InstantMillis;
 
-/// Platform body for the pure Reticulum engine.
 pub trait Host {
     type Error;
 

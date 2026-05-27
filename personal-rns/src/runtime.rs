@@ -1,25 +1,24 @@
 //! Runtime driver: the provided loop that ticks the pure engine against a host.
 //!
 //! Defined in the core so every target body — daemon, microcontroller, SDK —
-//! reuses one loop and supplies only a `Host`, never its own driver.
+//! reuses one loop and supplies only a `Host`
 
-use crate::engine::{tick, DeltaMillis, Effects, Input, State};
+use crate::engine::{tick, DeltaMillis, Effects, TickInput, EngineState};
 use crate::host::Host;
 
-/// Drive the pure engine once using caller-owned host I/O buffers.
 pub fn drive_once<H: Host>(
-    state: &mut State,
+    state: &mut EngineState,
     host: &mut H,
     buffer: &mut [u8],
     dt: DeltaMillis,
 ) -> Result<Effects, H::Error> {
     let now = host.now_millis()?;
     let input = match host.receive_packet(buffer)? {
-        Some(len) => Input::InboundPacket {
+        Some(len) => TickInput::InboundPacket {
             now,
             bytes: &buffer[..len],
         },
-        None => Input::Idle { now },
+        None => TickInput::Idle { now },
     };
 
     Ok(tick(state, input, dt))
@@ -28,7 +27,7 @@ pub fn drive_once<H: Host>(
 #[cfg(test)]
 mod tests {
     use super::drive_once;
-    use crate::engine::{DeltaMillis, InstantMillis, State};
+    use crate::engine::{DeltaMillis, InstantMillis, EngineState};
     use crate::host::Host;
 
     #[derive(Default)]
@@ -52,7 +51,7 @@ mod tests {
 
     #[test]
     fn host_drives_one_engine_tick() {
-        let mut state = State::default();
+        let mut state = EngineState::default();
         let mut host = EmptyHost;
         let mut buffer = [0u8; 16];
 

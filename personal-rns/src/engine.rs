@@ -11,13 +11,12 @@ pub struct InstantMillis(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeltaMillis(pub u64);
 
-/// Protocol state owned by the pure engine.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct State {
+pub struct EngineState {
     ticks: u64,
 }
 
-impl State {
+impl EngineState {
     /// Number of deterministic engine ticks applied to this state.
     pub const fn ticks(&self) -> u64 {
         self.ticks
@@ -26,7 +25,7 @@ impl State {
 
 /// Inbound input for one deterministic engine tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Input<'a> {
+pub enum TickInput<'a> {
     Idle { now: InstantMillis },
     InboundPacket { now: InstantMillis, bytes: &'a [u8] },
 }
@@ -46,20 +45,20 @@ impl Effects {
 
 /// Advance the pure engine by one deterministic tick.
 #[must_use]
-pub fn tick(state: &mut State, _input: Input<'_>, _dt: DeltaMillis) -> Effects {
+pub fn tick(state: &mut EngineState, _input: TickInput<'_>, _dt: DeltaMillis) -> Effects {
     state.ticks = state.ticks.saturating_add(1);
     Effects::default()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{tick, DeltaMillis, Effects, Input, InstantMillis, State};
+    use super::{tick, DeltaMillis, Effects, TickInput, InstantMillis, EngineState};
 
     #[test]
     fn tick_is_deterministic_and_side_effect_free() {
-        let mut left = State::default();
-        let mut right = State::default();
-        let input = Input::Idle {
+        let mut left = EngineState::default();
+        let mut right = EngineState::default();
+        let input = TickInput::Idle {
             now: InstantMillis(1_000),
         };
 
