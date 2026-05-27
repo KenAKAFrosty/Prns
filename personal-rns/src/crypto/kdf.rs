@@ -1,0 +1,13 @@
+use hkdf::Hkdf;
+use sha2::Sha256;
+
+/// HKDF-SHA256 (RFC 5869), deriving `N` bytes. `salt` and `info` map to RNS's
+/// `salt` and `context`. `N` is always far below HKDF's 255*32 ceiling for our
+/// uses, so derivation cannot fail.
+pub fn hkdf_sha256<const N: usize>(ikm: &[u8], salt: &[u8], info: &[u8]) -> [u8; N] {
+    let mut out = [0u8; N];
+    Hkdf::<Sha256>::new(Some(salt), ikm)
+        .expand(info, &mut out)
+        .expect("HKDF output length is within RFC 5869 bounds");
+    out
+}
