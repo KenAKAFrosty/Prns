@@ -6,5 +6,6 @@ pub mod crypto;
 pub mod engine;
 pub mod host;
 pub mod path;
+mod payload_store;
 pub mod runtime;
 pub mod wire;

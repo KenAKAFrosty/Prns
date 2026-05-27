@@ -11,6 +11,7 @@
 
 use crate::announce::AnnounceId;
 use crate::engine::InstantMillis;
+use crate::payload_store::{PayloadHandle, PayloadStore};
 use crate::wire::DestinationHash;
 
 /// RNS's `RNS.Transport.PATHFINDER_M`
@@ -25,6 +26,15 @@ pub const DEFAULT_MAX_SEEN_ANNOUNCE_IDS: usize = 64;
 /// How many destinations the table tracks. Fixed-capacity for the no-allocator
 /// targets; a new destination arriving past this is dropped (v1 policy).
 pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 32;
+
+/// Total byte budget for retained announce payloads, shared across all tracked
+/// destinations. Sized as a per-announce average rather than worst-case ×
+/// destination count: a packed [`PayloadStore`] holds only the bytes each
+/// announce actually carries, so betting ~256 B/announce (typical payloads run
+/// ~150–230 B; the cap is ~481) backs a full table at a fraction of the
+/// worst-case footprint. A capable host widens this independently of the
+/// destination count.
+pub const DEFAULT_ANNOUNCE_PAYLOAD_ARENA_BYTES: usize = DEFAULT_MAX_TRACKED_DESTINATIONS * 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RememberOutcome {
@@ -53,7 +63,7 @@ impl<const MAX_SEEN_ANNOUNCE_IDS: usize> RecentAnnounceIds<MAX_SEEN_ANNOUNCE_IDS
     }
 
     /// Record `announce_id` as recently heard, unless already present; evict the
-    /// oldest-inserted id when at capacity. Reports which of the three happened.
+    /// oldest-inserted id when at capacity
     fn remember(&mut self, announce_id: AnnounceId) -> RememberOutcome {
         if self.0.contains(&announce_id) {
             return RememberOutcome::AlreadyKnown;
@@ -91,13 +101,21 @@ pub struct ExistingPath<'a> {
     pub responsiveness: PathResponsiveness,
 }
 
-/// What recording an accepted announce did to the table. Names the three
-/// outcomes the bare success/failure of the write would otherwise collapse.
+/// Why a path could not be recorded: either the destination table is full, or
+/// the payload arena has no room to retain the announce that backs the path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropCause {
+    DestinationTableFull,
+    PayloadArenaFull,
+}
+
+/// What recording an accepted announce did to the table. Names the outcomes the
+/// bare success/failure of the write would otherwise collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordPathOutcome {
     Inserted,
     Refreshed,
-    DroppedAtCapacity,
+    Dropped(DropCause),
 }
 
 /// Struct-of-Arrays routing table. The columns share one `len` and only the
@@ -120,6 +138,7 @@ pub enum RecordPathOutcome {
 pub struct PathTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
+    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_PAYLOAD_ARENA_BYTES,
 > {
     len: usize,
     destination: [DestinationHash; MAX_TRACKED_DESTINATIONS],
@@ -128,10 +147,19 @@ pub struct PathTable<
     responsiveness: [PathResponsiveness; MAX_TRACKED_DESTINATIONS],
     seen_announce_ids_for_destination:
         [RecentAnnounceIds<MAX_SEEN_ANNOUNCE_IDS>; MAX_TRACKED_DESTINATIONS],
+    /// Handle into `payloads` for each path's retained announce; `None` for
+    /// unused rows. A live row always holds `Some`, though it may resolve to
+    /// empty bytes when a better announce arrived that the arena couldn't fit.
+    payload: [Option<PayloadHandle>; MAX_TRACKED_DESTINATIONS],
+    payloads: PayloadStore<ANNOUNCE_PAYLOAD_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
 }
 
-impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize> Default
-    for PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>
+impl<
+        const MAX_TRACKED_DESTINATIONS: usize,
+        const MAX_SEEN_ANNOUNCE_IDS: usize,
+        const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+    > Default
+    for PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_PAYLOAD_ARENA_BYTES>
 {
     fn default() -> Self {
         Self {
@@ -143,12 +171,17 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize> 
             seen_announce_ids_for_destination: core::array::from_fn(|_| {
                 RecentAnnounceIds::<MAX_SEEN_ANNOUNCE_IDS>::new()
             }),
+            payload: [None; MAX_TRACKED_DESTINATIONS],
+            payloads: PayloadStore::new(),
         }
     }
 }
 
-impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
-    PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>
+impl<
+        const MAX_TRACKED_DESTINATIONS: usize,
+        const MAX_SEEN_ANNOUNCE_IDS: usize,
+        const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+    > PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_PAYLOAD_ARENA_BYTES>
 {
     pub fn path_count(&self) -> usize {
         self.len
@@ -180,6 +213,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
         hops: u8,
         arrival: InstantMillis,
         announce_id: AnnounceId,
+        payload: &[u8],
     ) -> RecordPathOutcome {
         let expires = InstantMillis(arrival.0.saturating_add(DEFAULT_PATH_EXPIRY_MILLIS));
         match self.index_of(&destination) {
@@ -188,12 +222,31 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
                 self.expires[i] = expires;
                 self.responsiveness[i] = PathResponsiveness::Responsive;
                 self.seen_announce_ids_for_destination[i].remember(announce_id);
+                // The route is refreshed above regardless; only retaining the
+                // announce can fail. If a better announce won't fit, exit early
+                // surfacing the cause rather than recovering here — the call site
+                // recovers on this outcome by handing the announce to the egress
+                // cache (RNS's held-announce queue) once it exists. The old payload
+                // stays on hand until then; this column is the path-request cache,
+                // bound by time (PATHFINDER_E), not memory.
+                if let Some(handle) = self.payload[i] {
+                    if self.payloads.replace(handle, payload).is_err() {
+                        return RecordPathOutcome::Dropped(DropCause::PayloadArenaFull);
+                    }
+                }
                 RecordPathOutcome::Refreshed
             }
             None => {
                 if self.len >= MAX_TRACKED_DESTINATIONS {
-                    return RecordPathOutcome::DroppedAtCapacity;
+                    return RecordPathOutcome::Dropped(DropCause::DestinationTableFull);
                 }
+                // Retain the announce before committing the row. On arena overflow,
+                // exit early surfacing the cause and install nothing — the call site
+                // recovers on this outcome by handing the announce to the egress
+                // cache once it exists.
+                let Ok(handle) = self.payloads.insert(payload) else {
+                    return RecordPathOutcome::Dropped(DropCause::PayloadArenaFull);
+                };
                 let i = self.len;
                 self.destination[i] = destination;
                 self.hops[i] = hops;
@@ -201,10 +254,21 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
                 self.responsiveness[i] = PathResponsiveness::Responsive;
                 self.seen_announce_ids_for_destination[i] = RecentAnnounceIds::new();
                 self.seen_announce_ids_for_destination[i].remember(announce_id);
+                self.payload[i] = Some(handle);
                 self.len += 1;
                 RecordPathOutcome::Inserted
             }
         }
+    }
+
+    /// The retained announce payload for a known destination, or `None` if the
+    /// destination is unknown or its announce isn't currently on hand (cleared
+    /// to make room for a better one that didn't fit).
+    pub fn announce_payload(&self, destination: &DestinationHash) -> Option<&[u8]> {
+        let i = self.index_of(destination)?;
+        let handle = self.payload[i]?;
+        let bytes = self.payloads.get(handle);
+        (!bytes.is_empty()).then_some(bytes)
     }
 }
 
@@ -222,6 +286,11 @@ mod tests {
         bytes[..5].copy_from_slice(&[nonce_byte; 5]);
         bytes[5..].copy_from_slice(&timebase.to_be_bytes()[3..]);
         AnnounceId::from_wire(bytes)
+    }
+
+    /// A stand-in announce payload, tagged so distinct ones are distinguishable.
+    fn payload(tag: u8) -> [u8; 16] {
+        [tag; 16]
     }
 
     #[test]
@@ -253,7 +322,13 @@ mod tests {
     fn first_record_creates_a_path() {
         let mut table: PathTable = PathTable::default();
         assert_eq!(
-            table.record_accepted_path(dest(1), 2, InstantMillis(100), announce_id(0xAA, 1)),
+            table.record_accepted_path(
+                dest(1),
+                2,
+                InstantMillis(100),
+                announce_id(0xAA, 1),
+                &payload(0xAA)
+            ),
             RecordPathOutcome::Inserted
         );
         assert_eq!(table.path_count(), 1);
@@ -264,8 +339,20 @@ mod tests {
     #[test]
     fn refresh_updates_in_place_and_remembers_distinct_ids() {
         let mut table: PathTable = PathTable::default();
-        table.record_accepted_path(dest(1), 4, InstantMillis(100), announce_id(0xAA, 1));
-        table.record_accepted_path(dest(1), 2, InstantMillis(200), announce_id(0xBB, 2));
+        table.record_accepted_path(
+            dest(1),
+            4,
+            InstantMillis(100),
+            announce_id(0xAA, 1),
+            &payload(0xAA),
+        );
+        table.record_accepted_path(
+            dest(1),
+            2,
+            InstantMillis(200),
+            announce_id(0xBB, 2),
+            &payload(0xBB),
+        );
         assert_eq!(table.path_count(), 1); // same destination, not a second row
         assert_eq!(table.hop_count_to(&dest(1)), Some(2)); // hops refreshed
 
@@ -277,8 +364,8 @@ mod tests {
     fn re_recording_the_same_id_does_not_duplicate_it() {
         let mut table: PathTable = PathTable::default();
         let id = announce_id(0xAA, 1);
-        table.record_accepted_path(dest(1), 2, InstantMillis(100), id);
-        table.record_accepted_path(dest(1), 2, InstantMillis(150), id);
+        table.record_accepted_path(dest(1), 2, InstantMillis(100), id, &payload(0xAA));
+        table.record_accepted_path(dest(1), 2, InstantMillis(150), id, &payload(0xAA));
         assert_eq!(
             table
                 .existing_path(&dest(1))
@@ -294,7 +381,13 @@ mod tests {
         let mut table: PathTable = PathTable::default();
         // Fill past capacity; the first id must be evicted, the last retained.
         for n in 0..(DEFAULT_MAX_SEEN_ANNOUNCE_IDS as u64 + 3) {
-            table.record_accepted_path(dest(1), 1, InstantMillis(n), announce_id(0, n));
+            table.record_accepted_path(
+                dest(1),
+                1,
+                InstantMillis(n),
+                announce_id(0, n),
+                &payload(0),
+            );
         }
         let view = table.existing_path(&dest(1)).unwrap();
         assert_eq!(view.seen_announce_ids.len(), DEFAULT_MAX_SEEN_ANNOUNCE_IDS);
@@ -314,7 +407,8 @@ mod tests {
                     dest(n as u8),
                     1,
                     InstantMillis(0),
-                    announce_id(0, n as u64)
+                    announce_id(0, n as u64),
+                    &payload(n as u8)
                 ),
                 RecordPathOutcome::Inserted
             );
@@ -322,14 +416,100 @@ mod tests {
         assert_eq!(table.path_count(), DEFAULT_MAX_TRACKED_DESTINATIONS);
         // One destination too many: dropped, count unchanged.
         assert_eq!(
-            table.record_accepted_path(dest(0xFF), 1, InstantMillis(0), announce_id(0, 999)),
-            RecordPathOutcome::DroppedAtCapacity
+            table.record_accepted_path(
+                dest(0xFF),
+                1,
+                InstantMillis(0),
+                announce_id(0, 999),
+                &payload(0xFF)
+            ),
+            RecordPathOutcome::Dropped(DropCause::DestinationTableFull)
         );
         assert_eq!(table.path_count(), DEFAULT_MAX_TRACKED_DESTINATIONS);
         // But a known destination still refreshes.
         assert_eq!(
-            table.record_accepted_path(dest(0), 1, InstantMillis(1), announce_id(1, 1)),
+            table.record_accepted_path(
+                dest(0),
+                1,
+                InstantMillis(1),
+                announce_id(1, 1),
+                &payload(0)
+            ),
             RecordPathOutcome::Refreshed
         );
+    }
+
+    #[test]
+    fn record_retains_the_payload_and_refresh_replaces_it() {
+        let mut table: PathTable = PathTable::default();
+        table.record_accepted_path(
+            dest(1),
+            2,
+            InstantMillis(100),
+            announce_id(0xAA, 1),
+            &[1, 2, 3],
+        );
+        assert_eq!(table.announce_payload(&dest(1)), Some(&[1, 2, 3][..]));
+        assert_eq!(table.announce_payload(&dest(2)), None); // unknown destination
+
+        // A refresh swaps the retained announce, even to a different length.
+        table.record_accepted_path(
+            dest(1),
+            2,
+            InstantMillis(200),
+            announce_id(0xBB, 2),
+            &[9, 9, 9, 9, 9],
+        );
+        assert_eq!(table.announce_payload(&dest(1)), Some(&[9, 9, 9, 9, 9][..]));
+    }
+
+    #[test]
+    fn distinct_destinations_retain_independent_payloads() {
+        let mut table: PathTable = PathTable::default();
+        table.record_accepted_path(dest(1), 1, InstantMillis(0), announce_id(1, 1), &[0xA1; 4]);
+        table.record_accepted_path(dest(2), 1, InstantMillis(0), announce_id(2, 1), &[0xB2; 7]);
+        table.record_accepted_path(dest(3), 1, InstantMillis(0), announce_id(3, 1), &[0xC3; 2]);
+        assert_eq!(table.announce_payload(&dest(1)), Some(&[0xA1; 4][..]));
+        assert_eq!(table.announce_payload(&dest(2)), Some(&[0xB2; 7][..]));
+        assert_eq!(table.announce_payload(&dest(3)), Some(&[0xC3; 2][..]));
+    }
+
+    #[test]
+    fn a_new_path_whose_payload_overflows_the_arena_is_dropped() {
+        // Arena holds 8 bytes total; entry/destination caps are generous.
+        let mut table: PathTable<4, 8, 8> = PathTable::default();
+        assert_eq!(
+            table.record_accepted_path(dest(1), 1, InstantMillis(0), announce_id(1, 1), &[0xAA; 8]),
+            RecordPathOutcome::Inserted
+        );
+        // The arena is now full, so a second path can't be backed: drop it whole.
+        assert_eq!(
+            table.record_accepted_path(dest(2), 1, InstantMillis(0), announce_id(2, 1), &[0xBB; 1]),
+            RecordPathOutcome::Dropped(DropCause::PayloadArenaFull)
+        );
+        assert_eq!(table.path_count(), 1);
+        assert_eq!(table.hop_count_to(&dest(2)), None);
+    }
+
+    #[test]
+    fn refresh_that_cannot_retain_a_better_announce_exits_early_with_the_cause() {
+        // 8-byte arena: the first payload fits, but growing it past reclaim won't.
+        let mut table: PathTable<4, 8, 8> = PathTable::default();
+        table.record_accepted_path(dest(1), 5, InstantMillis(0), announce_id(1, 1), &[0xAA; 6]);
+        assert_eq!(table.announce_payload(&dest(1)), Some(&[0xAA; 6][..]));
+
+        // A better announce (fewer hops) arrives but its payload (9) won't fit even
+        // after reclaiming the old 6. We surface the cause and bail; recovering the
+        // dropped announce (handing it to the egress cache) is the call site's job.
+        let outcome =
+            table.record_accepted_path(dest(1), 2, InstantMillis(1), announce_id(2, 2), &[0xBB; 9]);
+        assert_eq!(
+            outcome,
+            RecordPathOutcome::Dropped(DropCause::PayloadArenaFull)
+        );
+        // The route was refreshed before the bail; the old announce stays on hand
+        // (untouched) until the call site recovers.
+        assert_eq!(table.hop_count_to(&dest(1)), Some(2));
+        assert_eq!(table.announce_payload(&dest(1)), Some(&[0xAA; 6][..]));
     }
 }

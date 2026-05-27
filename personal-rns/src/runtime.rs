@@ -19,8 +19,13 @@ pub fn step<
     H: HostAdapter,
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_SEEN_ANNOUNCE_IDS: usize,
+    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
 >(
-    state: &mut EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+    state: &mut EngineState<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_PAYLOAD_ARENA_BYTES,
+    >,
     host: &mut H,
 ) -> Result<StepOutput, H::Error> {
     let packets = host.drain_inbound_packets()?;

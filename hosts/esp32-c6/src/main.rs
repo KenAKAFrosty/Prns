@@ -54,7 +54,7 @@ fn main() -> ! {
 
     println!("ESP32C6_HOST: boot");
 
-    let mut state = EngineState::default();
+    let mut state: EngineState = EngineState::default();
     let mut host = Esp32Host;
     let delay = Delay::new();
 

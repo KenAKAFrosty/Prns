@@ -7,9 +7,10 @@
 
 use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::path::{
-    PathTable, RecordPathOutcome, DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
+    PathTable, RecordPathOutcome, DEFAULT_ANNOUNCE_PAYLOAD_ARENA_BYTES,
+    DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
 };
-use crate::wire::WirePacketHeader;
+use crate::wire::{DestinationHash, WirePacketHeader};
 
 /// Monotonic timestamp supplied by the host, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -31,22 +32,29 @@ pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
-/// Retained engine state. The two const parameters size the path table's fixed
-/// capacity; they default to the RNS-derived values, so plain `EngineState` is
-/// the embedded-friendly default and a capable host opts into a larger table
-/// with `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS>::default()`.
+/// Retained engine state. The three const parameters size the path table's
+/// fixed capacity — tracked destinations, remembered announce ids per
+/// destination, and the shared byte budget for retained announce payloads. They
+/// default to the RNS-derived values, so plain `EngineState` is the
+/// embedded-friendly default and a capable host opts into a larger table with
+/// `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS, PAYLOAD_ARENA_BYTES>::default()`.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
+    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_PAYLOAD_ARENA_BYTES,
 > {
     tick_count: u64,
     ingested_packet_count: u64,
-    path_table: PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+    path_table:
+        PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_PAYLOAD_ARENA_BYTES>,
 }
 
-impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
-    EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>
+impl<
+        const MAX_TRACKED_DESTINATIONS: usize,
+        const MAX_SEEN_ANNOUNCE_IDS: usize,
+        const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+    > EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_PAYLOAD_ARENA_BYTES>
 {
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
@@ -59,6 +67,12 @@ impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
     /// Number of destinations the engine currently has a path to.
     pub fn path_count(&self) -> usize {
         self.path_table.path_count()
+    }
+
+    /// The retained announce payload for a known destination, or `None` if the
+    /// destination is unknown or its announce isn't currently on hand.
+    pub fn announce_payload(&self, destination: &DestinationHash) -> Option<&[u8]> {
+        self.path_table.announce_payload(destination)
     }
 }
 
@@ -100,8 +114,16 @@ impl TickOutput {
 /// path. Bytes that don't parse, or aren't announces, are counted as processed
 /// and otherwise ignored — this slice acts only on announces.
 #[must_use]
-pub fn ingest<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>(
-    state: &mut EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+pub fn ingest<
+    const MAX_TRACKED_DESTINATIONS: usize,
+    const MAX_SEEN_ANNOUNCE_IDS: usize,
+    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+>(
+    state: &mut EngineState<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_PAYLOAD_ARENA_BYTES,
+    >,
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput {
     state.ingested_packet_count = state
@@ -141,8 +163,9 @@ pub fn ingest<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS
                 received_hops,
                 packet.arrival,
                 announce.announce_id,
+                payload,
             );
-            if outcome != RecordPathOutcome::DroppedAtCapacity {
+            if !matches!(outcome, RecordPathOutcome::Dropped(_)) {
                 accepted_announce_count += 1;
             }
         }
@@ -156,8 +179,16 @@ pub fn ingest<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS
 
 /// Advance the engine's periodic work to `now`.
 #[must_use]
-pub fn tick<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>(
-    state: &mut EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+pub fn tick<
+    const MAX_TRACKED_DESTINATIONS: usize,
+    const MAX_SEEN_ANNOUNCE_IDS: usize,
+    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+>(
+    state: &mut EngineState<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_PAYLOAD_ARENA_BYTES,
+    >,
     _now: InstantMillis,
 ) -> TickOutput {
     state.tick_count = state.tick_count.saturating_add(1);
@@ -279,6 +310,27 @@ mod tests {
         );
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(state.path_count(), 0);
+    }
+
+    #[test]
+    fn an_accepted_announce_retains_its_exact_payload_for_read_back() {
+        let raw = hx(RAW_ANNOUNCE);
+        // The payload is everything after the 19-byte Type-1 header.
+        let (_, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let destination =
+            DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
+
+        let mut state: EngineState = EngineState::default();
+        let out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+        );
+        assert_eq!(out.accepted_announce_count(), 1);
+
+        assert_eq!(state.announce_payload(&destination), Some(payload));
     }
 
     #[test]
