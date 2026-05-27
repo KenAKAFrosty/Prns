@@ -1,5 +1,5 @@
 [package]
-name = "esp32c6-host"
+name = "esp32-c6"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -10,11 +10,11 @@ description = "ESP32-C6 Host adapter: drives the Personal Reticulum engine on ba
 [workspace]
 
 [[bin]]
-name = "esp32c6-host"
+name = "esp32-c6"
 path = "src/main.rs"
 
 [dependencies]
-personal-rns = { path = "../personal-rns", default-features = false }
+personal-rns = { path = "../../personal-rns", default-features = false }
 
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32c6", "panic-handler", "println"] }

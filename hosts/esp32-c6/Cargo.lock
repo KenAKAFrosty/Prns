@@ -537,6 +537,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "esp32-c6"
+version = "0.1.0"
+dependencies = [
+ "esp-backtrace",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-println",
+ "personal-rns",
+]
+
+[[package]]
 name = "esp32c2"
 version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,17 +572,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c58f34ff2633968c12125efc7f4f8f101078d5d34c7cb60eab82268db20986f9"
 dependencies = [
  "vcell",
-]
-
-[[package]]
-name = "esp32c6-host"
-version = "0.1.0"
-dependencies = [
- "esp-backtrace",
- "esp-bootloader-esp-idf",
- "esp-hal",
- "esp-println",
- "personal-rns",
 ]
 
 [[package]]
