@@ -2,7 +2,7 @@
 
 use personal_rns::engine::EngineState;
 use personal_rns::host::Host;
-use personal_rns::runtime::drive_once;
+use personal_rns::runtime::step;
 use personal_rnsd::StdHost;
 
 fn main() {
@@ -15,8 +15,8 @@ fn main() {
     // sleep lets wall-clock time actually move between ticks.
     let start = host.now_millis().expect("std clock is readable");
     for _ in 0..5 {
-        drive_once(&mut state, &mut host, &mut buffer)
-            .expect("clock-only drive_once cannot fail");
+        step(&mut state, &mut host, &mut buffer)
+            .expect("clock-only step cannot fail");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let end = host.now_millis().expect("std clock is readable");

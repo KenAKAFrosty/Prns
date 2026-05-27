@@ -6,7 +6,7 @@
 use crate::engine::{tick, TickOutput, EngineState, TickInput};
 use crate::host::Host;
 
-pub fn drive_once<H: Host>(
+pub fn step<H: Host>(
     state: &mut EngineState,
     host: &mut H,
     buffer: &mut [u8],
@@ -25,7 +25,7 @@ pub fn drive_once<H: Host>(
 
 #[cfg(test)]
 mod tests {
-    use super::drive_once;
+    use super::step;
     use crate::engine::{EngineState, InstantMillis};
     use crate::host::Host;
 
@@ -54,7 +54,7 @@ mod tests {
         let mut host = EmptyHost;
         let mut buffer = [0u8; 16];
 
-        let effects = drive_once(&mut state, &mut host, &mut buffer).unwrap();
+        let effects = step(&mut state, &mut host, &mut buffer).unwrap();
 
         assert_eq!(state.tick_count(), 1);
         assert_eq!(effects.emitted_packet_count(), 0);
