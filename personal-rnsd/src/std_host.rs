@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use personal_rns::engine::{InboundPacket, InstantMillis};
+use personal_rns::engine::{InboundPacket, InstantMillis, OutboundPacket};
 use personal_rns::host::Host;
 
 pub struct StdHost {
@@ -40,11 +40,14 @@ impl Host for StdHost {
         Ok(InstantMillis(self.base.elapsed().as_millis() as u64))
     }
 
-    fn drain_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+    fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
         Ok(&[])
     }
 
-    fn transmit_packet(&mut self, _bytes: &[u8]) -> Result<(), Self::Error> {
+    fn pump_outbound_packets(
+        &mut self,
+        _packets: &[OutboundPacket<'_>],
+    ) -> Result<(), Self::Error> {
         Err(StdHostError::NoTransport)
     }
 }

@@ -9,7 +9,7 @@ use esp_hal::main;
 use esp_hal::time::Instant;
 use esp_println::println;
 
-use personal_rns::engine::{EngineState, InboundPacket, InstantMillis};
+use personal_rns::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
 use personal_rns::host::Host;
 use personal_rns::runtime::step;
 
@@ -30,14 +30,19 @@ impl Host for Esp32Host {
     type Error = Esp32HostError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
-        Ok(InstantMillis(Instant::now().duration_since_epoch().as_millis()))
+        Ok(InstantMillis(
+            Instant::now().duration_since_epoch().as_millis(),
+        ))
     }
 
-    fn drain_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+    fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
         Ok(&[])
     }
 
-    fn transmit_packet(&mut self, _bytes: &[u8]) -> Result<(), Self::Error> {
+    fn pump_outbound_packets(
+        &mut self,
+        _packets: &[OutboundPacket<'_>],
+    ) -> Result<(), Self::Error> {
         Err(Esp32HostError::NoTransport)
     }
 }

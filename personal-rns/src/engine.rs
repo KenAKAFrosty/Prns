@@ -18,6 +18,13 @@ pub struct InboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
+/// One outbound packet the engine wants transmitted. A semantic wrapper over
+/// the bytes; the host decides which transport carries it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutboundPacket<'a> {
+    pub bytes: &'a [u8],
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState {
     tick_count: u64,
@@ -25,18 +32,15 @@ pub struct EngineState {
 }
 
 impl EngineState {
-    /// Periodic `tick` passes run since construction.
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
     }
 
-    /// Inbound packets handed to `ingest` since construction.
     pub const fn ingested_packet_count(&self) -> u64 {
         self.ingested_packet_count
     }
 }
 
-/// What one `ingest` of an inbound batch produced.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IngestOutput {
     processed_packet_count: usize,
@@ -48,7 +52,6 @@ impl IngestOutput {
     }
 }
 
-/// What one periodic `tick` pass produced.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TickOutput {
     emitted_packet_count: usize,
@@ -68,6 +71,7 @@ pub fn ingest(state: &mut EngineState, packets: &[InboundPacket<'_>]) -> IngestO
     state.ingested_packet_count = state
         .ingested_packet_count
         .saturating_add(packets.len() as u64);
+
     IngestOutput {
         processed_packet_count: packets.len(),
     }

@@ -16,7 +16,7 @@ pub struct StepOutput {
 }
 
 pub fn step<H: Host>(state: &mut EngineState, host: &mut H) -> Result<StepOutput, H::Error> {
-    let packets = host.drain_packets()?;
+    let packets = host.drain_inbound_packets()?;
     let ingest = ingest(state, packets);
     let now = host.now_millis()?;
     let tick = tick(state, now);
@@ -26,7 +26,7 @@ pub fn step<H: Host>(state: &mut EngineState, host: &mut H) -> Result<StepOutput
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EngineState, InboundPacket, InstantMillis};
+    use crate::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
     use crate::host::Host;
 
     /// Host with nothing queued — the steady idle case.
@@ -40,11 +40,14 @@ mod tests {
             Ok(InstantMillis(10))
         }
 
-        fn drain_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+        fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
             Ok(&[])
         }
 
-        fn transmit_packet(&mut self, _bytes: &[u8]) -> Result<(), Self::Error> {
+        fn pump_outbound_packets(
+            &mut self,
+            _packets: &[OutboundPacket<'_>],
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
     }
@@ -61,11 +64,14 @@ mod tests {
             Ok(InstantMillis(10))
         }
 
-        fn drain_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+        fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
             Ok(self.queued)
         }
 
-        fn transmit_packet(&mut self, _bytes: &[u8]) -> Result<(), Self::Error> {
+        fn pump_outbound_packets(
+            &mut self,
+            _packets: &[OutboundPacket<'_>],
+        ) -> Result<(), Self::Error> {
             Ok(())
         }
     }
