@@ -5,6 +5,7 @@ pub mod announce;
 pub mod crypto;
 pub mod engine;
 pub mod host;
+pub mod outbox;
 pub mod path;
 mod payload_store;
 pub mod runtime;
