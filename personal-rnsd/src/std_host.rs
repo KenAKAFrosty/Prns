@@ -27,7 +27,6 @@ impl Default for StdHost {
     }
 }
 
-/// Failure surface of [`StdHost`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StdHostError {
     /// Transmission was requested, but no transport is configured yet.
