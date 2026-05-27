@@ -7,10 +7,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
-/// Elapsed time supplied by the host for one engine tick, in milliseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DeltaMillis(pub u64);
-
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState {
     tick_count: u64,
@@ -41,14 +37,14 @@ impl TickOutput {
 
 /// Advance the pure engine by one deterministic tick.
 #[must_use]
-pub fn tick(state: &mut EngineState, _input: TickInput<'_>, _dt: DeltaMillis) -> TickOutput {
+pub fn tick(state: &mut EngineState, _input: TickInput<'_>) -> TickOutput {
     state.tick_count = state.tick_count.saturating_add(1);
     TickOutput::default()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{tick, DeltaMillis, EngineState, InstantMillis, TickInput, TickOutput};
+    use super::{tick, EngineState, InstantMillis, TickInput, TickOutput};
 
     #[test]
     fn tick_is_deterministic_and_side_effect_free() {
@@ -58,11 +54,11 @@ mod tests {
             now: InstantMillis(1_000),
         };
 
-        let left_effects = tick(&mut left, input, DeltaMillis(50));
-        let right_effects = tick(&mut right, input, DeltaMillis(50));
+        let left_output = tick(&mut left, input);
+        let right_output = tick(&mut right, input);
 
         assert_eq!(left, right);
-        assert_eq!(left_effects, TickOutput::default());
-        assert_eq!(right_effects.emitted_packet_count(), 0);
+        assert_eq!(left_output, TickOutput::default());
+        assert_eq!(right_output.emitted_packet_count(), 0);
     }
 }

@@ -3,14 +3,13 @@
 //! Defined in the core so every target body — daemon, microcontroller, SDK —
 //! reuses one loop and supplies only a `Host`
 
-use crate::engine::{tick, DeltaMillis, TickOutput, EngineState, TickInput};
+use crate::engine::{tick, TickOutput, EngineState, TickInput};
 use crate::host::Host;
 
 pub fn drive_once<H: Host>(
     state: &mut EngineState,
     host: &mut H,
     buffer: &mut [u8],
-    dt: DeltaMillis,
 ) -> Result<TickOutput, H::Error> {
     let now = host.now_millis()?;
     let input = match host.receive_packet(buffer)? {
@@ -21,13 +20,13 @@ pub fn drive_once<H: Host>(
         None => TickInput::Idle { now },
     };
 
-    Ok(tick(state, input, dt))
+    Ok(tick(state, input))
 }
 
 #[cfg(test)]
 mod tests {
     use super::drive_once;
-    use crate::engine::{DeltaMillis, EngineState, InstantMillis};
+    use crate::engine::{EngineState, InstantMillis};
     use crate::host::Host;
 
     #[derive(Default)]
@@ -55,7 +54,7 @@ mod tests {
         let mut host = EmptyHost;
         let mut buffer = [0u8; 16];
 
-        let effects = drive_once(&mut state, &mut host, &mut buffer, DeltaMillis(1)).unwrap();
+        let effects = drive_once(&mut state, &mut host, &mut buffer).unwrap();
 
         assert_eq!(state.tick_count(), 1);
         assert_eq!(effects.emitted_packet_count(), 0);
