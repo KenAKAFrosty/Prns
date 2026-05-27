@@ -1,0 +1,27 @@
+[package]
+name = "personal-rns-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "uniffi bindings for personal-rns — the Personal Reticulum runtime exposed to Kotlin/Swift/Python from one UDL"
+publish = false
+
+[lib]
+# `cdylib` for the JNI / Swift FFI / Python ctypes consumers; `staticlib`
+# for iOS xcframework packaging; `rlib` so Rust tests can link us directly.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+personal-rns = { path = "../personal-rns", default-features = false, features = ["std"] }
+uniffi = { version = "0.28", features = ["cli"] }
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
+
+[lints]
+workspace = true
+
+[[bin]]
+# `cargo run -p personal-rns-ffi --bin uniffi-bindgen -- generate <args>`
+# regenerates the committed bindings from the UDL when the surface changes.
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

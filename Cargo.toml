@@ -3,6 +3,7 @@ members = [
     "personal-rns",
     "personal-rnsd",
     "personal-lxmf",
+    "personal-rns-ffi",
 ]
 resolver = "3"
 

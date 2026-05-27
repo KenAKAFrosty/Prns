@@ -1,0 +1,28 @@
+// uniffi UDL for personal-rns — Personal's implementation of the Reticulum Network Stack (RNS).
+//
+// One file describes the SDK surface once; `uniffi-bindgen generate`
+// produces Kotlin (Android), Swift (iOS), and Python bindings from it.
+// The same UDL feeds the `.aar`, `.xcframework`, and PyPI packaging.
+//
+// Stage A surface: enough to validate the package shape end to end 
+// (construct a runtime, drive deterministic ticks, observe the count).
+// The pure engine, the Host seam, and the runtime::step driver stay
+// private to Rust; the SDK exposes only what an app consumer needs.
+
+namespace prns {
+  // The personal-rns version this binding was built against, so the
+  // Kotlin/Swift/Python consumer can assert it links what it expects.
+  string version();
+};
+
+interface ReticulumRuntime {
+  // Open a runtime over the SDK's built-in clock host.
+  constructor();
+
+  // Advance the engine by one deterministic tick; returns the number of
+  // packets the tick emitted (zero until the protocol slices land).
+  u64 tick();
+
+  // Total ticks advanced since construction.
+  u64 tick_count();
+};
