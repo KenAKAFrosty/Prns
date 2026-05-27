@@ -15,7 +15,14 @@ pub struct StepOutput {
     pub tick: TickOutput,
 }
 
-pub fn step<H: HostAdapter>(state: &mut EngineState, host: &mut H) -> Result<StepOutput, H::Error> {
+pub fn step<
+    H: HostAdapter,
+    const MAX_TRACKED_DESTINATIONS: usize,
+    const MAX_SEEN_ANNOUNCE_IDS: usize,
+>(
+    state: &mut EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+    host: &mut H,
+) -> Result<StepOutput, H::Error> {
     let packets = host.drain_inbound_packets()?;
     let ingest = ingest(state, packets);
     let now = host.now_millis()?;
@@ -78,7 +85,7 @@ mod tests {
 
     #[test]
     fn step_ticks_once_when_the_queue_is_empty() {
-        let mut state = EngineState::default();
+        let mut state: EngineState = EngineState::default();
         let mut host = IdleHost;
 
         let out = step(&mut state, &mut host).unwrap();
@@ -100,7 +107,7 @@ mod tests {
                 bytes: &[0xBB, 0xCC],
             },
         ];
-        let mut state = EngineState::default();
+        let mut state: EngineState = EngineState::default();
         let mut host = QueuedHost { queued: &queued };
 
         let out = step(&mut state, &mut host).unwrap();

@@ -5,6 +5,12 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
+use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
+use crate::path::{
+    PathTable, RecordPathOutcome, DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
+};
+use crate::wire::WirePacketHeader;
+
 /// Monotonic timestamp supplied by the host, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
@@ -25,13 +31,23 @@ pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
+/// Retained engine state. The two const parameters size the path table's fixed
+/// capacity; they default to the RNS-derived values, so plain `EngineState` is
+/// the embedded-friendly default and a capable host opts into a larger table
+/// with `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS>::default()`.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EngineState {
+pub struct EngineState<
+    const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
+    const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
+> {
     tick_count: u64,
     ingested_packet_count: u64,
+    path_table: PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
 }
 
-impl EngineState {
+impl<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>
+    EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>
+{
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
     }
@@ -39,16 +55,28 @@ impl EngineState {
     pub const fn ingested_packet_count(&self) -> u64 {
         self.ingested_packet_count
     }
+
+    /// Number of destinations the engine currently has a path to.
+    pub fn path_count(&self) -> usize {
+        self.path_table.path_count()
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IngestOutput {
     processed_packet_count: usize,
+    accepted_announce_count: usize,
 }
 
 impl IngestOutput {
+    /// Every inbound packet the batch looked at, parseable or not.
     pub const fn processed_packet_count(&self) -> usize {
         self.processed_packet_count
+    }
+
+    /// How many of those were valid announces accepted into the path table.
+    pub const fn accepted_announce_count(&self) -> usize {
+        self.accepted_announce_count
     }
 }
 
@@ -66,20 +94,64 @@ impl TickOutput {
 /// Process a batch of inbound packets. Clock-free: each packet carries its own
 /// arrival instant, so the result is a pure function of `(state, packets)`. An
 /// empty batch is valid and a no-op.
+///
+/// Each packet is decoded to a header and, if it is a valid announce, run
+/// through the acceptance predicate; accepted announces install or refresh a
+/// path. Bytes that don't parse, or aren't announces, are counted as processed
+/// and otherwise ignored — this slice acts only on announces.
 #[must_use]
-pub fn ingest(state: &mut EngineState, packets: &[InboundPacket<'_>]) -> IngestOutput {
+pub fn ingest<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>(
+    state: &mut EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+    packets: &[InboundPacket<'_>],
+) -> IngestOutput {
     state.ingested_packet_count = state
         .ingested_packet_count
         .saturating_add(packets.len() as u64);
 
+    let mut accepted_announce_count = 0;
+    for packet in packets {
+        let Ok((header, payload)) = WirePacketHeader::parse(packet.bytes) else {
+            continue;
+        };
+        let Ok(announce) = Announce::from_wire(&header, payload) else {
+            continue;
+        };
+
+        let decision = AnnounceAcceptanceInput {
+            packet_hops: header.hops,
+            announce_id: announce.announce_id,
+            // No local identities yet, so no announce is ever for us.
+            destination_is_local: false,
+            existing_path: state.path_table.existing_path(&announce.destination),
+            arrived_at: packet.arrival,
+        }
+        .determine_acceptance();
+
+        if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
+            let outcome = state.path_table.record_accepted_path(
+                announce.destination,
+                header.hops,
+                packet.arrival,
+                announce.announce_id,
+            );
+            if outcome != RecordPathOutcome::DroppedAtCapacity {
+                accepted_announce_count += 1;
+            }
+        }
+    }
+
     IngestOutput {
         processed_packet_count: packets.len(),
+        accepted_announce_count,
     }
 }
 
 /// Advance the engine's periodic work to `now`.
 #[must_use]
-pub fn tick(state: &mut EngineState, _now: InstantMillis) -> TickOutput {
+pub fn tick<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS: usize>(
+    state: &mut EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS>,
+    _now: InstantMillis,
+) -> TickOutput {
     state.tick_count = state.tick_count.saturating_add(1);
     TickOutput::default()
 }
@@ -90,8 +162,8 @@ mod tests {
 
     #[test]
     fn tick_advances_count_deterministically() {
-        let mut left = EngineState::default();
-        let mut right = EngineState::default();
+        let mut left: EngineState = EngineState::default();
+        let mut right: EngineState = EngineState::default();
 
         let left_out = tick(&mut left, InstantMillis(1_000));
         let right_out = tick(&mut right, InstantMillis(1_000));
@@ -104,7 +176,7 @@ mod tests {
 
     #[test]
     fn ingest_counts_the_batch_without_a_clock() {
-        let mut state = EngineState::default();
+        let mut state: EngineState = EngineState::default();
         let batch = [
             InboundPacket {
                 arrival: InstantMillis(10),
@@ -124,5 +196,78 @@ mod tests {
         let empty = ingest(&mut state, &[]);
         assert_eq!(empty.processed_packet_count(), 0);
         assert_eq!(state.ingested_packet_count(), 2);
+    }
+
+    // A genuine RNS 1.3.1 announce (the same vector the announce module validates).
+    const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
+                                59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
+                                0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
+                                7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
+                                4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
+
+    fn hx(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    #[test]
+    fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState = EngineState::default();
+
+        let first = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+        );
+        assert_eq!(first.accepted_announce_count(), 1);
+        assert_eq!(state.path_count(), 1);
+
+        // The identical announce again is a known-route replay: rejected, no new path.
+        let second = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(2_000),
+                bytes: &raw,
+            }],
+        );
+        assert_eq!(second.processed_packet_count(), 1);
+        assert_eq!(second.accepted_announce_count(), 0);
+        assert_eq!(state.path_count(), 1);
+    }
+
+    #[test]
+    fn ingest_processes_but_does_not_accept_non_announce_bytes() {
+        let mut state: EngineState = EngineState::default();
+        let junk = InboundPacket {
+            arrival: InstantMillis(1),
+            bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
+        };
+        let out = ingest(&mut state, &[junk]);
+        assert_eq!(out.processed_packet_count(), 1);
+        assert_eq!(out.accepted_announce_count(), 0);
+        assert_eq!(state.path_count(), 0);
+    }
+
+    #[test]
+    fn a_capable_host_can_widen_the_path_table_at_the_type_level() {
+        // The const-generic lever: a roomier table is just a different type, and
+        // ingest is generic over it — same engine, no heap, no API change. (Very
+        // large widths belong on the heap; this inline default lives on the stack.)
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state = EngineState::<64, 128>::default();
+        let out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+        );
+        assert_eq!(out.accepted_announce_count(), 1);
+        assert_eq!(state.path_count(), 1);
     }
 }

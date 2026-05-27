@@ -35,6 +35,8 @@ impl AnnounceNonce {
 pub struct MonotonicTimebase([u8; TIMEBASE_LEN]);
 
 impl MonotonicTimebase {
+    pub const ZERO: Self = Self([0u8; TIMEBASE_LEN]);
+
     pub const fn from_wire(bytes: [u8; TIMEBASE_LEN]) -> Self {
         Self(bytes)
     }

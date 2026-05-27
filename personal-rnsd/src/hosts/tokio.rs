@@ -23,7 +23,7 @@ pub fn run_multi_thread(ticks: u64, poll: Duration) -> u64 {
 
     runtime.block_on(async move {
         tokio::spawn(async move {
-            let mut state = EngineState::default();
+            let mut state: EngineState = EngineState::default();
             let mut host = StdHost::new();
             while state.tick_count() < ticks {
                 step(&mut state, &mut host).expect("clock-only step cannot fail");

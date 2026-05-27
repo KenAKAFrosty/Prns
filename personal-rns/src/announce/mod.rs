@@ -1,8 +1,12 @@
 //! The validated announce: a SINGLE-destination identity claim, only
 //! constructible once its signature and destination binding both check out.
 
+pub mod acceptance;
 mod id;
 
+pub use acceptance::{
+    AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, RejectReason,
+};
 pub use id::{AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};

@@ -6,7 +6,7 @@ use personal_rns::runtime::step;
 use personal_rnsd::StdHost;
 
 fn main() {
-    let mut state = EngineState::default();
+    let mut state: EngineState = EngineState::default();
     let mut host = StdHost::new();
 
     // No transport yet, so every step ingests an empty queue and ticks once.
