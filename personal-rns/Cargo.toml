@@ -1,0 +1,25 @@
+[package]
+name = "personal-rns"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Reticulum engine and wire contract for Personal Reticulum"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std", "std-host"]
+alloc = []
+std = ["alloc"]
+std-host = ["std"]
+stream-compression = ["std"]
+bridge-bin = ["std", "dep:serde", "dep:serde_json"]
+differential-coverage = ["std"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[lints]
+workspace = true

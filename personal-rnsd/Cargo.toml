@@ -1,0 +1,28 @@
+[package]
+name = "personal-rnsd"
+version = "0.1.0"
+edition = "2021"
+description = "Thin daemon host for the Personal Reticulum engine"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "personal-rnsd"
+path = "src/main.rs"
+required-features = ["std-host"]
+
+[features]
+default = ["std-host"]
+alloc = ["personal-rns/alloc"]
+std = ["alloc", "personal-rns/std"]
+std-host = ["std"]
+fixture-identity = []
+interfaces-host-shell = ["std"]
+
+[dependencies]
+personal-rns = { path = "../personal-rns", default-features = false }
+
+[lints]
+workspace = true

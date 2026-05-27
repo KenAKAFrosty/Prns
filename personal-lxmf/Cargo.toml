@@ -1,0 +1,23 @@
+[package]
+name = "personal-lxmf"
+version = "0.1.0"
+edition = "2021"
+description = "LXMF application layer above Personal Reticulum"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+alloc = ["personal-rns/alloc"]
+std = ["alloc", "personal-rns/std"]
+bridge-bin = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+personal-rns = { path = "../personal-rns", default-features = false }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[lints]
+workspace = true
