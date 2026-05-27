@@ -3,4 +3,5 @@
 
 pub mod engine;
 pub mod host;
+pub mod runtime;
 pub mod wire;
