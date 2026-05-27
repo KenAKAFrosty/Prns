@@ -117,8 +117,16 @@ pub fn ingest<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS
             continue;
         };
 
+        // RNS increments a packet's hop count on receipt, before both the
+        // acceptance gate and storing the path, so every downstream comparison
+        // and the reported hop count use the incremented value.
+        // https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1455
+        // Unconditional while we have no interfaces; RNS decrements for
+        // local-client / shared-instance hops, which we don't model yet.
+        let received_hops = header.hops.saturating_add(1);
+
         let decision = AnnounceAcceptanceInput {
-            packet_hops: header.hops,
+            packet_hops: received_hops,
             announce_id: announce.announce_id,
             // No local identities yet, so no announce is ever for us.
             destination_is_local: false,
@@ -130,7 +138,7 @@ pub fn ingest<const MAX_TRACKED_DESTINATIONS: usize, const MAX_SEEN_ANNOUNCE_IDS
         if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
             let outcome = state.path_table.record_accepted_path(
                 announce.destination,
-                header.hops,
+                received_hops,
                 packet.arrival,
                 announce.announce_id,
             );
@@ -238,6 +246,39 @@ mod tests {
         assert_eq!(second.processed_packet_count(), 1);
         assert_eq!(second.accepted_announce_count(), 0);
         assert_eq!(state.path_count(), 1);
+    }
+
+    #[test]
+    fn received_hops_are_incremented_so_the_reach_boundary_matches_pathfinder_m() {
+        // RNS increments hops on receive, then accepts only `incremented <
+        // PATHFINDER_M+1`. So 127 on the wire (128 after the increment) is the
+        // last acceptable value, and 128 on the wire (129 after) is beyond reach.
+        // The hop byte lives in the header, not the signed payload, so editing it
+        // leaves the announce's signature intact.
+        let mut at_limit = hx(RAW_ANNOUNCE);
+        at_limit[1] = 127;
+        let mut state: EngineState = EngineState::default();
+        let out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &at_limit,
+            }],
+        );
+        assert_eq!(out.accepted_announce_count(), 1);
+
+        let mut beyond = hx(RAW_ANNOUNCE);
+        beyond[1] = 128;
+        let mut state: EngineState = EngineState::default();
+        let out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &beyond,
+            }],
+        );
+        assert_eq!(out.accepted_announce_count(), 0);
+        assert_eq!(state.path_count(), 0);
     }
 
     #[test]
