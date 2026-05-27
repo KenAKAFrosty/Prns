@@ -7,7 +7,7 @@
 use std::time::Instant;
 
 use personal_rns::engine::{InboundPacket, InstantMillis, OutboundPacket};
-use personal_rns::host::Host;
+use personal_rns::host::HostAdapter;
 
 pub struct StdHost {
     base: Instant,
@@ -33,7 +33,7 @@ pub enum StdHostError {
     NoTransport,
 }
 
-impl Host for StdHost {
+impl HostAdapter for StdHost {
     type Error = StdHostError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {

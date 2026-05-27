@@ -1,7 +1,7 @@
 //! Linux smoke: drive the pure engine against a real monotonic clock via StdHost.
 
 use personal_rns::engine::EngineState;
-use personal_rns::host::Host;
+use personal_rns::host::HostAdapter;
 use personal_rns::runtime::step;
 use personal_rnsd::StdHost;
 

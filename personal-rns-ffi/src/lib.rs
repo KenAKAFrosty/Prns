@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use personal_rns::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
-use personal_rns::host::Host;
+use personal_rns::host::HostAdapter;
 use personal_rns::runtime::step;
 
 uniffi::include_scaffolding!("prns");
@@ -43,7 +43,7 @@ enum SdkHostError {
     NoTransport,
 }
 
-impl Host for SdkHost {
+impl HostAdapter for SdkHost {
     type Error = SdkHostError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {

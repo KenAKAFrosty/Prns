@@ -1,13 +1,13 @@
 //! Host seam: the platform body the pure engine runs on.
 //!
 //! The engine is platform-agnostic. Each target (daemon, microcontroller, SDK)
-//! supplies a `Host` providing the clock, the inbound queue, and outbound
+//! supplies a `HostAdapter` providing the clock, the inbound queue, and outbound
 //! transmission. This trait is the complete inventory of what the stack asks of
 //! the world; keep it small.
 
 use crate::engine::{InboundPacket, InstantMillis, OutboundPacket};
 
-pub trait Host {
+pub trait HostAdapter {
     type Error;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error>;

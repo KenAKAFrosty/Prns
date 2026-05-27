@@ -10,7 +10,7 @@ use esp_hal::time::Instant;
 use esp_println::println;
 
 use personal_rns::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
-use personal_rns::host::Host;
+use personal_rns::host::HostAdapter;
 use personal_rns::runtime::step;
 
 esp_app_desc!();
@@ -26,7 +26,7 @@ enum Esp32HostError {
     NoTransport,
 }
 
-impl Host for Esp32Host {
+impl HostAdapter for Esp32Host {
     type Error = Esp32HostError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {

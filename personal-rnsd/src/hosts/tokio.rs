@@ -2,7 +2,7 @@
 //!
 //! Drives the sync engine loop on a spawned task under a multi-thread runtime,
 //! so Send-correctness is structural: this only compiles if `EngineState` and
-//! the host are `Send`. Same sync `step` and `Host` as the embedded path. The
+//! the host are `Send`. Same sync `step` and `HostAdapter` as the embedded path. The
 //! async lives only in the runtime, never in the engine.
 
 use std::time::Duration;

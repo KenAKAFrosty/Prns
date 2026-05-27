@@ -1,13 +1,13 @@
 //! Runtime driver: the provided loop that drives the pure engine against a host.
 //!
 //! Defined in the core so every target body — daemon, microcontroller, SDK —
-//! reuses one driver and supplies only a `Host`. Each `step` does both engine
+//! reuses one driver and supplies only a `HostAdapter`. Each `step` does both engine
 //! verbs in order: ingest the host's queued batch, then advance one periodic
 //! tick. The host decides how its queue fills and how often `step` runs; the
 //! tick rate is the stable heartbeat the engine is designed against.
 
 use crate::engine::{ingest, tick, EngineState, IngestOutput, TickOutput};
-use crate::host::Host;
+use crate::host::HostAdapter;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StepOutput {
@@ -15,7 +15,7 @@ pub struct StepOutput {
     pub tick: TickOutput,
 }
 
-pub fn step<H: Host>(state: &mut EngineState, host: &mut H) -> Result<StepOutput, H::Error> {
+pub fn step<H: HostAdapter>(state: &mut EngineState, host: &mut H) -> Result<StepOutput, H::Error> {
     let packets = host.drain_inbound_packets()?;
     let ingest = ingest(state, packets);
     let now = host.now_millis()?;
@@ -27,13 +27,13 @@ pub fn step<H: Host>(state: &mut EngineState, host: &mut H) -> Result<StepOutput
 mod tests {
     use super::*;
     use crate::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
-    use crate::host::Host;
+    use crate::host::HostAdapter;
 
     /// Host with nothing queued — the steady idle case.
     #[derive(Default)]
     struct IdleHost;
 
-    impl Host for IdleHost {
+    impl HostAdapter for IdleHost {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -57,7 +57,7 @@ mod tests {
         queued: &'q [InboundPacket<'q>],
     }
 
-    impl Host for QueuedHost<'_> {
+    impl HostAdapter for QueuedHost<'_> {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
