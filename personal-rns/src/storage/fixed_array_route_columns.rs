@@ -1,7 +1,7 @@
 //! Fixed-capacity, inline-array destination-table columns — the no_std default.
 //!
 //! Each column is a `[T; MAX_TRACKED_DESTINATIONS]` stored inline in the
-//! struct (and therefore inline in whatever `DestinationTable` it lives in).
+//! struct (and therefore inline in whatever `RoutingTable` it lives in).
 //! No allocator, no heap, no growth: footprint is known at compile time and
 //! sized by the const generic. Capacity overflow surfaces as
 //! [`ColumnsFull`](crate::storage::ColumnsFull) at the `push` call site.
@@ -9,8 +9,8 @@
 use crate::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
-use crate::path::PathResponsiveness;
-use crate::storage::{ColumnsFull, DestinationColumns, PathRow, PayloadHandle};
+use crate::routing::RouteResponsiveness;
+use crate::storage::{AppDataHandle, ColumnsFull, RouteColumns, RouteEntry};
 use crate::wire::DestinationHash;
 
 /// SoA destination-table columns backed by inline fixed-size arrays. The
@@ -18,25 +18,25 @@ use crate::wire::DestinationHash;
 /// `push`.
 ///
 /// `PartialEq` is structural — every slot compares, including unused tail
-/// past `len`. Determinism tests rely on this exactly as `DestinationTable`
+/// past `len`. Determinism tests rely on this exactly as `RoutingTable`
 /// already does; it is not "same set of destinations."
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FixedArrayColumns<const MAX_TRACKED_DESTINATIONS: usize> {
+pub struct FixedArrayRouteColumns<const MAX_TRACKED_DESTINATIONS: usize> {
     len: usize,
     destination: [DestinationHash; MAX_TRACKED_DESTINATIONS],
     hops: [u8; MAX_TRACKED_DESTINATIONS],
     expires: [InstantMillis; MAX_TRACKED_DESTINATIONS],
-    responsiveness: [PathResponsiveness; MAX_TRACKED_DESTINATIONS],
+    responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
     public_keys: [IdentityPublicKeys; MAX_TRACKED_DESTINATIONS],
     dotted_name_hash: [DottedNameHash; MAX_TRACKED_DESTINATIONS],
     retained_announce_id: [AnnounceId; MAX_TRACKED_DESTINATIONS],
     ratchet: [Option<RatchetKey>; MAX_TRACKED_DESTINATIONS],
     signature: [Ed25519Signature; MAX_TRACKED_DESTINATIONS],
-    app_data_handle: [Option<PayloadHandle>; MAX_TRACKED_DESTINATIONS],
+    app_data_handle: [Option<AppDataHandle>; MAX_TRACKED_DESTINATIONS],
 }
 
 impl<const MAX_TRACKED_DESTINATIONS: usize> Default
-    for FixedArrayColumns<MAX_TRACKED_DESTINATIONS>
+    for FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>
 {
     fn default() -> Self {
         Self {
@@ -44,7 +44,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             destination: [DestinationHash::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
             hops: [0u8; MAX_TRACKED_DESTINATIONS],
             expires: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
-            responsiveness: [PathResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
+            responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
             public_keys: [IdentityPublicKeys {
                 encryption: X25519PublicKey([0u8; 32]),
                 signing: Ed25519PublicKey([0u8; 32]),
@@ -58,8 +58,8 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
     }
 }
 
-impl<const MAX_TRACKED_DESTINATIONS: usize> DestinationColumns
-    for FixedArrayColumns<MAX_TRACKED_DESTINATIONS>
+impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
+    for FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>
 {
     fn capacity(&self) -> usize {
         MAX_TRACKED_DESTINATIONS
@@ -77,7 +77,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> DestinationColumns
     fn expires(&self) -> &[InstantMillis] {
         &self.expires[..self.len]
     }
-    fn responsiveness(&self) -> &[PathResponsiveness] {
+    fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness[..self.len]
     }
     fn public_keys(&self) -> &[IdentityPublicKeys] {
@@ -95,11 +95,11 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> DestinationColumns
     fn signature(&self) -> &[Ed25519Signature] {
         &self.signature[..self.len]
     }
-    fn app_data_handle(&self) -> &[Option<PayloadHandle>] {
+    fn app_data_handle(&self) -> &[Option<AppDataHandle>] {
         &self.app_data_handle[..self.len]
     }
 
-    fn set_row(&mut self, i: usize, row: PathRow) {
+    fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.expires[i] = row.expires;
         self.responsiveness[i] = row.responsiveness;
@@ -111,7 +111,11 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> DestinationColumns
         self.app_data_handle[i] = row.maybe_app_data_handle;
     }
 
-    fn push(&mut self, destination: DestinationHash, row: PathRow) -> Result<usize, ColumnsFull> {
+    fn push(
+        &mut self,
+        destination: DestinationHash,
+        row: RouteEntry,
+    ) -> Result<usize, ColumnsFull> {
         if self.len >= MAX_TRACKED_DESTINATIONS {
             return Err(ColumnsFull);
         }

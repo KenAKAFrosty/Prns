@@ -1,39 +1,39 @@
 //! A two-tier seen-announce-id set: an inline floor that guarantees every path
 //! a small handful of slots, plus a shared overflow arena for bonus capacity.
 //!
-//! The path table needs RNS's `MAX_RANDOM_BLOBS` (64) per destination to defend
+//! The routing table needs RNS's `MAX_RANDOM_BLOBS` (64) per destination to defend
 //! against blob-replay across multipath, but most destinations use far fewer in
 //! steady state, and per-destination worst-case allocation pays the maximum
 //! for every path whether it earns it or not (64 × 10 B × 32 paths ≈ 20 KB,
-//! always). A small per-path inline floor (covers typical multipath fan-in,
+//! always). A small per-destination inline floor (covers typical multipath fan-in,
 //! always paid) plus a shared overflow arena (bonus capacity, packed) cuts the
-//! footprint by ~5× while keeping the same per-path cap.
+//! footprint by ~5× while keeping the same per-destination cap.
 //!
 //! ## Tiers
 //!
-//! 1. **Floor (per-path inline, guaranteed).** Every path gets `FLOOR_PER_PATH`
+//! 1. **Floor (per-destination inline, guaranteed).** Every path gets `FLOOR_PER_DESTINATION`
 //!    inline slots regardless of arena pressure. This covers the multipath dedup
 //!    case for paths typical mesh deployments see (interfaces × routes).
 //! 2. **Overflow (shared arena, packed).** `OVERFLOW_CAPACITY` ids total,
-//!    backing every path past its floor up to the per-path cap. Each path's
+//!    backing every path past its floor up to the per-destination cap. Each path's
 //!    overflow ids live in one contiguous span; offsets are derived from the
-//!    prefix sum of per-path lengths, not stored. Costs one `u8` per path of
+//!    prefix sum of per-destination lengths, not stored. Costs one `u8` per destination of
 //!    bookkeeping (vs eight bytes for a `{offset, len}` pair on a 32-bit
 //!    target), which keeps the metadata-to-payload ratio sane: ~1 byte
 //!    overhead per 10-byte id.
-//! 3. **Per-path cap (`MAX_PER_PATH`).** Mirrors RNS's `MAX_RANDOM_BLOBS`.
+//! 3. **Per-path cap (`MAX_PER_DESTINATION`).** Mirrors RNS's `MAX_RANDOM_BLOBS`.
 //!    Const generic owned by the store, not passed by callers — keeps the
 //!    cap as a structural property of the type rather than something the
 //!    consumer has to remember to pass on every call.
 //!
 //! ## Eviction: one rotate path
 //!
-//! When a `remember` would exceed either the per-path cap *or* the shared
+//! When a `remember` would exceed either the per-destination cap *or* the shared
 //! arena, we don't drop — we rotate the oldest out. The oldest is `floor[0]`
 //! (chronologically, the floor fills before overflow). Floor shifts left by 1,
 //! `overflow[0]` for this path promotes to `floor[floor_len - 1]` if the
 //! path has any overflow, then this path's overflow slice rotates in place
-//! (its length unchanged → no other path's span moves). Both the per-path-cap
+//! (its length unchanged → no other path's span moves). Both the per-destination-cap
 //! case and the arena-exhausted case collapse to the same code path, and there
 //! is no `Dropped` outcome.
 //!
@@ -42,23 +42,23 @@
 //! `PartialEq` is structural: the arrays compare byte-for-byte, including the
 //! stale tail past `overflow_used` that prior shifts left behind. Two stores
 //! built by identical op sequences yield byte-identical bytes, so `==` is the
-//! determinism check. Like `PayloadStore`, this is **not** "same set of ids".
+//! determinism check. Like `PackedAppDataArena`, this is **not** "same set of ids".
 //! Comparing two stores built by different routes is a misuse.
 
 use crate::announce::AnnounceId;
-use crate::storage::{RememberOutcome, SeenAnnounceIdsStorage};
+use crate::storage::{AnnounceIdHistory, RememberOutcome};
 
-/// The seen-id view a path lookup hands the predicate: two contiguous slices,
+/// The announce-id-history view a path lookup hands the predicate: two contiguous slices,
 /// floor first then overflow. Hides the two-tier storage from the consumer
 /// (`iter()` walks both back-to-back, `contains` checks both).
 #[derive(Debug, Clone, Copy)]
-pub struct SeenAnnounceIds<'a> {
+pub struct AnnounceIdHistoryView<'a> {
     floor: &'a [AnnounceId],
     overflow: &'a [AnnounceId],
 }
 
-impl<'a> SeenAnnounceIds<'a> {
-    pub const EMPTY: SeenAnnounceIds<'static> = SeenAnnounceIds {
+impl<'a> AnnounceIdHistoryView<'a> {
+    pub const EMPTY: AnnounceIdHistoryView<'static> = AnnounceIdHistoryView {
         floor: &[],
         overflow: &[],
     };
@@ -91,53 +91,64 @@ impl<'a> SeenAnnounceIds<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TieredSeenAnnounceIds<
-    const FLOOR_PER_PATH: usize,
+pub struct TieredAnnounceIdHistory<
+    const FLOOR_PER_DESTINATION: usize,
     const OVERFLOW_CAPACITY: usize,
-    const MAX_PATHS: usize,
-    const MAX_PER_PATH: usize,
+    const MAX_DESTINATIONS: usize,
+    const MAX_PER_DESTINATION: usize,
 > {
-    floor: [[AnnounceId; FLOOR_PER_PATH]; MAX_PATHS],
-    floor_len: [u8; MAX_PATHS],
+    floor: [[AnnounceId; FLOOR_PER_DESTINATION]; MAX_DESTINATIONS],
+    floor_len: [u8; MAX_DESTINATIONS],
     overflow: [AnnounceId; OVERFLOW_CAPACITY],
     /// Per-path overflow length. Path `i`'s overflow slice lives at
     /// `overflow[sum(overflow_len[..i]) .. sum(overflow_len[..i]) + overflow_len[i]]`,
     /// so offsets are derived from the prefix sum rather than stored.
-    overflow_len: [u8; MAX_PATHS],
+    overflow_len: [u8; MAX_DESTINATIONS],
 }
 
 impl<
-        const FLOOR_PER_PATH: usize,
+        const FLOOR_PER_DESTINATION: usize,
         const OVERFLOW_CAPACITY: usize,
-        const MAX_PATHS: usize,
-        const MAX_PER_PATH: usize,
+        const MAX_DESTINATIONS: usize,
+        const MAX_PER_DESTINATION: usize,
     > Default
-    for TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS, MAX_PER_PATH>
+    for TieredAnnounceIdHistory<
+        FLOOR_PER_DESTINATION,
+        OVERFLOW_CAPACITY,
+        MAX_DESTINATIONS,
+        MAX_PER_DESTINATION,
+    >
 {
     fn default() -> Self {
         let zero = AnnounceId::from_wire([0u8; 10]);
         Self {
-            floor: [[zero; FLOOR_PER_PATH]; MAX_PATHS],
-            floor_len: [0u8; MAX_PATHS],
+            floor: [[zero; FLOOR_PER_DESTINATION]; MAX_DESTINATIONS],
+            floor_len: [0u8; MAX_DESTINATIONS],
             overflow: [zero; OVERFLOW_CAPACITY],
-            overflow_len: [0u8; MAX_PATHS],
+            overflow_len: [0u8; MAX_DESTINATIONS],
         }
     }
 }
 
 impl<
-        const FLOOR_PER_PATH: usize,
+        const FLOOR_PER_DESTINATION: usize,
         const OVERFLOW_CAPACITY: usize,
-        const MAX_PATHS: usize,
-        const MAX_PER_PATH: usize,
-    > TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS, MAX_PER_PATH>
+        const MAX_DESTINATIONS: usize,
+        const MAX_PER_DESTINATION: usize,
+    >
+    TieredAnnounceIdHistory<
+        FLOOR_PER_DESTINATION,
+        OVERFLOW_CAPACITY,
+        MAX_DESTINATIONS,
+        MAX_PER_DESTINATION,
+    >
 {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn seen_ids(&self, slot: usize) -> SeenAnnounceIds<'_> {
-        SeenAnnounceIds {
+    pub fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_> {
+        AnnounceIdHistoryView {
             floor: self.floor_slice(slot),
             overflow: self.overflow_slice(slot),
         }
@@ -145,24 +156,30 @@ impl<
 
     /// Record `id` as recently seen for path `slot`. Re-hearing a known id is a
     /// no-op (no promotion). Inserts go to the floor first, then the shared
-    /// overflow; when the path is at `MAX_PER_PATH` or the arena is exhausted,
+    /// overflow; when the path is at `MAX_PER_DESTINATION` or the arena is exhausted,
     /// the oldest id rotates out and the new one takes its place at the end.
     /// Never drops.
     pub fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome {
         // The rotate path assumes `floor_len >= 1` at Tier 3; that follows from
-        // `FLOOR_PER_PATH >= 1` (the floor receives the first insert via Tier 1)
-        // and `MAX_PER_PATH >= 1`. The u8 length fields cap floor lengths at
-        // 255 and overflow per-path lengths at `MAX_PER_PATH - FLOOR_PER_PATH`.
+        // `FLOOR_PER_DESTINATION >= 1` (the floor receives the first insert via Tier 1)
+        // and `MAX_PER_DESTINATION >= 1`. The u8 length fields cap floor lengths at
+        // 255 and overflow per-destination lengths at `MAX_PER_DESTINATION - FLOOR_PER_DESTINATION`.
         const {
-            assert!(FLOOR_PER_PATH >= 1, "FLOOR_PER_PATH must be at least 1");
-            assert!(MAX_PER_PATH >= 1, "MAX_PER_PATH must be at least 1");
             assert!(
-                FLOOR_PER_PATH <= u8::MAX as usize,
-                "FLOOR_PER_PATH must fit in u8 (floor_len storage)"
+                FLOOR_PER_DESTINATION >= 1,
+                "FLOOR_PER_DESTINATION must be at least 1"
             );
             assert!(
-                MAX_PER_PATH.saturating_sub(FLOOR_PER_PATH) <= u8::MAX as usize,
-                "MAX_PER_PATH - FLOOR_PER_PATH must fit in u8 (overflow_len storage)"
+                MAX_PER_DESTINATION >= 1,
+                "MAX_PER_DESTINATION must be at least 1"
+            );
+            assert!(
+                FLOOR_PER_DESTINATION <= u8::MAX as usize,
+                "FLOOR_PER_DESTINATION must fit in u8 (floor_len storage)"
+            );
+            assert!(
+                MAX_PER_DESTINATION.saturating_sub(FLOOR_PER_DESTINATION) <= u8::MAX as usize,
+                "MAX_PER_DESTINATION - FLOOR_PER_DESTINATION must fit in u8 (overflow_len storage)"
             );
         }
 
@@ -174,18 +191,18 @@ impl<
         let overflow_len = self.overflow_len[slot] as usize;
         let total = floor_len + overflow_len;
 
-        // Tier 1: floor has room and the per-path cap isn't reached.
-        if floor_len < FLOOR_PER_PATH && total < MAX_PER_PATH {
+        // Tier 1: floor has room and the per-destination cap isn't reached.
+        if floor_len < FLOOR_PER_DESTINATION && total < MAX_PER_DESTINATION {
             self.floor[slot][floor_len] = id;
             self.floor_len[slot] = (floor_len + 1) as u8;
             return RememberOutcome::StoredFresh;
         }
 
-        // Tier 2: floor full (or cap below floor), per-path cap not reached,
+        // Tier 2: floor full (or cap below floor), per-destination cap not reached,
         // arena has room. Insert into this path's overflow span; shift the
         // arena tail right by 1 to keep all spans packed.
         let used = self.overflow_used();
-        if total < MAX_PER_PATH && used < OVERFLOW_CAPACITY {
+        if total < MAX_PER_DESTINATION && used < OVERFLOW_CAPACITY {
             let path_offset = self.overflow_offset(slot);
             let insert_at = path_offset + overflow_len;
             self.overflow.copy_within(insert_at..used, insert_at + 1);
@@ -194,15 +211,15 @@ impl<
             return RememberOutcome::StoredFresh;
         }
 
-        // Tier 3: at per-path cap, or arena exhausted. Rotate the oldest out.
+        // Tier 3: at per-destination cap, or arena exhausted. Rotate the oldest out.
         // floor[0] is the oldest (the floor fills first). Shift the LIVE
         // prefix left by 1, then place either the promoted overflow[0] (if
         // any) or the new id into floor[floor_len - 1]. The overflow contents
         // rotate in place; the path's overflow length is unchanged, so no
         // other path's offset moves.
         //
-        // The shift is bounded by `floor_len`, not `FLOOR_PER_PATH`, so the
-        // visible-slice invariant holds even when `MAX_PER_PATH < FLOOR_PER_PATH`
+        // The shift is bounded by `floor_len`, not `FLOOR_PER_DESTINATION`, so the
+        // visible-slice invariant holds even when `MAX_PER_DESTINATION < FLOOR_PER_DESTINATION`
         // (the path fills its live prefix and rotates inside it).
         self.floor[slot].copy_within(1..floor_len, 0);
         if overflow_len > 0 {
@@ -229,7 +246,7 @@ impl<
     }
 
     /// Where in `overflow` path `slot`'s span begins — the prefix sum of every
-    /// earlier path's overflow length. O(slot), trivial for `MAX_PATHS` ≤ ~64.
+    /// earlier path's overflow length. O(slot), trivial for `MAX_DESTINATIONS` ≤ ~64.
     fn overflow_offset(&self, slot: usize) -> usize {
         self.overflow_len[..slot].iter().map(|&n| n as usize).sum()
     }
@@ -244,21 +261,26 @@ impl<
 }
 
 impl<
-        const FLOOR_PER_PATH: usize,
+        const FLOOR_PER_DESTINATION: usize,
         const OVERFLOW_CAPACITY: usize,
-        const MAX_PATHS: usize,
-        const MAX_PER_PATH: usize,
-    > SeenAnnounceIdsStorage
-    for TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS, MAX_PER_PATH>
+        const MAX_DESTINATIONS: usize,
+        const MAX_PER_DESTINATION: usize,
+    > AnnounceIdHistory
+    for TieredAnnounceIdHistory<
+        FLOOR_PER_DESTINATION,
+        OVERFLOW_CAPACITY,
+        MAX_DESTINATIONS,
+        MAX_PER_DESTINATION,
+    >
 {
-    fn seen_ids(&self, slot: usize) -> SeenAnnounceIds<'_> {
+    fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_> {
         // Inherent method takes precedence in method-call notation; the trait
         // impl forwards to it (the inherent method holds the actual logic).
-        TieredSeenAnnounceIds::seen_ids(self, slot)
+        TieredAnnounceIdHistory::history(self, slot)
     }
 
     fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome {
-        TieredSeenAnnounceIds::remember(self, slot, id)
+        TieredAnnounceIdHistory::remember(self, slot, id)
     }
 }
 
@@ -270,10 +292,10 @@ mod tests {
         AnnounceId::from_wire([byte; 10])
     }
 
-    /// Convenience: floor + overflow lengths describe the per-path footprint;
+    /// Convenience: floor + overflow lengths describe the per-destination footprint;
     /// asserting both keeps the tier assignment honest.
     fn tier_lens<const F: usize, const O: usize, const P: usize, const MP: usize>(
-        store: &TieredSeenAnnounceIds<F, O, P, MP>,
+        store: &TieredAnnounceIdHistory<F, O, P, MP>,
         slot: usize,
     ) -> (usize, usize) {
         (
@@ -284,15 +306,15 @@ mod tests {
 
     #[test]
     fn first_insert_lands_in_the_floor() {
-        let mut store: TieredSeenAnnounceIds<4, 16, 4, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<4, 16, 4, 64> = TieredAnnounceIdHistory::new();
         assert_eq!(store.remember(0, aid(1)), RememberOutcome::StoredFresh);
         assert_eq!(tier_lens(&store, 0), (1, 0));
-        assert!(store.seen_ids(0).contains(&aid(1)));
+        assert!(store.history(0).contains(&aid(1)));
     }
 
     #[test]
     fn re_remembering_a_known_id_is_a_no_op() {
-        let mut store: TieredSeenAnnounceIds<4, 16, 4, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<4, 16, 4, 64> = TieredAnnounceIdHistory::new();
         store.remember(0, aid(1));
         assert_eq!(store.remember(0, aid(1)), RememberOutcome::AlreadyKnown);
         assert_eq!(tier_lens(&store, 0), (1, 0));
@@ -300,7 +322,7 @@ mod tests {
 
     #[test]
     fn floor_fills_then_overflow_takes_the_rest() {
-        let mut store: TieredSeenAnnounceIds<2, 16, 4, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<2, 16, 4, 64> = TieredAnnounceIdHistory::new();
         // Fill floor (2 slots).
         store.remember(0, aid(1));
         store.remember(0, aid(2));
@@ -310,7 +332,7 @@ mod tests {
         store.remember(0, aid(4));
         assert_eq!(tier_lens(&store, 0), (2, 2));
         // View walks floor first, then overflow, preserving insertion order.
-        let view = store.seen_ids(0);
+        let view = store.history(0);
         assert_eq!(view.len(), 4);
         let collected: heapless::Vec<AnnounceId, 4> = view.iter().copied().collect();
         assert_eq!(collected.as_slice(), &[aid(1), aid(2), aid(3), aid(4)][..]);
@@ -318,7 +340,7 @@ mod tests {
 
     #[test]
     fn multiple_paths_pack_overflow_contiguously() {
-        let mut store: TieredSeenAnnounceIds<1, 8, 3, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<1, 8, 3, 64> = TieredAnnounceIdHistory::new();
         // Each path: one in floor, two in overflow → arena holds 6 ids tightly.
         for slot in 0..3 {
             store.remember(slot, aid(10 * slot as u8 + 1));
@@ -327,7 +349,7 @@ mod tests {
         }
         // Path 0: floor[1], overflow[2,3]. Path 1: floor[11], overflow[12,13]. Etc.
         for slot in 0..3 {
-            let view = store.seen_ids(slot);
+            let view = store.history(slot);
             assert_eq!(view.floor, &[aid(10 * slot as u8 + 1)][..]);
             assert_eq!(
                 view.overflow,
@@ -340,19 +362,19 @@ mod tests {
 
     #[test]
     fn growing_one_paths_overflow_does_not_disturb_anothers_view() {
-        let mut store: TieredSeenAnnounceIds<1, 8, 3, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<1, 8, 3, 64> = TieredAnnounceIdHistory::new();
         store.remember(0, aid(1)); // floor
         store.remember(0, aid(2)); // overflow
         store.remember(1, aid(11)); // floor
         store.remember(1, aid(12)); // overflow (after path 0's span)
         store.remember(0, aid(3)); // grows path 0's overflow → shifts path 1's
         assert_eq!(
-            store.seen_ids(0).overflow,
+            store.history(0).overflow,
             &[aid(2), aid(3)][..],
             "path 0's overflow grew correctly",
         );
         assert_eq!(
-            store.seen_ids(1).overflow,
+            store.history(1).overflow,
             &[aid(12)][..],
             "path 1's view is intact after the shift",
         );
@@ -360,10 +382,10 @@ mod tests {
 
     #[test]
     fn per_path_cap_rotates_oldest_with_cross_tier_promotion() {
-        // floor=2, overflow=8, per-path cap=4. Once the path has 4 ids (2 floor
+        // floor=2, overflow=8, per-destination cap=4. Once the path has 4 ids (2 floor
         // + 2 overflow), the next insert evicts floor[0], promotes overflow[0]
         // to floor's last slot, rotates the overflow slice, appends new at end.
-        let mut store: TieredSeenAnnounceIds<2, 8, 2, 4> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<2, 8, 2, 4> = TieredAnnounceIdHistory::new();
         store.remember(0, aid(1)); // floor[0]
         store.remember(0, aid(2)); // floor[1]
         store.remember(0, aid(3)); // overflow[0]
@@ -372,7 +394,7 @@ mod tests {
             store.remember(0, aid(5)),
             RememberOutcome::StoredEvictingOldest
         );
-        let view = store.seen_ids(0);
+        let view = store.history(0);
         // Floor: [aid(2), aid(3)] (1 evicted; 3 promoted from overflow[0])
         // Overflow: [aid(4), aid(5)] (in-place rotated)
         assert_eq!(view.floor, &[aid(2), aid(3)][..]);
@@ -385,7 +407,7 @@ mod tests {
     fn arena_exhausted_rotates_within_floor_when_path_has_no_overflow() {
         // floor=3, overflow=0 (degenerate). Once floor fills, every new id
         // rotates within floor — no overflow ever exists for this path.
-        let mut store: TieredSeenAnnounceIds<3, 0, 1, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<3, 0, 1, 64> = TieredAnnounceIdHistory::new();
         store.remember(0, aid(1));
         store.remember(0, aid(2));
         store.remember(0, aid(3));
@@ -393,17 +415,17 @@ mod tests {
             store.remember(0, aid(4)),
             RememberOutcome::StoredEvictingOldest
         );
-        assert_eq!(store.seen_ids(0).floor, &[aid(2), aid(3), aid(4)][..]);
-        assert!(!store.seen_ids(0).contains(&aid(1)));
+        assert_eq!(store.history(0).floor, &[aid(2), aid(3), aid(4)][..]);
+        assert!(!store.history(0).contains(&aid(1)));
     }
 
     #[test]
     fn arena_exhausted_rotates_with_promotion_when_path_has_overflow() {
         // floor=1, overflow=2 (tiny shared budget). One path fills it: floor[1]
         // + overflow[2,3]. Arena now full. Next insert can't grow overflow
-        // (arena exhausted) and not at per-path cap (3 < 64), so it falls into
+        // (arena exhausted) and not at per-destination cap (3 < 64), so it falls into
         // the rotate-with-promotion path.
-        let mut store: TieredSeenAnnounceIds<1, 2, 1, 64> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<1, 2, 1, 64> = TieredAnnounceIdHistory::new();
         store.remember(0, aid(1)); // floor[0]
         store.remember(0, aid(2)); // overflow[0]
         store.remember(0, aid(3)); // overflow[1] — arena full now
@@ -414,7 +436,7 @@ mod tests {
         // floor[0] = old floor's only slot was aid(1); evict it. Promote
         // overflow[0] = aid(2) into floor. Overflow rotates: was [aid(2),
         // aid(3)], becomes [aid(3), aid(4)].
-        let view = store.seen_ids(0);
+        let view = store.history(0);
         assert_eq!(view.floor, &[aid(2)][..]);
         assert_eq!(view.overflow, &[aid(3), aid(4)][..]);
         assert!(!view.contains(&aid(1)));
@@ -422,14 +444,14 @@ mod tests {
 
     #[test]
     fn floor_equal_to_per_path_cap_reverts_to_per_path_full_allocation() {
-        // Abundance config: floor == per-path cap, so overflow is vestigial.
+        // Abundance config: floor == per-destination cap, so overflow is vestigial.
         // Every insert lands in floor; once full, rotates within floor.
-        let mut store: TieredSeenAnnounceIds<3, 0, 1, 3> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<3, 0, 1, 3> = TieredAnnounceIdHistory::new();
         for n in 0..5u8 {
             store.remember(0, aid(n));
         }
         // Floor cap 3: kept the last 3 (aid(2), aid(3), aid(4)).
-        let view = store.seen_ids(0);
+        let view = store.history(0);
         assert_eq!(view.floor, &[aid(2), aid(3), aid(4)][..]);
         assert_eq!(view.overflow, &[] as &[AnnounceId]);
         assert!(!view.contains(&aid(0)));
@@ -438,8 +460,8 @@ mod tests {
 
     #[test]
     fn identical_operation_sequences_yield_byte_identical_stores() {
-        fn build() -> TieredSeenAnnounceIds<2, 8, 3, 4> {
-            let mut s = TieredSeenAnnounceIds::<2, 8, 3, 4>::new();
+        fn build() -> TieredAnnounceIdHistory<2, 8, 3, 4> {
+            let mut s = TieredAnnounceIdHistory::<2, 8, 3, 4>::new();
             s.remember(0, aid(1));
             s.remember(0, aid(2));
             s.remember(1, aid(11));
@@ -454,11 +476,11 @@ mod tests {
 
     #[test]
     fn max_per_path_below_floor_rotates_visible_prefix() {
-        // FLOOR=4, MAX_PER_PATH=2: the path fills the live prefix to 2 ids,
+        // FLOOR=4, MAX_PER_DESTINATION=2: the path fills the live prefix to 2 ids,
         // then every subsequent insert must rotate *within that visible slice*
         // (not over the full floor capacity). Otherwise the new id would land
         // at floor[3] while the view only exposes floor[..2].
-        let mut store: TieredSeenAnnounceIds<4, 8, 1, 2> = TieredSeenAnnounceIds::new();
+        let mut store: TieredAnnounceIdHistory<4, 8, 1, 2> = TieredAnnounceIdHistory::new();
         store.remember(0, aid(1));
         store.remember(0, aid(2));
         assert_eq!(tier_lens(&store, 0), (2, 0));
@@ -467,7 +489,7 @@ mod tests {
             store.remember(0, aid(3)),
             RememberOutcome::StoredEvictingOldest
         );
-        let view = store.seen_ids(0);
+        let view = store.history(0);
         assert_eq!(view.len(), 2);
         assert_eq!(view.floor, &[aid(2), aid(3)][..]);
         assert!(view.contains(&aid(3))); // newly remembered id is visible
@@ -476,8 +498,8 @@ mod tests {
 
     #[test]
     fn view_is_empty_for_an_unused_slot() {
-        let store: TieredSeenAnnounceIds<4, 16, 4, 64> = TieredSeenAnnounceIds::new();
-        assert!(store.seen_ids(2).is_empty());
-        assert_eq!(store.seen_ids(2).len(), 0);
+        let store: TieredAnnounceIdHistory<4, 16, 4, 64> = TieredAnnounceIdHistory::new();
+        assert!(store.history(2).is_empty());
+        assert_eq!(store.history(2).len(), 0);
     }
 }

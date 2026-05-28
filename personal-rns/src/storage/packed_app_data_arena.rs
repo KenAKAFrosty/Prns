@@ -3,7 +3,7 @@
 //! Built to retain one announce payload per known path without paying a
 //! fixed-maximum slot for every entry: announces vary widely in size (an
 //! app-data-less one is ~148 bytes, the cap is ~481), so a packed arena keyed
-//! by an opaque [`PayloadHandle`] holds only the bytes actually present.
+//! by an opaque [`AppDataHandle`] holds only the bytes actually present.
 //!
 //! The arena is kept *packed* — the live payloads occupy a contiguous prefix
 //! `[0, used)` with no gaps — so growing, shrinking, or clearing a payload
@@ -22,11 +22,11 @@
 
 use heapless::Vec;
 
-/// An opaque, stable reference to a payload held by a [`PayloadStore`]. Indexes
+/// An opaque, stable reference to a payload held by a [`PackedAppDataArena`]. Indexes
 /// the span table, which compaction never reorders, so the handle survives the
 /// arena moves that grow/shrink other payloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PayloadHandle(usize);
+pub struct AppDataHandle(usize);
 
 /// Where one payload sits in the arena. Spans are held in offset order with no
 /// gaps between them, mirroring the packed arena.
@@ -37,27 +37,29 @@ struct Span {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PayloadStoreError {
+pub enum RetainedAppDataError {
     ArenaFull,      //full of? memory?
     TooManyEntries, // same but just count? why do we even need this? do we?
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PayloadStore<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> {
+pub struct PackedAppDataArena<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> {
     arena: [u8; ARENA_BYTES],
     used: usize,
     spans: Vec<Span, MAX_ENTRIES>,
 }
 
 impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> Default
-    for PayloadStore<ARENA_BYTES, MAX_ENTRIES>
+    for PackedAppDataArena<ARENA_BYTES, MAX_ENTRIES>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTES, MAX_ENTRIES> {
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
+    PackedAppDataArena<ARENA_BYTES, MAX_ENTRIES>
+{
     pub const fn new() -> Self {
         Self {
             arena: [0u8; ARENA_BYTES],
@@ -69,18 +71,18 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTE
     /// A handle obtained from this store is always
     /// valid (there is no removal yet), so this never fails; a cleared payload
     /// reads back as an empty slice.
-    pub fn get(&self, handle: PayloadHandle) -> &[u8] {
+    pub fn get(&self, handle: AppDataHandle) -> &[u8] {
         let span = self.spans[handle.0];
         &self.arena[span.offset..span.offset + span.len]
     }
 
     /// Copy `bytes` into the arena and return a handle to them.
-    pub fn insert(&mut self, bytes: &[u8]) -> Result<PayloadHandle, PayloadStoreError> {
+    pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
         if self.spans.is_full() {
-            return Err(PayloadStoreError::TooManyEntries);
+            return Err(RetainedAppDataError::TooManyEntries);
         }
         if bytes.len() > ARENA_BYTES - self.used {
-            return Err(PayloadStoreError::ArenaFull);
+            return Err(RetainedAppDataError::ArenaFull);
         }
 
         let offset = self.used;
@@ -91,7 +93,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTE
             offset,
             len: bytes.len(),
         });
-        Ok(PayloadHandle(self.spans.len() - 1))
+        Ok(AppDataHandle(self.spans.len() - 1))
     }
 
     /// Replace the payload behind `handle`, which may change its size. On a size
@@ -101,9 +103,9 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTE
     /// `ArenaFull` the store is left exactly as it was.
     pub fn replace(
         &mut self,
-        handle: PayloadHandle,
+        handle: AppDataHandle,
         bytes: &[u8],
-    ) -> Result<(), PayloadStoreError> {
+    ) -> Result<(), RetainedAppDataError> {
         let span = self.spans[handle.0];
         let new_len = bytes.len();
 
@@ -117,7 +119,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTE
         // anything, so the error path leaves a valid store.
         let new_used = self.used - span.len + new_len;
         if new_used > ARENA_BYTES {
-            return Err(PayloadStoreError::ArenaFull);
+            return Err(RetainedAppDataError::ArenaFull);
         }
 
         let tail_start = span.offset + span.len;
@@ -141,19 +143,19 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTE
     }
 }
 
-impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> crate::storage::AppDataBackend
-    for PayloadStore<ARENA_BYTES, MAX_ENTRIES>
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> crate::storage::RetainedAppData
+    for PackedAppDataArena<ARENA_BYTES, MAX_ENTRIES>
 {
-    fn get(&self, handle: PayloadHandle) -> &[u8] {
-        PayloadStore::get(self, handle)
+    fn get(&self, handle: AppDataHandle) -> &[u8] {
+        PackedAppDataArena::get(self, handle)
     }
 
-    fn insert(&mut self, bytes: &[u8]) -> Result<PayloadHandle, PayloadStoreError> {
-        PayloadStore::insert(self, bytes)
+    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+        PackedAppDataArena::insert(self, bytes)
     }
 
-    fn replace(&mut self, handle: PayloadHandle, bytes: &[u8]) -> Result<(), PayloadStoreError> {
-        PayloadStore::replace(self, handle, bytes)
+    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
+        PackedAppDataArena::replace(self, handle, bytes)
     }
 }
 
@@ -163,7 +165,7 @@ mod tests {
 
     /// The store's core invariant: live payloads pack a contiguous prefix with
     /// no gaps, and `used` equals the sum of their lengths.
-    fn assert_packed<const A: usize, const M: usize>(store: &PayloadStore<A, M>) {
+    fn assert_packed<const A: usize, const M: usize>(store: &PackedAppDataArena<A, M>) {
         let mut expected_offset = 0;
         let mut total = 0;
         for span in &store.spans {
@@ -176,7 +178,7 @@ mod tests {
 
     #[test]
     fn insert_then_get_round_trips() {
-        let mut store = PayloadStore::<64, 4>::new();
+        let mut store = PackedAppDataArena::<64, 4>::new();
         let h = store.insert(&[1, 2, 3, 4, 5]).unwrap();
         assert_eq!(store.get(h), &[1, 2, 3, 4, 5]);
         assert_packed(&store);
@@ -184,7 +186,7 @@ mod tests {
 
     #[test]
     fn multiple_payloads_pack_contiguously_and_read_back() {
-        let mut store = PayloadStore::<64, 4>::new();
+        let mut store = PackedAppDataArena::<64, 4>::new();
         let a = store.insert(&[0xAA; 3]).unwrap();
         let b = store.insert(&[0xBB; 5]).unwrap();
         let c = store.insert(&[0xCC; 2]).unwrap();
@@ -197,7 +199,7 @@ mod tests {
 
     #[test]
     fn replace_same_size_overwrites_in_place_without_moving_neighbors() {
-        let mut store = PayloadStore::<64, 4>::new();
+        let mut store = PackedAppDataArena::<64, 4>::new();
         let a = store.insert(&[0xAA; 4]).unwrap();
         let b = store.insert(&[0xBB; 4]).unwrap();
         let c = store.insert(&[0xCC; 4]).unwrap();
@@ -210,7 +212,7 @@ mod tests {
 
     #[test]
     fn replace_larger_shifts_the_tail_and_preserves_neighbors() {
-        let mut store = PayloadStore::<64, 4>::new();
+        let mut store = PackedAppDataArena::<64, 4>::new();
         let a = store.insert(&[0xAA; 4]).unwrap();
         let b = store.insert(&[0xBB; 4]).unwrap();
         let c = store.insert(&[0xCC; 4]).unwrap();
@@ -224,7 +226,7 @@ mod tests {
 
     #[test]
     fn replace_smaller_shifts_the_tail_down_and_preserves_neighbors() {
-        let mut store = PayloadStore::<64, 4>::new();
+        let mut store = PackedAppDataArena::<64, 4>::new();
         let a = store.insert(&[0xAA; 4]).unwrap();
         let b = store.insert(&[0xBB; 8]).unwrap();
         let c = store.insert(&[0xCC; 4]).unwrap();
@@ -238,7 +240,7 @@ mod tests {
 
     #[test]
     fn replace_to_empty_clears_and_reclaims_while_keeping_the_handle_valid() {
-        let mut store = PayloadStore::<64, 4>::new();
+        let mut store = PackedAppDataArena::<64, 4>::new();
         let a = store.insert(&[0xAA; 4]).unwrap();
         let b = store.insert(&[0xBB; 6]).unwrap();
         let c = store.insert(&[0xCC; 4]).unwrap();
@@ -252,10 +254,13 @@ mod tests {
 
     #[test]
     fn insert_past_the_byte_budget_errors_and_leaves_the_store_unchanged() {
-        let mut store = PayloadStore::<8, 4>::new();
+        let mut store = PackedAppDataArena::<8, 4>::new();
         let a = store.insert(&[0xAA; 6]).unwrap();
         let before = store.clone();
-        assert_eq!(store.insert(&[0xBB; 4]), Err(PayloadStoreError::ArenaFull));
+        assert_eq!(
+            store.insert(&[0xBB; 4]),
+            Err(RetainedAppDataError::ArenaFull)
+        );
         assert_eq!(store, before); // error path mutated nothing
         assert_eq!(store.get(a), &[0xAA; 6]);
         assert_packed(&store);
@@ -263,14 +268,14 @@ mod tests {
 
     #[test]
     fn replace_larger_past_the_budget_errors_and_leaves_the_store_unchanged() {
-        let mut store = PayloadStore::<8, 4>::new();
+        let mut store = PackedAppDataArena::<8, 4>::new();
         let a = store.insert(&[0xAA; 3]).unwrap();
         let b = store.insert(&[0xBB; 3]).unwrap();
         let before = store.clone();
         // Replacing b (3) with 7 needs used = 6-3+7 = 10 > 8.
         assert_eq!(
             store.replace(b, &[0xBB; 7]),
-            Err(PayloadStoreError::ArenaFull)
+            Err(RetainedAppDataError::ArenaFull)
         );
         assert_eq!(store, before);
         assert_eq!(store.get(a), &[0xAA; 3]);
@@ -280,26 +285,29 @@ mod tests {
 
     #[test]
     fn insert_past_the_entry_cap_errors() {
-        let mut store = PayloadStore::<64, 2>::new();
+        let mut store = PackedAppDataArena::<64, 2>::new();
         store.insert(&[1]).unwrap();
         store.insert(&[2]).unwrap();
-        assert_eq!(store.insert(&[3]), Err(PayloadStoreError::TooManyEntries));
+        assert_eq!(
+            store.insert(&[3]),
+            Err(RetainedAppDataError::TooManyEntries)
+        );
     }
 
     #[test]
     fn fills_the_arena_to_exact_capacity() {
-        let mut store = PayloadStore::<8, 4>::new();
+        let mut store = PackedAppDataArena::<8, 4>::new();
         let h = store.insert(&[0x7; 8]).unwrap();
         assert_eq!(store.used, 8);
         assert_eq!(store.get(h), &[0x7; 8]);
-        assert_eq!(store.insert(&[0x9]), Err(PayloadStoreError::ArenaFull));
+        assert_eq!(store.insert(&[0x9]), Err(RetainedAppDataError::ArenaFull));
         assert_packed(&store);
     }
 
     #[test]
     fn identical_operation_sequences_yield_byte_identical_stores() {
-        fn build() -> PayloadStore<64, 4> {
-            let mut s = PayloadStore::<64, 4>::new();
+        fn build() -> PackedAppDataArena<64, 4> {
+            let mut s = PackedAppDataArena::<64, 4>::new();
             let a = s.insert(&[0xAA; 4]).unwrap();
             let b = s.insert(&[0xBB; 4]).unwrap();
             s.insert(&[0xCC; 4]).unwrap();

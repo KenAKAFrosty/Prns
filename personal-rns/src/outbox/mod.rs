@@ -2,7 +2,7 @@
 //! transmitted.
 //!
 //! Variable-length packets packed into one byte arena behind a span table — the
-//! same layout as `PayloadStore`, but append-only: a producer reserves a slot
+//! same layout as `PackedAppDataArena`, but append-only: a producer reserves a slot
 //! and writes a packet straight into the arena (no scratch or double copy), the
 //! caller drains them with `iter()`, then `clear()` resets for the next round.
 //!
@@ -16,7 +16,7 @@
 //! `PartialEq` is structural — it compares the whole arena, including the dead
 //! tail past `used` that `clear` leaves behind — so `==` means "identical
 //! representation," not "same set of packets." Deliberate, and used only for
-//! determinism tests, the same as `PayloadStore`.
+//! determinism tests, the same as `PackedAppDataArena`.
 
 use crate::engine::OutboundPacket;
 use heapless::Vec;

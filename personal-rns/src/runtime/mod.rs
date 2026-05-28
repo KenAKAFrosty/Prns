@@ -8,7 +8,7 @@
 
 use crate::engine::{ingest, tick, EngineState, IngestOutput, TickOutput};
 use crate::host::HostAdapter;
-use crate::storage::{AppDataBackend, DestinationColumns, SeenAnnounceIdsStorage};
+use crate::storage::{AnnounceIdHistory, RetainedAppData, RouteColumns};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StepOutput {
@@ -22,9 +22,9 @@ pub fn step<H, C, S, P>(
 ) -> Result<StepOutput, H::Error>
 where
     H: HostAdapter,
-    C: DestinationColumns,
-    S: SeenAnnounceIdsStorage,
-    P: AppDataBackend,
+    C: RouteColumns,
+    S: AnnounceIdHistory,
+    P: RetainedAppData,
 {
     let packets = host.drain_inbound_packets()?;
     let ingest = ingest(state, packets);

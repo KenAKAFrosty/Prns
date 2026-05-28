@@ -6,14 +6,14 @@
 //! sockets, or storage directly.
 
 use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
-use crate::path::{
-    DestinationTable, RecordPathOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
-    DEFAULT_SEEN_IDS_FLOOR_PER_PATH, DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
+use crate::routing::{
+    RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+    DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
+    DEFAULT_MAX_TRACKED_DESTINATIONS, DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
 };
 use crate::storage::{
-    AppDataBackend, DestinationColumns, FixedArrayColumns, PayloadStore, SeenAnnounceIdsStorage,
-    TieredSeenAnnounceIds,
+    AnnounceIdHistory, FixedArrayRouteColumns, PackedAppDataArena, RetainedAppData, RouteColumns,
+    TieredAnnounceIdHistory,
 };
 use crate::wire::WirePacketHeader;
 
@@ -45,47 +45,47 @@ pub struct OutboundPacket<'a> {
 /// alias for staying on the defaults but tuning their sizes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<
-    C: DestinationColumns = FixedArrayColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
-    S: SeenAnnounceIdsStorage = TieredSeenAnnounceIds<
-        DEFAULT_SEEN_IDS_FLOOR_PER_PATH,
-        DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
+    C: RouteColumns = FixedArrayRouteColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
+    S: AnnounceIdHistory = TieredAnnounceIdHistory<
+        DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
+        DEFAULT_HISTORY_OVERFLOW_CAPACITY,
         DEFAULT_MAX_TRACKED_DESTINATIONS,
-        DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
+        DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
     >,
-    P: AppDataBackend = PayloadStore<
+    P: RetainedAppData = PackedAppDataArena<
         DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
         DEFAULT_MAX_TRACKED_DESTINATIONS,
     >,
 > {
     tick_count: u64,
     ingested_packet_count: u64,
-    path_table: DestinationTable<C, S, P>,
+    routing_table: RoutingTable<C, S, P>,
 }
 
 /// Convenience alias for the no_std default backends sized by the existing
-/// const-generic knobs. Mirrors [`DefaultDestinationTable`](crate::path::DefaultDestinationTable).
+/// const-generic knobs. Mirrors [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable).
 pub type DefaultEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
+    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    const SEEN_IDS_FLOOR_PER_PATH: usize = DEFAULT_SEEN_IDS_FLOOR_PER_PATH,
-    const SEEN_IDS_OVERFLOW_CAPACITY: usize = DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
+    const SEEN_IDS_FLOOR_PER_DESTINATION: usize = DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
+    const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
 > = EngineState<
-    FixedArrayColumns<MAX_TRACKED_DESTINATIONS>,
-    TieredSeenAnnounceIds<
-        SEEN_IDS_FLOOR_PER_PATH,
-        SEEN_IDS_OVERFLOW_CAPACITY,
+    FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
+    TieredAnnounceIdHistory<
+        SEEN_IDS_FLOOR_PER_DESTINATION,
+        HISTORY_OVERFLOW_CAPACITY,
         MAX_TRACKED_DESTINATIONS,
-        MAX_SEEN_ANNOUNCE_IDS,
+        MAX_ANNOUNCE_IDS_PER_DESTINATION,
     >,
-    PayloadStore<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
+    PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
 >;
 
 impl<C, S, P> EngineState<C, S, P>
 where
-    C: DestinationColumns,
-    S: SeenAnnounceIdsStorage,
-    P: AppDataBackend,
+    C: RouteColumns,
+    S: AnnounceIdHistory,
+    P: RetainedAppData,
 {
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
@@ -96,8 +96,8 @@ where
     }
 
     /// Number of destinations the engine currently has a path to.
-    pub fn path_count(&self) -> usize {
-        self.path_table.path_count()
+    pub fn route_count(&self) -> usize {
+        self.routing_table.route_count()
     }
 }
 
@@ -113,7 +113,7 @@ impl IngestOutput {
         self.processed_packet_count
     }
 
-    /// How many of those were valid announces accepted into the path table.
+    /// How many of those were valid announces accepted into the routing table.
     pub const fn accepted_announce_count(&self) -> usize {
         self.accepted_announce_count
     }
@@ -144,9 +144,9 @@ pub fn ingest<C, S, P>(
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput
 where
-    C: DestinationColumns,
-    S: SeenAnnounceIdsStorage,
-    P: AppDataBackend,
+    C: RouteColumns,
+    S: AnnounceIdHistory,
+    P: RetainedAppData,
 {
     state.ingested_packet_count = state
         .ingested_packet_count
@@ -189,7 +189,9 @@ where
             announce_id: announce.announce_id,
             // No local identities yet, so no announce is ever for us.
             destination_is_local: false,
-            existing_path: state.path_table.existing_path_for(&announce.destination),
+            existing_route: state
+                .routing_table
+                .existing_route_for(&announce.destination),
             arrived_at: packet.arrival,
         }
         .determine_acceptance();
@@ -197,9 +199,9 @@ where
         if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
             let outcome =
                 state
-                    .path_table
-                    .record_accepted_path(received_hops, packet.arrival, &announce);
-            if !matches!(outcome, RecordPathOutcome::Dropped(_)) {
+                    .routing_table
+                    .upsert_route(received_hops, packet.arrival, &announce);
+            if !matches!(outcome, UpsertRouteOutcome::Dropped(_)) {
                 accepted_announce_count += 1;
             }
         }
@@ -215,9 +217,9 @@ where
 #[must_use]
 pub fn tick<C, S, P>(state: &mut EngineState<C, S, P>, _now: InstantMillis) -> TickOutput
 where
-    C: DestinationColumns,
-    S: SeenAnnounceIdsStorage,
-    P: AppDataBackend,
+    C: RouteColumns,
+    S: AnnounceIdHistory,
+    P: RetainedAppData,
 {
     state.tick_count = state.tick_count.saturating_add(1);
     TickOutput::default()
@@ -293,7 +295,7 @@ mod tests {
             }],
         );
         assert_eq!(first.accepted_announce_count(), 1);
-        assert_eq!(state.path_count(), 1);
+        assert_eq!(state.route_count(), 1);
 
         // The identical announce again is a known-route replay: rejected, no new path.
         let second = ingest(
@@ -305,7 +307,7 @@ mod tests {
         );
         assert_eq!(second.processed_packet_count(), 1);
         assert_eq!(second.accepted_announce_count(), 0);
-        assert_eq!(state.path_count(), 1);
+        assert_eq!(state.route_count(), 1);
     }
 
     #[test]
@@ -338,7 +340,7 @@ mod tests {
             }],
         );
         assert_eq!(out.accepted_announce_count(), 0);
-        assert_eq!(state.path_count(), 0);
+        assert_eq!(state.route_count(), 0);
     }
 
     #[test]
@@ -362,7 +364,7 @@ mod tests {
         // via to_wire (so the signature still validates on re-emission), and
         // hops are incremented on receive.
         let retained = state
-            .path_table
+            .routing_table
             .retained_announce_for(&destination)
             .expect("the accepted announce is on hand");
         assert_eq!(retained.hops, header.hops + 1);
@@ -381,11 +383,11 @@ mod tests {
         let out = ingest(&mut state, &[junk]);
         assert_eq!(out.processed_packet_count(), 1);
         assert_eq!(out.accepted_announce_count(), 0);
-        assert_eq!(state.path_count(), 0);
+        assert_eq!(state.route_count(), 0);
     }
 
     #[test]
-    fn a_capable_host_can_widen_the_path_table_at_the_type_level() {
+    fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         // The const-generic lever: a roomier table is just a different type, and
         // ingest is generic over it — same engine, no heap, no API change. (Very
         // large widths belong on the heap; this inline default lives on the stack.)
@@ -399,6 +401,6 @@ mod tests {
             }],
         );
         assert_eq!(out.accepted_announce_count(), 1);
-        assert_eq!(state.path_count(), 1);
+        assert_eq!(state.route_count(), 1);
     }
 }

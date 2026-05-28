@@ -3,7 +3,7 @@
 //! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1748-L1829>.
 //!
 //! It answers one question: "Should this heard announce be installed into the
-//! path table?" It does this as a total function of the announce, the existing path (if
+//! routing table?" It does this as a total function of the announce, the existing path (if
 //! any), whether we own the destination, and the packet's arrival instant.
 //! Applying the decision is the engine's job; the predicate mutates nothing.
 
@@ -11,7 +11,7 @@ use core::cmp::Ordering;
 
 use crate::announce::{AnnounceId, MonotonicTimebase};
 use crate::engine::InstantMillis;
-use crate::path::{ExistingPath, PathResponsiveness, MAX_HOP_COUNT};
+use crate::routing::{ExistingRoute, RouteResponsiveness, MAX_HOP_COUNT};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnnounceAcceptanceInput<'a> {
@@ -19,7 +19,7 @@ pub struct AnnounceAcceptanceInput<'a> {
     /// RNS's `random_blob`
     pub announce_id: AnnounceId,
     pub destination_is_local: bool,
-    pub existing_path: Option<ExistingPath<'a>>,
+    pub existing_route: Option<ExistingRoute<'a>>,
     /// The arriving packet's instant, used as "now" for path-expiry — keeps the
     /// predicate clock-free: time arrives as data on the packet.
     pub arrived_at: InstantMillis,
@@ -69,32 +69,32 @@ impl AnnounceAcceptanceInput<'_> {
         if self.destination_is_local {
             return Reject(DestinationIsLocal);
         }
-        let Some(existing) = self.existing_path else {
+        let Some(existing) = self.existing_route else {
             return Accept(FirstSighting);
         };
 
         let is_longer_hops = self.packet_hops > existing.hops;
-        let path_is_expired = self.arrived_at >= existing.expires;
+        let route_is_expired = self.arrived_at >= existing.expires;
         let announce_emitted_at = self.announce_id.timebase;
 
         let mut announce_id_was_already_seen = false;
-        let mut path_max_emitted = MonotonicTimebase::ZERO;
-        for stored in existing.seen_announce_ids.iter() {
+        let mut route_max_emitted = MonotonicTimebase::ZERO;
+        for stored in existing.announce_id_history.iter() {
             if !announce_id_was_already_seen && *stored == self.announce_id {
                 announce_id_was_already_seen = true;
                 if !is_longer_hops {
                     return Reject(KnownRouteReplay);
                 }
-                if path_is_expired {
+                if route_is_expired {
                     return Reject(DeadRouteReplay);
                 }
             }
-            path_max_emitted = path_max_emitted.max(stored.timebase);
+            route_max_emitted = route_max_emitted.max(stored.timebase);
         }
 
         // EQUAL OR SHORTER HOPS — id was unheard (a hit would have early-exited).
         if !is_longer_hops {
-            return if announce_emitted_at > path_max_emitted {
+            return if announce_emitted_at > route_max_emitted {
                 Accept(KnownRouteFreshEvidence)
             } else {
                 Reject(KnownRouteNoNewerEvidence)
@@ -102,18 +102,18 @@ impl AnnounceAcceptanceInput<'_> {
         }
 
         // LONGER HOPS + EXPIRED — id was unheard (a hit would have early-exited).
-        if path_is_expired {
+        if route_is_expired {
             return Accept(ExpiredRouteSucceededByLongerAlternative);
         }
 
         // LONGER HOPS + FRESH PATH. The seen-status matters only when the
         // emission is the more recent one; the equal and older arms decide
         // independently of it.
-        match announce_emitted_at.cmp(&path_max_emitted) {
+        match announce_emitted_at.cmp(&route_max_emitted) {
             Ordering::Less => Reject(StaleEvidence),
             Ordering::Equal => match existing.responsiveness {
-                PathResponsiveness::Unresponsive => Accept(FailoverFromUnresponsiveIncumbent),
-                PathResponsiveness::Responsive => Reject(EqualEvidenceIncumbentStillWorking),
+                RouteResponsiveness::Unresponsive => Accept(FailoverFromUnresponsiveIncumbent),
+                RouteResponsiveness::Responsive => Reject(EqualEvidenceIncumbentStillWorking),
             },
             Ordering::Greater => {
                 if announce_id_was_already_seen {
@@ -129,7 +129,7 @@ impl AnnounceAcceptanceInput<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::path::SeenAnnounceIds;
+    use crate::routing::AnnounceIdHistoryView;
 
     fn announce_id(nonce_byte: u8, timebase: u64) -> AnnounceId {
         let mut bytes = [0u8; 10];
@@ -148,7 +148,7 @@ mod tests {
             packet_hops: MAX_HOP_COUNT + 1,
             announce_id: announce_id(0x11, 5_000),
             destination_is_local: false,
-            existing_path: None,
+            existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
         assert_eq!(
@@ -163,7 +163,7 @@ mod tests {
             packet_hops: MAX_HOP_COUNT,
             announce_id: announce_id(0x22, 5_000),
             destination_is_local: false,
-            existing_path: None,
+            existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
         assert_eq!(
@@ -178,7 +178,7 @@ mod tests {
             packet_hops: 1,
             announce_id: announce_id(0x33, 5_000),
             destination_is_local: true,
-            existing_path: None,
+            existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
         assert_eq!(
@@ -188,12 +188,12 @@ mod tests {
     }
 
     #[test]
-    fn no_existing_path_is_a_first_sighting() {
+    fn no_existing_route_is_a_first_sighting() {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 2,
             announce_id: announce_id(0x44, 5_000),
             destination_is_local: false,
-            existing_path: None,
+            existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
         assert_eq!(
@@ -209,14 +209,14 @@ mod tests {
             packet_hops: 3,
             announce_id: announce_id(0x56, 200),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -233,14 +233,14 @@ mod tests {
             packet_hops: 3,
             announce_id: stored,
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -257,14 +257,14 @@ mod tests {
             packet_hops: 3,
             announce_id: announce_id(0x56, 200),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -281,14 +281,14 @@ mod tests {
             packet_hops: 5,
             announce_id: announce_id(0x67, 50),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(1_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(2_000),
         });
@@ -307,14 +307,14 @@ mod tests {
             packet_hops: 5,
             announce_id: stored,
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(1_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(2_000),
         });
@@ -331,14 +331,14 @@ mod tests {
             packet_hops: 6,
             announce_id: announce_id(0x78, 500),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -355,14 +355,14 @@ mod tests {
             packet_hops: 6,
             announce_id: announce_id(0x89, 300),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Unresponsive,
+                responsiveness: RouteResponsiveness::Unresponsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -379,14 +379,14 @@ mod tests {
             packet_hops: 6,
             announce_id: announce_id(0x9a, 300),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -403,14 +403,14 @@ mod tests {
             packet_hops: 6,
             announce_id: announce_id(0xab, 300),
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(
+                announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
                     &[],
                 ),
-                responsiveness: PathResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -433,11 +433,11 @@ mod tests {
             packet_hops: 3,
             announce_id: replayed,
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(&floor, &overflow),
-                responsiveness: PathResponsiveness::Responsive,
+                announce_id_history: AnnounceIdHistoryView::from_slices(&floor, &overflow),
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn max_emitted_calculation_includes_overflow_ids() {
-        // path_max_emitted is the running max across every seen id — overflow
+        // route_max_emitted is the running max across every seen id — overflow
         // entries have to be included for the same-hops "newer evidence?" gate
         // to compare against the right ceiling. We put the newest stored
         // timebase in overflow and arrive with one that beats the floor but
@@ -460,11 +460,11 @@ mod tests {
             packet_hops: 3,
             announce_id: announce_id(0xC, 300), // newer than floor, older than overflow
             destination_is_local: false,
-            existing_path: Some(ExistingPath {
+            existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: SeenAnnounceIds::from_slices(&floor, &overflow),
-                responsiveness: PathResponsiveness::Responsive,
+                announce_id_history: AnnounceIdHistoryView::from_slices(&floor, &overflow),
+                responsiveness: RouteResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
         });

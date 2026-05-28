@@ -6,13 +6,13 @@
 //! already waiting rather than queuing a second time.
 //! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1896-L1906>
 //!
-//! Entries are deliberately tiny: the announce bytes live in the path table's
+//! Entries are deliberately tiny: the announce bytes live in the routing table's
 //! payload store and are read back at emit time, so a scheduled entry holds only
 //! *which* destination and *when*. That keeps the freshest accepted announce as
 //! the one rebroadcast and avoids a second copy of the payload.
 
 use crate::engine::InstantMillis;
-use crate::path::DEFAULT_MAX_TRACKED_DESTINATIONS;
+use crate::routing::DEFAULT_MAX_TRACKED_DESTINATIONS;
 use crate::wire::DestinationHash;
 use heapless::Vec;
 
@@ -23,7 +23,7 @@ pub struct ScheduledRebroadcast {
 }
 
 /// A fixed-capacity set of pending rebroadcasts, at most one per destination.
-/// Capacity matches the path table — there is never more than one pending
+/// Capacity matches the routing table — there is never more than one pending
 /// rebroadcast per tracked path.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RebroadcastSchedule<const MAX_PENDING: usize = DEFAULT_MAX_TRACKED_DESTINATIONS> {
@@ -49,7 +49,7 @@ impl<const MAX_PENDING: usize> RebroadcastSchedule<MAX_PENDING> {
         {
             existing.due_at = due_at;
         } else {
-            // One entry per path and capacity equals the path table's, so a
+            // One entry per destination and capacity equals the routing table's, so a
             // newly accepted destination always has room.
             let _ = self.pending.push(ScheduledRebroadcast {
                 destination,
