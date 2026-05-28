@@ -5,8 +5,11 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
+use crate::outbox::{Outbox, OutboxFull};
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
+use crate::routing::defaults::jitter_offset_for;
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
+use crate::routing::schedule::PendingRebroadcasts;
 use crate::routing::storage::{
     AnnounceIdHistory, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
     PackedAppDataArena, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -16,8 +19,12 @@ use crate::routing::{
     DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     DEFAULT_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_TRACKED_DESTINATIONS,
+    DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
-use crate::wire::WirePacketHeader;
+use crate::wire::{
+    Context, ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WirePacketHeader,
+    HEADER_LEN,
+};
 
 /// Monotonic timestamp supplied by the host, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -56,6 +63,14 @@ where
     ingested_packet_count: u64,
     routing_table: RoutingTable<R, A, H, D>,
     held_cache: HeldAnnouncesCache<HELD>,
+    // The pending-rebroadcast set is capped at `HELD`, reusing the held-cache
+    // dial: one slot per destination, and the realistic per-tick burst of
+    // unique accepts is the same order of magnitude as `HELD` (we already park
+    // up to `HELD` arena-pressure overflows per tick). Hosts that genuinely
+    // see larger bursts widen `HELD` and get both columns at once. A separate
+    // `MAX_PENDING` dial is the obvious next iteration if that assumption
+    // breaks.
+    pending_rebroadcasts: PendingRebroadcasts<HELD>,
 }
 
 /// The no_std stack-resident engine-state preset — the only place the
@@ -106,6 +121,12 @@ where
     pub fn held_count(&self) -> usize {
         self.held_cache.len()
     }
+
+    /// Number of accepted destinations currently waiting to be re-emitted on
+    /// a future tick. Drains as `tick()` emits each due rebroadcast.
+    pub fn pending_rebroadcast_count(&self) -> usize {
+        self.pending_rebroadcasts.pending_count()
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -113,6 +134,7 @@ pub struct IngestOutput {
     processed_packet_count: usize,
     accepted_announce_count: usize,
     held_for_retry_count: usize,
+    scheduled_rebroadcast_count: usize,
 }
 
 impl IngestOutput {
@@ -130,6 +152,13 @@ impl IngestOutput {
     /// transient `Dropped(PayloadArenaFull)`. They retry on subsequent ticks.
     pub const fn held_for_retry_count(&self) -> usize {
         self.held_for_retry_count
+    }
+
+    /// How many destinations this batch scheduled for re-emission. Equal to
+    /// `accepted_announce_count` whenever every accept finds a slot in the
+    /// pending-rebroadcast set.
+    pub const fn scheduled_rebroadcast_count(&self) -> usize {
+        self.scheduled_rebroadcast_count
     }
 }
 
@@ -153,17 +182,22 @@ impl TickOutput {
 }
 
 /// Process a batch of inbound packets. Clock-free: each packet carries its own
-/// arrival instant, so the result is a pure function of `(state, packets)`. An
-/// empty batch is valid and a no-op.
+/// arrival instant, so the result is a pure function of `(state, packets,
+/// entropy)`. An empty batch is valid and a no-op.
 ///
 /// Each packet is decoded to a header and, if it is a valid announce, run
 /// through the acceptance predicate; accepted announces install or refresh a
-/// path. Bytes that don't parse, or aren't announces, are counted as processed
-/// and otherwise ignored — this slice acts only on announces.
+/// path and schedule a jittered re-emission. `entropy` seeds the per-(entropy,
+/// destination) jitter so the same input batch from two hosts with the same
+/// entropy schedules identically — determinism is a property of the inputs,
+/// not of a hidden RNG. Bytes that don't parse, or aren't announces, are
+/// counted as processed and otherwise ignored — this slice acts only on
+/// announces.
 #[must_use]
 pub fn ingest<R, A, H, D, const HELD: usize>(
     state: &mut EngineState<R, A, H, D, HELD>,
     packets: &[InboundPacket<'_>],
+    entropy: u64,
 ) -> IngestOutput
 where
     R: RouteColumns,
@@ -177,6 +211,7 @@ where
 
     let mut accepted_announce_count = 0;
     let mut held_for_retry_count = 0;
+    let mut scheduled_rebroadcast_count = 0;
     for packet in packets {
         let Ok((header, payload)) = WirePacketHeader::parse(packet.bytes) else {
             continue;
@@ -228,6 +263,16 @@ where
             match outcome {
                 UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
                     accepted_announce_count += 1;
+                    let offset = jitter_offset_for(
+                        entropy,
+                        &announce.destination,
+                        DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                    );
+                    state.pending_rebroadcasts.schedule(
+                        announce.destination,
+                        InstantMillis(packet.arrival.0.saturating_add(offset)),
+                    );
+                    scheduled_rebroadcast_count += 1;
                 }
                 UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
                     // Park the structured announce; retry on tick will
@@ -258,16 +303,24 @@ where
         processed_packet_count: packets.len(),
         accepted_announce_count,
         held_for_retry_count,
+        scheduled_rebroadcast_count,
     }
 }
 
-/// Advance the engine's periodic work to `now`. Retries up to one held
-/// announce per tick, selecting the lowest-hop entry (RNS parity). Failed
-/// retries are discarded rather than re-parked.
+/// Advance the engine's periodic work to `now`, draining due rebroadcasts
+/// into a host-lent `outbox`. Retries up to one held announce per tick,
+/// selecting the lowest-hop entry (RNS parity); a recovered held entry is
+/// scheduled the same way a fresh accept is. Failed retries are discarded
+/// rather than re-parked.
+///
+/// `entropy` is the same per-step value passed to `ingest`; reused here so a
+/// held-recovery accept gets a deterministic jittered re-emission slot.
 #[must_use]
-pub fn tick<R, A, H, D, const HELD: usize>(
+pub fn tick<R, A, H, D, const HELD: usize, const ARENA: usize, const MAX_PACKETS: usize>(
     state: &mut EngineState<R, A, H, D, HELD>,
-    _now: InstantMillis,
+    now: InstantMillis,
+    entropy: u64,
+    outbox: &mut Outbox<ARENA, MAX_PACKETS>,
 ) -> TickOutput
 where
     R: RouteColumns,
@@ -305,6 +358,15 @@ where
                         UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
                     ) {
                         recovered_from_held_count += 1;
+                        let offset = jitter_offset_for(
+                            entropy,
+                            &announce.destination,
+                            DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                        );
+                        state.pending_rebroadcasts.schedule(
+                            announce.destination,
+                            InstantMillis(arrival.0.saturating_add(offset)),
+                        );
                     }
                     // On Dropped(_) or Reject we discard — see the
                     // held-cache module note on livelock avoidance.
@@ -313,10 +375,81 @@ where
         }
     }
 
+    let mut emitted_packet_count = 0;
+    loop {
+        let Some(scheduled) = state.pending_rebroadcasts.take_due(now) else {
+            break;
+        };
+
+        // Look up + write the wire packet straight into the outbox. The
+        // retained-announce borrow lives only inside this match arm so the
+        // next loop pass can call `state.pending_rebroadcasts.*` again.
+        let emit_outcome: EmitOutcome = match state
+            .routing_table
+            .retained_announce_for(&scheduled.destination)
+        {
+            // The route was evicted between scheduling and draining (future
+            // eviction surface — today this never fires). Drop silently.
+            None => EmitOutcome::RouteGone,
+            Some(retained) => {
+                let context_flag = if retained.announce.maybe_ratchet.is_some() {
+                    ContextFlag::Set
+                } else {
+                    ContextFlag::Unset
+                };
+                let header = WirePacketHeader {
+                    ifac_flag: IfacFlag::Open,
+                    context_flag,
+                    propagation: PropagationType::Broadcast,
+                    destination_type: DestinationType::Single,
+                    packet_type: PacketType::Announce,
+                    hops: retained.hops,
+                    transport_id: None,
+                    destination: scheduled.destination,
+                    context: Context::None,
+                };
+                let payload_len = retained.announce.wire_len();
+                let total_len = HEADER_LEN + payload_len;
+                match outbox.write_packet(total_len, |buf| {
+                    let _ = header
+                        .write(&mut buf[..HEADER_LEN])
+                        .expect("HEADER_LEN bytes always fit a Type-1 header");
+                    let _ = retained
+                        .announce
+                        .to_wire(&mut buf[HEADER_LEN..])
+                        .expect("payload_len bytes always fit the announce body");
+                }) {
+                    Ok(()) => EmitOutcome::Emitted,
+                    Err(OutboxFull::Bytes | OutboxFull::Packets) => EmitOutcome::OutboxFull,
+                }
+            }
+        };
+
+        match emit_outcome {
+            EmitOutcome::Emitted => emitted_packet_count += 1,
+            EmitOutcome::RouteGone => continue,
+            EmitOutcome::OutboxFull => {
+                // Put it back at its original due_at so the host can drain
+                // and we re-emit on a later tick. Breaking out also keeps
+                // the rest of the due set queued for the same later tick.
+                state
+                    .pending_rebroadcasts
+                    .schedule(scheduled.destination, scheduled.due_at);
+                break;
+            }
+        }
+    }
+
     TickOutput {
-        emitted_packet_count: 0,
+        emitted_packet_count,
         recovered_from_held_count,
     }
+}
+
+enum EmitOutcome {
+    Emitted,
+    RouteGone,
+    OutboxFull,
 }
 
 #[cfg(test)]
@@ -324,18 +457,44 @@ mod tests {
     use super::*;
     use crate::wire::DestinationHash;
 
+    /// Fixed entropy so determinism tests can compare two runs apples-to-apples;
+    /// the engine treats entropy as opaque data, the value just has to be stable.
+    const TEST_ENTROPY: u64 = 0xCAFE_F00D_DEAD_BEEF;
+
+    /// Test-side `tick` helper: lends an outbox sized for any one
+    /// announce-emission test and returns the captured outbound bytes
+    /// alongside the `TickOutput`. Tests that don't care about emission just
+    /// destructure the first element.
+    fn tick_capture<R, A, H, D, const HELD: usize>(
+        state: &mut EngineState<R, A, H, D, HELD>,
+        now: InstantMillis,
+    ) -> (TickOutput, std::vec::Vec<std::vec::Vec<u8>>)
+    where
+        R: RouteColumns,
+        A: RetainedAnnounceColumns,
+        H: AnnounceIdHistory,
+        D: RetainedAppData,
+    {
+        let mut outbox = Outbox::<2048, 16>::new();
+        let out = tick(state, now, TEST_ENTROPY, &mut outbox);
+        let emitted = outbox.iter().map(|p| p.bytes.to_vec()).collect();
+        (out, emitted)
+    }
+
     #[test]
     fn tick_advances_count_deterministically() {
         let mut left: DefaultEngineState = DefaultEngineState::default();
         let mut right: DefaultEngineState = DefaultEngineState::default();
 
-        let left_out = tick(&mut left, InstantMillis(1_000));
-        let right_out = tick(&mut right, InstantMillis(1_000));
+        let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000));
+        let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000));
 
         assert_eq!(left, right);
         assert_eq!(left.tick_count(), 1);
         assert_eq!(left_out, right_out);
         assert_eq!(left_out.emitted_packet_count(), 0);
+        assert!(left_bytes.is_empty());
+        assert_eq!(left_bytes, right_bytes);
     }
 
     #[test]
@@ -352,12 +511,12 @@ mod tests {
             },
         ];
 
-        let out = ingest(&mut state, &batch);
+        let out = ingest(&mut state, &batch, TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
 
         // Empty batch is valid and does not move state.
-        let empty = ingest(&mut state, &[]);
+        let empty = ingest(&mut state, &[], TEST_ENTROPY);
         assert_eq!(empty.processed_packet_count(), 0);
         assert_eq!(state.ingested_packet_count(), 2);
     }
@@ -387,6 +546,7 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &raw,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(first.accepted_announce_count(), 1);
         assert_eq!(state.route_count(), 1);
@@ -398,6 +558,7 @@ mod tests {
                 arrival: InstantMillis(2_000),
                 bytes: &raw,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(second.processed_packet_count(), 1);
         assert_eq!(second.accepted_announce_count(), 0);
@@ -420,6 +581,7 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &at_limit,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(out.accepted_announce_count(), 1);
 
@@ -432,6 +594,7 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &beyond,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -451,6 +614,7 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &raw,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(out.accepted_announce_count(), 1);
 
@@ -474,7 +638,7 @@ mod tests {
             arrival: InstantMillis(1),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = ingest(&mut state, &[junk]);
+        let out = ingest(&mut state, &[junk], TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 1);
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -493,6 +657,7 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &raw,
             }],
+            TEST_ENTROPY,
         );
 
         assert_eq!(out.accepted_announce_count(), 0);
@@ -511,12 +676,13 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &raw,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(state.held_count(), 1);
 
         // Arena state unchanged → retry hits Dropped(PayloadArenaFull) again
         // and the held entry is discarded. We don't re-park (livelock).
-        let out = tick(&mut state, InstantMillis(2_000));
+        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
         assert_eq!(out.recovered_from_held_count(), 0);
         assert_eq!(state.held_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -535,8 +701,164 @@ mod tests {
                 arrival: InstantMillis(1_000),
                 bytes: &raw,
             }],
+            TEST_ENTROPY,
         );
         assert_eq!(out.accepted_announce_count(), 1);
         assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
+    fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+
+        let arrival = InstantMillis(1_000);
+        let out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival,
+                bytes: &raw,
+            }],
+            TEST_ENTROPY,
+        );
+        assert_eq!(out.accepted_announce_count(), 1);
+        assert_eq!(out.scheduled_rebroadcast_count(), 1);
+        assert_eq!(state.pending_rebroadcast_count(), 1);
+
+        // Far past the jitter window: the rebroadcast is due and tick emits it.
+        let (tick_out, emitted) = tick_capture(
+            &mut state,
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+        );
+        assert_eq!(tick_out.emitted_packet_count(), 1);
+        assert_eq!(state.pending_rebroadcast_count(), 0);
+
+        // The emitted bytes round-trip back to the same announce, with the
+        // hop count incremented (received_hops becomes emit hops). Same
+        // signature, so the on-wire packet would re-validate on any peer.
+        assert_eq!(emitted.len(), 1);
+        let wire = &emitted[0];
+        let (header, payload) = WirePacketHeader::parse(wire).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.destination_type, DestinationType::Single);
+        assert_eq!(header.propagation, PropagationType::Broadcast);
+        let original = WirePacketHeader::parse(&raw).unwrap().0;
+        assert_eq!(header.hops, original.hops + 1);
+        assert_eq!(header.destination, original.destination);
+        // And the body bytes are byte-for-byte the same as the original wire
+        // payload — `Announce::to_wire(from_wire(payload)) == payload`.
+        let original_payload = WirePacketHeader::parse(&raw).unwrap().1;
+        assert_eq!(payload, original_payload);
+    }
+
+    #[test]
+    fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let arrival = InstantMillis(1_000);
+        let _ = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival,
+                bytes: &raw,
+            }],
+            TEST_ENTROPY,
+        );
+        assert_eq!(state.pending_rebroadcast_count(), 1);
+
+        // `now < arrival` is strictly before any due_at — the offset is
+        // non-negative so `due_at >= arrival > now`, and nothing emits.
+        let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1));
+        assert_eq!(tick_out.emitted_packet_count(), 0);
+        assert!(emitted.is_empty());
+        assert_eq!(state.pending_rebroadcast_count(), 1);
+    }
+
+    #[test]
+    fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
+        // Determinism: two engines fed the same packets + same entropy emit
+        // the same wire bytes at the same tick. The whole point of "entropy
+        // as data" — no hidden RNG state moves results around.
+        let raw = hx(RAW_ANNOUNCE);
+        let now = InstantMillis(5_000);
+        let arrival = InstantMillis(1_000);
+
+        let mut left: DefaultEngineState = DefaultEngineState::default();
+        let mut right: DefaultEngineState = DefaultEngineState::default();
+
+        for state in [&mut left, &mut right] {
+            let _ = ingest(
+                state,
+                &[InboundPacket {
+                    arrival,
+                    bytes: &raw,
+                }],
+                TEST_ENTROPY,
+            );
+        }
+        let (left_tick, left_bytes) = tick_capture(&mut left, now);
+        let (right_tick, right_bytes) = tick_capture(&mut right, now);
+
+        assert_eq!(left, right);
+        assert_eq!(left_tick, right_tick);
+        assert_eq!(left_bytes, right_bytes);
+        assert_eq!(left_bytes.len(), 1);
+    }
+
+    #[test]
+    fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
+        // Arena stays full across both calls so the held-cache retry inside
+        // `tick` also fails. The schedule should not move: only successful
+        // accepts schedule. (The successful held-recovery case is exercised
+        // once eviction lands and a follow-up packet can free arena space.)
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state = DefaultEngineState::<4, 64, 8, 4, 16, 4>::default();
+        let _ = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+            TEST_ENTROPY,
+        );
+        assert_eq!(state.held_count(), 1);
+        assert_eq!(state.pending_rebroadcast_count(), 0);
+
+        let (tick_out, bytes) = tick_capture(&mut state, InstantMillis(2_000));
+        assert_eq!(tick_out.recovered_from_held_count(), 0);
+        assert_eq!(tick_out.emitted_packet_count(), 0);
+        assert_eq!(state.pending_rebroadcast_count(), 0);
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn outbox_full_reschedules_so_emission_resumes_next_tick() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let _ = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+            TEST_ENTROPY,
+        );
+        assert_eq!(state.pending_rebroadcast_count(), 1);
+
+        // Outbox too small to hold the wire packet (HEADER_LEN + 162 byte
+        // payload). The emit attempts to write, fails on byte budget, and
+        // re-schedules at the same due_at.
+        let mut tiny_outbox = Outbox::<16, 4>::new();
+        let now = InstantMillis(2_000);
+        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut tiny_outbox);
+        assert_eq!(tick_out.emitted_packet_count(), 0);
+        assert_eq!(state.pending_rebroadcast_count(), 1);
+        assert_eq!(tiny_outbox.len(), 0);
+
+        // A roomy outbox later still drains the same scheduled entry.
+        let mut roomy = Outbox::<2048, 4>::new();
+        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut roomy);
+        assert_eq!(tick_out.emitted_packet_count(), 1);
+        assert_eq!(state.pending_rebroadcast_count(), 0);
     }
 }

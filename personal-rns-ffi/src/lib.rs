@@ -21,7 +21,13 @@ use std::time::Instant;
 
 use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis, OutboundPacket};
 use personal_rns::host::HostAdapter;
+use personal_rns::outbox::Outbox;
 use personal_rns::runtime::step;
+
+/// Per-step emission scratch lent to `runtime::step`. 4 KiB and 32 packets is
+/// plenty for the SDK's announce-only workload until transport lands and the
+/// SDK has real per-packet budgeting.
+type SdkOutbox = Outbox<4096, 32>;
 
 uniffi::include_scaffolding!("prns");
 
@@ -41,6 +47,7 @@ struct SdkHost {
 #[derive(Debug)]
 enum SdkHostError {
     NoTransport,
+    EntropySourceUnavailable,
 }
 
 impl HostAdapter for SdkHost {
@@ -50,20 +57,29 @@ impl HostAdapter for SdkHost {
         Ok(InstantMillis(self.base.elapsed().as_millis() as u64))
     }
 
+    fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
+        // Same OS CSPRNG path as StdHost: getrandom backs onto Android's
+        // `/dev/urandom` (via `getrandom(2)` on API ≥17) and iOS's
+        // `SecRandomCopyBytes`. Crypto-grade by host contract.
+        getrandom::getrandom(buf).map_err(|_| SdkHostError::EntropySourceUnavailable)
+    }
+
     fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
         Ok(&[])
     }
 
-    fn pump_outbound_packets(
-        &mut self,
-        _packets: &[OutboundPacket<'_>],
-    ) -> Result<(), Self::Error> {
-        Err(SdkHostError::NoTransport)
+    fn pump_outbound_packets(&mut self, packets: &[OutboundPacket<'_>]) -> Result<(), Self::Error> {
+        if packets.is_empty() {
+            Ok(())
+        } else {
+            Err(SdkHostError::NoTransport)
+        }
     }
 }
 
 struct RuntimeInner {
     state: DefaultEngineState,
+    outbox: SdkOutbox,
     host: SdkHost,
 }
 
@@ -79,6 +95,7 @@ impl ReticulumRuntime {
         Self {
             inner: Mutex::new(RuntimeInner {
                 state: DefaultEngineState::default(),
+                outbox: SdkOutbox::new(),
                 host: SdkHost {
                     base: Instant::now(),
                 },
@@ -90,8 +107,12 @@ impl ReticulumRuntime {
     /// returns the packet count the periodic pass emitted.
     pub fn tick(&self) -> u64 {
         let mut inner = self.inner.lock().expect("ReticulumRuntime mutex poisoned");
-        let RuntimeInner { state, host } = &mut *inner;
-        let output = step(state, host).expect("clock-only step cannot fail");
+        let RuntimeInner {
+            state,
+            outbox,
+            host,
+        } = &mut *inner;
+        let output = step(state, outbox, host).expect("clock-only step cannot fail");
         output.tick.emitted_packet_count() as u64
     }
 

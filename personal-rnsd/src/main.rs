@@ -2,11 +2,13 @@
 
 use personal_rns::engine::DefaultEngineState;
 use personal_rns::host::HostAdapter;
+use personal_rns::outbox::Outbox;
 use personal_rns::runtime::step;
 use personal_rnsd::StdHost;
 
 fn main() {
     let mut state: DefaultEngineState = DefaultEngineState::default();
+    let mut outbox = Outbox::<4096, 32>::new();
     let mut host = StdHost::new();
 
     // No transport yet, so every step ingests an empty queue and ticks once.
@@ -15,7 +17,7 @@ fn main() {
     // move between ticks.
     let start = host.now_millis().expect("std clock is readable");
     for _ in 0..5 {
-        step(&mut state, &mut host).expect("clock-only step cannot fail");
+        step(&mut state, &mut outbox, &mut host).expect("clock-only step cannot fail");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let end = host.now_millis().expect("std clock is readable");

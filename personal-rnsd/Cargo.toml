@@ -25,6 +25,10 @@ interfaces-host-shell = ["std"]
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
+# OS CSPRNG shim: maps to getrandom(2) / BCryptGenRandom / SecRandomCopyBytes.
+# Implements the `HostAdapter::fill_entropy` contract on every std platform
+# we ship — same source RNS uses (`os.urandom`).
+getrandom = "0.2"
 
 [lints]
 workspace = true
