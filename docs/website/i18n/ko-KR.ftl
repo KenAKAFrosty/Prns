@@ -9,13 +9,12 @@ footer-tagline = Personal 팀이 만들었습니다.
 # 랜딩
 landing-kicker = 모두를 위한, 막을 수 없는 메시 네트워크
 landing-title = Rust로 작성된 Reticulum(RNS)의 프로덕션급 포트.
-landing-subtitle = 결정론적이고, no_std이며, 할당자가 필요 없는 코어. RNS와 LXMF를 빠짐없이 지원합니다. Kotlin, Swift, Python, TypeScript, C# 네이티브 바인딩이 모두 갖춰져 있고, 브라우저와 Cloudflare Workers·Fastly·Spin 같은 엣지 런타임을 위한 WebAssembly까지 함께 따라옵니다. 5달러짜리 마이크로컨트롤러부터 클라우드 노드까지, 어떤 Reticulum 스택이라도 요구하는 성능과 배터리 수명을 정면으로 챙긴 설계입니다. rnsd의 드롭인 대체품도 함께 들어 있습니다.
-landing-cta-ethos = 크레이트 고르기
+landing-subtitle = 결정론적이고, no_std이며, 할당자가 필요 없는 코어. RNS와 LXMF를 빠짐없이 지원합니다. Kotlin, Swift, Python, TypeScript, C# 네이티브 바인딩이 모두 갖춰져 있고, 브라우저와 Cloudflare Workers·Fastly·Spin 같은 엣지 런타임을 위한 WebAssembly까지 함께 따라옵니다. 5달러짜리 마이크로컨트롤러부터 클라우드 노드까지, 어떤 Reticulum 스택이라도 요구하는 성능과 배터리 수명을 정면으로 챙긴 설계입니다.landing-cta-ethos = 크레이트 고르기
 landing-cta-crates = 어떻게 만드는지 보기
 
 # 인용
 landing-quote-label = 우리가 향하는 곳
-landing-quote-body = Reticulum은 우리가 함께 만들어 갈 수 있는 밝은 미래의 통신 기반 그 자체입니다. 이 프로젝트는 그것을 더 많은 개발자의 손에 쥐어 주고, 그 미래를 함께 일구어 가기 위한 우리의 노력입니다.
+landing-quote-body = Reticulum은 우리가 함께 만들어낸다면 가질 수 있는 밝은 미래의 통신 기반 그 자체입니다. 이 프로젝트는 그것을 더 많은 개발자의 손에 쥐어 주고, 그 미래를 함께 일구어 가기 위한 우리의 노력입니다.
 
 # 우리의 기준
 standards-section-label = 우리의 기준

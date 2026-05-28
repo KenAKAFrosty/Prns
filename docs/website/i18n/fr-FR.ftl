@@ -9,13 +9,12 @@ footer-tagline = Construit par l'équipe Personal.
 # Page d'accueil
 landing-kicker = Des réseaux maillés que rien n'arrête — pour les gens
 landing-title = Un portage de Reticulum (RNS) prêt pour la production, écrit en Rust.
-landing-subtitle = Un cœur déterministe, sans std et sans allocateur. Couverture complète de RNS et LXMF. Bindings natifs pour Kotlin, Swift, Python, TypeScript et C#. WebAssembly pour les navigateurs et les runtimes edge comme Cloudflare Workers, Fastly et Spin. Pensé pour la performance et l'autonomie dont n'importe quelle pile Reticulum a besoin — d'un microcontrôleur à cinq dollars jusqu'à un nœud cloud. Un remplacement drop-in pour rnsd est livré dans la foulée.
-landing-cta-ethos = Choisir un crate
+landing-subtitle = Un cœur déterministe, sans std et sans allocateur. Couverture complète de RNS et LXMF. Bindings natifs pour Kotlin, Swift, Python, TypeScript et C#. WebAssembly pour les navigateurs et les runtimes edge comme Cloudflare Workers, Fastly et Spin. Pensé pour la performance et l'autonomie dont n'importe quelle pile Reticulum a besoin — d'un microcontrôleur à cinq dollars jusqu'à un nœud cloud.landing-cta-ethos = Choisir un crate
 landing-cta-crates = Comment on le construit
 
 # Citation
 landing-quote-label = Ce vers quoi on bâtit
-landing-quote-body = Reticulum est l'infrastructure de communication fondatrice de l'avenir lumineux qu'on peut avoir — à condition de le construire. C'est notre manière de le mettre entre les mains de plus de développeurs et de faire avancer cet avenir, ensemble.
+landing-quote-body = Reticulum est l'infrastructure de communication fondatrice de l'avenir lumineux qu'on peut avoir — si nous le construisons. C'est notre manière de le mettre entre les mains de plus de développeurs et de faire avancer cet avenir, ensemble.
 
 # Ce sur quoi vous pouvez compter
 standards-section-label = Nos standards

@@ -9,13 +9,12 @@ footer-tagline = Skapad av Personal-teamet.
 # Landing
 landing-kicker = Ostoppbara mesh-nätverk — för folket
 landing-title = En produktionsklar port av Reticulum (RNS) skriven i Rust.
-landing-subtitle = En deterministisk kärna utan std och utan allokerare. Fullständig täckning av RNS och LXMF. Native bindningar för Kotlin, Swift, Python, TypeScript och C#. WebAssembly för webbläsare och edge-runtimes som Cloudflare Workers, Fastly och Spin. Byggd med den prestanda och batteritid i åtanke som varje Reticulum-stack behöver — från en mikrokontroller för fem dollar ända till en molnnod. En drop-in-ersättning för rnsd följer med på köpet.
-landing-cta-ethos = Välj en crate
+landing-subtitle = En deterministisk kärna utan std och utan allokerare. Fullständig täckning av RNS och LXMF. Native bindningar för Kotlin, Swift, Python, TypeScript och C#. WebAssembly för webbläsare och edge-runtimes som Cloudflare Workers, Fastly och Spin. Byggd med den prestanda och batteritid i åtanke som varje Reticulum-stack behöver — från en mikrokontroller för fem dollar ända till en molnnod.landing-cta-ethos = Välj en crate
 landing-cta-crates = Så bygger vi det
 
 # Pull quote
 landing-quote-label = Det vi bygger mot
-landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastrukturen i den ljusa framtid vi kan ha — om vi väljer att skapa den. Detta är vår insats för att lägga den i händerna på fler utvecklare och hjälpa den framtiden på väg.
+landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastrukturen i den ljusa framtid vi kan ha — om vi bygger den. Detta är vår insats för att lägga den i händerna på fler utvecklare och hjälpa den framtiden på väg.
 
 # What you can count on
 standards-section-label = Våra standarder
