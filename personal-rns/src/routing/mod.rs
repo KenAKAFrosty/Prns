@@ -1,24 +1,27 @@
-//! The routing table: which destinations we can reach, in how many hops, and
-//! the recent announces that taught us (plus the constants the acceptance
-//! predicate enforces).
+//! The routing layer: announces, the routing table, the rebroadcast schedule,
+//! and the storage backends that hold each routing concern.
 //!
 //! `RoutingTable` is generic over three substitutable storage backends —
-//! see [`crate::storage`] for the trait catalogue. The default type
-//! parameters resolve to the no_std stack-resident backends
-//! (`FixedArrayRouteColumns`, `TieredAnnounceIdHistory`, `PackedAppDataArena`), so bare
-//! `RoutingTable` is the embedded-friendly default and
-//! `DefaultRoutingTable<...>` re-introduces the const generics that size
-//! them. A capable host substitutes alternate backends (heap-resident,
-//! mmap-backed, etc.) at the type parameters.
+//! see [`storage`] for the trait catalogue. The default type parameters
+//! resolve to the no_std stack-resident backends (`FixedArrayRouteColumns`,
+//! `TieredAnnounceIdHistory`, `PackedAppDataArena`), so bare `RoutingTable`
+//! is the embedded-friendly default and `DefaultRoutingTable<...>`
+//! re-introduces the const generics that size them. A capable host
+//! substitutes alternate backends (heap-resident, mmap-backed, etc.) at the
+//! type parameters.
 
-use crate::announce::Announce;
+pub mod announce;
+pub mod schedule;
+pub mod storage;
+
 use crate::engine::InstantMillis;
-pub use crate::storage::AnnounceIdHistoryView;
-use crate::storage::{
+use crate::wire::DestinationHash;
+use announce::Announce;
+pub use storage::AnnounceIdHistoryView;
+use storage::{
     AnnounceIdHistory, ColumnsFull, FixedArrayRouteColumns, PackedAppDataArena, RetainedAppData,
     RouteColumns, RouteEntry, TieredAnnounceIdHistory,
 };
-use crate::wire::DestinationHash;
 
 /// RNS's `RNS.Transport.PATHFINDER_E`
 const DEFAULT_PATH_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
@@ -42,8 +45,8 @@ pub const DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_MAX_TRACKED_DES
 /// Per-path inline floor for seen-announce-id retention. Every tracked path is
 /// guaranteed this many slots regardless of arena pressure — covers the typical
 /// multipath dedup fan-in (interfaces × routes) for small-to-medium mesh
-/// deployments. See [`crate::storage::tiered_announce_id_history`] for the full reasoning.
-pub const DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION: usize = 4;
+/// deployments. See [`crate::routing::storage::tiered_announce_id_history`] for the full reasoning.
+pub const DEFAULT_HISTORY_FLOOR_PER_DESTINATION: usize = 4;
 
 /// Total shared overflow capacity for seen-announce-id retention. Sized as the
 /// destination count × an average per-destination overflow draw rather than worst-case.
@@ -107,7 +110,7 @@ pub enum UpsertRouteOutcome {
 ///
 /// Defaults resolve to the no_std stack-resident backends. See
 /// [`DefaultRoutingTable`] for the const-generic-sized convenience alias
-/// and [`crate::storage`] for the trait catalogue.
+/// and [`crate::routing::storage`] for the trait catalogue.
 ///
 /// `PartialEq` is structural — it compares every backend's representation
 /// byte-for-byte. The engine's determinism tests rely on this; do not use it
@@ -116,7 +119,7 @@ pub enum UpsertRouteOutcome {
 pub struct RoutingTable<
     C: RouteColumns = FixedArrayRouteColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
     S: AnnounceIdHistory = TieredAnnounceIdHistory<
-        DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
+        DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
         DEFAULT_HISTORY_OVERFLOW_CAPACITY,
         DEFAULT_MAX_TRACKED_DESTINATIONS,
         DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -144,12 +147,12 @@ pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    const SEEN_IDS_FLOOR_PER_DESTINATION: usize = DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
+    const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
 > = RoutingTable<
     FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
     TieredAnnounceIdHistory<
-        SEEN_IDS_FLOOR_PER_DESTINATION,
+        HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -343,8 +346,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+    use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])

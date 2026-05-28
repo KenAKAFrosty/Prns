@@ -4,13 +4,10 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![doc = "Reticulum"]
 
-pub mod announce;
 pub mod crypto;
 pub mod engine;
 pub mod host;
 pub mod outbox;
 pub mod routing;
 pub mod runtime;
-pub mod schedule;
-pub mod storage;
 pub mod wire;

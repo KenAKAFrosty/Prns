@@ -5,15 +5,15 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
-use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
-use crate::routing::{
-    RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
-    DEFAULT_MAX_TRACKED_DESTINATIONS, DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
-};
-use crate::storage::{
+use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
+use crate::routing::storage::{
     AnnounceIdHistory, FixedArrayRouteColumns, PackedAppDataArena, RetainedAppData, RouteColumns,
     TieredAnnounceIdHistory,
+};
+use crate::routing::{
+    RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+    DEFAULT_HISTORY_FLOOR_PER_DESTINATION, DEFAULT_HISTORY_OVERFLOW_CAPACITY,
+    DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION, DEFAULT_MAX_TRACKED_DESTINATIONS,
 };
 use crate::wire::WirePacketHeader;
 
@@ -38,7 +38,7 @@ pub struct OutboundPacket<'a> {
 }
 
 /// Retained engine state. Generic over the three storage backends from
-/// [`crate::storage`]; the default type parameters resolve to the no_std
+/// [`crate::routing::storage`]; the default type parameters resolve to the no_std
 /// stack-resident backends, so bare `EngineState` is the embedded-friendly
 /// default. A capable host substitutes alternate backends at the type
 /// parameters; [`DefaultEngineState`] is the const-generic-sized convenience
@@ -47,7 +47,7 @@ pub struct OutboundPacket<'a> {
 pub struct EngineState<
     C: RouteColumns = FixedArrayRouteColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
     S: AnnounceIdHistory = TieredAnnounceIdHistory<
-        DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
+        DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
         DEFAULT_HISTORY_OVERFLOW_CAPACITY,
         DEFAULT_MAX_TRACKED_DESTINATIONS,
         DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -68,12 +68,12 @@ pub type DefaultEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    const SEEN_IDS_FLOOR_PER_DESTINATION: usize = DEFAULT_SEEN_IDS_FLOOR_PER_DESTINATION,
+    const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
 > = EngineState<
     FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
     TieredAnnounceIdHistory<
-        SEEN_IDS_FLOOR_PER_DESTINATION,
+        HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,

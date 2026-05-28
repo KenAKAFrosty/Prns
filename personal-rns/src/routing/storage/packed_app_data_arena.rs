@@ -143,7 +143,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
     }
 }
 
-impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> crate::storage::RetainedAppData
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> crate::routing::storage::RetainedAppData
     for PackedAppDataArena<ARENA_BYTES, MAX_ENTRIES>
 {
     fn get(&self, handle: AppDataHandle) -> &[u8] {

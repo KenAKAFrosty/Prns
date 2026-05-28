@@ -4,13 +4,13 @@
 //! struct (and therefore inline in whatever `RoutingTable` it lives in).
 //! No allocator, no heap, no growth: footprint is known at compile time and
 //! sized by the const generic. Capacity overflow surfaces as
-//! [`ColumnsFull`](crate::storage::ColumnsFull) at the `push` call site.
+//! [`ColumnsFull`](crate::routing::storage::ColumnsFull) at the `push` call site.
 
-use crate::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
+use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
+use crate::routing::storage::{AppDataHandle, ColumnsFull, RouteColumns, RouteEntry};
 use crate::routing::RouteResponsiveness;
-use crate::storage::{AppDataHandle, ColumnsFull, RouteColumns, RouteEntry};
 use crate::wire::DestinationHash;
 
 /// SoA destination-table columns backed by inline fixed-size arrays. The

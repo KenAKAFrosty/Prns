@@ -36,9 +36,9 @@ pub use fixed_array_route_columns::FixedArrayRouteColumns;
 pub use packed_app_data_arena::{AppDataHandle, PackedAppDataArena, RetainedAppDataError};
 pub use tiered_announce_id_history::{AnnounceIdHistoryView, TieredAnnounceIdHistory};
 
-use crate::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::crypto::Ed25519Signature;
 use crate::engine::InstantMillis;
+use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 

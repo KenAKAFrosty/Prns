@@ -8,7 +8,7 @@
 
 use crate::engine::{ingest, tick, EngineState, IngestOutput, TickOutput};
 use crate::host::HostAdapter;
-use crate::storage::{AnnounceIdHistory, RetainedAppData, RouteColumns};
+use crate::routing::storage::{AnnounceIdHistory, RetainedAppData, RouteColumns};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StepOutput {

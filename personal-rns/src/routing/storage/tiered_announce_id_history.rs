@@ -45,8 +45,8 @@
 //! determinism check. Like `PackedAppDataArena`, this is **not** "same set of ids".
 //! Comparing two stores built by different routes is a misuse.
 
-use crate::announce::AnnounceId;
-use crate::storage::{AnnounceIdHistory, RememberOutcome};
+use crate::routing::announce::AnnounceId;
+use crate::routing::storage::{AnnounceIdHistory, RememberOutcome};
 
 /// The announce-id-history view a path lookup hands the predicate: two contiguous slices,
 /// floor first then overflow. Hides the two-tier storage from the consumer
