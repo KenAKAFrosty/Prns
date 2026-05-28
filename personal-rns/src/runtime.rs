@@ -8,6 +8,7 @@
 
 use crate::engine::{ingest, tick, EngineState, IngestOutput, TickOutput};
 use crate::host::HostAdapter;
+use crate::storage::{AppDataBackend, DestinationColumns, SeenAnnounceIdsStorage};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StepOutput {
@@ -15,23 +16,16 @@ pub struct StepOutput {
     pub tick: TickOutput,
 }
 
-pub fn step<
-    H: HostAdapter,
-    const MAX_TRACKED_DESTINATIONS: usize,
-    const MAX_SEEN_ANNOUNCE_IDS: usize,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    const SEEN_IDS_FLOOR_PER_PATH: usize,
-    const SEEN_IDS_OVERFLOW_CAPACITY: usize,
->(
-    state: &mut EngineState<
-        MAX_TRACKED_DESTINATIONS,
-        MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_APP_DATA_ARENA_BYTES,
-        SEEN_IDS_FLOOR_PER_PATH,
-        SEEN_IDS_OVERFLOW_CAPACITY,
-    >,
+pub fn step<H, C, S, P>(
+    state: &mut EngineState<C, S, P>,
     host: &mut H,
-) -> Result<StepOutput, H::Error> {
+) -> Result<StepOutput, H::Error>
+where
+    H: HostAdapter,
+    C: DestinationColumns,
+    S: SeenAnnounceIdsStorage,
+    P: AppDataBackend,
+{
     let packets = host.drain_inbound_packets()?;
     let ingest = ingest(state, packets);
     let now = host.now_millis()?;

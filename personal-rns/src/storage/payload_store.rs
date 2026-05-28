@@ -38,8 +38,8 @@ struct Span {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadStoreError {
-    ArenaFull,
-    TooManyEntries,
+    ArenaFull,      //full of? memory?
+    TooManyEntries, // same but just count? why do we even need this? do we?
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +138,22 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> PayloadStore<ARENA_BYTE
         }
         self.used = new_used;
         Ok(())
+    }
+}
+
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> crate::storage::AppDataBackend
+    for PayloadStore<ARENA_BYTES, MAX_ENTRIES>
+{
+    fn get(&self, handle: PayloadHandle) -> &[u8] {
+        PayloadStore::get(self, handle)
+    }
+
+    fn insert(&mut self, bytes: &[u8]) -> Result<PayloadHandle, PayloadStoreError> {
+        PayloadStore::insert(self, bytes)
+    }
+
+    fn replace(&mut self, handle: PayloadHandle, bytes: &[u8]) -> Result<(), PayloadStoreError> {
+        PayloadStore::replace(self, handle, bytes)
     }
 }
 

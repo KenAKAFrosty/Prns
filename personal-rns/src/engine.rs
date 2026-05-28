@@ -7,9 +7,13 @@
 
 use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::path::{
-    PathTable, RecordPathOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+    DestinationTable, RecordPathOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
     DEFAULT_SEEN_IDS_FLOOR_PER_PATH, DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
+};
+use crate::storage::{
+    AppDataBackend, DestinationColumns, FixedArrayColumns, PayloadStore, SeenAnnounceIdsStorage,
+    TieredSeenAnnounceIds,
 };
 use crate::wire::WirePacketHeader;
 
@@ -33,47 +37,55 @@ pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
-/// Retained engine state. The const parameters size the path table's fixed
-/// capacity — tracked destinations, the per-path cap on remembered announce
-/// ids, the shared byte budget for retained announce `app_data` (the rest of
-/// each announce is held in structured columns and serialized back to wire on
-/// re-emission), and the two seen-id tier sizes (per-path inline floor + shared
-/// overflow). They default to the RNS-derived values, so plain `EngineState`
-/// is the embedded-friendly default and a capable host opts into a larger
-/// table with `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS, ...>::default()`.
+/// Retained engine state. Generic over the three storage backends from
+/// [`crate::storage`]; the default type parameters resolve to the no_std
+/// stack-resident backends, so bare `EngineState` is the embedded-friendly
+/// default. A capable host substitutes alternate backends at the type
+/// parameters; [`DefaultEngineState`] is the const-generic-sized convenience
+/// alias for staying on the defaults but tuning their sizes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<
+    C: DestinationColumns = FixedArrayColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
+    S: SeenAnnounceIdsStorage = TieredSeenAnnounceIds<
+        DEFAULT_SEEN_IDS_FLOOR_PER_PATH,
+        DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
+        DEFAULT_MAX_TRACKED_DESTINATIONS,
+        DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
+    >,
+    P: AppDataBackend = PayloadStore<
+        DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+        DEFAULT_MAX_TRACKED_DESTINATIONS,
+    >,
+> {
+    tick_count: u64,
+    ingested_packet_count: u64,
+    path_table: DestinationTable<C, S, P>,
+}
+
+/// Convenience alias for the no_std default backends sized by the existing
+/// const-generic knobs. Mirrors [`DefaultDestinationTable`](crate::path::DefaultDestinationTable).
+pub type DefaultEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     const SEEN_IDS_FLOOR_PER_PATH: usize = DEFAULT_SEEN_IDS_FLOOR_PER_PATH,
     const SEEN_IDS_OVERFLOW_CAPACITY: usize = DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
-> {
-    tick_count: u64,
-    ingested_packet_count: u64,
-    path_table: PathTable<
-        MAX_TRACKED_DESTINATIONS,
-        MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_APP_DATA_ARENA_BYTES,
+> = EngineState<
+    FixedArrayColumns<MAX_TRACKED_DESTINATIONS>,
+    TieredSeenAnnounceIds<
         SEEN_IDS_FLOOR_PER_PATH,
         SEEN_IDS_OVERFLOW_CAPACITY,
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
     >,
-}
+    PayloadStore<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
+>;
 
-impl<
-        const MAX_TRACKED_DESTINATIONS: usize,
-        const MAX_SEEN_ANNOUNCE_IDS: usize,
-        const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-        const SEEN_IDS_FLOOR_PER_PATH: usize,
-        const SEEN_IDS_OVERFLOW_CAPACITY: usize,
-    >
-    EngineState<
-        MAX_TRACKED_DESTINATIONS,
-        MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_APP_DATA_ARENA_BYTES,
-        SEEN_IDS_FLOOR_PER_PATH,
-        SEEN_IDS_OVERFLOW_CAPACITY,
-    >
+impl<C, S, P> EngineState<C, S, P>
+where
+    C: DestinationColumns,
+    S: SeenAnnounceIdsStorage,
+    P: AppDataBackend,
 {
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
@@ -127,22 +139,15 @@ impl TickOutput {
 /// path. Bytes that don't parse, or aren't announces, are counted as processed
 /// and otherwise ignored — this slice acts only on announces.
 #[must_use]
-pub fn ingest<
-    const MAX_TRACKED_DESTINATIONS: usize,
-    const MAX_SEEN_ANNOUNCE_IDS: usize,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    const SEEN_IDS_FLOOR_PER_PATH: usize,
-    const SEEN_IDS_OVERFLOW_CAPACITY: usize,
->(
-    state: &mut EngineState<
-        MAX_TRACKED_DESTINATIONS,
-        MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_APP_DATA_ARENA_BYTES,
-        SEEN_IDS_FLOOR_PER_PATH,
-        SEEN_IDS_OVERFLOW_CAPACITY,
-    >,
+pub fn ingest<C, S, P>(
+    state: &mut EngineState<C, S, P>,
     packets: &[InboundPacket<'_>],
-) -> IngestOutput {
+) -> IngestOutput
+where
+    C: DestinationColumns,
+    S: SeenAnnounceIdsStorage,
+    P: AppDataBackend,
+{
     state.ingested_packet_count = state
         .ingested_packet_count
         .saturating_add(packets.len() as u64);
@@ -184,7 +189,7 @@ pub fn ingest<
             announce_id: announce.announce_id,
             // No local identities yet, so no announce is ever for us.
             destination_is_local: false,
-            existing_path: state.path_table.existing_path(&announce.destination),
+            existing_path: state.path_table.existing_path_for(&announce.destination),
             arrived_at: packet.arrival,
         }
         .determine_acceptance();
@@ -208,22 +213,12 @@ pub fn ingest<
 
 /// Advance the engine's periodic work to `now`.
 #[must_use]
-pub fn tick<
-    const MAX_TRACKED_DESTINATIONS: usize,
-    const MAX_SEEN_ANNOUNCE_IDS: usize,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    const SEEN_IDS_FLOOR_PER_PATH: usize,
-    const SEEN_IDS_OVERFLOW_CAPACITY: usize,
->(
-    state: &mut EngineState<
-        MAX_TRACKED_DESTINATIONS,
-        MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_APP_DATA_ARENA_BYTES,
-        SEEN_IDS_FLOOR_PER_PATH,
-        SEEN_IDS_OVERFLOW_CAPACITY,
-    >,
-    _now: InstantMillis,
-) -> TickOutput {
+pub fn tick<C, S, P>(state: &mut EngineState<C, S, P>, _now: InstantMillis) -> TickOutput
+where
+    C: DestinationColumns,
+    S: SeenAnnounceIdsStorage,
+    P: AppDataBackend,
+{
     state.tick_count = state.tick_count.saturating_add(1);
     TickOutput::default()
 }
@@ -368,7 +363,7 @@ mod tests {
         // hops are incremented on receive.
         let retained = state
             .path_table
-            .retained_announce(&destination)
+            .retained_announce_for(&destination)
             .expect("the accepted announce is on hand");
         assert_eq!(retained.hops, header.hops + 1);
         let mut buf = [0u8; 500];
@@ -395,7 +390,7 @@ mod tests {
         // ingest is generic over it — same engine, no heap, no API change. (Very
         // large widths belong on the heap; this inline default lives on the stack.)
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<64, 128>::default();
+        let mut state = DefaultEngineState::<64, 128>::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {

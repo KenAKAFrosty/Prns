@@ -21,15 +21,17 @@
 //!    bookkeeping (vs eight bytes for a `{offset, len}` pair on a 32-bit
 //!    target), which keeps the metadata-to-payload ratio sane: ~1 byte
 //!    overhead per 10-byte id.
-//! 3. **Per-path cap (`max_per_path`).** Mirrors RNS's `MAX_RANDOM_BLOBS`.
-//!    Keeps one chatty path from hogging the shared overflow.
+//! 3. **Per-path cap (`MAX_PER_PATH`).** Mirrors RNS's `MAX_RANDOM_BLOBS`.
+//!    Const generic owned by the store, not passed by callers — keeps the
+//!    cap as a structural property of the type rather than something the
+//!    consumer has to remember to pass on every call.
 //!
 //! ## Eviction: one rotate path
 //!
 //! When a `remember` would exceed either the per-path cap *or* the shared
 //! arena, we don't drop — we rotate the oldest out. The oldest is `floor[0]`
 //! (chronologically, the floor fills before overflow). Floor shifts left by 1,
-//! `overflow[0]` for this path promotes to `floor[FLOOR_PER_PATH - 1]` if the
+//! `overflow[0]` for this path promotes to `floor[floor_len - 1]` if the
 //! path has any overflow, then this path's overflow slice rotates in place
 //! (its length unchanged → no other path's span moves). Both the per-path-cap
 //! case and the arena-exhausted case collapse to the same code path, and there
@@ -44,13 +46,7 @@
 //! Comparing two stores built by different routes is a misuse.
 
 use crate::announce::AnnounceId;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RememberOutcome {
-    AlreadyKnown,
-    StoredFresh,
-    StoredEvictingOldest,
-}
+use crate::storage::{RememberOutcome, SeenAnnounceIdsStorage};
 
 /// The seen-id view a path lookup hands the predicate: two contiguous slices,
 /// floor first then overflow. Hides the two-tier storage from the consumer
@@ -95,10 +91,11 @@ impl<'a> SeenAnnounceIds<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TieredSeenAnnounceIds<
+pub struct TieredSeenAnnounceIds<
     const FLOOR_PER_PATH: usize,
     const OVERFLOW_CAPACITY: usize,
     const MAX_PATHS: usize,
+    const MAX_PER_PATH: usize,
 > {
     floor: [[AnnounceId; FLOOR_PER_PATH]; MAX_PATHS],
     floor_len: [u8; MAX_PATHS],
@@ -109,8 +106,13 @@ pub(crate) struct TieredSeenAnnounceIds<
     overflow_len: [u8; MAX_PATHS],
 }
 
-impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATHS: usize> Default
-    for TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS>
+impl<
+        const FLOOR_PER_PATH: usize,
+        const OVERFLOW_CAPACITY: usize,
+        const MAX_PATHS: usize,
+        const MAX_PER_PATH: usize,
+    > Default
+    for TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS, MAX_PER_PATH>
 {
     fn default() -> Self {
         let zero = AnnounceId::from_wire([0u8; 10]);
@@ -123,14 +125,18 @@ impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATH
     }
 }
 
-impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATHS: usize>
-    TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS>
+impl<
+        const FLOOR_PER_PATH: usize,
+        const OVERFLOW_CAPACITY: usize,
+        const MAX_PATHS: usize,
+        const MAX_PER_PATH: usize,
+    > TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS, MAX_PER_PATH>
 {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn seen_ids(&self, slot: usize) -> SeenAnnounceIds<'_> {
+    pub fn seen_ids(&self, slot: usize) -> SeenAnnounceIds<'_> {
         SeenAnnounceIds {
             floor: self.floor_slice(slot),
             overflow: self.overflow_slice(slot),
@@ -139,28 +145,26 @@ impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATH
 
     /// Record `id` as recently seen for path `slot`. Re-hearing a known id is a
     /// no-op (no promotion). Inserts go to the floor first, then the shared
-    /// overflow; when the path is at `max_per_path` or the arena is exhausted,
+    /// overflow; when the path is at `MAX_PER_PATH` or the arena is exhausted,
     /// the oldest id rotates out and the new one takes its place at the end.
     /// Never drops.
-    pub(crate) fn remember(
-        &mut self,
-        slot: usize,
-        id: AnnounceId,
-        max_per_path: usize,
-    ) -> RememberOutcome {
+    pub fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome {
         // The rotate path assumes `floor_len >= 1` at Tier 3; that follows from
         // `FLOOR_PER_PATH >= 1` (the floor receives the first insert via Tier 1)
-        // plus `max_per_path >= 1`. The u8 length fields cap floor lengths at
-        // 255; PathTable enforces the corresponding overflow_len bound against
-        // its `MAX_SEEN_ANNOUNCE_IDS` const generic.
+        // and `MAX_PER_PATH >= 1`. The u8 length fields cap floor lengths at
+        // 255 and overflow per-path lengths at `MAX_PER_PATH - FLOOR_PER_PATH`.
         const {
             assert!(FLOOR_PER_PATH >= 1, "FLOOR_PER_PATH must be at least 1");
+            assert!(MAX_PER_PATH >= 1, "MAX_PER_PATH must be at least 1");
             assert!(
                 FLOOR_PER_PATH <= u8::MAX as usize,
                 "FLOOR_PER_PATH must fit in u8 (floor_len storage)"
             );
+            assert!(
+                MAX_PER_PATH.saturating_sub(FLOOR_PER_PATH) <= u8::MAX as usize,
+                "MAX_PER_PATH - FLOOR_PER_PATH must fit in u8 (overflow_len storage)"
+            );
         }
-        debug_assert!(max_per_path >= 1, "max_per_path must be at least 1");
 
         if self.contains(slot, &id) {
             return RememberOutcome::AlreadyKnown;
@@ -171,7 +175,7 @@ impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATH
         let total = floor_len + overflow_len;
 
         // Tier 1: floor has room and the per-path cap isn't reached.
-        if floor_len < FLOOR_PER_PATH && total < max_per_path {
+        if floor_len < FLOOR_PER_PATH && total < MAX_PER_PATH {
             self.floor[slot][floor_len] = id;
             self.floor_len[slot] = (floor_len + 1) as u8;
             return RememberOutcome::StoredFresh;
@@ -181,7 +185,7 @@ impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATH
         // arena has room. Insert into this path's overflow span; shift the
         // arena tail right by 1 to keep all spans packed.
         let used = self.overflow_used();
-        if total < max_per_path && used < OVERFLOW_CAPACITY {
+        if total < MAX_PER_PATH && used < OVERFLOW_CAPACITY {
             let path_offset = self.overflow_offset(slot);
             let insert_at = path_offset + overflow_len;
             self.overflow.copy_within(insert_at..used, insert_at + 1);
@@ -198,9 +202,8 @@ impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATH
         // other path's offset moves.
         //
         // The shift is bounded by `floor_len`, not `FLOOR_PER_PATH`, so the
-        // visible-slice invariant holds even when a caller's `max_per_path`
-        // is smaller than the inline floor (the path fills its live prefix
-        // and rotates inside it).
+        // visible-slice invariant holds even when `MAX_PER_PATH < FLOOR_PER_PATH`
+        // (the path fills its live prefix and rotates inside it).
         self.floor[slot].copy_within(1..floor_len, 0);
         if overflow_len > 0 {
             let path_offset = self.overflow_offset(slot);
@@ -240,6 +243,25 @@ impl<const FLOOR_PER_PATH: usize, const OVERFLOW_CAPACITY: usize, const MAX_PATH
     }
 }
 
+impl<
+        const FLOOR_PER_PATH: usize,
+        const OVERFLOW_CAPACITY: usize,
+        const MAX_PATHS: usize,
+        const MAX_PER_PATH: usize,
+    > SeenAnnounceIdsStorage
+    for TieredSeenAnnounceIds<FLOOR_PER_PATH, OVERFLOW_CAPACITY, MAX_PATHS, MAX_PER_PATH>
+{
+    fn seen_ids(&self, slot: usize) -> SeenAnnounceIds<'_> {
+        // Inherent method takes precedence in method-call notation; the trait
+        // impl forwards to it (the inherent method holds the actual logic).
+        TieredSeenAnnounceIds::seen_ids(self, slot)
+    }
+
+    fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome {
+        TieredSeenAnnounceIds::remember(self, slot, id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,8 +272,8 @@ mod tests {
 
     /// Convenience: floor + overflow lengths describe the per-path footprint;
     /// asserting both keeps the tier assignment honest.
-    fn tier_lens<const F: usize, const O: usize, const P: usize>(
-        store: &TieredSeenAnnounceIds<F, O, P>,
+    fn tier_lens<const F: usize, const O: usize, const P: usize, const MP: usize>(
+        store: &TieredSeenAnnounceIds<F, O, P, MP>,
         slot: usize,
     ) -> (usize, usize) {
         (
@@ -262,30 +284,30 @@ mod tests {
 
     #[test]
     fn first_insert_lands_in_the_floor() {
-        let mut store: TieredSeenAnnounceIds<4, 16, 4> = TieredSeenAnnounceIds::new();
-        assert_eq!(store.remember(0, aid(1), 64), RememberOutcome::StoredFresh);
+        let mut store: TieredSeenAnnounceIds<4, 16, 4, 64> = TieredSeenAnnounceIds::new();
+        assert_eq!(store.remember(0, aid(1)), RememberOutcome::StoredFresh);
         assert_eq!(tier_lens(&store, 0), (1, 0));
         assert!(store.seen_ids(0).contains(&aid(1)));
     }
 
     #[test]
     fn re_remembering_a_known_id_is_a_no_op() {
-        let mut store: TieredSeenAnnounceIds<4, 16, 4> = TieredSeenAnnounceIds::new();
-        store.remember(0, aid(1), 64);
-        assert_eq!(store.remember(0, aid(1), 64), RememberOutcome::AlreadyKnown);
+        let mut store: TieredSeenAnnounceIds<4, 16, 4, 64> = TieredSeenAnnounceIds::new();
+        store.remember(0, aid(1));
+        assert_eq!(store.remember(0, aid(1)), RememberOutcome::AlreadyKnown);
         assert_eq!(tier_lens(&store, 0), (1, 0));
     }
 
     #[test]
     fn floor_fills_then_overflow_takes_the_rest() {
-        let mut store: TieredSeenAnnounceIds<2, 16, 4> = TieredSeenAnnounceIds::new();
+        let mut store: TieredSeenAnnounceIds<2, 16, 4, 64> = TieredSeenAnnounceIds::new();
         // Fill floor (2 slots).
-        store.remember(0, aid(1), 64);
-        store.remember(0, aid(2), 64);
+        store.remember(0, aid(1));
+        store.remember(0, aid(2));
         assert_eq!(tier_lens(&store, 0), (2, 0));
         // Next two land in overflow.
-        store.remember(0, aid(3), 64);
-        store.remember(0, aid(4), 64);
+        store.remember(0, aid(3));
+        store.remember(0, aid(4));
         assert_eq!(tier_lens(&store, 0), (2, 2));
         // View walks floor first, then overflow, preserving insertion order.
         let view = store.seen_ids(0);
@@ -296,12 +318,12 @@ mod tests {
 
     #[test]
     fn multiple_paths_pack_overflow_contiguously() {
-        let mut store: TieredSeenAnnounceIds<1, 8, 3> = TieredSeenAnnounceIds::new();
+        let mut store: TieredSeenAnnounceIds<1, 8, 3, 64> = TieredSeenAnnounceIds::new();
         // Each path: one in floor, two in overflow → arena holds 6 ids tightly.
         for slot in 0..3 {
-            store.remember(slot, aid(10 * slot as u8 + 1), 64);
-            store.remember(slot, aid(10 * slot as u8 + 2), 64);
-            store.remember(slot, aid(10 * slot as u8 + 3), 64);
+            store.remember(slot, aid(10 * slot as u8 + 1));
+            store.remember(slot, aid(10 * slot as u8 + 2));
+            store.remember(slot, aid(10 * slot as u8 + 3));
         }
         // Path 0: floor[1], overflow[2,3]. Path 1: floor[11], overflow[12,13]. Etc.
         for slot in 0..3 {
@@ -318,12 +340,12 @@ mod tests {
 
     #[test]
     fn growing_one_paths_overflow_does_not_disturb_anothers_view() {
-        let mut store: TieredSeenAnnounceIds<1, 8, 3> = TieredSeenAnnounceIds::new();
-        store.remember(0, aid(1), 64); // floor
-        store.remember(0, aid(2), 64); // overflow
-        store.remember(1, aid(11), 64); // floor
-        store.remember(1, aid(12), 64); // overflow (after path 0's span)
-        store.remember(0, aid(3), 64); // grows path 0's overflow → shifts path 1's
+        let mut store: TieredSeenAnnounceIds<1, 8, 3, 64> = TieredSeenAnnounceIds::new();
+        store.remember(0, aid(1)); // floor
+        store.remember(0, aid(2)); // overflow
+        store.remember(1, aid(11)); // floor
+        store.remember(1, aid(12)); // overflow (after path 0's span)
+        store.remember(0, aid(3)); // grows path 0's overflow → shifts path 1's
         assert_eq!(
             store.seen_ids(0).overflow,
             &[aid(2), aid(3)][..],
@@ -341,13 +363,13 @@ mod tests {
         // floor=2, overflow=8, per-path cap=4. Once the path has 4 ids (2 floor
         // + 2 overflow), the next insert evicts floor[0], promotes overflow[0]
         // to floor's last slot, rotates the overflow slice, appends new at end.
-        let mut store: TieredSeenAnnounceIds<2, 8, 2> = TieredSeenAnnounceIds::new();
-        store.remember(0, aid(1), 4); // floor[0]
-        store.remember(0, aid(2), 4); // floor[1]
-        store.remember(0, aid(3), 4); // overflow[0]
-        store.remember(0, aid(4), 4); // overflow[1] — at cap now
+        let mut store: TieredSeenAnnounceIds<2, 8, 2, 4> = TieredSeenAnnounceIds::new();
+        store.remember(0, aid(1)); // floor[0]
+        store.remember(0, aid(2)); // floor[1]
+        store.remember(0, aid(3)); // overflow[0]
+        store.remember(0, aid(4)); // overflow[1] — at cap now
         assert_eq!(
-            store.remember(0, aid(5), 4),
+            store.remember(0, aid(5)),
             RememberOutcome::StoredEvictingOldest
         );
         let view = store.seen_ids(0);
@@ -363,12 +385,12 @@ mod tests {
     fn arena_exhausted_rotates_within_floor_when_path_has_no_overflow() {
         // floor=3, overflow=0 (degenerate). Once floor fills, every new id
         // rotates within floor — no overflow ever exists for this path.
-        let mut store: TieredSeenAnnounceIds<3, 0, 1> = TieredSeenAnnounceIds::new();
-        store.remember(0, aid(1), 64);
-        store.remember(0, aid(2), 64);
-        store.remember(0, aid(3), 64);
+        let mut store: TieredSeenAnnounceIds<3, 0, 1, 64> = TieredSeenAnnounceIds::new();
+        store.remember(0, aid(1));
+        store.remember(0, aid(2));
+        store.remember(0, aid(3));
         assert_eq!(
-            store.remember(0, aid(4), 64),
+            store.remember(0, aid(4)),
             RememberOutcome::StoredEvictingOldest
         );
         assert_eq!(store.seen_ids(0).floor, &[aid(2), aid(3), aid(4)][..]);
@@ -381,12 +403,12 @@ mod tests {
         // + overflow[2,3]. Arena now full. Next insert can't grow overflow
         // (arena exhausted) and not at per-path cap (3 < 64), so it falls into
         // the rotate-with-promotion path.
-        let mut store: TieredSeenAnnounceIds<1, 2, 1> = TieredSeenAnnounceIds::new();
-        store.remember(0, aid(1), 64); // floor[0]
-        store.remember(0, aid(2), 64); // overflow[0]
-        store.remember(0, aid(3), 64); // overflow[1] — arena full now
+        let mut store: TieredSeenAnnounceIds<1, 2, 1, 64> = TieredSeenAnnounceIds::new();
+        store.remember(0, aid(1)); // floor[0]
+        store.remember(0, aid(2)); // overflow[0]
+        store.remember(0, aid(3)); // overflow[1] — arena full now
         assert_eq!(
-            store.remember(0, aid(4), 64),
+            store.remember(0, aid(4)),
             RememberOutcome::StoredEvictingOldest
         );
         // floor[0] = old floor's only slot was aid(1); evict it. Promote
@@ -402,9 +424,9 @@ mod tests {
     fn floor_equal_to_per_path_cap_reverts_to_per_path_full_allocation() {
         // Abundance config: floor == per-path cap, so overflow is vestigial.
         // Every insert lands in floor; once full, rotates within floor.
-        let mut store: TieredSeenAnnounceIds<3, 0, 1> = TieredSeenAnnounceIds::new();
+        let mut store: TieredSeenAnnounceIds<3, 0, 1, 3> = TieredSeenAnnounceIds::new();
         for n in 0..5u8 {
-            store.remember(0, aid(n), 3);
+            store.remember(0, aid(n));
         }
         // Floor cap 3: kept the last 3 (aid(2), aid(3), aid(4)).
         let view = store.seen_ids(0);
@@ -416,15 +438,15 @@ mod tests {
 
     #[test]
     fn identical_operation_sequences_yield_byte_identical_stores() {
-        fn build() -> TieredSeenAnnounceIds<2, 8, 3> {
-            let mut s = TieredSeenAnnounceIds::<2, 8, 3>::new();
-            s.remember(0, aid(1), 4);
-            s.remember(0, aid(2), 4);
-            s.remember(1, aid(11), 4);
-            s.remember(0, aid(3), 4);
-            s.remember(1, aid(12), 4);
-            s.remember(0, aid(4), 4);
-            s.remember(0, aid(5), 4); // triggers rotate
+        fn build() -> TieredSeenAnnounceIds<2, 8, 3, 4> {
+            let mut s = TieredSeenAnnounceIds::<2, 8, 3, 4>::new();
+            s.remember(0, aid(1));
+            s.remember(0, aid(2));
+            s.remember(1, aid(11));
+            s.remember(0, aid(3));
+            s.remember(1, aid(12));
+            s.remember(0, aid(4));
+            s.remember(0, aid(5)); // triggers rotate
             s
         }
         assert_eq!(build(), build());
@@ -432,17 +454,17 @@ mod tests {
 
     #[test]
     fn max_per_path_below_floor_rotates_visible_prefix() {
-        // FLOOR=4, max_per_path=2: the path fills the live prefix to 2 ids,
+        // FLOOR=4, MAX_PER_PATH=2: the path fills the live prefix to 2 ids,
         // then every subsequent insert must rotate *within that visible slice*
         // (not over the full floor capacity). Otherwise the new id would land
         // at floor[3] while the view only exposes floor[..2].
-        let mut store: TieredSeenAnnounceIds<4, 8, 1> = TieredSeenAnnounceIds::new();
-        store.remember(0, aid(1), 2);
-        store.remember(0, aid(2), 2);
+        let mut store: TieredSeenAnnounceIds<4, 8, 1, 2> = TieredSeenAnnounceIds::new();
+        store.remember(0, aid(1));
+        store.remember(0, aid(2));
         assert_eq!(tier_lens(&store, 0), (2, 0));
         // At the cap. Next insert must rotate inside the live prefix.
         assert_eq!(
-            store.remember(0, aid(3), 2),
+            store.remember(0, aid(3)),
             RememberOutcome::StoredEvictingOldest
         );
         let view = store.seen_ids(0);
@@ -454,7 +476,7 @@ mod tests {
 
     #[test]
     fn view_is_empty_for_an_unused_slot() {
-        let store: TieredSeenAnnounceIds<4, 16, 4> = TieredSeenAnnounceIds::new();
+        let store: TieredSeenAnnounceIds<4, 16, 4, 64> = TieredSeenAnnounceIds::new();
         assert!(store.seen_ids(2).is_empty());
         assert_eq!(store.seen_ids(2).len(), 0);
     }
