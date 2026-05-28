@@ -37,33 +37,26 @@ pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
-/// Retained engine state. Generic over the three storage backends from
-/// [`crate::routing::storage`]; the default type parameters resolve to the no_std
-/// stack-resident backends, so bare `EngineState` is the embedded-friendly
-/// default. A capable host substitutes alternate backends at the type
-/// parameters; [`DefaultEngineState`] is the const-generic-sized convenience
-/// alias for staying on the defaults but tuning their sizes.
+/// Retained engine state. **Purely abstract** in its type parameters — does
+/// not name a preset. The no_std stack-resident preset lives in
+/// [`DefaultEngineState`]; that's the canonical embedded entry point. A
+/// capable host substitutes alternate routing-storage backends at the type
+/// parameters directly.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EngineState<
-    C: RouteColumns = FixedArrayRouteColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
-    S: AnnounceIdHistory = TieredAnnounceIdHistory<
-        DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-        DEFAULT_HISTORY_OVERFLOW_CAPACITY,
-        DEFAULT_MAX_TRACKED_DESTINATIONS,
-        DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
-    >,
-    P: RetainedAppData = PackedAppDataArena<
-        DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-        DEFAULT_MAX_TRACKED_DESTINATIONS,
-    >,
-> {
+pub struct EngineState<C, S, P>
+where
+    C: RouteColumns,
+    S: AnnounceIdHistory,
+    P: RetainedAppData,
+{
     tick_count: u64,
     ingested_packet_count: u64,
     routing_table: RoutingTable<C, S, P>,
 }
 
-/// Convenience alias for the no_std default backends sized by the existing
-/// const-generic knobs. Mirrors [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable).
+/// The no_std stack-resident engine-state preset — the only place the
+/// default backend choices are named. Mirrors
+/// [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable).
 pub type DefaultEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -232,8 +225,8 @@ mod tests {
 
     #[test]
     fn tick_advances_count_deterministically() {
-        let mut left: EngineState = EngineState::default();
-        let mut right: EngineState = EngineState::default();
+        let mut left: DefaultEngineState = DefaultEngineState::default();
+        let mut right: DefaultEngineState = DefaultEngineState::default();
 
         let left_out = tick(&mut left, InstantMillis(1_000));
         let right_out = tick(&mut right, InstantMillis(1_000));
@@ -246,7 +239,7 @@ mod tests {
 
     #[test]
     fn ingest_counts_the_batch_without_a_clock() {
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let batch = [
             InboundPacket {
                 arrival: InstantMillis(10),
@@ -285,7 +278,7 @@ mod tests {
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
 
         let first = ingest(
             &mut state,
@@ -319,7 +312,7 @@ mod tests {
         // leaves the announce's signature intact.
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -331,7 +324,7 @@ mod tests {
 
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -350,7 +343,7 @@ mod tests {
         let destination =
             DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
 
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -375,7 +368,7 @@ mod tests {
 
     #[test]
     fn ingest_processes_but_does_not_accept_non_announce_bytes() {
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let junk = InboundPacket {
             arrival: InstantMillis(1),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],

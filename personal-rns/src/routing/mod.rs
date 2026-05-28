@@ -37,40 +37,38 @@ pub use types::{
 /// Routing table composed of three substitutable storage backends:
 ///
 /// - `C: RouteColumns` — the SoA per-destination columns.
-/// - `S: AnnounceIdHistory` — the per-destination set of recently-seen announce ids.
-/// - `P: RetainedAppData` — the variable-length app_data arena.
+/// - `S: AnnounceIdHistory` — the per-destination accumulated history of
+///   announce ids heard.
+/// - `P: RetainedAppData` — the variable-length `app_data` tail of each
+///   retained announce.
 ///
-/// Defaults resolve to the no_std stack-resident backends. See
-/// [`DefaultRoutingTable`] for the const-generic-sized convenience alias
-/// and [`crate::routing::storage`] for the trait catalogue.
+/// This type is **purely abstract** — it does not name a preset. The
+/// no_std stack-resident preset lives in [`DefaultRoutingTable`]; that's
+/// the canonical embedded entry point. A capable host substitutes alternate
+/// backends (heap-resident, mmap-backed, etc.) at the type parameters
+/// directly.
 ///
 /// `PartialEq` is structural — it compares every backend's representation
-/// byte-for-byte. The engine's determinism tests rely on this; do not use it
-/// to ask "do two tables built by different routes hold the same paths."
+/// byte-for-byte. The engine's determinism tests rely on this; do not use
+/// it to ask "do two tables built by different routes hold the same paths."
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RoutingTable<
-    C: RouteColumns = FixedArrayRouteColumns<DEFAULT_MAX_TRACKED_DESTINATIONS>,
-    S: AnnounceIdHistory = TieredAnnounceIdHistory<
-        DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-        DEFAULT_HISTORY_OVERFLOW_CAPACITY,
-        DEFAULT_MAX_TRACKED_DESTINATIONS,
-        DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
-    >,
-    P: RetainedAppData = PackedAppDataArena<
-        DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-        DEFAULT_MAX_TRACKED_DESTINATIONS,
-    >,
-> {
+pub struct RoutingTable<C, S, P>
+where
+    C: RouteColumns,
+    S: AnnounceIdHistory,
+    P: RetainedAppData,
+{
     columns: C,
     announce_id_history: S,
     retained_app_data: P,
 }
 
-
-/// Convenience alias for the no_std default backends parameterized by the
-/// existing const-generic knobs. Lets call sites that want to tune the
-/// no_std backends' sizes do so with a familiar const-generic shape rather
-/// than spelling out the full `RoutingTable<C, S, P>`.
+/// The no_std stack-resident routing-table preset — the only place the
+/// default backend choices (`FixedArrayRouteColumns`,
+/// `TieredAnnounceIdHistory`, `PackedAppDataArena`) are named. Lets call
+/// sites tune the sizes via const generics without spelling out the full
+/// `RoutingTable<C, S, P>`. Bare `DefaultRoutingTable` uses the
+/// `DEFAULT_*` sizing knobs from [`crate::routing::defaults`].
 pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -335,7 +333,7 @@ mod tests {
 
     #[test]
     fn first_record_creates_a_path() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         assert_eq!(
             record(
                 &mut table,
@@ -354,7 +352,7 @@ mod tests {
 
     #[test]
     fn refresh_updates_in_place_and_remembers_distinct_ids() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         record(
             &mut table,
             dest(1),
@@ -380,7 +378,7 @@ mod tests {
 
     #[test]
     fn re_recording_the_same_id_does_not_duplicate_it() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         let id = announce_id(0xAA, 1);
         record(
             &mut table,
@@ -410,7 +408,7 @@ mod tests {
 
     #[test]
     fn seen_set_evicts_oldest_when_full() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         // Fill past capacity; the first id must be evicted, the last retained.
         for n in 0..(DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION as u64 + 3) {
             record(
@@ -437,7 +435,7 @@ mod tests {
 
     #[test]
     fn new_destinations_past_capacity_are_dropped() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         for n in 0..DEFAULT_MAX_TRACKED_DESTINATIONS {
             assert_eq!(
                 record(
@@ -481,7 +479,7 @@ mod tests {
 
     #[test]
     fn record_retains_the_payload_and_refresh_replaces_it() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         record(
             &mut table,
             dest(1),
@@ -507,7 +505,7 @@ mod tests {
 
     #[test]
     fn distinct_destinations_retain_independent_payloads() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         record(
             &mut table,
             dest(1),
@@ -605,7 +603,7 @@ mod tests {
 
     #[test]
     fn ratchet_is_retained_for_faithful_rebroadcast() {
-        let mut table: RoutingTable = RoutingTable::default();
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         let ratchet = Some(RatchetKey::new([0xFE; 32]));
         let body = app_data(0xAA);
         // An announce carrying a ratchet must remember it structurally — the

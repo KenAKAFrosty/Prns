@@ -36,7 +36,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
+    use crate::engine::DefaultEngineState;
+    use crate::engine::{InboundPacket, InstantMillis, OutboundPacket};
     use crate::host::HostAdapter;
 
     /// Host with nothing queued — the steady idle case.
@@ -88,7 +89,7 @@ mod tests {
 
     #[test]
     fn step_ticks_once_when_the_queue_is_empty() {
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let mut host = IdleHost;
 
         let out = step(&mut state, &mut host).unwrap();
@@ -110,7 +111,7 @@ mod tests {
                 bytes: &[0xBB, 0xCC],
             },
         ];
-        let mut state: EngineState = EngineState::default();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
         let mut host = QueuedHost { queued: &queued };
 
         let out = step(&mut state, &mut host).unwrap();
