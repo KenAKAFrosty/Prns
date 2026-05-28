@@ -132,21 +132,18 @@ where
         })
     }
 
-    // REVIEW I think dropping app data but updating our routes is actually really bad.  We got the route *based* on the announce. Our separation here is sensible but should not separate properly-coupled concepts. I think we just reject and let the queue handle it (we still need that qaueue to really feel that, but it should work great)
-
-    /// Record an accepted route. Orchestrates across all
-    /// four backends, each with its own atomicity boundary:
+    /// Record an accepted route. Atomic across the four backends — either
+    /// every backend takes the update or none does. The route and its
+    /// retained announce are conceptually coupled (the route exists
+    /// *because* we heard the announce), so a partial success would have
+    /// us claim a freshened route while re-emitting a stale announce id +
+    /// timebase — peers would drop our gossip on replay defence and we
+    /// wouldn't know.
     ///
-    /// 1. Routes (routing-coherent): hops/expires/responsiveness refresh
-    ///    always, including when the announce payload can't be retained.
-    /// 2. Retained app_data (variable-length): insert/replace returns a
-    ///    handle. Failure here is the *only* reason an existing route
-    ///    keeps its old retained announce (the bytes must stay consistent
-    ///    with the existing signature).
-    /// 3. Retained announces (announce-coherent): only refreshes when
-    ///    step 2 cleared; signature ↔ keys ↔ app_data stay coupled.
-    /// 4. Announce-id history: append-with-eviction, independent of the
-    ///    others — we did *hear* the id either way.
+    /// On `Dropped(_)` the table is untouched. Recovering the dropped
+    /// announce (parking it for retry when arena space frees up) is the
+    /// caller's job; we surface the cause so it can route to the right
+    /// queue.
     pub fn upsert_route(
         &mut self,
         hops: u8,
@@ -155,95 +152,104 @@ where
     ) -> UpsertRouteOutcome {
         let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
-            None => {
-                //REVIEW just like cleanup thought here, create private mtehods for these branches, like update vs insert, so we can see the branching here wihtout the long arms making us lose context
-
-                // Bound-check the columns *before* taking up arena space,
-                // so a ColumnsFull error doesn't leak an AppDataHandle. For
-                // growable backends, `capacity()` is effectively infinite
-                // and this check is effectively a no-op.
-                if self.routes.len() >= self.routes.capacity() {
-                    return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
-                }
-                let Ok(handle) = self.retained_app_data.insert(announce.app_data) else {
-                    return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
-                };
-                let route_entry = RouteEntry {
-                    hops,
-                    expires: expires_at,
-                    responsiveness: RouteResponsiveness::Responsive,
-                };
-                let announce_entry = RetainedAnnounceEntry {
-                    public_keys: announce.public_keys,
-                    dotted_name_hash: announce.dotted_name_hash,
-                    retained_announce_id: announce.announce_id,
-                    maybe_ratchet: announce.ratchet,
-                    signature: announce.signature,
-                    maybe_app_data_handle: Some(handle),
-                };
-                let routes_slot = match self.routes.push(announce.destination, route_entry) {
-                    Ok(i) => i,
-                    Err(ColumnsFull) => {
-                        return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
-                    }
-                };
-                // Keep retained_announces in lockstep with the routes slot.
-                // For both fixed and growable backends with equal capacity,
-                // a successful routes.push means this push will succeed too;
-                // we surface ColumnsFull defensively for backends with
-                // mismatched capacity policies.
-                let _ = self.retained_announces.push(announce_entry);
-                self.announce_id_history
-                    .remember(routes_slot, announce.announce_id);
-                UpsertRouteOutcome::Inserted
-            }
-            Some(i) => {
-                // Phase 1 (routing-coherent): always survives.
-                self.routes.set_row(
-                    i,
-                    RouteEntry {
-                        hops,
-                        expires: expires_at,
-                        responsiveness: RouteResponsiveness::Responsive,
-                    },
-                );
-
-                // Phase 2 (announce-coherent): atomic only if the new
-                // app_data can replace the old. If the arena can't hold it,
-                // the route stays freshened but the old retained announce
-                // stays on hand — the call site recovers the dropped one
-                // via the egress cache (RNS's held-announce queue) once it
-                // exists.
-                let maybe_handle = self.retained_announces.app_data_handle()[i];
-                let Some(handle) = maybe_handle else {
-                    // Invariant: an inserted destination always has a handle.
-                    debug_assert!(false, "existing destination missing app_data handle");
-                    return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
-                };
-                if self
-                    .retained_app_data
-                    .replace(handle, announce.app_data)
-                    .is_err()
-                {
-                    return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
-                }
-                self.retained_announces.set_row(
-                    i,
-                    RetainedAnnounceEntry {
-                        public_keys: announce.public_keys,
-                        dotted_name_hash: announce.dotted_name_hash,
-                        retained_announce_id: announce.announce_id,
-                        maybe_ratchet: announce.ratchet,
-                        signature: announce.signature,
-                        maybe_app_data_handle: Some(handle),
-                    },
-                );
-
-                // Phase 3 (history): we heard the id either way.
-                self.announce_id_history.remember(i, announce.announce_id);
-                UpsertRouteOutcome::Updated
-            }
+            None => self.insert_new_route(hops, expires_at, announce),
+            Some(i) => self.refresh_existing_route(i, hops, expires_at, announce),
         }
+    }
+
+    fn insert_new_route(
+        &mut self,
+        hops: u8,
+        expires_at: InstantMillis,
+        announce: &Announce<'_>,
+    ) -> UpsertRouteOutcome {
+        // Bound-check the routes columns *before* taking up arena space,
+        // so an out-of-room routes table can't leak an AppDataHandle. For
+        // growable backends, `capacity()` is effectively infinite and this
+        // check is a no-op.
+        if self.routes.len() >= self.routes.capacity() {
+            return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
+        }
+        let Ok(handle) = self.retained_app_data.insert(announce.app_data) else {
+            return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
+        };
+        let route_entry = RouteEntry {
+            hops,
+            expires: expires_at,
+            responsiveness: RouteResponsiveness::Responsive,
+        };
+        let announce_entry = RetainedAnnounceEntry {
+            public_keys: announce.public_keys,
+            dotted_name_hash: announce.dotted_name_hash,
+            retained_announce_id: announce.announce_id,
+            maybe_ratchet: announce.ratchet,
+            signature: announce.signature,
+            maybe_app_data_handle: Some(handle),
+        };
+        let routes_slot = match self.routes.push(announce.destination, route_entry) {
+            Ok(i) => i,
+            Err(ColumnsFull) => {
+                return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
+            }
+        };
+        // Keep retained_announces in lockstep with the routes slot. For
+        // both fixed and growable backends with equal capacity, a
+        // successful routes.push means this push will succeed too; we
+        // surface ColumnsFull defensively for backends with mismatched
+        // capacity policies.
+        let _ = self.retained_announces.push(announce_entry);
+        self.announce_id_history
+            .remember(routes_slot, announce.announce_id);
+        UpsertRouteOutcome::Inserted
+    }
+
+    fn refresh_existing_route(
+        &mut self,
+        i: usize,
+        hops: u8,
+        expires_at: InstantMillis,
+        announce: &Announce<'_>,
+    ) -> UpsertRouteOutcome {
+        // Try the announce-coherent replace FIRST. If the arena can't hold
+        // the new app_data, bail with nothing changed — the route and the
+        // announce that motivated it are joined-at-the-hip (re-emission of
+        // a freshened route with stale app_data sends an old announce id +
+        // timebase, which downstream peers drop as a replay). Honest
+        // all-or-nothing.
+        let Some(handle) = self.retained_announces.app_data_handle()[i] else {
+            // An inserted destination always has a handle; this is a bug.
+            debug_assert!(false, "existing destination missing app_data handle");
+            return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
+        };
+        if self
+            .retained_app_data
+            .replace(handle, announce.app_data)
+            .is_err()
+        {
+            return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
+        }
+
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops,
+                expires: expires_at,
+                responsiveness: RouteResponsiveness::Responsive,
+            },
+        );
+        self.retained_announces.set_row(
+            i,
+            RetainedAnnounceEntry {
+                public_keys: announce.public_keys,
+                dotted_name_hash: announce.dotted_name_hash,
+                retained_announce_id: announce.announce_id,
+                maybe_ratchet: announce.ratchet,
+                signature: announce.signature,
+                maybe_app_data_handle: Some(handle),
+            },
+        );
+        self.announce_id_history.remember(i, announce.announce_id);
+        UpsertRouteOutcome::Updated
     }
 
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
@@ -573,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_that_cannot_retain_a_better_announce_exits_early_with_the_cause() {
+    fn refresh_that_cannot_retain_a_better_announce_leaves_the_table_untouched() {
         // 8-byte arena: the first payload fits, but growing it past reclaim won't.
         let mut table: DefaultRoutingTable<4, 8, 8> = DefaultRoutingTable::default();
         record(
@@ -587,8 +593,8 @@ mod tests {
         assert_eq!(table.app_data_for(&dest(1)), Some(&[0xAA; 6][..]));
 
         // A better announce (fewer hops) arrives but its payload (9) won't fit even
-        // after reclaiming the old 6. We surface the cause and bail; recovering the
-        // dropped announce (handing it to the egress cache) is the call site's job.
+        // after reclaiming the old 6. Atomicity: bail with nothing changed and let
+        // the call site park the announce for retry once arena space frees up.
         let outcome = record(
             &mut table,
             dest(1),
@@ -601,9 +607,8 @@ mod tests {
             outcome,
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull)
         );
-        // The route was refreshed before the bail; the old announce stays on hand
-        // (untouched) until the call site recovers.
-        assert_eq!(table.hop_count_to(&dest(1)), Some(2));
+        // Route, hops, and retained app_data all stay at their old values.
+        assert_eq!(table.hop_count_to(&dest(1)), Some(5));
         assert_eq!(table.app_data_for(&dest(1)), Some(&[0xAA; 6][..]));
     }
 
