@@ -11,96 +11,28 @@
 //! type parameters.
 
 pub mod announce;
+pub mod defaults;
 pub mod schedule;
 pub mod storage;
+pub mod types;
 
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 use announce::Announce;
+use defaults::DEFAULT_PATH_EXPIRY_MILLIS;
+pub use defaults::{
+    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
+    DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
+    DEFAULT_MAX_TRACKED_DESTINATIONS,
+};
 pub use storage::AnnounceIdHistoryView;
 use storage::{
     AnnounceIdHistory, ColumnsFull, FixedArrayRouteColumns, PackedAppDataArena, RetainedAppData,
     RouteColumns, RouteEntry, TieredAnnounceIdHistory,
 };
-
-/// RNS's `RNS.Transport.PATHFINDER_E`
-const DEFAULT_PATH_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
-
-/// RNS's `RNS.Transport.MAX_RANDOM_BLOBS`
-pub const DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = 64;
-
-/// How many destinations the table tracks. Fixed-capacity for the no-allocator
-/// targets; a new destination arriving past this is dropped (v1 policy).
-pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 32;
-
-/// Total byte budget for retained announce **app_data** (the one variable,
-/// genuinely-opaque tail of an announce — the rest is stored as structured
-/// columns and serialized back to wire via `Announce::to_wire` on re-emission).
-/// Sized as an average per destination rather than worst-case × destination count, so
-/// a packed [`PackedAppDataArena`] backs a full table at a fraction of the worst-case
-/// footprint. A capable host widens this independently of the destination
-/// count.
-pub const DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_MAX_TRACKED_DESTINATIONS * 256;
-
-/// Per-path inline floor for seen-announce-id retention. Every tracked path is
-/// guaranteed this many slots regardless of arena pressure — covers the typical
-/// multipath dedup fan-in (interfaces × routes) for small-to-medium mesh
-/// deployments. See [`crate::routing::storage::tiered_announce_id_history`] for the full reasoning.
-pub const DEFAULT_HISTORY_FLOOR_PER_DESTINATION: usize = 4;
-
-/// Total shared overflow capacity for seen-announce-id retention. Sized as the
-/// destination count × an average per-destination overflow draw rather than worst-case.
-///
-/// Chatty paths borrow against the budget up to `MAX_ANNOUNCE_IDS_PER_DESTINATION`, quiet
-/// paths leave it for the chatty ones. A capable host widens this independently
-/// of the floor.
-pub const DEFAULT_HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_MAX_TRACKED_DESTINATIONS * 8;
-
-/// Whether a learned path is currently answering direct traffic. RNS tracks
-/// this as a boolean `path_is_unresponsive`; modelled as a two-state type so the
-/// predicate reads as intent rather than a bare flag. Only an `Unresponsive`
-/// incumbent can be failed over from at equal evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouteResponsiveness {
-    Responsive,
-    Unresponsive,
-}
-
-/// The fields of an existing path the acceptance predicate consults, gathered
-/// from the table's columns on a lookup hit. The announce-id-history set is a borrowed
-/// two-slice view ([`AnnounceIdHistoryView`]) over the tiered store, so the predicate
-/// reads it in place.
-#[derive(Debug, Clone, Copy)]
-pub struct ExistingRoute<'a> {
-    pub hops: u8,
-    pub expires: InstantMillis,
-    pub announce_id_history: AnnounceIdHistoryView<'a>,
-    pub responsiveness: RouteResponsiveness,
-}
-
-/// What rebroadcasting a known destination's retained announce needs, gathered
-/// from the table's columns on a hit: the hop count to emit, plus the structured
-/// announce itself. Re-emission serializes it back to wire via
-/// [`Announce::to_wire`], reproducing the original payload byte-identically so
-/// the retained signature still validates.
-#[derive(Debug, Clone)]
-pub struct RetainedAnnounce<'a> {
-    pub hops: u8,
-    pub announce: Announce<'a>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DropCause {
-    RoutingTableFull,
-    PayloadArenaFull,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UpsertRouteOutcome {
-    Inserted,
-    Updated,
-    Dropped(DropCause),
-}
+pub use types::{
+    DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
+};
 
 /// Routing table composed of three substitutable storage backends:
 ///
@@ -134,10 +66,6 @@ pub struct RoutingTable<
     retained_app_data: P,
 }
 
-// I'm REALLY wondering if some of the messiness I'm feeling is because
-// this default sorta blurs the lines, and at least should go elsewhere
-// (like closer to the "default case *construction* site of all this")
-// rather than fully baked in like this
 
 /// Convenience alias for the no_std default backends parameterized by the
 /// existing const-generic knobs. Lets call sites that want to tune the
