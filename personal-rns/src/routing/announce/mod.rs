@@ -1,5 +1,4 @@
-//! The validated announce: a SINGLE-destination identity claim, only
-//! constructible once its signature and destination binding both check out.
+//! The validated announce, only constructible once its signature and destination binding both check out.
 
 pub mod acceptance;
 mod id;
@@ -12,17 +11,9 @@ pub use id::{AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN}
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, PacketType, WirePacketHeader,
+    ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, MTU, RATCHET_LEN, SIGNATURE_LEN,
     TRUNCATED_HASH_BYTE_LEN,
 };
-
-const PUBLIC_KEY_LEN: usize = 64; // X25519 encryption (32) + Ed25519 signing (32)
-const DOTTED_NAME_HASH_LEN: usize = 10;
-const RATCHET_LEN: usize = 32;
-const SIGNATURE_LEN: usize = 64;
-
-/// An announce payload never exceeds the Reticulum MTU; this bounds the scratch
-/// buffer used to reassemble the (non-contiguous) signed data.
-const MTU: usize = 500;
 
 /// The 64-byte announced public key, split by role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +94,7 @@ impl<'a> Announce<'a> {
 
         let has_ratchet = header.context_flag == ContextFlag::Set;
         let ratchet_len = if has_ratchet { RATCHET_LEN } else { 0 };
-        let fixed_len = PUBLIC_KEY_LEN
+        let fixed_len = ANNOUNCE_PUBLIC_KEY_LEN
             + DOTTED_NAME_HASH_LEN
             + ANNOUNCE_ID_WIRE_LEN
             + ratchet_len
@@ -113,10 +104,10 @@ impl<'a> Announce<'a> {
             return Err(AnnounceValidationError::PayloadTooSmall);
         }
 
-        // Slice the payload: pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖ sig ‖ app_data.
+        // Slice the payload ( pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖ sig ‖ app_data )
         let mut offset = 0;
-        let public_key = &payload[offset..offset + PUBLIC_KEY_LEN];
-        offset += PUBLIC_KEY_LEN;
+        let public_key = &payload[offset..offset + ANNOUNCE_PUBLIC_KEY_LEN];
+        offset += ANNOUNCE_PUBLIC_KEY_LEN;
         let name_hash = &payload[offset..offset + DOTTED_NAME_HASH_LEN];
         offset += DOTTED_NAME_HASH_LEN;
         let announce_id = &payload[offset..offset + ANNOUNCE_ID_WIRE_LEN];
@@ -133,8 +124,8 @@ impl<'a> Announce<'a> {
         offset += SIGNATURE_LEN;
         let app_data = &payload[offset..];
 
-        // Reassemble signed data — `dest ‖ payload-before-signature ‖ app_data`
-        // (the signature sits between, and is excluded) — then verify it.
+        // Reassemble signed data ( `dest ‖ payload-before-signature ‖ app_data` )
+        // The signature sits between, and is excluded.
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + MTU];
         let mut len = 0;
         scratch[len..len + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(header.destination.as_bytes());
@@ -148,6 +139,7 @@ impl<'a> Announce<'a> {
         signing.copy_from_slice(&public_key[32..]);
         let mut sig = [0u8; SIGNATURE_LEN];
         sig.copy_from_slice(signature);
+
         ed25519_verify(
             &Ed25519PublicKey(signing),
             &scratch[..len],
@@ -155,7 +147,7 @@ impl<'a> Announce<'a> {
         )
         .map_err(|_| AnnounceValidationError::InvalidSignature)?;
 
-        // Destination binding: dest == sha256(name_hash ‖ sha256(pubkey)[:16])[:16].
+        // Destination binding ( dest == sha256(name_hash ‖ sha256(pubkey)[:16])[:16] )
         let identity_hash = sha256(public_key);
         let mut binding_input = [0u8; DOTTED_NAME_HASH_LEN + TRUNCATED_HASH_BYTE_LEN];
         binding_input[..DOTTED_NAME_HASH_LEN].copy_from_slice(name_hash);
@@ -191,14 +183,14 @@ impl<'a> Announce<'a> {
         })
     }
 
-    /// The wire length the announce will produce when serialized.
+    /// Lightweight check of the wire length the announce will produce when serialized (without serializing)
     pub fn wire_len(&self) -> usize {
         let ratchet_len = if self.ratchet.is_some() {
             RATCHET_LEN
         } else {
             0
         };
-        PUBLIC_KEY_LEN
+        ANNOUNCE_PUBLIC_KEY_LEN
             + DOTTED_NAME_HASH_LEN
             + ANNOUNCE_ID_WIRE_LEN
             + ratchet_len
@@ -206,10 +198,10 @@ impl<'a> Announce<'a> {
             + self.app_data.len()
     }
 
-    /// Serialize the announce back to its wire payload (the input shape that
-    /// `from_wire` parses). Deterministic fixed-order concatenation, matching
-    /// RNS's layout exactly: `pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖
-    /// signature ‖ app_data`. Returns the number of bytes written. Used both for
+    /// Serialize the announce back to a matching RNS layout
+    /// ( `pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖ signature ‖ app_data`)
+    ///
+    /// Returns the number of bytes written. Used both for
     /// re-emitting a retained announce and for emitting our own.
     pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, AnnounceSerializeError> {
         let total = self.wire_len();
@@ -239,7 +231,6 @@ impl<'a> Announce<'a> {
     }
 }
 
-/// Why `to_wire` could not serialize the announce.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceSerializeError {
     BufferTooShort,

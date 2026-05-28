@@ -10,6 +10,26 @@ pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
 /// outside reach. A wire-protocol invariant, not a sizing knob.
 pub const MAX_HOP_COUNT: u8 = 128;
 
+/// RNS's `RNS.Reticulum.MTU` — the maximum byte size of one Reticulum packet
+/// peers must agree on. A wire-protocol invariant; everything that allocates
+/// per-packet scratch (announce reassembly, payload buffers) bounds against it.
+pub const MTU: usize = 500;
+
+/// 32 B X25519 encryption key + 32 B Ed25519 signing key, concatenated on the
+/// wire as one 64-byte field.
+pub const ANNOUNCE_PUBLIC_KEY_LEN: usize = 64;
+
+/// Wire width of the dotted app/aspect name hash that prefixes destination
+/// binding.
+pub const DOTTED_NAME_HASH_LEN: usize = 10;
+
+/// Wire width of the X25519 forward-secrecy ratchet public key carried by
+/// announces that opt into ratcheting.
+pub const RATCHET_LEN: usize = 32;
+
+/// Wire width of an Ed25519 signature.
+pub const SIGNATURE_LEN: usize = 64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
     BufferTooShort,
