@@ -79,7 +79,7 @@ impl AnnounceAcceptanceInput<'_> {
 
         let mut announce_id_was_already_seen = false;
         let mut path_max_emitted = MonotonicTimebase::ZERO;
-        for stored in existing.seen_announce_ids {
+        for stored in existing.seen_announce_ids.iter() {
             if !announce_id_was_already_seen && *stored == self.announce_id {
                 announce_id_was_already_seen = true;
                 if !is_longer_hops {
@@ -129,6 +129,7 @@ impl AnnounceAcceptanceInput<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path::SeenAnnounceIds;
 
     fn announce_id(nonce_byte: u8, timebase: u64) -> AnnounceId {
         let mut bytes = [0u8; 10];
@@ -211,7 +212,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -232,7 +236,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -253,7 +260,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 3,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -274,7 +284,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 2,
                 expires: InstantMillis(1_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(2_000),
@@ -297,7 +310,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 2,
                 expires: InstantMillis(1_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(2_000),
@@ -318,7 +334,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -339,7 +358,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Unresponsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -360,7 +382,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -381,7 +406,10 @@ mod tests {
             existing_path: Some(ExistingPath {
                 hops: 2,
                 expires: InstantMillis(10_000),
-                seen_announce_ids: core::slice::from_ref(&stored),
+                seen_announce_ids: SeenAnnounceIds::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
                 responsiveness: PathResponsiveness::Responsive,
             }),
             arrived_at: InstantMillis(1_000),
@@ -389,6 +417,60 @@ mod tests {
         assert_eq!(
             decision,
             AnnounceAcceptanceDecision::Reject(RejectReason::StaleEvidence)
+        );
+    }
+
+    #[test]
+    fn replay_of_an_id_only_in_overflow_is_recognized_as_known() {
+        // The predicate iterates the view's floor and overflow back-to-back;
+        // a replay of an id that lives exclusively in the overflow tier must
+        // still hit the KnownRouteReplay branch. (Pre-fix, an iterator that
+        // skipped overflow would have let the replay through.)
+        let floor = [announce_id(0xA, 100), announce_id(0xB, 200)];
+        let overflow = [announce_id(0xC, 300), announce_id(0xD, 400)];
+        let replayed = overflow[0];
+        let decision = decide(AnnounceAcceptanceInput {
+            packet_hops: 3,
+            announce_id: replayed,
+            destination_is_local: false,
+            existing_path: Some(ExistingPath {
+                hops: 3,
+                expires: InstantMillis(10_000),
+                seen_announce_ids: SeenAnnounceIds::from_slices(&floor, &overflow),
+                responsiveness: PathResponsiveness::Responsive,
+            }),
+            arrived_at: InstantMillis(1_000),
+        });
+        assert_eq!(
+            decision,
+            AnnounceAcceptanceDecision::Reject(RejectReason::KnownRouteReplay)
+        );
+    }
+
+    #[test]
+    fn max_emitted_calculation_includes_overflow_ids() {
+        // path_max_emitted is the running max across every seen id — overflow
+        // entries have to be included for the same-hops "newer evidence?" gate
+        // to compare against the right ceiling. We put the newest stored
+        // timebase in overflow and arrive with one that beats the floor but
+        // not the overflow; the predicate should reject as no-newer-evidence.
+        let floor = [announce_id(0xA, 100)];
+        let overflow = [announce_id(0xB, 500)]; // newer than floor's 100
+        let decision = decide(AnnounceAcceptanceInput {
+            packet_hops: 3,
+            announce_id: announce_id(0xC, 300), // newer than floor, older than overflow
+            destination_is_local: false,
+            existing_path: Some(ExistingPath {
+                hops: 3,
+                expires: InstantMillis(10_000),
+                seen_announce_ids: SeenAnnounceIds::from_slices(&floor, &overflow),
+                responsiveness: PathResponsiveness::Responsive,
+            }),
+            arrived_at: InstantMillis(1_000),
+        });
+        assert_eq!(
+            decision,
+            AnnounceAcceptanceDecision::Reject(RejectReason::KnownRouteNoNewerEvidence)
         );
     }
 }

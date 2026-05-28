@@ -20,11 +20,15 @@ pub fn step<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_SEEN_ANNOUNCE_IDS: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+    const SEEN_IDS_FLOOR_PER_PATH: usize,
+    const SEEN_IDS_OVERFLOW_CAPACITY: usize,
 >(
     state: &mut EngineState<
         MAX_TRACKED_DESTINATIONS,
         MAX_SEEN_ANNOUNCE_IDS,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
     >,
     host: &mut H,
 ) -> Result<StepOutput, H::Error> {

@@ -9,6 +9,7 @@ use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceIn
 use crate::path::{
     PathTable, RecordPathOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
+    DEFAULT_SEEN_IDS_FLOOR_PER_PATH, DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
 };
 use crate::wire::WirePacketHeader;
 
@@ -32,31 +33,47 @@ pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
-/// Retained engine state. The three const parameters size the path table's
-/// fixed capacity — tracked destinations, remembered announce ids per
-/// destination, and the shared byte budget for retained announce `app_data`
-/// (the rest of each announce is held in structured columns and serialized
-/// back to wire on re-emission). They default to the RNS-derived values, so
-/// plain `EngineState` is the embedded-friendly default and a capable host
-/// opts into a larger table with
-/// `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS, APP_DATA_ARENA_BYTES>::default()`.
+/// Retained engine state. The const parameters size the path table's fixed
+/// capacity — tracked destinations, the per-path cap on remembered announce
+/// ids, the shared byte budget for retained announce `app_data` (the rest of
+/// each announce is held in structured columns and serialized back to wire on
+/// re-emission), and the two seen-id tier sizes (per-path inline floor + shared
+/// overflow). They default to the RNS-derived values, so plain `EngineState`
+/// is the embedded-friendly default and a capable host opts into a larger
+/// table with `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS, ...>::default()`.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+    const SEEN_IDS_FLOOR_PER_PATH: usize = DEFAULT_SEEN_IDS_FLOOR_PER_PATH,
+    const SEEN_IDS_OVERFLOW_CAPACITY: usize = DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
 > {
     tick_count: u64,
     ingested_packet_count: u64,
-    path_table:
-        PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_APP_DATA_ARENA_BYTES>,
+    path_table: PathTable<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
+    >,
 }
 
 impl<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_SEEN_ANNOUNCE_IDS: usize,
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    > EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_APP_DATA_ARENA_BYTES>
+        const SEEN_IDS_FLOOR_PER_PATH: usize,
+        const SEEN_IDS_OVERFLOW_CAPACITY: usize,
+    >
+    EngineState<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
+    >
 {
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
@@ -114,11 +131,15 @@ pub fn ingest<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_SEEN_ANNOUNCE_IDS: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+    const SEEN_IDS_FLOOR_PER_PATH: usize,
+    const SEEN_IDS_OVERFLOW_CAPACITY: usize,
 >(
     state: &mut EngineState<
         MAX_TRACKED_DESTINATIONS,
         MAX_SEEN_ANNOUNCE_IDS,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
     >,
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput {
@@ -191,11 +212,15 @@ pub fn tick<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_SEEN_ANNOUNCE_IDS: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+    const SEEN_IDS_FLOOR_PER_PATH: usize,
+    const SEEN_IDS_OVERFLOW_CAPACITY: usize,
 >(
     state: &mut EngineState<
         MAX_TRACKED_DESTINATIONS,
         MAX_SEEN_ANNOUNCE_IDS,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
     >,
     _now: InstantMillis,
 ) -> TickOutput {

@@ -13,6 +13,8 @@ use crate::announce::{Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, 
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
 use crate::payload_store::{PayloadHandle, PayloadStore};
+pub use crate::tiered_seen_ids::SeenAnnounceIds;
+use crate::tiered_seen_ids::TieredSeenAnnounceIds;
 use crate::wire::DestinationHash;
 
 /// RNS's `RNS.Transport.PATHFINDER_M`
@@ -37,49 +39,18 @@ pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 32;
 /// count.
 pub const DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_MAX_TRACKED_DESTINATIONS * 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RememberOutcome {
-    AlreadyKnown,
-    StoredFresh,
-    StoredEvictingOldest,
-}
+/// Per-path inline floor for seen-announce-id retention. Every tracked path is
+/// guaranteed this many slots regardless of arena pressure — covers the typical
+/// multipath dedup fan-in (interfaces × routes) for small-to-medium mesh
+/// deployments. See [`crate::tiered_seen_ids`] for the full reasoning.
+pub const DEFAULT_SEEN_IDS_FLOOR_PER_PATH: usize = 4;
 
-/// A fixed-capacity, insertion-ordered set of the most-recently-heard announce
-/// ids for one destination (a bounded FIFO with dedup). Re-hearing an id is a
-/// no-op (no promotion). Mirrors RNS's `random_blobs.append(...)` then the
-/// `random_blobs[-MAX_RANDOM_BLOBS:]` truncation.
-/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1880-L1882>
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RecentAnnounceIds<const MAX_SEEN_ANNOUNCE_IDS: usize>(
-    heapless::Vec<AnnounceId, MAX_SEEN_ANNOUNCE_IDS>,
-);
-
-impl<const MAX_SEEN_ANNOUNCE_IDS: usize> RecentAnnounceIds<MAX_SEEN_ANNOUNCE_IDS> {
-    const fn new() -> Self {
-        Self(heapless::Vec::new())
-    }
-
-    fn as_slice(&self) -> &[AnnounceId] {
-        self.0.as_slice()
-    }
-
-    /// Record `announce_id` as recently heard, unless already present; evict the
-    /// oldest-inserted id when at capacity
-    fn remember(&mut self, announce_id: AnnounceId) -> RememberOutcome {
-        if self.0.contains(&announce_id) {
-            return RememberOutcome::AlreadyKnown;
-        }
-        if self.0.is_full() {
-            let ids = self.0.as_mut_slice();
-            ids.copy_within(1.., 0);
-            *ids.last_mut().expect("a full set is non-empty") = announce_id;
-            RememberOutcome::StoredEvictingOldest
-        } else {
-            let _ = self.0.push(announce_id);
-            RememberOutcome::StoredFresh
-        }
-    }
-}
+/// Total shared overflow capacity for seen-announce-id retention. Sized as the
+/// destination count × an average per-path overflow draw rather than worst-case
+/// — chatty paths borrow against the budget up to `MAX_SEEN_ANNOUNCE_IDS`, quiet
+/// paths leave it for the chatty ones. A capable host widens this independently
+/// of the floor.
+pub const DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY: usize = DEFAULT_MAX_TRACKED_DESTINATIONS * 8;
 
 /// Whether a learned path is currently answering direct traffic. RNS tracks
 /// this as a boolean `path_is_unresponsive`; modelled as a two-state type so the
@@ -92,13 +63,14 @@ pub enum PathResponsiveness {
 }
 
 /// The fields of an existing path the acceptance predicate consults, gathered
-/// from the table's columns on a lookup hit. Borrows the seen-id set rather than
-/// copying it, so the predicate reads the column in place.
+/// from the table's columns on a lookup hit. The seen-id set is a borrowed
+/// two-slice view ([`SeenAnnounceIds`]) over the tiered store, so the predicate
+/// reads it in place.
 #[derive(Debug, Clone, Copy)]
 pub struct ExistingPath<'a> {
     pub hops: u8,
     pub expires: InstantMillis,
-    pub seen_announce_ids: &'a [AnnounceId],
+    pub seen_announce_ids: SeenAnnounceIds<'a>,
     pub responsiveness: PathResponsiveness,
 }
 
@@ -147,14 +119,23 @@ pub struct PathTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+    const SEEN_IDS_FLOOR_PER_PATH: usize = DEFAULT_SEEN_IDS_FLOOR_PER_PATH,
+    const SEEN_IDS_OVERFLOW_CAPACITY: usize = DEFAULT_SEEN_IDS_OVERFLOW_CAPACITY,
 > {
     len: usize,
     destination: [DestinationHash; MAX_TRACKED_DESTINATIONS],
     hops: [u8; MAX_TRACKED_DESTINATIONS],
     expires: [InstantMillis; MAX_TRACKED_DESTINATIONS],
     responsiveness: [PathResponsiveness; MAX_TRACKED_DESTINATIONS],
-    seen_announce_ids_for_destination:
-        [RecentAnnounceIds<MAX_SEEN_ANNOUNCE_IDS>; MAX_TRACKED_DESTINATIONS],
+    /// Two-tier seen-id store: each path gets an inline floor of guaranteed
+    /// slots plus a share of the packed overflow arena. Footprint stays small
+    /// regardless of how many paths are chatty vs quiet — see
+    /// [`crate::tiered_seen_ids`].
+    seen_ids: TieredSeenAnnounceIds<
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
+        MAX_TRACKED_DESTINATIONS,
+    >,
     // The retained announce, as structured fields — gathered into an
     // `Announce<'_>` on a hit. Re-emission re-serializes via `Announce::to_wire`
     // (round-trip byte-identical to the received payload, so the stored
@@ -176,8 +157,16 @@ impl<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_SEEN_ANNOUNCE_IDS: usize,
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+        const SEEN_IDS_FLOOR_PER_PATH: usize,
+        const SEEN_IDS_OVERFLOW_CAPACITY: usize,
     > Default
-    for PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_APP_DATA_ARENA_BYTES>
+    for PathTable<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
+    >
 {
     fn default() -> Self {
         Self {
@@ -186,9 +175,7 @@ impl<
             hops: [0u8; MAX_TRACKED_DESTINATIONS],
             expires: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
             responsiveness: [PathResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
-            seen_announce_ids_for_destination: core::array::from_fn(|_| {
-                RecentAnnounceIds::<MAX_SEEN_ANNOUNCE_IDS>::new()
-            }),
+            seen_ids: TieredSeenAnnounceIds::new(),
             public_keys: [IdentityPublicKeys {
                 encryption: X25519PublicKey([0u8; 32]),
                 signing: Ed25519PublicKey([0u8; 32]),
@@ -207,7 +194,16 @@ impl<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_SEEN_ANNOUNCE_IDS: usize,
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    > PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_APP_DATA_ARENA_BYTES>
+        const SEEN_IDS_FLOOR_PER_PATH: usize,
+        const SEEN_IDS_OVERFLOW_CAPACITY: usize,
+    >
+    PathTable<
+        MAX_TRACKED_DESTINATIONS,
+        MAX_SEEN_ANNOUNCE_IDS,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
+        SEEN_IDS_FLOOR_PER_PATH,
+        SEEN_IDS_OVERFLOW_CAPACITY,
+    >
 {
     pub fn path_count(&self) -> usize {
         self.len
@@ -228,7 +224,7 @@ impl<
         Some(ExistingPath {
             hops: self.hops[i],
             expires: self.expires[i],
-            seen_announce_ids: self.seen_announce_ids_for_destination[i].as_slice(),
+            seen_announce_ids: self.seen_ids.seen_ids(i),
             responsiveness: self.responsiveness[i],
         })
     }
@@ -242,13 +238,25 @@ impl<
         arrival: InstantMillis,
         announce: &Announce<'_>,
     ) -> RecordPathOutcome {
+        // The tiered seen-ids store packs per-path overflow length in u8; the
+        // largest possible value is `MAX_SEEN_ANNOUNCE_IDS - SEEN_IDS_FLOOR_PER_PATH`,
+        // so the difference must fit in u8. If a host wants seen-id counts past
+        // 255, the next move is the std-host storage backend with a wider type,
+        // not silently widening this one.
+        const {
+            assert!(
+                MAX_SEEN_ANNOUNCE_IDS.saturating_sub(SEEN_IDS_FLOOR_PER_PATH) <= u8::MAX as usize,
+                "MAX_SEEN_ANNOUNCE_IDS - SEEN_IDS_FLOOR_PER_PATH must fit in u8 (overflow_len storage)"
+            );
+        }
         let expires = InstantMillis(arrival.0.saturating_add(DEFAULT_PATH_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             Some(i) => {
                 self.hops[i] = hops;
                 self.expires[i] = expires;
                 self.responsiveness[i] = PathResponsiveness::Responsive;
-                self.seen_announce_ids_for_destination[i].remember(announce.announce_id);
+                self.seen_ids
+                    .remember(i, announce.announce_id, MAX_SEEN_ANNOUNCE_IDS);
                 // Atomic refresh of the retained announce: try the variable
                 // `app_data` first, and only update the structured fields if it
                 // fits — otherwise the new signature wouldn't match the old
@@ -292,8 +300,9 @@ impl<
                 self.retained_announce_id[i] = announce.announce_id;
                 self.ratchet[i] = announce.ratchet;
                 self.signature[i] = announce.signature;
-                self.seen_announce_ids_for_destination[i] = RecentAnnounceIds::new();
-                self.seen_announce_ids_for_destination[i].remember(announce.announce_id);
+                // New slot is empty (default-initialized); just record the id.
+                self.seen_ids
+                    .remember(i, announce.announce_id, MAX_SEEN_ANNOUNCE_IDS);
                 self.app_data[i] = Some(handle);
                 self.len += 1;
                 RecordPathOutcome::Inserted
@@ -378,8 +387,8 @@ mod tests {
 
     /// Record a path with a no-ratchet synthetic announce — the common case for
     /// these tests; ratchet-specific assertions construct the announce inline.
-    fn record<const D: usize, const S: usize, const A: usize>(
-        table: &mut PathTable<D, S, A>,
+    fn record<const D: usize, const S: usize, const A: usize, const F: usize, const O: usize>(
+        table: &mut PathTable<D, S, A, F, O>,
         destination: DestinationHash,
         hops: u8,
         arrival: InstantMillis,
@@ -391,31 +400,6 @@ mod tests {
             arrival,
             &announce_for(destination, announce_id, None, app_data),
         )
-    }
-
-    #[test]
-    fn recent_announce_ids_report_each_remember_outcome() {
-        let mut recent = RecentAnnounceIds::<2>::new();
-        assert_eq!(
-            recent.remember(announce_id(0, 1)),
-            RememberOutcome::StoredFresh
-        );
-        // Re-hearing the same id is a no-op (no promotion).
-        assert_eq!(
-            recent.remember(announce_id(0, 1)),
-            RememberOutcome::AlreadyKnown
-        );
-        assert_eq!(
-            recent.remember(announce_id(0, 2)),
-            RememberOutcome::StoredFresh
-        );
-        // Capacity 2 is now full; a new id evicts the oldest-inserted (timebase 1).
-        assert_eq!(
-            recent.remember(announce_id(0, 3)),
-            RememberOutcome::StoredEvictingOldest
-        );
-        assert!(!recent.as_slice().contains(&announce_id(0, 1)));
-        assert!(recent.as_slice().contains(&announce_id(0, 3)));
     }
 
     #[test]
