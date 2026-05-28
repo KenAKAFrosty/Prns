@@ -1,0 +1,21 @@
+[package]
+name = "reticulum-site"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Public-facing docs site for the Personal Reticulum Suite, served at reticulum.rs."
+
+# Own workspace: keeps the (heavy) web/UI dep tree out of the core suite's
+# build and off the no_std gate. Mirrors the rvt pattern.
+[workspace]
+
+[[bin]]
+name = "reticulum-site"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to match the locally installed `dx` 0.7.5; bump dx and this together.
+dioxus = { version = "=0.7.5", features = ["router", "web"] }
+dioxus-i18n = "0.5"
+unic-langid = "0.9"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

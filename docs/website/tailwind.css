@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@theme {
+    /* Inverted-ink palette: deep substrate, cool accent. Matches the
+       engineering tone of personal-rns (deterministic, embedded-first). */
+    --color-ink: #0b0e13;
+    --color-paper: #f4f6fa;
+    --color-mid: #6c7480;
+    --color-soft: #a5acb8;
+    --color-line: #1a1f28;
+    --color-surface: #11151c;
+    --color-layer: #161b24;
+    --color-accent: #6ee7b7;
+    --color-accent-strong: #34d399;
+    --color-accent-soft: rgb(110 231 183 / 0.12);
+    --color-signal: #93c5fd;
+    --color-warn: #fbbf24;
+
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --radius-card: 1rem;
+    --radius-pill: 999px;
+
+    --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset,
+        0 12px 28px rgb(0 0 0 / 0.35);
+}
+
+html, body {
+    background: var(--color-ink);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Prose styles for markdown-rendered pages (ethos, crate docs). */
+.prose {
+    max-width: 70ch;
+    line-height: 1.7;
+    color: rgb(244 246 250 / 0.92);
+}
+.prose h1, .prose h2, .prose h3 {
+    color: var(--color-paper);
+    font-weight: 600;
+    margin-top: 2.2em;
+    margin-bottom: 0.6em;
+    letter-spacing: -0.01em;
+}
+.prose h1 { font-size: 2rem; margin-top: 0; }
+.prose h2 { font-size: 1.4rem; }
+.prose h3 { font-size: 1.15rem; }
+.prose p { margin: 1em 0; }
+.prose a {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-decoration-color: rgb(110 231 183 / 0.4);
+    text-underline-offset: 3px;
+}
+.prose a:hover { text-decoration-color: var(--color-accent); }
+.prose code {
+    font-family: var(--font-mono);
+    background: var(--color-layer);
+    color: var(--color-accent);
+    padding: 0.15em 0.4em;
+    border-radius: 0.35em;
+    font-size: 0.92em;
+}
+.prose pre {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 0.75em;
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    line-height: 1.55;
+    margin: 1.4em 0;
+}
+.prose pre code {
+    background: transparent;
+    color: rgb(244 246 250 / 0.92);
+    padding: 0;
+    border-radius: 0;
+    font-size: 0.88em;
+}
+.prose blockquote {
+    border-left: 3px solid var(--color-accent);
+    padding-left: 1em;
+    color: rgb(244 246 250 / 0.75);
+    font-style: italic;
+    margin: 1.4em 0;
+}
+.prose ul, .prose ol { margin: 1em 0; padding-left: 1.5em; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li { margin: 0.4em 0; }
+.prose hr {
+    border: none;
+    border-top: 1px solid var(--color-line);
+    margin: 2.5em 0;
+}

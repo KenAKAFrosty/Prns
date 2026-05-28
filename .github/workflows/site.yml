@@ -1,0 +1,104 @@
+name: reticulum.rs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/website/**"
+      - "docs/build-ethos.md"
+      - "personal-rns/**"
+      - "personal-rnsd/**"
+      - "personal-lxmf/**"
+      - "personal-rns-ffi/**"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+# Allow one concurrent deploy; cancel in-flight runs on new pushes.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            docs/website
+
+      - name: Install dx (dioxus-cli)
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Pin dioxus-cli to 0.7.5
+        run: cargo binstall --no-confirm --force dioxus-cli@0.7.5
+
+      - name: Set up Node (for Tailwind CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Tailwind
+        working-directory: docs/website
+        run: |
+          mkdir -p public/assets
+          npm install --no-fund --no-audit
+          npm run build:css
+
+      - name: Build site (web SPA)
+        working-directory: docs/website
+        run: dx build --platform web --release
+
+      - name: Build workspace rustdoc
+        run: cargo doc --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+      - name: Assemble dist
+        run: |
+          set -euo pipefail
+          DIST=docs/website/target/dx/reticulum-site/release/web/public
+          test -d "$DIST" || { echo "Bundle output missing"; exit 1; }
+          # Drop rustdoc under /api/ so the site nav's "API" link resolves.
+          mkdir -p "$DIST/api"
+          cp -R target/doc/. "$DIST/api/"
+          # Top-level redirect so /api/ lands somewhere meaningful.
+          cat > "$DIST/api/index.html" <<'HTML'
+          <!doctype html>
+          <meta http-equiv="refresh" content="0; url=./personal_rns/index.html">
+          <link rel="canonical" href="./personal_rns/index.html">
+          HTML
+          # CNAME ensures the custom domain survives every publish.
+          cp docs/website/public/CNAME "$DIST/CNAME"
+          echo "Dist contents:"
+          ls -la "$DIST"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/website/target/dx/reticulum-site/release/web/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

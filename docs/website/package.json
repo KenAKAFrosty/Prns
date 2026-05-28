@@ -1,0 +1,14 @@
+{
+  "name": "reticulum-site-assets",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Tailwind v4 build tooling for the reticulum.rs Dioxus site. Rust is the application language; this manifest exists only because the official Tailwind v4 toolchain ships via npm.",
+  "scripts": {
+    "build:css": "tailwindcss -i ./tailwind.css -o ./public/assets/tailwind.css --minify",
+    "watch:css": "tailwindcss -i ./tailwind.css -o ./public/assets/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4",
+    "tailwindcss": "^4"
+  }
+}
