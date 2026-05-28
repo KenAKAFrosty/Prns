@@ -15,7 +15,7 @@ landing-cta-crates = How we build it
 
 # Pull quote
 landing-quote-label = What we're building toward
-landing-quote-body = Reticulum is the foundational communication infrastructure of the bright future we can have, if we build it. This is our effort to bring it into the hands of more developers, to help realize that future.
+landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, if we build it. This is our effort to bring it into the hands of more developers, to help realize that future.
 
 # What you can count on (standards callout)
 standards-section-label = Our standards
