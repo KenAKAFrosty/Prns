@@ -7,10 +7,10 @@
 
 use crate::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::path::{
-    PathTable, RecordPathOutcome, DEFAULT_ANNOUNCE_PAYLOAD_ARENA_BYTES,
+    PathTable, RecordPathOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     DEFAULT_MAX_SEEN_ANNOUNCE_IDS, DEFAULT_MAX_TRACKED_DESTINATIONS,
 };
-use crate::wire::{DestinationHash, WirePacketHeader};
+use crate::wire::WirePacketHeader;
 
 /// Monotonic timestamp supplied by the host, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -34,27 +34,29 @@ pub struct OutboundPacket<'a> {
 
 /// Retained engine state. The three const parameters size the path table's
 /// fixed capacity — tracked destinations, remembered announce ids per
-/// destination, and the shared byte budget for retained announce payloads. They
-/// default to the RNS-derived values, so plain `EngineState` is the
-/// embedded-friendly default and a capable host opts into a larger table with
-/// `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS, PAYLOAD_ARENA_BYTES>::default()`.
+/// destination, and the shared byte budget for retained announce `app_data`
+/// (the rest of each announce is held in structured columns and serialized
+/// back to wire on re-emission). They default to the RNS-derived values, so
+/// plain `EngineState` is the embedded-friendly default and a capable host
+/// opts into a larger table with
+/// `EngineState::<MAX_DESTINATIONS, MAX_SEEN_IDS, APP_DATA_ARENA_BYTES>::default()`.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_SEEN_ANNOUNCE_IDS: usize = DEFAULT_MAX_SEEN_ANNOUNCE_IDS,
-    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_PAYLOAD_ARENA_BYTES,
+    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
 > {
     tick_count: u64,
     ingested_packet_count: u64,
     path_table:
-        PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_PAYLOAD_ARENA_BYTES>,
+        PathTable<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_APP_DATA_ARENA_BYTES>,
 }
 
 impl<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_SEEN_ANNOUNCE_IDS: usize,
-        const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
-    > EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_PAYLOAD_ARENA_BYTES>
+        const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+    > EngineState<MAX_TRACKED_DESTINATIONS, MAX_SEEN_ANNOUNCE_IDS, ANNOUNCE_APP_DATA_ARENA_BYTES>
 {
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
@@ -67,12 +69,6 @@ impl<
     /// Number of destinations the engine currently has a path to.
     pub fn path_count(&self) -> usize {
         self.path_table.path_count()
-    }
-
-    /// The retained announce payload for a known destination, or `None` if the
-    /// destination is unknown or its announce isn't currently on hand.
-    pub fn announce_payload(&self, destination: &DestinationHash) -> Option<&[u8]> {
-        self.path_table.announce_payload(destination)
     }
 }
 
@@ -117,12 +113,12 @@ impl TickOutput {
 pub fn ingest<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_SEEN_ANNOUNCE_IDS: usize,
-    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
 >(
     state: &mut EngineState<
         MAX_TRACKED_DESTINATIONS,
         MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_PAYLOAD_ARENA_BYTES,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
     >,
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput {
@@ -138,6 +134,21 @@ pub fn ingest<
         let Ok(announce) = Announce::from_wire(&header, payload) else {
             continue;
         };
+
+        // Self-check the parse↔serialize round-trip on every accepted announce
+        // in debug builds: if `to_wire` ever drifts from `from_wire`, we'd
+        // silently re-emit a signature-broken packet on rebroadcast. Cheap in
+        // debug (one MTU-sized scratch copy + compare), zero in release.
+        debug_assert!(
+            {
+                let mut scratch = [0u8; 500];
+                announce
+                    .to_wire(&mut scratch)
+                    .map(|n| &scratch[..n] == payload)
+                    .unwrap_or(false)
+            },
+            "Announce::to_wire(from_wire(payload)) must equal payload"
+        );
 
         // RNS increments a packet's hop count on receipt, before both the
         // acceptance gate and storing the path, so every downstream comparison
@@ -158,13 +169,10 @@ pub fn ingest<
         .determine_acceptance();
 
         if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-            let outcome = state.path_table.record_accepted_path(
-                announce.destination,
-                received_hops,
-                packet.arrival,
-                announce.announce_id,
-                payload,
-            );
+            let outcome =
+                state
+                    .path_table
+                    .record_accepted_path(received_hops, packet.arrival, &announce);
             if !matches!(outcome, RecordPathOutcome::Dropped(_)) {
                 accepted_announce_count += 1;
             }
@@ -182,12 +190,12 @@ pub fn ingest<
 pub fn tick<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_SEEN_ANNOUNCE_IDS: usize,
-    const ANNOUNCE_PAYLOAD_ARENA_BYTES: usize,
+    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
 >(
     state: &mut EngineState<
         MAX_TRACKED_DESTINATIONS,
         MAX_SEEN_ANNOUNCE_IDS,
-        ANNOUNCE_PAYLOAD_ARENA_BYTES,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
     >,
     _now: InstantMillis,
 ) -> TickOutput {
@@ -198,6 +206,7 @@ pub fn tick<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::DestinationHash;
 
     #[test]
     fn tick_advances_count_deterministically() {
@@ -313,10 +322,9 @@ mod tests {
     }
 
     #[test]
-    fn an_accepted_announce_retains_its_exact_payload_for_read_back() {
+    fn an_accepted_announce_is_retained_for_faithful_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
-        // The payload is everything after the 19-byte Type-1 header.
-        let (_, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let destination =
             DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
 
@@ -330,7 +338,17 @@ mod tests {
         );
         assert_eq!(out.accepted_announce_count(), 1);
 
-        assert_eq!(state.announce_payload(&destination), Some(payload));
+        // The structured retained announce reproduces the wire payload exactly
+        // via to_wire (so the signature still validates on re-emission), and
+        // hops are incremented on receive.
+        let retained = state
+            .path_table
+            .retained_announce(&destination)
+            .expect("the accepted announce is on hand");
+        assert_eq!(retained.hops, header.hops + 1);
+        let mut buf = [0u8; 500];
+        let n = retained.announce.to_wire(&mut buf).unwrap();
+        assert_eq!(&buf[..n], payload);
     }
 
     #[test]

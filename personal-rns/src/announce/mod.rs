@@ -60,8 +60,10 @@ impl RatchetKey {
     }
 }
 
-/// A validated announce. Holds only the announce's content; routing (hops,
-/// transport id) stays on the [`WirePacketHeader`].
+/// A validated announce. Holds the full announce content — every field needed to
+/// reproduce the exact wire payload via [`Announce::to_wire`], so the same value
+/// drives both retention (for re-emission) and origination (for our own
+/// announces). Routing (hops, transport id) stays on the [`WirePacketHeader`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Announce<'a> {
     pub destination: DestinationHash,
@@ -69,6 +71,7 @@ pub struct Announce<'a> {
     pub dotted_name_hash: DottedNameHash,
     pub announce_id: AnnounceId,
     pub ratchet: Option<RatchetKey>,
+    pub signature: Ed25519Signature,
     pub app_data: &'a [u8],
 }
 
@@ -183,9 +186,63 @@ impl<'a> Announce<'a> {
             dotted_name_hash: DottedNameHash(name),
             announce_id: AnnounceId::from_wire(id),
             ratchet,
+            signature: Ed25519Signature(sig),
             app_data,
         })
     }
+
+    /// The wire length the announce will produce when serialized.
+    pub fn wire_len(&self) -> usize {
+        let ratchet_len = if self.ratchet.is_some() {
+            RATCHET_LEN
+        } else {
+            0
+        };
+        PUBLIC_KEY_LEN
+            + DOTTED_NAME_HASH_LEN
+            + ANNOUNCE_ID_WIRE_LEN
+            + ratchet_len
+            + SIGNATURE_LEN
+            + self.app_data.len()
+    }
+
+    /// Serialize the announce back to its wire payload (the input shape that
+    /// `from_wire` parses). Deterministic fixed-order concatenation, matching
+    /// RNS's layout exactly: `pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖
+    /// signature ‖ app_data`. Returns the number of bytes written. Used both for
+    /// re-emitting a retained announce and for emitting our own.
+    pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, AnnounceSerializeError> {
+        let total = self.wire_len();
+        if buf.len() < total {
+            return Err(AnnounceSerializeError::BufferTooShort);
+        }
+        let mut offset = 0;
+        buf[offset..offset + 32].copy_from_slice(&self.public_keys.encryption.0);
+        offset += 32;
+        buf[offset..offset + 32].copy_from_slice(&self.public_keys.signing.0);
+        offset += 32;
+        buf[offset..offset + DOTTED_NAME_HASH_LEN]
+            .copy_from_slice(self.dotted_name_hash.as_bytes());
+        offset += DOTTED_NAME_HASH_LEN;
+        buf[offset..offset + ANNOUNCE_ID_WIRE_LEN]
+            .copy_from_slice(&self.announce_id.to_wire_bytes());
+        offset += ANNOUNCE_ID_WIRE_LEN;
+        if let Some(ratchet) = &self.ratchet {
+            buf[offset..offset + RATCHET_LEN].copy_from_slice(ratchet.as_bytes());
+            offset += RATCHET_LEN;
+        }
+        buf[offset..offset + SIGNATURE_LEN].copy_from_slice(&self.signature.0);
+        offset += SIGNATURE_LEN;
+        buf[offset..offset + self.app_data.len()].copy_from_slice(self.app_data);
+        offset += self.app_data.len();
+        Ok(offset)
+    }
+}
+
+/// Why `to_wire` could not serialize the announce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceSerializeError {
+    BufferTooShort,
 }
 
 #[cfg(test)]
@@ -243,6 +300,21 @@ mod tests {
         );
         assert_eq!(announce.ratchet, None);
         assert_eq!(announce.app_data, b"hello-personal");
+    }
+
+    #[test]
+    fn to_wire_reproduces_the_real_payload_exactly() {
+        // The serializer is byte-identical with the parsed input — the round-trip
+        // that lets us re-emit a retained announce with its signature intact.
+        let raw = hx(RAW);
+        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let announce = Announce::from_wire(&header, payload).unwrap();
+
+        let mut buf = [0u8; MTU];
+        let n = announce.to_wire(&mut buf).unwrap();
+        assert_eq!(n, payload.len());
+        assert_eq!(&buf[..n], payload);
+        assert_eq!(n, announce.wire_len());
     }
 
     #[test]
