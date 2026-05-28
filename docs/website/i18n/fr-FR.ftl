@@ -4,42 +4,42 @@ nav-crates = Crates
 nav-api = API
 
 # Pied de page
-footer-tagline = Apporté par l'équipe Personal.
+footer-tagline = Construit par l'équipe Personal.
 
 # Page d'accueil
-landing-kicker = Réseaux maillés inarrêtables, pour les gens
-landing-title = Un portage de Reticulum (RNS) écrit en Rust, prêt pour la production.
-landing-subtitle = Un cœur déterministe, no_std, sans allocateur. Couvre RNS et LXMF intégralement. Bindings natifs pour Kotlin, Swift, Python, TypeScript et C#. WebAssembly pour les navigateurs et les runtimes edge. Conçu pour la performance et l'autonomie dont a besoin n'importe quelle pile Reticulum, d'un microcontrôleur à cinq dollars jusqu'à un nœud cloud. Inclut un remplacement drop-in pour rnsd.
+landing-kicker = Des réseaux maillés que rien n'arrête — pour les gens
+landing-title = Un portage de Reticulum (RNS) prêt pour la production, écrit en Rust.
+landing-subtitle = Un cœur déterministe, sans std et sans allocateur. Couverture complète de RNS et LXMF. Bindings natifs pour Kotlin, Swift, Python, TypeScript et C#. WebAssembly pour les navigateurs et les runtimes edge comme Cloudflare Workers, Fastly et Spin. Pensé pour la performance et l'autonomie dont n'importe quelle pile Reticulum a besoin — d'un microcontrôleur à cinq dollars jusqu'à un nœud cloud. Un remplacement drop-in pour rnsd est livré dans la foulée.
 landing-cta-ethos = Choisir un crate
 landing-cta-crates = Comment on le construit
 
 # Citation
-landing-quote-label = Vers quoi on bâtit
-landing-quote-body = Reticulum est l'infrastructure de communication fondatrice de l'avenir lumineux que nous pouvons avoir, si nous le construisons. Cet effort vise à le mettre entre les mains de plus de développeurs et à aider à concrétiser cet avenir.
+landing-quote-label = Ce vers quoi on bâtit
+landing-quote-body = Reticulum est l'infrastructure de communication fondatrice de l'avenir lumineux qu'on peut avoir — à condition de le construire. C'est notre manière de le mettre entre les mains de plus de développeurs et de faire avancer cet avenir, ensemble.
 
 # Ce sur quoi vous pouvez compter
 standards-section-label = Nos standards
 standards-section-title = Ce sur quoi vous pouvez compter
 standards-license-label = Licence
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = Double licence et permissive. Pas de copyleft, pas de restrictions non commerciales.
+standards-license-body = Double licence, permissive. Pas de copyleft, pas de clauses non commerciales.
 standards-coverage-label = Couverture
 standards-coverage-headline = RNS et LXMF complets
-standards-coverage-body = Pas seulement RNS. Pas LXMF en accessoire. Les deux, entièrement.
+standards-coverage-body = Pas seulement RNS. Et LXMF n'est pas en accessoire. Les deux, entiers.
 standards-core-label = Cœur
 standards-core-headline = no_std, sans allocateur
 standards-core-body = Un cœur déterministe qui tourne là où les allocateurs ne peuvent pas.
 standards-verification-label = Vérification
 standards-verification-headline = Diff-testé contre RNS
-standards-verification-body = Chaque changement est vérifié contre la référence ; des preuves formelles là où ça compte.
+standards-verification-body = Chaque changement est confronté à la référence, et là où ça compte vraiment, des preuves formelles viennent avec.
 
 # Par où je commence ?
 start-section-label = Voies d'entrée
 start-section-title = Par où je commence ?
-start-section-lead = Choisis le chemin qui correspond à ce que tu construis. Chacun pointe vers un seul crate aujourd'hui ; davantage de guides arriveront avec eux.
+start-section-lead = Choisis le chemin qui correspond à ce que tu construis. Aujourd'hui chacun mène à un seul crate ; les guides dédiés suivent au même rythme.
 
-start-daemon-headline = Je veux un nœud Reticulum en marche
-start-daemon-body = Daemon prêt à l'emploi. Drop-in pour rnsd. Mets-le à côté des nœuds que tu as déjà.
+start-daemon-headline = Je veux un nœud Reticulum en route
+start-daemon-body = Daemon prêt à l'emploi. Drop-in pour rnsd. Pose-le à côté des nœuds que tu as déjà et laisse-les tourner ensemble.
 start-daemon-code = apt install personal-rnsd
 start-daemon-target = personal-rnsd
 
@@ -49,13 +49,13 @@ start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
 start-mobile-target = personal-rns-ffi
 
-start-game-headline = J'intègre dans un jeu
-start-game-body = Bindings C# / .NET pour Unity, Godot et MonoGame. Multijoueur sans monter de serveur.
+start-game-headline = Je l'intègre dans un jeu
+start-game-body = Bindings C#/.NET pour Unity, Godot et MonoGame. Multijoueur sans monter de serveur.
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
 start-embedded-headline = Je vise les microcontrôleurs
-start-embedded-body = Le moteur plus un trait Host à trois méthodes. L'ESP32-C6 est la référence ; S3, nRF, RP2040 et STM32 suivent.
+start-embedded-body = Le moteur, plus un trait Host à seulement trois méthodes. L'ESP32-C6 est la référence ; suivent le S3, le nRF, le RP2040 et le STM32.
 start-embedded-code = cargo add personal-rns --no-default-features
 start-embedded-target = personal-rns + hosts/*
 
@@ -65,7 +65,7 @@ start-web-code = npm install personal-rns
 start-web-target = personal-rns (wasm32)
 
 start-rust-headline = Je l'embarque dans une app Rust
-start-rust-body = Un runtime RNS complet prêt à l'emploi, ou le cœur pur pour bâtir ton propre runtime autour.
+start-rust-body = Un runtime RNS complet livré tel quel, ou le cœur pur pour bâtir ton propre runtime autour. À toi de choisir.
 start-rust-code = cargo add personal-rnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = personal-rnsd or personal-rns
@@ -85,15 +85,15 @@ ethos-lead = Une note d'ingénieur à ingénieur sur la discipline derrière ce 
 
 # Index des crates
 crates-kicker = Les pièces
-crates-title = Choisis ce qui correspond à ce que tu construis.
-crates-lead = Chaque crate est conçu pour être utile seul, même si tu n'amènes pas le reste. Le moteur est le substrat ; tout le reste s'empile dessus, et d'autres pièces arrivent au fur et à mesure que la suite grandit.
+crates-title = Choisis ce qui colle à ce que tu construis.
+crates-lead = Chaque crate est pensé pour être utile seul, même si tu n'amènes pas le reste. Le moteur est le substrat ; tout le reste s'empile dessus, et d'autres pièces arrivent à mesure que la suite grandit.
 crates-card-cta = Ce qu'il fait →
 crates-back = Tous les crates
 crates-not-found = Aucun crate de ce nom
 
 # Cartes par crate
 crate-rns-role = Le moteur
-crate-rns-blurb = Mets Reticulum dans n'importe quel projet Rust. Déterministe, no_std, sans allocateur ; pas d'état global, pas d'E/S intégrées — apporte ton horloge et ton câble.
+crate-rns-blurb = Glisse Reticulum dans n'importe quel projet Rust. Déterministe, no_std, sans allocateur ; pas d'état global, pas d'E/S intégrées — apporte ton horloge et ton câble.
 crate-rnsd-role = Le daemon
 crate-rnsd-blurb = Un drop-in pour rnsd qui tourne là où Linux tourne. Même fil que la référence RNS ; utilise-le à côté ou à la place des nœuds que tu as déjà.
 crate-lxmf-role = Messagerie

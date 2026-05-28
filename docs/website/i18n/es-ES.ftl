@@ -4,42 +4,42 @@ nav-crates = Crates
 nav-api = API
 
 # Pie de página
-footer-tagline = Hecho por el equipo de Personal.
+footer-tagline = Construido por el equipo de Personal.
 
 # Página de inicio
-landing-kicker = Redes mesh imparables, para la gente
-landing-title = Una portación de Reticulum (RNS) escrita en Rust, lista para producción.
-landing-subtitle = Un núcleo determinista, no_std y sin asignador. Cubre RNS y LXMF por completo. Bindings nativos para Kotlin, Swift, Python, TypeScript y C#. WebAssembly para navegadores y runtimes edge. Pensado para el rendimiento y la autonomía que cualquier stack de Reticulum necesita, desde un microcontrolador de cinco dólares hasta un nodo en la nube. Incluye un reemplazo drop-in para rnsd.
+landing-kicker = Redes mesh imparables — para la gente
+landing-title = Una portación de Reticulum (RNS) lista para producción, escrita en Rust.
+landing-subtitle = Un núcleo determinista, sin std y sin asignador. Cobertura completa de RNS y LXMF. Bindings nativos para Kotlin, Swift, Python, TypeScript y C#. WebAssembly para navegadores y runtimes edge como Cloudflare Workers, Fastly y Spin. Pensado para el rendimiento y la autonomía que cualquier stack de Reticulum exige — desde un microcontrolador de cinco dólares hasta un nodo en la nube. Incluye un reemplazo drop-in para rnsd.
 landing-cta-ethos = Elige un crate
 landing-cta-crates = Cómo lo construimos
 
 # Cita
-landing-quote-label = Hacia lo que construimos
-landing-quote-body = Reticulum es la infraestructura de comunicación fundacional del futuro luminoso que podemos tener, si lo hacemos realidad. Este es nuestro esfuerzo por ponerlo en manos de más desarrolladores y ayudar a hacer ese futuro posible.
+landing-quote-label = Hacia lo que vamos
+landing-quote-body = Reticulum es la infraestructura de comunicación fundacional del futuro luminoso que podemos tener — si decidimos construirlo. Este es nuestro esfuerzo por ponerlo en manos de más desarrolladores y ayudar a que ese futuro tome forma.
 
 # Con lo que puedes contar
 standards-section-label = Nuestros estándares
 standards-section-title = Con lo que puedes contar
 standards-license-label = Licencia
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = Doble licencia y permisiva. Sin copyleft, sin restricciones no comerciales.
+standards-license-body = Doble licencia y permisiva. Sin copyleft y sin restricciones no comerciales.
 standards-coverage-label = Cobertura
-standards-coverage-headline = RNS y LXMF completos
-standards-coverage-body = No solo RNS. No LXMF como añadido. Ambos, por completo.
+standards-coverage-headline = RNS y LXMF, completos
+standards-coverage-body = No solo RNS. Y LXMF no es de acompañamiento. Ambos, enteros.
 standards-core-label = Núcleo
 standards-core-headline = no_std, sin asignador
 standards-core-body = Un núcleo determinista que corre donde los asignadores no llegan.
 standards-verification-label = Verificación
-standards-verification-headline = Comparado contra RNS
-standards-verification-body = Cada cambio se contrasta con la referencia; pruebas formales donde importan.
+standards-verification-headline = Diff-testado contra RNS
+standards-verification-body = Cada cambio se contrasta con la referencia, y donde de verdad importa, llegan pruebas formales.
 
 # ¿Por dónde empiezo?
 start-section-label = Caminos de entrada
 start-section-title = ¿Por dónde empiezo?
-start-section-lead = Elige el camino que coincide con lo que estás construyendo. Hoy cada uno apunta a un único crate; pronto irán llegando guías junto a ellos.
+start-section-lead = Elige el camino que coincida con lo que estás construyendo. Hoy cada uno aterriza en un único crate; las guías dedicadas vienen detrás.
 
 start-daemon-headline = Quiero un nodo Reticulum corriendo
-start-daemon-body = Daemon listo para usar. Drop-in para rnsd. Ponlo junto a los nodos que ya tienes.
+start-daemon-body = Daemon ya construido. Drop-in para rnsd. Colócalo junto a los nodos que ya tienes y déjalos correr juntos.
 start-daemon-code = apt install personal-rnsd
 start-daemon-target = personal-rnsd
 
@@ -50,12 +50,12 @@ start-mobile-code = implementation("org.staypersonal:rns:0.1")
 start-mobile-target = personal-rns-ffi
 
 start-game-headline = Lo estoy integrando en un juego
-start-game-body = Bindings C# / .NET para Unity, Godot y MonoGame. Multijugador sin levantar un servidor.
+start-game-body = Bindings C#/.NET para Unity, Godot y MonoGame. Multijugador sin levantar un servidor.
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
 start-embedded-headline = Apunto a microcontroladores
-start-embedded-body = El motor más un trait Host de tres métodos. El ESP32-C6 es la referencia; S3, nRF, RP2040 y STM32 vienen después.
+start-embedded-body = El motor más un trait Host de solo tres métodos. El ESP32-C6 es la referencia; vienen después el S3, nRF, RP2040 y STM32.
 start-embedded-code = cargo add personal-rns --no-default-features
 start-embedded-target = personal-rns + hosts/*
 
@@ -65,7 +65,7 @@ start-web-code = npm install personal-rns
 start-web-target = personal-rns (wasm32)
 
 start-rust-headline = Lo embebo en una app Rust
-start-rust-body = Un runtime RNS completo listo para usar, o el núcleo puro para montar tu propio runtime alrededor.
+start-rust-body = Un runtime RNS completo de fábrica, o el núcleo puro para montar tu propio runtime alrededor. Elige lo que te encaje.
 start-rust-code = cargo add personal-rnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = personal-rnsd or personal-rns
@@ -85,17 +85,17 @@ ethos-lead = Una nota de ingeniero a ingeniero sobre la disciplina detrás de es
 
 # Índice de crates
 crates-kicker = Las piezas
-crates-title = Elige lo que coincide con lo que estás construyendo.
-crates-lead = Cada crate está pensado para ser útil por sí mismo, aunque no traigas el resto. El motor es el sustrato; todo lo demás se apila encima, y más piezas irán llegando a medida que la suite crezca.
+crates-title = Elige el que encaje con lo que estás construyendo.
+crates-lead = Cada crate está pensado para ser útil por sí solo, aunque no traigas el resto. El motor es el sustrato; todo lo demás se apila encima, y más piezas van llegando a medida que la suite crece.
 crates-card-cta = Qué hace →
 crates-back = Todos los crates
-crates-not-found = No existe un crate con ese nombre
+crates-not-found = No existe ningún crate con ese nombre
 
 # Tarjetas por crate
 crate-rns-role = El motor
-crate-rns-blurb = Mete Reticulum en cualquier proyecto Rust. Determinista, no_std, sin asignador; sin estado global, sin E/S incorporada — trae tu propio reloj y tu propio cable.
+crate-rns-blurb = Mete Reticulum en cualquier proyecto Rust. Determinista, no_std, sin asignador; sin estado global, sin E/S incorporada — tú pones el reloj y el cable.
 crate-rnsd-role = El daemon
-crate-rnsd-blurb = Un drop-in para rnsd que corre donde corra Linux. Mismo hilo que la referencia de RNS; úsalo junto a o en lugar de los nodos que ya tienes.
+crate-rnsd-blurb = Un drop-in para rnsd que corre donde corre Linux. Mismo hilo que la referencia de RNS; úsalo junto a o en lugar de los nodos que ya tienes.
 crate-lxmf-role = Mensajería
 crate-lxmf-blurb = LXMF sobre Reticulum — la capa sobre la que se apoyan Sideband y Nomadnet. Identidades, direcciones, entrega de mensajes.
 crate-ffi-role = Bindings móviles y de Python
@@ -103,7 +103,7 @@ crate-ffi-blurb = Una sola interfaz uniffi genera Kotlin (.aar), Swift (.xcframe
 crate-rvt-role = Depurador visual
 crate-rvt-blurb = Mira a los paquetes moverse entre nodos simulados sobre un reloj virtual. Determinista — mismo escenario, mismo trazo, cada vez.
 crate-esp32c6-role = Firmware para ESP32-C6
-crate-esp32c6-blurb = Adaptador host bare-metal para el ESP32-C6. Sin sistema operativo, sin asignador — la prueba de que el motor corre en un chip RISC-V de cinco dólares con radios integradas.
+crate-esp32c6-blurb = Adaptador host bare-metal para el ESP32-C6. Sin sistema operativo y sin asignador — la prueba de que el motor corre sobre un chip RISC-V de cinco dólares con radios integradas.
 
 # 404
 not-found-title = Aquí todavía no hay nada.
