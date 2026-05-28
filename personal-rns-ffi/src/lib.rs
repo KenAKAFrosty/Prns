@@ -19,7 +19,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use personal_rns::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
+use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis, OutboundPacket};
 use personal_rns::host::HostAdapter;
 use personal_rns::runtime::step;
 
@@ -63,7 +63,7 @@ impl HostAdapter for SdkHost {
 }
 
 struct RuntimeInner {
-    state: EngineState,
+    state: DefaultEngineState,
     host: SdkHost,
 }
 
@@ -78,7 +78,7 @@ impl ReticulumRuntime {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(RuntimeInner {
-                state: EngineState::default(),
+                state: DefaultEngineState::default(),
                 host: SdkHost {
                     base: Instant::now(),
                 },

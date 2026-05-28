@@ -8,7 +8,9 @@
 
 use crate::engine::{ingest, tick, EngineState, IngestOutput, TickOutput};
 use crate::host::HostAdapter;
-use crate::routing::storage::{AnnounceIdHistory, RetainedAppData, RouteColumns};
+use crate::routing::storage::{
+    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
+};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct StepOutput {
@@ -16,13 +18,14 @@ pub struct StepOutput {
     pub tick: TickOutput,
 }
 
-pub fn step<H, C, S, P>(
-    state: &mut EngineState<C, S, P>,
+pub fn step<H, C, A, S, P>(
+    state: &mut EngineState<C, A, S, P>,
     host: &mut H,
 ) -> Result<StepOutput, H::Error>
 where
     H: HostAdapter,
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {

@@ -28,10 +28,12 @@
 //! refresh. There is intentionally no `row()` reader: that would invite
 //! AoS-shaped reads against SoA storage and defeat the layout.
 
+mod fixed_array_retained_announce_columns;
 mod fixed_array_route_columns;
 mod packed_app_data_arena;
 mod tiered_announce_id_history;
 
+pub use fixed_array_retained_announce_columns::FixedArrayRetainedAnnounceColumns;
 pub use fixed_array_route_columns::FixedArrayRouteColumns;
 pub use packed_app_data_arena::{AppDataHandle, PackedAppDataArena, RetainedAppDataError};
 pub use tiered_announce_id_history::{AnnounceIdHistoryView, TieredAnnounceIdHistory};
@@ -42,15 +44,23 @@ use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, R
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 
-/// The cold per-destination fields gathered into one row. Writes happen row-coherent
-/// (via [`RouteColumns::set_row`] / [`RouteColumns::push`]); reads
-/// are per-column through the slice accessors, so this struct only appears on
-/// the write side.
+/// The routing-coherent row written to [`RouteColumns`] — fields whose
+/// updates are independent of the announce payload (hops/expires update on
+/// every accept; responsiveness flips on path probes; future next_hop +
+/// interface land here too).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteEntry {
     pub hops: u8,
     pub expires: InstantMillis,
     pub responsiveness: RouteResponsiveness,
+}
+
+/// The announce-coherent row written to [`RetainedAnnounceColumns`] — fields
+/// the signature couples and that must refresh as a unit (signature signs
+/// the rest; replacing any one without the others would leave the retained
+/// announce unverifiable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetainedAnnounceEntry {
     pub public_keys: IdentityPublicKeys,
     pub dotted_name_hash: DottedNameHash,
     pub retained_announce_id: AnnounceId,
@@ -75,7 +85,10 @@ pub enum RememberOutcome {
     StoredEvictingOldest,
 }
 
-/// Struct-of-arrays storage of the routing table's per-destination columns.
+/// SoA columns for the routing table — the routing-coherent fields,
+/// keyed by destination. This is the primary destination index in the
+/// crate: its `destinations()` slice is the linear-scan ground truth and
+/// its slot index is what the other routing-storage traits join against.
 ///
 /// Reads are per-column slices so SoA scans stay cache-friendly. Writes go
 /// through `set_row`/`push` as a coherent unit so backends that need
@@ -96,6 +109,30 @@ pub trait RouteColumns {
     fn hops(&self) -> &[u8];
     fn expires(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
+
+    /// Row-coherent overwrite of slot `i`'s routing fields. Backends that
+    /// need transactional writes anchor atomicity here.
+    fn set_row(&mut self, i: usize, row: RouteEntry);
+
+    /// Append a new row. Bounded backends return [`ColumnsFull`] when
+    /// `len == capacity`; growable backends never error.
+    fn push(&mut self, destination: DestinationHash, row: RouteEntry)
+        -> Result<usize, ColumnsFull>;
+}
+
+/// SoA columns for the retained-announces table — the announce-coherent
+/// fields the signature couples. Slot-indexed by the [`RouteColumns`] slot
+/// for the same destination; no destination column of its own. Writes are
+/// whole-row (signature signs the rest of the row, so partial updates
+/// would leave the retained announce unverifiable).
+pub trait RetainedAnnounceColumns {
+    fn capacity(&self) -> usize;
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn public_keys(&self) -> &[IdentityPublicKeys];
     fn dotted_name_hash(&self) -> &[DottedNameHash];
     fn retained_announce_id(&self) -> &[AnnounceId];
@@ -103,14 +140,13 @@ pub trait RouteColumns {
     fn signature(&self) -> &[Ed25519Signature];
     fn app_data_handle(&self) -> &[Option<AppDataHandle>];
 
-    /// Row-coherent overwrite of slot `i`'s cold fields. Backends that need
-    /// transactional writes anchor atomicity here.
-    fn set_row(&mut self, i: usize, row: RouteEntry);
+    /// Row-coherent overwrite of slot `i`'s announce fields.
+    fn set_row(&mut self, i: usize, row: RetainedAnnounceEntry);
 
-    /// Append a new row. Bounded backends return [`ColumnsFull`] when
-    /// `len == capacity`; growable backends never error.
-    fn push(&mut self, destination: DestinationHash, row: RouteEntry)
-        -> Result<usize, ColumnsFull>;
+    /// Append a new row. The caller (engine) is responsible for keeping the
+    /// retained-announces slot in lockstep with the routes-columns slot —
+    /// they share the destination index.
+    fn push(&mut self, row: RetainedAnnounceEntry) -> Result<usize, ColumnsFull>;
 }
 
 /// Per-destination accumulated history of announce ids we've heard (RNS's

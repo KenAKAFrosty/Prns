@@ -27,20 +27,30 @@ pub use defaults::{
 };
 pub use storage::AnnounceIdHistoryView;
 use storage::{
-    AnnounceIdHistory, ColumnsFull, FixedArrayRouteColumns, PackedAppDataArena, RetainedAppData,
+    AnnounceIdHistory, ColumnsFull, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
+    PackedAppDataArena, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
     RouteColumns, RouteEntry, TieredAnnounceIdHistory,
 };
 pub use types::{
     DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
 };
 
-/// Routing table composed of three substitutable storage backends:
+/// Routing table composed of four substitutable storage backends:
 ///
-/// - `C: RouteColumns` — the SoA per-destination columns.
-/// - `S: AnnounceIdHistory` — the per-destination accumulated history of
-///   announce ids heard.
-/// - `P: RetainedAppData` — the variable-length `app_data` tail of each
-///   retained announce.
+/// - `C: RouteColumns` — SoA routing-coherent fields (hops, expires,
+///   responsiveness) keyed by destination. The primary destination index.
+/// - `A: RetainedAnnounceColumns` — SoA announce-coherent fields
+///   (public_keys, dotted_name_hash, ratchet, signature, app_data_handle)
+///   slot-indexed by `C`'s slot.
+/// - `S: AnnounceIdHistory` — per-destination history of announce ids
+///   heard, slot-indexed by `C`'s slot.
+/// - `P: RetainedAppData` — variable-length `app_data` bytes behind
+///   opaque handles, joined into `A` via `app_data_handle`.
+///
+/// Each backend has its own atomicity boundary, matching the data
+/// semantics — routing-coherent vs announce-coherent vs history-accumulate
+/// vs blob-replace. The engine's `upsert_route` orchestrates across them
+/// without packing them into one row.
 ///
 /// This type is **purely abstract** — it does not name a preset. The
 /// no_std stack-resident preset lives in [`DefaultRoutingTable`]; that's
@@ -52,22 +62,25 @@ pub use types::{
 /// byte-for-byte. The engine's determinism tests rely on this; do not use
 /// it to ask "do two tables built by different routes hold the same paths."
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RoutingTable<C, S, P>
+pub struct RoutingTable<C, A, S, P>
 where
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {
-    columns: C,
+    routes: C,
+    retained_announces: A,
     announce_id_history: S,
     retained_app_data: P,
 }
 
 /// The no_std stack-resident routing-table preset — the only place the
 /// default backend choices (`FixedArrayRouteColumns`,
-/// `TieredAnnounceIdHistory`, `PackedAppDataArena`) are named. Lets call
-/// sites tune the sizes via const generics without spelling out the full
-/// `RoutingTable<C, S, P>`. Bare `DefaultRoutingTable` uses the
+/// `FixedArrayRetainedAnnounceColumns`, `TieredAnnounceIdHistory`,
+/// `PackedAppDataArena`) are named. Lets call sites tune the sizes via
+/// const generics without spelling out the full
+/// `RoutingTable<C, A, S, P>`. Bare `DefaultRoutingTable` uses the
 /// `DEFAULT_*` sizing knobs from [`crate::routing::defaults`].
 pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
@@ -77,6 +90,7 @@ pub type DefaultRoutingTable<
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
 > = RoutingTable<
     FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
+    FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
     TieredAnnounceIdHistory<
         HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
@@ -86,22 +100,23 @@ pub type DefaultRoutingTable<
     PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
 >;
 
-impl<C, S, P> RoutingTable<C, S, P>
+impl<C, A, S, P> RoutingTable<C, A, S, P>
 where
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {
     pub fn route_count(&self) -> usize {
-        self.columns.len()
+        self.routes.len()
     }
 
     pub fn hop_count_to(&self, destination: &DestinationHash) -> Option<u8> {
-        self.index_of(destination).map(|i| self.columns.hops()[i])
+        self.index_of(destination).map(|i| self.routes.hops()[i])
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
-        self.columns
+        self.routes
             .destinations()
             .iter()
             .position(|candidate| candidate == destination)
@@ -110,16 +125,26 @@ where
     pub fn existing_route_for(&self, destination: &DestinationHash) -> Option<ExistingRoute<'_>> {
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
-            hops: self.columns.hops()[i],
-            expires: self.columns.expires()[i],
+            hops: self.routes.hops()[i],
+            expires: self.routes.expires()[i],
             announce_id_history: self.announce_id_history.history(i),
-            responsiveness: self.columns.responsiveness()[i],
+            responsiveness: self.routes.responsiveness()[i],
         })
     }
 
-    /// Record a path the predicate just accepted. The structured `announce`
-    /// carries every field needed to reproduce its exact wire payload via
-    /// `Announce::to_wire` on re-emission (signature included).
+    /// Record a route the predicate just accepted. Orchestrates across all
+    /// four backends — each is its own atomicity boundary:
+    ///
+    /// 1. Routes (routing-coherent): hops/expires/responsiveness refresh
+    ///    always, including when the announce payload can't be retained.
+    /// 2. Retained app_data (variable-length): insert/replace returns a
+    ///    handle. Failure here is the *only* reason an existing route
+    ///    keeps its old retained announce (the bytes must stay consistent
+    ///    with the existing signature).
+    /// 3. Retained announces (announce-coherent): only refreshes when
+    ///    step 2 cleared; signature ↔ keys ↔ app_data stay coupled.
+    /// 4. Announce-id history: append-with-eviction, independent of the
+    ///    others — we did *hear* the id either way.
     pub fn upsert_route(
         &mut self,
         hops: u8,
@@ -129,20 +154,22 @@ where
         let expires = InstantMillis(arrived_at.0.saturating_add(DEFAULT_PATH_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             None => {
-                // Bound-check the columns *before* taking up arena
-                // space, so a ColumnsFull error doesn't leak a AppDataHandle.
-                // For growable backends, `capacity()` is effectively infinite
+                // Bound-check the columns *before* taking up arena space,
+                // so a ColumnsFull error doesn't leak an AppDataHandle. For
+                // growable backends, `capacity()` is effectively infinite
                 // and this check is a no-op.
-                if self.columns.len() >= self.columns.capacity() {
+                if self.routes.len() >= self.routes.capacity() {
                     return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
                 }
                 let Ok(handle) = self.retained_app_data.insert(announce.app_data) else {
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 };
-                let row = RouteEntry {
+                let route_row = RouteEntry {
                     hops,
                     expires,
                     responsiveness: RouteResponsiveness::Responsive,
+                };
+                let announce_row = RetainedAnnounceEntry {
                     public_keys: announce.public_keys,
                     dotted_name_hash: announce.dotted_name_hash,
                     retained_announce_id: announce.announce_id,
@@ -150,63 +177,45 @@ where
                     signature: announce.signature,
                     maybe_app_data_handle: Some(handle),
                 };
-                match self.columns.push(announce.destination, row) {
-                    Ok(i) => {
-                        // New slot is empty (default-initialized); just record the id.
-                        self.announce_id_history.remember(i, announce.announce_id);
-                        UpsertRouteOutcome::Inserted
-                    }
+                let routes_slot = match self.routes.push(announce.destination, route_row) {
+                    Ok(i) => i,
                     Err(ColumnsFull) => {
-                        // Pre-check above should have caught this. Surfacing
-                        // it defensively in case a backend's capacity policy
-                        // is stricter than `capacity()` reports.
-                        UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull)
+                        return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
                     }
-                }
+                };
+                // Keep retained_announces in lockstep with the routes slot.
+                // For both fixed and growable backends with equal capacity,
+                // a successful routes.push means this push will succeed too;
+                // we surface ColumnsFull defensively for backends with
+                // mismatched capacity policies.
+                let _ = self.retained_announces.push(announce_row);
+                self.announce_id_history
+                    .remember(routes_slot, announce.announce_id);
+                UpsertRouteOutcome::Inserted
             }
             Some(i) => {
-                // Two coherence boundaries here, not one:
-                //   - Routing fields (hops, expires, responsiveness) are
-                //     derived from the packet and the predicate's accept
-                //     decision — independent of the announce payload.
-                //   - Announce-correlated fields (public_keys, ratchet,
-                //     signature, app_data) must stay consistent with each
-                //     other (the signature signs the rest); refresh as one.
-                //
-                // So we refresh routing first (always survives), then attempt
-                // the announce-payload replace, and only on its success do we
-                // refresh the announce-correlated fields. If the arena can't
-                // hold the new payload, the route stays freshened but the old
-                // announce stays on hand for the call site to recover via the
-                // egress cache (RNS's held-announce queue) once it exists.
-                let maybe_handle = self.columns.app_data_handle()[i];
-                self.columns.set_row(
+                // Phase 1 (routing-coherent): always survives.
+                self.routes.set_row(
                     i,
                     RouteEntry {
                         hops,
                         expires,
                         responsiveness: RouteResponsiveness::Responsive,
-                        // Announce-correlated fields stay as they were until
-                        // the replace clears.
-                        public_keys: self.columns.public_keys()[i],
-                        dotted_name_hash: self.columns.dotted_name_hash()[i],
-                        retained_announce_id: self.columns.retained_announce_id()[i],
-                        signature: self.columns.signature()[i],
-                        maybe_ratchet: self.columns.ratchet()[i],
-                        maybe_app_data_handle: maybe_handle,
                     },
                 );
 
-                // Any inserted destination carries a handle; the `Option` is
-                // for default (unused) slots only. If the invariant ever
-                // breaks, the routing was already refreshed — surface the
-                // same outcome a failed replace would so the call site
-                // recovers along the same path.
+                // Phase 2 (announce-coherent): atomic only if the new
+                // app_data can replace the old. If the arena can't hold it,
+                // the route stays freshened but the old retained announce
+                // stays on hand — the call site recovers the dropped one
+                // via the egress cache (RNS's held-announce queue) once it
+                // exists.
+                let maybe_handle = self.retained_announces.app_data_handle()[i];
                 let Some(handle) = maybe_handle else {
+                    // Invariant: an inserted destination always has a handle.
                     debug_assert!(false, "existing destination missing app_data handle");
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 };
-
                 if self
                     .retained_app_data
                     .replace(handle, announce.app_data)
@@ -214,14 +223,9 @@ where
                 {
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 }
-
-                self.announce_id_history.remember(i, announce.announce_id);
-                self.columns.set_row(
+                self.retained_announces.set_row(
                     i,
-                    RouteEntry {
-                        hops,
-                        expires,
-                        responsiveness: RouteResponsiveness::Responsive,
+                    RetainedAnnounceEntry {
                         public_keys: announce.public_keys,
                         dotted_name_hash: announce.dotted_name_hash,
                         retained_announce_id: announce.announce_id,
@@ -230,39 +234,42 @@ where
                         maybe_app_data_handle: Some(handle),
                     },
                 );
+
+                // Phase 3 (history): we heard the id either way.
+                self.announce_id_history.remember(i, announce.announce_id);
                 UpsertRouteOutcome::Updated
             }
         }
     }
 
-    /// The retained announce's `app_data` (its variable application payload),
-    /// or `None` if the destination is unknown. The structured protocol fields
-    /// (public_keys, ratchet, signature, …) are reached via `retained_announce`.
+    /// The retained announce's `app_data` for `destination`, or `None` if
+    /// unknown. The structured protocol fields are reached via
+    /// `retained_announce_for`.
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
         Some(self.retained_announce_for(destination)?.announce.app_data)
     }
 
     /// Everything a rebroadcast needs about a known destination's retained
-    /// announce (the hop count [and soon, transport id I believe?] plus the structured `Announce` itself) gathered
-    /// in one lookup. `None` if the destination is unknown. Re-emission calls
-    /// `announce.to_wire(buf)` to reproduce the original payload byte-identically
-    /// so the retained signature still validates.
+    /// announce — the hop count plus the structured `Announce` itself —
+    /// gathered in one lookup. `None` if the destination is unknown.
+    /// Re-emission calls `announce.to_wire(buf)` to reproduce the original
+    /// payload byte-identically so the retained signature still validates.
     pub fn retained_announce_for(
         &self,
         destination: &DestinationHash,
     ) -> Option<RetainedAnnounce<'_>> {
         let i = self.index_of(destination)?;
-        let handle = self.columns.app_data_handle()[i]?;
+        let handle = self.retained_announces.app_data_handle()[i]?;
         let app_data = self.retained_app_data.get(handle);
         Some(RetainedAnnounce {
-            hops: self.columns.hops()[i],
+            hops: self.routes.hops()[i],
             announce: Announce {
-                destination: self.columns.destinations()[i],
-                public_keys: self.columns.public_keys()[i],
-                dotted_name_hash: self.columns.dotted_name_hash()[i],
-                announce_id: self.columns.retained_announce_id()[i],
-                ratchet: self.columns.ratchet()[i],
-                signature: self.columns.signature()[i],
+                destination: self.routes.destinations()[i],
+                public_keys: self.retained_announces.public_keys()[i],
+                dotted_name_hash: self.retained_announces.dotted_name_hash()[i],
+                announce_id: self.retained_announces.retained_announce_id()[i],
+                ratchet: self.retained_announces.ratchet()[i],
+                signature: self.retained_announces.signature()[i],
                 app_data,
             },
         })

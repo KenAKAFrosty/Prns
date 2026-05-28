@@ -9,7 +9,7 @@ use esp_hal::main;
 use esp_hal::time::Instant;
 use esp_println::println;
 
-use personal_rns::engine::{EngineState, InboundPacket, InstantMillis, OutboundPacket};
+use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis, OutboundPacket};
 use personal_rns::host::HostAdapter;
 use personal_rns::runtime::step;
 
@@ -54,7 +54,7 @@ fn main() -> ! {
 
     println!("ESP32C6_HOST: boot");
 
-    let mut state: EngineState = EngineState::default();
+    let mut state: DefaultEngineState = DefaultEngineState::default();
     let mut host = Esp32Host;
     let delay = Delay::new();
 

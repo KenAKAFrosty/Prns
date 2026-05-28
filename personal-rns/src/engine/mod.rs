@@ -7,7 +7,8 @@
 
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::storage::{
-    AnnounceIdHistory, FixedArrayRouteColumns, PackedAppDataArena, RetainedAppData, RouteColumns,
+    AnnounceIdHistory, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
+    PackedAppDataArena, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
     TieredAnnounceIdHistory,
 };
 use crate::routing::{
@@ -43,15 +44,16 @@ pub struct OutboundPacket<'a> {
 /// capable host substitutes alternate routing-storage backends at the type
 /// parameters directly.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EngineState<C, S, P>
+pub struct EngineState<C, A, S, P>
 where
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {
     tick_count: u64,
     ingested_packet_count: u64,
-    routing_table: RoutingTable<C, S, P>,
+    routing_table: RoutingTable<C, A, S, P>,
 }
 
 /// The no_std stack-resident engine-state preset — the only place the
@@ -65,6 +67,7 @@ pub type DefaultEngineState<
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
 > = EngineState<
     FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
+    FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
     TieredAnnounceIdHistory<
         HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
@@ -74,9 +77,10 @@ pub type DefaultEngineState<
     PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
 >;
 
-impl<C, S, P> EngineState<C, S, P>
+impl<C, A, S, P> EngineState<C, A, S, P>
 where
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {
@@ -132,12 +136,13 @@ impl TickOutput {
 /// path. Bytes that don't parse, or aren't announces, are counted as processed
 /// and otherwise ignored — this slice acts only on announces.
 #[must_use]
-pub fn ingest<C, S, P>(
-    state: &mut EngineState<C, S, P>,
+pub fn ingest<C, A, S, P>(
+    state: &mut EngineState<C, A, S, P>,
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput
 where
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {
@@ -208,9 +213,10 @@ where
 
 /// Advance the engine's periodic work to `now`.
 #[must_use]
-pub fn tick<C, S, P>(state: &mut EngineState<C, S, P>, _now: InstantMillis) -> TickOutput
+pub fn tick<C, A, S, P>(state: &mut EngineState<C, A, S, P>, _now: InstantMillis) -> TickOutput
 where
     C: RouteColumns,
+    A: RetainedAnnounceColumns,
     S: AnnounceIdHistory,
     P: RetainedAppData,
 {

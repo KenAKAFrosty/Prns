@@ -1,12 +1,12 @@
 //! Linux smoke: drive the pure engine against a real monotonic clock via StdHost.
 
-use personal_rns::engine::EngineState;
+use personal_rns::engine::DefaultEngineState;
 use personal_rns::host::HostAdapter;
 use personal_rns::runtime::step;
 use personal_rnsd::StdHost;
 
 fn main() {
-    let mut state: EngineState = EngineState::default();
+    let mut state: DefaultEngineState = DefaultEngineState::default();
     let mut host = StdHost::new();
 
     // No transport yet, so every step ingests an empty queue and ticks once.
