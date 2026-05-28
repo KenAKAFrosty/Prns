@@ -18,8 +18,8 @@ pub struct StepOutput {
     pub tick: TickOutput,
 }
 
-pub fn step<Host, R, A, H, D>(
-    state: &mut EngineState<R, A, H, D>,
+pub fn step<Host, R, A, H, D, const HELD: usize>(
+    state: &mut EngineState<R, A, H, D, HELD>,
     host: &mut Host,
 ) -> Result<StepOutput, Host::Error>
 where

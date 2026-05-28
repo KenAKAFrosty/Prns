@@ -30,6 +30,11 @@ pub const RATCHET_LEN: usize = 32;
 /// Wire width of an Ed25519 signature.
 pub const SIGNATURE_LEN: usize = 64;
 
+/// Total bytes of the Reticulum packet header that prefixes every wire
+/// packet: 1 byte flags + 1 byte hops + 16-byte destination hash + 1 byte
+/// context = 19 bytes. The packet payload starts at this offset.
+pub const HEADER_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
     BufferTooShort,

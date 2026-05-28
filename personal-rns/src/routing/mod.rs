@@ -12,6 +12,7 @@
 
 pub mod announce;
 pub mod defaults;
+pub mod held_cache;
 pub mod schedule;
 pub mod storage;
 pub mod types;
@@ -182,7 +183,7 @@ where
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,
             retained_announce_id: announce.announce_id,
-            maybe_ratchet: announce.ratchet,
+            maybe_ratchet: announce.maybe_ratchet,
             signature: announce.signature,
             maybe_app_data_handle: Some(handle),
         };
@@ -243,7 +244,7 @@ where
                 public_keys: announce.public_keys,
                 dotted_name_hash: announce.dotted_name_hash,
                 retained_announce_id: announce.announce_id,
-                maybe_ratchet: announce.ratchet,
+                maybe_ratchet: announce.maybe_ratchet,
                 signature: announce.signature,
                 maybe_app_data_handle: Some(handle),
             },
@@ -270,7 +271,7 @@ where
                 public_keys: self.retained_announces.public_keys()[i],
                 dotted_name_hash: self.retained_announces.dotted_name_hash()[i],
                 announce_id: self.retained_announces.retained_announce_id()[i],
-                ratchet: self.retained_announces.ratchet()[i],
+                maybe_ratchet: self.retained_announces.ratchet()[i],
                 signature: self.retained_announces.signature()[i],
                 app_data,
             },
@@ -317,7 +318,7 @@ mod tests {
             },
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             announce_id,
-            ratchet,
+            maybe_ratchet: ratchet,
             signature: Ed25519Signature([0u8; 64]),
             app_data,
         }
@@ -625,7 +626,7 @@ mod tests {
             &announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();
-        assert_eq!(retained.announce.ratchet, ratchet);
+        assert_eq!(retained.announce.maybe_ratchet, ratchet);
         assert_eq!(retained.hops, 3);
         assert_eq!(retained.announce.app_data, &body[..]);
 
@@ -639,7 +640,7 @@ mod tests {
             &app_data(0xBB),
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();
-        assert_eq!(retained.announce.ratchet, None);
+        assert_eq!(retained.announce.maybe_ratchet, None);
         assert_eq!(retained.hops, 2);
 
         // An unknown destination has no retained announce.

@@ -61,7 +61,7 @@ pub struct Announce<'a> {
     pub public_keys: IdentityPublicKeys,
     pub dotted_name_hash: DottedNameHash,
     pub announce_id: AnnounceId,
-    pub ratchet: Option<RatchetKey>,
+    pub maybe_ratchet: Option<RatchetKey>,
     pub signature: Ed25519Signature,
     pub app_data: &'a [u8],
 }
@@ -177,7 +177,7 @@ impl<'a> Announce<'a> {
             },
             dotted_name_hash: DottedNameHash(name),
             announce_id: AnnounceId::from_wire(id),
-            ratchet,
+            maybe_ratchet: ratchet,
             signature: Ed25519Signature(sig),
             app_data,
         })
@@ -185,7 +185,7 @@ impl<'a> Announce<'a> {
 
     /// Lightweight check of the wire length the announce will produce when serialized (without serializing)
     pub fn wire_len(&self) -> usize {
-        let ratchet_len = if self.ratchet.is_some() {
+        let ratchet_len = if self.maybe_ratchet.is_some() {
             RATCHET_LEN
         } else {
             0
@@ -219,7 +219,7 @@ impl<'a> Announce<'a> {
         buf[offset..offset + ANNOUNCE_ID_WIRE_LEN]
             .copy_from_slice(&self.announce_id.to_wire_bytes());
         offset += ANNOUNCE_ID_WIRE_LEN;
-        if let Some(ratchet) = &self.ratchet {
+        if let Some(ratchet) = &self.maybe_ratchet {
             buf[offset..offset + RATCHET_LEN].copy_from_slice(ratchet.as_bytes());
             offset += RATCHET_LEN;
         }
@@ -289,7 +289,7 @@ mod tests {
             announce.announce_id,
             AnnounceId::from_wire(a("5468d9b829006a172e83"))
         );
-        assert_eq!(announce.ratchet, None);
+        assert_eq!(announce.maybe_ratchet, None);
         assert_eq!(announce.app_data, b"hello-personal");
     }
 

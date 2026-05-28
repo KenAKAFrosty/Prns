@@ -6,13 +6,14 @@
 //! sockets, or storage directly.
 
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
+use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
 use crate::routing::storage::{
     AnnounceIdHistory, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
     PackedAppDataArena, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
     TieredAnnounceIdHistory,
 };
 use crate::routing::{
-    RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
+    DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     DEFAULT_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_TRACKED_DESTINATIONS,
 };
@@ -44,7 +45,7 @@ pub struct OutboundPacket<'a> {
 /// capable host substitutes alternate routing-storage backends at the type
 /// parameters directly.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EngineState<R, A, H, D>
+pub struct EngineState<R, A, H, D, const HELD: usize>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -54,6 +55,7 @@ where
     tick_count: u64,
     ingested_packet_count: u64,
     routing_table: RoutingTable<R, A, H, D>,
+    held_cache: HeldAnnouncesCache<HELD>,
 }
 
 /// The no_std stack-resident engine-state preset — the only place the
@@ -65,6 +67,7 @@ pub type DefaultEngineState<
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
+    const HELD_CACHE_CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACITY,
 > = EngineState<
     FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
     FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
@@ -75,9 +78,10 @@ pub type DefaultEngineState<
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
     >,
     PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
+    HELD_CACHE_CAPACITY,
 >;
 
-impl<R, A, H, D> EngineState<R, A, H, D>
+impl<R, A, H, D, const HELD: usize> EngineState<R, A, H, D, HELD>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -96,12 +100,19 @@ where
     pub fn route_count(&self) -> usize {
         self.routing_table.route_count()
     }
+
+    /// Number of announces currently parked for retry after a transient
+    /// arena-full bail. Drains as `tick()` retries them.
+    pub fn held_count(&self) -> usize {
+        self.held_cache.len()
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct IngestOutput {
     processed_packet_count: usize,
     accepted_announce_count: usize,
+    held_for_retry_count: usize,
 }
 
 impl IngestOutput {
@@ -114,16 +125,30 @@ impl IngestOutput {
     pub const fn accepted_announce_count(&self) -> usize {
         self.accepted_announce_count
     }
+
+    /// How many announces this batch parked in the held-cache after a
+    /// transient `Dropped(PayloadArenaFull)`. They retry on subsequent ticks.
+    pub const fn held_for_retry_count(&self) -> usize {
+        self.held_for_retry_count
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TickOutput {
     emitted_packet_count: usize,
+    recovered_from_held_count: usize,
 }
 
 impl TickOutput {
     pub const fn emitted_packet_count(&self) -> usize {
         self.emitted_packet_count
+    }
+
+    /// How many held announces this tick installed into the routing table on
+    /// retry. Each tick attempts at most one — the cache typically drains
+    /// across several ticks as routine traffic frees arena space.
+    pub const fn recovered_from_held_count(&self) -> usize {
+        self.recovered_from_held_count
     }
 }
 
@@ -136,8 +161,8 @@ impl TickOutput {
 /// path. Bytes that don't parse, or aren't announces, are counted as processed
 /// and otherwise ignored — this slice acts only on announces.
 #[must_use]
-pub fn ingest<R, A, H, D>(
-    state: &mut EngineState<R, A, H, D>,
+pub fn ingest<R, A, H, D, const HELD: usize>(
+    state: &mut EngineState<R, A, H, D, HELD>,
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput
 where
@@ -151,6 +176,7 @@ where
         .saturating_add(packets.len() as u64);
 
     let mut accepted_announce_count = 0;
+    let mut held_for_retry_count = 0;
     for packet in packets {
         let Ok((header, payload)) = WirePacketHeader::parse(packet.bytes) else {
             continue;
@@ -199,8 +225,31 @@ where
                 state
                     .routing_table
                     .upsert_route(received_hops, packet.arrival, &announce);
-            if !matches!(outcome, UpsertRouteOutcome::Dropped(_)) {
-                accepted_announce_count += 1;
+            match outcome {
+                UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
+                    accepted_announce_count += 1;
+                }
+                UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
+                    // Park the structured announce; retry on tick will
+                    // re-evaluate against current arena state. Park can
+                    // return CacheFull (cap reached, dropped) — we count
+                    // only the successful parks.
+                    use crate::routing::held_cache::{HoldReason, ParkOutcome};
+                    match state.held_cache.park(
+                        &announce,
+                        packet.arrival,
+                        received_hops,
+                        HoldReason::RoutingArenaPressure,
+                    ) {
+                        ParkOutcome::Parked | ParkOutcome::Overwrote => {
+                            held_for_retry_count += 1;
+                        }
+                        ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {}
+                    }
+                }
+                UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => {
+                    // Nowhere to retry to until route eviction exists.
+                }
             }
         }
     }
@@ -208,12 +257,18 @@ where
     IngestOutput {
         processed_packet_count: packets.len(),
         accepted_announce_count,
+        held_for_retry_count,
     }
 }
 
-/// Advance the engine's periodic work to `now`.
+/// Advance the engine's periodic work to `now`. Retries up to one held
+/// announce per tick, selecting the lowest-hop entry (RNS parity). Failed
+/// retries are discarded rather than re-parked.
 #[must_use]
-pub fn tick<R, A, H, D>(state: &mut EngineState<R, A, H, D>, _now: InstantMillis) -> TickOutput
+pub fn tick<R, A, H, D, const HELD: usize>(
+    state: &mut EngineState<R, A, H, D, HELD>,
+    _now: InstantMillis,
+) -> TickOutput
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -221,7 +276,47 @@ where
     D: RetainedAppData,
 {
     state.tick_count = state.tick_count.saturating_add(1);
-    TickOutput::default()
+
+    let mut recovered_from_held_count = 0;
+    if let Some(held) = state.held_cache.take_next() {
+        use crate::routing::held_cache::HoldReason;
+        match held.reason() {
+            HoldReason::RoutingArenaPressure => {
+                let announce = held.announce();
+                let arrival = held.arrived_at();
+                let received_hops = held.received_hops();
+                let decision = AnnounceAcceptanceInput {
+                    packet_hops: received_hops,
+                    announce_id: announce.announce_id,
+                    destination_is_local: false,
+                    existing_route: state
+                        .routing_table
+                        .existing_route_for(&announce.destination),
+                    arrived_at: arrival,
+                }
+                .determine_acceptance();
+                if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
+                    let outcome =
+                        state
+                            .routing_table
+                            .upsert_route(received_hops, arrival, &announce);
+                    if matches!(
+                        outcome,
+                        UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
+                    ) {
+                        recovered_from_held_count += 1;
+                    }
+                    // On Dropped(_) or Reject we discard — see the
+                    // held-cache module note on livelock avoidance.
+                }
+            }
+        }
+    }
+
+    TickOutput {
+        emitted_packet_count: 0,
+        recovered_from_held_count,
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +477,48 @@ mod tests {
         let out = ingest(&mut state, &[junk]);
         assert_eq!(out.processed_packet_count(), 1);
         assert_eq!(out.accepted_announce_count(), 0);
+        assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
+    fn arena_full_drops_park_the_inbound_bytes_for_retry() {
+        // Arena tuned to 8 bytes — smaller than the real announce's 14-byte
+        // app_data ("hello-personal") — so upsert returns Dropped(PayloadArenaFull).
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state = DefaultEngineState::<4, 64, 8>::default();
+
+        let out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+        );
+
+        assert_eq!(out.accepted_announce_count(), 0);
+        assert_eq!(out.held_for_retry_count(), 1);
+        assert_eq!(state.route_count(), 0);
+        assert_eq!(state.held_count(), 1);
+    }
+
+    #[test]
+    fn tick_retries_one_held_entry_and_discards_it_when_the_arena_is_still_full() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state = DefaultEngineState::<4, 64, 8>::default();
+        let _ = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrival: InstantMillis(1_000),
+                bytes: &raw,
+            }],
+        );
+        assert_eq!(state.held_count(), 1);
+
+        // Arena state unchanged → retry hits Dropped(PayloadArenaFull) again
+        // and the held entry is discarded. We don't re-park (livelock).
+        let out = tick(&mut state, InstantMillis(2_000));
+        assert_eq!(out.recovered_from_held_count(), 0);
+        assert_eq!(state.held_count(), 0);
         assert_eq!(state.route_count(), 0);
     }
 
