@@ -20,9 +20,6 @@ use crate::storage::{
 };
 use crate::wire::DestinationHash;
 
-/// RNS's `RNS.Transport.PATHFINDER_M`
-pub const MAX_HOP_COUNT: u8 = 128;
-
 /// RNS's `RNS.Transport.PATHFINDER_E`
 const DEFAULT_PATH_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
 

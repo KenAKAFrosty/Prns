@@ -6,6 +6,10 @@
 
 pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
 
+/// RNS's `RNS.Transport.PATHFINDER_M` — packets beyond this hop count are
+/// outside reach. A wire-protocol invariant, not a sizing knob.
+pub const MAX_HOP_COUNT: u8 = 128;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
     BufferTooShort,

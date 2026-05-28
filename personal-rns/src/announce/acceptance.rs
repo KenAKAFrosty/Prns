@@ -11,7 +11,8 @@ use core::cmp::Ordering;
 
 use crate::announce::{AnnounceId, MonotonicTimebase};
 use crate::engine::InstantMillis;
-use crate::routing::{ExistingRoute, RouteResponsiveness, MAX_HOP_COUNT};
+use crate::routing::{ExistingRoute, RouteResponsiveness};
+use crate::wire::MAX_HOP_COUNT;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnnounceAcceptanceInput<'a> {
