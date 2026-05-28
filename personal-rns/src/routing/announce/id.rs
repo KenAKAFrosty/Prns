@@ -1,16 +1,15 @@
-//! `AnnounceId` and its two halves — `AnnounceNonce` + `MonotonicTimebase`.
+//! `AnnounceId` and its two halves, `AnnounceNonce` + `MonotonicTimebase`.
 //!
 //! The 10-byte field RNS calls `random_hash` on the wire is neither fully
 //! random nor a hash: the first 5 bytes are a per-emission random nonce (a
 //! replay/loop dedup tag), and the last 5 are the origin's clock at emission,
-//! big-endian — the monotonic "announce time" receivers compare per
-//! destination. Splitting at the type level keeps the names honest.
+//! (big-endian, the monotonic "announce time" receivers compare per
+//! destination). Splitting at the type level keeps the names honest.
 
 pub const ANNOUNCE_ID_WIRE_LEN: usize = 10;
 const NONCE_LEN: usize = 5;
 const TIMEBASE_LEN: usize = 5;
 
-/// The per-emission random nonce — first half of an [`AnnounceId`].
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AnnounceNonce([u8; NONCE_LEN]);
@@ -58,9 +57,9 @@ impl core::fmt::Debug for MonotonicTimebase {
     }
 }
 
-/// The per-emission announce identifier: `nonce ‖ timebase`, 10 contiguous
+/// RNS's `random_blob` / `random_hash`. The per-emission announce identifier: `nonce ‖ timebase`, 10 contiguous
 /// bytes. The same value travels with a path-response rebroadcast of a cached
-/// announce, so peers recognise "this is the same announce I already saw" —
+/// announce, so peers recognise "this is the same announce I already saw". This is
 /// identity in the strict sense, which the name reflects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnnounceId {

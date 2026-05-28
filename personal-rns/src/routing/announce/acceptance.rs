@@ -1,6 +1,6 @@
 //! The announce-acceptance predicate: a faithful port of the `should_add` derivation in
 //! Python `Transport.inbound()`
-//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1748-L1829>.
+//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1743-L1829>.
 //!
 //! It answers one question: "Should this heard announce be installed into the
 //! routing table?" It does this as a total function of the announce, the existing path (if
@@ -17,12 +17,9 @@ use crate::wire::MAX_HOP_COUNT;
 #[derive(Debug, Clone, Copy)]
 pub struct AnnounceAcceptanceInput<'a> {
     pub packet_hops: u8,
-    /// RNS's `random_blob`
     pub announce_id: AnnounceId,
     pub destination_is_local: bool,
     pub existing_route: Option<ExistingRoute<'a>>,
-    /// The arriving packet's instant, used as "now" for path-expiry — keeps the
-    /// predicate clock-free: time arrives as data on the packet.
     pub arrived_at: InstantMillis,
 }
 
@@ -38,8 +35,7 @@ pub enum AcceptReason {
 /// Why an announce is rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
-    /// Hop count exceeds max — beyond reachable range.
-    BeyondReach,
+    ExceedsMaxHops,
     DestinationIsLocal,
     KnownRouteReplay,
     KnownRouteNoNewerEvidence,
@@ -48,7 +44,7 @@ pub enum RejectReason {
     EqualEvidenceIncumbentStillWorking,
     /// Longer hops, fresh route, emission strictly older than stored, i.e., stale.
     /// Python's if/elif chain has no else arm here, so `should_add` keeps its
-    /// initial `False`; we surface it explicitly rather than as fallthrough.
+    /// initial `False`; we surface it explicitly.
     StaleEvidence,
 }
 
@@ -65,7 +61,7 @@ impl AnnounceAcceptanceInput<'_> {
         use RejectReason::*;
 
         if self.packet_hops > MAX_HOP_COUNT {
-            return Reject(BeyondReach);
+            return Reject(ExceedsMaxHops);
         }
         if self.destination_is_local {
             return Reject(DestinationIsLocal);
@@ -154,7 +150,7 @@ mod tests {
         });
         assert_eq!(
             decision,
-            AnnounceAcceptanceDecision::Reject(RejectReason::BeyondReach)
+            AnnounceAcceptanceDecision::Reject(RejectReason::ExceedsMaxHops)
         );
     }
 

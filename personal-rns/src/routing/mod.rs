@@ -19,10 +19,10 @@ pub mod types;
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 use announce::Announce;
-use defaults::DEFAULT_PATH_EXPIRY_MILLIS;
+use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 pub use defaults::{
-    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-    DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
+    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_HISTORY_CAP_PER_DESTINATION,
+    DEFAULT_HISTORY_FLOOR_PER_DESTINATION, DEFAULT_HISTORY_OVERFLOW_CAPACITY,
     DEFAULT_MAX_TRACKED_DESTINATIONS,
 };
 pub use storage::AnnounceIdHistoryView;
@@ -48,17 +48,17 @@ pub use types::{
 ///   opaque handles, joined into `A` via `app_data_handle`.
 ///
 /// Each backend has its own atomicity boundary, matching the data
-/// semantics — routing-coherent vs announce-coherent vs history-accumulate
-/// vs blob-replace. The engine's `upsert_route` orchestrates across them
+/// semantics (routing-coherent vs announce-coherent vs history-accumulate
+/// vs blob-replace). The engine's `upsert_route` orchestrates across them
 /// without packing them into one row.
 ///
-/// This type is **purely abstract** — it does not name a preset. The
+/// This type is **purely abstract**. It does not name a preset. The
 /// no_std stack-resident preset lives in [`DefaultRoutingTable`]; that's
 /// the canonical embedded entry point. A capable host substitutes alternate
 /// backends (heap-resident, mmap-backed, etc.) at the type parameters
 /// directly.
 ///
-/// `PartialEq` is structural — it compares every backend's representation
+/// `PartialEq` compares every backend's representation
 /// byte-for-byte. The engine's determinism tests rely on this; do not use
 /// it to ask "do two tables built by different routes hold the same paths."
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -75,7 +75,7 @@ where
     retained_app_data: D,
 }
 
-/// The no_std stack-resident routing-table preset — the only place the
+/// The no_std stack-resident routing-table preset, and the only place the
 /// default backend choices (`FixedArrayRouteColumns`,
 /// `FixedArrayRetainedAnnounceColumns`, `TieredAnnounceIdHistory`,
 /// `PackedAppDataArena`) are named. Lets call sites tune the sizes via
@@ -84,7 +84,7 @@ where
 /// `DEFAULT_*` sizing knobs from [`crate::routing::defaults`].
 pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION,
+    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_HISTORY_CAP_PER_DESTINATION,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
@@ -132,8 +132,10 @@ where
         })
     }
 
-    /// Record a route the predicate just accepted. Orchestrates across all
-    /// four backends — each is its own atomicity boundary:
+    // REVIEW I think dropping app data but updating our routes is actually really bad.  We got the route *based* on the announce. Our separation here is sensible but should not separate properly-coupled concepts. I think we just reject and let the queue handle it (we still need that qaueue to really feel that, but it should work great)
+
+    /// Record an accepted route. Orchestrates across all
+    /// four backends, each with its own atomicity boundary:
     ///
     /// 1. Routes (routing-coherent): hops/expires/responsiveness refresh
     ///    always, including when the announce payload can't be retained.
@@ -151,25 +153,27 @@ where
         arrived_at: InstantMillis,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
-        let expires = InstantMillis(arrived_at.0.saturating_add(DEFAULT_PATH_EXPIRY_MILLIS));
+        let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             None => {
+                //REVIEW just like cleanup thought here, create private mtehods for these branches, like update vs insert, so we can see the branching here wihtout the long arms making us lose context
+
                 // Bound-check the columns *before* taking up arena space,
                 // so a ColumnsFull error doesn't leak an AppDataHandle. For
                 // growable backends, `capacity()` is effectively infinite
-                // and this check is a no-op.
+                // and this check is effectively a no-op.
                 if self.routes.len() >= self.routes.capacity() {
                     return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
                 }
                 let Ok(handle) = self.retained_app_data.insert(announce.app_data) else {
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 };
-                let route_row = RouteEntry {
+                let route_entry = RouteEntry {
                     hops,
-                    expires,
+                    expires: expires_at,
                     responsiveness: RouteResponsiveness::Responsive,
                 };
-                let announce_row = RetainedAnnounceEntry {
+                let announce_entry = RetainedAnnounceEntry {
                     public_keys: announce.public_keys,
                     dotted_name_hash: announce.dotted_name_hash,
                     retained_announce_id: announce.announce_id,
@@ -177,7 +181,7 @@ where
                     signature: announce.signature,
                     maybe_app_data_handle: Some(handle),
                 };
-                let routes_slot = match self.routes.push(announce.destination, route_row) {
+                let routes_slot = match self.routes.push(announce.destination, route_entry) {
                     Ok(i) => i,
                     Err(ColumnsFull) => {
                         return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
@@ -188,7 +192,7 @@ where
                 // a successful routes.push means this push will succeed too;
                 // we surface ColumnsFull defensively for backends with
                 // mismatched capacity policies.
-                let _ = self.retained_announces.push(announce_row);
+                let _ = self.retained_announces.push(announce_entry);
                 self.announce_id_history
                     .remember(routes_slot, announce.announce_id);
                 UpsertRouteOutcome::Inserted
@@ -199,7 +203,7 @@ where
                     i,
                     RouteEntry {
                         hops,
-                        expires,
+                        expires: expires_at,
                         responsiveness: RouteResponsiveness::Responsive,
                     },
                 );
@@ -242,18 +246,10 @@ where
         }
     }
 
-    /// The retained announce's `app_data` for `destination`, or `None` if
-    /// unknown. The structured protocol fields are reached via
-    /// `retained_announce_for`.
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
         Some(self.retained_announce_for(destination)?.announce.app_data)
     }
 
-    /// Everything a rebroadcast needs about a known destination's retained
-    /// announce — the hop count plus the structured `Announce` itself —
-    /// gathered in one lookup. `None` if the destination is unknown.
-    /// Re-emission calls `announce.to_wire(buf)` to reproduce the original
-    /// payload byte-identically so the retained signature still validates.
     pub fn retained_announce_for(
         &self,
         destination: &DestinationHash,
@@ -417,7 +413,7 @@ mod tests {
     fn seen_set_evicts_oldest_when_full() {
         let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         // Fill past capacity; the first id must be evicted, the last retained.
-        for n in 0..(DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION as u64 + 3) {
+        for n in 0..(DEFAULT_HISTORY_CAP_PER_DESTINATION as u64 + 3) {
             record(
                 &mut table,
                 dest(1),
@@ -430,20 +426,23 @@ mod tests {
         let view = table.existing_route_for(&dest(1)).unwrap();
         assert_eq!(
             view.announce_id_history.len(),
-            DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION
+            DEFAULT_HISTORY_CAP_PER_DESTINATION
         );
         // Oldest (timebase 0,1,2) gone; newest present.
         assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
         assert!(view.announce_id_history.contains(&announce_id(
             0,
-            DEFAULT_MAX_ANNOUNCE_IDS_PER_DESTINATION as u64 + 2
+            DEFAULT_HISTORY_CAP_PER_DESTINATION as u64 + 2
         )));
     }
 
     #[test]
     fn new_destinations_past_capacity_are_dropped() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
-        for n in 0..DEFAULT_MAX_TRACKED_DESTINATIONS {
+        // Custom-small capacity isolates the mechanic from the production
+        // default — and keeps `dest(byte)` unique within the u8 it takes.
+        const MAX: usize = 8;
+        let mut table: DefaultRoutingTable<MAX, 8, 256> = DefaultRoutingTable::default();
+        for n in 0..MAX {
             assert_eq!(
                 record(
                     &mut table,
@@ -456,7 +455,7 @@ mod tests {
                 UpsertRouteOutcome::Inserted
             );
         }
-        assert_eq!(table.route_count(), DEFAULT_MAX_TRACKED_DESTINATIONS);
+        assert_eq!(table.route_count(), MAX);
         // One destination too many: dropped, count unchanged.
         assert_eq!(
             record(
@@ -469,7 +468,7 @@ mod tests {
             ),
             UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull)
         );
-        assert_eq!(table.route_count(), DEFAULT_MAX_TRACKED_DESTINATIONS);
+        assert_eq!(table.route_count(), MAX);
         // But a known destination still refreshes.
         assert_eq!(
             record(
