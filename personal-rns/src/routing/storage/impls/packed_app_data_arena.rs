@@ -20,13 +20,8 @@
 //! in the same order and assert byte-identical results. Do not use `==` to ask
 //! whether two stores built by different routes hold the same payloads.
 
+use crate::routing::storage::{AppDataHandle, RetainedAppData, RetainedAppDataError};
 use heapless::Vec;
-
-/// An opaque, stable reference to a payload held by a [`PackedAppDataArena`]. Indexes
-/// the span table, which compaction never reorders, so the handle survives the
-/// arena moves that grow/shrink other payloads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AppDataHandle(usize);
 
 /// Where one payload sits in the arena. Spans are held in offset order with no
 /// gaps between them, mirroring the packed arena.
@@ -34,12 +29,6 @@ pub struct AppDataHandle(usize);
 struct Span {
     offset: usize,
     len: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetainedAppDataError {
-    ArenaFull,      //full of? memory?
-    TooManyEntries, // same but just count? why do we even need this? do we?
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +61,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
     /// valid (there is no removal yet), so this never fails; a cleared payload
     /// reads back as an empty slice.
     pub fn get(&self, handle: AppDataHandle) -> &[u8] {
-        let span = self.spans[handle.0];
+        let span = self.spans[handle.slot()];
         &self.arena[span.offset..span.offset + span.len]
     }
 
@@ -93,7 +82,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
             offset,
             len: bytes.len(),
         });
-        Ok(AppDataHandle(self.spans.len() - 1))
+        Ok(AppDataHandle::new(self.spans.len() - 1))
     }
 
     /// Replace the payload behind `handle`, which may change its size. On a size
@@ -106,7 +95,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         handle: AppDataHandle,
         bytes: &[u8],
     ) -> Result<(), RetainedAppDataError> {
-        let span = self.spans[handle.0];
+        let span = self.spans[handle.slot()];
         let new_len = bytes.len();
 
         if new_len == span.len {
@@ -131,7 +120,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
             .copy_within(tail_start..tail_start + tail_len, new_tail_start);
         self.arena[span.offset..span.offset + new_len].copy_from_slice(bytes);
 
-        self.spans[handle.0].len = new_len;
+        self.spans[handle.slot()].len = new_len;
         for other in self.spans.iter_mut() {
             if other.offset > span.offset {
                 other.offset =
@@ -143,7 +132,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
     }
 }
 
-impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> crate::routing::storage::RetainedAppData
+impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> RetainedAppData
     for PackedAppDataArena<ARENA_BYTES, MAX_ENTRIES>
 {
     fn get(&self, handle: AppDataHandle) -> &[u8] {

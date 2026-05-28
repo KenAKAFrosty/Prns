@@ -28,15 +28,12 @@
 //! refresh. There is intentionally no `row()` reader: that would invite
 //! AoS-shaped reads against SoA storage and defeat the layout.
 
-mod fixed_array_retained_announce_columns;
-mod fixed_array_route_columns;
-mod packed_app_data_arena;
-mod tiered_announce_id_history;
+mod impls;
 
-pub use fixed_array_retained_announce_columns::FixedArrayRetainedAnnounceColumns;
-pub use fixed_array_route_columns::FixedArrayRouteColumns;
-pub use packed_app_data_arena::{AppDataHandle, PackedAppDataArena, RetainedAppDataError};
-pub use tiered_announce_id_history::{AnnounceIdHistoryView, TieredAnnounceIdHistory};
+pub use impls::{
+    FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
+    TieredAnnounceIdHistory,
+};
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::InstantMillis;
@@ -83,6 +80,34 @@ pub enum RememberOutcome {
     AlreadyKnown,
     StoredFresh,
     StoredEvictingOldest,
+}
+
+/// An opaque, stable reference to a payload held by a [`RetainedAppData`]
+/// backend. Backends define what the handle indexes (span table, page id,
+/// row id…); callers never see the encoding and never make handles
+/// themselves — only `insert` mints them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppDataHandle(usize);
+
+impl AppDataHandle {
+    /// Backend constructor — only the impl crate-private side ever calls
+    /// this; callers receive handles by `insert`/`replace` round-trip.
+    pub(crate) const fn new(slot: usize) -> Self {
+        Self(slot)
+    }
+
+    pub(crate) const fn slot(self) -> usize {
+        self.0
+    }
+}
+
+/// Why a [`RetainedAppData`] mutation could not complete. Bounded backends
+/// surface both variants; growable backends raise only `ArenaFull` if they
+/// raise anything at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetainedAppDataError {
+    ArenaFull,
+    TooManyEntries,
 }
 
 /// SoA columns for the routing table — the routing-coherent fields,
@@ -157,6 +182,48 @@ pub trait RetainedAnnounceColumns {
 pub trait AnnounceIdHistory {
     fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_>;
     fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome;
+}
+
+/// The announce-id-history view a path lookup hands the predicate. Today's
+/// [`TieredAnnounceIdHistory`] returns its (floor, overflow) pair behind it,
+/// but the type is trait-facing — any backend can shape its storage however
+/// it likes and present one or two contiguous slices through this view.
+#[derive(Debug, Clone, Copy)]
+pub struct AnnounceIdHistoryView<'a> {
+    floor: &'a [AnnounceId],
+    overflow: &'a [AnnounceId],
+}
+
+impl<'a> AnnounceIdHistoryView<'a> {
+    pub const EMPTY: AnnounceIdHistoryView<'static> = AnnounceIdHistoryView {
+        floor: &[],
+        overflow: &[],
+    };
+
+    /// Build a view directly from two slices. Backends call this on every
+    /// lookup; tests use it to stand a synthetic view in for the predicate.
+    pub fn from_slices(floor: &'a [AnnounceId], overflow: &'a [AnnounceId]) -> Self {
+        Self { floor, overflow }
+    }
+
+    pub fn len(&self) -> usize {
+        self.floor.len() + self.overflow.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.floor.is_empty() && self.overflow.is_empty()
+    }
+
+    pub fn iter(
+        &self,
+    ) -> core::iter::Chain<core::slice::Iter<'a, AnnounceId>, core::slice::Iter<'a, AnnounceId>>
+    {
+        self.floor.iter().chain(self.overflow.iter())
+    }
+
+    pub fn contains(&self, id: &AnnounceId) -> bool {
+        self.floor.contains(id) || self.overflow.contains(id)
+    }
 }
 
 /// Variable-length retained-announce `app_data` storage behind opaque handles.

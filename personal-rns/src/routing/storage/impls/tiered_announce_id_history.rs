@@ -19,10 +19,9 @@
 //!    overflow ids live in one contiguous span; offsets are derived from the
 //!    prefix sum of per-destination lengths, not stored. Costs one `u8` per destination of
 //!    bookkeeping (vs eight bytes for a `{offset, len}` pair on a 32-bit
-//!    target), which keeps the metadata-to-payload ratio sane: ~1 byte
-//!    overhead per 10-byte id.
+//!    target), which keeps the metadata-to-payload ratio sane
 //! 3. **Per-path cap (`MAX_PER_DESTINATION`).** Mirrors RNS's `MAX_RANDOM_BLOBS`.
-//!    Const generic owned by the store, not passed by callers — keeps the
+//!    Const generic owned by the store, not passed by callers. Keeps the
 //!    cap as a structural property of the type rather than something the
 //!    consumer has to remember to pass on every call.
 //!
@@ -46,49 +45,7 @@
 //! Comparing two stores built by different routes is a misuse.
 
 use crate::routing::announce::AnnounceId;
-use crate::routing::storage::{AnnounceIdHistory, RememberOutcome};
-
-/// The announce-id-history view a path lookup hands the predicate: two contiguous slices,
-/// floor first then overflow. Hides the two-tier storage from the consumer
-/// (`iter()` walks both back-to-back, `contains` checks both).
-#[derive(Debug, Clone, Copy)]
-pub struct AnnounceIdHistoryView<'a> {
-    floor: &'a [AnnounceId],
-    overflow: &'a [AnnounceId],
-}
-
-impl<'a> AnnounceIdHistoryView<'a> {
-    pub const EMPTY: AnnounceIdHistoryView<'static> = AnnounceIdHistoryView {
-        floor: &[],
-        overflow: &[],
-    };
-
-    /// Build a view directly from two slices. The tiered store calls this on
-    /// every lookup; tests use it to stand a synthetic view in for the
-    /// predicate.
-    pub fn from_slices(floor: &'a [AnnounceId], overflow: &'a [AnnounceId]) -> Self {
-        Self { floor, overflow }
-    }
-
-    pub fn len(&self) -> usize {
-        self.floor.len() + self.overflow.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.floor.is_empty() && self.overflow.is_empty()
-    }
-
-    pub fn iter(
-        &self,
-    ) -> core::iter::Chain<core::slice::Iter<'a, AnnounceId>, core::slice::Iter<'a, AnnounceId>>
-    {
-        self.floor.iter().chain(self.overflow.iter())
-    }
-
-    pub fn contains(&self, id: &AnnounceId) -> bool {
-        self.floor.contains(id) || self.overflow.contains(id)
-    }
-}
+use crate::routing::storage::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TieredAnnounceIdHistory<
@@ -148,10 +105,7 @@ impl<
     }
 
     pub fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_> {
-        AnnounceIdHistoryView {
-            floor: self.floor_slice(slot),
-            overflow: self.overflow_slice(slot),
-        }
+        AnnounceIdHistoryView::from_slices(self.floor_slice(slot), self.overflow_slice(slot))
     }
 
     /// Record `id` as recently seen for path `slot`. Re-hearing a known id is a
@@ -349,10 +303,9 @@ mod tests {
         }
         // Path 0: floor[1], overflow[2,3]. Path 1: floor[11], overflow[12,13]. Etc.
         for slot in 0..3 {
-            let view = store.history(slot);
-            assert_eq!(view.floor, &[aid(10 * slot as u8 + 1)][..]);
+            assert_eq!(store.floor_slice(slot), &[aid(10 * slot as u8 + 1)][..]);
             assert_eq!(
-                view.overflow,
+                store.overflow_slice(slot),
                 &[aid(10 * slot as u8 + 2), aid(10 * slot as u8 + 3)][..]
             );
         }
@@ -369,12 +322,12 @@ mod tests {
         store.remember(1, aid(12)); // overflow (after path 0's span)
         store.remember(0, aid(3)); // grows path 0's overflow → shifts path 1's
         assert_eq!(
-            store.history(0).overflow,
+            store.overflow_slice(0),
             &[aid(2), aid(3)][..],
             "path 0's overflow grew correctly",
         );
         assert_eq!(
-            store.history(1).overflow,
+            store.overflow_slice(1),
             &[aid(12)][..],
             "path 1's view is intact after the shift",
         );
@@ -394,11 +347,11 @@ mod tests {
             store.remember(0, aid(5)),
             RememberOutcome::StoredEvictingOldest
         );
-        let view = store.history(0);
         // Floor: [aid(2), aid(3)] (1 evicted; 3 promoted from overflow[0])
         // Overflow: [aid(4), aid(5)] (in-place rotated)
-        assert_eq!(view.floor, &[aid(2), aid(3)][..]);
-        assert_eq!(view.overflow, &[aid(4), aid(5)][..]);
+        assert_eq!(store.floor_slice(0), &[aid(2), aid(3)][..]);
+        assert_eq!(store.overflow_slice(0), &[aid(4), aid(5)][..]);
+        let view = store.history(0);
         assert!(!view.contains(&aid(1)));
         assert!(view.contains(&aid(5)));
     }
@@ -415,7 +368,7 @@ mod tests {
             store.remember(0, aid(4)),
             RememberOutcome::StoredEvictingOldest
         );
-        assert_eq!(store.history(0).floor, &[aid(2), aid(3), aid(4)][..]);
+        assert_eq!(store.floor_slice(0), &[aid(2), aid(3), aid(4)][..]);
         assert!(!store.history(0).contains(&aid(1)));
     }
 
@@ -436,10 +389,9 @@ mod tests {
         // floor[0] = old floor's only slot was aid(1); evict it. Promote
         // overflow[0] = aid(2) into floor. Overflow rotates: was [aid(2),
         // aid(3)], becomes [aid(3), aid(4)].
-        let view = store.history(0);
-        assert_eq!(view.floor, &[aid(2)][..]);
-        assert_eq!(view.overflow, &[aid(3), aid(4)][..]);
-        assert!(!view.contains(&aid(1)));
+        assert_eq!(store.floor_slice(0), &[aid(2)][..]);
+        assert_eq!(store.overflow_slice(0), &[aid(3), aid(4)][..]);
+        assert!(!store.history(0).contains(&aid(1)));
     }
 
     #[test]
@@ -451,9 +403,9 @@ mod tests {
             store.remember(0, aid(n));
         }
         // Floor cap 3: kept the last 3 (aid(2), aid(3), aid(4)).
+        assert_eq!(store.floor_slice(0), &[aid(2), aid(3), aid(4)][..]);
+        assert_eq!(store.overflow_slice(0), &[] as &[AnnounceId]);
         let view = store.history(0);
-        assert_eq!(view.floor, &[aid(2), aid(3), aid(4)][..]);
-        assert_eq!(view.overflow, &[] as &[AnnounceId]);
         assert!(!view.contains(&aid(0)));
         assert!(!view.contains(&aid(1)));
     }
@@ -489,9 +441,9 @@ mod tests {
             store.remember(0, aid(3)),
             RememberOutcome::StoredEvictingOldest
         );
+        assert_eq!(store.floor_slice(0), &[aid(2), aid(3)][..]);
         let view = store.history(0);
         assert_eq!(view.len(), 2);
-        assert_eq!(view.floor, &[aid(2), aid(3)][..]);
         assert!(view.contains(&aid(3))); // newly remembered id is visible
         assert!(!view.contains(&aid(1))); // oldest was evicted
     }
