@@ -1,56 +1,110 @@
 # Navegação
-nav-ethos = Filosofia
+nav-ethos = Design
 nav-crates = Crates
 nav-api = API
 
 # Rodapé
-footer-tagline = Porte o contrato, não a implementação.
+footer-tagline = Trazido até você pelo time Personal.
 
 # Página inicial
-landing-kicker = Reticulum, portado com fidelidade
-landing-title = Um motor puro. Cada plataforma traz um host enxuto.
-landing-subtitle = Um porte em Rust feito do zero do contrato de rede mesh do Reticulum — voltado primeiro para embarcados, determinístico, compatível com no_std, com uma pequena costura Host que permite ao mesmo motor rodar em um daemon, um microcontrolador e um celular.
-landing-cta-ethos = Leia a filosofia
-landing-cta-crates = Conheça os crates
-landing-triumvirate-label = O triunvirato
-landing-quote-label = Diretriz de construção
-landing-quote-body = Porte o contrato, não a implementação. Construa um único motor puro e deixe cada plataforma trazer seu host enxuto.
+landing-kicker = Redes mesh imparáveis, para as pessoas
+landing-title = Uma portação de produção do Reticulum (RNS) escrita em Rust.
+landing-subtitle = Um núcleo determinístico, no_std e sem alocador. Cobre RNS e LXMF por inteiro. Bindings nativos para Kotlin, Swift, Python, TypeScript e C#. WebAssembly para navegadores e runtimes edge. Feito para o desempenho e a autonomia que qualquer stack Reticulum precisa, de um microcontrolador de cinco dólares a um nó na nuvem. Inclui um substituto drop-in para o rnsd.
+landing-cta-ethos = Escolha um crate
+landing-cta-crates = Como construímos isto
 
-# Cartões do triunvirato
-triumvirate-rns-role = O motor puro
-triumvirate-rns-blurb = Contrato de fio, roteamento, anúncios, enlaces — tick/ingest puros, sem I/O, sem std obrigatório.
-triumvirate-rnsd-role = O host daemon
-triumvirate-rnsd-blurb = Um adaptador Host enxuto baseado em std; o exemplo canônico de como uma plataforma dá vida ao motor.
-triumvirate-lxmf-role = A camada de mensagens
-triumvirate-lxmf-blurb = Camada de aplicação LXMF acima do motor — endereçamento, entrega e identidade para quem constrói apps.
+# Citação
+landing-quote-label = Para onde estamos construindo
+landing-quote-body = Reticulum é a infraestrutura de comunicação fundadora do futuro luminoso que podemos ter, se o construirmos. Este é nosso esforço para colocá-lo nas mãos de mais desenvolvedores e ajudar a tornar esse futuro real.
+
+# Em que você pode contar
+standards-section-label = Nossos padrões
+standards-section-title = Em que você pode contar
+standards-license-label = Licença
+standards-license-headline = MIT / Apache 2.0
+standards-license-body = Licença dupla e permissiva. Sem copyleft, sem restrições não comerciais.
+standards-coverage-label = Cobertura
+standards-coverage-headline = RNS e LXMF completos
+standards-coverage-body = Não só RNS. Não LXMF como adendo. Os dois, por inteiro.
+standards-core-label = Núcleo
+standards-core-headline = no_std, sem alocador
+standards-core-body = Um núcleo determinístico que roda onde alocadores não conseguem.
+standards-verification-label = Verificação
+standards-verification-headline = Diff-testado contra o RNS
+standards-verification-body = Toda mudança é conferida contra a referência; provas formais onde fazem diferença.
+
+# Por onde começo?
+start-section-label = Vias de entrada
+start-section-title = Por onde começo?
+start-section-lead = Escolha o caminho que combina com o que você está construindo. Hoje cada um aponta para um único crate; guias dedicados chegam junto.
+
+start-daemon-headline = Quero um nó Reticulum rodando
+start-daemon-body = Daemon pronto pra usar. Drop-in para o rnsd. Coloque do lado dos nós que você já tem.
+start-daemon-code = apt install personal-rnsd
+start-daemon-target = personal-rnsd
+
+start-mobile-headline = Estou construindo um app mobile
+start-mobile-body = Kotlin (.aar), Swift (.xcframework) ou Python (.whl) — o mesmo motor que seu daemon roda, embutido diretamente no app.
+start-mobile-code = implementation("org.staypersonal:rns:0.1")
+    pod 'PersonalRns', '~> 0.1'
+start-mobile-target = personal-rns-ffi
+
+start-game-headline = Estou levando para dentro de um jogo
+start-game-body = Bindings C# / .NET para Unity, Godot e MonoGame. Multiplayer sem subir um servidor.
+start-game-code = dotnet add package Personal.Rns
+start-game-target = personal-rns-ffi
+
+start-embedded-headline = Estou mirando microcontroladores
+start-embedded-body = O motor mais uma trait Host de três métodos. ESP32-C6 é a referência; S3, nRF, RP2040 e STM32 vêm em seguida.
+start-embedded-code = cargo add personal-rns --no-default-features
+start-embedded-target = personal-rns + hosts/*
+
+start-web-headline = Construo para web ou edge
+start-web-body = Um build WebAssembly que roda no navegador e em runtimes edge como Cloudflare Workers, Fastly e Spin.
+start-web-code = npm install personal-rns
+start-web-target = personal-rns (wasm32)
+
+start-rust-headline = Embuto em um app Rust
+start-rust-body = Um runtime RNS completo na caixa, ou o núcleo puro para você montar seu próprio runtime em volta.
+start-rust-code = cargo add personal-rnsd   # complete RNS runtime
+    cargo add personal-rns      # pure core only
+start-rust-target = personal-rnsd or personal-rns
+
+start-lxmf-headline = Quero enviar mensagens pela mesh
+start-lxmf-body = LXMF em cima do Reticulum — identidades, endereços, entrega. A camada onde Sideband e Nomadnet se apoiam.
+start-lxmf-code = cargo add personal-lxmf
+start-lxmf-target = personal-lxmf
+
+# Rodapé (licença)
+footer-license = Código aberto. MIT / Apache 2.0.
 
 # Página de filosofia
-ethos-kicker = Como isso é construído
-ethos-title = A diretriz de construção
-ethos-lead = Esta é a filosofia de engenharia por trás de cada decisão da suíte. Leia uma vez para entender por que a arquitetura é assim — motor puro, host enxuto, contrato acima de implementação.
+ethos-kicker = A disciplina
+ethos-title = Como construímos isto
+ethos-lead = Uma nota de engenheiro pra engenheiro sobre a disciplina por trás deste projeto — motor puro, núcleo sem alocador, cada mudança verificada contra a referência RNS. Dê uma passada antes de depender; queremos que você saiba no que está se metendo.
 
 # Índice de crates
-crates-kicker = A suíte
-crates-title = Crates em um relance
-crates-lead = Seis crates compõem a suíte. O motor é o substrato; todo o resto é um host enxuto ou um consumidor.
-crates-card-cta = Leia mais →
-crates-back = Voltar aos crates
-crates-not-found = Não existe crate com esse nome
+crates-kicker = As peças
+crates-title = Pegue o que combina com o que você está construindo.
+crates-lead = Cada crate é feito pra ser útil sozinho, mesmo se você não puxar o resto. O motor é o substrato; tudo o mais empilha em cima, e mais peças vão chegando conforme a suíte cresce.
+crates-card-cta = O que ele faz →
+crates-back = Todos os crates
+crates-not-found = Nenhum crate com esse nome
 
-# Cartões por crate
-crate-rns-role = O motor Reticulum puro
-crate-rns-blurb = Contrato de fio e roteamento como uma máquina de estados pura. no_std + alloc, determinístico, embarcados primeiro.
-crate-rnsd-role = O host daemon de referência
-crate-rnsd-blurb = Adaptador Host baseado em std e binário daemon Linux. O exemplo canônico de como colocar o motor online.
-crate-lxmf-role = A camada de aplicação LXMF
-crate-lxmf-blurb = Endereçamento, entrega e identidade para quem constrói apps. Fica sobre personal-rns; consumido por Personal e outros.
-crate-ffi-role = Bindings Kotlin / Swift / Python
-crate-ffi-blurb = Um UDL, três linguagens via uniffi. A porta do SDK para quem está fora do Rust.
-crate-rvt-role = Simulação multinó e ferramentas
-crate-rvt-blurb = Reticulum Visual Toolkit. Hoje simulação multinó com relógio virtual; em breve depurador ao vivo. Em Dioxus e portável para a web.
-crate-esp32c6-role = Adaptador Host para ESP32-C6
-crate-esp32c6-blurb = Host no_std/no_main em bare metal. Prova de que o motor cabe em um microcontrolador de verdade.
+# Cards por crate
+crate-rns-role = O motor
+crate-rns-blurb = Encaixe o Reticulum em qualquer projeto Rust. Determinístico, no_std, sem alocador; sem estado global, sem I/O embutido — traga seu relógio e seu fio.
+crate-rnsd-role = O daemon
+crate-rnsd-blurb = Um drop-in para o rnsd que roda em qualquer lugar onde o Linux roda. Mesmo fio da referência RNS; use junto ou no lugar dos nós que você já tem.
+crate-lxmf-role = Mensageria
+crate-lxmf-blurb = LXMF em cima do Reticulum — a camada onde Sideband e Nomadnet se apoiam. Identidades, endereços, entrega de mensagens.
+crate-ffi-role = Bindings mobile + Python
+crate-ffi-blurb = Uma única interface uniffi gera Kotlin (.aar), Swift (.xcframework) e Python (.whl). Use o Reticulum do Android, iOS ou de um notebook Jupyter — mesma forma, mesmo motor.
+crate-rvt-role = Depurador visual
+crate-rvt-blurb = Veja pacotes se moverem entre nós simulados sobre um relógio virtual. Determinístico — mesmo cenário, mesmo trace, toda vez.
+crate-esp32c6-role = Firmware do ESP32-C6
+crate-esp32c6-blurb = Adaptador host bare-metal para o ESP32-C6. Sem SO, sem alocador — prova de que o motor roda num chip RISC-V de cinco dólares com rádios embutidos.
 
 # 404
-not-found-title = Ainda não há nada aqui.
-not-found-cta = Voltar ao início
+not-found-title = Aqui ainda não tem nada.
+not-found-cta = Voltar para o início

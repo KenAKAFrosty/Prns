@@ -49,6 +49,26 @@ fn App() -> Element {
                 langid!("zh-CN"),
                 include_str!("../i18n/zh-CN.ftl"),
             ))
+            .with_locale(Locale::new_static(
+                langid!("da-DK"),
+                include_str!("../i18n/da-DK.ftl"),
+            ))
+            .with_locale(Locale::new_static(
+                langid!("it-IT"),
+                include_str!("../i18n/it-IT.ftl"),
+            ))
+            .with_locale(Locale::new_static(
+                langid!("ko-KR"),
+                include_str!("../i18n/ko-KR.ftl"),
+            ))
+            .with_locale(Locale::new_static(
+                langid!("nb-NO"),
+                include_str!("../i18n/nb-NO.ftl"),
+            ))
+            .with_locale(Locale::new_static(
+                langid!("sv-SE"),
+                include_str!("../i18n/sv-SE.ftl"),
+            ))
     });
 
     rsx! {

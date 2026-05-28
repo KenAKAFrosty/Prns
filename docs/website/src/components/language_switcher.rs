@@ -4,11 +4,16 @@ use unic_langid::LanguageIdentifier;
 
 const LANGUAGES: &[(&str, &str, &str)] = &[
     ("en-US", "EN", "English"),
+    ("da-DK", "DA", "Dansk"),
     ("de-DE", "DE", "Deutsch"),
     ("es-ES", "ES", "Español"),
     ("fr-FR", "FR", "Français"),
+    ("it-IT", "IT", "Italiano"),
     ("ja-JP", "JA", "日本語"),
+    ("ko-KR", "KO", "한국어"),
+    ("nb-NO", "NB", "Norsk"),
     ("pt-BR", "PT", "Português"),
+    ("sv-SE", "SV", "Svenska"),
     ("zh-CN", "ZH", "简体中文"),
 ];
 
