@@ -16,7 +16,6 @@ use crate::path::DEFAULT_MAX_TRACKED_DESTINATIONS;
 use crate::wire::DestinationHash;
 use heapless::Vec;
 
-/// One destination's accepted announce, due to be rebroadcast at `due_at`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduledRebroadcast {
     pub destination: DestinationHash,
@@ -38,14 +37,10 @@ impl<const MAX_PENDING: usize> RebroadcastSchedule<MAX_PENDING> {
         }
     }
 
-    /// How many rebroadcasts are currently waiting.
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
-    /// Schedule `destination`'s accepted announce for rebroadcast at `due_at`. A
-    /// destination already waiting is rescheduled to the new time, so a fresher
-    /// announce supersedes the older pending one instead of queuing twice.
     pub fn schedule(&mut self, destination: DestinationHash, due_at: InstantMillis) {
         if let Some(existing) = self
             .pending
@@ -65,7 +60,7 @@ impl<const MAX_PENDING: usize> RebroadcastSchedule<MAX_PENDING> {
 
     /// Remove and return one rebroadcast whose time has come (`due_at <= now`),
     /// or `None` if nothing is due yet. Called in a loop to drain a tick's due
-    /// set; the order entries come out in is unspecified.
+    /// set. The order entries come out in is unspecified.
     pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledRebroadcast> {
         let due = self.pending.iter().position(|entry| entry.due_at <= now)?;
         Some(self.pending.swap_remove(due))
