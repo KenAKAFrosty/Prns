@@ -1,7 +1,7 @@
 //! The routing layer: announces, the routing table, the rebroadcast schedule,
 //! and the storage backends that hold each routing concern.
 //!
-//! `RoutingTable` is generic over three substitutable storage backends —
+//! `RoutingTable` is generic over four substitutable storage backends —
 //! see [`storage`] for the trait catalogue. The default type parameters
 //! resolve to the no_std stack-resident backends (`FixedArrayRouteColumns`,
 //! `TieredAnnounceIdHistory`, `PackedAppDataArena`), so bare `RoutingTable`
@@ -37,14 +37,14 @@ pub use types::{
 
 /// Routing table composed of four substitutable storage backends:
 ///
-/// - `C: RouteColumns` — SoA routing-coherent fields (hops, expires,
+/// - `R: RouteColumns` — SoA routing-coherent fields (hops, expires,
 ///   responsiveness) keyed by destination. The primary destination index.
 /// - `A: RetainedAnnounceColumns` — SoA announce-coherent fields
 ///   (public_keys, dotted_name_hash, ratchet, signature, app_data_handle)
-///   slot-indexed by `C`'s slot.
-/// - `S: AnnounceIdHistory` — per-destination history of announce ids
-///   heard, slot-indexed by `C`'s slot.
-/// - `P: RetainedAppData` — variable-length `app_data` bytes behind
+///   slot-indexed by `R`'s slot.
+/// - `H: AnnounceIdHistory` — per-destination history of announce ids
+///   heard, slot-indexed by `R`'s slot.
+/// - `D: RetainedAppData` — variable-length `app_data` bytes behind
 ///   opaque handles, joined into `A` via `app_data_handle`.
 ///
 /// Each backend has its own atomicity boundary, matching the data
@@ -62,17 +62,17 @@ pub use types::{
 /// byte-for-byte. The engine's determinism tests rely on this; do not use
 /// it to ask "do two tables built by different routes hold the same paths."
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RoutingTable<C, A, S, P>
+pub struct RoutingTable<R, A, H, D>
 where
-    C: RouteColumns,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
-    routes: C,
+    routes: R,
     retained_announces: A,
-    announce_id_history: S,
-    retained_app_data: P,
+    announce_id_history: H,
+    retained_app_data: D,
 }
 
 /// The no_std stack-resident routing-table preset — the only place the
@@ -80,7 +80,7 @@ where
 /// `FixedArrayRetainedAnnounceColumns`, `TieredAnnounceIdHistory`,
 /// `PackedAppDataArena`) are named. Lets call sites tune the sizes via
 /// const generics without spelling out the full
-/// `RoutingTable<C, A, S, P>`. Bare `DefaultRoutingTable` uses the
+/// `RoutingTable<R, A, H, D>`. Bare `DefaultRoutingTable` uses the
 /// `DEFAULT_*` sizing knobs from [`crate::routing::defaults`].
 pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
@@ -100,12 +100,12 @@ pub type DefaultRoutingTable<
     PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
 >;
 
-impl<C, A, S, P> RoutingTable<C, A, S, P>
+impl<R, A, H, D> RoutingTable<R, A, H, D>
 where
-    C: RouteColumns,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
     pub fn route_count(&self) -> usize {
         self.routes.len()

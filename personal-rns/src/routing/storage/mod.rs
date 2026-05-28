@@ -10,7 +10,7 @@
 //! - [`RetainedAppData`] — the variable-length `app_data` tail of each
 //!   retained announce, kept behind opaque [`AppDataHandle`]s.
 //!
-//! A `RoutingTable<C, S, P>` composes one impl of each. Today's defaults
+//! A `RoutingTable<R, A, H, D>` composes one impl of each. Today's defaults
 //! are the no_std backends (`FixedArrayRouteColumns`,
 //! `TieredAnnounceIdHistory`, `PackedAppDataArena`). The std-host backends
 //! slot in behind a feature flag later, mixing-and-matching with the

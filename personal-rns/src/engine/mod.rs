@@ -44,16 +44,16 @@ pub struct OutboundPacket<'a> {
 /// capable host substitutes alternate routing-storage backends at the type
 /// parameters directly.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EngineState<C, A, S, P>
+pub struct EngineState<R, A, H, D>
 where
-    C: RouteColumns,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
     tick_count: u64,
     ingested_packet_count: u64,
-    routing_table: RoutingTable<C, A, S, P>,
+    routing_table: RoutingTable<R, A, H, D>,
 }
 
 /// The no_std stack-resident engine-state preset — the only place the
@@ -77,12 +77,12 @@ pub type DefaultEngineState<
     PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
 >;
 
-impl<C, A, S, P> EngineState<C, A, S, P>
+impl<R, A, H, D> EngineState<R, A, H, D>
 where
-    C: RouteColumns,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
@@ -136,15 +136,15 @@ impl TickOutput {
 /// path. Bytes that don't parse, or aren't announces, are counted as processed
 /// and otherwise ignored — this slice acts only on announces.
 #[must_use]
-pub fn ingest<C, A, S, P>(
-    state: &mut EngineState<C, A, S, P>,
+pub fn ingest<R, A, H, D>(
+    state: &mut EngineState<R, A, H, D>,
     packets: &[InboundPacket<'_>],
 ) -> IngestOutput
 where
-    C: RouteColumns,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
     state.ingested_packet_count = state
         .ingested_packet_count
@@ -213,12 +213,12 @@ where
 
 /// Advance the engine's periodic work to `now`.
 #[must_use]
-pub fn tick<C, A, S, P>(state: &mut EngineState<C, A, S, P>, _now: InstantMillis) -> TickOutput
+pub fn tick<R, A, H, D>(state: &mut EngineState<R, A, H, D>, _now: InstantMillis) -> TickOutput
 where
-    C: RouteColumns,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
     state.tick_count = state.tick_count.saturating_add(1);
     TickOutput::default()

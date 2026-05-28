@@ -18,16 +18,16 @@ pub struct StepOutput {
     pub tick: TickOutput,
 }
 
-pub fn step<H, C, A, S, P>(
-    state: &mut EngineState<C, A, S, P>,
-    host: &mut H,
-) -> Result<StepOutput, H::Error>
+pub fn step<Host, R, A, H, D>(
+    state: &mut EngineState<R, A, H, D>,
+    host: &mut Host,
+) -> Result<StepOutput, Host::Error>
 where
-    H: HostAdapter,
-    C: RouteColumns,
+    Host: HostAdapter,
+    R: RouteColumns,
     A: RetainedAnnounceColumns,
-    S: AnnounceIdHistory,
-    P: RetainedAppData,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
 {
     let packets = host.drain_inbound_packets()?;
     let ingest = ingest(state, packets);
