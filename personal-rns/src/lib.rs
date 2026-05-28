@@ -12,4 +12,5 @@ pub mod outbox;
 pub mod path;
 mod payload_store;
 pub mod runtime;
+pub mod schedule;
 pub mod wire;
