@@ -1,19 +1,35 @@
 //! The seam between the engine and the wire.
 //!
-//! The engine defines what every interface IS (this module's data shapes,
-//! soon a trait) and what each kind can DO (sub-traits arriving in later
-//! slices). Hosts fulfill the contracts with concrete implementations:
-//! TCP socket, UDP socket, LoRa radio, BLE GATT, in-process loopback,
-//! sim, and so on. Reticulum policy decisions stay in the engine; an
-//! interface impl is a faithful actor honoring the contract, never a
-//! source of routing or fanout decisions.
+//! The engine defines what every interface IS (the data shapes here and
+//! the base [`Interface`] trait) and what each kind can DO (per-medium
+//! sub-traits like [`PointToPointInterface`] and
+//! [`SharedBroadcastInterface`]). Hosts fulfill the contracts with
+//! concrete implementations: TCP socket, UDP socket, LoRa radio, BLE
+//! GATT, in-process loopback, sim, and so on. Reticulum policy
+//! decisions stay in the engine; an interface impl is a faithful actor
+//! honoring the contract, never a source of routing or fanout
+//! decisions.
+//!
+//! Layout:
+//! - **Data shapes** (`capabilities`, `id`, `medium`, `mode`, `state`):
+//!   the inert types every interface presents.
+//! - **Traits** (`interface`, `point_to_point`, `shared_broadcast`):
+//!   the contract every concrete impl signs.
+//! - **Concrete impls** (`loopback/`): in-process loopback variants
+//!   live together since they share semantics and vary only by
+//!   environment.
+//! - **Framing helpers** (`hdlc`): byte-stuffed framing used by
+//!   serial-style transports (USB CDC, RS-232, etc.); not an
+//!   `Interface` itself, but a building block for those that frame
+//!   over byte streams.
 
 pub mod capabilities;
+pub mod hdlc;
 pub mod id;
 pub mod interface;
+pub mod loopback;
 pub mod medium;
 pub mod mode;
-pub mod no_alloc_loopback;
 pub mod point_to_point;
 pub mod shared_broadcast;
 pub mod state;
@@ -23,17 +39,14 @@ pub use id::InterfaceId;
 pub use interface::Interface;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
-pub use no_alloc_loopback::{NoAllocLoopback, NoAllocLoopbackError, NoAllocLoopbackQueue};
 pub use point_to_point::PointToPointInterface;
 pub use shared_broadcast::SharedBroadcastInterface;
 pub use state::InterfaceState;
 
-#[cfg(feature = "alloc")]
-pub mod loopback;
+pub use loopback::{NoAllocLoopback, NoAllocLoopbackError, NoAllocLoopbackQueue};
+
 #[cfg(feature = "alloc")]
 pub use loopback::{LoopbackError, LoopbackInterface};
 
 #[cfg(feature = "std")]
-pub mod threaded_loopback;
-#[cfg(feature = "std")]
-pub use threaded_loopback::ThreadedLoopback;
+pub use loopback::ThreadedLoopback;
