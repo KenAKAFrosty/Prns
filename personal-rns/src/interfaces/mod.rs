@@ -25,3 +25,8 @@ pub use mode::InterfaceMode;
 pub use point_to_point::PointToPointInterface;
 pub use shared_broadcast::SharedBroadcastInterface;
 pub use state::InterfaceState;
+
+#[cfg(feature = "alloc")]
+pub mod loopback;
+#[cfg(feature = "alloc")]
+pub use loopback::{LoopbackError, LoopbackInterface};
