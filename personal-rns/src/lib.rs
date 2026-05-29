@@ -16,7 +16,6 @@ pub mod crypto;
 pub mod engine;
 pub mod host;
 pub mod interfaces;
-pub mod outbox;
 pub mod routing;
 pub mod runtime;
 pub mod wire;

@@ -10,9 +10,9 @@ use esp_hal::rng::{Rng, TrngSource};
 use esp_hal::time::Instant;
 use esp_println::println;
 
-use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis, OutboundPacket};
+use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis};
 use personal_rns::host::HostAdapter;
-use personal_rns::outbox::Outbox;
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::step;
 
 esp_app_desc!();
@@ -54,15 +54,14 @@ impl HostAdapter for Esp32Host {
         Ok(&[])
     }
 
-    fn pump_outbound_packets(
+    fn handle_egress(
         &mut self,
-        packets: &[OutboundPacket<'_>],
+        _bytes: &[u8],
+        _received_from: Option<InterfaceId>,
     ) -> Result<(), Self::Error> {
-        if packets.is_empty() {
-            Ok(())
-        } else {
-            Err(Esp32HostError::NoTransport)
-        }
+        // No transport wired yet — every egress fails honestly until a
+        // real interface lands.
+        Err(Esp32HostError::NoTransport)
     }
 }
 
@@ -82,12 +81,11 @@ fn main() -> ! {
     println!("ESP32C6_HOST: boot");
 
     let mut state: DefaultEngineState = DefaultEngineState::default();
-    let mut outbox = Outbox::<2048, 16>::new();
     let mut host = Esp32Host;
     let delay = Delay::new();
 
     for _ in 0..5 {
-        step(&mut state, &mut outbox, &mut host).expect("clock-only step cannot fail");
+        step(&mut state, &mut host).expect("clock-only step cannot fail");
         delay.delay_millis(10);
     }
     let now = host.now_millis().expect("c6 timer is readable");
@@ -100,7 +98,7 @@ fn main() -> ! {
     let mut heartbeat: u32 = 0;
     loop {
         heartbeat = heartbeat.wrapping_add(1);
-        step(&mut state, &mut outbox, &mut host).expect("clock-only step cannot fail");
+        step(&mut state, &mut host).expect("clock-only step cannot fail");
         println!(
             "ESP32C6_HOST_HEARTBEAT count={heartbeat} ticks={}",
             state.tick_count()

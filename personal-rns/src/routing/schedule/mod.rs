@@ -22,8 +22,9 @@ use heapless::Vec;
 /// One scheduled rebroadcast: which destination, when it's due, and the
 /// interface the announce we're re-emitting was originally delivered on.
 /// The `source_interface` tag is opaque to the engine — it carries
-/// through to the emitted `OutboundPacket` so the host can apply RNS's
-/// "don't gossip back to source" rule in fanout.
+/// through on the [`EgressDirective`](crate::engine::EgressDirective) as
+/// `received_from`, so the host can apply RNS's "don't gossip back to
+/// source" rule in fanout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduledRebroadcast {
     pub destination: DestinationHash,
@@ -78,11 +79,40 @@ impl<const MAX_PENDING: usize> PendingRebroadcasts<MAX_PENDING> {
     }
 
     /// Remove and return one rebroadcast whose time has come (`due_at <= now`),
-    /// or `None` if nothing is due yet. Called in a loop to drain a tick's due
-    /// set. The order entries come out in is unspecified.
+    /// or `None` if nothing is due yet. The order entries come out in is
+    /// unspecified.
     pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledRebroadcast> {
         let due = self.pending.iter().position(|entry| entry.due_at <= now)?;
         Some(self.pending.swap_remove(due))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &ScheduledRebroadcast> + '_ {
+        self.pending.iter()
+    }
+
+    /// Remove every entry whose `due_at <= now`. Returns how many were
+    /// removed. Used by `TickOutput`'s Drop to commit a tick's
+    /// emissions once the host has iterated them.
+    pub fn drain_due(&mut self, now: InstantMillis) -> usize {
+        let mut removed = 0;
+        let mut i = 0;
+        while i < self.pending.len() {
+            if self.pending[i].due_at <= now {
+                self.pending.swap_remove(i);
+                removed += 1;
+            } else {
+                i += 1;
+            }
+        }
+        removed
+    }
+
+    /// Count entries whose `due_at <= now` without removing them.
+    pub fn count_due(&self, now: InstantMillis) -> usize {
+        self.pending
+            .iter()
+            .filter(|entry| entry.due_at <= now)
+            .count()
     }
 }
 

@@ -9,8 +9,9 @@
 
 use std::time::Instant;
 
-use personal_rns::engine::{InboundPacket, InstantMillis, OutboundPacket};
+use personal_rns::engine::{InboundPacket, InstantMillis};
 use personal_rns::host::HostAdapter;
+use personal_rns::interfaces::InterfaceId;
 
 pub struct StdHost {
     base: Instant,
@@ -58,14 +59,14 @@ impl HostAdapter for StdHost {
         Ok(&[])
     }
 
-    fn pump_outbound_packets(&mut self, packets: &[OutboundPacket<'_>]) -> Result<(), Self::Error> {
-        if packets.is_empty() {
-            // No transport wired yet, but an empty batch costs nothing to
-            // accept — that's the natural shape every step takes until ingest
-            // actually surfaces an emission.
-            Ok(())
-        } else {
-            Err(StdHostError::NoTransport)
-        }
+    fn handle_egress(
+        &mut self,
+        _bytes: &[u8],
+        _received_from: Option<InterfaceId>,
+    ) -> Result<(), Self::Error> {
+        // No transport wired yet — every egress hits this and fails
+        // honestly. Once a real interface lands, this method dispatches
+        // the bytes per host fanout policy.
+        Err(StdHostError::NoTransport)
     }
 }

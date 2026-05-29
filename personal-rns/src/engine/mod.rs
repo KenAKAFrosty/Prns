@@ -12,7 +12,6 @@ pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 
 use crate::interfaces::InterfaceId;
-use crate::outbox::{Outbox, OutboxFull};
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::defaults::jitter_offset_for;
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
@@ -27,10 +26,6 @@ use crate::routing::{
     DEFAULT_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_TRACKED_DESTINATIONS,
     DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-};
-use crate::wire::{
-    Context, ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WirePacketHeader,
-    HEADER_LEN,
 };
 
 /// Monotonic timestamp supplied by the host, in milliseconds.
@@ -49,19 +44,6 @@ pub struct InboundPacket<'a> {
     pub arrived_at: InstantMillis,
     pub source_interface: InterfaceId,
     pub bytes: &'a [u8],
-}
-
-/// One outbound packet the engine wants transmitted. The bytes are the
-/// finished wire packet; `maybe_source_interface` carries the identity
-/// of the interface that originally delivered the announce we're
-/// re-emitting (the canonical use: the host's fanout skips that
-/// interface). `None` means the engine originated this packet — for
-/// example a future origin-side announce — and the host should fan to
-/// every interface it owns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutboundPacket<'a> {
-    pub bytes: &'a [u8],
-    pub maybe_source_interface: Option<InterfaceId>,
 }
 
 /// Retained engine state. **Purely abstract** in its type parameters — does
@@ -156,46 +138,121 @@ pub struct IngestOutput {
 }
 
 impl IngestOutput {
-    /// Every inbound packet the batch looked at, parseable or not.
     pub const fn processed_packet_count(&self) -> usize {
         self.processed_packet_count
     }
-
-    /// How many of those were valid announces accepted into the routing table.
     pub const fn accepted_announce_count(&self) -> usize {
         self.accepted_announce_count
     }
-
-    /// How many announces this batch parked in the held-cache after a
-    /// transient `Dropped(PayloadArenaFull)`. They retry on subsequent ticks.
     pub const fn held_for_retry_count(&self) -> usize {
         self.held_for_retry_count
     }
-
-    /// How many destinations this batch scheduled for re-emission. Equal to
-    /// `accepted_announce_count` whenever every accept finds a slot in the
-    /// pending-rebroadcast set.
     pub const fn scheduled_rebroadcast_count(&self) -> usize {
         self.scheduled_rebroadcast_count
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct TickOutput {
-    emitted_packet_count: usize,
+/// What `tick` produced this cycle.
+///
+/// Holds a mutable borrow on the engine state for its lifetime — so the
+/// host can iterate the typed directives via [`egress_directives`], and
+/// the engine's commit (drain of processed entries) happens
+/// automatically when this value drops. The borrow also structurally
+/// enforces the pseudo-pure tick contract: no other state mutation can
+/// happen while a `TickOutput` is alive.
+///
+/// **What stays behind**: only the directives the host is handed this
+/// tick get committed (removed from engine state) on Drop. Everything
+/// else the engine had scheduled for a future tick — today only
+/// not-yet-due entries in the rebroadcast schedule, tomorrow other
+/// directive kinds with their own lifecycle (data sends, proofs, link
+/// replies, ...) — stays inside engine state and surfaces on a later
+/// tick when its time comes. The engine owns its own schedules; the
+/// host is a dumb tx/rx pump. The fixed-cap backends used today cap
+/// the in-flight schedule — a growable backend is on the roadmap
+/// once we want to mentally validate the "engine has effectively
+/// infinite room to carry stuff over" model at scale.
+///
+/// [`egress_directives`]: TickOutput::egress_directives
+#[must_use]
+pub struct TickOutput<'a, R, A, H, D, const HELD: usize>
+where
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    state: &'a mut EngineState<R, A, H, D, HELD>,
+    now: InstantMillis,
+    egress_directive_count: usize,
     recovered_from_held_count: usize,
 }
 
-impl TickOutput {
-    pub const fn emitted_packet_count(&self) -> usize {
-        self.emitted_packet_count
+impl<'a, R, A, H, D, const HELD: usize> TickOutput<'a, R, A, H, D, HELD>
+where
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    /// Count of directives the host receives this tick — identical to
+    /// the number of items [`egress_directives`] will yield.
+    ///
+    /// [`egress_directives`]: TickOutput::egress_directives
+    pub const fn egress_directive_count(&self) -> usize {
+        self.egress_directive_count
     }
 
-    /// How many held announces this tick installed into the routing table on
-    /// retry. Each tick attempts at most one — the cache typically drains
-    /// across several ticks as routine traffic frees arena space.
     pub const fn recovered_from_held_count(&self) -> usize {
         self.recovered_from_held_count
+    }
+
+    /// Iterate every directive the engine is handing to the host this
+    /// tick. Read-only — the iterator yields [`EgressDirective`]
+    /// borrowing from state via `&self`, so the host can re-iterate,
+    /// count, peek, find, collect snapshots. On Drop the engine
+    /// commits: exactly the set of entries yielded here is removed
+    /// from whichever per-kind schedule produced them; everything
+    /// else stays in state for a future tick. Today the only source
+    /// is the rebroadcast schedule; as more directive kinds land the
+    /// iterator will chain across additional sources, each with its
+    /// own commit.
+    pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
+        let now = self.now;
+        let state = &*self.state;
+        state
+            .pending_rebroadcasts
+            .iter()
+            .filter(move |sr| sr.due_at <= now)
+            .filter_map(move |sr| {
+                let retained = state.routing_table.retained_announce_for(&sr.destination)?;
+                Some(EgressDirective::ReemitAnnounce {
+                    announce: retained.announce,
+                    emit_hops: retained.hops,
+                    received_from: sr.source_interface,
+                })
+            })
+    }
+}
+
+impl<R, A, H, D, const HELD: usize> Drop for TickOutput<'_, R, A, H, D, HELD>
+where
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    fn drop(&mut self) {
+        // Commit the tick: each per-kind schedule drops exactly the
+        // entries it just yielded to the host. Anything else stays
+        // in state for a later tick. Today the only schedule is the
+        // rebroadcast set (drain by `due_at <= self.now`); as more
+        // directive kinds land we add their commits here. Failures
+        // the host had during dispatch are not retried — per the
+        // architecture, failure feedback flows back via future inputs
+        // (interface state changes, the protocol's re-broadcast
+        // cycle), never via cancellation of the current tick.
+        self.state.pending_rebroadcasts.drain_due(self.now);
     }
 }
 
@@ -352,17 +409,20 @@ fn ingest_announce<R, A, H, D, const HELD: usize>(
     }
 }
 
-/// Advance the engine's periodic work to `now`.
+/// Advance the engine's periodic work to `now`. Performs the held-cache
+/// retry (one entry max per tick), maintains the rebroadcast schedule,
+/// and returns a [`TickOutput`] holding `&mut state` until the host has
+/// iterated the directives the engine produced.
 ///
-/// `entropy` is the same per-step value passed to `ingest`; reused here so a
-/// held-recovery accept gets a deterministic jittered re-emission slot.
-#[must_use]
-pub fn tick<R, A, H, D, const HELD: usize, const ARENA: usize, const MAX_PACKETS: usize>(
+/// `entropy` is the same per-step value passed to `ingest`; reused here
+/// so a held-recovery accept gets a deterministic jittered re-emission
+/// slot. The returned [`TickOutput`] is itself `#[must_use]`, so
+/// dropping it without iterating is a compile-time warning.
+pub fn tick<R, A, H, D, const HELD: usize>(
     state: &mut EngineState<R, A, H, D, HELD>,
     now: InstantMillis,
     entropy: u64,
-    outbox: &mut Outbox<ARENA, MAX_PACKETS>,
-) -> TickOutput
+) -> TickOutput<'_, R, A, H, D, HELD>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -418,111 +478,70 @@ where
         }
     }
 
-    let mut emitted_packet_count = 0;
-    loop {
-        let Some(scheduled) = state.pending_rebroadcasts.take_due(now) else {
-            break;
-        };
-
-        // Look up + write the wire packet straight into the outbox. The
-        // retained-announce borrow lives only inside this match arm so the
-        // next loop pass can call `state.pending_rebroadcasts.*` again.
-        let emit_outcome: EmitOutcome = match state
-            .routing_table
-            .retained_announce_for(&scheduled.destination)
-        {
-            // The route was evicted between scheduling and draining (future
-            // eviction surface — today this never fires). Drop silently.
-            None => EmitOutcome::RouteGone,
-            Some(retained) => {
-                let context_flag = if retained.announce.maybe_ratchet.is_some() {
-                    ContextFlag::Set
-                } else {
-                    ContextFlag::Unset
-                };
-                let header = WirePacketHeader {
-                    ifac_flag: IfacFlag::Open,
-                    context_flag,
-                    propagation: PropagationType::Broadcast,
-                    destination_type: DestinationType::Single,
-                    packet_type: PacketType::Announce,
-                    hops: retained.hops,
-                    transport_id: None,
-                    destination: scheduled.destination,
-                    context: Context::None,
-                };
-                let payload_len = retained.announce.wire_len();
-                let total_len = HEADER_LEN + payload_len;
-                match outbox.write_packet(total_len, Some(scheduled.source_interface), |buf| {
-                    let _ = header
-                        .write(&mut buf[..HEADER_LEN])
-                        .expect("HEADER_LEN bytes always fit a Type-1 header");
-                    let _ = retained
-                        .announce
-                        .to_wire(&mut buf[HEADER_LEN..])
-                        .expect("payload_len bytes always fit the announce body");
-                }) {
-                    Ok(()) => EmitOutcome::Emitted,
-                    Err(OutboxFull::Bytes | OutboxFull::Packets) => EmitOutcome::OutboxFull,
-                }
-            }
-        };
-
-        match emit_outcome {
-            EmitOutcome::Emitted => emitted_packet_count += 1,
-            EmitOutcome::RouteGone => continue,
-            EmitOutcome::OutboxFull => {
-                // Put it back at its original due_at + source so the host
-                // can drain and we re-emit on a later tick.
-                state.pending_rebroadcasts.schedule(
-                    scheduled.destination,
-                    scheduled.due_at,
-                    scheduled.source_interface,
-                );
-                break;
-            }
-        }
-    }
+    // Count what the host will see this tick. `tick` is no longer
+    // responsible for emitting bytes; the host iterates the typed
+    // directives via `TickOutput::egress_directives` and commits on
+    // Drop. Anything not-yet-due stays parked in
+    // `pending_rebroadcasts` and surfaces on a later tick.
+    let egress_directive_count = state.pending_rebroadcasts.count_due(now);
 
     TickOutput {
-        emitted_packet_count,
+        state,
+        now,
+        egress_directive_count,
         recovered_from_held_count,
     }
-}
-
-enum EmitOutcome {
-    Emitted,
-    RouteGone,
-    OutboxFull,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::DestinationHash;
+    use crate::wire::{
+        DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
+    };
 
     /// Fixed entropy so determinism tests can compare two runs apples-to-apples;
     /// the engine treats entropy as opaque data, the value just has to be stable.
     const TEST_ENTROPY: u64 = 0xCAFE_F00D_DEAD_BEEF;
 
-    /// Test-side `tick` helper: lends an outbox sized for any one
-    /// announce-emission test and returns the captured outbound bytes
-    /// alongside the `TickOutput`. Tests that don't care about emission just
-    /// destructure the first element.
+    /// What the tests need to assert against a tick, snapshotted to a
+    /// value type so it can outlive the `TickOutput` borrow on state.
+    /// `TickOutput` itself holds `&mut state` until drop (the commit),
+    /// so we can't bubble it out of `tick_capture` — instead we drain
+    /// the directives, copy their wire serialisation, and return both
+    /// the counters and the captured bytes.
+    #[derive(Debug, Default, Clone, PartialEq, Eq)]
+    struct TickSnapshot {
+        egress_directive_count: usize,
+        recovered_from_held_count: usize,
+    }
+
+    /// Test-side `tick` helper: runs one tick, serializes every due
+    /// directive into its own owned wire buffer, and returns the
+    /// captured bytes alongside a [`TickSnapshot`]. Tests that don't
+    /// care about emission ignore the byte vec.
     fn tick_capture<R, A, H, D, const HELD: usize>(
         state: &mut EngineState<R, A, H, D, HELD>,
         now: InstantMillis,
-    ) -> (TickOutput, std::vec::Vec<std::vec::Vec<u8>>)
+    ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>)
     where
         R: RouteColumns,
         A: RetainedAnnounceColumns,
         H: AnnounceIdHistory,
         D: RetainedAppData,
     {
-        let mut outbox = Outbox::<2048, 16>::new();
-        let out = tick(state, now, TEST_ENTROPY, &mut outbox);
-        let emitted = outbox.iter().map(|p| p.bytes.to_vec()).collect();
-        (out, emitted)
+        let tick_out = tick(state, now, TEST_ENTROPY);
+        let snapshot = TickSnapshot {
+            egress_directive_count: tick_out.egress_directive_count(),
+            recovered_from_held_count: tick_out.recovered_from_held_count(),
+        };
+        let mut emitted = std::vec::Vec::new();
+        let mut buf = [0u8; MTU];
+        for directive in tick_out.egress_directives() {
+            let n = directive.to_wire(&mut buf).expect("serialize directive");
+            emitted.push(buf[..n].to_vec());
+        }
+        (snapshot, emitted)
     }
 
     #[test]
@@ -536,7 +555,7 @@ mod tests {
         assert_eq!(left, right);
         assert_eq!(left.tick_count(), 1);
         assert_eq!(left_out, right_out);
-        assert_eq!(left_out.emitted_packet_count(), 0);
+        assert_eq!(left_out.egress_directive_count, 0);
         assert!(left_bytes.is_empty());
         assert_eq!(left_bytes, right_bytes);
     }
@@ -737,7 +756,7 @@ mod tests {
         // Arena state unchanged → retry hits Dropped(PayloadArenaFull) again
         // and the held entry is discarded. We don't re-park (livelock).
         let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
-        assert_eq!(out.recovered_from_held_count(), 0);
+        assert_eq!(out.recovered_from_held_count, 0);
         assert_eq!(state.held_count(), 0);
         assert_eq!(state.route_count(), 0);
     }
@@ -786,7 +805,7 @@ mod tests {
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
         );
-        assert_eq!(tick_out.emitted_packet_count(), 1);
+        assert_eq!(tick_out.egress_directive_count, 1);
         assert_eq!(state.pending_rebroadcast_count(), 0);
 
         // The emitted bytes round-trip back to the same announce, with the
@@ -826,7 +845,7 @@ mod tests {
         // `now < arrival` is strictly before any due_at — the offset is
         // non-negative so `due_at >= arrival > now`, and nothing emits.
         let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1));
-        assert_eq!(tick_out.emitted_packet_count(), 0);
+        assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
         assert_eq!(state.pending_rebroadcast_count(), 1);
     }
@@ -884,54 +903,21 @@ mod tests {
         assert_eq!(state.pending_rebroadcast_count(), 0);
 
         let (tick_out, bytes) = tick_capture(&mut state, InstantMillis(2_000));
-        assert_eq!(tick_out.recovered_from_held_count(), 0);
-        assert_eq!(tick_out.emitted_packet_count(), 0);
+        assert_eq!(tick_out.recovered_from_held_count, 0);
+        assert_eq!(tick_out.egress_directive_count, 0);
         assert_eq!(state.pending_rebroadcast_count(), 0);
         assert!(bytes.is_empty());
-    }
-
-    #[test]
-    fn outbox_full_reschedules_so_emission_resumes_next_tick() {
-        let raw = hx(RAW_ANNOUNCE);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
-        let _ = ingest(
-            &mut state,
-            &[InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
-            TEST_ENTROPY,
-        );
-        assert_eq!(state.pending_rebroadcast_count(), 1);
-
-        // Outbox too small to hold the wire packet (HEADER_LEN + 162 byte
-        // payload). The emit attempts to write, fails on byte budget, and
-        // re-schedules at the same due_at.
-        let mut tiny_outbox = Outbox::<16, 4>::new();
-        let now = InstantMillis(2_000);
-        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut tiny_outbox);
-        assert_eq!(tick_out.emitted_packet_count(), 0);
-        assert_eq!(state.pending_rebroadcast_count(), 1);
-        assert_eq!(tiny_outbox.len(), 0);
-
-        // A roomy outbox later still drains the same scheduled entry.
-        let mut roomy = Outbox::<2048, 4>::new();
-        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut roomy);
-        assert_eq!(tick_out.emitted_packet_count(), 1);
-        assert_eq!(state.pending_rebroadcast_count(), 0);
     }
 
     /// End-to-end interface ↔ engine integration. Drives a real announce
     /// through a LoopbackInterface pair, using the `read_inbound` default
     /// trait method to bridge the interface read into an `InboundPacket`,
-    /// and verifies the `source_interface` tag threads cleanly through
-    /// ingest → schedule → tick → outbox → OutboundPacket.
+    /// and verifies the `received_from` tag threads cleanly through
+    /// ingest → schedule → tick → due directives.
     #[cfg(feature = "alloc")]
     #[test]
     fn an_announce_traverses_the_engine_via_a_loopback_interface() {
         use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
-        use crate::wire::MTU;
 
         let raw = hx(RAW_ANNOUNCE);
 
@@ -964,24 +950,34 @@ mod tests {
         assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
         assert_eq!(state.route_count(), 1);
 
-        // == Phase 4: engine ticks past the jitter window and emits ==
-        let mut outbox = Outbox::<2048, 16>::new();
+        // == Phase 4: engine ticks past the jitter window; one directive is due ==
+        // == Phase 5: directive carries the received_from tag end-to-end ==
+        // == Phase 6: host serializes the directive and writes it back ==
+        // (Phases 4-6 live inside the tick_out scope so the borrow on
+        // state is released before Phase 7 inspects the seed-side read.)
         let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut outbox);
-        assert_eq!(tick_out.emitted_packet_count(), 1);
+        let mut wire_buf = [0u8; MTU];
+        let wire_len = {
+            let tick_out = tick(&mut state, now, TEST_ENTROPY);
+            assert_eq!(tick_out.egress_directive_count(), 1);
 
-        // == Phase 5: emitted OutboundPacket carries the source tag end-to-end ==
-        let emitted: std::vec::Vec<OutboundPacket<'_>> = outbox.iter().collect();
-        assert_eq!(emitted.len(), 1);
-        assert_eq!(
-            emitted[0].maybe_source_interface,
-            Some(engine_iface_id),
-            "engine must thread maybe_source_interface from ingest through emission \
-             so the host can apply the fanout exclusion"
-        );
-
-        // == Phase 6: engine writes the outbox bytes back to the interface ==
-        engine_half.write(emitted[0].bytes).unwrap();
+            let mut directives = tick_out.egress_directives();
+            let directive = directives.next().expect("one due directive");
+            assert!(
+                directives.next().is_none(),
+                "exactly one due directive expected"
+            );
+            assert_eq!(
+                directive.received_from(),
+                Some(engine_iface_id),
+                "engine must thread received_from from ingest through emission \
+                 so the host can apply the fanout exclusion"
+            );
+            directive
+                .to_wire(&mut wire_buf)
+                .expect("serialize directive")
+        };
+        engine_half.write(&wire_buf[..wire_len]).unwrap();
 
         // == Phase 7: upstream peer reads the rebroadcast ==
         let n = seed_half
@@ -1017,7 +1013,6 @@ mod tests {
     #[test]
     fn an_announce_on_one_interface_fans_out_to_others_skipping_source() {
         use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
-        use crate::wire::MTU;
 
         let raw = hx(RAW_ANNOUNCE);
 
@@ -1060,28 +1055,37 @@ mod tests {
             // batch (and the buf borrows it holds) drops at end of block
         }
 
-        // Phase 4: tick past the jitter window — engine emits one packet
-        // tagged with the source it came in on.
-        let mut outbox = Outbox::<2048, 16>::new();
+        // Phase 4: tick past the jitter window — engine produces one
+        // directive tagged with the source it came in on. Phase 5
+        // applies host-side fanout from inside the tick_out scope, so
+        // the borrow on state is released before Phase 6/7 reads.
         let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut outbox);
-        assert_eq!(tick_out.emitted_packet_count(), 1);
+        let mut wire_buf = [0u8; MTU];
+        {
+            let tick_out = tick(&mut state, now, TEST_ENTROPY);
+            assert_eq!(tick_out.egress_directive_count(), 1);
 
-        let emitted: std::vec::Vec<OutboundPacket<'_>> = outbox.iter().collect();
-        assert_eq!(emitted.len(), 1);
-        let packet = emitted[0];
-        assert_eq!(packet.maybe_source_interface, Some(engine_a_id));
+            let mut wrote = 0usize;
+            for directive in tick_out.egress_directives() {
+                let source = directive.received_from();
+                assert_eq!(source, Some(engine_a_id));
+                let n = directive
+                    .to_wire(&mut wire_buf)
+                    .expect("serialize directive");
 
-        // Phase 5: HOST applies fanout BY HAND. For each interface we
-        // own: write the packet UNLESS that interface's id matches the
-        // source. Hardcoded N=2 — the engine would eventually own this
-        // loop with proper typed directives.
-        let source = packet.maybe_source_interface;
-        if source != Some(engine_a_id) {
-            engine_a.write(packet.bytes).unwrap();
-        }
-        if source != Some(engine_b_id) {
-            engine_b.write(packet.bytes).unwrap();
+                // HOST applies fanout BY HAND. For each interface we
+                // own: write the packet UNLESS that interface's id
+                // matches the source. Hardcoded N=2 — the engine would
+                // eventually own this loop with positive targets.
+                if source != Some(engine_a_id) {
+                    engine_a.write(&wire_buf[..n]).unwrap();
+                }
+                if source != Some(engine_b_id) {
+                    engine_b.write(&wire_buf[..n]).unwrap();
+                }
+                wrote += 1;
+            }
+            assert_eq!(wrote, 1);
         }
 
         // Phase 6: A's peer should NOT have received the rebroadcast

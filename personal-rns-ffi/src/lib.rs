@@ -19,15 +19,10 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis, OutboundPacket};
+use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis};
 use personal_rns::host::HostAdapter;
-use personal_rns::outbox::Outbox;
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::step;
-
-/// Per-step emission scratch lent to `runtime::step`. 4 KiB and 32 packets is
-/// plenty for the SDK's announce-only workload until transport lands and the
-/// SDK has real per-packet budgeting.
-type SdkOutbox = Outbox<4096, 32>;
 
 uniffi::include_scaffolding!("prns");
 
@@ -68,18 +63,19 @@ impl HostAdapter for SdkHost {
         Ok(&[])
     }
 
-    fn pump_outbound_packets(&mut self, packets: &[OutboundPacket<'_>]) -> Result<(), Self::Error> {
-        if packets.is_empty() {
-            Ok(())
-        } else {
-            Err(SdkHostError::NoTransport)
-        }
+    fn handle_egress(
+        &mut self,
+        _bytes: &[u8],
+        _received_from: Option<InterfaceId>,
+    ) -> Result<(), Self::Error> {
+        // No transport wired yet; every egress fails honestly until a
+        // real interface lands.
+        Err(SdkHostError::NoTransport)
     }
 }
 
 struct RuntimeInner {
     state: DefaultEngineState,
-    outbox: SdkOutbox,
     host: SdkHost,
 }
 
@@ -95,7 +91,6 @@ impl ReticulumRuntime {
         Self {
             inner: Mutex::new(RuntimeInner {
                 state: DefaultEngineState::default(),
-                outbox: SdkOutbox::new(),
                 host: SdkHost {
                     base: Instant::now(),
                 },
@@ -104,16 +99,12 @@ impl ReticulumRuntime {
     }
 
     /// Drive one step over the SDK clock host (ingest the queue, then tick);
-    /// returns the packet count the periodic pass emitted.
+    /// returns the directive count the periodic pass emitted.
     pub fn tick(&self) -> u64 {
         let mut inner = self.inner.lock().expect("ReticulumRuntime mutex poisoned");
-        let RuntimeInner {
-            state,
-            outbox,
-            host,
-        } = &mut *inner;
-        let output = step(state, outbox, host).expect("clock-only step cannot fail");
-        output.tick.emitted_packet_count() as u64
+        let RuntimeInner { state, host } = &mut *inner;
+        let output = step(state, host).expect("clock-only step cannot fail");
+        output.tick.egress_directive_count as u64
     }
 
     /// Total ticks advanced since construction.
