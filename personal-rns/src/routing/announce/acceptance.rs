@@ -471,3 +471,48 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    fn arbitrary_announce_id() -> AnnounceId {
+        AnnounceId::from_wire(kani::any())
+    }
+
+    #[kani::proof]
+    fn hops_above_pathfinder_m_always_reject_before_any_other_gate() {
+        let packet_hops: u8 = kani::any();
+        kani::assume(packet_hops > MAX_HOP_COUNT);
+        let input = AnnounceAcceptanceInput {
+            packet_hops,
+            announce_id: arbitrary_announce_id(),
+            destination_is_local: kani::any(),
+            existing_route: None,
+            arrived_at: InstantMillis(kani::any()),
+        };
+
+        assert_eq!(
+            input.determine_acceptance(),
+            AnnounceAcceptanceDecision::Reject(RejectReason::ExceedsMaxHops)
+        );
+    }
+
+    #[kani::proof]
+    fn local_destination_rejects_when_hops_are_in_range() {
+        let packet_hops: u8 = kani::any();
+        kani::assume(packet_hops <= MAX_HOP_COUNT);
+        let input = AnnounceAcceptanceInput {
+            packet_hops,
+            announce_id: arbitrary_announce_id(),
+            destination_is_local: true,
+            existing_route: None,
+            arrived_at: InstantMillis(kani::any()),
+        };
+
+        assert_eq!(
+            input.determine_acceptance(),
+            AnnounceAcceptanceDecision::Reject(RejectReason::DestinationIsLocal)
+        );
+    }
+}

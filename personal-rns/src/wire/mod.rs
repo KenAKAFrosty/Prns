@@ -372,6 +372,7 @@ impl WirePacketHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn bytes_from_hex(hex: &str) -> Vec<u8> {
         (0..hex.len())
@@ -466,15 +467,40 @@ mod tests {
     }
 
     #[test]
-    fn every_flags_byte_decodes() {
-        // The flags byte is total: every bit pattern maps to valid values, so
-        // a long-enough buffer never fails to decode on the flags alone.
-        let mut raw = [0u8; 2 + 2 * TRUNCATED_HASH_BYTE_LEN + 1];
+    fn every_flags_byte_round_trips_with_unknown_context_and_payload() {
+        // The wire boundary should preserve every flag bit and unknown context
+        // values exactly; parsed payload bytes stay outside header encoding.
+        let payload = [0xDE, 0xAD, 0xBE, 0xEF];
         for meta in 0u8..=u8::MAX {
+            let is_type_2 = meta & 0b0100_0000 != 0;
+            let header_len =
+                2 + usize::from(is_type_2) * TRUNCATED_HASH_BYTE_LEN + TRUNCATED_HASH_BYTE_LEN + 1;
+            let mut raw = vec![0u8; header_len + payload.len()];
+
             raw[0] = meta;
-            assert!(
-                WirePacketHeader::parse(&raw).is_ok(),
-                "flags {meta:#04x} failed to decode",
+            raw[1] = 0x7A;
+            let mut offset = 2;
+            if is_type_2 {
+                raw[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(&[0x11; 16]);
+                offset += TRUNCATED_HASH_BYTE_LEN;
+            }
+            raw[offset..offset + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(&[0x22; 16]);
+            offset += TRUNCATED_HASH_BYTE_LEN;
+            raw[offset] = 0xA5;
+            offset += 1;
+            raw[offset..].copy_from_slice(&payload);
+
+            let (header, parsed_payload) = WirePacketHeader::parse(&raw).unwrap();
+            assert_eq!(header.context, Context::Unknown(0xA5));
+            assert_eq!(parsed_payload, payload);
+
+            let mut encoded = [0u8; 64];
+            let written = header.write(&mut encoded).unwrap();
+            assert_eq!(written, header_len);
+            assert_eq!(
+                &encoded[..written],
+                &raw[..header_len],
+                "flags {meta:#04x} did not preserve the header bytes",
             );
         }
     }
@@ -490,5 +516,103 @@ mod tests {
             WirePacketHeader::parse(&[0u8; 18]),
             Err(WireError::BufferTooShort)
         );
+        // A Type-2 header needs the transport-id + destination + context byte;
+        // a buffer holding only flags + hops + transport-id + destination is one
+        // byte short of the context.
+        let mut type_2 = [0u8; 2 + 2 * TRUNCATED_HASH_BYTE_LEN];
+        type_2[0] = 0b0100_0000;
+        assert_eq!(
+            WirePacketHeader::parse(&type_2),
+            Err(WireError::BufferTooShort)
+        );
+    }
+
+    fn ifac_flags() -> impl Strategy<Value = IfacFlag> {
+        prop_oneof![Just(IfacFlag::Open), Just(IfacFlag::Authenticated)]
+    }
+
+    fn context_flags() -> impl Strategy<Value = ContextFlag> {
+        prop_oneof![Just(ContextFlag::Unset), Just(ContextFlag::Set)]
+    }
+
+    fn propagation_types() -> impl Strategy<Value = PropagationType> {
+        prop_oneof![
+            Just(PropagationType::Broadcast),
+            Just(PropagationType::Transport)
+        ]
+    }
+
+    fn destination_types() -> impl Strategy<Value = DestinationType> {
+        prop_oneof![
+            Just(DestinationType::Single),
+            Just(DestinationType::Group),
+            Just(DestinationType::Plain),
+            Just(DestinationType::Link)
+        ]
+    }
+
+    fn packet_types() -> impl Strategy<Value = PacketType> {
+        prop_oneof![
+            Just(PacketType::Data),
+            Just(PacketType::Announce),
+            Just(PacketType::LinkRequest),
+            Just(PacketType::Proof)
+        ]
+    }
+
+    fn contexts() -> impl Strategy<Value = Context> {
+        any::<u8>().prop_map(Context::from_byte)
+    }
+
+    fn headers() -> impl Strategy<Value = WirePacketHeader> {
+        (
+            ifac_flags(),
+            any::<bool>(),
+            context_flags(),
+            propagation_types(),
+            destination_types(),
+            packet_types(),
+            any::<u8>(),
+            any::<[u8; TRUNCATED_HASH_BYTE_LEN]>(),
+            any::<[u8; TRUNCATED_HASH_BYTE_LEN]>(),
+            contexts(),
+        )
+            .prop_map(
+                |(
+                    ifac_flag,
+                    has_transport_id,
+                    context_flag,
+                    propagation,
+                    destination_type,
+                    packet_type,
+                    hops,
+                    transport_id,
+                    destination,
+                    context,
+                )| WirePacketHeader {
+                    ifac_flag,
+                    context_flag,
+                    propagation,
+                    destination_type,
+                    packet_type,
+                    hops,
+                    transport_id: has_transport_id.then(|| TransportId::new(transport_id)),
+                    destination: DestinationHash::new(destination),
+                    context,
+                },
+            )
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_headers_write_then_parse_back(header in headers()) {
+            let mut buf = [0u8; 2 + 2 * TRUNCATED_HASH_BYTE_LEN + 1];
+            let written = header.write(&mut buf).unwrap();
+
+            let (parsed, payload) = WirePacketHeader::parse(&buf[..written]).unwrap();
+
+            prop_assert_eq!(parsed, header);
+            prop_assert!(payload.is_empty());
+        }
     }
 }

@@ -11,5 +11,8 @@ The short form is:
 
 > Port the contract, not the implementation. Build one pure engine, and let each platform bring a thin host.
 
+Extra proof, fuzzing, property-test, and mutation-test lanes are documented in
+[docs/validation.md](docs/validation.md).
+
 The previous in-tree implementations are reference material only and live in
 the parent repository under `archive/rns-legacy/`.

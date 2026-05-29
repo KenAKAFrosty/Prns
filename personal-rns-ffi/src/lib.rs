@@ -122,3 +122,22 @@ impl Default for ReticulumRuntime {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_matches_the_crate_version() {
+        assert_eq!(version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn runtime_tick_advances_without_transport_emissions() {
+        let runtime = ReticulumRuntime::new();
+
+        assert_eq!(runtime.tick_count(), 0);
+        assert_eq!(runtime.tick(), 0);
+        assert_eq!(runtime.tick_count(), 1);
+    }
+}

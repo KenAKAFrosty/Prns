@@ -35,5 +35,8 @@ zeroize = { version = "1", default-features = false, features = ["derive"] }
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
 
+[dev-dependencies]
+proptest = "1"
+
 [lints]
 workspace = true

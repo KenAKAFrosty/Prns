@@ -1,0 +1,8 @@
+# Initial mutation-testing lane. Keep this focused on stable contract-heavy
+# modules until the suite has enough experience triaging survivors.
+examine_globs = [
+    "personal-rns/src/wire/mod.rs",
+    "personal-rns/src/routing/announce/acceptance.rs",
+]
+
+additional_cargo_test_args = ["-p", "personal-rns"]

@@ -388,14 +388,9 @@ mod tests {
         let mut cache: HeldAnnouncesCache<4> = HeldAnnouncesCache::new();
         let app_data = b"hello-personal";
         let a = announce_for(dest(1), app_data);
+        let source = InterfaceId::new([0xA5; 16]);
         assert_eq!(
-            cache.park(
-                &a,
-                ts(100),
-                3,
-                HoldReason::RoutingArenaPressure,
-                InterfaceId::new([0u8; 16])
-            ),
+            cache.park(&a, ts(100), 3, HoldReason::RoutingArenaPressure, source),
             ParkOutcome::Parked
         );
         assert_eq!(cache.len(), 1);
@@ -407,6 +402,7 @@ mod tests {
         assert_eq!(held.arrived_at(), ts(100));
         assert_eq!(held.received_hops(), 3);
         assert_eq!(held.reason(), HoldReason::RoutingArenaPressure);
+        assert_eq!(held.source_interface(), source);
     }
 
     #[test]
@@ -414,6 +410,8 @@ mod tests {
         let mut cache: HeldAnnouncesCache<4> = HeldAnnouncesCache::new();
         let first = announce_for(dest(1), b"old");
         let second = announce_for(dest(1), b"new");
+        let first_source = InterfaceId::new([0x01; 16]);
+        let second_source = InterfaceId::new([0x02; 16]);
 
         assert_eq!(
             cache.park(
@@ -421,7 +419,7 @@ mod tests {
                 ts(100),
                 5,
                 HoldReason::RoutingArenaPressure,
-                InterfaceId::new([0u8; 16])
+                first_source
             ),
             ParkOutcome::Parked
         );
@@ -431,7 +429,7 @@ mod tests {
                 ts(200),
                 2,
                 HoldReason::RoutingArenaPressure,
-                InterfaceId::new([0u8; 16])
+                second_source
             ),
             ParkOutcome::Overwrote
         );
@@ -441,6 +439,7 @@ mod tests {
         assert_eq!(held.announce().app_data, b"new");
         assert_eq!(held.arrived_at(), ts(200));
         assert_eq!(held.received_hops(), 2);
+        assert_eq!(held.source_interface(), second_source);
     }
 
     #[test]

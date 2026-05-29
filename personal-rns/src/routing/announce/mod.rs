@@ -352,7 +352,11 @@ mod tests {
     }
 
     // Build an announce with our own crypto, signed over `signed_destination`.
-    fn synthetic_announce(signed_destination: [u8; 16], app_data: &[u8]) -> Vec<u8> {
+    fn synthetic_announce(
+        signed_destination: [u8; 16],
+        maybe_ratchet: Option<[u8; RATCHET_LEN]>,
+        app_data: &[u8],
+    ) -> Vec<u8> {
         let secret = Ed25519SecretKey::new([0x11u8; 32]);
         let signing = ed25519_public_key(&secret).0;
         let mut pubkey = [0u8; 64];
@@ -366,6 +370,9 @@ mod tests {
         signed.extend_from_slice(&pubkey);
         signed.extend_from_slice(&name_hash);
         signed.extend_from_slice(&announce_id);
+        if let Some(ratchet) = maybe_ratchet {
+            signed.extend_from_slice(&ratchet);
+        }
         signed.extend_from_slice(app_data);
         let sig = ed25519_sign(&secret, &signed).0;
 
@@ -373,10 +380,16 @@ mod tests {
         payload.extend_from_slice(&pubkey);
         payload.extend_from_slice(&name_hash);
         payload.extend_from_slice(&announce_id);
+        if let Some(ratchet) = maybe_ratchet {
+            payload.extend_from_slice(&ratchet);
+        }
         payload.extend_from_slice(&sig);
         payload.extend_from_slice(app_data);
 
-        let mut raw = vec![0x01u8, 0x00]; // Announce|Single|type1, hops 0
+        // Type-1 announce with context_flag set when a ratchet is present
+        // (0x21 = 0x01 announce|single|type1 | 0x20 context_flag).
+        let flags = if maybe_ratchet.is_some() { 0x21 } else { 0x01 };
+        let mut raw = vec![flags, 0x00];
         raw.extend_from_slice(&signed_destination); // header destination
         raw.push(0x00); // context
         raw.extend_from_slice(&payload);
@@ -397,7 +410,7 @@ mod tests {
 
     #[test]
     fn synthetic_announce_with_correct_binding_validates() {
-        let raw = synthetic_announce(bound_destination(), b"app");
+        let raw = synthetic_announce(bound_destination(), None, b"app");
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
         assert_eq!(announce.app_data, b"app");
@@ -408,10 +421,27 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_ratchet_announce_validates_and_round_trips() {
+        let ratchet = [0x55u8; RATCHET_LEN];
+        let raw = synthetic_announce(bound_destination(), Some(ratchet), b"ratchet-app");
+        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        assert_eq!(header.context_flag, ContextFlag::Set);
+
+        let announce = Announce::from_wire(&header, payload).unwrap();
+        assert_eq!(announce.maybe_ratchet, Some(RatchetKey::new(ratchet)));
+        assert_eq!(announce.app_data, b"ratchet-app");
+
+        let mut buf = [0u8; MTU];
+        let n = announce.to_wire(&mut buf).unwrap();
+        assert_eq!(n, payload.len());
+        assert_eq!(&buf[..n], payload);
+    }
+
+    #[test]
     fn rejects_destination_mismatch() {
         // Signature is valid (signed over this dest), but the dest doesn't match
         // the pubkey+name binding, so it must still be rejected.
-        let raw = synthetic_announce([0x99u8; 16], b"app");
+        let raw = synthetic_announce([0x99u8; 16], None, b"app");
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
             Announce::from_wire(&header, payload),

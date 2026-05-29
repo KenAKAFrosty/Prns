@@ -88,6 +88,8 @@ mod tests {
     use crate::engine::{InboundPacket, InstantMillis};
     use crate::host::HostAdapter;
     use crate::interfaces::InterfaceId;
+    use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+    use crate::wire::WirePacketHeader;
 
     /// Host with nothing queued — the steady idle case.
     #[derive(Default)]
@@ -183,5 +185,93 @@ mod tests {
         assert_eq!(out.ingest.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
         assert_eq!(state.tick_count(), 1);
+    }
+
+    /// End-to-end host-facing contract: a single `step` ingests a real
+    /// announce, accepts it, schedules a rebroadcast, and — once the
+    /// host's `now` is past the jitter window — hands the wire bytes
+    /// back to the host via `handle_egress` with the source-interface
+    /// provenance threaded through.
+    struct CapturingHost<'q> {
+        queued: &'q [InboundPacket<'q>],
+        now: InstantMillis,
+        entropy: [u8; 8],
+        handled: std::vec::Vec<(Option<InterfaceId>, std::vec::Vec<u8>)>,
+    }
+
+    impl HostAdapter for CapturingHost<'_> {
+        type Error = core::convert::Infallible;
+
+        fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
+            Ok(self.now)
+        }
+
+        fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
+            for (dst, src) in buf.iter_mut().zip(self.entropy.iter().cycle()) {
+                *dst = *src;
+            }
+            Ok(())
+        }
+
+        fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
+            Ok(self.queued)
+        }
+
+        fn handle_egress(
+            &mut self,
+            bytes: &[u8],
+            received_from: Option<InterfaceId>,
+        ) -> Result<(), Self::Error> {
+            self.handled.push((received_from, bytes.to_vec()));
+            Ok(())
+        }
+    }
+
+    // A genuine RNS 1.3.1 announce (the same vector the engine module validates).
+    const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
+                                59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
+                                0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
+                                7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
+                                4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
+
+    fn hx(s: &str) -> std::vec::Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    #[test]
+    fn step_hands_due_rebroadcasts_to_the_host_with_provenance_intact() {
+        let raw = hx(RAW_ANNOUNCE);
+        let source_interface = InterfaceId::new([0x7A; 16]);
+        let arrival = InstantMillis(1_000);
+        let queued = [InboundPacket {
+            arrived_at: arrival,
+            source_interface,
+            bytes: &raw,
+        }];
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut host = CapturingHost {
+            queued: &queued,
+            now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            entropy: 0xCAFE_F00D_DEAD_BEEFu64.to_le_bytes(),
+            handled: std::vec::Vec::new(),
+        };
+
+        let out = step(&mut state, &mut host).unwrap();
+
+        assert_eq!(out.ingest.accepted_announce_count(), 1);
+        assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
+        assert_eq!(out.tick.egress_directive_count, 1);
+        assert_eq!(host.handled.len(), 1);
+        assert_eq!(host.handled[0].0, Some(source_interface));
+
+        let (original_header, original_payload) = WirePacketHeader::parse(&raw).unwrap();
+        let (rebroadcast_header, rebroadcast_payload) =
+            WirePacketHeader::parse(&host.handled[0].1).unwrap();
+        assert_eq!(rebroadcast_header.hops, original_header.hops + 1);
+        assert_eq!(rebroadcast_header.destination, original_header.destination);
+        assert_eq!(rebroadcast_payload, original_payload);
     }
 }
