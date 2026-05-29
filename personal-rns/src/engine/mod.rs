@@ -5,6 +5,10 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
+pub mod ingress;
+
+pub use ingress::Ingress;
+
 use crate::interfaces::InterfaceId;
 use crate::outbox::{Outbox, OutboxFull};
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
@@ -221,111 +225,132 @@ where
         .ingested_packet_count
         .saturating_add(packets.len() as u64);
 
-    let mut accepted_announce_count = 0;
-    let mut held_for_retry_count = 0;
-    let mut scheduled_rebroadcast_count = 0;
+    let mut counters = IngestCounters::default();
+
     for packet in packets {
-        let Ok((header, payload)) = WirePacketHeader::parse(packet.bytes) else {
-            continue;
-        };
-        let Ok(announce) = Announce::from_wire(&header, payload) else {
-            continue;
-        };
+        match Ingress::classify(packet) {
+            Ingress::Announce {
+                announce,
+                received_hops,
+                source_interface,
+                arrived_at,
+            } => ingest_announce(
+                state,
+                announce,
+                received_hops,
+                source_interface,
+                arrived_at,
+                entropy,
+                &mut counters,
+            ),
 
-        // Self-check the parse↔serialize round-trip on every accepted announce
-        // in debug builds: if `to_wire` ever drifts from `from_wire`, we'd
-        // silently re-emit a signature-broken packet on rebroadcast. Cheap in
-        // debug (one MTU-sized scratch copy + compare), zero in release.
-        debug_assert!(
-            {
-                let mut scratch = [0u8; 500];
-                announce
-                    .to_wire(&mut scratch)
-                    .map(|n| &scratch[..n] == payload)
-                    .unwrap_or(false)
-            },
-            "Announce::to_wire(from_wire(payload)) must equal payload"
-        );
+            // Wire-recognised but not yet handled by the engine. Future
+            // slices land their dispatch here.
+            Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
 
-        // RNS increments a packet's hop count on receipt, before both the
-        // acceptance gate and storing the path, so every downstream comparison
-        // and the reported hop count use the incremented value.
-        // https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L1455
-        // Unconditional while we have no interfaces; RNS decrements for
-        // local-client / shared-instance hops, which we don't model yet.
-        let received_hops = header.hops.saturating_add(1);
-
-        let decision = AnnounceAcceptanceInput {
-            packet_hops: received_hops,
-            announce_id: announce.announce_id,
-            // No local identities yet, so no announce is ever for us.
-            destination_is_local: false,
-            existing_route: state
-                .routing_table
-                .existing_route_for(&announce.destination),
-            arrived_at: packet.arrived_at,
-        }
-        .determine_acceptance();
-
-        if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-            let outcome =
-                state
-                    .routing_table
-                    .upsert_route(received_hops, packet.arrived_at, &announce);
-            match outcome {
-                UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
-                    accepted_announce_count += 1;
-                    let offset = jitter_offset_for(
-                        entropy,
-                        &announce.destination,
-                        DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                    );
-                    state.pending_rebroadcasts.schedule(
-                        announce.destination,
-                        InstantMillis(packet.arrived_at.0.saturating_add(offset)),
-                        packet.source_interface,
-                    );
-                    scheduled_rebroadcast_count += 1;
-                }
-                UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
-                    // Park the structured announce; retry on tick will
-                    // re-evaluate against current arena state. Park can
-                    // return CacheFull (cap reached, dropped) — we count
-                    // only the successful parks.
-                    use crate::routing::held_cache::{HoldReason, ParkOutcome};
-                    match state.held_cache.park(
-                        &announce,
-                        packet.arrived_at,
-                        received_hops,
-                        HoldReason::RoutingArenaPressure,
-                        packet.source_interface,
-                    ) {
-                        ParkOutcome::Parked | ParkOutcome::Overwrote => {
-                            held_for_retry_count += 1;
-                        }
-                        ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {}
-                    }
-                }
-                UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => {
-                    // Nowhere to retry to until route eviction exists.
-                }
-            }
+            // Bad header / failed announce validation; dropped.
+            Ingress::Unparseable => {}
         }
     }
 
     IngestOutput {
         processed_packet_count: packets.len(),
-        accepted_announce_count,
-        held_for_retry_count,
-        scheduled_rebroadcast_count,
+        accepted_announce_count: counters.accepted,
+        held_for_retry_count: counters.held,
+        scheduled_rebroadcast_count: counters.scheduled,
     }
 }
 
-/// Advance the engine's periodic work to `now`, draining due rebroadcasts
-/// into a host-lent `outbox`. Retries up to one held announce per tick,
-/// selecting the lowest-hop entry (RNS parity); a recovered held entry is
-/// scheduled the same way a fresh accept is. Failed retries are discarded
-/// rather than re-parked.
+/// Per-batch counters mutated by per-variant ingest handlers. Stays
+/// private to `ingest`; the public surface is [`IngestOutput`].
+#[derive(Default)]
+struct IngestCounters {
+    accepted: usize,
+    held: usize,
+    scheduled: usize,
+}
+
+/// Mutates `state` and `counters` in place; returns nothing because
+/// every branch's side effects are already captured by the counters.
+///
+/// WIP - "Always-returns-()" is a current posture, not a committed stance.
+/// We need to continue to observe the other handlers' impls and stay
+/// vigilant at unifying & coupling what should be, while avoiding
+/// doing so for what shouldn't be.
+fn ingest_announce<R, A, H, D, const HELD: usize>(
+    state: &mut EngineState<R, A, H, D, HELD>,
+    announce: Announce<'_>,
+    received_hops: u8,
+    source_interface: InterfaceId,
+    arrived_at: InstantMillis,
+    entropy: u64,
+    counters: &mut IngestCounters,
+) where
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    let decision = AnnounceAcceptanceInput {
+        packet_hops: received_hops,
+        announce_id: announce.announce_id,
+        // No local identities yet, so no announce is ever for us.
+        destination_is_local: false,
+        existing_route: state
+            .routing_table
+            .existing_route_for(&announce.destination),
+        arrived_at,
+    }
+    .determine_acceptance();
+
+    if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
+        return;
+    }
+
+    let outcome = state
+        .routing_table
+        .upsert_route(received_hops, arrived_at, &announce);
+    match outcome {
+        UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
+            counters.accepted += 1;
+            let offset = jitter_offset_for(
+                entropy,
+                &announce.destination,
+                DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+            );
+            state.pending_rebroadcasts.schedule(
+                announce.destination,
+                InstantMillis(arrived_at.0.saturating_add(offset)),
+                source_interface,
+            );
+            counters.scheduled += 1;
+        }
+        UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
+            // Park the structured announce; retry on tick will
+            // re-evaluate against current arena state. Park can return
+            // CacheFull (cap reached, dropped) — we count only the
+            // successful parks.
+            use crate::routing::held_cache::{HoldReason, ParkOutcome};
+            match state.held_cache.park(
+                &announce,
+                arrived_at,
+                received_hops,
+                HoldReason::RoutingArenaPressure,
+                source_interface,
+            ) {
+                ParkOutcome::Parked | ParkOutcome::Overwrote => {
+                    counters.held += 1;
+                }
+                ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {}
+            }
+        }
+        UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => {
+            // Nowhere to retry to until route eviction exists.
+        }
+    }
+}
+
+/// Advance the engine's periodic work to `now`.
 ///
 /// `entropy` is the same per-step value passed to `ingest`; reused here so a
 /// held-recovery accept gets a deterministic jittered re-emission slot.
