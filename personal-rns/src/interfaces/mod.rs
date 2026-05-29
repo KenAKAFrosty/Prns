@@ -30,3 +30,8 @@ pub use state::InterfaceState;
 pub mod loopback;
 #[cfg(feature = "alloc")]
 pub use loopback::{LoopbackError, LoopbackInterface};
+
+#[cfg(feature = "std")]
+pub mod threaded_loopback;
+#[cfg(feature = "std")]
+pub use threaded_loopback::ThreadedLoopback;
