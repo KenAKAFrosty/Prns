@@ -66,6 +66,8 @@ impl<'a, const MAX_PACKET_LEN: usize, const QUEUE_CAP: usize>
 impl<'a, const MAX_PACKET_LEN: usize, const QUEUE_CAP: usize> Interface
     for NoAllocLoopback<'a, MAX_PACKET_LEN, QUEUE_CAP>
 {
+    type Error = NoAllocLoopbackError;
+
     fn id(&self) -> InterfaceId {
         self.id
     }
@@ -90,12 +92,6 @@ impl<'a, const MAX_PACKET_LEN: usize, const QUEUE_CAP: usize> Interface
     fn state(&self) -> InterfaceState {
         InterfaceState::Connected
     }
-}
-
-impl<'a, const MAX_PACKET_LEN: usize, const QUEUE_CAP: usize> PointToPointInterface
-    for NoAllocLoopback<'a, MAX_PACKET_LEN, QUEUE_CAP>
-{
-    type Error = NoAllocLoopbackError;
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
         let mut queue = self.inbound.borrow_mut();
@@ -125,6 +121,11 @@ impl<'a, const MAX_PACKET_LEN: usize, const QUEUE_CAP: usize> PointToPointInterf
             .map_err(|_| NoAllocLoopbackError::QueueFull)?;
         Ok(())
     }
+}
+
+impl<'a, const MAX_PACKET_LEN: usize, const QUEUE_CAP: usize> PointToPointInterface
+    for NoAllocLoopback<'a, MAX_PACKET_LEN, QUEUE_CAP>
+{
 }
 
 #[cfg(test)]

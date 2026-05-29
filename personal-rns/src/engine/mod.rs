@@ -5,6 +5,7 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
+use crate::interfaces::InterfaceId;
 use crate::outbox::{Outbox, OutboxFull};
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::defaults::jitter_offset_for;
@@ -30,20 +31,31 @@ use crate::wire::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
-/// One inbound packet, frozen with the instant it arrived. The host stamps
-/// `arrival` when it enqueues the packet, so `ingest` processes a fixed record
-/// and never needs to read a clock.
+/// One inbound packet, frozen with the instant it arrived and tagged with
+/// the interface it came in on. The host stamps `arrived_at` when it
+/// enqueues the packet so `ingest` processes a fixed record and never
+/// needs to read a clock; `source_interface` carries through to emission
+/// so the engine can apply RNS's "don't gossip an announce back to its
+/// source interface" rule (and any future medium-aware policy keyed on
+/// the source).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InboundPacket<'a> {
     pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
     pub bytes: &'a [u8],
 }
 
-/// One outbound packet the engine wants transmitted. A semantic wrapper over
-/// the bytes; the host decides which transport carries it.
+/// One outbound packet the engine wants transmitted. The bytes are the
+/// finished wire packet; `maybe_source_interface` carries the identity
+/// of the interface that originally delivered the announce we're
+/// re-emitting (the canonical use: the host's fanout skips that
+/// interface). `None` means the engine originated this packet — for
+/// example a future origin-side announce — and the host should fan to
+/// every interface it owns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
+    pub maybe_source_interface: Option<InterfaceId>,
 }
 
 /// Retained engine state. **Purely abstract** in its type parameters — does
@@ -271,6 +283,7 @@ where
                     state.pending_rebroadcasts.schedule(
                         announce.destination,
                         InstantMillis(packet.arrived_at.0.saturating_add(offset)),
+                        packet.source_interface,
                     );
                     scheduled_rebroadcast_count += 1;
                 }
@@ -285,6 +298,7 @@ where
                         packet.arrived_at,
                         received_hops,
                         HoldReason::RoutingArenaPressure,
+                        packet.source_interface,
                     ) {
                         ParkOutcome::Parked | ParkOutcome::Overwrote => {
                             held_for_retry_count += 1;
@@ -338,6 +352,7 @@ where
                 let announce = held.announce();
                 let arrival = held.arrived_at();
                 let received_hops = held.received_hops();
+                let source_interface = held.source_interface();
                 let decision = AnnounceAcceptanceInput {
                     packet_hops: received_hops,
                     announce_id: announce.announce_id,
@@ -366,6 +381,7 @@ where
                         state.pending_rebroadcasts.schedule(
                             announce.destination,
                             InstantMillis(arrival.0.saturating_add(offset)),
+                            source_interface,
                         );
                     }
                     // On Dropped(_) or Reject we discard — see the
@@ -410,7 +426,7 @@ where
                 };
                 let payload_len = retained.announce.wire_len();
                 let total_len = HEADER_LEN + payload_len;
-                match outbox.write_packet(total_len, |buf| {
+                match outbox.write_packet(total_len, Some(scheduled.source_interface), |buf| {
                     let _ = header
                         .write(&mut buf[..HEADER_LEN])
                         .expect("HEADER_LEN bytes always fit a Type-1 header");
@@ -429,12 +445,13 @@ where
             EmitOutcome::Emitted => emitted_packet_count += 1,
             EmitOutcome::RouteGone => continue,
             EmitOutcome::OutboxFull => {
-                // Put it back at its original due_at so the host can drain
-                // and we re-emit on a later tick. Breaking out also keeps
-                // the rest of the due set queued for the same later tick.
-                state
-                    .pending_rebroadcasts
-                    .schedule(scheduled.destination, scheduled.due_at);
+                // Put it back at its original due_at + source so the host
+                // can drain and we re-emit on a later tick.
+                state.pending_rebroadcasts.schedule(
+                    scheduled.destination,
+                    scheduled.due_at,
+                    scheduled.source_interface,
+                );
                 break;
             }
         }
@@ -503,10 +520,12 @@ mod tests {
         let batch = [
             InboundPacket {
                 arrived_at: InstantMillis(10),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &[1, 2, 3],
             },
             InboundPacket {
                 arrived_at: InstantMillis(20),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &[4],
             },
         ];
@@ -544,6 +563,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -556,6 +576,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(2_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -579,6 +600,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &at_limit,
             }],
             TEST_ENTROPY,
@@ -592,6 +614,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &beyond,
             }],
             TEST_ENTROPY,
@@ -612,6 +635,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -636,6 +660,7 @@ mod tests {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
+            source_interface: InterfaceId::new([0u8; 16]),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
         };
         let out = ingest(&mut state, &[junk], TEST_ENTROPY);
@@ -655,6 +680,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -674,6 +700,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -699,6 +726,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -717,6 +745,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: arrival,
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -760,6 +789,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: arrival,
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -791,6 +821,7 @@ mod tests {
                 state,
                 &[InboundPacket {
                     arrived_at: arrival,
+                    source_interface: InterfaceId::new([0u8; 16]),
                     bytes: &raw,
                 }],
                 TEST_ENTROPY,
@@ -817,6 +848,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -839,6 +871,7 @@ mod tests {
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -862,18 +895,15 @@ mod tests {
         assert_eq!(state.pending_rebroadcast_count(), 0);
     }
 
-    /// TDD seed for the interface-engine integration arc. Drives a real
-    /// announce end-to-end through a LoopbackInterface pair: upstream
-    /// peer writes bytes → engine reads via PointToPointInterface::try_read
-    /// → engine ingests → engine schedules + emits → engine writes bytes
-    /// back out the interface → upstream peer reads the rebroadcast.
-    ///
-    /// Every awkward step here is a friction point pointing at the next
-    /// production change worth making. We deliberately do NOT add any
-    /// production-side helpers in this slice — surface the seams first.
+    /// End-to-end interface ↔ engine integration. Drives a real announce
+    /// through a LoopbackInterface pair, using the `read_inbound` default
+    /// trait method to bridge the interface read into an `InboundPacket`,
+    /// and verifies the `source_interface` tag threads cleanly through
+    /// ingest → schedule → tick → outbox → OutboundPacket.
+    #[cfg(feature = "alloc")]
     #[test]
     fn an_announce_traverses_the_engine_via_a_loopback_interface() {
-        use crate::interfaces::{InterfaceId, LoopbackInterface, PointToPointInterface};
+        use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
         use crate::wire::MTU;
 
         let raw = hx(RAW_ANNOUNCE);
@@ -883,29 +913,26 @@ mod tests {
         // pulls from and writes back to.
         let (mut seed_half, mut engine_half) =
             LoopbackInterface::pair(InterfaceId::new([0x01; 16]), InterfaceId::new([0x02; 16]));
+        let engine_iface_id = engine_half.id();
 
         // == Phase 1: upstream peer sends an announce in ==
         seed_half.write(&raw).unwrap();
 
         // == Phase 2: engine drains the interface ==
+        // `read_inbound` is a default trait method on
+        // PointToPointInterface — wraps `try_read` and stamps the
+        // InboundPacket with the interface's own id().
+        let arrived_at = InstantMillis(1_000);
         let mut read_buf = [0u8; MTU];
-        let n = engine_half
-            .try_read(&mut read_buf)
+        let packet = engine_half
+            .read_inbound(&mut read_buf, arrived_at)
             .unwrap()
             .expect("seeded packet ready to read");
-        let received_bytes = &read_buf[..n];
+        assert_eq!(packet.source_interface, engine_iface_id);
 
         // == Phase 3: engine ingests ==
-        let arrived_at = InstantMillis(1_000);
         let mut state: DefaultEngineState = DefaultEngineState::default();
-        let ingest_out = ingest(
-            &mut state,
-            &[InboundPacket {
-                arrived_at,
-                bytes: received_bytes,
-            }],
-            TEST_ENTROPY,
-        );
+        let ingest_out = ingest(&mut state, &[packet], TEST_ENTROPY);
         assert_eq!(ingest_out.accepted_announce_count(), 1);
         assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
         assert_eq!(state.route_count(), 1);
@@ -916,12 +943,20 @@ mod tests {
         let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut outbox);
         assert_eq!(tick_out.emitted_packet_count(), 1);
 
-        // == Phase 5: engine writes the outbox bytes back to the interface ==
+        // == Phase 5: emitted OutboundPacket carries the source tag end-to-end ==
         let emitted: std::vec::Vec<OutboundPacket<'_>> = outbox.iter().collect();
         assert_eq!(emitted.len(), 1);
+        assert_eq!(
+            emitted[0].maybe_source_interface,
+            Some(engine_iface_id),
+            "engine must thread maybe_source_interface from ingest through emission \
+             so the host can apply the fanout exclusion"
+        );
+
+        // == Phase 6: engine writes the outbox bytes back to the interface ==
         engine_half.write(emitted[0].bytes).unwrap();
 
-        // == Phase 6: upstream peer reads the rebroadcast ==
+        // == Phase 7: upstream peer reads the rebroadcast ==
         let n = seed_half
             .try_read(&mut read_buf)
             .unwrap()

@@ -49,6 +49,8 @@ impl ThreadedLoopback {
 }
 
 impl Interface for ThreadedLoopback {
+    type Error = LoopbackError;
+
     fn id(&self) -> InterfaceId {
         self.id
     }
@@ -73,10 +75,6 @@ impl Interface for ThreadedLoopback {
     fn state(&self) -> InterfaceState {
         InterfaceState::Connected
     }
-}
-
-impl PointToPointInterface for ThreadedLoopback {
-    type Error = LoopbackError;
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
         let mut queue = self.inbound.lock().expect("loopback queue lock poisoned");
@@ -102,6 +100,8 @@ impl PointToPointInterface for ThreadedLoopback {
         Ok(())
     }
 }
+
+impl PointToPointInterface for ThreadedLoopback {}
 
 #[cfg(test)]
 mod tests {

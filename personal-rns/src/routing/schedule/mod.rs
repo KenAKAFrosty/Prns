@@ -14,14 +14,21 @@
 //! announce as the one rebroadcast and avoids a second copy of the payload.
 
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::routing::DEFAULT_MAX_TRACKED_DESTINATIONS;
 use crate::wire::DestinationHash;
 use heapless::Vec;
 
+/// One scheduled rebroadcast: which destination, when it's due, and the
+/// interface the announce we're re-emitting was originally delivered on.
+/// The `source_interface` tag is opaque to the engine — it carries
+/// through to the emitted `OutboundPacket` so the host can apply RNS's
+/// "don't gossip back to source" rule in fanout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScheduledRebroadcast {
     pub destination: DestinationHash,
     pub due_at: InstantMillis,
+    pub source_interface: InterfaceId,
 }
 
 /// A fixed-capacity set of pending rebroadcasts, at most one per destination.
@@ -43,19 +50,29 @@ impl<const MAX_PENDING: usize> PendingRebroadcasts<MAX_PENDING> {
         self.pending.len()
     }
 
-    pub fn schedule(&mut self, destination: DestinationHash, due_at: InstantMillis) {
+    pub fn schedule(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        source_interface: InterfaceId,
+    ) {
         if let Some(existing) = self
             .pending
             .iter_mut()
             .find(|entry| entry.destination == destination)
         {
+            // A fresher announce supersedes the queued one — both timing
+            // AND the source override (the freshest accept wins for the
+            // host's "don't gossip back" decision too).
             existing.due_at = due_at;
+            existing.source_interface = source_interface;
         } else {
             // One entry per destination and capacity equals the routing table's, so a
             // newly accepted destination always has room.
             let _ = self.pending.push(ScheduledRebroadcast {
                 destination,
                 due_at,
+                source_interface,
             });
         }
     }
@@ -77,10 +94,16 @@ mod tests {
         DestinationHash::new([byte; 16])
     }
 
+    /// Synthetic source-interface tag — the tests don't care what value
+    /// it is, only that it threads through.
+    fn iface(byte: u8) -> InterfaceId {
+        InterfaceId::new([byte; 16])
+    }
+
     #[test]
     fn nothing_is_due_before_its_time_then_it_drains_once() {
         let mut pending = PendingRebroadcasts::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
 
         assert_eq!(pending.take_due(InstantMillis(99)), None); // not yet
         assert_eq!(
@@ -88,6 +111,7 @@ mod tests {
             Some(ScheduledRebroadcast {
                 destination: dest(1),
                 due_at: InstantMillis(100),
+                source_interface: iface(0xAA),
             })
         );
         assert_eq!(pending.take_due(InstantMillis(100)), None); // drained
@@ -95,24 +119,24 @@ mod tests {
     }
 
     #[test]
-    fn rescheduling_a_destination_updates_its_time_without_duplicating() {
+    fn rescheduling_a_destination_updates_time_and_source_without_duplicating() {
         let mut pending = PendingRebroadcasts::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100));
-        pending.schedule(dest(1), InstantMillis(200)); // a fresher announce supersedes
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
+        // A fresher announce, this time arriving via a different interface.
+        pending.schedule(dest(1), InstantMillis(200), iface(0xBB));
         assert_eq!(pending.pending_count(), 1);
 
         assert_eq!(pending.take_due(InstantMillis(150)), None); // moved to 200
-        assert_eq!(
-            pending.take_due(InstantMillis(200)).map(|e| e.destination),
-            Some(dest(1))
-        );
+        let taken = pending.take_due(InstantMillis(200)).unwrap();
+        assert_eq!(taken.destination, dest(1));
+        assert_eq!(taken.source_interface, iface(0xBB));
     }
 
     #[test]
     fn only_entries_whose_time_has_come_are_taken() {
         let mut pending = PendingRebroadcasts::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100));
-        pending.schedule(dest(2), InstantMillis(300));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(2), InstantMillis(300), iface(0xAA));
 
         assert_eq!(
             pending.take_due(InstantMillis(200)).map(|e| e.destination),
@@ -128,9 +152,9 @@ mod tests {
     #[test]
     fn a_tick_drains_every_due_entry() {
         let mut pending = PendingRebroadcasts::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100));
-        pending.schedule(dest(2), InstantMillis(100));
-        pending.schedule(dest(3), InstantMillis(100));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(3), InstantMillis(100), iface(0xAA));
 
         let mut drained = std::vec::Vec::new();
         while let Some(entry) = pending.take_due(InstantMillis(100)) {

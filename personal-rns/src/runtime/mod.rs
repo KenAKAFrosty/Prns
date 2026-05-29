@@ -70,6 +70,7 @@ mod tests {
     use crate::engine::DefaultEngineState;
     use crate::engine::{InboundPacket, InstantMillis, OutboundPacket};
     use crate::host::HostAdapter;
+    use crate::interfaces::InterfaceId;
 
     /// Host with nothing queued — the steady idle case.
     #[derive(Default)]
@@ -147,10 +148,12 @@ mod tests {
         let queued = [
             InboundPacket {
                 arrived_at: InstantMillis(5),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &[0xAA],
             },
             InboundPacket {
                 arrived_at: InstantMillis(6),
+                source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &[0xBB, 0xCC],
             },
         ];

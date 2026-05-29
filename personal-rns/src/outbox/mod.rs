@@ -19,12 +19,18 @@
 //! determinism tests, the same as `PackedAppDataArena`.
 
 use crate::engine::OutboundPacket;
+use crate::interfaces::InterfaceId;
 use heapless::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Span {
     offset: usize,
     len: usize,
+    /// Source-interface tag the packet carries through to the host's
+    /// fanout (typically used to skip echoing back to that interface).
+    /// `None` for engine-originated packets that should fan to every
+    /// interface the host owns.
+    maybe_source_interface: Option<InterfaceId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,12 +76,17 @@ impl<const ARENA_BYTES: usize, const MAX_PACKET_COUNT: usize>
         self.spans.is_empty()
     }
 
-    /// Append one `len`-byte packet, built in place. `write` is handed an
-    /// exactly-`len` slice of the arena and must fill it. Room is checked before
-    /// `write` runs, so an `OutboxFull` leaves the buffer untouched.
+    /// Append one `len`-byte packet, built in place, tagged with the
+    /// `maybe_source_interface` of the announce that motivated it.
+    /// `write` is handed an exactly-`len` slice of the arena and must
+    /// fill it. Room is checked before `write` runs, so an `OutboxFull`
+    /// leaves the buffer untouched. Pass `None` for
+    /// `maybe_source_interface` when the engine originated the packet
+    /// (no source to exclude in fanout).
     pub fn write_packet(
         &mut self,
         len: usize,
+        maybe_source_interface: Option<InterfaceId>,
         write: impl FnOnce(&mut [u8]),
     ) -> Result<(), OutboxFull> {
         if len > ARENA_BYTES - self.used {
@@ -88,13 +99,18 @@ impl<const ARENA_BYTES: usize, const MAX_PACKET_COUNT: usize>
         let offset = self.used;
         write(&mut self.arena[offset..offset + len]);
         self.used += len;
-        let _ = self.spans.push(Span { offset, len });
+        let _ = self.spans.push(Span {
+            offset,
+            len,
+            maybe_source_interface,
+        });
         Ok(())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = OutboundPacket<'_>> {
         self.spans.iter().map(|span| OutboundPacket {
             bytes: &self.arena[span.offset..span.offset + span.len],
+            maybe_source_interface: span.maybe_source_interface,
         })
     }
 
@@ -113,7 +129,7 @@ mod tests {
         outbox: &mut Outbox<B, P>,
         bytes: &[u8],
     ) -> Result<(), OutboxFull> {
-        outbox.write_packet(bytes.len(), |buf| buf.copy_from_slice(bytes))
+        outbox.write_packet(bytes.len(), None, |buf| buf.copy_from_slice(bytes))
     }
 
     /// The buffer's core invariant: packets pack a contiguous prefix with no
@@ -147,7 +163,7 @@ mod tests {
         let header = [0xDE, 0xAD];
         let payload = [0xBE, 0xEF, 0x00];
         outbox
-            .write_packet(header.len() + payload.len(), |buf| {
+            .write_packet(header.len() + payload.len(), None, |buf| {
                 buf[..header.len()].copy_from_slice(&header);
                 buf[header.len()..].copy_from_slice(&payload);
             })

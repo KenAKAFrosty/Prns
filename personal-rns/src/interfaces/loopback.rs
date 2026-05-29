@@ -68,6 +68,8 @@ impl LoopbackInterface {
 }
 
 impl Interface for LoopbackInterface {
+    type Error = LoopbackError;
+
     fn id(&self) -> InterfaceId {
         self.id
     }
@@ -97,10 +99,6 @@ impl Interface for LoopbackInterface {
         // for hot-reload testing).
         InterfaceState::Connected
     }
-}
-
-impl PointToPointInterface for LoopbackInterface {
-    type Error = LoopbackError;
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
         let mut queue = self.inbound.borrow_mut();
@@ -126,6 +124,8 @@ impl PointToPointInterface for LoopbackInterface {
         Ok(())
     }
 }
+
+impl PointToPointInterface for LoopbackInterface {}
 
 #[cfg(test)]
 mod tests {

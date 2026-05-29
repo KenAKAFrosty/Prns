@@ -42,6 +42,7 @@
 
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::{
     Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_ID_WIRE_LEN,
 };
@@ -108,6 +109,7 @@ pub struct HeldAnnounce {
     app_data_len: u16,
     arrived_at: InstantMillis,
     received_hops: u8,
+    source_interface: InterfaceId,
 }
 
 impl HeldAnnounce {
@@ -137,6 +139,14 @@ impl HeldAnnounce {
     pub fn reason(&self) -> HoldReason {
         self.reason
     }
+
+    /// Interface this announce was originally delivered on. Threads
+    /// through to emission so the engine can apply RNS's "don't gossip
+    /// back to source" rule when a held entry recovers and gets
+    /// re-emitted.
+    pub fn source_interface(&self) -> InterfaceId {
+        self.source_interface
+    }
 }
 
 /// Fixed-capacity SoA store of held announces. Hot scan columns
@@ -159,6 +169,7 @@ pub struct HeldAnnouncesCache<const CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACIT
     app_data_buf: [[u8; HELD_APP_DATA_LIMIT]; CAPACITY],
     app_data_len: [u16; CAPACITY],
     reason: [HoldReason; CAPACITY],
+    source_interface: [InterfaceId; CAPACITY],
 }
 
 impl<const CAPACITY: usize> Default for HeldAnnouncesCache<CAPACITY> {
@@ -179,6 +190,7 @@ impl<const CAPACITY: usize> Default for HeldAnnouncesCache<CAPACITY> {
             app_data_buf: [[0u8; HELD_APP_DATA_LIMIT]; CAPACITY],
             app_data_len: [0u16; CAPACITY],
             reason: [HoldReason::RoutingArenaPressure; CAPACITY],
+            source_interface: [InterfaceId::new([0u8; 16]); CAPACITY],
         }
     }
 }
@@ -212,6 +224,7 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
         arrived_at: InstantMillis,
         received_hops: u8,
         reason: HoldReason,
+        source_interface: InterfaceId,
     ) -> ParkOutcome {
         if announce.app_data.len() > HELD_APP_DATA_LIMIT {
             return ParkOutcome::AppDataTooLarge;
@@ -220,7 +233,14 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
         // Destination-keyed dedup: same destination overwrites in place.
         for i in 0..self.len {
             if self.destinations[i] == announce.destination {
-                self.write_at(i, announce, arrived_at, received_hops, reason);
+                self.write_at(
+                    i,
+                    announce,
+                    arrived_at,
+                    received_hops,
+                    reason,
+                    source_interface,
+                );
                 return ParkOutcome::Overwrote;
             }
         }
@@ -229,7 +249,14 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
             return ParkOutcome::CacheFull;
         }
         let i = self.len;
-        self.write_at(i, announce, arrived_at, received_hops, reason);
+        self.write_at(
+            i,
+            announce,
+            arrived_at,
+            received_hops,
+            reason,
+            source_interface,
+        );
         self.len += 1;
         ParkOutcome::Parked
     }
@@ -265,6 +292,7 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
             app_data_len: self.app_data_len[best_idx],
             arrived_at: self.arrived_at[best_idx],
             received_hops: self.received_hops[best_idx],
+            source_interface: self.source_interface[best_idx],
         };
 
         self.swap_remove_at(best_idx);
@@ -278,6 +306,7 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
         arrived_at: InstantMillis,
         received_hops: u8,
         reason: HoldReason,
+        source_interface: InterfaceId,
     ) {
         self.destinations[i] = announce.destination;
         self.received_hops[i] = received_hops;
@@ -297,6 +326,7 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
         }
         self.app_data_len[i] = len as u16;
         self.reason[i] = reason;
+        self.source_interface[i] = source_interface;
     }
 
     fn swap_remove_at(&mut self, i: usize) {
@@ -313,6 +343,7 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
             self.app_data_buf[i] = self.app_data_buf[last];
             self.app_data_len[i] = self.app_data_len[last];
             self.reason[i] = self.reason[last];
+            self.source_interface[i] = self.source_interface[last];
         }
         self.len = last;
     }
@@ -358,7 +389,13 @@ mod tests {
         let app_data = b"hello-personal";
         let a = announce_for(dest(1), app_data);
         assert_eq!(
-            cache.park(&a, ts(100), 3, HoldReason::RoutingArenaPressure),
+            cache.park(
+                &a,
+                ts(100),
+                3,
+                HoldReason::RoutingArenaPressure,
+                InterfaceId::new([0u8; 16])
+            ),
             ParkOutcome::Parked
         );
         assert_eq!(cache.len(), 1);
@@ -379,11 +416,23 @@ mod tests {
         let second = announce_for(dest(1), b"new");
 
         assert_eq!(
-            cache.park(&first, ts(100), 5, HoldReason::RoutingArenaPressure),
+            cache.park(
+                &first,
+                ts(100),
+                5,
+                HoldReason::RoutingArenaPressure,
+                InterfaceId::new([0u8; 16])
+            ),
             ParkOutcome::Parked
         );
         assert_eq!(
-            cache.park(&second, ts(200), 2, HoldReason::RoutingArenaPressure),
+            cache.park(
+                &second,
+                ts(200),
+                2,
+                HoldReason::RoutingArenaPressure,
+                InterfaceId::new([0u8; 16])
+            ),
             ParkOutcome::Overwrote
         );
         assert_eq!(cache.len(), 1);
@@ -403,7 +452,8 @@ mod tests {
                 &announce_for(dest(1), b"a"),
                 ts(100),
                 3,
-                HoldReason::RoutingArenaPressure
+                HoldReason::RoutingArenaPressure,
+                InterfaceId::new([0u8; 16])
             ),
             ParkOutcome::Parked
         );
@@ -412,7 +462,8 @@ mod tests {
                 &announce_for(dest(2), b"b"),
                 ts(200),
                 3,
-                HoldReason::RoutingArenaPressure
+                HoldReason::RoutingArenaPressure,
+                InterfaceId::new([0u8; 16])
             ),
             ParkOutcome::Parked
         );
@@ -421,7 +472,8 @@ mod tests {
                 &announce_for(dest(3), b"c"),
                 ts(300),
                 3,
-                HoldReason::RoutingArenaPressure
+                HoldReason::RoutingArenaPressure,
+                InterfaceId::new([0u8; 16])
             ),
             ParkOutcome::CacheFull
         );
@@ -436,18 +488,21 @@ mod tests {
             ts(100),
             10,
             HoldReason::RoutingArenaPressure,
+            InterfaceId::new([0u8; 16]),
         );
         cache.park(
             &announce_for(dest(2), b"near"),
             ts(200),
             2,
             HoldReason::RoutingArenaPressure,
+            InterfaceId::new([0u8; 16]),
         );
         cache.park(
             &announce_for(dest(3), b"medium"),
             ts(300),
             5,
             HoldReason::RoutingArenaPressure,
+            InterfaceId::new([0u8; 16]),
         );
 
         let held = cache.take_next().unwrap();
@@ -469,18 +524,21 @@ mod tests {
             ts(300),
             3,
             HoldReason::RoutingArenaPressure,
+            InterfaceId::new([0u8; 16]),
         );
         cache.park(
             &announce_for(dest(2), b"b"),
             ts(100),
             3,
             HoldReason::RoutingArenaPressure,
+            InterfaceId::new([0u8; 16]),
         ); // oldest arrival, same hops
         cache.park(
             &announce_for(dest(3), b"c"),
             ts(200),
             3,
             HoldReason::RoutingArenaPressure,
+            InterfaceId::new([0u8; 16]),
         );
 
         let held = cache.take_next().unwrap();
