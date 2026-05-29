@@ -13,6 +13,7 @@ pub mod id;
 pub mod interface;
 pub mod medium;
 pub mod mode;
+pub mod point_to_point;
 pub mod state;
 
 pub use capabilities::Capabilities;
@@ -20,4 +21,5 @@ pub use id::InterfaceId;
 pub use interface::Interface;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
+pub use point_to_point::PointToPointInterface;
 pub use state::InterfaceState;
