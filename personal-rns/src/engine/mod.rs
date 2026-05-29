@@ -972,4 +972,110 @@ mod tests {
         assert_eq!(rebroadcast_header.destination, orig_header.destination);
         assert_eq!(rebroadcast_payload, orig_payload);
     }
+
+    /// Multi-interface forcing-function test. A real announce arrives on
+    /// interface A; the engine emits; host-side fanout sends the
+    /// rebroadcast to interface B while skipping A (the source).
+    ///
+    /// The test orchestrates drain + fanout BY HAND because the engine
+    /// doesn't hold an interface set yet — the friction of doing it
+    /// manually IS the forcing function pointing at the next refactor
+    /// (rich typed `Ingress` / `EgressDirective` enums + the engine
+    /// holding the interface set). N=2 is the smallest case that
+    /// surfaces what doesn't scale; the shape of this code (two
+    /// hand-coded `if`s for fanout, two hand-coded drains for ingress)
+    /// is what we'll want to compress into a typed match-then-execute
+    /// pattern at the engine boundary.
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn an_announce_on_one_interface_fans_out_to_others_skipping_source() {
+        use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
+        use crate::wire::MTU;
+
+        let raw = hx(RAW_ANNOUNCE);
+
+        // Two paired loopbacks. Engine "owns" the right halves; the
+        // upstream peers (test code) own the left halves.
+        let (mut seed_a, mut engine_a) =
+            LoopbackInterface::pair(InterfaceId::new([0xA1; 16]), InterfaceId::new([0xA2; 16]));
+        let (mut seed_b, mut engine_b) =
+            LoopbackInterface::pair(InterfaceId::new([0xB1; 16]), InterfaceId::new([0xB2; 16]));
+        let engine_a_id = engine_a.id();
+        let engine_b_id = engine_b.id();
+
+        // Phase 1: peer reachable via A sends an announce.
+        seed_a.write(&raw).unwrap();
+
+        // Phase 2: engine drains BOTH interfaces, builds one batch.
+        // Separate scratch buf per interface — a shared buf would let
+        // the second drain clobber the first's contents (the
+        // InboundPackets borrow from the bufs).
+        let arrived_at = InstantMillis(1_000);
+        let mut buf_a = [0u8; MTU];
+        let mut buf_b = [0u8; MTU];
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        {
+            let mut batch = std::vec::Vec::new();
+            if let Some(p) = engine_a.read_inbound(&mut buf_a, arrived_at).unwrap() {
+                batch.push(p);
+            }
+            if let Some(p) = engine_b.read_inbound(&mut buf_b, arrived_at).unwrap() {
+                batch.push(p);
+            }
+            assert_eq!(batch.len(), 1, "only A had a packet queued");
+            assert_eq!(batch[0].source_interface, engine_a_id);
+
+            // Phase 3: ingest the unified batch.
+            let ingest_out = ingest(&mut state, &batch, TEST_ENTROPY);
+            assert_eq!(ingest_out.accepted_announce_count(), 1);
+            assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
+            assert_eq!(state.route_count(), 1);
+            // batch (and the buf borrows it holds) drops at end of block
+        }
+
+        // Phase 4: tick past the jitter window — engine emits one packet
+        // tagged with the source it came in on.
+        let mut outbox = Outbox::<2048, 16>::new();
+        let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
+        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut outbox);
+        assert_eq!(tick_out.emitted_packet_count(), 1);
+
+        let emitted: std::vec::Vec<OutboundPacket<'_>> = outbox.iter().collect();
+        assert_eq!(emitted.len(), 1);
+        let packet = emitted[0];
+        assert_eq!(packet.maybe_source_interface, Some(engine_a_id));
+
+        // Phase 5: HOST applies fanout BY HAND. For each interface we
+        // own: write the packet UNLESS that interface's id matches the
+        // source. Hardcoded N=2 — the engine would eventually own this
+        // loop with proper typed directives.
+        let source = packet.maybe_source_interface;
+        if source != Some(engine_a_id) {
+            engine_a.write(packet.bytes).unwrap();
+        }
+        if source != Some(engine_b_id) {
+            engine_b.write(packet.bytes).unwrap();
+        }
+
+        // Phase 6: A's peer should NOT have received the rebroadcast
+        // (we skipped A as the source).
+        assert_eq!(
+            seed_a.try_read(&mut buf_a).unwrap(),
+            None,
+            "A is the source — fanout must skip A"
+        );
+
+        // Phase 7: B's peer SHOULD have received the rebroadcast, with
+        // hop count incremented (received_hops = orig + 1 on the
+        // engine's receive, re-emitted at that value).
+        let n = seed_b
+            .try_read(&mut buf_b)
+            .unwrap()
+            .expect("B should receive the fan-out");
+        let rebroadcast_bytes = &buf_b[..n];
+        let (orig_header, _) = WirePacketHeader::parse(&raw).unwrap();
+        let (rebroadcast_header, _) = WirePacketHeader::parse(rebroadcast_bytes).unwrap();
+        assert_eq!(rebroadcast_header.hops, orig_header.hops + 1);
+        assert_eq!(rebroadcast_header.destination, orig_header.destination);
+    }
 }
