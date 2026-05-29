@@ -10,6 +10,8 @@
 
 pub mod capabilities;
 pub mod id;
+pub mod mode;
 
 pub use capabilities::Capabilities;
 pub use id::InterfaceId;
+pub use mode::InterfaceMode;
