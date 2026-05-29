@@ -14,6 +14,7 @@ pub mod interface;
 pub mod medium;
 pub mod mode;
 pub mod point_to_point;
+pub mod shared_broadcast;
 pub mod state;
 
 pub use capabilities::Capabilities;
@@ -22,4 +23,5 @@ pub use interface::Interface;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 pub use point_to_point::PointToPointInterface;
+pub use shared_broadcast::SharedBroadcastInterface;
 pub use state::InterfaceState;
