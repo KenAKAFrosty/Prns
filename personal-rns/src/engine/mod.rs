@@ -5,8 +5,10 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
+pub mod egress;
 pub mod ingress;
 
+pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 
 use crate::interfaces::InterfaceId;
