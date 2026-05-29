@@ -35,7 +35,7 @@ pub struct InstantMillis(pub u64);
 /// and never needs to read a clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InboundPacket<'a> {
-    pub arrival: InstantMillis,
+    pub arrived_at: InstantMillis,
     pub bytes: &'a [u8],
 }
 
@@ -251,7 +251,7 @@ where
             existing_route: state
                 .routing_table
                 .existing_route_for(&announce.destination),
-            arrived_at: packet.arrival,
+            arrived_at: packet.arrived_at,
         }
         .determine_acceptance();
 
@@ -259,7 +259,7 @@ where
             let outcome =
                 state
                     .routing_table
-                    .upsert_route(received_hops, packet.arrival, &announce);
+                    .upsert_route(received_hops, packet.arrived_at, &announce);
             match outcome {
                 UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
                     accepted_announce_count += 1;
@@ -270,7 +270,7 @@ where
                     );
                     state.pending_rebroadcasts.schedule(
                         announce.destination,
-                        InstantMillis(packet.arrival.0.saturating_add(offset)),
+                        InstantMillis(packet.arrived_at.0.saturating_add(offset)),
                     );
                     scheduled_rebroadcast_count += 1;
                 }
@@ -282,7 +282,7 @@ where
                     use crate::routing::held_cache::{HoldReason, ParkOutcome};
                     match state.held_cache.park(
                         &announce,
-                        packet.arrival,
+                        packet.arrived_at,
                         received_hops,
                         HoldReason::RoutingArenaPressure,
                     ) {
@@ -502,11 +502,11 @@ mod tests {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         let batch = [
             InboundPacket {
-                arrival: InstantMillis(10),
+                arrived_at: InstantMillis(10),
                 bytes: &[1, 2, 3],
             },
             InboundPacket {
-                arrival: InstantMillis(20),
+                arrived_at: InstantMillis(20),
                 bytes: &[4],
             },
         ];
@@ -543,7 +543,7 @@ mod tests {
         let first = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -555,7 +555,7 @@ mod tests {
         let second = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(2_000),
+                arrived_at: InstantMillis(2_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -578,7 +578,7 @@ mod tests {
         let out = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &at_limit,
             }],
             TEST_ENTROPY,
@@ -591,7 +591,7 @@ mod tests {
         let out = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &beyond,
             }],
             TEST_ENTROPY,
@@ -611,7 +611,7 @@ mod tests {
         let out = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -635,7 +635,7 @@ mod tests {
     fn ingest_processes_but_does_not_accept_non_announce_bytes() {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         let junk = InboundPacket {
-            arrival: InstantMillis(1),
+            arrived_at: InstantMillis(1),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
         };
         let out = ingest(&mut state, &[junk], TEST_ENTROPY);
@@ -654,7 +654,7 @@ mod tests {
         let out = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -673,7 +673,7 @@ mod tests {
         let _ = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -698,7 +698,7 @@ mod tests {
         let out = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -716,7 +716,7 @@ mod tests {
         let out = ingest(
             &mut state,
             &[InboundPacket {
-                arrival,
+                arrived_at: arrival,
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -759,7 +759,7 @@ mod tests {
         let _ = ingest(
             &mut state,
             &[InboundPacket {
-                arrival,
+                arrived_at: arrival,
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -790,7 +790,7 @@ mod tests {
             let _ = ingest(
                 state,
                 &[InboundPacket {
-                    arrival,
+                    arrived_at: arrival,
                     bytes: &raw,
                 }],
                 TEST_ENTROPY,
@@ -816,7 +816,7 @@ mod tests {
         let _ = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -838,7 +838,7 @@ mod tests {
         let _ = ingest(
             &mut state,
             &[InboundPacket {
-                arrival: InstantMillis(1_000),
+                arrived_at: InstantMillis(1_000),
                 bytes: &raw,
             }],
             TEST_ENTROPY,
@@ -860,5 +860,81 @@ mod tests {
         let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut roomy);
         assert_eq!(tick_out.emitted_packet_count(), 1);
         assert_eq!(state.pending_rebroadcast_count(), 0);
+    }
+
+    /// TDD seed for the interface-engine integration arc. Drives a real
+    /// announce end-to-end through a LoopbackInterface pair: upstream
+    /// peer writes bytes → engine reads via PointToPointInterface::try_read
+    /// → engine ingests → engine schedules + emits → engine writes bytes
+    /// back out the interface → upstream peer reads the rebroadcast.
+    ///
+    /// Every awkward step here is a friction point pointing at the next
+    /// production change worth making. We deliberately do NOT add any
+    /// production-side helpers in this slice — surface the seams first.
+    #[test]
+    fn an_announce_traverses_the_engine_via_a_loopback_interface() {
+        use crate::interfaces::{InterfaceId, LoopbackInterface, PointToPointInterface};
+        use crate::wire::MTU;
+
+        let raw = hx(RAW_ANNOUNCE);
+
+        // Two halves of a paired loopback. `seed_half` is what an
+        // upstream peer would hold; `engine_half` is what the engine
+        // pulls from and writes back to.
+        let (mut seed_half, mut engine_half) =
+            LoopbackInterface::pair(InterfaceId::new([0x01; 16]), InterfaceId::new([0x02; 16]));
+
+        // == Phase 1: upstream peer sends an announce in ==
+        seed_half.write(&raw).unwrap();
+
+        // == Phase 2: engine drains the interface ==
+        let mut read_buf = [0u8; MTU];
+        let n = engine_half
+            .try_read(&mut read_buf)
+            .unwrap()
+            .expect("seeded packet ready to read");
+        let received_bytes = &read_buf[..n];
+
+        // == Phase 3: engine ingests ==
+        let arrived_at = InstantMillis(1_000);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let ingest_out = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrived_at,
+                bytes: received_bytes,
+            }],
+            TEST_ENTROPY,
+        );
+        assert_eq!(ingest_out.accepted_announce_count(), 1);
+        assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
+        assert_eq!(state.route_count(), 1);
+
+        // == Phase 4: engine ticks past the jitter window and emits ==
+        let mut outbox = Outbox::<2048, 16>::new();
+        let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
+        let tick_out = tick(&mut state, now, TEST_ENTROPY, &mut outbox);
+        assert_eq!(tick_out.emitted_packet_count(), 1);
+
+        // == Phase 5: engine writes the outbox bytes back to the interface ==
+        let emitted: std::vec::Vec<OutboundPacket<'_>> = outbox.iter().collect();
+        assert_eq!(emitted.len(), 1);
+        engine_half.write(emitted[0].bytes).unwrap();
+
+        // == Phase 6: upstream peer reads the rebroadcast ==
+        let n = seed_half
+            .try_read(&mut read_buf)
+            .unwrap()
+            .expect("rebroadcast available to upstream peer");
+        let rebroadcast_bytes = &read_buf[..n];
+
+        // The bytes the seed end receives are the re-emitted announce:
+        // same destination, same payload, hop count incremented by 1.
+        let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
+        let (rebroadcast_header, rebroadcast_payload) =
+            WirePacketHeader::parse(rebroadcast_bytes).unwrap();
+        assert_eq!(rebroadcast_header.hops, orig_header.hops + 1);
+        assert_eq!(rebroadcast_header.destination, orig_header.destination);
+        assert_eq!(rebroadcast_payload, orig_payload);
     }
 }

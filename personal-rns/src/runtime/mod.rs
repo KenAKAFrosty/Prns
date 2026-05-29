@@ -146,11 +146,11 @@ mod tests {
     fn step_ingests_the_whole_batch_then_ticks_once() {
         let queued = [
             InboundPacket {
-                arrival: InstantMillis(5),
+                arrived_at: InstantMillis(5),
                 bytes: &[0xAA],
             },
             InboundPacket {
-                arrival: InstantMillis(6),
+                arrived_at: InstantMillis(6),
                 bytes: &[0xBB, 0xCC],
             },
         ];
