@@ -10,8 +10,10 @@
 
 pub mod capabilities;
 pub mod id;
+pub mod medium;
 pub mod mode;
 
 pub use capabilities::Capabilities;
 pub use id::InterfaceId;
+pub use medium::MediumKind;
 pub use mode::InterfaceMode;
