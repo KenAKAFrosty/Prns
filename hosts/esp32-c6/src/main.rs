@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod usb_serial;
+
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::clock::CpuClock;
