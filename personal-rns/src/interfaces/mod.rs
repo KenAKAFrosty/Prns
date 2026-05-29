@@ -8,6 +8,8 @@
 //! interface impl is a faithful actor honoring the contract, never a
 //! source of routing or fanout decisions.
 
+pub mod capabilities;
 pub mod id;
 
+pub use capabilities::Capabilities;
 pub use id::InterfaceId;
