@@ -1,23 +1,18 @@
 //! Typed egress directives.
 //!
 //! `EgressDirective` is the engine's typed view of what it wants
-//! emitted. `tick` (eventually) produces directives; some host-side
-//! site pattern-matches and dispatches. Each variant carries the typed
+//! emitted. `tick` produces directives; the host's runtime loop
+//! pattern-matches and dispatches. Each variant carries the typed
 //! values it operates on AND provides a `to_wire` method that handles
 //! the serialization — the engine owns wire-protocol knowledge; the
 //! host doesn't need to know how any packet kind frames onto the wire.
 //!
-//! `received_from` on `ReemitAnnounce` is provenance data (which
-//! interface delivered the announce we're re-emitting), not a fanout
-//! policy directive. Once engine-held-interfaces lands, directives
-//! will gain explicit positive `fire_on: TargetSet` targets that the
-//! engine computes; until then, hosts apply their own fanout policy
-//! using `received_from` as input.
-//!
-//! This module ships the directive type, serialization, and tests
-//! today. The `tick` refactor that actually produces directives lands
-//! in a subsequent slice once we've picked a delivery shape
-//! (callback / iterator / lent sink).
+//! Every directive carries an explicit positive `fire_on:
+//! &[InterfaceId]` list — the engine has already filtered down to the
+//! interfaces this packet should actually go out on (today: registered
+//! interfaces minus source for `ReemitAnnounce`). The host is a pure
+//! tx/rx pump: write the bytes to each id in `fire_on`, no exclusion
+//! logic.
 
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
@@ -37,7 +32,7 @@ pub enum EgressDirective<'a> {
     ReemitAnnounce {
         announce: Announce<'a>,
         emit_hops: u8,
-        received_from: InterfaceId,
+        fire_on: &'a [InterfaceId],
     },
 }
 
@@ -80,9 +75,12 @@ impl<'a> EgressDirective<'a> {
         }
     }
 
-    pub fn received_from(&self) -> Option<InterfaceId> {
+    /// The engine-computed set of interfaces this directive should be
+    /// emitted on. Never empty: the engine elides empty-fanout
+    /// directives before they reach the host.
+    pub fn fire_on(&self) -> &[InterfaceId] {
         match self {
-            Self::ReemitAnnounce { received_from, .. } => Some(*received_from),
+            Self::ReemitAnnounce { fire_on, .. } => fire_on,
         }
     }
 }
@@ -118,11 +116,12 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
+        let targets = [iface(0xAA), iface(0xBB)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: orig_header.hops + 1,
-            received_from: iface(0xAB),
+            fire_on: &targets,
         };
 
         let mut buf = [0u8; 500];
@@ -148,11 +147,12 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
+        let targets = [iface(0xAB)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: 1,
-            received_from: iface(0xAB),
+            fire_on: &targets,
         };
 
         let mut tiny_buf = [0u8; 8];
@@ -163,18 +163,19 @@ mod tests {
     }
 
     #[test]
-    fn received_from_accessor_returns_the_stamped_source() {
+    fn fire_on_accessor_returns_the_engine_supplied_targets() {
         let raw = hx(RAW_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
+        let targets = [iface(0xCD), iface(0xEF)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: header.hops + 1,
-            received_from: iface(0xCD),
+            fire_on: &targets,
         };
 
-        assert_eq!(directive.received_from(), Some(iface(0xCD)));
+        assert_eq!(directive.fire_on(), &targets);
     }
 
     #[test]
@@ -185,11 +186,12 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let orig_announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
+        let targets = [iface(0x42)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce: orig_announce.clone(),
             emit_hops: 5,
-            received_from: iface(0x42),
+            fire_on: &targets,
         };
 
         let mut buf = [0u8; 500];

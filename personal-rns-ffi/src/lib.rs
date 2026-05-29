@@ -66,7 +66,7 @@ impl HostAdapter for SdkHost {
     fn handle_egress(
         &mut self,
         _bytes: &[u8],
-        _received_from: Option<InterfaceId>,
+        _fire_on: &[InterfaceId],
     ) -> Result<(), Self::Error> {
         // No transport wired yet; every egress fails honestly until a
         // real interface lands.

@@ -27,6 +27,16 @@ use crate::routing::{
     DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_TRACKED_DESTINATIONS,
     DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
+use crate::wire::DestinationHash;
+use heapless::Vec as HeaplessVec;
+
+/// Cap on how many interfaces the engine can own at once. Picked against
+/// embedded reality — a real device typically has 1–4 active radios; 8
+/// gives slack for hosts that present a virtual interface (USB, BLE,
+/// loopback for diagnostics) without ballooning per-tick fanout arena
+/// storage. Tunable if a real host outgrows it; not exposed as a const
+/// generic to keep `EngineState`'s type signature manageable.
+pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
 /// Monotonic timestamp supplied by the host, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -51,6 +61,15 @@ pub struct InboundPacket<'a> {
 /// [`DefaultEngineState`]; that's the canonical embedded entry point. A
 /// capable host substitutes alternate routing-storage backends at the type
 /// parameters directly.
+///
+/// The engine owns its **interface registry** — the host calls
+/// [`register_interface`] at startup for each interface it presents, and
+/// from then on the engine computes positive `fire_on` fanout targets per
+/// directive (see [`EgressDirective`]) rather than asking the host to apply
+/// "don't reflect back to source" by hand.
+///
+/// [`register_interface`]: EngineState::register_interface
+/// [`EgressDirective`]: crate::engine::EgressDirective
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<R, A, H, D, const HELD: usize>
 where
@@ -71,7 +90,15 @@ where
     // `MAX_PENDING` dial is the obvious next iteration if that assumption
     // breaks.
     pending_rebroadcasts: PendingRebroadcasts<HELD>,
+    // Interfaces the host has registered with this engine. tick() builds each
+    // directive's `fire_on` list from this set minus the source.
+    interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
 }
+
+/// Returned by [`EngineState::register_interface`] when the registry is
+/// already at [`MAX_REGISTERED_INTERFACES`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceRegistryFull;
 
 /// The no_std stack-resident engine-state preset — the only place the
 /// default backend choices are named. Mirrors
@@ -127,6 +154,22 @@ where
     pub fn pending_rebroadcast_count(&self) -> usize {
         self.pending_rebroadcasts.pending_count()
     }
+
+    /// Register an interface so the engine can target it in fanout.
+    /// Idempotent: registering an already-known id is a no-op that returns
+    /// `Ok(())`. Returns [`InterfaceRegistryFull`] only when the registry is
+    /// at [`MAX_REGISTERED_INTERFACES`] and the id is new.
+    pub fn register_interface(&mut self, id: InterfaceId) -> Result<(), InterfaceRegistryFull> {
+        if self.interfaces.contains(&id) {
+            return Ok(());
+        }
+        self.interfaces.push(id).map_err(|_| InterfaceRegistryFull)
+    }
+
+    /// Currently-registered interfaces, in registration order.
+    pub fn registered_interfaces(&self) -> &[InterfaceId] {
+        &self.interfaces
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -152,6 +195,15 @@ impl IngestOutput {
     }
 }
 
+/// One due directive's fanout target list, materialised at tick-time.
+/// Private to the engine: callers see typed [`EgressDirective`]s via
+/// [`TickOutput::egress_directives`].
+#[derive(Debug, Clone)]
+struct DirectiveFanout {
+    destination: DestinationHash,
+    fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
+}
+
 /// What `tick` produced this cycle.
 ///
 /// Holds a mutable borrow on the engine state for its lifetime — so the
@@ -173,6 +225,15 @@ impl IngestOutput {
 /// once we want to mentally validate the "engine has effectively
 /// infinite room to carry stuff over" model at scale.
 ///
+/// **Fanout is engine-computed**: each yielded [`EgressDirective`]
+/// carries an explicit positive `fire_on: &[InterfaceId]` list. The
+/// engine builds this from the [registered interfaces](
+/// EngineState::registered_interfaces) minus the source, so the host
+/// stays a pure tx/rx pump with no "don't reflect to source" filter
+/// logic. Directives whose computed `fire_on` would be empty are
+/// elided (engine processed → host sees nothing) but still drained on
+/// Drop so they don't re-fire next tick.
+///
 /// [`egress_directives`]: TickOutput::egress_directives
 #[must_use]
 pub struct TickOutput<'a, R, A, H, D, const HELD: usize>
@@ -184,8 +245,8 @@ where
 {
     state: &'a mut EngineState<R, A, H, D, HELD>,
     now: InstantMillis,
-    egress_directive_count: usize,
     recovered_from_held_count: usize,
+    fanouts: HeaplessVec<DirectiveFanout, HELD>,
 }
 
 impl<'a, R, A, H, D, const HELD: usize> TickOutput<'a, R, A, H, D, HELD>
@@ -199,8 +260,8 @@ where
     /// the number of items [`egress_directives`] will yield.
     ///
     /// [`egress_directives`]: TickOutput::egress_directives
-    pub const fn egress_directive_count(&self) -> usize {
-        self.egress_directive_count
+    pub fn egress_directive_count(&self) -> usize {
+        self.fanouts.len()
     }
 
     pub const fn recovered_from_held_count(&self) -> usize {
@@ -209,29 +270,28 @@ where
 
     /// Iterate every directive the engine is handing to the host this
     /// tick. Read-only — the iterator yields [`EgressDirective`]
-    /// borrowing from state via `&self`, so the host can re-iterate,
-    /// count, peek, find, collect snapshots. On Drop the engine
-    /// commits: exactly the set of entries yielded here is removed
-    /// from whichever per-kind schedule produced them; everything
-    /// else stays in state for a future tick. Today the only source
-    /// is the rebroadcast schedule; as more directive kinds land the
+    /// borrowing from `&self` (the announce body comes from the
+    /// routing table; the `fire_on` slice comes from this
+    /// `TickOutput`'s fanout arena). The host can re-iterate, count,
+    /// peek, find, collect snapshots. On Drop the engine commits:
+    /// exactly the set of entries yielded here is removed from
+    /// whichever per-kind schedule produced them; everything else
+    /// stays in state for a future tick. Today the only source is the
+    /// rebroadcast schedule; as more directive kinds land the
     /// iterator will chain across additional sources, each with its
     /// own commit.
     pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
-        let now = self.now;
         let state = &*self.state;
-        state
-            .pending_rebroadcasts
-            .iter()
-            .filter(move |sr| sr.due_at <= now)
-            .filter_map(move |sr| {
-                let retained = state.routing_table.retained_announce_for(&sr.destination)?;
-                Some(EgressDirective::ReemitAnnounce {
-                    announce: retained.announce,
-                    emit_hops: retained.hops,
-                    received_from: sr.source_interface,
-                })
+        self.fanouts.iter().filter_map(move |fanout| {
+            let retained = state
+                .routing_table
+                .retained_announce_for(&fanout.destination)?;
+            Some(EgressDirective::ReemitAnnounce {
+                announce: retained.announce,
+                emit_hops: retained.hops,
+                fire_on: fanout.fire_on.as_slice(),
             })
+        })
     }
 }
 
@@ -478,18 +538,45 @@ where
         }
     }
 
-    // Count what the host will see this tick. `tick` is no longer
-    // responsible for emitting bytes; the host iterates the typed
-    // directives via `TickOutput::egress_directives` and commits on
-    // Drop. Anything not-yet-due stays parked in
+    // Materialise per-due-directive fanout: for each rebroadcast whose
+    // due_at <= now, build the positive `fire_on` list (registered
+    // interfaces minus the source). Directives whose computed list is
+    // empty are elided here (engine processed → host sees nothing) but
+    // still drained on Drop so they don't re-fire next tick. The host
+    // iterates the typed directives via `TickOutput::egress_directives`
+    // and commits on Drop. Anything not-yet-due stays parked in
     // `pending_rebroadcasts` and surfaces on a later tick.
-    let egress_directive_count = state.pending_rebroadcasts.count_due(now);
+    let mut fanouts: HeaplessVec<DirectiveFanout, HELD> = HeaplessVec::new();
+    for scheduled in state
+        .pending_rebroadcasts
+        .iter()
+        .filter(|sr| sr.due_at <= now)
+    {
+        let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> = HeaplessVec::new();
+        for &iface in &state.interfaces {
+            if iface != scheduled.source_interface {
+                // Push is infallible: state.interfaces is also capped at
+                // MAX_REGISTERED_INTERFACES, so the filter never produces
+                // more than the destination's capacity.
+                let _ = fire_on.push(iface);
+            }
+        }
+        if fire_on.is_empty() {
+            continue;
+        }
+        // Both caps match (HELD == max due directives == max fanouts),
+        // so push is infallible here too.
+        let _ = fanouts.push(DirectiveFanout {
+            destination: scheduled.destination,
+            fire_on,
+        });
+    }
 
     TickOutput {
         state,
         now,
-        egress_directive_count,
         recovered_from_held_count,
+        fanouts,
     }
 }
 
@@ -785,6 +872,11 @@ mod tests {
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: DefaultEngineState = DefaultEngineState::default();
+        // Register a peer so fanout has a target (source is [0u8;16]; the
+        // engine's fire_on = registered minus source = [peer]).
+        state
+            .register_interface(InterfaceId::new([0xFE; 16]))
+            .unwrap();
 
         let arrival = InstantMillis(1_000);
         let out = ingest(
@@ -863,6 +955,11 @@ mod tests {
         let mut right: DefaultEngineState = DefaultEngineState::default();
 
         for state in [&mut left, &mut right] {
+            // Identical registries: byte-identical emissions depend on
+            // both engines computing the same fanout target sets.
+            state
+                .register_interface(InterfaceId::new([0xFE; 16]))
+                .unwrap();
             let _ = ingest(
                 state,
                 &[InboundPacket {
@@ -909,14 +1006,15 @@ mod tests {
         assert!(bytes.is_empty());
     }
 
-    /// End-to-end interface ↔ engine integration. Drives a real announce
-    /// through a LoopbackInterface pair, using the `read_inbound` default
-    /// trait method to bridge the interface read into an `InboundPacket`,
-    /// and verifies the `received_from` tag threads cleanly through
-    /// ingest → schedule → tick → due directives.
+    /// Engine elides empty-fanout directives. Drives a real announce
+    /// through a single LoopbackInterface pair, registers only that
+    /// engine half, and verifies the engine accepts + schedules the
+    /// announce but produces zero directives (fanout = registered −
+    /// source = empty). The rebroadcast still drains on tick commit,
+    /// so it does not re-fire on a later tick.
     #[cfg(feature = "alloc")]
     #[test]
-    fn an_announce_traverses_the_engine_via_a_loopback_interface() {
+    fn engine_elides_directives_with_only_the_source_registered() {
         use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
 
         let raw = hx(RAW_ANNOUNCE);
@@ -943,75 +1041,42 @@ mod tests {
             .expect("seeded packet ready to read");
         assert_eq!(packet.source_interface, engine_iface_id);
 
-        // == Phase 3: engine ingests ==
+        // == Phase 3: engine ingests, with the one engine-owned interface
+        //             registered. Fanout = registered - source = empty,
+        //             so the engine elides the directive and the host
+        //             sees nothing this tick. ==
         let mut state: DefaultEngineState = DefaultEngineState::default();
+        state.register_interface(engine_iface_id).unwrap();
         let ingest_out = ingest(&mut state, &[packet], TEST_ENTROPY);
         assert_eq!(ingest_out.accepted_announce_count(), 1);
         assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
         assert_eq!(state.route_count(), 1);
 
-        // == Phase 4: engine ticks past the jitter window; one directive is due ==
-        // == Phase 5: directive carries the received_from tag end-to-end ==
-        // == Phase 6: host serializes the directive and writes it back ==
-        // (Phases 4-6 live inside the tick_out scope so the borrow on
-        // state is released before Phase 7 inspects the seed-side read.)
+        // == Phase 4: tick past the jitter window — engine elides the
+        //             empty-fanout directive but still drains it. ==
         let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let mut wire_buf = [0u8; MTU];
-        let wire_len = {
+        {
             let tick_out = tick(&mut state, now, TEST_ENTROPY);
-            assert_eq!(tick_out.egress_directive_count(), 1);
+            assert_eq!(tick_out.egress_directive_count(), 0);
+            assert!(tick_out.egress_directives().next().is_none());
+        }
+        assert_eq!(state.pending_rebroadcast_count(), 0);
 
-            let mut directives = tick_out.egress_directives();
-            let directive = directives.next().expect("one due directive");
-            assert!(
-                directives.next().is_none(),
-                "exactly one due directive expected"
-            );
-            assert_eq!(
-                directive.received_from(),
-                Some(engine_iface_id),
-                "engine must thread received_from from ingest through emission \
-                 so the host can apply the fanout exclusion"
-            );
-            directive
-                .to_wire(&mut wire_buf)
-                .expect("serialize directive")
-        };
-        engine_half.write(&wire_buf[..wire_len]).unwrap();
-
-        // == Phase 7: upstream peer reads the rebroadcast ==
-        let n = seed_half
-            .try_read(&mut read_buf)
-            .unwrap()
-            .expect("rebroadcast available to upstream peer");
-        let rebroadcast_bytes = &read_buf[..n];
-
-        // The bytes the seed end receives are the re-emitted announce:
-        // same destination, same payload, hop count incremented by 1.
-        let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
-        let (rebroadcast_header, rebroadcast_payload) =
-            WirePacketHeader::parse(rebroadcast_bytes).unwrap();
-        assert_eq!(rebroadcast_header.hops, orig_header.hops + 1);
-        assert_eq!(rebroadcast_header.destination, orig_header.destination);
-        assert_eq!(rebroadcast_payload, orig_payload);
+        // == Phase 5: the upstream peer sees nothing — the engine had no
+        //             other interface to fan out to. ==
+        assert_eq!(seed_half.try_read(&mut read_buf).unwrap(), None);
     }
 
-    /// Multi-interface forcing-function test. A real announce arrives on
-    /// interface A; the engine emits; host-side fanout sends the
-    /// rebroadcast to interface B while skipping A (the source).
-    ///
-    /// The test orchestrates drain + fanout BY HAND because the engine
-    /// doesn't hold an interface set yet — the friction of doing it
-    /// manually IS the forcing function pointing at the next refactor
-    /// (rich typed `Ingress` / `EgressDirective` enums + the engine
-    /// holding the interface set). N=2 is the smallest case that
-    /// surfaces what doesn't scale; the shape of this code (two
-    /// hand-coded `if`s for fanout, two hand-coded drains for ingress)
-    /// is what we'll want to compress into a typed match-then-execute
-    /// pattern at the engine boundary.
+    /// Multi-interface forcing-function test, Stage 3 edition. A real
+    /// announce arrives on interface A; the engine — which owns both
+    /// registered interfaces — computes `fire_on = [B]` (positive,
+    /// source excluded) and the host writes the bytes to B with no
+    /// exclusion logic of its own. The test is the canonical proof
+    /// that Stage 3 holds: the host code that used to have
+    /// `if source != engine_X_id { … }` filters is GONE.
     #[cfg(feature = "alloc")]
     #[test]
-    fn an_announce_on_one_interface_fans_out_to_others_skipping_source() {
+    fn engine_computed_fire_on_drives_fanout_with_no_host_side_filter() {
         use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
 
         let raw = hx(RAW_ANNOUNCE);
@@ -1036,6 +1101,8 @@ mod tests {
         let mut buf_a = [0u8; MTU];
         let mut buf_b = [0u8; MTU];
         let mut state: DefaultEngineState = DefaultEngineState::default();
+        state.register_interface(engine_a_id).unwrap();
+        state.register_interface(engine_b_id).unwrap();
         {
             let mut batch = std::vec::Vec::new();
             if let Some(p) = engine_a.read_inbound(&mut buf_a, arrived_at).unwrap() {
@@ -1055,10 +1122,11 @@ mod tests {
             // batch (and the buf borrows it holds) drops at end of block
         }
 
-        // Phase 4: tick past the jitter window — engine produces one
-        // directive tagged with the source it came in on. Phase 5
-        // applies host-side fanout from inside the tick_out scope, so
-        // the borrow on state is released before Phase 6/7 reads.
+        // Phase 4 + 5: tick past the jitter window — engine produces one
+        // directive with `fire_on = [engine_b_id]`. The host writes the
+        // bytes to each id in fire_on, no source filter. Both phases
+        // live inside the tick_out scope so the borrow on state is
+        // released before Phase 6/7 reads.
         let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
         let mut wire_buf = [0u8; MTU];
         {
@@ -1067,21 +1135,23 @@ mod tests {
 
             let mut wrote = 0usize;
             for directive in tick_out.egress_directives() {
-                let source = directive.received_from();
-                assert_eq!(source, Some(engine_a_id));
+                assert_eq!(
+                    directive.fire_on(),
+                    &[engine_b_id],
+                    "engine must compute fire_on as registered interfaces minus source"
+                );
                 let n = directive
                     .to_wire(&mut wire_buf)
                     .expect("serialize directive");
 
-                // HOST applies fanout BY HAND. For each interface we
-                // own: write the packet UNLESS that interface's id
-                // matches the source. Hardcoded N=2 — the engine would
-                // eventually own this loop with positive targets.
-                if source != Some(engine_a_id) {
-                    engine_a.write(&wire_buf[..n]).unwrap();
-                }
-                if source != Some(engine_b_id) {
-                    engine_b.write(&wire_buf[..n]).unwrap();
+                // HOST is now a pure pump: write to each fire_on id.
+                // No `if source != X` filter — the engine already did it.
+                for target in directive.fire_on() {
+                    if *target == engine_a_id {
+                        engine_a.write(&wire_buf[..n]).unwrap();
+                    } else if *target == engine_b_id {
+                        engine_b.write(&wire_buf[..n]).unwrap();
+                    }
                 }
                 wrote += 1;
             }
@@ -1089,11 +1159,11 @@ mod tests {
         }
 
         // Phase 6: A's peer should NOT have received the rebroadcast
-        // (we skipped A as the source).
+        // (engine excluded A from fire_on).
         assert_eq!(
             seed_a.try_read(&mut buf_a).unwrap(),
             None,
-            "A is the source — fanout must skip A"
+            "A is the source — engine-computed fire_on excludes A"
         );
 
         // Phase 7: B's peer SHOULD have received the rebroadcast, with

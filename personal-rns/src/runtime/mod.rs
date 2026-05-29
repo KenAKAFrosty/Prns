@@ -64,14 +64,15 @@ where
     };
 
     // Serialize each directive into a stack-sized MTU buffer and hand
-    // the bytes + provenance to the host. The buffer fits any valid
-    // announce (max-app_data no-ratchet announce is exactly MTU bytes).
+    // the bytes + engine-computed fanout targets to the host. The
+    // buffer fits any valid announce (max-app_data no-ratchet announce
+    // is exactly MTU bytes).
     let mut emit_buf = [0u8; MTU];
     for directive in tick_out.egress_directives() {
         let n = directive
             .to_wire(&mut emit_buf)
             .expect("MTU-sized buf fits any valid wire packet");
-        host.handle_egress(&emit_buf[..n], directive.received_from())?;
+        host.handle_egress(&emit_buf[..n], directive.fire_on())?;
     }
     // tick_out drops here → state's due rebroadcasts are drained.
 
@@ -115,7 +116,7 @@ mod tests {
         fn handle_egress(
             &mut self,
             _bytes: &[u8],
-            _received_from: Option<InterfaceId>,
+            _fire_on: &[InterfaceId],
         ) -> Result<(), Self::Error> {
             Ok(())
         }
@@ -145,7 +146,7 @@ mod tests {
         fn handle_egress(
             &mut self,
             _bytes: &[u8],
-            _received_from: Option<InterfaceId>,
+            _fire_on: &[InterfaceId],
         ) -> Result<(), Self::Error> {
             Ok(())
         }
@@ -190,13 +191,13 @@ mod tests {
     /// End-to-end host-facing contract: a single `step` ingests a real
     /// announce, accepts it, schedules a rebroadcast, and — once the
     /// host's `now` is past the jitter window — hands the wire bytes
-    /// back to the host via `handle_egress` with the source-interface
-    /// provenance threaded through.
+    /// back to the host via `handle_egress` with an engine-computed
+    /// positive `fire_on` list (registered interfaces minus the source).
     struct CapturingHost<'q> {
         queued: &'q [InboundPacket<'q>],
         now: InstantMillis,
         entropy: [u8; 8],
-        handled: std::vec::Vec<(Option<InterfaceId>, std::vec::Vec<u8>)>,
+        handled: std::vec::Vec<(std::vec::Vec<InterfaceId>, std::vec::Vec<u8>)>,
     }
 
     impl HostAdapter for CapturingHost<'_> {
@@ -220,9 +221,9 @@ mod tests {
         fn handle_egress(
             &mut self,
             bytes: &[u8],
-            received_from: Option<InterfaceId>,
+            fire_on: &[InterfaceId],
         ) -> Result<(), Self::Error> {
-            self.handled.push((received_from, bytes.to_vec()));
+            self.handled.push((fire_on.to_vec(), bytes.to_vec()));
             Ok(())
         }
     }
@@ -242,9 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn step_hands_due_rebroadcasts_to_the_host_with_provenance_intact() {
+    fn step_hands_due_rebroadcasts_to_the_host_with_engine_computed_fire_on() {
         let raw = hx(RAW_ANNOUNCE);
         let source_interface = InterfaceId::new([0x7A; 16]);
+        let peer_interface = InterfaceId::new([0x7B; 16]);
         let arrival = InstantMillis(1_000);
         let queued = [InboundPacket {
             arrived_at: arrival,
@@ -252,6 +254,11 @@ mod tests {
             bytes: &raw,
         }];
         let mut state: DefaultEngineState = DefaultEngineState::default();
+        // Register both: the engine should compute fire_on = [peer]
+        // (source excluded). Without `peer` registered, fanout would be
+        // empty and the engine would elide the directive entirely.
+        state.register_interface(source_interface).unwrap();
+        state.register_interface(peer_interface).unwrap();
         let mut host = CapturingHost {
             queued: &queued,
             now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
@@ -265,7 +272,11 @@ mod tests {
         assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
         assert_eq!(out.tick.egress_directive_count, 1);
         assert_eq!(host.handled.len(), 1);
-        assert_eq!(host.handled[0].0, Some(source_interface));
+        assert_eq!(
+            host.handled[0].0,
+            std::vec![peer_interface],
+            "engine must compute fire_on as registered interfaces minus the source"
+        );
 
         let (original_header, original_payload) = WirePacketHeader::parse(&raw).unwrap();
         let (rebroadcast_header, rebroadcast_payload) =
@@ -273,5 +284,38 @@ mod tests {
         assert_eq!(rebroadcast_header.hops, original_header.hops + 1);
         assert_eq!(rebroadcast_header.destination, original_header.destination);
         assert_eq!(rebroadcast_payload, original_payload);
+    }
+
+    #[test]
+    fn step_elides_directives_when_the_only_registered_interface_is_the_source() {
+        // Edge case: the only target the engine knows about IS the source.
+        // Fanout would be empty, so the engine elides the directive — the
+        // host sees no handle_egress call this tick. The rebroadcast is
+        // still drained (engine processed it; nothing to do), so it won't
+        // re-fire on a later tick.
+        let raw = hx(RAW_ANNOUNCE);
+        let source_interface = InterfaceId::new([0x7A; 16]);
+        let arrival = InstantMillis(1_000);
+        let queued = [InboundPacket {
+            arrived_at: arrival,
+            source_interface,
+            bytes: &raw,
+        }];
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        state.register_interface(source_interface).unwrap();
+        let mut host = CapturingHost {
+            queued: &queued,
+            now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            entropy: 0xCAFE_F00D_DEAD_BEEFu64.to_le_bytes(),
+            handled: std::vec::Vec::new(),
+        };
+
+        let out = step(&mut state, &mut host).unwrap();
+
+        assert_eq!(out.ingest.accepted_announce_count(), 1);
+        assert_eq!(out.tick.egress_directive_count, 0);
+        assert!(host.handled.is_empty());
+        // The scheduled entry was elided AND drained; not still pending.
+        assert_eq!(state.pending_rebroadcast_count(), 0);
     }
 }

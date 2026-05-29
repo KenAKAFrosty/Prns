@@ -38,23 +38,21 @@ pub trait HostAdapter {
 
     /// Handle one outgoing wire packet the engine produced. The runtime
     /// calls this once per directive the tick emitted, passing the
-    /// already-serialized bytes and the provenance tag identifying
-    /// which interface the underlying announce arrived on (`None` for
-    /// engine-originated packets).
+    /// already-serialized bytes and an engine-computed list of positive
+    /// `fire_on` targets — exactly the interface ids the host should
+    /// transmit on. The list is never empty: the engine elides
+    /// empty-fanout directives before they reach the host.
     ///
-    /// The host applies whatever fanout policy it implements today
-    /// (typically: write the bytes to every interface except
-    /// `received_from`). Stage 3 will let the engine compute explicit
-    /// positive `fire_on` targets, replacing the host-applied
-    /// exclusion-by-provenance policy with engine-directed dispatch.
+    /// The host is a pure tx/rx pump: write `bytes` to each id in
+    /// `fire_on`. No "skip the source" logic is needed — the engine
+    /// already filtered. As more directive variants land (data sends,
+    /// proofs, link replies) the engine may compute different `fire_on`
+    /// shapes per kind, but the host's job stays the same: take the
+    /// list, transmit on each.
     ///
     /// Returning `Err` propagates out of `runtime::step` and halts the
-    /// step early — most hosts will want to log and swallow per-
+    /// step early. Most hosts will want to log and swallow per-
     /// interface dispatch failures, returning `Ok` so the rest of the
     /// tick's directives still get a chance to dispatch.
-    fn handle_egress(
-        &mut self,
-        bytes: &[u8],
-        received_from: Option<InterfaceId>,
-    ) -> Result<(), Self::Error>;
+    fn handle_egress(&mut self, bytes: &[u8], fire_on: &[InterfaceId]) -> Result<(), Self::Error>;
 }
