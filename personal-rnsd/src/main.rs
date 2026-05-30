@@ -16,16 +16,29 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
 
 /// Idle poll cadence between steps. The interface read itself blocks up to its
 /// own short timeout, so this only adds a small floor when the link is busy.
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(5);
+const USB_RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
-fn usb_lifecycle_exit(state: ConnectionState) -> Option<(&'static str, i32)> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UsbLifecycleAction {
+    Continue,
+    Reopen { marker: &'static str },
+}
+
+fn usb_lifecycle_action(state: ConnectionState) -> UsbLifecycleAction {
     match state {
-        ConnectionState::Connected | ConnectionState::Degraded => None,
+        ConnectionState::Connected | ConnectionState::Degraded => UsbLifecycleAction::Continue,
         ConnectionState::Initializing | ConnectionState::Reconnecting => {
-            Some(("RNSD_USB_NOT_ROUTABLE", 1))
+            UsbLifecycleAction::Reopen {
+                marker: "RNSD_USB_NOT_ROUTABLE",
+            }
         }
-        ConnectionState::Failed => Some(("RNSD_USB_FAILED", 1)),
-        ConnectionState::Disconnected => Some(("RNSD_USB_DISCONNECTED", 1)),
+        ConnectionState::Failed => UsbLifecycleAction::Reopen {
+            marker: "RNSD_USB_FAILED",
+        },
+        ConnectionState::Disconnected => UsbLifecycleAction::Reopen {
+            marker: "RNSD_USB_DISCONNECTED",
+        },
     }
 }
 
@@ -35,59 +48,68 @@ fn main() {
         std::process::exit(2);
     };
 
-    let mut iface = match SerialUsbInterface::open(USB_INTERFACE_ID, &path) {
-        Ok(iface) => iface,
-        Err(e) => {
-            eprintln!("RNSD_USB_OPEN_ERR {path}: {e:?}");
-            std::process::exit(1);
-        }
-    };
-    println!("RNSD_USB_OPEN_OK {path}");
-
     let clock = Instant::now();
     let mut state: DefaultEngineState = DefaultEngineState::default();
-    state
-        .register_routable_interface(&iface)
-        .expect("opened USB interface is connected and transmits");
-
     let mut announced_routes = 0;
-    loop {
-        let now = InstantMillis(clock.elapsed().as_millis() as u64);
 
-        // Read at most one de-framed packet into per-step scratch. The
-        // returned packet borrows `scratch` (not the interface), so the
-        // interface is free again for the host to transmit egress on.
-        let mut scratch = [0u8; MTU];
-        let inbound = match iface.read_inbound(&mut scratch, now) {
-            Ok(packet) => packet,
+    loop {
+        let mut iface = match SerialUsbInterface::open(USB_INTERFACE_ID, &path) {
+            Ok(iface) => iface,
             Err(e) => {
-                eprintln!("RNSD_USB_READ_ERR {e:?}");
-                None
+                eprintln!("RNSD_USB_OPEN_ERR {path}: {e:?}");
+                std::thread::sleep(USB_RECONNECT_INTERVAL);
+                continue;
             }
         };
+        println!("RNSD_USB_OPEN_OK {path}");
 
-        // `Option::as_slice` lends the 0-or-1 packet as the borrowed batch the
-        // engine seam expects — no allocation, borrows `inbound`/`scratch`.
-        let mut host = UsbHost::for_step(clock, &mut iface, inbound.as_slice());
-        step(&mut state, &mut host).expect("usb host clock/entropy step cannot fail");
+        state
+            .register_routable_interface(&iface)
+            .expect("opened USB interface is connected and transmits");
 
-        // A growing route count means the engine just learned a path from an
-        // ingested announce — the proof the cable carried a real one.
-        if state.route_count() > announced_routes {
-            announced_routes = state.route_count();
-            println!(
-                "RNSD_USB_RX_ANNOUNCE routes={} ingested={}",
-                state.route_count(),
-                state.ingested_packet_count()
-            );
+        loop {
+            let now = InstantMillis(clock.elapsed().as_millis() as u64);
+
+            // Read at most one de-framed packet into per-step scratch. The
+            // returned packet borrows `scratch` (not the interface), so the
+            // interface is free again for the host to transmit egress on.
+            let mut scratch = [0u8; MTU];
+            let inbound = match iface.read_inbound(&mut scratch, now) {
+                Ok(packet) => packet,
+                Err(e) => {
+                    eprintln!("RNSD_USB_READ_ERR {e:?}");
+                    None
+                }
+            };
+
+            // `Option::as_slice` lends the 0-or-1 packet as the borrowed batch the
+            // engine seam expects — no allocation, borrows `inbound`/`scratch`.
+            let mut host = UsbHost::for_step(clock, &mut iface, inbound.as_slice());
+            step(&mut state, &mut host).expect("usb host clock/entropy step cannot fail");
+
+            // A growing route count means the engine just learned a path from an
+            // ingested announce — the proof the cable carried a real one.
+            if state.route_count() > announced_routes {
+                announced_routes = state.route_count();
+                println!(
+                    "RNSD_USB_RX_ANNOUNCE routes={} ingested={}",
+                    state.route_count(),
+                    state.ingested_packet_count()
+                );
+            }
+
+            match usb_lifecycle_action(iface.state()) {
+                UsbLifecycleAction::Continue => {}
+                UsbLifecycleAction::Reopen { marker } => {
+                    eprintln!("{marker}");
+                    break;
+                }
+            }
+
+            std::thread::sleep(RUNTIME_POLL_INTERVAL);
         }
 
-        if let Some((marker, code)) = usb_lifecycle_exit(iface.state()) {
-            eprintln!("{marker}");
-            std::process::exit(code);
-        }
-
-        std::thread::sleep(POLL_INTERVAL);
+        std::thread::sleep(USB_RECONNECT_INTERVAL);
     }
 }
 
@@ -96,28 +118,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn usb_lifecycle_exit_keeps_routable_states_running() {
-        assert_eq!(usb_lifecycle_exit(ConnectionState::Connected), None);
-        assert_eq!(usb_lifecycle_exit(ConnectionState::Degraded), None);
+    fn usb_lifecycle_action_keeps_routable_states_running() {
+        assert_eq!(
+            usb_lifecycle_action(ConnectionState::Connected),
+            UsbLifecycleAction::Continue
+        );
+        assert_eq!(
+            usb_lifecycle_action(ConnectionState::Degraded),
+            UsbLifecycleAction::Continue
+        );
     }
 
     #[test]
-    fn usb_lifecycle_exit_stops_on_non_routable_states() {
+    fn usb_lifecycle_action_reopens_on_non_routable_states() {
         assert_eq!(
-            usb_lifecycle_exit(ConnectionState::Initializing),
-            Some(("RNSD_USB_NOT_ROUTABLE", 1))
+            usb_lifecycle_action(ConnectionState::Initializing),
+            UsbLifecycleAction::Reopen {
+                marker: "RNSD_USB_NOT_ROUTABLE"
+            }
         );
         assert_eq!(
-            usb_lifecycle_exit(ConnectionState::Reconnecting),
-            Some(("RNSD_USB_NOT_ROUTABLE", 1))
+            usb_lifecycle_action(ConnectionState::Reconnecting),
+            UsbLifecycleAction::Reopen {
+                marker: "RNSD_USB_NOT_ROUTABLE"
+            }
         );
         assert_eq!(
-            usb_lifecycle_exit(ConnectionState::Failed),
-            Some(("RNSD_USB_FAILED", 1))
+            usb_lifecycle_action(ConnectionState::Failed),
+            UsbLifecycleAction::Reopen {
+                marker: "RNSD_USB_FAILED"
+            }
         );
         assert_eq!(
-            usb_lifecycle_exit(ConnectionState::Disconnected),
-            Some(("RNSD_USB_DISCONNECTED", 1))
+            usb_lifecycle_action(ConnectionState::Disconnected),
+            UsbLifecycleAction::Reopen {
+                marker: "RNSD_USB_DISCONNECTED"
+            }
         );
     }
 }
