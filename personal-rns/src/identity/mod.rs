@@ -10,20 +10,21 @@
 //! too as that work arrives — mirroring RNS's `Identity` module.
 //!
 //! **Sans-storage, by construction.** Per `crypto/`'s invariant, nothing here
-//! generates randomness — [`in_memory::InMemoryNodeIdentity::from_entropy`]
-//! takes the key material as an *input*. An ephemeral per-run identity is simply
-//! that fed from the host's
-//! [`fill_entropy`](crate::engine::EngineDriver::fill_entropy); a fixed seed
-//! gives a deterministic identity for tests and early spikes. Persistence is a
-//! later, separate concern.
+//! generates randomness — [`in_memory::InMemoryNodeIdentity::from_secret_key_bytes`]
+//! takes the secret keys *themselves* as input: the 64 bytes ARE the two private
+//! keys, used verbatim (no stretching), so their quality is the key's quality. An
+//! ephemeral per-run identity is just fresh CSPRNG bytes; a persisted one is those
+//! same bytes saved and reloaded (the RNS on-disk layout); a fixed array gives a
+//! deterministic test/spike identity. Persistence is a later, separate concern.
 
 use crate::crypto::{sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
-/// Bytes of entropy [`in_memory::InMemoryNodeIdentity::from_entropy`] consumes: a
-/// 32-byte X25519 (encryption) secret followed by a 32-byte Ed25519 (signing)
-/// secret — matching RNS's private-key byte layout (`prv_bytes ‖ sig_prv_bytes`).
-pub const IDENTITY_SEED_LEN: usize = 64;
+/// Length of an identity's secret key material: a 32-byte X25519 (encryption)
+/// secret followed by a 32-byte Ed25519 (signing) secret — the two private keys
+/// concatenated, matching RNS's persisted layout (`prv_bytes ‖ sig_prv_bytes`).
+/// These bytes *are* the keys; persist them to persist the identity.
+pub const IDENTITY_SECRET_KEY_LEN: usize = 64;
 
 /// The truncated SHA-256 of an identity's two public keys
 /// (`sha256(encryption_pub ‖ signing_pub)[..16]`) — how the network names a
@@ -131,7 +132,7 @@ pub mod in_memory {
 
     use super::{
         derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigningPublicKey,
-        NodeIdentity, IDENTITY_SEED_LEN,
+        NodeIdentity, IDENTITY_SECRET_KEY_LEN,
     };
     use crate::crypto::{
         ed25519_public_key, ed25519_sign, x25519_diffie_hellman, x25519_public_key,
@@ -151,19 +152,20 @@ pub mod in_memory {
     }
 
     impl InMemoryNodeIdentity {
-        /// Build an identity from [`IDENTITY_SEED_LEN`](super::IDENTITY_SEED_LEN)
-        /// bytes of key material: the first 32 become the X25519 (encryption)
-        /// secret, the next 32 the Ed25519 (signing) secret. Feed CSPRNG bytes for
-        /// an ephemeral per-run identity - or a fixed array for a deterministic
-        /// test/spike one - the math is identical.
-        pub fn from_entropy(seed: &[u8; IDENTITY_SEED_LEN]) -> Self {
-            let mut encryption_seed = [0u8; 32];
-            encryption_seed.copy_from_slice(&seed[..32]);
-            let mut signing_seed = [0u8; 32];
-            signing_seed.copy_from_slice(&seed[32..]);
+        /// Build an identity from its [`IDENTITY_SECRET_KEY_LEN`](super::IDENTITY_SECRET_KEY_LEN)
+        /// bytes of secret key material: the first 32 *are* the X25519 (encryption)
+        /// private key, the next 32 *are* the Ed25519 (signing) private key — used
+        /// verbatim, not stretched, so the bytes' quality is the keys' quality.
+        /// CSPRNG bytes give a fresh identity; the same bytes reloaded from storage
+        /// give the persisted one; a fixed array gives a deterministic test/spike.
+        pub fn from_secret_key_bytes(bytes: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
+            let mut encryption_secret_bytes = [0u8; 32];
+            encryption_secret_bytes.copy_from_slice(&bytes[..32]);
+            let mut signing_secret_bytes = [0u8; 32];
+            signing_secret_bytes.copy_from_slice(&bytes[32..]);
 
-            let encryption_secret = X25519SecretKey::new(encryption_seed);
-            let signing_secret = Ed25519SecretKey::new(signing_seed);
+            let encryption_secret = X25519SecretKey::new(encryption_secret_bytes);
+            let signing_secret = Ed25519SecretKey::new(signing_secret_bytes);
             let encryption_public =
                 IdentityEncryptionPublicKey::new(x25519_public_key(&encryption_secret));
             let signing_public = IdentitySigningPublicKey::new(ed25519_public_key(&signing_secret));
@@ -210,11 +212,11 @@ pub mod in_memory {
         /// Fixed key material matching the seeds the `crypto` vectors already pin
         /// (X25519 secret `[0x22; 32]`, Ed25519 secret `[0x11; 32]`), so the
         /// derived public keys and identity hash can be checked against RNS 1.3.1.
-        fn fixed_seed() -> [u8; IDENTITY_SEED_LEN] {
-            let mut seed = [0u8; IDENTITY_SEED_LEN];
-            seed[..32].fill(0x22);
-            seed[32..].fill(0x11);
-            seed
+        fn fixed_secret_key_bytes() -> [u8; IDENTITY_SECRET_KEY_LEN] {
+            let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
+            bytes[..32].fill(0x22);
+            bytes[32..].fill(0x11);
+            bytes
         }
 
         fn hx<const N: usize>(s: &str) -> [u8; N] {
@@ -226,8 +228,8 @@ pub mod in_memory {
         }
 
         #[test]
-        fn from_entropy_derives_rns_public_keys_and_hash() {
-            let identity = InMemoryNodeIdentity::from_entropy(&fixed_seed());
+        fn from_secret_key_bytes_derives_rns_public_keys_and_hash() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
 
             // Public keys match the RNS 1.3.1 vectors (same seeds as crypto tests).
             assert_eq!(
@@ -248,8 +250,8 @@ pub mod in_memory {
 
         #[test]
         fn same_seed_is_deterministic() {
-            let a = InMemoryNodeIdentity::from_entropy(&fixed_seed());
-            let b = InMemoryNodeIdentity::from_entropy(&fixed_seed());
+            let a = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let b = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             assert_eq!(a.identity_hash(), b.identity_hash());
         }
 
@@ -257,7 +259,7 @@ pub mod in_memory {
         fn signatures_verify_under_the_identitys_public_key() {
             use crate::crypto::ed25519_verify;
 
-            let identity = InMemoryNodeIdentity::from_entropy(&fixed_seed());
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let message = b"announce-ourselves";
             let signature = identity.sign(message);
 
@@ -280,7 +282,7 @@ pub mod in_memory {
             // Same X25519 vector the crypto tests pin: our encryption secret
             // `[0x22; 32]` agreed with the peer public below yields this shared
             // secret per RNS 1.3.1.
-            let identity = InMemoryNodeIdentity::from_entropy(&fixed_seed());
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let peer = X25519PublicKey(hx::<32>(
                 "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
             ));
@@ -292,8 +294,8 @@ pub mod in_memory {
 
         #[test]
         fn distinct_seeds_yield_distinct_identities() {
-            let a = InMemoryNodeIdentity::from_entropy(&fixed_seed());
-            let b = InMemoryNodeIdentity::from_entropy(&[0x05; IDENTITY_SEED_LEN]);
+            let a = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let b = InMemoryNodeIdentity::from_secret_key_bytes(&[0x05; IDENTITY_SECRET_KEY_LEN]);
             assert_ne!(a.identity_hash(), b.identity_hash());
         }
     }

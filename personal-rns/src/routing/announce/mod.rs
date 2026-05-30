@@ -575,11 +575,11 @@ mod tests {
     #[test]
     fn build_signed_matches_rns_1_3_1() {
         use crate::identity::in_memory::InMemoryNodeIdentity;
-        // Same fixed seed the identity/crypto vectors pin (x25519_prv 0x22, ed25519_prv 0x11).
-        let mut seed = [0u8; 64];
-        seed[..32].fill(0x22);
-        seed[32..].fill(0x11);
-        let identity = InMemoryNodeIdentity::from_entropy(&seed);
+        // Same fixed secret keys the identity/crypto vectors pin (x25519_prv 0x22, ed25519_prv 0x11).
+        let mut secret_key_bytes = [0u8; 64];
+        secret_key_bytes[..32].fill(0x22);
+        secret_key_bytes[32..].fill(0x11);
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key_bytes);
 
         let announce = Announce::build_signed(
             &identity,
@@ -616,10 +616,10 @@ mod tests {
     #[test]
     fn build_signed_round_trips_through_the_validator() {
         use crate::identity::in_memory::InMemoryNodeIdentity;
-        let mut seed = [0u8; 64];
-        seed[..32].fill(0x07);
-        seed[32..].fill(0x09);
-        let identity = InMemoryNodeIdentity::from_entropy(&seed);
+        let mut secret_key_bytes = [0u8; 64];
+        secret_key_bytes[..32].fill(0x07);
+        secret_key_bytes[32..].fill(0x09);
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key_bytes);
 
         let built = Announce::build_signed(
             &identity,
