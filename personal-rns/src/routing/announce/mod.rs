@@ -9,6 +9,7 @@ pub use acceptance::{
 pub use id::{AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+use crate::identity::IdentityHash;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, PacketType, WirePacketHeader,
     ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, MTU, RATCHET_LEN, SIGNATURE_LEN,
@@ -34,6 +35,28 @@ impl DottedNameHash {
     pub const fn as_bytes(&self) -> &[u8; DOTTED_NAME_HASH_LEN] {
         &self.0
     }
+}
+
+/// Derive a destination's address hash from the identity that owns it and the
+/// hash of its dotted app/aspect name: `sha256(name_hash ‖ identity_hash)[..16]`.
+/// This is the one derivation both directions run through — the validator below
+/// checks an inbound announce's binding against it, and our own origination
+/// builds its destination from it — so a validated announce and one we emit can
+/// never disagree on how a destination is addressed.
+///
+/// Mirrors the final step of RNS 1.3.1 `Destination.hash`:
+/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>
+pub fn derive_destination_hash(
+    identity_hash: &IdentityHash,
+    dotted_name_hash: &DottedNameHash,
+) -> DestinationHash {
+    let mut material = [0u8; DOTTED_NAME_HASH_LEN + TRUNCATED_HASH_BYTE_LEN];
+    material[..DOTTED_NAME_HASH_LEN].copy_from_slice(dotted_name_hash.as_bytes());
+    material[DOTTED_NAME_HASH_LEN..].copy_from_slice(identity_hash.as_bytes());
+
+    let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];
+    truncated.copy_from_slice(&sha256(&material)[..TRUNCATED_HASH_BYTE_LEN]);
+    DestinationHash::new(truncated)
 }
 
 /// An X25519 forward-secrecy ratchet public key (distinct role from the
@@ -147,20 +170,20 @@ impl<'a> Announce<'a> {
         )
         .map_err(|_| AnnounceValidationError::InvalidSignature)?;
 
-        // Destination binding ( dest == sha256(name_hash ‖ sha256(pubkey)[:16])[:16] )
-        let identity_hash = sha256(public_key);
-        let mut binding_input = [0u8; DOTTED_NAME_HASH_LEN + TRUNCATED_HASH_BYTE_LEN];
-        binding_input[..DOTTED_NAME_HASH_LEN].copy_from_slice(name_hash);
-        binding_input[DOTTED_NAME_HASH_LEN..]
-            .copy_from_slice(&identity_hash[..TRUNCATED_HASH_BYTE_LEN]);
-        if sha256(&binding_input)[..TRUNCATED_HASH_BYTE_LEN] != *header.destination.as_bytes() {
+        // Destination binding: the header's destination must be the one this
+        // announced identity + name hash derive to (see `derive_destination_hash`).
+        let mut identity_hash_bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
+        identity_hash_bytes.copy_from_slice(&sha256(public_key)[..TRUNCATED_HASH_BYTE_LEN]);
+        let identity_hash = IdentityHash::new(identity_hash_bytes);
+        let mut name = [0u8; DOTTED_NAME_HASH_LEN];
+        name.copy_from_slice(name_hash);
+        let dotted_name_hash = DottedNameHash::new(name);
+        if derive_destination_hash(&identity_hash, &dotted_name_hash) != header.destination {
             return Err(AnnounceValidationError::DestinationMismatch);
         }
 
         let mut encryption = [0u8; 32];
         encryption.copy_from_slice(&public_key[..32]);
-        let mut name = [0u8; DOTTED_NAME_HASH_LEN];
-        name.copy_from_slice(name_hash);
         let mut id = [0u8; ANNOUNCE_ID_WIRE_LEN];
         id.copy_from_slice(announce_id);
         let ratchet = ratchet.map(|r| {
@@ -175,7 +198,7 @@ impl<'a> Announce<'a> {
                 encryption: X25519PublicKey(encryption),
                 signing: Ed25519PublicKey(signing),
             },
-            dotted_name_hash: DottedNameHash(name),
+            dotted_name_hash,
             announce_id: AnnounceId::from_wire(id),
             maybe_ratchet: ratchet,
             signature: Ed25519Signature(sig),
@@ -401,11 +424,10 @@ mod tests {
         let mut pubkey = [0u8; 64];
         pubkey[..32].copy_from_slice(&[0x22u8; 32]);
         pubkey[32..].copy_from_slice(&signing);
-        let idh = sha256(&pubkey);
-        let mut input = [0u8; 26];
-        input[..10].copy_from_slice(&[0x33u8; 10]);
-        input[10..].copy_from_slice(&idh[..16]);
-        sha256(&input)[..16].try_into().unwrap()
+        let mut idh = [0u8; 16];
+        idh.copy_from_slice(&sha256(&pubkey)[..16]);
+        *derive_destination_hash(&IdentityHash::new(idh), &DottedNameHash::new([0x33u8; 10]))
+            .as_bytes()
     }
 
     #[test]
@@ -446,6 +468,36 @@ mod tests {
         assert_eq!(
             Announce::from_wire(&header, payload),
             Err(AnnounceValidationError::DestinationMismatch),
+        );
+    }
+
+    #[test]
+    fn derive_destination_hash_matches_rns_1_3_1() {
+        // RNS 1.3.1 `Destination.hash(<identity hash>, "personal", "announce")`:
+        // the identity hash is the one the identity/crypto vectors pin, and the
+        // name `personal.announce` hashes (full_hash[..10]) to the name hash below.
+        let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let dotted_name_hash = DottedNameHash::new(a("8794b70072dbf251144b"));
+        assert_eq!(
+            derive_destination_hash(&identity_hash, &dotted_name_hash),
+            DestinationHash::new(a("33d610d1d6a7f4f809ebfe62c0ce7d43")),
+        );
+
+        // The real announce vector binds the same way: deriving from its identity
+        // hash (sha256 of its 64-byte public key, truncated) and name hash yields
+        // exactly the destination RNS placed on the wire.
+        let real_pubkey = a::<64>(
+            "02281f6d21232cbba9d12e516183197f08e59b7afba27e99e4fe39f01b0d4d25\
+             83a5920220253970a16861e82e52e955a05ee39e2b6d20a2331f515512f66700",
+        );
+        let mut real_identity_hash = [0u8; 16];
+        real_identity_hash.copy_from_slice(&sha256(&real_pubkey)[..16]);
+        assert_eq!(
+            derive_destination_hash(
+                &IdentityHash::new(real_identity_hash),
+                &DottedNameHash::new(a("9618ccc8f5ebce060084")),
+            ),
+            DestinationHash::new(a("16f8a6d3f7d7c5b6f106d293804d7314")),
         );
     }
 }
