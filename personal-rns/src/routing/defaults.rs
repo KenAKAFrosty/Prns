@@ -19,7 +19,7 @@ pub(crate) const DEFAULT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
 /// How many destinations the table tracks. Fixed-capacity for the
 /// no-allocator targets; a new destination arriving past this is dropped
 /// (v1 policy).
-pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 512;
+pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 64;
 
 /// Per-destination cap on remembered announce ids used by the replay-defence
 /// predicate. RNS's `Transport.MAX_RANDOM_BLOBS` uses 64; this is a local
