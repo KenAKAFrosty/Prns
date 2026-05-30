@@ -1,14 +1,13 @@
 //! Tokio multi-threaded runtime driver for the engine.
 //!
-//! Drives the sync engine loop on a spawned task under a multi-thread runtime,
-//! so Send-correctness is structural: this only compiles if `EngineState` and
-//! the host are `Send`. Same sync `step` and `HostAdapter` as the embedded path. The
-//! async lives only in the runtime, never in the engine.
+//! Drives the synchronous engine step helper on a spawned task under a
+//! multi-thread Tokio runtime, so Send-correctness is structural: this only
+//! compiles if `EngineState` and the host are `Send`. Tokio stays outside the
+//! engine.
 
 use std::time::Duration;
 
-use personal_rns::engine::DefaultEngineState;
-use personal_rns::runtime::step;
+use personal_rns::engine::{step_engine, DefaultEngineState};
 
 use crate::StdHost;
 
@@ -26,7 +25,7 @@ pub fn run_multi_thread(ticks: u64, poll: Duration) -> u64 {
             let mut state: DefaultEngineState = DefaultEngineState::default();
             let mut host = StdHost::new();
             while state.tick_count() < ticks {
-                step(&mut state, &mut host).expect("clock-only step cannot fail");
+                step_engine(&mut state, &mut host).expect("clock-only step cannot fail");
                 tokio::time::sleep(poll).await;
             }
             state.tick_count()

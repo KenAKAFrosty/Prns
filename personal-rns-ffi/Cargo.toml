@@ -14,7 +14,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 personal-rns = { path = "../personal-rns", default-features = false, features = ["std"] }
 uniffi = { version = "0.28", features = ["cli"] }
 # OS CSPRNG shim. Android/iOS both have a working `getrandom` backend in this
-# crate, so the SDK host meets the `HostAdapter::fill_entropy` CSPRNG contract
+# crate, so the SDK host meets the `EngineHost::fill_entropy` CSPRNG contract
 # on the same source RNS uses (`os.urandom` / `SecRandomCopyBytes`).
 getrandom = "0.2"
 

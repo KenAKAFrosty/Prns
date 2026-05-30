@@ -13,7 +13,7 @@ pub mod usb;
 use std::time::Instant;
 
 use personal_rns::engine::{InboundPacket, InstantMillis};
-use personal_rns::host::HostAdapter;
+use personal_rns::host::EngineHost;
 use personal_rns::interfaces::InterfaceId;
 
 pub struct StdHost {
@@ -44,7 +44,7 @@ pub enum StdHostError {
     EntropySourceUnavailable,
 }
 
-impl HostAdapter for StdHost {
+impl EngineHost for StdHost {
     type Error = StdHostError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {

@@ -5,9 +5,8 @@
 
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{DefaultEngineState, InstantMillis};
+use personal_rns::engine::{step_engine, DefaultEngineState, InstantMillis};
 use personal_rns::interfaces::{ConnectionState, Interface, InterfaceId};
-use personal_rns::runtime::step;
 use personal_rns::wire::MTU;
 use personal_rnsd::{SerialUsbInterface, UsbHost};
 
@@ -84,8 +83,8 @@ fn main() {
 
             // `Option::as_slice` lends the 0-or-1 packet as the borrowed batch the
             // engine seam expects — no allocation, borrows `inbound`/`scratch`.
-            let mut host = UsbHost::for_step(clock, &mut iface, inbound.as_slice());
-            step(&mut state, &mut host).expect("usb host clock/entropy step cannot fail");
+            let mut host = UsbHost::for_runtime_step(clock, &mut iface, inbound.as_slice());
+            step_engine(&mut state, &mut host).expect("usb host clock/entropy step cannot fail");
 
             // A growing route count means the engine just learned a path from an
             // ingested announce — the proof the cable carried a real one.

@@ -8,6 +8,7 @@
 pub mod egress;
 pub mod ingress;
 
+pub use crate::runtime::{step_engine, StepOutput, TickSummary};
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 

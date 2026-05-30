@@ -1,5 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![doc = "Reticulum daemon body: a concrete `HostAdapter` plus the entry point that drives the core runtime loop."]
+#![doc = "Reticulum daemon body: concrete `EngineHost` views plus the entry point that drives the engine."]
 
 mod hosts;
 

@@ -6,7 +6,7 @@
 //
 // Stage A surface: enough to validate the package shape end to end 
 // (construct a runtime, drive deterministic ticks, observe the count).
-// The pure engine, the Host seam, and the runtime::step driver stay
+// The pure engine, the Host seam, and the engine::step_engine driver stay
 // private to Rust; the SDK exposes only what an app consumer needs.
 
 namespace prns {

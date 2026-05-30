@@ -1,13 +1,12 @@
-//! Runtime driver: the provided loop that drives the pure engine against a host.
+//! Engine stepping helper.
 //!
-//! Defined in the core so every target body — daemon, microcontroller, SDK —
-//! reuses one driver and supplies only a `HostAdapter`. Each `step` does both
-//! engine verbs in order: ingest the host's queued batch, then advance one
-//! periodic tick. The host decides how its queue fills and how often `step`
-//! runs; the tick rate is the stable heartbeat the engine is designed against.
+//! Defined in the core so every host body — daemon, microcontroller, SDK —
+//! can advance the pure engine once through the same seam. This is not the
+//! host runtime; a future `HostRuntime` owns drivers, queues, lifecycle, and
+//! cadence, then calls [`step_engine`] for the protocol step.
 
 use crate::engine::{ingest, tick, EngineState, IngestOutput};
-use crate::host::HostAdapter;
+use crate::host::EngineHost;
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
 };
@@ -27,25 +26,25 @@ pub struct StepOutput {
     pub tick: TickSummary,
 }
 
-/// One driver pass: pulls entropy, drains the inbound queue into
+/// One engine pass: pulls entropy, drains the inbound queue into
 /// `ingest`, runs `tick`, then iterates every directive the tick
 /// produced — serializing each via `EgressDirective::to_wire` and
 /// handing the bytes (plus provenance) to the host's
 /// `handle_egress`. The `TickOutput`'s Drop commits the tick's
 /// emissions on the way out.
-pub fn step<Host, R, A, H, D, const HELD: usize>(
+pub fn step_engine<Host, R, A, H, D, const HELD: usize>(
     state: &mut EngineState<R, A, H, D, HELD>,
     host: &mut Host,
 ) -> Result<StepOutput, Host::Error>
 where
-    Host: HostAdapter,
+    Host: EngineHost,
     R: RouteColumns,
     A: RetainedAnnounceColumns,
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
     // Sip 8 bytes of host entropy for this step. CSPRNG-quality is the
-    // host's contract (see `HostAdapter::fill_entropy`); the engine doesn't
+    // host's contract (see `EngineHost::fill_entropy`); the engine doesn't
     // check, it just consumes opaque bytes — same 8 bytes drive ingest jitter
     // and tick's held-recovery jitter so deterministic-replay tests can
     // compare bit-for-bit.
@@ -87,7 +86,7 @@ mod tests {
     use super::*;
     use crate::engine::DefaultEngineState;
     use crate::engine::{InboundPacket, InstantMillis};
-    use crate::host::HostAdapter;
+    use crate::host::EngineHost;
     use crate::interfaces::{
         Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     };
@@ -98,7 +97,7 @@ mod tests {
     #[derive(Default)]
     struct IdleHost;
 
-    impl HostAdapter for IdleHost {
+    impl EngineHost for IdleHost {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -129,7 +128,7 @@ mod tests {
         queued: &'q [InboundPacket<'q>],
     }
 
-    impl HostAdapter for QueuedHost<'_> {
+    impl EngineHost for QueuedHost<'_> {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -159,7 +158,7 @@ mod tests {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         let mut host = IdleHost;
 
-        let out = step(&mut state, &mut host).unwrap();
+        let out = step_engine(&mut state, &mut host).unwrap();
 
         assert_eq!(state.tick_count(), 1);
         assert_eq!(out.ingest.processed_packet_count(), 0);
@@ -183,7 +182,7 @@ mod tests {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         let mut host = QueuedHost { queued: &queued };
 
-        let out = step(&mut state, &mut host).unwrap();
+        let out = step_engine(&mut state, &mut host).unwrap();
 
         assert_eq!(out.ingest.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
@@ -202,7 +201,7 @@ mod tests {
         handled: std::vec::Vec<(std::vec::Vec<InterfaceId>, std::vec::Vec<u8>)>,
     }
 
-    impl HostAdapter for CapturingHost<'_> {
+    impl EngineHost for CapturingHost<'_> {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -317,7 +316,7 @@ mod tests {
             handled: std::vec::Vec::new(),
         };
 
-        let out = step(&mut state, &mut host).unwrap();
+        let out = step_engine(&mut state, &mut host).unwrap();
 
         assert_eq!(out.ingest.accepted_announce_count(), 1);
         assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
@@ -362,7 +361,7 @@ mod tests {
             handled: std::vec::Vec::new(),
         };
 
-        let out = step(&mut state, &mut host).unwrap();
+        let out = step_engine(&mut state, &mut host).unwrap();
 
         assert_eq!(out.ingest.accepted_announce_count(), 1);
         assert_eq!(out.tick.egress_directive_count, 0);

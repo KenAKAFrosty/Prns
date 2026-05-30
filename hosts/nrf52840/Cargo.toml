@@ -3,7 +3,7 @@ name = "nrf52840"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "nRF52840 Dongle (PCA10059) Host adapter: drives the Personal Reticulum engine on bare metal."
+description = "nRF52840 Dongle (PCA10059) host body: drives the Personal Reticulum engine on bare metal."
 
 # Standalone: its own workspace so the suite's host workspace never tries to
 # build this no_std/no_main bare-metal crate for the host target.

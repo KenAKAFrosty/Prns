@@ -1,6 +1,6 @@
 //! Multi-node simulation of the Personal Reticulum engine on virtual time.
 //!
-//! A bespoke driver, not a `HostAdapter`: it advances a virtual clock, moves
+//! A bespoke driver, not an `EngineHost`: it advances a virtual clock, moves
 //! packets across a virtual wire, and runs each node's engine via the public
 //! `ingest`/`tick` primitives — faithful to `step`, which calls the same two in
 //! the same order. Deterministic: given the same inputs, every run is identical,
@@ -83,7 +83,7 @@ impl Sim {
 
     /// Advance one step: move the clock, deliver every due wire packet into its
     /// recipient's inbound queue, then `ingest` + `tick` every node.
-    pub fn step(&mut self) {
+    pub fn step_engine(&mut self) {
         self.now_ms += self.tick_ms;
         let now = InstantMillis(self.now_ms);
 
@@ -124,7 +124,7 @@ mod tests {
             let mut sim = Sim::new(&["n0", "n1", "n2"], 100, 50);
             sim.inject(1, vec![1, 2, 3]);
             for _ in 0..5 {
-                sim.step();
+                sim.step_engine();
             }
             sim
         };
@@ -142,13 +142,13 @@ mod tests {
         sim.inject(1, vec![0xAA]);
 
         // Latency 50 < first step's 100ms, so it lands on step 1.
-        sim.step();
+        sim.step_engine();
         assert_eq!(sim.nodes[1].ingested_packet_count(), 1);
         assert_eq!(sim.nodes[0].ingested_packet_count(), 0);
         assert_eq!(sim.nodes[0].tick_count(), 1);
 
         // No further injection: counts hold, ticks keep climbing.
-        sim.step();
+        sim.step_engine();
         assert_eq!(sim.nodes[1].ingested_packet_count(), 1);
         assert_eq!(sim.nodes[1].tick_count(), 2);
     }

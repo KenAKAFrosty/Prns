@@ -3,7 +3,7 @@ name = "esp32-c6"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "ESP32-C6 Host adapter: drives the Personal Reticulum engine on bare metal."
+description = "ESP32-C6 host body: drives the Personal Reticulum engine on bare metal."
 
 # Standalone: its own workspace so the suite's host workspace never tries to
 # build this no_std/no_main bare-metal crate for the host target.

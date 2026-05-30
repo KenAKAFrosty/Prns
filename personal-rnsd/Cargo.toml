@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true
 # `SerialUsbInterface` so the crate stays the only thing that sees it.
 serialport = { version = "4", default-features = false, optional = true }
 # OS CSPRNG shim: maps to getrandom(2) / BCryptGenRandom / SecRandomCopyBytes.
-# Implements the `HostAdapter::fill_entropy` contract on every std platform
+# Implements the `EngineHost::fill_entropy` contract on every std platform
 # we ship — same source RNS uses (`os.urandom`).
 getrandom = "0.2"
 

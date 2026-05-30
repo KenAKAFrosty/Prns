@@ -17,5 +17,5 @@ pub mod engine;
 pub mod host;
 pub mod interfaces;
 pub mod routing;
-pub mod runtime;
+mod runtime;
 pub mod wire;

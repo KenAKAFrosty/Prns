@@ -13,10 +13,9 @@ use esp_hal::time::Instant;
 use esp_hal::usb_serial_jtag::UsbSerialJtag;
 use esp_println::println;
 
-use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis};
-use personal_rns::host::HostAdapter;
+use personal_rns::engine::{step_engine, DefaultEngineState, InboundPacket, InstantMillis};
+use personal_rns::host::EngineHost;
 use personal_rns::interfaces::{Interface, InterfaceId};
-use personal_rns::runtime::step;
 
 use usb_serial::Esp32UsbSerialInterface;
 
@@ -37,7 +36,7 @@ const SEED_SOURCE_ID: InterfaceId = InterfaceId::new([0x7A; 16]);
 /// on inline hex decoding.
 static SEED_ANNOUNCE: &[u8] = include_bytes!("../resources/seed_announce.bin");
 
-/// ESP32-C6 Host adapter: real timer clock + hardware CSPRNG (TRNG-backed
+/// ESP32-C6 engine host: real timer clock + hardware CSPRNG (TRNG-backed
 /// Rng), with the on-board USB Serial/JTAG peripheral wired as a single
 /// point-to-point interface. No heap: the alloc-free core runs on bare
 /// metal with no allocator at all.
@@ -68,7 +67,7 @@ impl<'d> Esp32Host<'d> {
     }
 }
 
-impl HostAdapter for Esp32Host<'_> {
+impl EngineHost for Esp32Host<'_> {
     type Error = core::convert::Infallible;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -98,7 +97,7 @@ impl HostAdapter for Esp32Host<'_> {
     fn handle_egress(&mut self, bytes: &[u8], fire_on: &[InterfaceId]) -> Result<(), Self::Error> {
         // USB is the only registered transport, so it's the only id the
         // engine puts in fire_on. Log-and-swallow a write failure (per the
-        // HostAdapter contract) so one bad directive can't halt the step.
+        // EngineHost contract) so one bad directive can't halt the step.
         for id in fire_on {
             if *id == self.usb.id() {
                 if let Err(e) = self.usb.write(bytes) {
@@ -137,7 +136,7 @@ fn main() -> ! {
     let delay = Delay::new();
 
     for _ in 0..5 {
-        step(&mut state, &mut host).expect("c6 host ops are infallible");
+        step_engine(&mut state, &mut host).expect("c6 host ops are infallible");
         delay.delay_millis(10);
     }
     let now = host.now_millis().expect("c6 timer is readable");
@@ -150,7 +149,7 @@ fn main() -> ! {
     let mut heartbeat: u32 = 0;
     loop {
         heartbeat = heartbeat.wrapping_add(1);
-        step(&mut state, &mut host).expect("c6 host ops are infallible");
+        step_engine(&mut state, &mut host).expect("c6 host ops are infallible");
         println!(
             "ESP32C6_HOST_HEARTBEAT count={heartbeat} ticks={}",
             state.tick_count()

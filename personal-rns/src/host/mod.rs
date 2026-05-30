@@ -1,14 +1,17 @@
-//! Host seam: the platform body the pure engine runs on.
+//! Engine host seam: the per-step view the pure engine consumes.
 //!
-//! The engine is platform-agnostic. Each target (daemon, microcontroller, SDK)
-//! supplies a `HostAdapter` providing the clock, the inbound queue, an
-//! entropy source, and an egress sink. This trait is the complete inventory
-//! of what the stack asks of the world; keep it small.
+//! The engine is platform-agnostic. Each host runtime constructs an
+//! `EngineHost` view for one call to [`step_engine`], providing the clock,
+//! inbound batch, entropy source, and egress sink the engine needs for that
+//! pass. Broader host lifecycle and driver coordination belongs outside this
+//! trait.
+//!
+//! [`step_engine`]: crate::engine::step_engine
 
 use crate::engine::{InboundPacket, InstantMillis};
 use crate::interfaces::InterfaceId;
 
-pub trait HostAdapter {
+pub trait EngineHost {
     type Error;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error>;
@@ -32,11 +35,12 @@ pub trait HostAdapter {
     /// Drain a batch of queued inbound packets, each stamped with its arrival
     /// instant. The host owns the backing storage and lends the batch for one
     /// `ingest`. Draining need not be exhaustive: the host may cap the batch so
-    /// a burst can't make one `step` do unbounded work — the remainder waits for
-    /// the next call. An empty slice means nothing is queued.
+    /// a burst can't make one [`step_engine`](crate::engine::step_engine) do
+    /// unbounded work — the remainder waits for the next call. An empty slice
+    /// means nothing is queued.
     fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error>;
 
-    /// Handle one outgoing wire packet the engine produced. The runtime
+    /// Handle one outgoing wire packet the engine produced. `step_engine`
     /// calls this once per directive the tick emitted, passing the
     /// already-serialized bytes and an engine-computed list of positive
     /// `fire_on` targets — exactly the interface ids the host should
@@ -50,7 +54,7 @@ pub trait HostAdapter {
     /// shapes per kind, but the host's job stays the same: take the
     /// list, transmit on each.
     ///
-    /// Returning `Err` propagates out of `runtime::step` and halts the
+    /// Returning `Err` propagates out of `engine::step_engine` and halts the
     /// step early. Most hosts will want to log and swallow per-
     /// interface dispatch failures, returning `Ok` so the rest of the
     /// tick's directives still get a chance to dispatch.

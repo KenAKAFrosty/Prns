@@ -14,15 +14,15 @@
 //! core it wraps stays `no_std` with no allocator; that constraint sits
 //! on the core, not on this bindings layer. The SDK is just another
 //! Host: it brings a thin std-clock adapter and drives the shared
-//! engine through `runtime::step`.
+//! engine through `engine::step_engine`.
 
 use std::sync::Mutex;
 use std::time::Instant;
 
+use personal_rns::engine::step_engine;
 use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis};
-use personal_rns::host::HostAdapter;
+use personal_rns::host::EngineHost;
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::runtime::step;
 
 uniffi::include_scaffolding!("prns");
 
@@ -32,7 +32,7 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// The SDK's thin Host adapter: a real monotonic clock, but no transport
+/// The SDK's thin engine host: a real monotonic clock, but no transport
 /// wired yet. So it reports no inbound and refuses to transmit, like
 /// every other minimal body until the protocol slices land.
 struct SdkHost {
@@ -45,7 +45,7 @@ enum SdkHostError {
     EntropySourceUnavailable,
 }
 
-impl HostAdapter for SdkHost {
+impl EngineHost for SdkHost {
     type Error = SdkHostError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -103,7 +103,7 @@ impl ReticulumRuntime {
     pub fn tick(&self) -> u64 {
         let mut inner = self.inner.lock().expect("ReticulumRuntime mutex poisoned");
         let RuntimeInner { state, host } = &mut *inner;
-        let output = step(state, host).expect("clock-only step cannot fail");
+        let output = step_engine(state, host).expect("clock-only step cannot fail");
         output.tick.egress_directive_count as u64
     }
 
