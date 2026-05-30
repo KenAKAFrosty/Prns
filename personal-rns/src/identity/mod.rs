@@ -41,14 +41,51 @@ impl IdentityHash {
     }
 }
 
-/// A node's own identity: the encryption + signing keypairs, the derived public
-/// keys, and the identity hash. Holds the secret keys, so it is neither `Clone`
-/// nor `Copy` and never logged.
+/// An identity's static X25519 public key, in its *encryption* role. A bare
+/// [`X25519PublicKey`] is used for other roles too — notably a forward-secrecy
+/// ratchet key — so wrapping it keeps the compiler from letting one stand in for
+/// the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdentityEncryptionPublicKey(X25519PublicKey);
+
+impl IdentityEncryptionPublicKey {
+    pub const fn new(key: X25519PublicKey) -> Self {
+        Self(key)
+    }
+
+    pub const fn as_x25519(&self) -> &X25519PublicKey {
+        &self.0
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0 .0
+    }
+}
+
+/// An identity's Ed25519 public key, in its *signing* role — distinct from any
+/// other Ed25519 key the type system might otherwise let through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdentitySigningPublicKey(Ed25519PublicKey);
+
+impl IdentitySigningPublicKey {
+    pub const fn new(key: Ed25519PublicKey) -> Self {
+        Self(key)
+    }
+
+    pub const fn as_ed25519(&self) -> &Ed25519PublicKey {
+        &self.0
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0 .0
+    }
+}
+
 pub struct Identity {
     encryption_secret: X25519SecretKey,
     signing_secret: Ed25519SecretKey,
-    encryption_public: X25519PublicKey,
-    signing_public: Ed25519PublicKey,
+    encryption_public: IdentityEncryptionPublicKey,
+    signing_public: IdentitySigningPublicKey,
     hash: IdentityHash,
 }
 
@@ -65,8 +102,9 @@ impl Identity {
 
         let encryption_secret = X25519SecretKey::new(encryption_seed);
         let signing_secret = Ed25519SecretKey::new(signing_seed);
-        let encryption_public = x25519_public_key(&encryption_secret);
-        let signing_public = ed25519_public_key(&signing_secret);
+        let encryption_public =
+            IdentityEncryptionPublicKey::new(x25519_public_key(&encryption_secret));
+        let signing_public = IdentitySigningPublicKey::new(ed25519_public_key(&signing_secret));
         let hash = derive_identity_hash(&encryption_public, &signing_public);
 
         Self {
@@ -78,23 +116,6 @@ impl Identity {
         }
     }
 
-    pub const fn hash(&self) -> IdentityHash {
-        self.hash
-    }
-
-    pub const fn encryption_public_key(&self) -> X25519PublicKey {
-        self.encryption_public
-    }
-
-    pub const fn signing_public_key(&self) -> Ed25519PublicKey {
-        self.signing_public
-    }
-
-    /// Sign `message` with this identity's Ed25519 secret (deterministic, RFC 8032)
-    pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
-        ed25519_sign(&self.signing_secret, message)
-    }
-
     /// The X25519 shared secret between this identity's encryption secret and a
     /// peer's encryption public key (RFC 7748 clamping).
     pub fn agree(&self, peer_encryption_public: &X25519PublicKey) -> X25519SharedSecret {
@@ -102,15 +123,56 @@ impl Identity {
     }
 }
 
-/// `sha256(encryption_pub ‖ signing_pub)` truncated to the standard address
-/// length — RNS's `Identity.truncated_hash(get_public_key())`.
+/// The capability the engine needs to author signed material on a node's behalf:
+/// the two public keys (which travel on the wire and name the node), the derived
+/// [`IdentityHash`], and the Ed25519 signing operation. This is deliberately the
+/// *operation* surface, not the *secret* one — there is no accessor for either
+/// private key, so a signer can expose exactly this without exposing key
+/// material. Today the only implementor is the in-memory [`Identity`] (we hold
+/// the secrets); a trait because the same seam later admits an enclave-backed
+/// external signer that signs without the key ever leaving. Packet
+/// key-agreement (`agree`) is a separate capability that joins when encryption
+/// lands — the announce path never needs it.
+pub trait NodeIdentity {
+    fn encryption_public_key(&self) -> IdentityEncryptionPublicKey;
+    fn signing_public_key(&self) -> IdentitySigningPublicKey;
+
+    /// `sha256(encryption_pub ‖ signing_pub)[..16]`. Defaulted from the two
+    /// public keys, so an implementor's hash is always consistent with the keys
+    /// it reports; an implementor holding a precomputed hash may override.
+    fn identity_hash(&self) -> IdentityHash {
+        derive_identity_hash(&self.encryption_public_key(), &self.signing_public_key())
+    }
+
+    /// Sign `message` with the node's Ed25519 secret (deterministic, RFC 8032).
+    fn sign(&self, message: &[u8]) -> Ed25519Signature;
+}
+
+impl NodeIdentity for Identity {
+    fn encryption_public_key(&self) -> IdentityEncryptionPublicKey {
+        self.encryption_public
+    }
+
+    fn signing_public_key(&self) -> IdentitySigningPublicKey {
+        self.signing_public
+    }
+
+    fn identity_hash(&self) -> IdentityHash {
+        self.hash
+    }
+
+    fn sign(&self, message: &[u8]) -> Ed25519Signature {
+        ed25519_sign(&self.signing_secret, message)
+    }
+}
+
 fn derive_identity_hash(
-    encryption_public: &X25519PublicKey,
-    signing_public: &Ed25519PublicKey,
+    encryption_public: &IdentityEncryptionPublicKey,
+    signing_public: &IdentitySigningPublicKey,
 ) -> IdentityHash {
     let mut material = [0u8; 64];
-    material[..32].copy_from_slice(&encryption_public.0);
-    material[32..].copy_from_slice(&signing_public.0);
+    material[..32].copy_from_slice(encryption_public.as_bytes());
+    material[32..].copy_from_slice(signing_public.as_bytes());
 
     let full = sha256(&material);
     let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];
@@ -146,17 +208,17 @@ mod tests {
 
         // Public keys match the RNS 1.3.1 vectors (same seeds as crypto tests).
         assert_eq!(
-            identity.encryption_public_key().0,
-            hx::<32>("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"),
+            identity.encryption_public_key().as_bytes(),
+            &hx::<32>("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"),
         );
         assert_eq!(
-            identity.signing_public_key().0,
-            hx::<32>("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+            identity.signing_public_key().as_bytes(),
+            &hx::<32>("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
         );
 
         // Identity hash = sha256(enc_pub ‖ sig_pub)[..16], oracle-confirmed.
         assert_eq!(
-            identity.hash(),
+            identity.identity_hash(),
             IdentityHash::new(hx::<16>("4cd0cc45a7405dbd5cf9b5be1ef92f10")),
         );
     }
@@ -165,7 +227,7 @@ mod tests {
     fn same_seed_is_deterministic() {
         let a = Identity::from_entropy(&fixed_seed());
         let b = Identity::from_entropy(&fixed_seed());
-        assert_eq!(a.hash(), b.hash());
+        assert_eq!(a.identity_hash(), b.identity_hash());
     }
 
     #[test]
@@ -176,8 +238,18 @@ mod tests {
         let message = b"announce-ourselves";
         let signature = identity.sign(message);
 
-        assert!(ed25519_verify(&identity.signing_public_key(), message, &signature).is_ok());
-        assert!(ed25519_verify(&identity.signing_public_key(), b"tampered", &signature).is_err());
+        assert!(ed25519_verify(
+            identity.signing_public_key().as_ed25519(),
+            message,
+            &signature
+        )
+        .is_ok());
+        assert!(ed25519_verify(
+            identity.signing_public_key().as_ed25519(),
+            b"tampered",
+            &signature
+        )
+        .is_err());
     }
 
     #[test]
@@ -199,6 +271,6 @@ mod tests {
     fn distinct_seeds_yield_distinct_identities() {
         let a = Identity::from_entropy(&fixed_seed());
         let b = Identity::from_entropy(&[0x05; IDENTITY_SEED_LEN]);
-        assert_ne!(a.hash(), b.hash());
+        assert_ne!(a.identity_hash(), b.identity_hash());
     }
 }

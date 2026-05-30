@@ -283,6 +283,7 @@ where
 mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+    use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
     use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 
     fn dest(byte: u8) -> DestinationHash {
@@ -313,8 +314,8 @@ mod tests {
         Announce {
             destination,
             public_keys: IdentityPublicKeys {
-                encryption: X25519PublicKey([0u8; 32]),
-                signing: Ed25519PublicKey([0u8; 32]),
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0u8; 32])),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0u8; 32])),
             },
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             announce_id,

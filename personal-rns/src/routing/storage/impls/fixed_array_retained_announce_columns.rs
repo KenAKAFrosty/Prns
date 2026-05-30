@@ -7,6 +7,7 @@
 //! key from that table.
 
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::storage::{
     AppDataHandle, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
@@ -34,8 +35,8 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
         Self {
             len: 0,
             public_keys: [IdentityPublicKeys {
-                encryption: X25519PublicKey([0u8; 32]),
-                signing: Ed25519PublicKey([0u8; 32]),
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0u8; 32])),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0u8; 32])),
             }; MAX_TRACKED_DESTINATIONS],
             dotted_name_hash: [DottedNameHash::new([0u8; 10]); MAX_TRACKED_DESTINATIONS],
             retained_announce_id: [AnnounceId::from_wire([0u8; 10]); MAX_TRACKED_DESTINATIONS],

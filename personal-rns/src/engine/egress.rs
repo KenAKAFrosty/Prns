@@ -232,6 +232,7 @@ mod tests {
 mod kani_proofs {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+    use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
     use crate::routing::announce::{
         AnnounceId, DottedNameHash, IdentityPublicKeys, ANNOUNCE_ID_WIRE_LEN,
     };
@@ -254,8 +255,8 @@ mod kani_proofs {
         Announce {
             destination: DestinationHash::new(kani::any()),
             public_keys: IdentityPublicKeys {
-                encryption: X25519PublicKey(kani::any()),
-                signing: Ed25519PublicKey(kani::any()),
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(kani::any())),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey(kani::any())),
             },
             dotted_name_hash: DottedNameHash::new(kani::any()),
             announce_id: AnnounceId::from_wire(kani::any()),

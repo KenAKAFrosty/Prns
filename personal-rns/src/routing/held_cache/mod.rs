@@ -42,6 +42,7 @@
 
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
+use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::{
     Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_ID_WIRE_LEN,
@@ -180,8 +181,8 @@ impl<const CAPACITY: usize> Default for HeldAnnouncesCache<CAPACITY> {
             received_hops: [0u8; CAPACITY],
             arrived_at: [InstantMillis(0); CAPACITY],
             public_keys: [IdentityPublicKeys {
-                encryption: X25519PublicKey([0u8; 32]),
-                signing: Ed25519PublicKey([0u8; 32]),
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0u8; 32])),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0u8; 32])),
             }; CAPACITY],
             dotted_name_hash: [DottedNameHash::new([0u8; 10]); CAPACITY],
             announce_id: [AnnounceId::from_wire([0u8; 10]); CAPACITY],
@@ -365,8 +366,8 @@ mod tests {
         Announce {
             destination,
             public_keys: IdentityPublicKeys {
-                encryption: X25519PublicKey([0u8; 32]),
-                signing: Ed25519PublicKey([0u8; 32]),
+                encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([0u8; 32])),
+                signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0u8; 32])),
             },
             dotted_name_hash: DottedNameHash::new([0u8; 10]),
             announce_id: AnnounceId::from_wire([0u8; 10]),
