@@ -8,13 +8,21 @@
 mod driver;
 pub mod egress;
 pub mod ingress;
+pub mod self_announce;
 
 pub use driver::{EngineDriver, StepOutput, TickSummary};
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
+pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
+use crate::engine::egress::write_announce_wire_packet;
+use crate::engine::self_announce::SelfAnnounce;
+use crate::identity::in_memory::InMemoryNodeIdentity;
+use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{ConnectionState, Interface, InterfaceId};
-use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
+use crate::routing::announce::{
+    Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceId, ANNOUNCE_ID_WIRE_LEN,
+};
 use crate::routing::defaults::jitter_offset_for;
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
 use crate::routing::schedule::PendingRebroadcasts;
@@ -31,6 +39,7 @@ use crate::routing::{
 };
 use crate::wire::DestinationHash;
 use heapless::Vec as HeaplessVec;
+use zeroize::Zeroizing;
 
 /// Cap on how many interfaces the engine can own at once. Picked against
 /// embedded reality — a real device typically has 1–4 active radios; 8
@@ -64,7 +73,15 @@ pub struct InboundPacket<'a> {
 ///
 /// [`register_routable_interface`]: EngineState::register_routable_interface
 /// [`EgressDirective`]: crate::engine::EgressDirective
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+///
+/// `Default` builds a **relay**: no identity, no self-announce — it forwards
+/// others' announces but originates nothing of its own. A node that signs,
+/// agrees, or announces itself is built with [`new`](EngineState::new) or
+/// [`announcing`](EngineState::announcing), which hand the engine its hot
+/// in-memory identity. Not `Clone`/`PartialEq`/`Eq`: it owns secret key
+/// material, which must not be duplicated or compared. `Debug` is hand-written
+/// to redact that material (it prints only the identity's public hash).
+#[derive(Default)]
 pub struct EngineState<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
 where
     R: RouteColumns,
@@ -87,6 +104,42 @@ where
     // Interfaces the host has registered with this engine. tick() builds each
     // directive's `fire_on` list from this set minus the source.
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
+    // The node's own identity, owned hot for the engine's lifetime so every
+    // signing / key-agreement operation reads it from memory rather than
+    // re-deriving or re-fetching per use. `None` for a pure relay. The secret
+    // keys inside zeroize on drop and have no byte accessor (see
+    // `InMemoryNodeIdentity`); that is why this struct drops `Clone`/`Eq`.
+    identity: Option<InMemoryNodeIdentity>,
+    // The optional, app-driven decision to announce our own destination on a
+    // cadence. Only ever `Some` when `identity` is `Some` (enforced by the
+    // constructors).
+    self_announce: Option<SelfAnnounce>,
+}
+
+impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> core::fmt::Debug
+    for EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>
+where
+    R: RouteColumns + core::fmt::Debug,
+    A: RetainedAnnounceColumns + core::fmt::Debug,
+    H: AnnounceIdHistory + core::fmt::Debug,
+    D: RetainedAppData + core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("EngineState")
+            .field("tick_count", &self.tick_count)
+            .field("ingested_packet_count", &self.ingested_packet_count)
+            .field("routing_table", &self.routing_table)
+            .field("held_announces_cache", &self.held_announces_cache)
+            .field("pending_rebroadcasts", &self.pending_rebroadcasts)
+            .field("interfaces", &self.interfaces)
+            // Redacted: only the identity's public hash, never its secret keys.
+            .field(
+                "identity_hash",
+                &self.identity.as_ref().map(|id| id.identity_hash()),
+            )
+            .field("self_announce", &self.self_announce)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +179,54 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
+    /// Build an engine that owns `identity_secret_key` as its hot in-memory
+    /// identity (see [`InMemoryNodeIdentity`]) but does not announce a
+    /// destination of its own. Use this for a node that needs to sign or agree
+    /// without periodically announcing itself; a pure relay needs no identity at
+    /// all and is built with [`default`](Default::default).
+    ///
+    /// `identity_secret_key` is the 64 bytes that *are* the node's two private
+    /// keys (X25519 ‖ Ed25519, RNS `prv_bytes` layout) — used verbatim, never
+    /// stretched. It arrives through a [`Zeroizing`] buffer the host fills from
+    /// its own secret store; that is a deliberately separate channel from the
+    /// driver's CSPRNG [`fill_entropy`](EngineDriver::fill_entropy) (which seeds
+    /// re-announce-timing jitter and must never be the source of key material).
+    pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self
+    where
+        R: Default,
+        A: Default,
+        H: Default,
+        D: Default,
+    {
+        Self {
+            identity: Some(InMemoryNodeIdentity::from_secret_key_bytes(
+                identity_secret_key,
+            )),
+            ..Self::default()
+        }
+    }
+
+    /// Like [`new`](Self::new), and additionally configure the node to announce
+    /// its own destination on a cadence. Returns a [`SelfAnnounceConfigError`]
+    /// if the destination name or app data is malformed; the identity is always
+    /// valid (its bytes are used verbatim).
+    pub fn announcing(
+        identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+        self_announce: SelfAnnounceConfig<'_>,
+    ) -> Result<Self, SelfAnnounceConfigError>
+    where
+        R: Default,
+        A: Default,
+        H: Default,
+        D: Default,
+    {
+        let self_announce = SelfAnnounce::from_config(self_announce)?;
+        Ok(Self {
+            self_announce: Some(self_announce),
+            ..Self::new(identity_secret_key)
+        })
+    }
+
     pub const fn tick_count(&self) -> u64 {
         self.tick_count
     }
@@ -184,6 +285,59 @@ where
     pub fn registered_interfaces(&self) -> &[InterfaceId] {
         &self.interfaces
     }
+
+    /// If this engine self-announces and one is due at `now`, build and sign our
+    /// announce, frame it as a fresh (hop-count 0) broadcast packet into `buf`,
+    /// record the emission, and return the bytes written. Returns `None` when we
+    /// don't self-announce (relay, or identity-only) or none is due yet.
+    ///
+    /// The announce id (RNS `random_hash`) is minted from `entropy` (its 5-byte
+    /// replay nonce) and `now` (its 5-byte monotonic timebase) — both already
+    /// owned by the [`step`](EngineDriver::step) that drives the engine, so
+    /// origination needs no clock or RNG of its own. `buf` should be
+    /// [`MTU`](crate::wire::MTU)-sized; the framed announce always fits because
+    /// the app data is bounded at construction.
+    pub fn write_due_self_announce(
+        &mut self,
+        now: InstantMillis,
+        entropy: u64,
+        buf: &mut [u8],
+    ) -> Option<usize> {
+        let identity = self.identity.as_ref()?;
+        let self_announce = self.self_announce.as_ref()?;
+        if !self_announce.is_due(now) {
+            return None;
+        }
+
+        let announce = Announce::build_signed(
+            identity,
+            self_announce.name_hash(),
+            mint_announce_id(entropy, now),
+            None,
+            self_announce.app_data(),
+        )
+        .expect("bounded self-announce app data always fits an announce");
+        let written = write_announce_wire_packet(&announce, 0, buf)
+            .expect("MTU-sized buffer fits a bounded self-announce");
+
+        self.self_announce
+            .as_mut()
+            .expect("self_announce was Some above")
+            .mark_announced(now);
+        Some(written)
+    }
+}
+
+/// Mint an announce id (RNS `random_hash`) from a step's entropy and clock: the
+/// 5-byte replay nonce comes from `entropy`, the 5-byte monotonic timebase from
+/// the low 40 bits of `now` in milliseconds. Receivers only ever compare
+/// timebases per origin, so our millisecond clock plays the same role RNS's
+/// second-resolution `time()` does on the wire.
+fn mint_announce_id(entropy: u64, now: InstantMillis) -> AnnounceId {
+    let mut wire = [0u8; ANNOUNCE_ID_WIRE_LEN];
+    wire[..5].copy_from_slice(&entropy.to_be_bytes()[..5]);
+    wire[5..].copy_from_slice(&now.0.to_be_bytes()[3..8]);
+    AnnounceId::from_wire(wire)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -638,6 +792,29 @@ mod tests {
         (snapshot, emitted)
     }
 
+    /// The public, observable surface of an engine, snapshotted for
+    /// determinism comparisons. `EngineState` is intentionally not `PartialEq`
+    /// (it owns secret identity material we must never compare byte-wise), so
+    /// "two runs ended in the same place" is asserted through its accessors.
+    fn observable_state<R, A, H, D, const N: usize>(
+        state: &EngineState<R, A, H, D, N>,
+    ) -> (u64, u64, usize, usize, usize, std::vec::Vec<InterfaceId>)
+    where
+        R: RouteColumns,
+        A: RetainedAnnounceColumns,
+        H: AnnounceIdHistory,
+        D: RetainedAppData,
+    {
+        (
+            state.tick_count(),
+            state.ingested_packet_count(),
+            state.route_count(),
+            state.held_announce_count(),
+            state.pending_announce_rebroadcast_count(),
+            state.registered_interfaces().to_vec(),
+        )
+    }
+
     #[test]
     fn tick_advances_count_deterministically() {
         let mut left: DefaultEngineState = DefaultEngineState::default();
@@ -646,7 +823,7 @@ mod tests {
         let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000));
         let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000));
 
-        assert_eq!(left, right);
+        assert_eq!(observable_state(&left), observable_state(&right));
         assert_eq!(left.tick_count(), 1);
         assert_eq!(left_out, right_out);
         assert_eq!(left_out.egress_directive_count, 0);
@@ -678,6 +855,107 @@ mod tests {
         let empty = ingest(&mut state, &[], TEST_ENTROPY);
         assert_eq!(empty.processed_packet_count(), 0);
         assert_eq!(state.ingested_packet_count(), 2);
+    }
+
+    // The 64 secret-key bytes the identity/crypto vectors pin: X25519 prv
+    // [0x22; 32] ‖ Ed25519 prv [0x11; 32], i.e. RNS `prv_bytes` for this node.
+    fn fixed_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+        let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
+        bytes[..32].fill(0x22);
+        bytes[32..].fill(0x11);
+        Zeroizing::new(bytes)
+    }
+
+    // A node that announces destination `personal.node` with app data
+    // `hello-personal` on the default cadence.
+    fn personal_node_announcer() -> DefaultEngineState {
+        EngineState::announcing(
+            &fixed_secret_key(),
+            SelfAnnounceConfig {
+                app_name: "personal",
+                aspects: &["node"],
+                app_data: b"hello-personal",
+                schedule: ReannounceSchedule::default(),
+            },
+        )
+        .expect("valid self-announce config")
+    }
+
+    // The exact `announce_data` RNS 1.3.1 emits for the fixed identity above,
+    // destination `personal.node`, random_hash [0x44; 10], and app data
+    // `hello-personal` (no ratchet). Generated offline against the oracle.
+    const SELF_ANNOUNCE_RNS_ANNOUNCE_DATA: &str =
+        "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20\
+         d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\
+         ab49baa826f122c1437f44444444444444444444\
+         3dba22d6ca6544a5cc056182536b9c42077e769ebd4398fea328a66424fa8972\
+         0d8639c7ad031b59ed698508eddf96dc0a130a21af65b2022ae0a118e497660f\
+         68656c6c6f2d706572736f6e616c";
+
+    #[test]
+    fn self_announce_originates_the_rns_1_3_1_vector() {
+        let mut state = personal_node_announcer();
+        // `now`'s low 5 bytes become the announce-id timebase and `entropy`'s
+        // high 5 bytes the nonce, so the minted random_hash is [0x44; 10] —
+        // matching the deterministic oracle vector.
+        let now = InstantMillis(0x44_4444_4444);
+        let entropy = 0x4444_4444_4444_4444;
+
+        let mut buf = [0u8; MTU];
+        let n = state
+            .write_due_self_announce(now, entropy, &mut buf)
+            .expect("a self-announce is due on the first call");
+
+        let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.destination_type, DestinationType::Single);
+        assert_eq!(header.propagation, PropagationType::Broadcast);
+        assert_eq!(header.hops, 0, "we originate at hop count 0");
+        assert_eq!(
+            header.destination,
+            DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()),
+        );
+        // Byte-for-byte equal to what RNS 1.3.1 puts on the wire for this node.
+        assert_eq!(payload, hx(SELF_ANNOUNCE_RNS_ANNOUNCE_DATA));
+    }
+
+    #[test]
+    fn self_announce_is_not_due_again_until_the_interval_elapses() {
+        let mut state = personal_node_announcer();
+        let mut buf = [0u8; MTU];
+        let interval = ReannounceSchedule::default().interval_millis();
+
+        assert!(state
+            .write_due_self_announce(InstantMillis(1_000), 0, &mut buf)
+            .is_some());
+        // Immediately after, nothing is due.
+        assert!(state
+            .write_due_self_announce(InstantMillis(1_000), 0, &mut buf)
+            .is_none());
+        // One interval later, due again.
+        assert!(state
+            .write_due_self_announce(InstantMillis(1_000 + interval), 0, &mut buf)
+            .is_some());
+    }
+
+    #[test]
+    fn a_relay_default_state_never_originates() {
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut buf = [0u8; MTU];
+        assert_eq!(
+            state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
+            None,
+        );
+    }
+
+    #[test]
+    fn an_identity_only_node_never_originates() {
+        let mut state: DefaultEngineState = EngineState::new(&fixed_secret_key());
+        let mut buf = [0u8; MTU];
+        assert_eq!(
+            state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
+            None,
+        );
     }
 
     // A genuine RNS 1.3.1 announce (the same vector the announce module validates).
@@ -1101,7 +1379,7 @@ mod tests {
         let (left_tick, left_bytes) = tick_capture(&mut left, now);
         let (right_tick, right_bytes) = tick_capture(&mut right, now);
 
-        assert_eq!(left, right);
+        assert_eq!(observable_state(&left), observable_state(&right));
         assert_eq!(left_tick, right_tick);
         assert_eq!(left_bytes, right_bytes);
         assert_eq!(left_bytes.len(), 1);

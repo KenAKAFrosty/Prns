@@ -26,6 +26,47 @@ pub enum EgressSerializeError {
     BufferTooShort,
 }
 
+/// Frame an announce into a complete broadcast wire packet — header
+/// (announce / single / broadcast, this `hops`, no transport id) followed by
+/// the announce body — into `buf`, returning the total length written. The
+/// engine owns this wire-protocol knowledge in one place: both re-emitting a
+/// retained announce ([`EgressDirective::ReemitAnnounce`], with the incremented
+/// hop count) and originating our own (`hops` = 0) frame through here, so the
+/// two can never drift on header shape.
+pub(crate) fn write_announce_wire_packet(
+    announce: &Announce,
+    hops: u8,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    let context_flag = if announce.maybe_ratchet.is_some() {
+        ContextFlag::Set
+    } else {
+        ContextFlag::Unset
+    };
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Single,
+        packet_type: PacketType::Announce,
+        hops,
+        transport_id: None,
+        destination: announce.destination,
+        context: Context::None,
+    };
+    let total_len = HEADER_LEN + announce.wire_len();
+    if buf.len() < total_len {
+        return Err(EgressSerializeError::BufferTooShort);
+    }
+    header
+        .write(&mut buf[..HEADER_LEN])
+        .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    announce
+        .to_wire(&mut buf[HEADER_LEN..])
+        .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    Ok(total_len)
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum EgressDirective<'a> {
@@ -43,35 +84,7 @@ impl<'a> EgressDirective<'a> {
                 announce,
                 emit_hops,
                 ..
-            } => {
-                let context_flag = if announce.maybe_ratchet.is_some() {
-                    ContextFlag::Set
-                } else {
-                    ContextFlag::Unset
-                };
-                let header = WirePacketHeader {
-                    ifac_flag: IfacFlag::Open,
-                    context_flag,
-                    propagation: PropagationType::Broadcast,
-                    destination_type: DestinationType::Single,
-                    packet_type: PacketType::Announce,
-                    hops: *emit_hops,
-                    transport_id: None,
-                    destination: announce.destination,
-                    context: Context::None,
-                };
-                let total_len = HEADER_LEN + announce.wire_len();
-                if buf.len() < total_len {
-                    return Err(EgressSerializeError::BufferTooShort);
-                }
-                header
-                    .write(&mut buf[..HEADER_LEN])
-                    .map_err(|_| EgressSerializeError::BufferTooShort)?;
-                announce
-                    .to_wire(&mut buf[HEADER_LEN..])
-                    .map_err(|_| EgressSerializeError::BufferTooShort)?;
-                Ok(total_len)
-            }
+            } => write_announce_wire_packet(announce, *emit_hops, buf),
         }
     }
 

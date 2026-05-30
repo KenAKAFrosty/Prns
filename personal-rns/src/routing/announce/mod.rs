@@ -17,6 +17,7 @@ use crate::wire::{
     ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, MTU, RATCHET_LEN, SIGNATURE_LEN,
     TRUNCATED_HASH_BYTE_LEN,
 };
+use heapless::Vec as HeaplessVec;
 
 /// The 64-byte announced public key, split by role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,53 @@ impl DottedNameHash {
     pub const fn as_bytes(&self) -> &[u8; DOTTED_NAME_HASH_LEN] {
         &self.0
     }
+}
+
+/// Maximum byte length of a destination's expanded dotted name (`app.aspect…`)
+/// we will hash. RNS app names and aspects are short identifiers, so 128 bytes
+/// is generous headroom; a name past this is rejected rather than truncated, so
+/// the name hash can never silently collide with a longer name's prefix.
+pub const MAX_DOTTED_NAME_LEN: usize = 128;
+
+/// Why deriving a [`DottedNameHash`] from an app name and aspects failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpandNameError {
+    /// A component contained a `.`. RNS forbids this identically, because a dot
+    /// is the structural separator between app name and aspects — allowing one
+    /// inside a component would let two distinct (app, aspects) inputs expand to
+    /// the same dotted name.
+    DotInComponent,
+    /// The expanded `app.aspect…` name exceeded [`MAX_DOTTED_NAME_LEN`].
+    NameTooLong,
+}
+
+/// Derive the [`DottedNameHash`] of a destination from its app name and aspects,
+/// mirroring RNS 1.3.1: the name hash is `sha256("app.aspect1.aspect2".utf8)`
+/// truncated to the first [`DOTTED_NAME_HASH_LEN`] bytes — the
+/// `full_hash(expand_name(None, …))[..NAME_HASH_LENGTH/8]` step of
+/// `Destination.hash`. Feed the result to [`derive_destination_hash`] with the
+/// owning identity's hash to get the addressable destination.
+///
+/// <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Destination.py#L116-L130>
+pub fn expand_name(app_name: &str, aspects: &[&str]) -> Result<DottedNameHash, ExpandNameError> {
+    if app_name.contains('.') {
+        return Err(ExpandNameError::DotInComponent);
+    }
+    let mut name: HeaplessVec<u8, MAX_DOTTED_NAME_LEN> = HeaplessVec::new();
+    name.extend_from_slice(app_name.as_bytes())
+        .map_err(|_| ExpandNameError::NameTooLong)?;
+    for aspect in aspects {
+        if aspect.contains('.') {
+            return Err(ExpandNameError::DotInComponent);
+        }
+        name.push(b'.').map_err(|_| ExpandNameError::NameTooLong)?;
+        name.extend_from_slice(aspect.as_bytes())
+            .map_err(|_| ExpandNameError::NameTooLong)?;
+    }
+
+    let mut name_hash = [0u8; DOTTED_NAME_HASH_LEN];
+    name_hash.copy_from_slice(&sha256(&name)[..DOTTED_NAME_HASH_LEN]);
+    Ok(DottedNameHash::new(name_hash))
 }
 
 /// Derive a destination's address hash from the identity that owns it and the
@@ -569,6 +617,47 @@ mod tests {
                 &DottedNameHash::new(a("9618ccc8f5ebce060084")),
             ),
             DestinationHash::new(a("16f8a6d3f7d7c5b6f106d293804d7314")),
+        );
+    }
+
+    #[test]
+    fn expand_name_matches_rns_1_3_1() {
+        // `personal.announce` — the exact name the derive_destination_hash
+        // vector above pins, so expand_name must reproduce that name hash.
+        assert_eq!(
+            expand_name("personal", &["announce"]).unwrap(),
+            DottedNameHash::new(a("8794b70072dbf251144b")),
+        );
+        // `personal.node` — the default destination our self-announce emits.
+        assert_eq!(
+            expand_name("personal", &["node"]).unwrap(),
+            DottedNameHash::new(a("ab49baa826f122c1437f")),
+        );
+        // App name with no aspects is just the app name hashed.
+        assert_eq!(
+            expand_name("personal", &[]).unwrap(),
+            DottedNameHash::new(a("4a0a339b0c6d05538977")),
+        );
+    }
+
+    #[test]
+    fn expand_name_rejects_dots_in_components_like_rns() {
+        assert_eq!(
+            expand_name("per.sonal", &["node"]),
+            Err(ExpandNameError::DotInComponent),
+        );
+        assert_eq!(
+            expand_name("personal", &["no.de"]),
+            Err(ExpandNameError::DotInComponent),
+        );
+    }
+
+    #[test]
+    fn expand_name_rejects_names_past_the_bound() {
+        let overlong = "x".repeat(MAX_DOTTED_NAME_LEN + 1);
+        assert_eq!(
+            expand_name(&overlong, &[]),
+            Err(ExpandNameError::NameTooLong),
         );
     }
 

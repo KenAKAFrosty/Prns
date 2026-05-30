@@ -132,9 +132,22 @@ pub trait EngineDriver {
                 .expect("MTU-sized buf fits any valid wire packet");
             self.handle_egress(&emit_buffer[..n], directive.fire_on())?;
         }
-        // tick_out drops here → state's due rebroadcasts are drained NOTE/REVIEW we may want to intentionally return
-        // the owned out back out as part of StepOutput, so the runtime above can choose when that drop actually triggers
-        // But alternatively that could be left to a custom impl override only?
+        // Drop the tick output here → its Drop drains state's due rebroadcasts,
+        // and releases the `&mut state` borrow so origination below can take it.
+        // NOTE/REVIEW we may want to intentionally return the owned output back
+        // out as part of StepOutput, so the runtime above can choose when that
+        // drop actually triggers — or leave that to a custom impl override only.
+        drop(tick_output);
+
+        // Originate our own announce when one is due (engine-owned identity +
+        // schedule). Independent of the tick's rebroadcasts; it fans out to
+        // every registered interface — no source to exclude — so we only mint
+        // and mark it emitted when there is at least one interface to carry it.
+        if !state.registered_interfaces().is_empty() {
+            if let Some(n) = state.write_due_self_announce(now, entropy, &mut emit_buffer) {
+                self.handle_egress(&emit_buffer[..n], state.registered_interfaces())?;
+            }
+        }
 
         Ok(StepOutput {
             ingest,
@@ -146,13 +159,16 @@ pub trait EngineDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::DefaultEngineState;
+    use crate::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
     use crate::engine::{InboundPacket, InstantMillis};
+    use crate::identity::IDENTITY_SECRET_KEY_LEN;
     use crate::interfaces::{
         Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     };
+    use crate::routing::announce::Announce;
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
-    use crate::wire::WirePacketHeader;
+    use crate::wire::{PacketType, WirePacketHeader};
+    use zeroize::Zeroizing;
 
     /// Driver with nothing queued — the steady idle case.
     #[derive(Default)]
@@ -429,5 +445,77 @@ mod tests {
         assert!(driver.handled.is_empty());
         // The scheduled entry was elided AND drained; not still pending.
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
+    }
+
+    fn announcing_state() -> DefaultEngineState {
+        let mut secret_key = [0u8; IDENTITY_SECRET_KEY_LEN];
+        secret_key[..32].fill(0x22);
+        secret_key[32..].fill(0x11);
+        EngineState::announcing(
+            &Zeroizing::new(secret_key),
+            SelfAnnounceConfig {
+                app_name: "personal",
+                aspects: &["node"],
+                app_data: b"hi",
+                schedule: ReannounceSchedule::default(),
+            },
+        )
+        .expect("valid self-announce config")
+    }
+
+    #[test]
+    fn step_originates_a_due_self_announce_on_every_registered_interface() {
+        let mut state = announcing_state();
+        let first = InterfaceId::new([0xA1; 16]);
+        let second = InterfaceId::new([0xB2; 16]);
+        state
+            .register_routable_interface(&StaticInterface::new(first))
+            .unwrap();
+        state
+            .register_routable_interface(&StaticInterface::new(second))
+            .unwrap();
+
+        let mut driver = CapturingEngineDriver {
+            queued: &[],
+            now: InstantMillis(5_000),
+            entropy: 0xCAFE_F00D_DEAD_BEEFu64.to_le_bytes(),
+            handled: std::vec::Vec::new(),
+        };
+
+        driver.step(&mut state).unwrap();
+
+        // Exactly one origination, fanned out to both registered interfaces.
+        assert_eq!(driver.handled.len(), 1);
+        let (fire_on, bytes) = &driver.handled[0];
+        assert_eq!(fire_on.len(), 2);
+        assert!(fire_on.contains(&first) && fire_on.contains(&second));
+
+        // The emitted packet is a hop-0 announce that validates and binds to
+        // its own destination — proof we signed our own real announce.
+        let (header, payload) = WirePacketHeader::parse(bytes).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.hops, 0);
+        let announce = Announce::from_wire(&header, payload).unwrap();
+        assert_eq!(announce.destination, header.destination);
+
+        // A second step before the interval elapses originates nothing more.
+        let mut driver = CapturingEngineDriver {
+            queued: &[],
+            now: InstantMillis(5_100),
+            entropy: 0xCAFE_F00D_DEAD_BEEFu64.to_le_bytes(),
+            handled: std::vec::Vec::new(),
+        };
+        driver.step(&mut state).unwrap();
+        assert!(driver.handled.is_empty());
+    }
+
+    #[test]
+    fn step_on_an_announcer_with_no_interfaces_originates_nothing() {
+        // No interface to carry it → we don't mint or mark the announce, so it
+        // stays due for when an interface is registered later.
+        let mut state = announcing_state();
+        let mut driver = IdleEngineDriver;
+        driver.step(&mut state).unwrap();
+        assert_eq!(state.registered_interfaces().len(), 0);
     }
 }
