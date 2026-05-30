@@ -1,9 +1,9 @@
-//! A node's identity. [`NodeIdentity`] is the capability the rest of the crate
+//! A node's identity. [`IdentitySigner`] is the capability the rest of the crate
 //! signs and addresses through: the two public keys (which name the node on the
 //! wire), the derived [`IdentityHash`], and the Ed25519 signing operation —
 //! deliberately the *operation* surface, never the secret keys. The concrete
 //! secret-holding implementation lives in [`in_memory`] and is built transiently
-//! from key material, so reach for [`NodeIdentity`] as the canonical surface and
+//! from key material, so reach for [`IdentitySigner`] as the canonical surface and
 //! treat [`in_memory::InMemoryNodeIdentity`] as one implementation of it. This
 //! module currently holds only *our own* identity (we hold the secrets);
 //! recall/remember and the storage of *other* nodes' identities will land here
@@ -93,7 +93,7 @@ impl IdentitySigningPublicKey {
 /// enclave-backed external signer that signs without the key ever leaving.
 /// Packet key-agreement (`agree`) is a separate capability that joins when
 /// encryption lands — the announce path never needs it.
-pub trait NodeIdentity {
+pub trait IdentitySigner {
     fn encryption_public_key(&self) -> IdentityEncryptionPublicKey;
     fn signing_public_key(&self) -> IdentitySigningPublicKey;
 
@@ -123,16 +123,16 @@ fn derive_identity_hash(
 }
 
 pub mod in_memory {
-    //! The in-memory implementation of [`NodeIdentity`](super::NodeIdentity): the
+    //! The in-memory implementation of [`IdentitySigner`](super::IdentitySigner): the
     //! one that actually holds the secret keys. Built transiently from key
     //! material (host-custodied bytes, or a fixed seed for tests/spikes), it signs
     //! and agrees with the secrets in RAM. Reach for the
-    //! [`NodeIdentity`](super::NodeIdentity) capability everywhere else; this is
+    //! [`IdentitySigner`](super::IdentitySigner) capability everywhere else; this is
     //! just where the secret lives when *we* are the signer, not "the" identity.
 
     use super::{
-        derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigningPublicKey,
-        NodeIdentity, IDENTITY_SECRET_KEY_LEN,
+        derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
+        IdentitySigningPublicKey, IDENTITY_SECRET_KEY_LEN,
     };
     use crate::crypto::{
         ed25519_public_key, ed25519_sign, x25519_diffie_hellman, x25519_public_key,
@@ -187,7 +187,7 @@ pub mod in_memory {
         }
     }
 
-    impl NodeIdentity for InMemoryNodeIdentity {
+    impl IdentitySigner for InMemoryNodeIdentity {
         fn encryption_public_key(&self) -> IdentityEncryptionPublicKey {
             self.encryption_public
         }

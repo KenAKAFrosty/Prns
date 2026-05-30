@@ -10,7 +10,7 @@ pub use id::{AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN}
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{
-    IdentityEncryptionPublicKey, IdentityHash, IdentitySigningPublicKey, NodeIdentity,
+    IdentityEncryptionPublicKey, IdentityHash, IdentitySigner, IdentitySigningPublicKey,
 };
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, PacketType, WirePacketHeader,
@@ -214,7 +214,7 @@ impl<'a> Announce<'a> {
     }
 
     pub fn build_signed(
-        signer: &impl NodeIdentity,
+        signer: &impl IdentitySigner,
         dotted_name_hash: DottedNameHash,
         announce_id: AnnounceId,
         maybe_ratchet: Option<RatchetKey>,
