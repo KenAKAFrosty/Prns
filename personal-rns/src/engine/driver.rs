@@ -54,27 +54,26 @@ pub trait EngineDriver {
     ///
     /// Test drivers may seed deterministically (counter, fixed pattern) so
     /// determinism tests can compare byte-identical runs; tests are not
-    /// crypto consumers and the engine doesn't enforce the contract at the
+    /// crypto consumers and the engine doesn't enforce the contract at this
     /// trait surface.
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error>;
 
-    /// Drain a batch of queued inbound packets, each stamped with its arrival
-    /// instant. The driver owns the backing storage and lends the batch for one
+    /// The driver owns the backing storage and lends the batch for one
     /// `ingest`. Draining need not be exhaustive: the driver may cap the batch
     /// so a burst can't make one [`step`](EngineDriver::step) do unbounded work
-    /// — the remainder waits for the next call. An empty slice means nothing is
+    /// (the remainder waits for the next call). An empty slice means nothing is
     /// queued.
     fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error>;
 
     /// Handle one outgoing wire packet the engine produced.
     /// [`step`](EngineDriver::step) calls this once per directive the tick
     /// emitted, passing the already-serialized bytes and an engine-computed
-    /// list of positive `fire_on` targets — exactly the interface ids the
-    /// driver should transmit on. The list is never empty: the engine elides
+    /// list of positive `fire_on` targets (exactly the interface ids the
+    /// driver should transmit on). The list is never empty: the engine elides
     /// empty-fanout directives before they reach the driver.
     ///
     /// The driver is a pure tx/rx pump: write `bytes` to each id in
-    /// `fire_on`. No "skip the source" logic is needed — the engine
+    /// `fire_on`. No "skip the source" or other logic is needed; the engine
     /// already filtered. As more directive variants land (data sends,
     /// proofs, link replies) the engine may compute different `fire_on`
     /// shapes per kind, but the driver's job stays the same: take the
@@ -109,7 +108,7 @@ pub trait EngineDriver {
     {
         // Sip 8 bytes of driver entropy for this step. CSPRNG-quality is the
         // driver's contract (see `EngineDriver::fill_entropy`); the engine
-        // doesn't check, it just consumes opaque bytes — same 8 bytes drive
+        // doesn't check, it just consumes opaque bytes. These same 8 bytes also drive
         // ingest jitter and tick's held-recovery jitter so deterministic-replay
         // tests can compare bit-for-bit.
         let mut entropy_bytes = [0u8; 8];
@@ -120,24 +119,22 @@ pub trait EngineDriver {
         let ingest = ingest(state, packets, entropy);
 
         let now = self.now_millis()?;
-        let tick_out = tick(state, now, entropy);
+        let tick_output = tick(state, now, entropy);
         let tick_summary = TickSummary {
-            egress_directive_count: tick_out.egress_directive_count(),
-            recovered_from_held_count: tick_out.recovered_from_held_count(),
+            egress_directive_count: tick_output.egress_directive_count(),
+            recovered_from_held_count: tick_output.recovered_from_held_count(),
         };
 
-        // Serialize each directive into a stack-sized MTU buffer and hand
-        // the bytes + engine-computed fanout targets to the driver. The
-        // buffer fits any valid announce (max-app_data no-ratchet announce
-        // is exactly MTU bytes).
-        let mut emit_buf = [0u8; MTU];
-        for directive in tick_out.egress_directives() {
+        let mut emit_buffer = [0u8; MTU];
+        for directive in tick_output.egress_directives() {
             let n = directive
-                .to_wire(&mut emit_buf)
+                .to_wire(&mut emit_buffer)
                 .expect("MTU-sized buf fits any valid wire packet");
-            self.handle_egress(&emit_buf[..n], directive.fire_on())?;
+            self.handle_egress(&emit_buffer[..n], directive.fire_on())?;
         }
-        // tick_out drops here → state's due rebroadcasts are drained.
+        // tick_out drops here → state's due rebroadcasts are drained NOTE/REVIEW we may want to intentionally return
+        // the owned out back out as part of StepOutput, so the runtime above can choose when that drop actually triggers
+        // But alternatively that could be left to a custom impl override only?
 
         Ok(StepOutput {
             ingest,
@@ -431,6 +428,6 @@ mod tests {
         assert_eq!(out.tick.egress_directive_count, 0);
         assert!(driver.handled.is_empty());
         // The scheduled entry was elided AND drained; not still pending.
-        assert_eq!(state.pending_rebroadcast_count(), 0);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
     }
 }

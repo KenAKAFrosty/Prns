@@ -12,41 +12,41 @@
 //!
 //! Layout:
 //! - **Data shapes** (`capabilities`, `id`, `medium`, `mode`, `connection_state`):
-//!   the inert types every interface presents.
-//! - **Traits** (`interface`, `point_to_point`, `shared_broadcast`):
-//!   the contract every concrete impl signs.
-//! - **Concrete impls** (`loopback/`): in-process loopback variants
-//!   live together since they share semantics and vary only by
-//!   environment.
-//! - **Framing helpers** (`rns_serial_framing`): RNS reference-compatible
-//!   byte-stuffed framing used by serial-style transports (USB CDC,
-//!   RS-232, etc.); not an `Interface` itself, but a building block for
-//!   those that frame over byte streams.
+//!   the inert types every interface presents, kept flat at the root.
+//! - **`contract/`**: the [`Interface`] trait and the per-medium sub-traits
+//!   each concrete impl signs.
+//! - **`framing/`**: byte-stream framing codecs interfaces build on
+//!   (`rns_serial_framing`) — building blocks, not interfaces themselves.
+//! - **`impls/`**: the concrete implementations the core ships (`loopback/`).
+//!
+//! Everything is re-exported flat here, so consumers reach for
+//! `interfaces::Interface` / `interfaces::LoopbackInterface` /
+//! `interfaces::rns_serial_framing` without knowing which bucket owns it.
 
 pub mod capabilities;
 pub mod connection_state;
 pub mod id;
-pub mod interface;
-pub mod loopback;
 pub mod medium;
 pub mod mode;
-pub mod point_to_point;
-pub mod rns_serial_framing;
-pub mod shared_broadcast;
+
+mod contract;
+mod framing;
+mod impls;
 
 pub use capabilities::Capabilities;
 pub use connection_state::ConnectionState;
 pub use id::InterfaceId;
-pub use interface::Interface;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
-pub use point_to_point::PointToPointInterface;
-pub use shared_broadcast::SharedBroadcastInterface;
 
-pub use loopback::{NoAllocLoopback, NoAllocLoopbackError, NoAllocLoopbackQueue};
+pub use contract::{Interface, PointToPointInterface, SharedBroadcastInterface};
+
+pub use framing::rns_serial_framing;
+
+pub use impls::loopback::{NoAllocLoopback, NoAllocLoopbackError, NoAllocLoopbackQueue};
 
 #[cfg(feature = "alloc")]
-pub use loopback::{LoopbackError, LoopbackInterface};
+pub use impls::loopback::{LoopbackError, LoopbackInterface};
 
 #[cfg(feature = "std")]
-pub use loopback::ThreadedLoopback;
+pub use impls::loopback::ThreadedLoopback;

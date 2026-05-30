@@ -1,4 +1,4 @@
-use crate::interfaces::Interface;
+use super::Interface;
 
 /// Semantic marker for **shared-broadcast** transports: every neighbor
 /// on the medium hears every transmission. LoRa, plain ESP-NOW

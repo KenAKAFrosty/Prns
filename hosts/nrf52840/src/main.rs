@@ -90,7 +90,7 @@ async fn main(_spawner: Spawner) -> ! {
                     "tick={} route={} held={}\r\n",
                     state.tick_count(),
                     state.route_count(),
-                    state.held_count()
+                    state.held_announce_count()
                 );
                 if class.write_packet(line.as_bytes()).await.is_err() {
                     break;

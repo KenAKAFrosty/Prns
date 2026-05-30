@@ -1,4 +1,4 @@
-use crate::interfaces::Interface;
+use super::Interface;
 
 /// Semantic marker for **point-to-point** transports: one interface
 /// instance speaks to one identified peer. TCP, USB CDC, BLE GATT,

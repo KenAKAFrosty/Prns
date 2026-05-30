@@ -40,17 +40,9 @@ use heapless::Vec as HeaplessVec;
 /// generic to keep `EngineState`'s type signature manageable.
 pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
-/// Monotonic timestamp supplied by the host, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
-/// One inbound packet, frozen with the instant it arrived and tagged with
-/// the interface it came in on. The host stamps `arrived_at` when it
-/// enqueues the packet so `ingest` processes a fixed record and never
-/// needs to read a clock; `source_interface` carries through to emission
-/// so the engine can apply RNS's "don't gossip an announce back to its
-/// source interface" rule (and any future medium-aware policy keyed on
-/// the source).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InboundPacket<'a> {
     pub arrived_at: InstantMillis,
@@ -73,7 +65,7 @@ pub struct InboundPacket<'a> {
 /// [`register_routable_interface`]: EngineState::register_routable_interface
 /// [`EgressDirective`]: crate::engine::EgressDirective
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EngineState<R, A, H, D, const HELD: usize>
+pub struct EngineState<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -83,22 +75,20 @@ where
     tick_count: u64,
     ingested_packet_count: u64,
     routing_table: RoutingTable<R, A, H, D>,
-    held_cache: HeldAnnouncesCache<HELD>,
-    // The pending-rebroadcast set is capped at `HELD`, reusing the held-cache
+    held_announces_cache: HeldAnnouncesCache<MAX_HELD_ANNOUNCES>,
+    // The pending-rebroadcast set is capped at `MAX_HELD_ANNOUNCES`, reusing the held-cache
     // dial: one slot per destination, and the realistic per-tick burst of
-    // unique accepts is the same order of magnitude as `HELD` (we already park
-    // up to `HELD` arena-pressure overflows per tick). Hosts that genuinely
-    // see larger bursts widen `HELD` and get both columns at once. A separate
+    // unique accepts is the same order of magnitude as `MAX_HELD_ANNOUNCES` (we already park
+    // up to `MAX_HELD_ANNOUNCES` arena-pressure overflows per tick). Hosts that genuinely
+    // see larger bursts widen `MAX_HELD_ANNOUNCES` and get both columns at once. A separate
     // `MAX_PENDING` dial is the obvious next iteration if that assumption
     // breaks.
-    pending_rebroadcasts: PendingRebroadcasts<HELD>,
+    pending_rebroadcasts: PendingRebroadcasts<MAX_HELD_ANNOUNCES>,
     // Interfaces the host has registered with this engine. tick() builds each
     // directive's `fire_on` list from this set minus the source.
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
 }
 
-/// Returned by [`EngineState::register_routable_interface`] when a real
-/// interface cannot be registered for engine fanout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterInterfaceError {
     RegistryFull,
@@ -129,7 +119,7 @@ pub type DefaultEngineState<
     HELD_CACHE_CAPACITY,
 >;
 
-impl<R, A, H, D, const HELD: usize> EngineState<R, A, H, D, HELD>
+impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -144,20 +134,15 @@ where
         self.ingested_packet_count
     }
 
-    /// Number of destinations the engine currently has a path to.
     pub fn route_count(&self) -> usize {
         self.routing_table.route_count()
     }
 
-    /// Number of announces currently parked for retry after a transient
-    /// arena-full bail. Drains as `tick()` retries them.
-    pub fn held_count(&self) -> usize {
-        self.held_cache.len()
+    pub fn held_announce_count(&self) -> usize {
+        self.held_announces_cache.len()
     }
 
-    /// Number of accepted destinations currently waiting to be re-emitted on
-    /// a future tick. Drains as `tick()` emits each due rebroadcast.
-    pub fn pending_rebroadcast_count(&self) -> usize {
+    pub fn pending_announce_rebroadcast_count(&self) -> usize {
         self.pending_rebroadcasts.pending_count()
     }
 
@@ -265,20 +250,20 @@ struct DirectiveFanout {
 ///
 /// [`egress_directives`]: TickOutput::egress_directives
 #[must_use]
-pub struct TickOutput<'a, R, A, H, D, const HELD: usize>
+pub struct TickOutput<'a, R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    state: &'a mut EngineState<R, A, H, D, HELD>,
+    state: &'a mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     now: InstantMillis,
     recovered_from_held_count: usize,
-    fanouts: HeaplessVec<DirectiveFanout, HELD>,
+    fanouts: HeaplessVec<DirectiveFanout, MAX_HELD_ANNOUNCES>,
 }
 
-impl<'a, R, A, H, D, const HELD: usize> TickOutput<'a, R, A, H, D, HELD>
+impl<'a, R, A, H, D, const MAX_HELD_ANNOUNCES: usize> TickOutput<'a, R, A, H, D, MAX_HELD_ANNOUNCES>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -324,7 +309,8 @@ where
     }
 }
 
-impl<R, A, H, D, const HELD: usize> Drop for TickOutput<'_, R, A, H, D, HELD>
+impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> Drop
+    for TickOutput<'_, R, A, H, D, MAX_HELD_ANNOUNCES>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -358,8 +344,8 @@ where
 /// counted as processed and otherwise ignored — this slice acts only on
 /// announces.
 #[must_use]
-pub fn ingest<R, A, H, D, const HELD: usize>(
-    state: &mut EngineState<R, A, H, D, HELD>,
+pub fn ingest<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
+    state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     packets: &[InboundPacket<'_>],
     entropy: u64,
 ) -> IngestOutput
@@ -425,8 +411,8 @@ struct IngestCounters {
 /// We need to continue to observe the other handlers' impls and stay
 /// vigilant at unifying & coupling what should be, while avoiding
 /// doing so for what shouldn't be.
-fn ingest_announce<R, A, H, D, const HELD: usize>(
-    state: &mut EngineState<R, A, H, D, HELD>,
+fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
+    state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     announce: Announce<'_>,
     received_hops: u8,
     source_interface: InterfaceId,
@@ -479,7 +465,7 @@ fn ingest_announce<R, A, H, D, const HELD: usize>(
             // CacheFull (cap reached, dropped) — we count only the
             // successful parks.
             use crate::routing::held_cache::{HoldReason, ParkOutcome};
-            match state.held_cache.park(
+            match state.held_announces_cache.park(
                 &announce,
                 arrived_at,
                 received_hops,
@@ -507,11 +493,11 @@ fn ingest_announce<R, A, H, D, const HELD: usize>(
 /// so a held-recovery accept gets a deterministic jittered re-emission
 /// slot. The returned [`TickOutput`] is itself `#[must_use]`, so
 /// dropping it without iterating is a compile-time warning.
-pub fn tick<R, A, H, D, const HELD: usize>(
-    state: &mut EngineState<R, A, H, D, HELD>,
+pub fn tick<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
+    state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     now: InstantMillis,
     entropy: u64,
-) -> TickOutput<'_, R, A, H, D, HELD>
+) -> TickOutput<'_, R, A, H, D, MAX_HELD_ANNOUNCES>
 where
     R: RouteColumns,
     A: RetainedAnnounceColumns,
@@ -521,7 +507,7 @@ where
     state.tick_count = state.tick_count.saturating_add(1);
 
     let mut recovered_from_held_count = 0;
-    if let Some(held) = state.held_cache.take_next() {
+    if let Some(held) = state.held_announces_cache.take_next() {
         use crate::routing::held_cache::HoldReason;
         match held.reason() {
             HoldReason::RoutingArenaPressure => {
@@ -575,7 +561,7 @@ where
     // iterates the typed directives via `TickOutput::egress_directives`
     // and commits on Drop. Anything not-yet-due stays parked in
     // `pending_rebroadcasts` and surfaces on a later tick.
-    let mut fanouts: HeaplessVec<DirectiveFanout, HELD> = HeaplessVec::new();
+    let mut fanouts: HeaplessVec<DirectiveFanout, MAX_HELD_ANNOUNCES> = HeaplessVec::new();
     for scheduled in state
         .pending_rebroadcasts
         .iter()
@@ -593,7 +579,7 @@ where
         if fire_on.is_empty() {
             continue;
         }
-        // Both caps match (HELD == max due directives == max fanouts),
+        // Both caps match (MAX_HELD_ANNOUNCES == max due directives == max fanouts),
         // so push is infallible here too.
         let _ = fanouts.push(DirectiveFanout {
             destination: scheduled.destination,
@@ -637,8 +623,8 @@ mod tests {
     /// directive into its own owned wire buffer, and returns the
     /// captured bytes alongside a [`TickSnapshot`]. Tests that don't
     /// care about emission ignore the byte vec.
-    fn tick_capture<R, A, H, D, const HELD: usize>(
-        state: &mut EngineState<R, A, H, D, HELD>,
+    fn tick_capture<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
+        state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
         now: InstantMillis,
     ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>)
     where
@@ -977,7 +963,7 @@ mod tests {
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(out.held_for_retry_count(), 1);
         assert_eq!(state.route_count(), 0);
-        assert_eq!(state.held_count(), 1);
+        assert_eq!(state.held_announce_count(), 1);
     }
 
     #[test]
@@ -993,13 +979,13 @@ mod tests {
             }],
             TEST_ENTROPY,
         );
-        assert_eq!(state.held_count(), 1);
+        assert_eq!(state.held_announce_count(), 1);
 
         // Arena state unchanged → retry hits Dropped(PayloadArenaFull) again
         // and the held entry is discarded. We don't re-park (livelock).
         let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
         assert_eq!(out.recovered_from_held_count, 0);
-        assert_eq!(state.held_count(), 0);
+        assert_eq!(state.held_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
     }
 
@@ -1043,7 +1029,7 @@ mod tests {
         );
         assert_eq!(out.accepted_announce_count(), 1);
         assert_eq!(out.scheduled_rebroadcast_count(), 1);
-        assert_eq!(state.pending_rebroadcast_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
         // Far past the jitter window: the rebroadcast is due and tick emits it.
         let (tick_out, emitted) = tick_capture(
@@ -1051,7 +1037,7 @@ mod tests {
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
         );
         assert_eq!(tick_out.egress_directive_count, 1);
-        assert_eq!(state.pending_rebroadcast_count(), 0);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
 
         // The emitted bytes round-trip back to the same announce, with the
         // hop count incremented (received_hops becomes emit hops). Same
@@ -1085,14 +1071,14 @@ mod tests {
             }],
             TEST_ENTROPY,
         );
-        assert_eq!(state.pending_rebroadcast_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
         // `now < arrival` is strictly before any due_at — the offset is
         // non-negative so `due_at >= arrival > now`, and nothing emits.
         let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1));
         assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
-        assert_eq!(state.pending_rebroadcast_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
     }
 
     #[test]
@@ -1147,13 +1133,13 @@ mod tests {
             }],
             TEST_ENTROPY,
         );
-        assert_eq!(state.held_count(), 1);
-        assert_eq!(state.pending_rebroadcast_count(), 0);
+        assert_eq!(state.held_announce_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
 
         let (tick_out, bytes) = tick_capture(&mut state, InstantMillis(2_000));
         assert_eq!(tick_out.recovered_from_held_count, 0);
         assert_eq!(tick_out.egress_directive_count, 0);
-        assert_eq!(state.pending_rebroadcast_count(), 0);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
         assert!(bytes.is_empty());
     }
 
@@ -1211,7 +1197,7 @@ mod tests {
             assert_eq!(tick_out.egress_directive_count(), 0);
             assert!(tick_out.egress_directives().next().is_none());
         }
-        assert_eq!(state.pending_rebroadcast_count(), 0);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
 
         // == Phase 5: the upstream peer sees nothing — the engine had no
         //             other interface to fan out to. ==

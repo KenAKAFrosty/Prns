@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-use crate::interfaces::loopback::LoopbackError;
+use super::LoopbackError;
 use crate::interfaces::{
     Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     PointToPointInterface,

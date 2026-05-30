@@ -240,6 +240,8 @@ mod kani_proofs {
     };
 
     const APP_DATA_LEN: usize = 2;
+
+    //REVIEW why was this re-built here? Checking if this is a sign that this ANNOUNCE_WIRE_LEN needs to go into wire/ ?
     const ANNOUNCE_WIRE_LEN: usize = ANNOUNCE_PUBLIC_KEY_LEN
         + DOTTED_NAME_HASH_LEN
         + ANNOUNCE_ID_WIRE_LEN
