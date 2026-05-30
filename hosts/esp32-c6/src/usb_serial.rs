@@ -3,8 +3,8 @@
 //!
 //! The C6 has a built-in USB Serial/JTAG controller that presents to a
 //! laptop as a CDC-ACM device (`/dev/ttyACM*` on Linux). Outgoing
-//! Reticulum packets are wrapped in RNS reference-compatible serial
-//! framing and pushed to the peripheral; incoming bytes are fed to a
+//! Reticulum packets are wrapped in canonical RNS serial framing and
+//! pushed to the peripheral; incoming bytes are fed to a
 //! streaming [`RnsSerialDecoder`] that surfaces one complete Reticulum
 //! packet per `try_read` call.
 //!
@@ -78,8 +78,8 @@ impl Interface for Esp32UsbSerialInterface<'_> {
     }
 
     fn state(&self) -> InterfaceState {
-        // Slice B reports Connected unconditionally; cable plug/unplug
-        // lifecycle detection is a later slice.
+        // Plug/unplug lifecycle detection has not landed; while the USB
+        // peripheral is owned, report Connected.
         InterfaceState::Connected
     }
 
@@ -105,7 +105,6 @@ impl Interface for Esp32UsbSerialInterface<'_> {
                 Ok(None) => continue,
                 Ok(Some(frame)) => {
                     if frame.is_empty() {
-                        // Keepalive — skip and keep draining the FIFO.
                         continue;
                     }
                     if frame.len() > buf.len() {

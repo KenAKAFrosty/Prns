@@ -4,7 +4,7 @@
 //! arrive at the engine boundary as `InboundPacket`; the engine's
 //! first move is `Ingress::classify` to turn them into a typed
 //! variant. Decision sites then pattern-match, providing exhaustive
-//! compile-time checks and no unnnecessary re-parsing
+//! compile-time checks and no unnecessary re-parsing.
 //!
 //! Today only `Announce` carries fields; the other wire-kind variants
 //! are bare discriminants documenting "the engine sees these packets

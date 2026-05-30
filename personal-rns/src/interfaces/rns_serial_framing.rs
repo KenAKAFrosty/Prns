@@ -1,4 +1,4 @@
-//! RNS reference-compatible serial framing.
+//! Canonical RNS serial byte framing.
 //!
 //! This module intentionally uses Reticulum's reference
 //! [`SerialInterface`] framing rather than inventing a local transport
@@ -18,15 +18,22 @@
 //!   raw byte XOR-ed with [`ESC_MASK`] (`0x20`).
 //!
 //! That gives `FLAG <escaped bytes> FLAG` on the wire. Empty frames
-//! (`FLAG FLAG` with nothing between them) are valid keepalives
-//! and the streaming decoder yields them; callers that don't care
-//! filter them out.
+//! (`FLAG FLAG` with nothing between them) are valid keepalives and the
+//! streaming decoder yields them; callers that don't care filter them
+//! out.
 //!
 //! Worst-case framed length is `2 + 2 * payload.len()` (every byte
 //! escaped) and best case is `2 + payload.len()`.
 //!
+//! This module owns the octet-stuffed frame format only. Concrete
+//! interfaces own read-loop policy such as idle timeout, frame cap, and
+//! oversize recovery.
+//!
 //! Reference RNS serial framing:
 //! https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L38-L48
+//!
+//! Reference escape handling:
+//! https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L180-L186
 
 use heapless::Vec;
 
@@ -168,7 +175,11 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
 
         let payload_byte = if self.saw_escape {
             self.saw_escape = false;
-            byte ^ ESC_MASK
+            match byte {
+                escaped_flag if escaped_flag == (FLAG ^ ESC_MASK) => FLAG,
+                escaped_esc if escaped_esc == (ESC ^ ESC_MASK) => ESC,
+                other => other,
+            }
         } else {
             byte
         };
@@ -276,11 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn decoder_xors_escape_mask_for_noncanonical_escaped_bytes() {
-        let escaped_byte_with_mask_bit_already_set = 0x61;
-        let bytes = [FLAG, ESC, escaped_byte_with_mask_bit_already_set, FLAG];
+    fn decoder_preserves_noncanonical_escaped_bytes_like_rns() {
+        let noncanonical_escaped_byte = 0x61;
+        let bytes = [FLAG, ESC, noncanonical_escaped_byte, FLAG];
         let frames = decode_all(&bytes);
-        assert_eq!(frames, std::vec![std::vec![0x41]]);
+        assert_eq!(frames, std::vec![std::vec![noncanonical_escaped_byte]]);
     }
 
     #[test]

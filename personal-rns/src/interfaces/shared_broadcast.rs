@@ -10,12 +10,9 @@ use crate::interfaces::Interface;
 /// source interface is correct, not gossip-back).
 ///
 /// The universal byte I/O surface (`try_read`, `write`, `read_inbound`)
-/// lives on the base [`Interface`] trait — every interface, regardless
-/// of medium, has to accommodate those operations. This sub-trait is
-/// an opt-in marker that declares semantic intent and a future-growth
-/// hook for methods that only make sense for shared-broadcast media
-/// (e.g., a `Reception` type carrying RSSI/SNR / neighbor metadata on
-/// the read side, when radio interfaces land).
+/// lives on the base [`Interface`] trait. This sub-trait declares
+/// shared-broadcast semantics and is where shared-medium metadata, such
+/// as reception quality or neighbor context, should land once needed.
 ///
 /// **Self-echo:** on half-duplex media a sender may receive its own
 /// outbound transmission back through `try_read`. Implementations

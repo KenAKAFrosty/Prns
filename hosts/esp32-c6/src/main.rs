@@ -48,8 +48,8 @@ static SEED_ANNOUNCE: &[u8] = include_bytes!("../resources/seed_announce.bin");
 struct Esp32Host<'d> {
     usb: Esp32UsbSerialInterface<'d>,
     /// Owned backing storage for `drain_inbound_packets`. Holds the boot
-    /// seed announce while `seed_pending` is true, then becomes a stale
-    /// slice that's never returned again.
+    /// seed announce while `seed_pending` is true, then remains retained
+    /// but not returned again.
     seed_buffer: [InboundPacket<'static>; 1],
     seed_pending: bool,
 }

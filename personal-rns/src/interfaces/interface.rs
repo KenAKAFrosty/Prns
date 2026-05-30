@@ -8,10 +8,9 @@ use crate::interfaces::{Capabilities, InterfaceId, InterfaceMode, InterfaceState
 /// [`PointToPointInterface`](crate::interfaces::PointToPointInterface)
 /// and
 /// [`SharedBroadcastInterface`](crate::interfaces::SharedBroadcastInterface)
-/// extend this trait to declare medium-specific intent; today they
-/// carry no extra methods, but they're where medium-specific divergence
-/// (e.g., a `Reception` type carrying RSSI/SNR on shared media) will
-/// land when it becomes real.
+/// extend this trait to declare medium-specific intent without adding
+/// API today. Add methods there once a medium needs behavior the base
+/// interface cannot honestly express.
 ///
 /// Hosts implement this on concrete interface types (TCP, LoRa, BLE,
 /// loopback, sim, …); the engine consumes the trait via dyn dispatch

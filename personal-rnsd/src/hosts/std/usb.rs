@@ -1,10 +1,9 @@
 //! Real USB-serial transport for the std daemon — the host end of a cable to
 //! an ESP32-C6 (or any stock RNS serial peer).
 //!
-//! Incoming bytes are de-framed by the shared [`RnsSerialDecoder`] (matching
-//! RNS's serial wire exactly, so the same cable speaks the same framing as a
-//! stock RNS `SerialInterface`); outgoing packets are RNS serial framed and
-//! written back.
+//! Incoming bytes are de-framed by the shared [`RnsSerialDecoder`]; outgoing
+//! packets use the same canonical RNS serial frame layout as a stock
+//! `SerialInterface` and are written back.
 //! Pre-frame noise on the link — e.g. an ESP32-C6 sharing its USB Serial/JTAG
 //! port between `println!` logs and Reticulum frames — is ignored by the
 //! decoder until a `FLAG` opens a frame.
@@ -116,7 +115,7 @@ impl<P: Read + Write> Interface for SerialUsbInterface<P> {
                     Ok(None) => continue,
                     Ok(Some(frame)) => {
                         if frame.is_empty() {
-                            continue; // Keepalive — skip and keep draining
+                            continue;
                         }
                         if frame.len() > buf.len() {
                             return Err(SerialUsbError::FrameLargerThanCallerBuffer);
