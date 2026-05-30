@@ -51,11 +51,14 @@ impl<'a> Ingress<'a> {
             return Self::Unparseable;
         };
 
+        let received_hops = header.hops.saturating_add(1); //IRC this is *general, broad packet behavior*, e.g., Link will probably want this too.
+
         match header.packet_type {
             PacketType::Announce => {
                 if header.destination_type != DestinationType::Single {
                     return Self::Unparseable;
                 }
+
                 let Ok(announce) = Announce::from_wire(&header, payload) else {
                     return Self::Unparseable;
                 };
@@ -79,7 +82,7 @@ impl<'a> Ingress<'a> {
 
                 Self::Announce {
                     announce,
-                    received_hops: header.hops.saturating_add(1),
+                    received_hops,
                     source_interface: packet.source_interface,
                     arrived_at: packet.arrived_at,
                 }

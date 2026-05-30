@@ -334,15 +334,6 @@ where
 /// Process a batch of inbound packets. Clock-free: each packet carries its own
 /// arrival instant, so the result is a pure function of `(state, packets,
 /// entropy)`. An empty batch is valid and a no-op.
-///
-/// Each packet is decoded to a header and, if it is a valid announce, run
-/// through the acceptance predicate; accepted announces install or refresh a
-/// path and schedule a jittered re-emission. `entropy` seeds the per-(entropy,
-/// destination) jitter so the same input batch from two hosts with the same
-/// entropy schedules identically — determinism is a property of the inputs,
-/// not of a hidden RNG. Bytes that don't parse, or aren't announces, are
-/// counted as processed and otherwise ignored — this slice acts only on
-/// announces.
 #[must_use]
 pub fn ingest<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
