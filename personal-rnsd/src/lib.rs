@@ -6,5 +6,8 @@ mod hosts;
 #[cfg(feature = "std")]
 pub use hosts::std::{StdHost, StdHostError};
 
+#[cfg(feature = "std-host")]
+pub use hosts::std::usb::{SerialUsbError, SerialUsbInterface, UsbHost, UsbHostError};
+
 #[cfg(feature = "tokio-host")]
 pub use hosts::tokio::run_multi_thread;
