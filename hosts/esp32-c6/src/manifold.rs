@@ -1,9 +1,10 @@
 //! `Manifold` — the substrate-neutral primitive bolted to the engine. Each
-//! cycle it gathers inbound across the interface ports, drives the engine one
-//! step ([`EngineDriver::step`]), and scatters egress to the named ports. It
-//! owns the engine and is the sole holder of the `InterfaceId` ↔ port binding.
+//! cycle it draws inbound in across the interface ports (intake), drives the
+//! engine one step ([`EngineDriver::step`]), and pushes egress back out to the
+//! named ports (exhaust). It owns the engine and is the sole holder of the
+//! `InterfaceId` ↔ port binding.
 //!
-//! This spike is single-port (one USB interface), so the gather/scatter is
+//! This spike is single-port (one USB interface), so the intake/exhaust is
 //! degenerate — one optional just-dequeued frame in, one egress buffer out —
 //! but the shape is exactly what a multi-port node would use.
 //!
@@ -116,10 +117,10 @@ impl Manifold {
         self.state.ingested_packet_count()
     }
 
-    /// One cycle: gather → drive → scatter. `inbound` is the optional USB frame
+    /// One cycle: intake → drive → exhaust. `inbound` is the optional USB frame
     /// the Runtime just dequeued from the zero-copy channel — borrowed straight
     /// from the channel slot, so the engine reads it with no further copy.
-    /// Egress frames are scattered into `egress` for the Runtime to write.
+    /// Egress frames are pushed out into `egress` for the Runtime to write.
     pub fn cycle(
         &mut self,
         now: InstantMillis,
@@ -128,7 +129,7 @@ impl Manifold {
     ) -> CycleSummary {
         egress.frames.clear();
 
-        // GATHER: the one-shot boot seed (first cycle only) plus the
+        // INTAKE: the one-shot boot seed (first cycle only) plus the
         // just-dequeued USB frame, each tagged with its provenance.
         let mut batch: HeaplessVec<InboundPacket<'_>, 2> = HeaplessVec::new();
         let seeded = if let Some(seed) = self.seed.take() {
@@ -152,7 +153,7 @@ impl Manifold {
             false
         };
 
-        // DRIVE one engine step over the gathered batch; SCATTER happens inside
+        // DRIVE one engine step over the intake batch; EXHAUST happens inside
         // it, via the driver's `handle_egress` staging into `egress`.
         let accepted = {
             let mut driver = StagingExampleEngineDriver {
@@ -217,9 +218,10 @@ impl Interface for UsbInterfaceDescriptor {
     }
 }
 
-/// Per-cycle [`EngineDriver`]: lends the borrowed inbound batch and scatters
-/// egress frames bound for USB into the reused buffer. Clock and entropy read
-/// the always-available esp-hal sources, so this driver is substrate-independent.
+/// Per-cycle [`EngineDriver`]: lends the borrowed inbound batch and stages the
+/// exhaust — egress frames bound for USB — into the reused buffer. Clock and
+/// entropy read the always-available esp-hal sources, so this driver is
+/// substrate-independent.
 struct StagingExampleEngineDriver<'a> {
     inbound: &'a [InboundPacket<'a>],
     egress: &'a mut EgressStaging,

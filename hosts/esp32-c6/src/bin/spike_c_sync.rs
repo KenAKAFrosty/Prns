@@ -11,7 +11,7 @@
 //! ```text
 //! loop {
 //!   worker.pump();    // drain USB RX FIFO -> decode -> zero-copy sink (try_send)
-//!   manifold.cycle(); // gather a frame -> EngineDriver.step -> scatter egress
+//!   manifold.cycle(); // intake a frame -> EngineDriver.step -> exhaust egress
 //!   flush_egress();   // blocking write staged frames to USB TX
 //! }
 //! ```
