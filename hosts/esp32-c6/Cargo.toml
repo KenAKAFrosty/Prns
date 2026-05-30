@@ -9,9 +9,9 @@ description = "ESP32-C6 host body: drives the Personal Reticulum engine on bare 
 # build this no_std/no_main bare-metal crate for the host target.
 [workspace]
 
-[[bin]]
-name = "esp32-c6"
-path = "src/main.rs"
+# Targets are the auto-discovered `src/bin/*` binaries (`spike_c_sync`,
+# `spike_c_async`) — there is no package-level `src/main.rs`, so always build
+# with `--bins`.
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false }
@@ -24,6 +24,27 @@ esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32c6", "panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = ["esp32c6", "jtag-serial", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32c6"] }
+# The async substrate (`spike_c_async`) runs an embassy executor + embassy-time
+# timebase on the stable esp-hal 1.1.1 stack, WITHOUT esp-hal-embassy — its
+# internal `__esp_hal_embassy` feature isn't reachable on the 1.1.x esp-*
+# generation we pin. The timebase is our own SystemTimer-backed
+# `embassy_time_driver::Driver` in `src/systimer_time_driver.rs`. The sync
+# substrate (`spike_c_sync`) links none of these — no executor, no time driver.
+embassy-executor = { version = "0.10.0", default-features = false, features = ["platform-riscv32", "executor-thread"] }
+embassy-time = { version = "0.5.1", default-features = false, features = ["tick-hz-1_000_000", "generic-queue-64"] }
+embassy-time-driver = "0.2.2"
+# The driver owns a self-contained generic timer queue (no coupling to the
+# executor's integrated per-task timer items), so we name `Queue` directly.
+embassy-time-queue-utils = { version = "0.3", default-features = false }
+critical-section = "1"
+static_cell = "2"
+# The zero-copy channel seam (`embassy_sync::zerocopy_channel`) is shared by both
+# substrates — sync borrows a NoopRawMutex channel on the stack, async a
+# CriticalSectionRawMutex channel in a StaticCell. `select`-over-(frame, tick)
+# and async USB RX (below) are async-substrate only.
+embassy-sync = { version = "0.6", default-features = false }
+embassy-futures = { version = "0.1", default-features = false }
+embedded-io-async = { version = "0.6", default-features = false }
 
 [profile.release]
 codegen-units = 1
