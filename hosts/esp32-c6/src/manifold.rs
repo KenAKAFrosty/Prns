@@ -1,20 +1,24 @@
-//! Substrate-neutral coordinator: owns the engine, runs one step against an
-//! optional just-dequeued inbound frame, and stages egress for the harness to
-//! write.
+//! `Manifold` — the substrate-neutral primitive bolted to the engine. Each
+//! cycle it gathers inbound across the interface ports, drives the engine one
+//! step ([`EngineDriver::step`]), and scatters egress to the named ports. It
+//! owns the engine and is the sole holder of the `InterfaceId` ↔ port binding.
 //!
-//! Like [`crate::rns_frame_ingest`], this touches no hardware beyond the
-//! always-available clock and TRNG (which read the same way on every substrate)
-//! and contains no `.await`. A sync poll loop and an async coordinator task
-//! call [`CoordinatorCore::step`] identically; the *only* substrate-specific
-//! work is (a) how a frame is dequeued from the zero-copy channel before the
-//! call and (b) how staged egress frames are written to the wire after it —
-//! both of which are I/O, and so belong to the harness, not the core.
+//! This spike is single-port (one USB interface), so the gather/scatter is
+//! degenerate — one optional just-dequeued frame in, one egress buffer out —
+//! but the shape is exactly what a multi-port node would use.
+//!
+//! Like [`crate::rns_frame_ingest`], the Manifold touches no hardware beyond the
+//! always-available clock and TRNG (read the same way on every substrate) and
+//! contains no `.await`. The sync poll loop and the async executor call
+//! [`Manifold::cycle`] identically; the *only* substrate-specific work is (a) how
+//! a frame is dequeued from the zero-copy channel before the cycle and (b) how
+//! staged egress is written to the wire after it — both I/O, owned by the
+//! per-platform Runtime, not the Manifold.
 //!
 //! Egress is **direct, not channelled**: the engine's synchronous
-//! `handle_egress` stages frames into a small reused buffer, and the harness
-//! flushes them straight to the owned TX with a non-blocking write. There is no
-//! egress channel and no per-fanout owned message — staging is one reused
-//! buffer, not a per-packet allocation.
+//! `handle_egress` stages frames into a small reused buffer, and the Runtime
+//! flushes them straight to the owned TX with a non-blocking write. No egress
+//! channel, no per-fanout owned message — staging is one reused buffer.
 
 use core::convert::Infallible;
 
@@ -37,9 +41,9 @@ pub const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC6; 16]);
 /// rebroadcast fans out to USB rather than being excluded as the source.
 const SEED_SOURCE_ID: InterfaceId = InterfaceId::new([0x7A; 16]);
 
-/// Egress frames a single step can stage. One interface, bounded traffic — a
-/// few slots of slack is plenty.
-const MAX_EGRESS_PER_STEP: usize = 4;
+/// Egress frames a single cycle can stage. One port, bounded traffic — a few
+/// slots of slack is plenty.
+const MAX_EGRESS_PER_CYCLE: usize = 4;
 
 /// Current time in milliseconds since boot — reads the same SystemTimer-derived
 /// clock on every substrate.
@@ -47,10 +51,10 @@ pub fn now_millis() -> InstantMillis {
     InstantMillis(Instant::now().duration_since_epoch().as_millis())
 }
 
-/// Egress frames produced by one step, awaiting the harness's wire write. A
-/// reused buffer, cleared each step — not a per-message allocation.
+/// Egress frames produced by one cycle, awaiting the Runtime's wire write. A
+/// reused buffer, cleared each cycle — not a per-message allocation.
 pub struct EgressStaging {
-    pub frames: HeaplessVec<PacketBytes, MAX_EGRESS_PER_STEP>,
+    pub frames: HeaplessVec<PacketBytes, MAX_EGRESS_PER_CYCLE>,
 }
 
 impl EgressStaging {
@@ -67,23 +71,24 @@ impl Default for EgressStaging {
     }
 }
 
-/// What one step observed, surfaced for on-device logging.
-pub struct StepSummary {
+/// What one cycle observed, surfaced for on-device logging.
+pub struct CycleSummary {
     pub seeded: bool,
     pub inbound_from_usb: bool,
     pub egress: usize,
     pub accepted: usize,
 }
 
-/// Owns the engine and the one-shot boot seed. Substrate-agnostic.
-pub struct CoordinatorCore {
+/// Bolted to the engine: owns it + the one-shot boot seed. Substrate-agnostic.
+pub struct Manifold {
     state: DefaultEngineState,
     seed: Option<&'static [u8]>,
 }
 
-impl CoordinatorCore {
+impl Manifold {
     /// Build the engine and register the USB interface descriptor (the engine
-    /// keeps only its id + capabilities; the peripheral lives in the harness).
+    /// keeps only its id + capabilities; the peripheral lives in its
+    /// `InterfaceWorker`).
     pub fn new(seed: &'static [u8]) -> Self {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         state
@@ -111,18 +116,20 @@ impl CoordinatorCore {
         self.state.ingested_packet_count()
     }
 
-    /// One engine step. `inbound` is an optional USB frame the harness just
-    /// dequeued from the zero-copy channel — borrowed straight from the channel
-    /// slot, so the engine reads it with no further copy. Egress frames are
-    /// staged into `egress` for the harness to write to the wire.
-    pub fn step(
+    /// One cycle: gather → drive → scatter. `inbound` is the optional USB frame
+    /// the Runtime just dequeued from the zero-copy channel — borrowed straight
+    /// from the channel slot, so the engine reads it with no further copy.
+    /// Egress frames are scattered into `egress` for the Runtime to write.
+    pub fn cycle(
         &mut self,
         now: InstantMillis,
         inbound: Option<&[u8]>,
         egress: &mut EgressStaging,
-    ) -> StepSummary {
+    ) -> CycleSummary {
         egress.frames.clear();
 
+        // GATHER: the one-shot boot seed (first cycle only) plus the
+        // just-dequeued USB frame, each tagged with its provenance.
         let mut batch: HeaplessVec<InboundPacket<'_>, 2> = HeaplessVec::new();
         let seeded = if let Some(seed) = self.seed.take() {
             let _ = batch.push(InboundPacket {
@@ -145,6 +152,8 @@ impl CoordinatorCore {
             false
         };
 
+        // DRIVE one engine step over the gathered batch; SCATTER happens inside
+        // it, via the driver's `handle_egress` staging into `egress`.
         let accepted = {
             let mut driver = StagingExampleEngineDriver {
                 inbound: batch.as_slice(),
@@ -156,7 +165,7 @@ impl CoordinatorCore {
             out.ingest.accepted_announce_count()
         };
 
-        StepSummary {
+        CycleSummary {
             seeded,
             inbound_from_usb,
             egress: egress.frames.len(),
@@ -168,7 +177,7 @@ impl CoordinatorCore {
 /// Inert stand-in registered so the engine knows the topology (id +
 /// capabilities) for fanout. Its `try_read`/`write` are never reached: RX
 /// arrives via the zero-copy channel and egress is written directly by the
-/// harness, so the engine only ever consults this at registration.
+/// Runtime, so the engine only ever consults this at registration.
 struct UsbInterfaceDescriptor;
 
 impl Interface for UsbInterfaceDescriptor {
@@ -208,9 +217,9 @@ impl Interface for UsbInterfaceDescriptor {
     }
 }
 
-/// Per-step [`EngineDriver`]: lends the borrowed inbound batch and stages egress
-/// frames bound for USB into the reused buffer. Clock and entropy read the
-/// always-available esp-hal sources, so this driver is substrate-independent.
+/// Per-cycle [`EngineDriver`]: lends the borrowed inbound batch and scatters
+/// egress frames bound for USB into the reused buffer. Clock and entropy read
+/// the always-available esp-hal sources, so this driver is substrate-independent.
 struct StagingExampleEngineDriver<'a> {
     inbound: &'a [InboundPacket<'a>],
     egress: &'a mut EgressStaging,
@@ -224,7 +233,7 @@ impl EngineDriver for StagingExampleEngineDriver<'_> {
     }
 
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // TRNG-backed Rng (the TrngSource guard is held alive by the harness's
+        // TRNG-backed Rng (the TrngSource guard is held alive by the Runtime's
         // main); CSPRNG-grade per the EngineDriver contract.
         Rng::new().read(buf);
         Ok(())

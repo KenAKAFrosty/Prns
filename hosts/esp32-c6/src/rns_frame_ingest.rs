@@ -1,7 +1,7 @@
 //! Substrate-neutral RX ingest: decode RNS serial frames and push each
 //! completed frame into a zero-copy SPSC sink.
 //!
-//! This is the shared heart of an interface's RX side in the host-runtime
+//! This is the shared heart of an `InterfaceWorker`'s RX side in the host-runtime
 //! model. It touches no hardware and knows nothing about how it's driven — a
 //! sync poll loop and an async task call `ingest_bytes` identically. The only
 //! substrate knob is the channel's `RawMutex` (cooperative-single-core vs
@@ -9,10 +9,10 @@
 //!
 //! It uses the **zero-copy** sink: a completed frame is written directly into
 //! the channel's own slot storage (one copy, out of the decoder), and the
-//! coordinator later reads that same slot in place — no owned message is moved
-//! across the channel. Pushes are non-blocking (`try_send`); if the coordinator
+//! Manifold later reads that same slot in place — no owned message is moved
+//! across the channel. Pushes are non-blocking (`try_send`); if the Manifold
 //! has fallen behind and the queue is full, the frame is dropped rather than
-//! stalling the drain (a driver's job is to keep the hardware FIFO empty).
+//! stalling the drain (a worker's job is to keep the hardware FIFO empty).
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::zerocopy_channel::Sender;

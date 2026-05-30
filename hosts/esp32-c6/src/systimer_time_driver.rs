@@ -1,8 +1,8 @@
 //! An `embassy-time` timebase backed by the ESP32-C6 SystemTimer.
 //!
-//! Spike B builds the embassy equivalent of the Spike A coordinator, and to do
-//! that the executor needs a real timebase: `Timer::after(..)` only resolves if
-//! some driver wakes the task when its deadline passes. The pre-built
+//! The async Runtime (`spike_c_async`) runs on an embassy executor, which needs
+//! a real timebase: `Timer::after(..)` only resolves if some driver wakes the
+//! task when its deadline passes. The pre-built
 //! `esp-hal-embassy` driver isn't usable on our pinned 1.1.x esp-* stack (it
 //! requires esp-hal's internal `__esp_hal_embassy` feature), so we wire the
 //! ~standard ~80-line driver ourselves: `embassy_time_driver::Driver` over one
