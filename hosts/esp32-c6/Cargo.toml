@@ -15,6 +15,10 @@ path = "src/main.rs"
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false }
+# Pinned to 0.8 to match personal-rns: the loopback's caller-owned queues are
+# heapless 0.8 `Deque`/`Vec`, so this crate must name the same version (esp-hal
+# pulls 0.9 transitively; a mismatch would be a different, incompatible type).
+heapless = { version = "0.8", default-features = false }
 
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32c6", "panic-handler", "println"] }

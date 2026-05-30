@@ -640,6 +640,7 @@ dependencies = [
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
+ "heapless 0.8.0",
  "personal-rns",
 ]
 

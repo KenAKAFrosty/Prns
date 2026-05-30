@@ -18,7 +18,7 @@ use esp_hal::Blocking;
 
 use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use personal_rns::interfaces::{
-    Capabilities, Interface, InterfaceId, InterfaceMode, ConnectionState, MediumKind,
+    Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     PointToPointInterface,
 };
 use personal_rns::wire::MTU;
