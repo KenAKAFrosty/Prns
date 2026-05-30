@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use personal_rns::engine::{DefaultEngineState, InstantMillis};
-use personal_rns::interfaces::{Interface, InterfaceId};
+use personal_rns::interfaces::{ConnectionState, Interface, InterfaceId};
 use personal_rns::runtime::step;
 use personal_rns::wire::MTU;
 use personal_rnsd::{SerialUsbInterface, UsbHost};
@@ -17,6 +17,17 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
 /// Idle poll cadence between steps. The interface read itself blocks up to its
 /// own short timeout, so this only adds a small floor when the link is busy.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+fn usb_lifecycle_exit(state: ConnectionState) -> Option<(&'static str, i32)> {
+    match state {
+        ConnectionState::Connected | ConnectionState::Degraded => None,
+        ConnectionState::Initializing | ConnectionState::Reconnecting => {
+            Some(("RNSD_USB_NOT_ROUTABLE", 1))
+        }
+        ConnectionState::Failed => Some(("RNSD_USB_FAILED", 1)),
+        ConnectionState::Disconnected => Some(("RNSD_USB_DISCONNECTED", 1)),
+    }
+}
 
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
@@ -71,6 +82,42 @@ fn main() {
             );
         }
 
+        if let Some((marker, code)) = usb_lifecycle_exit(iface.state()) {
+            eprintln!("{marker}");
+            std::process::exit(code);
+        }
+
         std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usb_lifecycle_exit_keeps_routable_states_running() {
+        assert_eq!(usb_lifecycle_exit(ConnectionState::Connected), None);
+        assert_eq!(usb_lifecycle_exit(ConnectionState::Degraded), None);
+    }
+
+    #[test]
+    fn usb_lifecycle_exit_stops_on_non_routable_states() {
+        assert_eq!(
+            usb_lifecycle_exit(ConnectionState::Initializing),
+            Some(("RNSD_USB_NOT_ROUTABLE", 1))
+        );
+        assert_eq!(
+            usb_lifecycle_exit(ConnectionState::Reconnecting),
+            Some(("RNSD_USB_NOT_ROUTABLE", 1))
+        );
+        assert_eq!(
+            usb_lifecycle_exit(ConnectionState::Failed),
+            Some(("RNSD_USB_FAILED", 1))
+        );
+        assert_eq!(
+            usb_lifecycle_exit(ConnectionState::Disconnected),
+            Some(("RNSD_USB_DISCONNECTED", 1))
+        );
     }
 }
