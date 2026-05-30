@@ -27,9 +27,9 @@ esp_app_desc!();
 /// visually obvious in logs and aligns with the board family.
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC6; 16]);
 
-/// Synthetic source id for the boot-time seed announce. Distinct from
-/// [`USB_INTERFACE_ID`] so the engine's fanout (registered minus source)
-/// includes USB and the rebroadcast actually leaves the device.
+/// Synthetic source id for the boot-time seed announce. It is deliberately not
+/// registered as a routable interface; it only tags the source so the engine's
+/// source-exclusion rule does not exclude USB.
 const SEED_SOURCE_ID: InterfaceId = InterfaceId::new([0x7A; 16]);
 
 /// One real RNS 1.3.1 announce (the same vector personal-rns's wire/runtime
@@ -130,11 +130,8 @@ fn main() -> ! {
 
     let mut state: DefaultEngineState = DefaultEngineState::default();
     state
-        .register_interface(USB_INTERFACE_ID)
-        .expect("first interface always fits the registry cap");
-    state
-        .register_interface(SEED_SOURCE_ID)
-        .expect("two interfaces always fit the registry cap");
+        .register_routable_interface(&usb_iface)
+        .expect("USB interface is connected and transmits");
 
     let mut host = Esp32Host::new(usb_iface);
     let delay = Delay::new();

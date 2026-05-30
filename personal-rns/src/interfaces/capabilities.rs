@@ -9,9 +9,10 @@
 /// some combinations are operationally incoherent — `forwards = true`
 /// with `transmits = false` can't actually forward anything. A
 /// normalized engine-side type that makes illegal combinations
-/// unrepresentable lands before the engine consumes capabilities for
-/// fanout decisions; until then this should be treated as a hint set
-/// arriving off the wire/config, not a contract the engine relies on.
+/// unrepresentable can land once the engine consumes the full shape.
+/// Today the engine only relies on `transmits` when registering a
+/// concrete interface for fanout; the remaining fields are declaration
+/// data until their owning routing decisions land.
 ///
 /// The host states facts about its concrete interface; the engine
 /// (after normalization) makes the routing/fanout calls. Operational

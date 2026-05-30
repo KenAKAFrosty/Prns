@@ -11,7 +11,7 @@ pub mod ingress;
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{ConnectionState, Interface, InterfaceId};
 use crate::routing::announce::{Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::defaults::jitter_offset_for;
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
@@ -63,12 +63,12 @@ pub struct InboundPacket<'a> {
 /// parameters directly.
 ///
 /// The engine owns its **interface registry** — the host calls
-/// [`register_interface`] at startup for each interface it presents, and
-/// from then on the engine computes positive `fire_on` fanout targets per
-/// directive (see [`EgressDirective`]) rather than asking the host to apply
-/// "don't reflect back to source" by hand.
+/// [`register_routable_interface`] at startup for each concrete interface it
+/// presents. From then on the engine computes positive `fire_on` fanout
+/// targets per directive (see [`EgressDirective`]) rather than asking the host
+/// to apply "don't reflect back to source" by hand.
 ///
-/// [`register_interface`]: EngineState::register_interface
+/// [`register_routable_interface`]: EngineState::register_routable_interface
 /// [`EgressDirective`]: crate::engine::EgressDirective
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EngineState<R, A, H, D, const HELD: usize>
@@ -95,10 +95,14 @@ where
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
 }
 
-/// Returned by [`EngineState::register_interface`] when the registry is
-/// already at [`MAX_REGISTERED_INTERFACES`].
+/// Returned by [`EngineState::register_routable_interface`] when a real
+/// interface cannot be registered for engine fanout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InterfaceRegistryFull;
+pub enum RegisterInterfaceError {
+    RegistryFull,
+    NotTransmitting,
+    NotRoutable { state: ConnectionState },
+}
 
 /// The no_std stack-resident engine-state preset — the only place the
 /// default backend choices are named. Mirrors
@@ -155,15 +159,38 @@ where
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// Register an interface so the engine can target it in fanout.
-    /// Idempotent: registering an already-known id is a no-op that returns
-    /// `Ok(())`. Returns [`InterfaceRegistryFull`] only when the registry is
-    /// at [`MAX_REGISTERED_INTERFACES`] and the id is new.
-    pub fn register_interface(&mut self, id: InterfaceId) -> Result<(), InterfaceRegistryFull> {
+    /// Register a concrete interface for engine fanout after checking the
+    /// load-bearing interface contract: it must be connected enough to route and
+    /// it must be able to transmit. Idempotent: registering an already-known
+    /// interface id is a no-op that returns `Ok(())`.
+    pub fn register_routable_interface<I: Interface + ?Sized>(
+        &mut self,
+        interface: &I,
+    ) -> Result<(), RegisterInterfaceError> {
+        let connection_state = interface.state();
+        match connection_state {
+            ConnectionState::Connected | ConnectionState::Degraded => {}
+            ConnectionState::Initializing
+            | ConnectionState::Reconnecting
+            | ConnectionState::Failed
+            | ConnectionState::Disconnected => {
+                return Err(RegisterInterfaceError::NotRoutable {
+                    state: connection_state,
+                });
+            }
+        }
+
+        if !interface.capabilities().transmits {
+            return Err(RegisterInterfaceError::NotTransmitting);
+        }
+
+        let id = interface.id();
         if self.interfaces.contains(&id) {
             return Ok(());
         }
-        self.interfaces.push(id).map_err(|_| InterfaceRegistryFull)
+        self.interfaces
+            .push(id)
+            .map_err(|_| RegisterInterfaceError::RegistryFull)
     }
 
     /// Currently-registered interfaces, in registration order.
@@ -583,6 +610,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::{Capabilities, InterfaceMode, MediumKind};
     use crate::wire::{
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
     };
@@ -685,6 +713,131 @@ mod tests {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
+    }
+
+    struct StaticInterface {
+        id: InterfaceId,
+        capabilities: Capabilities,
+        state: ConnectionState,
+    }
+
+    impl StaticInterface {
+        fn new(id: InterfaceId) -> Self {
+            Self {
+                id,
+                capabilities: Capabilities {
+                    receives: true,
+                    transmits: true,
+                    forwards: true,
+                    repeats: false,
+                },
+                state: ConnectionState::Connected,
+            }
+        }
+
+        fn with_state(mut self, state: ConnectionState) -> Self {
+            self.state = state;
+            self
+        }
+
+        fn without_transmit(mut self) -> Self {
+            self.capabilities.transmits = false;
+            self
+        }
+    }
+
+    impl Interface for StaticInterface {
+        type Error = core::convert::Infallible;
+
+        fn id(&self) -> InterfaceId {
+            self.id
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            self.capabilities
+        }
+
+        fn mode(&self) -> InterfaceMode {
+            InterfaceMode::Full
+        }
+
+        fn medium_kind(&self) -> MediumKind {
+            MediumKind::Loopback
+        }
+
+        fn state(&self) -> ConnectionState {
+            self.state
+        }
+
+        fn try_read(&mut self, _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+            Ok(None)
+        }
+
+        fn write(&mut self, _packet: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn register_static_interface(state: &mut DefaultEngineState, id: InterfaceId) {
+        let iface = StaticInterface::new(id);
+        state.register_routable_interface(&iface).unwrap();
+    }
+
+    #[test]
+    fn register_routable_interface_uses_the_interface_contract() {
+        let id = InterfaceId::new([0xAB; 16]);
+        let iface = StaticInterface::new(id);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+
+        assert_eq!(state.register_routable_interface(&iface), Ok(()));
+        assert_eq!(state.registered_interfaces(), &[id]);
+    }
+
+    #[test]
+    fn register_routable_interface_accepts_degraded_transmitting_interfaces() {
+        let id = InterfaceId::new([0xBC; 16]);
+        let iface = StaticInterface::new(id).with_state(ConnectionState::Degraded);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+
+        assert_eq!(state.register_routable_interface(&iface), Ok(()));
+        assert_eq!(state.registered_interfaces(), &[id]);
+    }
+
+    #[test]
+    fn register_routable_interface_rejects_non_transmitting_interfaces() {
+        let iface = StaticInterface::new(InterfaceId::new([0xCD; 16])).without_transmit();
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+
+        assert_eq!(
+            state.register_routable_interface(&iface),
+            Err(RegisterInterfaceError::NotTransmitting)
+        );
+        assert!(state.registered_interfaces().is_empty());
+    }
+
+    #[test]
+    fn register_routable_interface_rejects_unroutable_connection_states() {
+        for (idx, connection_state) in [
+            ConnectionState::Initializing,
+            ConnectionState::Reconnecting,
+            ConnectionState::Failed,
+            ConnectionState::Disconnected,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let iface = StaticInterface::new(InterfaceId::new([idx as u8; 16]))
+                .with_state(connection_state);
+            let mut state: DefaultEngineState = DefaultEngineState::default();
+
+            assert_eq!(
+                state.register_routable_interface(&iface),
+                Err(RegisterInterfaceError::NotRoutable {
+                    state: connection_state
+                })
+            );
+            assert!(state.registered_interfaces().is_empty());
+        }
     }
 
     #[test]
@@ -874,9 +1027,7 @@ mod tests {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         // Register a peer so fanout has a target (source is [0u8;16]; the
         // engine's fire_on = registered minus source = [peer]).
-        state
-            .register_interface(InterfaceId::new([0xFE; 16]))
-            .unwrap();
+        register_static_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
         let out = ingest(
@@ -957,9 +1108,7 @@ mod tests {
         for state in [&mut left, &mut right] {
             // Identical registries: byte-identical emissions depend on
             // both engines computing the same fanout target sets.
-            state
-                .register_interface(InterfaceId::new([0xFE; 16]))
-                .unwrap();
+            register_static_interface(state, InterfaceId::new([0xFE; 16]));
             let _ = ingest(
                 state,
                 &[InboundPacket {
@@ -1046,7 +1195,7 @@ mod tests {
         //             so the engine elides the directive and the host
         //             sees nothing this tick. ==
         let mut state: DefaultEngineState = DefaultEngineState::default();
-        state.register_interface(engine_iface_id).unwrap();
+        state.register_routable_interface(&engine_half).unwrap();
         let ingest_out = ingest(&mut state, &[packet], TEST_ENTROPY);
         assert_eq!(ingest_out.accepted_announce_count(), 1);
         assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
@@ -1101,8 +1250,8 @@ mod tests {
         let mut buf_a = [0u8; MTU];
         let mut buf_b = [0u8; MTU];
         let mut state: DefaultEngineState = DefaultEngineState::default();
-        state.register_interface(engine_a_id).unwrap();
-        state.register_interface(engine_b_id).unwrap();
+        state.register_routable_interface(&engine_a).unwrap();
+        state.register_routable_interface(&engine_b).unwrap();
         {
             let mut batch = std::vec::Vec::new();
             if let Some(p) = engine_a.read_inbound(&mut buf_a, arrived_at).unwrap() {

@@ -88,7 +88,9 @@ mod tests {
     use crate::engine::DefaultEngineState;
     use crate::engine::{InboundPacket, InstantMillis};
     use crate::host::HostAdapter;
-    use crate::interfaces::InterfaceId;
+    use crate::interfaces::{
+        Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
+    };
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::WirePacketHeader;
 
@@ -228,6 +230,53 @@ mod tests {
         }
     }
 
+    struct StaticInterface {
+        id: InterfaceId,
+    }
+
+    impl StaticInterface {
+        fn new(id: InterfaceId) -> Self {
+            Self { id }
+        }
+    }
+
+    impl Interface for StaticInterface {
+        type Error = core::convert::Infallible;
+
+        fn id(&self) -> InterfaceId {
+            self.id
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                receives: true,
+                transmits: true,
+                forwards: true,
+                repeats: false,
+            }
+        }
+
+        fn mode(&self) -> InterfaceMode {
+            InterfaceMode::Full
+        }
+
+        fn medium_kind(&self) -> MediumKind {
+            MediumKind::Loopback
+        }
+
+        fn state(&self) -> ConnectionState {
+            ConnectionState::Connected
+        }
+
+        fn try_read(&mut self, _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+            Ok(None)
+        }
+
+        fn write(&mut self, _packet: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
     // A genuine RNS 1.3.1 announce (the same vector the engine module validates).
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -257,8 +306,10 @@ mod tests {
         // Register both: the engine should compute fire_on = [peer]
         // (source excluded). Without `peer` registered, fanout would be
         // empty and the engine would elide the directive entirely.
-        state.register_interface(source_interface).unwrap();
-        state.register_interface(peer_interface).unwrap();
+        let source = StaticInterface::new(source_interface);
+        let peer = StaticInterface::new(peer_interface);
+        state.register_routable_interface(&source).unwrap();
+        state.register_routable_interface(&peer).unwrap();
         let mut host = CapturingHost {
             queued: &queued,
             now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
@@ -302,7 +353,8 @@ mod tests {
             bytes: &raw,
         }];
         let mut state: DefaultEngineState = DefaultEngineState::default();
-        state.register_interface(source_interface).unwrap();
+        let source = StaticInterface::new(source_interface);
+        state.register_routable_interface(&source).unwrap();
         let mut host = CapturingHost {
             queued: &queued,
             now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),

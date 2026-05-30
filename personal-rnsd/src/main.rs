@@ -36,8 +36,8 @@ fn main() {
     let clock = Instant::now();
     let mut state: DefaultEngineState = DefaultEngineState::default();
     state
-        .register_interface(USB_INTERFACE_ID)
-        .expect("first interface always fits the registry cap");
+        .register_routable_interface(&iface)
+        .expect("opened USB interface is connected and transmits");
 
     let mut announced_routes = 0;
     loop {
