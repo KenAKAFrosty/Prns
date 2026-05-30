@@ -19,3 +19,10 @@ path = "fuzz_targets/wire_announce_parse.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "egress_reemit_round_trip"
+path = "fuzz_targets/egress_reemit_round_trip.rs"
+test = false
+doc = false
+bench = false

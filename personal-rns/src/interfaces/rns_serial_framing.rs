@@ -1,8 +1,15 @@
-//! HDLC-style byte-stuffed framing for serial-style transports.
+//! RNS reference-compatible serial framing.
 //!
-//! The byte stuffing matches RNS's [`SerialInterface`] framing
-//! exactly so a stock RNS daemon on the laptop end of a USB serial
-//! cable speaks the same wire format with zero adapter code:
+//! This module intentionally uses Reticulum's reference
+//! [`SerialInterface`] framing rather than inventing a local transport
+//! wrapper. That keeps USB serial, RS-232, and similar byte-stream
+//! hosts wire-compatible with a stock RNS daemon with zero adapter
+//! code.
+//!
+//! The reference implementation calls this HDLC framing, but the
+//! behavior here is specifically HDLC-like octet-stuffed framing: frame
+//! delimiters and escapes live at the byte level. It is not KISS
+//! framing, and it is not bit-synchronous HDLC.
 //!
 //! - [`FLAG`] (`0x7E`) is the frame delimiter — one before each frame
 //!   and one after.
@@ -11,19 +18,19 @@
 //!   raw byte XOR-ed with [`ESC_MASK`] (`0x20`).
 //!
 //! That gives `FLAG <escaped bytes> FLAG` on the wire. Empty frames
-//! (`FLAG FLAG` with nothing between them) are valid HDLC keepalives
+//! (`FLAG FLAG` with nothing between them) are valid keepalives
 //! and the streaming decoder yields them; callers that don't care
 //! filter them out.
 //!
 //! Worst-case framed length is `2 + 2 * payload.len()` (every byte
 //! escaped) and best case is `2 + payload.len()`.
 //!
-//! HDLC framing for the serial interface in RNS:
+//! Reference RNS serial framing:
 //! https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L38-L48
 
 use heapless::Vec;
 
-/// HDLC frame delimiter.
+/// RNS serial frame delimiter.
 pub const FLAG: u8 = 0x7E;
 pub const ESC: u8 = 0x7D;
 /// XOR mask applied after [`ESC`] to recover the original byte (and
@@ -44,7 +51,7 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
-/// Encode `input` as a single HDLC frame into `output`. Returns the
+/// Encode `input` as a single RNS serial frame into `output`. Returns the
 /// number of bytes written, including the leading and trailing
 /// delimiters.
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
@@ -81,10 +88,10 @@ pub enum DecodeError {
     FrameTooBig,
 }
 
-/// Streaming HDLC decoder. Feed bytes one at a time as they arrive
-/// from the byte transport; on each [`FLAG`] that closes a frame,
-/// [`feed`] returns the decoded payload, borrowing from the decoder's
-/// internal buffer.
+/// Streaming RNS serial framing decoder. Feed bytes one at a time as
+/// they arrive from the byte transport; on each [`FLAG`] that closes a
+/// frame, [`feed`] returns the decoded payload, borrowing from the
+/// decoder's internal buffer.
 ///
 /// `FRAME_CAP` is the largest in-progress frame the decoder will
 /// accept. Serial-style RNS interfaces should size this at least at
@@ -94,21 +101,21 @@ pub enum DecodeError {
 /// matches RNS's reference behavior so the decoder can be plugged into
 /// an already-running byte stream without manual resync.
 ///
-/// [`feed`]: HdlcDecoder::feed
+/// [`feed`]: RnsSerialDecoder::feed
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HdlcDecoder<const FRAME_CAP: usize> {
+pub struct RnsSerialDecoder<const FRAME_CAP: usize> {
     buffer: Vec<u8, FRAME_CAP>,
     in_frame: bool,
     saw_escape: bool,
 }
 
-impl<const FRAME_CAP: usize> Default for HdlcDecoder<FRAME_CAP> {
+impl<const FRAME_CAP: usize> Default for RnsSerialDecoder<FRAME_CAP> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<const FRAME_CAP: usize> HdlcDecoder<FRAME_CAP> {
+impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
     pub const fn new() -> Self {
         Self {
             buffer: Vec::new(),
@@ -129,7 +136,7 @@ impl<const FRAME_CAP: usize> HdlcDecoder<FRAME_CAP> {
     /// - `Ok(Some(frame))` — a frame just closed; the slice borrows
     ///   from `self` and stays valid until the next call to
     ///   [`feed`](Self::feed) or [`reset`](Self::reset). Empty frames
-    ///   (`FLAG FLAG`) are valid HDLC keepalives and surface here as
+    ///   (`FLAG FLAG`) are valid keepalives and surface here as
     ///   `Some(&[])`.
     /// - `Err(FrameTooBig)` — the in-progress frame exceeded
     ///   `FRAME_CAP`; the decoder auto-resets and the next `FLAG`
@@ -185,7 +192,7 @@ mod tests {
     const TEST_FRAME_CAP: usize = 1024;
 
     fn decode_all(bytes: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
-        let mut decoder: HdlcDecoder<TEST_FRAME_CAP> = HdlcDecoder::new();
+        let mut decoder: RnsSerialDecoder<TEST_FRAME_CAP> = RnsSerialDecoder::new();
         let mut frames = std::vec::Vec::new();
         for &b in bytes {
             if let Some(frame) = decoder.feed(b).unwrap() {
@@ -269,6 +276,14 @@ mod tests {
     }
 
     #[test]
+    fn decoder_xors_escape_mask_for_noncanonical_escaped_bytes() {
+        let escaped_byte_with_mask_bit_already_set = 0x61;
+        let bytes = [FLAG, ESC, escaped_byte_with_mask_bit_already_set, FLAG];
+        let frames = decode_all(&bytes);
+        assert_eq!(frames, std::vec![std::vec![0x41]]);
+    }
+
+    #[test]
     fn decoder_ignores_bytes_before_the_first_flag() {
         let bytes = [0xAA, 0xBB, FLAG, 0x01, FLAG];
         let frames = decode_all(&bytes);
@@ -288,7 +303,7 @@ mod tests {
 
     #[test]
     fn frame_exceeding_cap_returns_frame_too_big_and_auto_resets() {
-        let mut decoder: HdlcDecoder<2> = HdlcDecoder::new();
+        let mut decoder: RnsSerialDecoder<2> = RnsSerialDecoder::new();
         // Open a frame and push past the cap.
         assert_eq!(decoder.feed(FLAG).unwrap(), None);
         assert_eq!(decoder.feed(0x01).unwrap(), None);
@@ -359,7 +374,7 @@ mod tests {
             let n = encode(&payload, &mut framed).unwrap();
             let framed = &framed[..n];
 
-            let mut decoder: HdlcDecoder<TEST_FRAME_CAP> = HdlcDecoder::new();
+            let mut decoder: RnsSerialDecoder<TEST_FRAME_CAP> = RnsSerialDecoder::new();
             let mut frames = std::vec::Vec::new();
             for chunk in framed.chunks(chunk_size) {
                 for &b in chunk {

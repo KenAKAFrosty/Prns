@@ -427,6 +427,37 @@ mod tests {
         assert!(payload.is_empty());
     }
 
+    #[test]
+    fn write_rejects_one_byte_short_header_buffers() {
+        let type1 = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Announce,
+            hops: 3,
+            transport_id: None,
+            destination: DestinationHash::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
+            context: Context::None,
+        };
+        let mut type1_short = [0u8; 2 + TRUNCATED_HASH_BYTE_LEN];
+        assert_eq!(
+            type1.write(&mut type1_short),
+            Err(WireError::BufferTooShort)
+        );
+
+        let type2 = WirePacketHeader {
+            transport_id: Some(TransportId::new([0x11; TRUNCATED_HASH_BYTE_LEN])),
+            destination: DestinationHash::new([0x22; TRUNCATED_HASH_BYTE_LEN]),
+            ..type1
+        };
+        let mut type2_short = [0u8; 2 + 2 * TRUNCATED_HASH_BYTE_LEN];
+        assert_eq!(
+            type2.write(&mut type2_short),
+            Err(WireError::BufferTooShort)
+        );
+    }
+
     /// Byte-exact decode of a genuine RNS 1.3.1 announce. Generated offline:
     /// `RNS.Destination(Identity(), IN, SINGLE, "personal", "wire_test")
     ///  .announce(app_data=b"hello-personal", send=False)` then `pack()`.

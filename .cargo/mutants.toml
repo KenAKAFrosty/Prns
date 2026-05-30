@@ -2,6 +2,8 @@
 # modules until the suite has enough experience triaging survivors.
 examine_globs = [
     "personal-rns/src/wire/mod.rs",
+    "personal-rns/src/interfaces/rns_serial_framing.rs",
+    "personal-rns/src/engine/egress.rs",
     "personal-rns/src/routing/announce/acceptance.rs",
 ]
 

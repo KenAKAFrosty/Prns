@@ -1,12 +1,11 @@
-//! Transport-free clock + entropy host for std smokes.
+//! Real-clock host for std platforms.
 //!
 //! Supplies the monotonic clock and an OS CSPRNG (via `getrandom`) the engine
-//! needs, with no transport: it reports no inbound packets and refuses to
-//! transmit a non-empty batch — both honest, not faked. Empty pumps succeed
-//! (the engine emits nothing when there's nothing scheduled), so the steady
-//! idle loop runs cleanly. The daemon's real USB transport lives in the `usb`
-//! submodule (`UsbHost`); `StdHost` is what the clock-only smokes and the
-//! tokio runtime driver run on.
+//! needs. No transport is wired yet, so it reports no inbound packets and
+//! refuses to transmit any non-empty batch until a real interface lands —
+//! both reported honestly rather than faked. Empty pumps succeed (the engine
+//! emits nothing when there's nothing scheduled), so the steady idle loop
+//! runs cleanly.
 
 #[cfg(feature = "std-host")]
 pub mod usb;

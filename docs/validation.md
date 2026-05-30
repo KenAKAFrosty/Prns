@@ -23,6 +23,9 @@ Current seed coverage:
 
 - `wire`: arbitrary typed packet headers must write and parse back to the same
   value.
+- `interfaces::rns_serial_framing`: arbitrary payloads must round-trip through
+  the RNS reference-compatible byte-stuffed serial framing, including arbitrary
+  stream chunk boundaries.
 
 ## Kani Proofs
 
@@ -32,12 +35,17 @@ them. Run the focused proofs with:
 ```sh
 cargo kani -p personal-rns --harness hops_above_pathfinder_m_always_reject_before_any_other_gate
 cargo kani -p personal-rns --harness local_destination_rejects_when_hops_are_in_range
+cargo kani -p personal-rns --harness reemit_announce_exact_buffer_serializes_header_and_payload_length
+cargo kani -p personal-rns --harness reemit_announce_short_buffer_rejects_before_a_full_packet_is_written
 ```
 
 Current proof coverage:
 
 - `announce::acceptance`: max-hop rejection wins before later gates, and local
   destinations reject once hops are in range.
+- `engine::egress`: a re-emitted announce with an exact buffer always produces
+  a well-formed broadcast announce packet, and a one-byte-short buffer rejects
+  before claiming a full packet was written.
 
 ## Fuzzing
 
@@ -47,18 +55,24 @@ workspace build. Use a nightly toolchain:
 ```sh
 cargo +nightly fuzz check
 cargo +nightly fuzz run wire_announce_parse -- -max_total_time=30
+cargo +nightly fuzz run egress_reemit_round_trip -- -max_total_time=30
 ```
 
-Current target:
+Current targets:
 
 - `wire_announce_parse`: arbitrary bytes enter the wire parser; any parsed
   header is re-encoded, and announce-shaped payloads are passed through announce
   validation. The corpus includes a real RNS announce vector as a hex seed.
+- `egress_reemit_round_trip`: fuzzed hop counts, fanout targets, and output
+  slack exercise re-emitted real announces. Serialization must preserve the
+  announce payload, produce the expected broadcast header, retain
+  engine-computed `fire_on` targets, and reject one-byte-short buffers.
 
 ## Mutation Testing
 
 `cargo-mutants` reads `.cargo/mutants.toml` from the source-tree root. The
-checked-in config narrows the first lane to wire parsing and announce acceptance:
+checked-in config narrows the first lane to contract-heavy surfaces: wire
+parsing, RNS serial framing, typed egress, and announce acceptance:
 
 ```sh
 cargo mutants --list-files

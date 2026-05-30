@@ -65,9 +65,11 @@ pub trait Interface {
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error>;
 
     /// Push one Reticulum packet to the transport. The implementation
-    /// applies whatever transport-level framing it uses (HDLC for TCP
-    /// streams, COBS for serial, raw frames for datagram media, …);
-    /// the caller passes the raw Reticulum bytes only.
+    /// applies whatever transport-level framing it uses (RNS serial
+    /// framing for reference-compatible serial byte streams, raw
+    /// frames for datagram media, a host-specific wrapper where
+    /// appropriate, …); the caller passes the raw Reticulum bytes
+    /// only.
     ///
     /// The semantic of "push" depends on the medium: a point-to-point
     /// interface delivers to one peer, a shared-broadcast interface

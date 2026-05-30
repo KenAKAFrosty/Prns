@@ -3,22 +3,20 @@
 //!
 //! The C6 has a built-in USB Serial/JTAG controller that presents to a
 //! laptop as a CDC-ACM device (`/dev/ttyACM*` on Linux). Outgoing
-//! Reticulum packets are HDLC-framed (matching RNS's serial wire
-//! exactly) and pushed to the peripheral; incoming bytes are fed to a
-//! streaming `HdlcDecoder` that surfaces one complete Reticulum packet
-//! per `try_read` call.
+//! Reticulum packets are wrapped in RNS reference-compatible serial
+//! framing and pushed to the peripheral; incoming bytes are fed to a
+//! streaming [`RnsSerialDecoder`] that surfaces one complete Reticulum
+//! packet per `try_read` call.
 //!
 //! This file ships the [`Interface`] impl wired against the real
-//! `esp_hal::usb_serial_jtag::UsbSerialJtag` peripheral but does NOT
-//! wire it into the C6 main loop yet — that's the follow-up slice
-//! that registers the interface with the engine, ingests a synthetic
-//! announce, and watches the framed bytes appear on the host's
-//! `/dev/ttyACM*` device.
+//! `esp_hal::usb_serial_jtag::UsbSerialJtag` peripheral so the C6 main
+//! loop can register it with the engine and speak the same serial wire
+//! format as a stock RNS `SerialInterface`.
 
 use esp_hal::usb_serial_jtag::UsbSerialJtag;
 use esp_hal::Blocking;
 
-use personal_rns::interfaces::hdlc::{self, HdlcDecoder};
+use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use personal_rns::interfaces::{
     Capabilities, Interface, InterfaceId, InterfaceMode, InterfaceState, MediumKind,
     PointToPointInterface,
@@ -32,15 +30,15 @@ pub enum Esp32UsbSerialError {
     PayloadLargerThanMtu,
 }
 
-/// Size the encode scratch at the HDLC worst case (every payload byte
-/// escaped) for an MTU-sized packet. Const-fn keeps this a stack
-/// constant rather than a runtime computation.
-const ENCODE_BUF_LEN: usize = hdlc::max_encoded_len(MTU);
+/// Size the encode scratch at the RNS serial framing worst case (every
+/// payload byte escaped) for an MTU-sized packet. Const-fn keeps this a
+/// stack constant rather than a runtime computation.
+const ENCODE_BUF_LEN: usize = rns_serial_framing::max_encoded_len(MTU);
 
 pub struct Esp32UsbSerialInterface<'d> {
     id: InterfaceId,
     usb: UsbSerialJtag<'d, Blocking>,
-    decoder: HdlcDecoder<MTU>,
+    decoder: RnsSerialDecoder<MTU>,
 }
 
 impl<'d> Esp32UsbSerialInterface<'d> {
@@ -48,7 +46,7 @@ impl<'d> Esp32UsbSerialInterface<'d> {
         Self {
             id,
             usb,
-            decoder: HdlcDecoder::new(),
+            decoder: RnsSerialDecoder::new(),
         }
     }
 }
@@ -87,7 +85,7 @@ impl Interface for Esp32UsbSerialInterface<'_> {
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
         // Drain bytes one at a time from the USB RX FIFO and feed each
-        // to the HDLC decoder. As soon as a frame closes, copy the
+        // to the RNS serial decoder. As soon as a frame closes, copy the
         // decoded payload into the caller's buf and return.
         //
         // The decoder's state survives across `try_read` calls, so a
@@ -107,7 +105,7 @@ impl Interface for Esp32UsbSerialInterface<'_> {
                 Ok(None) => continue,
                 Ok(Some(frame)) => {
                     if frame.is_empty() {
-                        // HDLC keepalive — skip and keep draining the FIFO.
+                        // Keepalive — skip and keep draining the FIFO.
                         continue;
                     }
                     if frame.len() > buf.len() {
@@ -117,7 +115,7 @@ impl Interface for Esp32UsbSerialInterface<'_> {
                     buf[..n].copy_from_slice(frame);
                     return Ok(Some(n));
                 }
-                Err(hdlc::DecodeError::FrameTooBig) => {
+                Err(rns_serial_framing::DecodeError::FrameTooBig) => {
                     return Err(Esp32UsbSerialError::FrameLargerThanInterfaceBuffer);
                 }
             }
@@ -126,7 +124,7 @@ impl Interface for Esp32UsbSerialInterface<'_> {
 
     fn write(&mut self, packet: &[u8]) -> Result<(), Self::Error> {
         let mut framed = [0u8; ENCODE_BUF_LEN];
-        let n = hdlc::encode(packet, &mut framed)
+        let n = rns_serial_framing::encode(packet, &mut framed)
             .map_err(|_| Esp32UsbSerialError::PayloadLargerThanMtu)?;
         // The peripheral's Error type is `Infallible`, so this write
         // can't fail at the Rust level; we still discard the Result

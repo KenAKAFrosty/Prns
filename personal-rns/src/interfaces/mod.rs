@@ -18,19 +18,19 @@
 //! - **Concrete impls** (`loopback/`): in-process loopback variants
 //!   live together since they share semantics and vary only by
 //!   environment.
-//! - **Framing helpers** (`hdlc`): byte-stuffed framing used by
-//!   serial-style transports (USB CDC, RS-232, etc.); not an
-//!   `Interface` itself, but a building block for those that frame
-//!   over byte streams.
+//! - **Framing helpers** (`rns_serial_framing`): RNS reference-compatible
+//!   byte-stuffed framing used by serial-style transports (USB CDC,
+//!   RS-232, etc.); not an `Interface` itself, but a building block for
+//!   those that frame over byte streams.
 
 pub mod capabilities;
-pub mod hdlc;
 pub mod id;
 pub mod interface;
 pub mod loopback;
 pub mod medium;
 pub mod mode;
 pub mod point_to_point;
+pub mod rns_serial_framing;
 pub mod shared_broadcast;
 pub mod state;
 

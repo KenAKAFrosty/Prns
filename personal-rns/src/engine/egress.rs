@@ -21,7 +21,7 @@ use crate::wire::{
     HEADER_LEN,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EgressSerializeError {
     BufferTooShort,
 }
@@ -163,6 +163,30 @@ mod tests {
     }
 
     #[test]
+    fn to_wire_with_exactly_sized_buffer_succeeds() {
+        let raw = hx(RAW_ANNOUNCE);
+        let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
+        let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
+        let exact_len = HEADER_LEN + announce.wire_len();
+        let targets = [iface(0xAC)];
+
+        let directive = EgressDirective::ReemitAnnounce {
+            announce,
+            emit_hops: 9,
+            fire_on: &targets,
+        };
+
+        let mut exact_buf = std::vec![0u8; exact_len];
+        let written = directive.to_wire(&mut exact_buf).unwrap();
+        assert_eq!(written, exact_len);
+
+        let (header, payload) = WirePacketHeader::parse(&exact_buf).unwrap();
+        assert_eq!(header.hops, 9);
+        assert_eq!(header.destination, orig_header.destination);
+        assert_eq!(payload, orig_payload);
+    }
+
+    #[test]
     fn fire_on_accessor_returns_the_engine_supplied_targets() {
         let raw = hx(RAW_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
@@ -201,5 +225,87 @@ mod tests {
 
         assert_eq!(re_header.hops, 5);
         assert_eq!(re_announce, orig_announce);
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+    use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+    use crate::routing::announce::{
+        AnnounceId, DottedNameHash, IdentityPublicKeys, ANNOUNCE_ID_WIRE_LEN,
+    };
+    use crate::wire::{
+        DestinationHash, ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, SIGNATURE_LEN,
+    };
+
+    const APP_DATA_LEN: usize = 2;
+    const ANNOUNCE_WIRE_LEN: usize = ANNOUNCE_PUBLIC_KEY_LEN
+        + DOTTED_NAME_HASH_LEN
+        + ANNOUNCE_ID_WIRE_LEN
+        + SIGNATURE_LEN
+        + APP_DATA_LEN;
+    const EXACT_REEMIT_LEN: usize = HEADER_LEN + ANNOUNCE_WIRE_LEN;
+    static APP_DATA: [u8; APP_DATA_LEN] = [0xA5, 0x5A];
+
+    fn arbitrary_announce() -> Announce<'static> {
+        Announce {
+            destination: DestinationHash::new(kani::any()),
+            public_keys: IdentityPublicKeys {
+                encryption: X25519PublicKey(kani::any()),
+                signing: Ed25519PublicKey(kani::any()),
+            },
+            dotted_name_hash: DottedNameHash::new(kani::any()),
+            announce_id: AnnounceId::from_wire(kani::any()),
+            maybe_ratchet: None,
+            signature: Ed25519Signature(kani::any()),
+            app_data: &APP_DATA,
+        }
+    }
+
+    #[kani::proof]
+    fn reemit_announce_exact_buffer_serializes_header_and_payload_length() {
+        let announce = arbitrary_announce();
+        let emit_hops: u8 = kani::any();
+        let targets = [InterfaceId::new(kani::any()), InterfaceId::new(kani::any())];
+        let directive = EgressDirective::ReemitAnnounce {
+            announce: announce.clone(),
+            emit_hops,
+            fire_on: &targets,
+        };
+
+        let mut buf = [0u8; EXACT_REEMIT_LEN];
+        let written = directive.to_wire(&mut buf).unwrap();
+        assert_eq!(written, EXACT_REEMIT_LEN);
+
+        let (header, payload) = WirePacketHeader::parse(&buf).unwrap();
+        assert_eq!(header.ifac_flag, IfacFlag::Open);
+        assert_eq!(header.context_flag, ContextFlag::Unset);
+        assert_eq!(header.propagation, PropagationType::Broadcast);
+        assert_eq!(header.destination_type, DestinationType::Single);
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.hops, emit_hops);
+        assert_eq!(header.transport_id, None);
+        assert_eq!(header.destination, announce.destination);
+        assert_eq!(header.context, Context::None);
+        assert_eq!(payload.len(), ANNOUNCE_WIRE_LEN);
+        assert_eq!(directive.fire_on(), &targets);
+    }
+
+    #[kani::proof]
+    fn reemit_announce_short_buffer_rejects_before_a_full_packet_is_written() {
+        let announce = arbitrary_announce();
+        let targets = [InterfaceId::new(kani::any())];
+        let directive = EgressDirective::ReemitAnnounce {
+            announce,
+            emit_hops: kani::any(),
+            fire_on: &targets,
+        };
+
+        let mut buf = [0u8; EXACT_REEMIT_LEN - 1];
+        assert_eq!(
+            directive.to_wire(&mut buf),
+            Err(EgressSerializeError::BufferTooShort)
+        );
     }
 }
