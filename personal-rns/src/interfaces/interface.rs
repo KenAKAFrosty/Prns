@@ -1,5 +1,5 @@
 use crate::engine::{InboundPacket, InstantMillis};
-use crate::interfaces::{Capabilities, InterfaceId, InterfaceMode, InterfaceState, MediumKind};
+use crate::interfaces::{Capabilities, ConnectionState, InterfaceId, InterfaceMode, MediumKind};
 
 /// Base contract every transport interface honors. Exposes the declared
 /// shape (id, capabilities, mode, medium), the observable lifecycle
@@ -35,7 +35,7 @@ pub trait Interface {
     fn medium_kind(&self) -> MediumKind;
 
     /// Current lifecycle state.
-    fn state(&self) -> InterfaceState;
+    fn state(&self) -> ConnectionState;
 
     /// Identity of the parent interface, if this one was spawned by a
     /// server-style interface (e.g., a TCP-client interface spawned by

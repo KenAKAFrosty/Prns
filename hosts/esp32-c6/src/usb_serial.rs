@@ -18,7 +18,7 @@ use esp_hal::Blocking;
 
 use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use personal_rns::interfaces::{
-    Capabilities, Interface, InterfaceId, InterfaceMode, InterfaceState, MediumKind,
+    Capabilities, Interface, InterfaceId, InterfaceMode, ConnectionState, MediumKind,
     PointToPointInterface,
 };
 use personal_rns::wire::MTU;
@@ -77,10 +77,10 @@ impl Interface for Esp32UsbSerialInterface<'_> {
         MediumKind::DirectPeer
     }
 
-    fn state(&self) -> InterfaceState {
+    fn state(&self) -> ConnectionState {
         // Plug/unplug lifecycle detection has not landed; while the USB
         // peripheral is owned, report Connected.
-        InterfaceState::Connected
+        ConnectionState::Connected
     }
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {

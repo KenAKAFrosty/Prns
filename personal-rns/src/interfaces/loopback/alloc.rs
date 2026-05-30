@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use crate::interfaces::{
-    Capabilities, Interface, InterfaceId, InterfaceMode, InterfaceState, MediumKind,
+    Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     PointToPointInterface,
 };
 
@@ -34,7 +34,7 @@ pub enum LoopbackError {
 /// | `capabilities` | receives, transmits — no forwards, no repeats |
 /// | `mode`        | [`InterfaceMode::PointToPoint`]            |
 /// | `medium_kind` | [`MediumKind::Loopback`]                   |
-/// | `state`       | [`InterfaceState::Connected`] (constant)   |
+/// | `connection_state`       | [`ConnectionState::Connected`] (constant)   |
 ///
 /// The hard-coded defaults match the most common test use case: a
 /// transparent endpoint pair, not a routing relay. A future
@@ -49,7 +49,7 @@ pub struct LoopbackInterface {
 impl LoopbackInterface {
     /// Build a connected pair of interfaces with the supplied
     /// identities. Each end's `write` lands at the other end's next
-    /// `try_read`. Both ends are returned in `InterfaceState::Connected`.
+    /// `try_read`. Both ends are returned in `ConnectionState::Connected`.
     pub fn pair(left_id: InterfaceId, right_id: InterfaceId) -> (Self, Self) {
         let left_to_right = Rc::new(RefCell::new(VecDeque::new()));
         let right_to_left = Rc::new(RefCell::new(VecDeque::new()));
@@ -91,13 +91,13 @@ impl Interface for LoopbackInterface {
         MediumKind::Loopback
     }
 
-    fn state(&self) -> InterfaceState {
+    fn state(&self) -> ConnectionState {
         // In-process pair: both halves exist immediately on
         // construction and have no failure mode. We report
         // `Connected` unconditionally. A configurable variant could
         // model intentional `Disconnected` transitions later (useful
         // for hot-reload testing).
-        InterfaceState::Connected
+        ConnectionState::Connected
     }
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
@@ -174,7 +174,7 @@ mod tests {
         for end in [&left, &right] {
             assert_eq!(end.medium_kind(), MediumKind::Loopback);
             assert_eq!(end.mode(), InterfaceMode::PointToPoint);
-            assert_eq!(end.state(), InterfaceState::Connected);
+            assert_eq!(end.state(), ConnectionState::Connected);
             assert_eq!(end.parent_interface(), None);
             assert_eq!(
                 end.capabilities(),

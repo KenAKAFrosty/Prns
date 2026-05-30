@@ -11,7 +11,7 @@
 //! decisions.
 //!
 //! Layout:
-//! - **Data shapes** (`capabilities`, `id`, `medium`, `mode`, `state`):
+//! - **Data shapes** (`capabilities`, `id`, `medium`, `mode`, `connection_state`):
 //!   the inert types every interface presents.
 //! - **Traits** (`interface`, `point_to_point`, `shared_broadcast`):
 //!   the contract every concrete impl signs.
@@ -24,6 +24,7 @@
 //!   those that frame over byte streams.
 
 pub mod capabilities;
+pub mod connection_state;
 pub mod id;
 pub mod interface;
 pub mod loopback;
@@ -32,16 +33,15 @@ pub mod mode;
 pub mod point_to_point;
 pub mod rns_serial_framing;
 pub mod shared_broadcast;
-pub mod state;
 
 pub use capabilities::Capabilities;
+pub use connection_state::ConnectionState;
 pub use id::InterfaceId;
 pub use interface::Interface;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 pub use point_to_point::PointToPointInterface;
 pub use shared_broadcast::SharedBroadcastInterface;
-pub use state::InterfaceState;
 
 pub use loopback::{NoAllocLoopback, NoAllocLoopbackError, NoAllocLoopbackQueue};
 

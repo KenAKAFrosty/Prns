@@ -20,7 +20,7 @@ use personal_rns::engine::{InboundPacket, InstantMillis};
 use personal_rns::host::HostAdapter;
 use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use personal_rns::interfaces::{
-    Capabilities, Interface, InterfaceId, InterfaceMode, InterfaceState, MediumKind,
+    Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     PointToPointInterface,
 };
 use personal_rns::wire::MTU;
@@ -43,6 +43,7 @@ pub struct SerialUsbInterface<P: Read + Write> {
     id: InterfaceId,
     port: P,
     decoder: RnsSerialDecoder<MTU>,
+    state: ConnectionState,
 }
 
 impl SerialUsbInterface<Box<dyn serialport::SerialPort>> {
@@ -65,6 +66,7 @@ impl<P: Read + Write> SerialUsbInterface<P> {
             id,
             port,
             decoder: RnsSerialDecoder::new(),
+            state: ConnectionState::Connected,
         }
     }
 }
@@ -95,10 +97,8 @@ impl<P: Read + Write> Interface for SerialUsbInterface<P> {
         MediumKind::DirectPeer
     }
 
-    fn state(&self) -> InterfaceState {
-        // Plug/unplug lifecycle detection is a later slice; while the port is
-        // open we report Connected.
-        InterfaceState::Connected
+    fn state(&self) -> ConnectionState {
+        self.state
     }
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
@@ -128,8 +128,20 @@ impl<P: Read + Write> Interface for SerialUsbInterface<P> {
                         return Err(SerialUsbError::FrameLargerThanInterfaceBuffer);
                     }
                 },
-                Err(e) if e.kind() == io::ErrorKind::TimedOut => return Ok(None),
-                Err(e) => return Err(SerialUsbError::Io(e)),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::TimedOut
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(e) => {
+                    self.state = ConnectionState::Failed;
+                    return Err(SerialUsbError::Io(e));
+                }
             }
         }
     }
@@ -138,9 +150,10 @@ impl<P: Read + Write> Interface for SerialUsbInterface<P> {
         let mut framed = [0u8; ENCODE_BUF_LEN];
         let n = rns_serial_framing::encode(packet, &mut framed)
             .map_err(|_| SerialUsbError::PayloadLargerThanMtu)?;
-        self.port
-            .write_all(&framed[..n])
-            .map_err(SerialUsbError::Io)
+        self.port.write_all(&framed[..n]).map_err(|e| {
+            self.state = ConnectionState::Failed;
+            SerialUsbError::Io(e)
+        })
     }
 }
 
@@ -225,16 +238,24 @@ mod tests {
     struct MockPort {
         rx: Cursor<Vec<u8>>,
         tx: Vec<u8>,
+        read_error: Option<io::ErrorKind>,
+        write_error: Option<io::ErrorKind>,
     }
 
     impl Read for MockPort {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if let Some(kind) = self.read_error {
+                return Err(io::Error::from(kind));
+            }
             self.rx.read(buf)
         }
     }
 
     impl Write for MockPort {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if let Some(kind) = self.write_error {
+                return Err(io::Error::from(kind));
+            }
             self.tx.extend_from_slice(buf);
             Ok(buf.len())
         }
@@ -249,8 +270,28 @@ mod tests {
             MockPort {
                 rx: Cursor::new(rx),
                 tx: Vec::new(),
+                read_error: None,
+                write_error: None,
             },
         )
+    }
+
+    fn mock_with_read_error(kind: io::ErrorKind) -> SerialUsbInterface<MockPort> {
+        let mut iface = mock(Vec::new());
+        iface.port.read_error = Some(kind);
+        iface
+    }
+
+    fn mock_with_write_error(kind: io::ErrorKind) -> SerialUsbInterface<MockPort> {
+        let mut iface = mock(Vec::new());
+        iface.port.write_error = Some(kind);
+        iface
+    }
+
+    #[test]
+    fn from_io_starts_connected() {
+        let iface = mock(Vec::new());
+        assert_eq!(iface.state(), ConnectionState::Connected);
     }
 
     #[test]
@@ -273,6 +314,7 @@ mod tests {
         assert_eq!(&buf[..payload.len()], &payload);
         // Stream exhausted (Cursor returns Ok(0)) → idle.
         assert_eq!(iface.try_read(&mut buf).unwrap(), None);
+        assert_eq!(iface.state(), ConnectionState::Connected);
     }
 
     #[test]
@@ -289,6 +331,34 @@ mod tests {
         let mut buf = [0u8; MTU];
         assert_eq!(iface.try_read(&mut buf).unwrap(), Some(payload.len()));
         assert_eq!(&buf[..payload.len()], &payload);
+        assert_eq!(iface.state(), ConnectionState::Connected);
+    }
+
+    #[test]
+    fn try_read_nonfatal_idle_errors_do_not_mark_failed() {
+        for kind in [
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::WouldBlock,
+            io::ErrorKind::Interrupted,
+        ] {
+            let mut iface = mock_with_read_error(kind);
+
+            let mut buf = [0u8; MTU];
+            assert_eq!(iface.try_read(&mut buf).unwrap(), None);
+            assert_eq!(iface.state(), ConnectionState::Connected);
+        }
+    }
+
+    #[test]
+    fn try_read_io_error_marks_failed() {
+        let mut iface = mock_with_read_error(io::ErrorKind::BrokenPipe);
+
+        let mut buf = [0u8; MTU];
+        assert!(matches!(
+            iface.try_read(&mut buf),
+            Err(SerialUsbError::Io(_))
+        ));
+        assert_eq!(iface.state(), ConnectionState::Failed);
     }
 
     #[test]
@@ -308,5 +378,14 @@ mod tests {
                 .count(),
             2
         );
+        assert_eq!(iface.state(), ConnectionState::Connected);
+    }
+
+    #[test]
+    fn write_io_error_marks_failed() {
+        let mut iface = mock_with_write_error(io::ErrorKind::BrokenPipe);
+
+        assert!(matches!(iface.write(&[0xAA]), Err(SerialUsbError::Io(_))));
+        assert_eq!(iface.state(), ConnectionState::Failed);
     }
 }

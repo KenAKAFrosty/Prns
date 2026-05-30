@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::interfaces::loopback::LoopbackError;
 use crate::interfaces::{
-    Capabilities, Interface, InterfaceId, InterfaceMode, InterfaceState, MediumKind,
+    Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     PointToPointInterface,
 };
 
@@ -72,8 +72,8 @@ impl Interface for ThreadedLoopback {
         MediumKind::Loopback
     }
 
-    fn state(&self) -> InterfaceState {
-        InterfaceState::Connected
+    fn state(&self) -> ConnectionState {
+        ConnectionState::Connected
     }
 
     fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
@@ -163,7 +163,7 @@ mod tests {
         for end in [&left, &right] {
             assert_eq!(end.medium_kind(), MediumKind::Loopback);
             assert_eq!(end.mode(), InterfaceMode::PointToPoint);
-            assert_eq!(end.state(), InterfaceState::Connected);
+            assert_eq!(end.state(), ConnectionState::Connected);
             assert_eq!(end.parent_interface(), None);
             assert_eq!(
                 end.capabilities(),
