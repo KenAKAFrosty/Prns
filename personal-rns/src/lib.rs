@@ -14,8 +14,6 @@ extern crate alloc;
 
 pub mod crypto;
 pub mod engine;
-pub mod host;
 pub mod interfaces;
 pub mod routing;
-mod runtime;
 pub mod wire;

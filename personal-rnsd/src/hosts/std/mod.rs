@@ -1,4 +1,4 @@
-//! Real-clock host for std platforms.
+//! Real-clock engine driver for std platforms.
 //!
 //! Supplies the monotonic clock and an OS CSPRNG (via `getrandom`) the engine
 //! needs. No transport is wired yet, so it reports no inbound packets and
@@ -12,15 +12,14 @@ pub mod usb;
 
 use std::time::Instant;
 
-use personal_rns::engine::{InboundPacket, InstantMillis};
-use personal_rns::host::EngineHost;
+use personal_rns::engine::{EngineDriver, InboundPacket, InstantMillis};
 use personal_rns::interfaces::InterfaceId;
 
-pub struct StdHost {
+pub struct StdEngineDriver {
     base: Instant,
 }
 
-impl StdHost {
+impl StdEngineDriver {
     pub fn new() -> Self {
         Self {
             base: Instant::now(),
@@ -28,14 +27,14 @@ impl StdHost {
     }
 }
 
-impl Default for StdHost {
+impl Default for StdEngineDriver {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StdHostError {
+pub enum StdEngineDriverError {
     /// Transmission was requested, but no transport is configured yet.
     NoTransport,
     /// The OS RNG refused to fill the entropy buffer. Vanishingly rare on
@@ -44,8 +43,8 @@ pub enum StdHostError {
     EntropySourceUnavailable,
 }
 
-impl EngineHost for StdHost {
-    type Error = StdHostError;
+impl EngineDriver for StdEngineDriver {
+    type Error = StdEngineDriverError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
         Ok(InstantMillis(self.base.elapsed().as_millis() as u64))
@@ -55,7 +54,7 @@ impl EngineHost for StdHost {
         // OS CSPRNG — same source RNS uses (`os.urandom`). Linux/macOS read
         // `getrandom(2)`, Windows reads `BCryptGenRandom`; both are the
         // documented "secure random" entry points.
-        getrandom::getrandom(buf).map_err(|_| StdHostError::EntropySourceUnavailable)
+        getrandom::getrandom(buf).map_err(|_| StdEngineDriverError::EntropySourceUnavailable)
     }
 
     fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
@@ -69,7 +68,7 @@ impl EngineHost for StdHost {
     ) -> Result<(), Self::Error> {
         // No transport wired yet — every egress hits this and fails
         // honestly. Once a real interface lands, this method dispatches
-        // the bytes per host fanout policy.
-        Err(StdHostError::NoTransport)
+        // the bytes per driver fanout policy.
+        Err(StdEngineDriverError::NoTransport)
     }
 }

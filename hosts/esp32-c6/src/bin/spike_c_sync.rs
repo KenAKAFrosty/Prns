@@ -10,7 +10,7 @@
 //! ```text
 //! loop {
 //!   driver.pump();      // drain USB RX FIFO -> decode -> zero-copy sink (try_send)
-//!   coordinator.step(); // try_receive a frame -> step_engine -> stage egress
+//!   coordinator.step(); // try_receive a frame -> driver.step -> stage egress
 //!   flush_egress();     // blocking write staged frames to USB TX
 //! }
 //! ```

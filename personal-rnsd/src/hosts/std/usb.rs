@@ -16,8 +16,7 @@
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{InboundPacket, InstantMillis};
-use personal_rns::host::EngineHost;
+use personal_rns::engine::{EngineDriver, InboundPacket, InstantMillis};
 use personal_rns::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use personal_rns::interfaces::{
     Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
@@ -175,11 +174,11 @@ impl<P: Read + Write> PointToPointInterface for SerialUsbInterface<P> {}
 ///
 /// Built fresh each `step` so the borrowed inbound batch can reference the
 /// caller's per-step decode scratch — the engine seam lends inbound as a
-/// borrowed slice (see [`EngineHost::drain_inbound_packets`]), which a
+/// borrowed slice (see [`EngineDriver::drain_inbound_packets`]), which a
 /// long-lived owned host can't supply without a self-referential struct. The
 /// interface is borrowed for egress only; the caller reads inbound (releasing
 /// the interface) before building this view, so the two never alias.
-pub struct UsbHost<'a, P: Read + Write> {
+pub struct UsbHostExampleEngineDriver<'a, P: Read + Write> {
     clock: Instant,
     iface: &'a mut SerialUsbInterface<P>,
     inbound: &'a [InboundPacket<'a>],
@@ -187,14 +186,14 @@ pub struct UsbHost<'a, P: Read + Write> {
 
 /// The only way this host can fail a step: the OS RNG refusing entropy.
 /// Surfaced honestly so crypto callers never see silent zeros. Egress write
-/// failures are logged and swallowed per the [`EngineHost`] contract, so they
+/// failures are logged and swallowed per the [`EngineDriver`] contract, so they
 /// are not an error variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UsbHostError {
+pub enum UsbHostExampleEngineDriverError {
     EntropySourceUnavailable,
 }
 
-impl<'a, P: Read + Write> UsbHost<'a, P> {
+impl<'a, P: Read + Write> UsbHostExampleEngineDriver<'a, P> {
     pub fn for_runtime_step(
         clock: Instant,
         iface: &'a mut SerialUsbInterface<P>,
@@ -208,8 +207,8 @@ impl<'a, P: Read + Write> UsbHost<'a, P> {
     }
 }
 
-impl<P: Read + Write> EngineHost for UsbHost<'_, P> {
-    type Error = UsbHostError;
+impl<P: Read + Write> EngineDriver for UsbHostExampleEngineDriver<'_, P> {
+    type Error = UsbHostExampleEngineDriverError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
         Ok(InstantMillis(self.clock.elapsed().as_millis() as u64))
@@ -217,7 +216,8 @@ impl<P: Read + Write> EngineHost for UsbHost<'_, P> {
 
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
         // OS CSPRNG — same source RNS uses (`os.urandom`).
-        getrandom::getrandom(buf).map_err(|_| UsbHostError::EntropySourceUnavailable)
+        getrandom::getrandom(buf)
+            .map_err(|_| UsbHostExampleEngineDriverError::EntropySourceUnavailable)
     }
 
     fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
@@ -436,8 +436,9 @@ mod tests {
         ));
 
         let id = iface.id();
-        let mut host = UsbHost::for_runtime_step(Instant::now(), &mut iface, &[]);
-        host.handle_egress(&[0xAA], &[id]).unwrap();
+        let mut driver =
+            UsbHostExampleEngineDriver::for_runtime_step(Instant::now(), &mut iface, &[]);
+        driver.handle_egress(&[0xAA], &[id]).unwrap();
 
         assert!(iface.port.tx.is_empty());
         assert_eq!(iface.state(), ConnectionState::Disconnected);

@@ -1,12 +1,20 @@
-//! Engine stepping helper.
+//! The engine-driver seam: the per-step contract the pure engine is advanced
+//! through, plus the default `step` that advances it one cycle.
 //!
-//! Defined in the core so every host body — daemon, microcontroller, SDK —
-//! can advance the pure engine once through the same seam. This is not the
-//! host runtime; a future `HostRuntime` owns drivers, queues, lifecycle, and
-//! cadence, then calls [`step_engine`] for the protocol step.
+//! The engine is platform-agnostic and passive — off until something drives it.
+//! An [`EngineDriver`] is a platform's supply of fuel for one cycle: the clock,
+//! an entropy source, the inbound batch, and an egress sink. Its default
+//! [`EngineDriver::step`] is one full engine pass — sip entropy, ingest the
+//! inbound batch, tick, and emit each directive — so an implementor gets the
+//! whole cycle for free and overrides only when it needs custom stepping.
+//!
+//! The over-time loop that fires `step` on a cadence, runs per-interface I/O,
+//! and coordinates multiple drivers is the *runtime*, layered above this seam —
+//! not part of it. The driver fuels the engine and advances it one cycle; the
+//! runtime decides when.
 
-use crate::engine::{ingest, tick, EngineState, IngestOutput};
-use crate::host::EngineHost;
+use crate::engine::{ingest, tick, EngineState, InboundPacket, IngestOutput, InstantMillis};
+use crate::interfaces::InterfaceId;
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
 };
@@ -26,59 +34,116 @@ pub struct StepOutput {
     pub tick: TickSummary,
 }
 
-/// One engine pass: pulls entropy, drains the inbound queue into
-/// `ingest`, runs `tick`, then iterates every directive the tick
-/// produced — serializing each via `EgressDirective::to_wire` and
-/// handing the bytes (plus provenance) to the host's
-/// `handle_egress`. The `TickOutput`'s Drop commits the tick's
-/// emissions on the way out.
-pub fn step_engine<Host, R, A, H, D, const HELD: usize>(
-    state: &mut EngineState<R, A, H, D, HELD>,
-    host: &mut Host,
-) -> Result<StepOutput, Host::Error>
-where
-    Host: EngineHost,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
-    // Sip 8 bytes of host entropy for this step. CSPRNG-quality is the
-    // host's contract (see `EngineHost::fill_entropy`); the engine doesn't
-    // check, it just consumes opaque bytes — same 8 bytes drive ingest jitter
-    // and tick's held-recovery jitter so deterministic-replay tests can
-    // compare bit-for-bit.
-    let mut entropy_bytes = [0u8; 8];
-    host.fill_entropy(&mut entropy_bytes)?;
-    let entropy = u64::from_le_bytes(entropy_bytes);
+/// One platform's per-cycle fuel for the engine. A host implements the four
+/// fuel methods; [`step`](EngineDriver::step) — one full engine pass — is
+/// supplied by default.
+pub trait EngineDriver {
+    type Error;
 
-    let packets = host.drain_inbound_packets()?;
-    let ingest = ingest(state, packets, entropy);
+    fn now_millis(&mut self) -> Result<InstantMillis, Self::Error>;
 
-    let now = host.now_millis()?;
-    let tick_out = tick(state, now, entropy);
-    let tick_summary = TickSummary {
-        egress_directive_count: tick_out.egress_directive_count(),
-        recovered_from_held_count: tick_out.recovered_from_held_count(),
-    };
+    /// Fill `buf` with CSPRNG-quality random bytes. The engine consumes these
+    /// as opaque data. RNS specifies the same bar
+    /// (`os.urandom` or better) and we hold to it: a non-CSPRNG driver turns
+    /// future crypto into latent forgeability bugs the engine cannot detect.
+    ///
+    /// Canonical implementations:
+    /// - std platforms: `getrandom::getrandom(buf)` (the OS RNG shim)
+    /// - ESP32-family: `esp_hal::rng::Rng` (hardware RNG peripheral)
+    /// - Nordic nRF: `embassy_nrf::rng::Rng` (hardware RNG peripheral)
+    ///
+    /// Test drivers may seed deterministically (counter, fixed pattern) so
+    /// determinism tests can compare byte-identical runs; tests are not
+    /// crypto consumers and the engine doesn't enforce the contract at the
+    /// trait surface.
+    fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error>;
 
-    // Serialize each directive into a stack-sized MTU buffer and hand
-    // the bytes + engine-computed fanout targets to the host. The
-    // buffer fits any valid announce (max-app_data no-ratchet announce
-    // is exactly MTU bytes).
-    let mut emit_buf = [0u8; MTU];
-    for directive in tick_out.egress_directives() {
-        let n = directive
-            .to_wire(&mut emit_buf)
-            .expect("MTU-sized buf fits any valid wire packet");
-        host.handle_egress(&emit_buf[..n], directive.fire_on())?;
+    /// Drain a batch of queued inbound packets, each stamped with its arrival
+    /// instant. The driver owns the backing storage and lends the batch for one
+    /// `ingest`. Draining need not be exhaustive: the driver may cap the batch
+    /// so a burst can't make one [`step`](EngineDriver::step) do unbounded work
+    /// — the remainder waits for the next call. An empty slice means nothing is
+    /// queued.
+    fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error>;
+
+    /// Handle one outgoing wire packet the engine produced.
+    /// [`step`](EngineDriver::step) calls this once per directive the tick
+    /// emitted, passing the already-serialized bytes and an engine-computed
+    /// list of positive `fire_on` targets — exactly the interface ids the
+    /// driver should transmit on. The list is never empty: the engine elides
+    /// empty-fanout directives before they reach the driver.
+    ///
+    /// The driver is a pure tx/rx pump: write `bytes` to each id in
+    /// `fire_on`. No "skip the source" logic is needed — the engine
+    /// already filtered. As more directive variants land (data sends,
+    /// proofs, link replies) the engine may compute different `fire_on`
+    /// shapes per kind, but the driver's job stays the same: take the
+    /// list, transmit on each.
+    ///
+    /// Returning `Err` propagates out of [`step`](EngineDriver::step) and halts
+    /// the step early. Most drivers will want to log and swallow per-
+    /// interface dispatch failures, returning `Ok` so the rest of the
+    /// tick's directives still get a chance to dispatch.
+    fn handle_egress(&mut self, bytes: &[u8], fire_on: &[InterfaceId]) -> Result<(), Self::Error>;
+
+    /// One engine pass: pulls entropy, drains the inbound queue into
+    /// `ingest`, runs `tick`, then iterates every directive the tick
+    /// produced — serializing each via `EgressDirective::to_wire` and
+    /// handing the bytes (plus provenance) to this driver's
+    /// `handle_egress`. The `TickOutput`'s Drop commits the tick's
+    /// emissions on the way out.
+    ///
+    /// The engine state stays a passed argument — one driver can step several
+    /// engines, and the engine's generic storage params live here on `step`
+    /// rather than on the trait, keeping the trait itself free of them.
+    /// Implementors get this for free; override only for custom stepping.
+    fn step<R, A, H, D, const HELD: usize>(
+        &mut self,
+        state: &mut EngineState<R, A, H, D, HELD>,
+    ) -> Result<StepOutput, Self::Error>
+    where
+        R: RouteColumns,
+        A: RetainedAnnounceColumns,
+        H: AnnounceIdHistory,
+        D: RetainedAppData,
+    {
+        // Sip 8 bytes of driver entropy for this step. CSPRNG-quality is the
+        // driver's contract (see `EngineDriver::fill_entropy`); the engine
+        // doesn't check, it just consumes opaque bytes — same 8 bytes drive
+        // ingest jitter and tick's held-recovery jitter so deterministic-replay
+        // tests can compare bit-for-bit.
+        let mut entropy_bytes = [0u8; 8];
+        self.fill_entropy(&mut entropy_bytes)?;
+        let entropy = u64::from_le_bytes(entropy_bytes);
+
+        let packets = self.drain_inbound_packets()?;
+        let ingest = ingest(state, packets, entropy);
+
+        let now = self.now_millis()?;
+        let tick_out = tick(state, now, entropy);
+        let tick_summary = TickSummary {
+            egress_directive_count: tick_out.egress_directive_count(),
+            recovered_from_held_count: tick_out.recovered_from_held_count(),
+        };
+
+        // Serialize each directive into a stack-sized MTU buffer and hand
+        // the bytes + engine-computed fanout targets to the driver. The
+        // buffer fits any valid announce (max-app_data no-ratchet announce
+        // is exactly MTU bytes).
+        let mut emit_buf = [0u8; MTU];
+        for directive in tick_out.egress_directives() {
+            let n = directive
+                .to_wire(&mut emit_buf)
+                .expect("MTU-sized buf fits any valid wire packet");
+            self.handle_egress(&emit_buf[..n], directive.fire_on())?;
+        }
+        // tick_out drops here → state's due rebroadcasts are drained.
+
+        Ok(StepOutput {
+            ingest,
+            tick: tick_summary,
+        })
     }
-    // tick_out drops here → state's due rebroadcasts are drained.
-
-    Ok(StepOutput {
-        ingest,
-        tick: tick_summary,
-    })
 }
 
 #[cfg(test)]
@@ -86,18 +151,17 @@ mod tests {
     use super::*;
     use crate::engine::DefaultEngineState;
     use crate::engine::{InboundPacket, InstantMillis};
-    use crate::host::EngineHost;
     use crate::interfaces::{
         Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
     };
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::WirePacketHeader;
 
-    /// Host with nothing queued — the steady idle case.
+    /// Driver with nothing queued — the steady idle case.
     #[derive(Default)]
-    struct IdleHost;
+    struct IdleEngineDriver;
 
-    impl EngineHost for IdleHost {
+    impl EngineDriver for IdleEngineDriver {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -123,12 +187,12 @@ mod tests {
         }
     }
 
-    /// Host that lends a fixed batch it borrows from the test.
-    struct QueuedHost<'q> {
+    /// Driver that lends a fixed batch it borrows from the test.
+    struct QueuedEngineDriver<'q> {
         queued: &'q [InboundPacket<'q>],
     }
 
-    impl EngineHost for QueuedHost<'_> {
+    impl EngineDriver for QueuedEngineDriver<'_> {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -156,9 +220,9 @@ mod tests {
     #[test]
     fn step_ticks_once_when_the_queue_is_empty() {
         let mut state: DefaultEngineState = DefaultEngineState::default();
-        let mut host = IdleHost;
+        let mut driver = IdleEngineDriver;
 
-        let out = step_engine(&mut state, &mut host).unwrap();
+        let out = driver.step(&mut state).unwrap();
 
         assert_eq!(state.tick_count(), 1);
         assert_eq!(out.ingest.processed_packet_count(), 0);
@@ -180,28 +244,28 @@ mod tests {
             },
         ];
         let mut state: DefaultEngineState = DefaultEngineState::default();
-        let mut host = QueuedHost { queued: &queued };
+        let mut driver = QueuedEngineDriver { queued: &queued };
 
-        let out = step_engine(&mut state, &mut host).unwrap();
+        let out = driver.step(&mut state).unwrap();
 
         assert_eq!(out.ingest.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
         assert_eq!(state.tick_count(), 1);
     }
 
-    /// End-to-end host-facing contract: a single `step` ingests a real
+    /// End-to-end driver-facing contract: a single `step` ingests a real
     /// announce, accepts it, schedules a rebroadcast, and — once the
-    /// host's `now` is past the jitter window — hands the wire bytes
-    /// back to the host via `handle_egress` with an engine-computed
-    /// positive `fire_on` list (registered interfaces minus the source).
-    struct CapturingHost<'q> {
+    /// driver's `now` is past the jitter window — hands the wire bytes
+    /// back via `handle_egress` with an engine-computed positive `fire_on`
+    /// list (registered interfaces minus the source).
+    struct CapturingEngineDriver<'q> {
         queued: &'q [InboundPacket<'q>],
         now: InstantMillis,
         entropy: [u8; 8],
         handled: std::vec::Vec<(std::vec::Vec<InterfaceId>, std::vec::Vec<u8>)>,
     }
 
-    impl EngineHost for CapturingHost<'_> {
+    impl EngineDriver for CapturingEngineDriver<'_> {
         type Error = core::convert::Infallible;
 
         fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -291,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn step_hands_due_rebroadcasts_to_the_host_with_engine_computed_fire_on() {
+    fn step_hands_due_rebroadcasts_to_the_driver_with_engine_computed_fire_on() {
         let raw = hx(RAW_ANNOUNCE);
         let source_interface = InterfaceId::new([0x7A; 16]);
         let peer_interface = InterfaceId::new([0x7B; 16]);
@@ -309,28 +373,28 @@ mod tests {
         let peer = StaticInterface::new(peer_interface);
         state.register_routable_interface(&source).unwrap();
         state.register_routable_interface(&peer).unwrap();
-        let mut host = CapturingHost {
+        let mut driver = CapturingEngineDriver {
             queued: &queued,
             now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             entropy: 0xCAFE_F00D_DEAD_BEEFu64.to_le_bytes(),
             handled: std::vec::Vec::new(),
         };
 
-        let out = step_engine(&mut state, &mut host).unwrap();
+        let out = driver.step(&mut state).unwrap();
 
         assert_eq!(out.ingest.accepted_announce_count(), 1);
         assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
         assert_eq!(out.tick.egress_directive_count, 1);
-        assert_eq!(host.handled.len(), 1);
+        assert_eq!(driver.handled.len(), 1);
         assert_eq!(
-            host.handled[0].0,
+            driver.handled[0].0,
             std::vec![peer_interface],
             "engine must compute fire_on as registered interfaces minus the source"
         );
 
         let (original_header, original_payload) = WirePacketHeader::parse(&raw).unwrap();
         let (rebroadcast_header, rebroadcast_payload) =
-            WirePacketHeader::parse(&host.handled[0].1).unwrap();
+            WirePacketHeader::parse(&driver.handled[0].1).unwrap();
         assert_eq!(rebroadcast_header.hops, original_header.hops + 1);
         assert_eq!(rebroadcast_header.destination, original_header.destination);
         assert_eq!(rebroadcast_payload, original_payload);
@@ -340,7 +404,7 @@ mod tests {
     fn step_elides_directives_when_the_only_registered_interface_is_the_source() {
         // Edge case: the only target the engine knows about IS the source.
         // Fanout would be empty, so the engine elides the directive — the
-        // host sees no handle_egress call this tick. The rebroadcast is
+        // driver sees no handle_egress call this tick. The rebroadcast is
         // still drained (engine processed it; nothing to do), so it won't
         // re-fire on a later tick.
         let raw = hx(RAW_ANNOUNCE);
@@ -354,18 +418,18 @@ mod tests {
         let mut state: DefaultEngineState = DefaultEngineState::default();
         let source = StaticInterface::new(source_interface);
         state.register_routable_interface(&source).unwrap();
-        let mut host = CapturingHost {
+        let mut driver = CapturingEngineDriver {
             queued: &queued,
             now: InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             entropy: 0xCAFE_F00D_DEAD_BEEFu64.to_le_bytes(),
             handled: std::vec::Vec::new(),
         };
 
-        let out = step_engine(&mut state, &mut host).unwrap();
+        let out = driver.step(&mut state).unwrap();
 
         assert_eq!(out.ingest.accepted_announce_count(), 1);
         assert_eq!(out.tick.egress_directive_count, 0);
-        assert!(host.handled.is_empty());
+        assert!(driver.handled.is_empty());
         // The scheduled entry was elided AND drained; not still pending.
         assert_eq!(state.pending_rebroadcast_count(), 0);
     }

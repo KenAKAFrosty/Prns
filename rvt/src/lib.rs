@@ -1,6 +1,6 @@
 //! Multi-node simulation of the Personal Reticulum engine on virtual time.
 //!
-//! A bespoke driver, not an `EngineHost`: it advances a virtual clock, moves
+//! A bespoke driver, not an `EngineDriver`: it advances a virtual clock, moves
 //! packets across a virtual wire, and runs each node's engine via the public
 //! `ingest`/`tick` primitives — faithful to `step`, which calls the same two in
 //! the same order. Deterministic: given the same inputs, every run is identical,

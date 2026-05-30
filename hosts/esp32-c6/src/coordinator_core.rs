@@ -22,8 +22,7 @@ use esp_hal::rng::Rng;
 use esp_hal::time::Instant;
 use heapless::Vec as HeaplessVec;
 
-use personal_rns::engine::{step_engine, DefaultEngineState, InboundPacket, InstantMillis};
-use personal_rns::host::EngineHost;
+use personal_rns::engine::{DefaultEngineState, EngineDriver, InboundPacket, InstantMillis};
 use personal_rns::interfaces::{
     Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
 };
@@ -147,11 +146,13 @@ impl CoordinatorCore {
         };
 
         let accepted = {
-            let mut host = StagingHost {
+            let mut driver = StagingExampleEngineDriver {
                 inbound: batch.as_slice(),
                 egress,
             };
-            let out = step_engine(&mut self.state, &mut host).expect("c6 host ops are infallible");
+            let out = driver
+                .step(&mut self.state)
+                .expect("c6 driver ops are infallible");
             out.ingest.accepted_announce_count()
         };
 
@@ -207,15 +208,15 @@ impl Interface for UsbInterfaceDescriptor {
     }
 }
 
-/// Per-step [`EngineHost`]: lends the borrowed inbound batch and stages egress
+/// Per-step [`EngineDriver`]: lends the borrowed inbound batch and stages egress
 /// frames bound for USB into the reused buffer. Clock and entropy read the
-/// always-available esp-hal sources, so this host is substrate-independent.
-struct StagingHost<'a> {
+/// always-available esp-hal sources, so this driver is substrate-independent.
+struct StagingExampleEngineDriver<'a> {
     inbound: &'a [InboundPacket<'a>],
     egress: &'a mut EgressStaging,
 }
 
-impl EngineHost for StagingHost<'_> {
+impl EngineDriver for StagingExampleEngineDriver<'_> {
     type Error = Infallible;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
@@ -224,7 +225,7 @@ impl EngineHost for StagingHost<'_> {
 
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
         // TRNG-backed Rng (the TrngSource guard is held alive by the harness's
-        // main); CSPRNG-grade per the EngineHost contract.
+        // main); CSPRNG-grade per the EngineDriver contract.
         Rng::new().read(buf);
         Ok(())
     }

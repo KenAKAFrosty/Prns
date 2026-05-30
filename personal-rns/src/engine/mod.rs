@@ -5,10 +5,11 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
+mod driver;
 pub mod egress;
 pub mod ingress;
 
-pub use crate::runtime::{step_engine, StepOutput, TickSummary};
+pub use driver::{EngineDriver, StepOutput, TickSummary};
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 

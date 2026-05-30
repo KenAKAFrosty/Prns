@@ -5,10 +5,10 @@
 
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{step_engine, DefaultEngineState, InstantMillis};
+use personal_rns::engine::{DefaultEngineState, EngineDriver, InstantMillis};
 use personal_rns::interfaces::{ConnectionState, Interface, InterfaceId};
 use personal_rns::wire::MTU;
-use personal_rnsd::{SerialUsbInterface, UsbHost};
+use personal_rnsd::{SerialUsbInterface, UsbHostExampleEngineDriver};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -83,8 +83,11 @@ fn main() {
 
             // `Option::as_slice` lends the 0-or-1 packet as the borrowed batch the
             // engine seam expects — no allocation, borrows `inbound`/`scratch`.
-            let mut host = UsbHost::for_runtime_step(clock, &mut iface, inbound.as_slice());
-            step_engine(&mut state, &mut host).expect("usb host clock/entropy step cannot fail");
+            let mut driver =
+                UsbHostExampleEngineDriver::for_runtime_step(clock, &mut iface, inbound.as_slice());
+            driver
+                .step(&mut state)
+                .expect("usb driver clock/entropy step cannot fail");
 
             // A growing route count means the engine just learned a path from an
             // ingested announce — the proof the cable carried a real one.

@@ -13,15 +13,13 @@
 //! This crate is std-only (uniffi requires std). The `personal-rns`
 //! core it wraps stays `no_std` with no allocator; that constraint sits
 //! on the core, not on this bindings layer. The SDK is just another
-//! Host: it brings a thin std-clock adapter and drives the shared
-//! engine through `engine::step_engine`.
+//! engine driver: it brings a thin std-clock adapter and drives the
+//! shared engine through `engine::EngineDriver::step`.
 
 use std::sync::Mutex;
 use std::time::Instant;
 
-use personal_rns::engine::step_engine;
-use personal_rns::engine::{DefaultEngineState, InboundPacket, InstantMillis};
-use personal_rns::host::EngineHost;
+use personal_rns::engine::{DefaultEngineState, EngineDriver, InboundPacket, InstantMillis};
 use personal_rns::interfaces::InterfaceId;
 
 uniffi::include_scaffolding!("prns");
@@ -35,28 +33,28 @@ pub fn version() -> String {
 /// The SDK's thin engine host: a real monotonic clock, but no transport
 /// wired yet. So it reports no inbound and refuses to transmit, like
 /// every other minimal body until the protocol slices land.
-struct SdkHost {
+struct SdkEngineDriver {
     base: Instant,
 }
 
 #[derive(Debug)]
-enum SdkHostError {
+enum SdkEngineDriverError {
     NoTransport,
     EntropySourceUnavailable,
 }
 
-impl EngineHost for SdkHost {
-    type Error = SdkHostError;
+impl EngineDriver for SdkEngineDriver {
+    type Error = SdkEngineDriverError;
 
     fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
         Ok(InstantMillis(self.base.elapsed().as_millis() as u64))
     }
 
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // Same OS CSPRNG path as StdHost: getrandom backs onto Android's
+        // Same OS CSPRNG path as StdEngineDriver: getrandom backs onto Android's
         // `/dev/urandom` (via `getrandom(2)` on API ≥17) and iOS's
         // `SecRandomCopyBytes`. Crypto-grade by host contract.
-        getrandom::getrandom(buf).map_err(|_| SdkHostError::EntropySourceUnavailable)
+        getrandom::getrandom(buf).map_err(|_| SdkEngineDriverError::EntropySourceUnavailable)
     }
 
     fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
@@ -70,17 +68,17 @@ impl EngineHost for SdkHost {
     ) -> Result<(), Self::Error> {
         // No transport wired yet; every egress fails honestly until a
         // real interface lands.
-        Err(SdkHostError::NoTransport)
+        Err(SdkEngineDriverError::NoTransport)
     }
 }
 
 struct RuntimeInner {
     state: DefaultEngineState,
-    host: SdkHost,
+    driver: SdkEngineDriver,
 }
 
 /// SDK-facing runtime handle. Wraps the pure [`EngineState`] and the
-/// SDK's [`SdkHost`] behind a `Mutex` because uniffi interface objects
+/// SDK's [`SdkEngineDriver`] behind a `Mutex` because uniffi interface objects
 /// must be `Send + Sync` and each `tick` mutates engine state.
 pub struct ReticulumRuntime {
     inner: Mutex<RuntimeInner>,
@@ -91,7 +89,7 @@ impl ReticulumRuntime {
         Self {
             inner: Mutex::new(RuntimeInner {
                 state: DefaultEngineState::default(),
-                host: SdkHost {
+                driver: SdkEngineDriver {
                     base: Instant::now(),
                 },
             }),
@@ -102,8 +100,8 @@ impl ReticulumRuntime {
     /// returns the directive count the periodic pass emitted.
     pub fn tick(&self) -> u64 {
         let mut inner = self.inner.lock().expect("ReticulumRuntime mutex poisoned");
-        let RuntimeInner { state, host } = &mut *inner;
-        let output = step_engine(state, host).expect("clock-only step cannot fail");
+        let RuntimeInner { state, driver } = &mut *inner;
+        let output = driver.step(state).expect("clock-only step cannot fail");
         output.tick.egress_directive_count as u64
     }
 
