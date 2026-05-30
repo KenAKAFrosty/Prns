@@ -69,6 +69,16 @@ impl<P: Read + Write> SerialUsbInterface<P> {
             state: ConnectionState::Connected,
         }
     }
+
+    fn mark_io_error(&mut self, kind: io::ErrorKind) {
+        self.state = match kind {
+            io::ErrorKind::BrokenPipe
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::UnexpectedEof => ConnectionState::Disconnected,
+            _ => ConnectionState::Failed,
+        };
+    }
 }
 
 impl<P: Read + Write> Interface for SerialUsbInterface<P> {
@@ -139,7 +149,7 @@ impl<P: Read + Write> Interface for SerialUsbInterface<P> {
                     return Ok(None);
                 }
                 Err(e) => {
-                    self.state = ConnectionState::Failed;
+                    self.mark_io_error(e.kind());
                     return Err(SerialUsbError::Io(e));
                 }
             }
@@ -151,7 +161,7 @@ impl<P: Read + Write> Interface for SerialUsbInterface<P> {
         let n = rns_serial_framing::encode(packet, &mut framed)
             .map_err(|_| SerialUsbError::PayloadLargerThanMtu)?;
         self.port.write_all(&framed[..n]).map_err(|e| {
-            self.state = ConnectionState::Failed;
+            self.mark_io_error(e.kind());
             SerialUsbError::Io(e)
         })
     }
@@ -220,6 +230,13 @@ impl<P: Read + Write> HostAdapter for UsbHost<'_, P> {
         // directive can't halt the engine step.
         for id in fire_on {
             if *id == self.iface.id() {
+                match self.iface.state() {
+                    ConnectionState::Connected | ConnectionState::Degraded => {}
+                    ConnectionState::Initializing
+                    | ConnectionState::Reconnecting
+                    | ConnectionState::Failed
+                    | ConnectionState::Disconnected => continue,
+                }
                 if let Err(e) = self.iface.write(bytes) {
                     eprintln!("RNSD_USB_EGRESS_ERR {e:?}");
                 }
@@ -350,8 +367,20 @@ mod tests {
     }
 
     #[test]
-    fn try_read_io_error_marks_failed() {
+    fn try_read_transport_close_marks_disconnected() {
         let mut iface = mock_with_read_error(io::ErrorKind::BrokenPipe);
+
+        let mut buf = [0u8; MTU];
+        assert!(matches!(
+            iface.try_read(&mut buf),
+            Err(SerialUsbError::Io(_))
+        ));
+        assert_eq!(iface.state(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn try_read_other_io_error_marks_failed() {
+        let mut iface = mock_with_read_error(io::ErrorKind::Other);
 
         let mut buf = [0u8; MTU];
         assert!(matches!(
@@ -382,10 +411,35 @@ mod tests {
     }
 
     #[test]
-    fn write_io_error_marks_failed() {
+    fn write_transport_close_marks_disconnected() {
         let mut iface = mock_with_write_error(io::ErrorKind::BrokenPipe);
 
         assert!(matches!(iface.write(&[0xAA]), Err(SerialUsbError::Io(_))));
+        assert_eq!(iface.state(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn write_other_io_error_marks_failed() {
+        let mut iface = mock_with_write_error(io::ErrorKind::Other);
+
+        assert!(matches!(iface.write(&[0xAA]), Err(SerialUsbError::Io(_))));
         assert_eq!(iface.state(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn usb_host_skips_egress_when_interface_is_not_routable() {
+        let mut iface = mock_with_read_error(io::ErrorKind::BrokenPipe);
+        let mut buf = [0u8; MTU];
+        assert!(matches!(
+            iface.try_read(&mut buf),
+            Err(SerialUsbError::Io(_))
+        ));
+
+        let id = iface.id();
+        let mut host = UsbHost::for_step(Instant::now(), &mut iface, &[]);
+        host.handle_egress(&[0xAA], &[id]).unwrap();
+
+        assert!(iface.port.tx.is_empty());
+        assert_eq!(iface.state(), ConnectionState::Disconnected);
     }
 }
