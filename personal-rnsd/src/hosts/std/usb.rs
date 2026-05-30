@@ -237,8 +237,9 @@ impl<P: Read + Write> EngineDriver for UsbHostExampleEngineDriver<'_, P> {
                     | ConnectionState::Failed
                     | ConnectionState::Disconnected => continue,
                 }
-                if let Err(e) = self.iface.write(bytes) {
-                    eprintln!("RNSD_USB_EGRESS_ERR {e:?}");
+                match self.iface.write(bytes) {
+                    Ok(()) => println!("RNSD_USB_TX bytes={}", bytes.len()),
+                    Err(e) => eprintln!("RNSD_USB_EGRESS_ERR {e:?}"),
                 }
             }
         }
@@ -249,6 +250,10 @@ impl<P: Read + Write> EngineDriver for UsbHostExampleEngineDriver<'_, P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
+    use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+    use personal_rns::routing::announce::Announce;
+    use personal_rns::wire::{PacketType, WirePacketHeader};
     use std::io::Cursor;
 
     /// In-memory byte backend: reads from a preloaded stream, captures writes.
@@ -424,6 +429,64 @@ mod tests {
 
         assert!(matches!(iface.write(&[0xAA]), Err(SerialUsbError::Io(_))));
         assert_eq!(iface.state(), ConnectionState::Failed);
+    }
+
+    fn fixture_announcing_state() -> DefaultEngineState {
+        let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+        secret_key[..32].fill(0x22);
+        secret_key[32..].fill(0x11);
+        DefaultEngineState::announcing(
+            &secret_key,
+            SelfAnnounceConfig {
+                app_name: "personal",
+                aspects: &["node"],
+                app_data: b"personal-rnsd",
+                schedule: ReannounceSchedule::default(),
+            },
+        )
+        .expect("valid self-announce config")
+    }
+
+    #[test]
+    fn step_emits_our_own_announce_framed_onto_the_serial_wire() {
+        // The full daemon integration, hardware-free: an announcing engine + a
+        // registered USB interface, stepped once, must frame our own signed
+        // announce out onto the (mock) serial link.
+        let mut state = fixture_announcing_state();
+        let mut iface = mock(Vec::new());
+        state
+            .register_routable_interface(&iface)
+            .expect("mock interface is connected and transmits");
+
+        {
+            let mut driver =
+                UsbHostExampleEngineDriver::for_runtime_step(Instant::now(), &mut iface, &[]);
+            driver.step(&mut state).expect("step cannot fail");
+        }
+
+        // De-frame whatever the daemon wrote and check it is a hop-0 announce
+        // that validates and binds to exactly the destination we advertise.
+        let mut decoder = RnsSerialDecoder::<MTU>::new();
+        let mut frame = None;
+        for &byte in &iface.port.tx {
+            if let Ok(Some(decoded)) = decoder.feed(byte) {
+                if !decoded.is_empty() {
+                    frame = Some(decoded.to_vec());
+                    break;
+                }
+            }
+        }
+        let frame = frame.expect("daemon framed exactly one announce onto the wire");
+
+        let (header, payload) = WirePacketHeader::parse(&frame).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.hops, 0, "we originate at hop count 0");
+        let announce =
+            Announce::from_wire(&header, payload).expect("our announce validates + binds");
+        assert_eq!(
+            announce.destination,
+            state.self_announced_destination().unwrap(),
+        );
     }
 
     #[test]

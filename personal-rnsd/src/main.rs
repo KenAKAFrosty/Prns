@@ -5,13 +5,50 @@
 
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{DefaultEngineState, EngineDriver, InstantMillis};
+use personal_rns::engine::{
+    DefaultEngineState, EngineDriver, InstantMillis, ReannounceSchedule, SelfAnnounceConfig,
+};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{ConnectionState, Interface, InterfaceId};
 use personal_rns::wire::MTU;
 use personal_rnsd::{SerialUsbInterface, UsbHostExampleEngineDriver};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+
+/// The destination this daemon announces itself as. `personal.node` is the
+/// node-level aspect; the engine derives its hash via `expand_name`.
+const SELF_ANNOUNCE_APP_NAME: &str = "personal";
+const SELF_ANNOUNCE_ASPECTS: &[&str] = &["node"];
+const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-rnsd";
+
+/// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖
+/// Ed25519 private keys). Handed to the engine through a [`Zeroizing`] buffer so
+/// it is wiped from this stack frame once construction copies it in.
+fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+
+    #[cfg(feature = "fixture-identity")]
+    {
+        // Deterministic bring-up / HITL identity: the same X25519 0x22 ‖
+        // Ed25519 0x11 keypair the personal-rns oracle vectors pin, so the
+        // daemon announces the known `personal.node` destination
+        // (c3cfae69b36bb6e3bbfd96a3b5867a59). Never ship this — every
+        // fixture-identity node shares one identity.
+        key[..32].fill(0x22);
+        key[32..].fill(0x11);
+    }
+
+    #[cfg(not(feature = "fixture-identity"))]
+    {
+        // A fresh OS-CSPRNG identity each run. Persisting it across restarts
+        // (file / keyring, the daemon-key story sketched in the engine roadmap)
+        // lands with the storage work; until then, a restart is a new node.
+        getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
+    }
+
+    key
+}
 
 /// Idle poll cadence between steps. The interface read itself blocks up to its
 /// own short timeout, so this only adds a small floor when the link is busy.
@@ -48,7 +85,33 @@ fn main() {
     };
 
     let clock = Instant::now();
-    let mut state: DefaultEngineState = DefaultEngineState::default();
+
+    // Build an announcing node: it both forwards others' announces AND emits its
+    // own `personal.node` announce on the schedule (default 6h), the first one as
+    // soon as the interface is registered below.
+    let identity_secret_key = load_identity_secret_key();
+    let mut state: DefaultEngineState = DefaultEngineState::announcing(
+        &identity_secret_key,
+        SelfAnnounceConfig {
+            app_name: SELF_ANNOUNCE_APP_NAME,
+            aspects: SELF_ANNOUNCE_ASPECTS,
+            app_data: SELF_ANNOUNCE_APP_DATA,
+            schedule: ReannounceSchedule::default(),
+        },
+    )
+    .expect("static self-announce config is valid");
+    // The engine now owns the keys; wipe our copy promptly.
+    drop(identity_secret_key);
+
+    if let Some(destination) = state.self_announced_destination() {
+        let hex: String = destination
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        println!("RNSD_SELF_ANNOUNCE_DEST {hex} name=personal.node");
+    }
+
     let mut announced_routes = 0;
 
     loop {

@@ -20,6 +20,11 @@
 use crate::crypto::{sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
+/// Re-exported so callers handing secret key bytes to the engine's
+/// identity-bearing constructors can build the expected zeroizing buffer
+/// without taking their own (version-coupled) `zeroize` dependency.
+pub use zeroize::Zeroizing;
+
 /// Length of an identity's secret key material: a 32-byte X25519 (encryption)
 /// secret followed by a 32-byte Ed25519 (signing) secret — the two private keys
 /// concatenated, matching RNS's persisted layout (`prv_bytes ‖ sig_prv_bytes`).

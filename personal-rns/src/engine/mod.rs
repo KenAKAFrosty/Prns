@@ -21,7 +21,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{ConnectionState, Interface, InterfaceId};
 use crate::routing::announce::{
-    Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceId, ANNOUNCE_ID_WIRE_LEN,
+    derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
+    AnnounceId, ANNOUNCE_ID_WIRE_LEN,
 };
 use crate::routing::defaults::jitter_offset_for;
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
@@ -284,6 +285,19 @@ where
     /// Currently-registered interfaces, in registration order.
     pub fn registered_interfaces(&self) -> &[InterfaceId] {
         &self.interfaces
+    }
+
+    /// The destination hash this engine announces itself as, if it self-
+    /// announces — `derive_destination_hash(identity, name)`. `None` for a relay
+    /// or an identity-only node. Lets a host report its own address (e.g. log it
+    /// at startup) without reaching into the identity.
+    pub fn self_announced_destination(&self) -> Option<DestinationHash> {
+        let identity = self.identity.as_ref()?;
+        let self_announce = self.self_announce.as_ref()?;
+        Some(derive_destination_hash(
+            &identity.identity_hash(),
+            &self_announce.name_hash(),
+        ))
     }
 
     /// If this engine self-announces and one is due at `now`, build and sign our
@@ -956,6 +970,22 @@ mod tests {
             state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
             None,
         );
+    }
+
+    #[test]
+    fn self_announced_destination_reports_our_address_only_when_announcing() {
+        // An announcer reports the same destination it puts on the wire.
+        assert_eq!(
+            personal_node_announcer().self_announced_destination(),
+            Some(DestinationHash::new(
+                hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
+            )),
+        );
+        // A relay and an identity-only node have no announced destination.
+        let relay: DefaultEngineState = DefaultEngineState::default();
+        assert_eq!(relay.self_announced_destination(), None);
+        let identity_only: DefaultEngineState = EngineState::new(&fixed_secret_key());
+        assert_eq!(identity_only.self_announced_destination(), None);
     }
 
     // A genuine RNS 1.3.1 announce (the same vector the announce module validates).
