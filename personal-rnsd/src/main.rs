@@ -1,18 +1,28 @@
-//! Personal Reticulum daemon: drive the engine over a real USB-serial
-//! interface — the host end of a cable to an ESP32-C6 (or any stock RNS
-//! serial peer). Each step reads at most one de-framed packet off the wire,
-//! lets the engine ingest it, and pumps any due egress back out.
+//! Personal Reticulum daemon: drive the engine over a USB-serial interface using
+//! the shared `InterfaceWorker` + `Manifold` runtime — the *same* abstraction the
+//! embedded hosts (ESP32) use, just on the std substrate.
+//!
+//! A worker thread owns the serial port (reopening on unplug) and runs the RNS
+//! `SerialInterface` shell; the std `Manifold` runtime drives the engine,
+//! deadline-driven, and surfaces a snapshot each cycle. The daemon both forwards
+//! others' announces and emits its own `personal.node` announce (first one as
+//! soon as the link is up).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use personal_rns::engine::{
-    DefaultEngineState, EngineDriver, InstantMillis, NextScheduledWakeup, ReannounceSchedule,
-    SelfAnnounceConfig,
+    DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::{ConnectionState, Interface, InterfaceId};
-use personal_rns::wire::MTU;
-use personal_rnsd::{SerialUsbInterface, UsbHostExampleEngineDriver};
+use personal_rns::interfaces::rns_parity::serial::std_host::{
+    run as run_serial_worker, StdSerialInterface,
+};
+use personal_rns::interfaces::InterfaceId;
+use personal_rns::runtime::manifold::impls::std_host::{run as run_manifold, InboxEntry};
+use personal_rns::runtime::Manifold;
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -23,6 +33,14 @@ const SELF_ANNOUNCE_APP_NAME: &str = "personal";
 const SELF_ANNOUNCE_ASPECTS: &[&str] = &["node"];
 const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-rnsd";
 
+/// CDC-ACM nominal baud (USB ignores it, but `serialport` wants a value).
+const USB_BAUD: u32 = 115_200;
+/// The worker's blocking read window: short enough that a quiet link still loops
+/// back to service outbound and refresh liveness, long enough to not busy-spin.
+const READ_POLL: Duration = Duration::from_millis(50);
+/// How long to wait before re-opening the port after an open failure or unplug.
+const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+
 /// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖
 /// Ed25519 private keys). Handed to the engine through a [`Zeroizing`] buffer so
 /// it is wiped from this stack frame once construction copies it in.
@@ -32,107 +50,27 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     #[cfg(feature = "fixture-identity")]
     {
         // Deterministic bring-up / HITL identity: the same X25519 0x22 ‖
-        // Ed25519 0x11 keypair the personal-rns oracle vectors pin, so the
-        // daemon announces the known `personal.node` destination
-        // (c3cfae69b36bb6e3bbfd96a3b5867a59). Never ship this — every
-        // fixture-identity node shares one identity.
+        // Ed25519 0x11 keypair the personal-rns oracle vectors pin. Never ship
+        // this — every fixture-identity node shares one identity.
         key[..32].fill(0x22);
         key[32..].fill(0x11);
     }
 
     #[cfg(not(feature = "fixture-identity"))]
     {
-        // A fresh OS-CSPRNG identity each run. Persisting it across restarts
-        // (file / keyring, the daemon-key story sketched in the engine roadmap)
-        // lands with the storage work; until then, a restart is a new node.
+        // A fresh OS-CSPRNG identity each run (a genuine stranger to its peer).
         getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
     }
 
     key
 }
 
-const USB_RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
-
-/// Upper bound on how long a single read may block before the loop loops back to
-/// re-check the link's health (so an unplug is noticed and we reconnect).
-/// Caps `WakeOnDeadline` so a far-off deadline or an idle engine still yields to
-/// that check. A USB host is mains-powered, so this cap costs nothing here; the
-/// deep-sleep payoff is the embedded story.
-const MAX_BLOCKING_WAIT: Duration = Duration::from_secs(1);
-
-// REVISIT(host-runtime-api): `WaitMode` + the loop below are an AD-HOC,
-// daemon-local wiring of a behavior that is NOT daemon-specific — every host
-// (this daemon, the C6 spike loop, a future tokio/embassy runtime) re-derives
-// "how long do I wait between steps" by hand. That is the same shape as the
-// identity-custody work we dropped: a technique proven inside `personal-rnsd`
-// rather than baked into the shared, structured Runtime/Manifold/EngineDriver
-// layer where it belongs (one implementation, every host). This keeps coming
-// up — lift `WaitMode` (and the deadline→wait translation) into that layer soon
-// so hosts *configure* the runtime instead of re-implementing its loop.
-//
-/// How the runtime loop decides how long to wait between engine steps. The
-/// engine is passive and (by design) has no reason to wake except its own
-/// scheduled work or an inbound packet, so the default drives the loop straight
-/// off [`EngineState::next_wakeup`] — the read blocks until that deadline or a
-/// packet, whichever comes first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WaitMode {
-    /// Wake on the engine's next scheduled deadline, or an inbound packet — the
-    /// default; the loop only runs when there is something to do.
-    WakeOnDeadline,
-    /// Always wait a fixed period regardless of schedule. The pre-deadline poll,
-    /// kept for comparison and deterministic tests.
-    FixedInterval(Duration),
-}
-
-impl WaitMode {
-    fn read_timeout(self, next: NextScheduledWakeup, now: InstantMillis) -> Duration {
-        match self {
-            WaitMode::FixedInterval(period) => period,
-            WaitMode::WakeOnDeadline => match next {
-                NextScheduledWakeup::Immediate => Duration::ZERO,
-                NextScheduledWakeup::At(deadline) => {
-                    Duration::from_millis(deadline.0.saturating_sub(now.0)).min(MAX_BLOCKING_WAIT)
-                }
-                NextScheduledWakeup::Idle => MAX_BLOCKING_WAIT,
-            },
-        }
-    }
-}
-
-/// `RNSD_POLL_INTERVAL_MS=<n>` forces the legacy fixed-interval poll (for
-/// comparison / tests); unset uses the deadline-driven default.
-fn wait_mode_from_env() -> WaitMode {
-    match std::env::var("RNSD_POLL_INTERVAL_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-    {
-        Some(ms) => WaitMode::FixedInterval(Duration::from_millis(ms)),
-        None => WaitMode::WakeOnDeadline,
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UsbLifecycleAction {
-    Continue,
-    Reopen { marker: &'static str },
-}
-
-fn usb_lifecycle_action(state: ConnectionState) -> UsbLifecycleAction {
-    match state {
-        ConnectionState::Connected | ConnectionState::Degraded => UsbLifecycleAction::Continue,
-        ConnectionState::Initializing | ConnectionState::Reconnecting => {
-            UsbLifecycleAction::Reopen {
-                marker: "RNSD_USB_NOT_ROUTABLE",
-            }
-        }
-        ConnectionState::Failed => UsbLifecycleAction::Reopen {
-            marker: "RNSD_USB_FAILED",
-        },
-        ConnectionState::Disconnected => UsbLifecycleAction::Reopen {
-            marker: "RNSD_USB_DISCONNECTED",
-        },
-    }
+/// Draw 8 bytes of OS-CSPRNG entropy for one engine cycle — the same `os.urandom`
+/// bar RNS holds to.
+fn draw_entropy() -> u64 {
+    let mut bytes = [0u8; 8];
+    getrandom::getrandom(&mut bytes).expect("OS CSPRNG must provide cycle entropy");
+    u64::from_le_bytes(bytes)
 }
 
 fn main() {
@@ -141,13 +79,11 @@ fn main() {
         std::process::exit(2);
     };
 
-    let clock = Instant::now();
-
-    // Build an announcing node: it both forwards others' announces AND emits its
-    // own `personal.node` announce on the schedule (default 6h), the first one as
-    // soon as the interface is registered below.
+    // Build an announcing node: forwards others' announces AND emits its own
+    // `personal.node` announce on the schedule (default 6h), the first as soon as
+    // the interface is registered in the manifold below.
     let identity_secret_key = load_identity_secret_key();
-    let mut state: DefaultEngineState = DefaultEngineState::announcing(
+    let state: DefaultEngineState = DefaultEngineState::announcing(
         &identity_secret_key,
         SelfAnnounceConfig {
             app_name: SELF_ANNOUNCE_APP_NAME,
@@ -169,170 +105,57 @@ fn main() {
         println!("RNSD_SELF_ANNOUNCE_DEST {hex} name=personal.node");
     }
 
-    let wait_mode = wait_mode_from_env();
-    println!("RNSD_WAIT_MODE {wait_mode:?}");
+    // One monotonic base shared by the worker (frame arrival stamps) and the
+    // runtime (cycle clock), so `arrived_at` and `now` share a timebase.
+    let clock_base = Instant::now();
 
-    let mut announced_routes = 0;
+    // Shared inbound mailbox (worker stamps → runtime drains), per-worker outbound
+    // queue (manifold fills → worker drains), and shared liveness.
+    let (inbound_tx, inbound_rx) = mpsc::channel::<InboxEntry>();
+    let (outbound_tx, outbound_rx) = mpsc::channel::<Vec<u8>>();
+    let link_up: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
-    loop {
-        let mut iface = match SerialUsbInterface::open(USB_INTERFACE_ID, &path) {
-            Ok(iface) => iface,
-            Err(e) => {
-                eprintln!("RNSD_USB_OPEN_ERR {path}: {e:?}");
-                std::thread::sleep(USB_RECONNECT_INTERVAL);
-                continue;
-            }
-        };
-        println!("RNSD_USB_OPEN_OK {path}");
+    let worker = StdSerialInterface::new(USB_INTERFACE_ID, outbound_tx, link_up.clone());
+    let manifold = Manifold::new(state, [worker]);
 
-        state
-            .register_routable_interface(&iface)
-            .expect("opened USB interface is connected and transmits");
-
-        loop {
-            let now = InstantMillis(clock.elapsed().as_millis() as u64);
-
-            // Read at most one de-framed packet into per-step scratch. The
-            // returned packet borrows `scratch` (not the interface), so the
-            // interface is free again for the host to transmit egress on.
-            let mut scratch = [0u8; MTU];
-            let inbound = match iface.read_inbound(&mut scratch, now) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    eprintln!("RNSD_USB_READ_ERR {e:?}");
-                    None
+    // Worker thread: own the serial port, reopen on unplug, run the shell. The
+    // handle stays registered across reconnects — only the byte stream churns.
+    {
+        let link_up = link_up.clone();
+        std::thread::spawn(move || loop {
+            match serialport::new(&path, USB_BAUD).timeout(READ_POLL).open() {
+                Ok(port) => {
+                    println!("RNSD_USB_OPEN_OK {path}");
+                    run_serial_worker(
+                        port,
+                        USB_INTERFACE_ID,
+                        &inbound_tx,
+                        &outbound_rx,
+                        &link_up,
+                        clock_base,
+                    );
+                    link_up.store(false, Ordering::Relaxed);
+                    eprintln!("RNSD_USB_DISCONNECTED {path}");
                 }
-            };
-
-            // `Option::as_slice` lends the 0-or-1 packet as the borrowed batch the
-            // engine seam expects — no allocation, borrows `inbound`/`scratch`.
-            let mut driver =
-                UsbHostExampleEngineDriver::for_runtime_step(clock, &mut iface, inbound.as_slice());
-            driver
-                .step(&mut state)
-                .expect("usb driver clock/entropy step cannot fail");
-
-            // A growing route count means the engine just learned a path from an
-            // ingested announce — the proof the cable carried a real one.
-            if state.route_count() > announced_routes {
-                announced_routes = state.route_count();
-                println!(
-                    "RNSD_USB_RX_ANNOUNCE routes={} ingested={}",
-                    state.route_count(),
-                    state.ingested_packet_count()
-                );
+                Err(e) => eprintln!("RNSD_USB_OPEN_ERR {path}: {e:?}"),
             }
+            std::thread::sleep(RECONNECT_INTERVAL);
+        });
+    }
 
-            match usb_lifecycle_action(iface.state()) {
-                UsbLifecycleAction::Continue => {}
-                UsbLifecycleAction::Reopen { marker } => {
-                    eprintln!("{marker}");
-                    break;
-                }
-            }
-
-            // Deadline-driven wait: size the next read's blocking window to the
-            // engine's next scheduled work (or a packet, whichever lands first).
-            // No fixed sleep — the engine has no reason to be woken otherwise.
-            let now = InstantMillis(clock.elapsed().as_millis() as u64);
-            let timeout = wait_mode.read_timeout(state.next_wakeup(now), now);
-            iface.set_read_timeout(timeout);
+    // Runtime: drive the manifold forever; log when the routing table grows — the
+    // proof the cable carried a real announce into the engine.
+    let mut announced_routes = 0u32;
+    run_manifold(manifold, inbound_rx, clock_base, draw_entropy, |snapshot| {
+        let routes = snapshot
+            .interfaces
+            .iter()
+            .map(|view| view.tracked_destinations)
+            .max()
+            .unwrap_or(0);
+        if routes > announced_routes {
+            announced_routes = routes;
+            println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
         }
-
-        std::thread::sleep(USB_RECONNECT_INTERVAL);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn usb_lifecycle_action_keeps_routable_states_running() {
-        assert_eq!(
-            usb_lifecycle_action(ConnectionState::Connected),
-            UsbLifecycleAction::Continue
-        );
-        assert_eq!(
-            usb_lifecycle_action(ConnectionState::Degraded),
-            UsbLifecycleAction::Continue
-        );
-    }
-
-    #[test]
-    fn usb_lifecycle_action_reopens_on_non_routable_states() {
-        assert_eq!(
-            usb_lifecycle_action(ConnectionState::Initializing),
-            UsbLifecycleAction::Reopen {
-                marker: "RNSD_USB_NOT_ROUTABLE"
-            }
-        );
-        assert_eq!(
-            usb_lifecycle_action(ConnectionState::Reconnecting),
-            UsbLifecycleAction::Reopen {
-                marker: "RNSD_USB_NOT_ROUTABLE"
-            }
-        );
-        assert_eq!(
-            usb_lifecycle_action(ConnectionState::Failed),
-            UsbLifecycleAction::Reopen {
-                marker: "RNSD_USB_FAILED"
-            }
-        );
-        assert_eq!(
-            usb_lifecycle_action(ConnectionState::Disconnected),
-            UsbLifecycleAction::Reopen {
-                marker: "RNSD_USB_DISCONNECTED"
-            }
-        );
-    }
-
-    #[test]
-    fn fixed_interval_wait_ignores_the_schedule() {
-        let mode = WaitMode::FixedInterval(Duration::from_millis(5));
-        let now = InstantMillis(1_000);
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::Idle, now),
-            Duration::from_millis(5)
-        );
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::Immediate, now),
-            Duration::from_millis(5)
-        );
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(9_999)), now),
-            Duration::from_millis(5),
-        );
-    }
-
-    #[test]
-    fn wake_on_deadline_sizes_the_wait_to_the_next_obligation() {
-        let mode = WaitMode::WakeOnDeadline;
-        let now = InstantMillis(1_000);
-
-        // Work due now → don't block.
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::Immediate, now),
-            Duration::ZERO
-        );
-        // A near deadline → exactly the gap until it.
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(1_200)), now),
-            Duration::from_millis(200),
-        );
-        // A deadline already in the past → zero (saturating), never a panic.
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(500)), now),
-            Duration::ZERO,
-        );
-        // A far deadline and a fully idle engine both cap at the lifecycle bound.
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(u64::MAX)), now),
-            MAX_BLOCKING_WAIT,
-        );
-        assert_eq!(
-            mode.read_timeout(NextScheduledWakeup::Idle, now),
-            MAX_BLOCKING_WAIT
-        );
-    }
+    });
 }

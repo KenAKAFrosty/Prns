@@ -6,10 +6,5 @@ mod hosts;
 #[cfg(feature = "std")]
 pub use hosts::std::{StdEngineDriver, StdEngineDriverError};
 
-#[cfg(feature = "std-host")]
-pub use hosts::std::usb::{
-    SerialUsbError, SerialUsbInterface, UsbHostExampleEngineDriver, UsbHostExampleEngineDriverError,
-};
-
 #[cfg(feature = "tokio-host")]
 pub use hosts::tokio::run_multi_thread;

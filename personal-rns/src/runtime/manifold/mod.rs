@@ -15,5 +15,5 @@ mod snapshot;
 pub use core::Manifold;
 pub use snapshot::{InterfaceView, RuntimeSnapshot};
 
-#[cfg(feature = "embassy-host")]
+#[cfg(any(feature = "embassy-host", feature = "std-host"))]
 pub mod impls;

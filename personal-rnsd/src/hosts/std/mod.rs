@@ -7,9 +7,6 @@
 //! emits nothing when there's nothing scheduled), so the steady idle loop
 //! runs cleanly.
 
-#[cfg(feature = "std-host")]
-pub mod usb;
-
 use std::time::Instant;
 
 use personal_rns::engine::{EngineDriver, InboundPacket, InstantMillis};

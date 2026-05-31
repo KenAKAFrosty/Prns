@@ -18,3 +18,6 @@ pub use core::{descriptor, SERIAL_MTU};
 
 #[cfg(feature = "embassy-host")]
 pub mod embassy;
+
+#[cfg(feature = "std-host")]
+pub mod std_host;
