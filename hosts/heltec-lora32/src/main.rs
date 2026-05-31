@@ -14,7 +14,9 @@
 //!
 //! Board: Heltec WiFi LoRa 32 V3 (ESP32-S3). OLED `SDA=17 SCL=18 RST=21`,
 //! `Vext=GPIO36` (active-low). WiFi creds come from build-time env
-//! `WIFI_SSID` / `WIFI_PASSWORD` so they never enter source.
+//! `WIFI_SSID` / `WIFI_PASSWORD` so they never enter source; optional
+//! `WIFI_BSSID` pins the STA to one AP (mesh units don't bridge the
+//! link-local multicast RNS discovery rides on).
 
 #![no_std]
 #![no_main]
@@ -34,8 +36,8 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select, Either};
-use embassy_net::udp::{PacketMetadata, UdpSocket};
+use embassy_futures::select::{select3, Either3};
+use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
 use embassy_net::{Config as NetConfig, IpAddress, Runner, StackResources};
 use embassy_time::{Duration, Ticker};
 use static_cell::StaticCell;
@@ -46,7 +48,7 @@ use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text};
-use heapless::String as HString;
+use heapless::{String as HString, Vec as HVec};
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
@@ -64,6 +66,11 @@ esp_app_desc!();
 /// `WIFI_SSID="…" WIFI_PASSWORD="…" cargo build --release`.
 const WIFI_SSID: &str = env!("WIFI_SSID");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
+/// Optional BSSID to pin the STA to (e.g. `WIFI_BSSID=24:2d:6c:11:aa:48`). On a
+/// multi-unit mesh, link-local multicast doesn't bridge between units, so RNS
+/// AutoInterface discovery only works when this node shares a physical AP with
+/// its peers. Unset = associate to the strongest BSSID (may roam between units).
+const WIFI_BSSID: Option<&str> = option_env!("WIFI_BSSID");
 
 fn now_millis() -> InstantMillis {
     InstantMillis(Instant::now().duration_since_epoch().as_millis())
@@ -73,6 +80,59 @@ fn now_millis() -> InstantMillis {
 fn block_ms(ms: u64) {
     let target = Instant::now().duration_since_epoch().as_millis() + ms;
     while Instant::now().duration_since_epoch().as_millis() < target {}
+}
+
+/// Parse a colon-separated MAC like "24:2d:6c:11:aa:48" into 6 bytes.
+fn parse_bssid(s: &str) -> Option<[u8; 6]> {
+    let mut out = [0u8; 6];
+    let mut n = 0;
+    for part in s.split(':') {
+        if n >= 6 {
+            return None;
+        }
+        out[n] = u8::from_str_radix(part, 16).ok()?;
+        n += 1;
+    }
+    (n == 6).then_some(out)
+}
+
+/// Extract the IPv6 source address from a received datagram's metadata.
+fn ipv6_src(meta: &UdpMetadata) -> Option<core::net::Ipv6Addr> {
+    match meta.endpoint.addr {
+        IpAddress::Ipv6(addr) => Some(addr),
+        // proto-ipv4 is off, so no other variant can occur; stay robust.
+        #[allow(unreachable_patterns)]
+        _ => None,
+    }
+}
+
+/// Authenticate an inbound discovery datagram against its source address and
+/// update the peer table, logging a newly-discovered peer and which channel
+/// (`mcast` beacon vs `ucast` reverse-peering) found it.
+fn note_peer(
+    bytes: &[u8],
+    src: core::net::Ipv6Addr,
+    our_link_local: &core::net::Ipv6Addr,
+    peers: &mut rns_auto::PeerTable<8>,
+    now_ms: u64,
+    auth_failures: &mut u32,
+    via: &str,
+) {
+    match rns_auto::classify_beacon(bytes, &src, our_link_local) {
+        rns_auto::BeaconVerdict::Peer => match peers.observe(src, now_ms) {
+            rns_auto::PeerObservation::NewlyDiscovered => {
+                println!("HELTEC_S3 PEER+ {src} via {via} (peers={})", peers.len());
+            }
+            rns_auto::PeerObservation::TableFull => {
+                println!("HELTEC_S3 PEER table full, dropped {src}");
+            }
+            rns_auto::PeerObservation::Refreshed => {}
+        },
+        rns_auto::BeaconVerdict::AuthenticationFailed => {
+            *auth_failures = auth_failures.wrapping_add(1);
+        }
+        rns_auto::BeaconVerdict::SelfEcho | rns_auto::BeaconVerdict::TooShort => {}
+    }
 }
 
 /// The embassy-net background task: polls the WiFi device and runs the IP stack.
@@ -157,9 +217,21 @@ async fn main(spawner: Spawner) {
     // --- WiFi association (esp-radio). ---
     let (mut controller, interfaces) =
         wifi::new(peripherals.WIFI, Default::default()).expect("esp-radio wifi::new");
-    let sta = StationConfig::default()
+    let mut sta = StationConfig::default()
         .with_ssid(WIFI_SSID)
         .with_password(WIFI_PASSWORD.into());
+    // Pin to one AP unit when WIFI_BSSID is set — mesh networks don't bridge
+    // link-local multicast between units, so discovery needs us on the peer's
+    // physical AP (see WIFI_BSSID docs).
+    if let Some(bssid_str) = WIFI_BSSID {
+        match parse_bssid(bssid_str) {
+            Some(bssid) => {
+                sta = sta.with_bssid(bssid);
+                println!("HELTEC_S3 WIFI pinning to bssid {bssid_str}");
+            }
+            None => println!("HELTEC_S3 WIFI ignoring malformed WIFI_BSSID '{bssid_str}'"),
+        }
+    }
     controller
         .set_config(&WifiConfig::Station(sta))
         .expect("set STA config");
@@ -181,6 +253,17 @@ async fn main(spawner: Spawner) {
             "WiFi: FAIL"
         }
     };
+
+    // Which AP did we land on? On a multi-AP / mesh LAN, cross-AP multicast may
+    // not bridge to the node sending announces — so correlate this BSSID with
+    // whether inbound discovery works this boot. (Diagnostic.)
+    if let Ok(ap) = controller.ap_info() {
+        let b = ap.bssid;
+        println!(
+            "HELTEC_S3 AP bssid {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            b[0], b[1], b[2], b[3], b[4], b[5]
+        );
+    }
 
     // --- M2: IP stack (embassy-net) with SLAAC → IPv6 link-local. ---
     // Capture the STA MAC before the device moves into the stack; we use it to
@@ -227,13 +310,34 @@ async fn main(spawner: Spawner) {
     let mut rx_buf = [0u8; 512];
     let mut tx_meta = [PacketMetadata::EMPTY; 8];
     let mut tx_buf = [0u8; 512];
-    // `bind` needs &mut; `recv_from`/`send_to` take &self, so the discovery
-    // loop reads and writes this one socket without re-borrowing conflicts.
-    let mut sock = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
-    sock.bind(rns_auto::DISCOVERY_PORT).expect("bind discovery port");
+    // `bind` needs &mut; `recv_from`/`send_to` take &self. This socket carries
+    // multicast discovery (beacons in + out) on the discovery port.
+    let mut disc = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    disc.bind(rns_auto::DISCOVERY_PORT).expect("bind discovery port");
 
-    // Our peering token — the beacon payload. Printed for the golden
-    // cross-check against `sha256(b"reticulum" + b"<our ll>")` (laptop-computed).
+    // Second socket for the RNS unicast reverse-peering channel (29717). A peer
+    // that hears our multicast unicasts its token back here, so we discover it
+    // even when our own multicast RX is blocked (e.g. a mesh AP that won't
+    // forward the group across its backhaul) — the mechanism that makes the
+    // reference AutoInterface robust to one-way multicast.
+    let mut udisc_rx_meta = [PacketMetadata::EMPTY; 8];
+    let mut udisc_rx_buf = [0u8; 512];
+    let mut udisc_tx_meta = [PacketMetadata::EMPTY; 8];
+    let mut udisc_tx_buf = [0u8; 512];
+    let mut udisc = UdpSocket::new(
+        stack,
+        &mut udisc_rx_meta,
+        &mut udisc_rx_buf,
+        &mut udisc_tx_meta,
+        &mut udisc_tx_buf,
+    );
+    udisc
+        .bind(rns_auto::UNICAST_DISCOVERY_PORT)
+        .expect("bind unicast discovery port");
+
+    // Our peering token — the multicast beacon payload and the unicast
+    // reverse-peering payload. Printed for the golden cross-check against
+    // `sha256(b"reticulum" + b"<our ll>")` (laptop-computed).
     let our_token = rns_auto::peering_token(&our_link_local);
     println!(
         "HELTEC_S3 token {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}.. for {our_link_local}",
@@ -250,50 +354,64 @@ async fn main(spawner: Spawner) {
     let mut peers: rns_auto::PeerTable<8> = rns_auto::PeerTable::new();
 
     // --- Discovery + engine loop. ---
-    // One task drives both directions: `select` parks on an inbound datagram
-    // and a 1.6 s beacon tick (RNS ANNOUNCE_INTERVAL) at once, handling whichever
-    // fires. Inbound beacons update the peer table; the tick drives the engine,
-    // emits our beacon, ages out stale peers, and redraws the OLED.
+    // `select3` parks on a multicast datagram (29716), a unicast reverse-peering
+    // datagram (29717), and a 1.6 s beacon tick at once, handling whichever
+    // fires. Inbound datagrams update the peer table (logging which channel found
+    // the peer); the tick drives the engine, emits our multicast beacon,
+    // reverse-announces to known peers, ages out stale peers, and redraws the OLED.
     let _controller = controller; // keep the radio alive (dropping disconnects)
     let mut rx = [0u8; 256];
+    let mut urx = [0u8; 256];
     let mut beacons: u32 = 0;
     let mut auth_failures: u32 = 0;
     let mut cycle: u32 = 0;
     let mut beacon_ticker = Ticker::every(Duration::from_millis(1600));
     loop {
-        match select(sock.recv_from(&mut rx), beacon_ticker.next()).await {
-            // Inbound discovery datagram.
-            Either::First(Ok((n, meta))) => {
-                let src = match meta.endpoint.addr {
-                    IpAddress::Ipv6(addr) => addr,
-                    // proto-ipv4 is off, so this is unreachable; stay robust.
-                    #[allow(unreachable_patterns)]
-                    _ => continue,
-                };
-                match rns_auto::classify_beacon(&rx[..n], &src, &our_link_local) {
-                    rns_auto::BeaconVerdict::Peer => match peers.observe(src, now_millis().0) {
-                        rns_auto::PeerObservation::NewlyDiscovered => {
-                            println!("HELTEC_S3 PEER+ {src} (peers={})", peers.len());
-                        }
-                        rns_auto::PeerObservation::TableFull => {
-                            println!("HELTEC_S3 PEER table full, dropped {src}");
-                        }
-                        rns_auto::PeerObservation::Refreshed => {}
-                    },
-                    rns_auto::BeaconVerdict::AuthenticationFailed => {
-                        auth_failures = auth_failures.wrapping_add(1);
-                    }
-                    rns_auto::BeaconVerdict::SelfEcho | rns_auto::BeaconVerdict::TooShort => {}
+        match select3(
+            disc.recv_from(&mut rx),
+            udisc.recv_from(&mut urx),
+            beacon_ticker.next(),
+        )
+        .await
+        {
+            // Multicast discovery datagram (29716).
+            Either3::First(Ok((n, meta))) => {
+                if let Some(src) = ipv6_src(&meta) {
+                    note_peer(
+                        &rx[..n],
+                        src,
+                        &our_link_local,
+                        &mut peers,
+                        now_millis().0,
+                        &mut auth_failures,
+                        "mcast",
+                    );
                 }
             }
-            Either::First(Err(e)) => println!("HELTEC_S3 RECV err: {e:?}"),
-            // Beacon tick: drive the engine, emit our beacon, age out peers.
-            Either::Second(_) => {
+            Either3::First(Err(e)) => println!("HELTEC_S3 RECV mcast err: {e:?}"),
+            // Unicast reverse-peering datagram (29717).
+            Either3::Second(Ok((n, meta))) => {
+                if let Some(src) = ipv6_src(&meta) {
+                    note_peer(
+                        &urx[..n],
+                        src,
+                        &our_link_local,
+                        &mut peers,
+                        now_millis().0,
+                        &mut auth_failures,
+                        "ucast",
+                    );
+                }
+            }
+            Either3::Second(Err(e)) => println!("HELTEC_S3 RECV ucast err: {e:?}"),
+            // Beacon tick: drive the engine, emit beacons, age out peers.
+            Either3::Third(_) => {
                 let now = now_millis();
                 let _ = tick(&mut state, now, 0xA5A5_A5A5_A5A5_A5A5);
                 cycle = cycle.wrapping_add(1);
 
-                match sock
+                // Multicast discovery beacon.
+                match disc
                     .send_to(
                         &our_token,
                         (IpAddress::Ipv6(rns_auto::DISCOVERY_GROUP), rns_auto::DISCOVERY_PORT),
@@ -303,6 +421,25 @@ async fn main(spawner: Spawner) {
                     Ok(()) => beacons = beacons.wrapping_add(1),
                     Err(e) => println!("HELTEC_S3 BEACON send err: {e:?}"),
                 }
+
+                // Reverse-peering: unicast our token to each known peer's unicast
+                // discovery port (RNS AutoInterface.py:394-401,477-489), so a peer
+                // that can't hear our multicast still keeps us discovered.
+                if cycle % 3 == 0 && peers.len() != 0 {
+                    let mut targets: HVec<core::net::Ipv6Addr, 8> = HVec::new();
+                    for addr in peers.addrs() {
+                        let _ = targets.push(addr);
+                    }
+                    for addr in targets {
+                        let _ = udisc
+                            .send_to(
+                                &our_token,
+                                (IpAddress::Ipv6(addr), rns_auto::UNICAST_DISCOVERY_PORT),
+                            )
+                            .await;
+                    }
+                }
+
                 let pruned = peers.prune(now.0);
                 if pruned > 0 {
                     println!("HELTEC_S3 pruned {pruned} stale peer(s) (peers={})", peers.len());

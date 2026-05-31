@@ -26,6 +26,14 @@ pub const GROUP_ID: &[u8] = b"reticulum";
 /// Multicast discovery port (`AutoInterface.py` L47).
 pub const DISCOVERY_PORT: u16 = 29716;
 
+/// Unicast reverse-peering port (`AutoInterface.py` L173 = `discovery_port + 1`).
+/// A node that *heard* a peer's multicast beacon unicasts its own token back
+/// here (`reverse_announce`, L477-489, driven by `peer_jobs` L394-401), so
+/// discovery completes even when the reverse multicast path is blocked — e.g. a
+/// mesh AP that won't forward the group across its backhaul. This is what makes
+/// reference RNS AutoInterface robust to one-way multicast.
+pub const UNICAST_DISCOVERY_PORT: u16 = DISCOVERY_PORT + 1;
+
 /// Unicast data port (`AutoInterface.py` L48). The data plane lands in M5;
 /// declared here so the module stays the single home for the wire spec.
 #[allow(dead_code)]
@@ -182,6 +190,11 @@ impl<const N: usize> PeerTable<N> {
 
     pub fn len(&self) -> usize {
         self.peers.len()
+    }
+
+    /// The link-local address of every known peer — reverse-peering targets.
+    pub fn addrs(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
+        self.peers.iter().map(|p| p.addr)
     }
 }
 
