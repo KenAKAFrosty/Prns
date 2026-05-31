@@ -90,6 +90,14 @@ impl<const MAX_PENDING: usize> PendingRebroadcasts<MAX_PENDING> {
         self.pending.iter()
     }
 
+    /// The earliest `due_at` across all queued rebroadcasts, or `None` if the
+    /// queue is empty. This is the queue's contribution to "when must the engine
+    /// next wake?" — kept here next to `schedule`/`take_due` so the deadline and
+    /// the due-check have a harder time drifting apart.
+    pub fn earliest_due_at(&self) -> Option<InstantMillis> {
+        self.pending.iter().map(|entry| entry.due_at).min()
+    }
+
     /// Remove every entry whose `due_at <= now`. Returns how many were
     /// removed. Used by `TickOutput`'s Drop to commit a tick's
     /// emissions once the host has iterated them.

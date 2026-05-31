@@ -16,7 +16,7 @@ pub use ingress::Ingress;
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
 use crate::engine::egress::write_announce_wire_packet;
-use crate::engine::self_announce::SelfAnnounce;
+use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{ConnectionState, Interface, InterfaceId};
@@ -43,11 +43,11 @@ use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
 /// Cap on how many interfaces the engine can own at once. Picked against
-/// embedded reality — a real device typically has 1–4 active radios; 8
+/// embedded reality — a real device typically has 1–4 active interfaces; 8
 /// gives slack for hosts that present a virtual interface (USB, BLE,
 /// loopback for diagnostics) without ballooning per-tick fanout arena
 /// storage. Tunable if a real host outgrows it; not exposed as a const
-/// generic to keep `EngineState`'s type signature manageable.
+/// generic for now, to keep `EngineState`'s type signature manageable.
 pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -58,6 +58,13 @@ pub struct InboundPacket<'a> {
     pub arrived_at: InstantMillis,
     pub source_interface: InterfaceId,
     pub bytes: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextScheduledWakeup {
+    Immediate,
+    At(InstantMillis),
+    Idle,
 }
 
 /// Retained engine state. **Purely abstract** in its type parameters — does
@@ -102,19 +109,14 @@ where
     // `MAX_PENDING` dial is the obvious next iteration if that assumption
     // breaks.
     pending_rebroadcasts: PendingRebroadcasts<MAX_HELD_ANNOUNCES>,
-    // Interfaces the host has registered with this engine. tick() builds each
-    // directive's `fire_on` list from this set minus the source.
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
     // The node's own identity, owned hot for the engine's lifetime so every
     // signing / key-agreement operation reads it from memory rather than
     // re-deriving or re-fetching per use. `None` for a pure relay. The secret
     // keys inside zeroize on drop and have no byte accessor (see
-    // `InMemoryNodeIdentity`); that is why this struct drops `Clone`/`Eq`.
+    // `InMemoryNodeIdentity`)
     identity: Option<InMemoryNodeIdentity>,
-    // The optional, app-driven decision to announce our own destination on a
-    // cadence. Only ever `Some` when `identity` is `Some` (enforced by the
-    // constructors).
-    self_announce: Option<SelfAnnounce>,
+    self_announce: Option<SelfAnnounceSettings>,
 }
 
 impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> core::fmt::Debug
@@ -221,7 +223,7 @@ where
         H: Default,
         D: Default,
     {
-        let self_announce = SelfAnnounce::from_config(self_announce)?;
+        let self_announce = SelfAnnounceSettings::from_config(self_announce)?;
         Ok(Self {
             self_announce: Some(self_announce),
             ..Self::new(identity_secret_key)
@@ -298,6 +300,45 @@ where
             &identity.identity_hash(),
             &self_announce.name_hash(),
         ))
+    }
+
+    /// When the host must next drive the engine, given everything scheduled in
+    /// state right now: parked held entries (retried next tick), our own
+    /// re-announce cadence, and queued rebroadcasts. This is the **single place**
+    /// that folds every timed obligation — any new scheduled behavior MUST be
+    /// represented here, or a deadline-driven host would sleep through it. Pure;
+    /// call it after a step to decide how long to sleep before the next one.
+    pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledWakeup {
+        // Parked held entries are fully drained on the next tick, so any parked
+        // entry means there is work to do right now.
+        if self.held_announce_count() > 0 {
+            return NextScheduledWakeup::Immediate;
+        }
+
+        let mut earliest: Option<InstantMillis> = None;
+
+        // Our own re-announce cadence.
+        if let Some(self_announce) = &self.self_announce {
+            if self_announce.is_due(now) {
+                return NextScheduledWakeup::Immediate;
+            }
+            if let Some(deadline) = self_announce.next_due_at() {
+                earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
+            }
+        }
+
+        // Queued rebroadcasts: due now → Immediate, else fold the earliest.
+        if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
+            if due_at <= now {
+                return NextScheduledWakeup::Immediate;
+            }
+            earliest = Some(earliest.map_or(due_at, |e| e.min(due_at)));
+        }
+
+        match earliest {
+            Some(instant) => NextScheduledWakeup::At(instant),
+            None => NextScheduledWakeup::Idle,
+        }
     }
 
     /// If this engine self-announces and one is due at `now`, build and sign our
@@ -643,10 +684,11 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     }
 }
 
-/// Advance the engine's periodic work to `now`. Performs the held-cache
-/// retry (one entry max per tick), maintains the rebroadcast schedule,
-/// and returns a [`TickOutput`] holding `&mut state` until the host has
-/// iterated the directives the engine produced.
+/// Advance the engine's periodic work to `now`. Fully drains the held-cache
+/// (retrying every parked entry, lowest-hops-first, so nothing is left to retry
+/// on a later tick), maintains the rebroadcast schedule, and returns a
+/// [`TickOutput`] holding `&mut state` until the host has iterated the
+/// directives the engine produced.
 ///
 /// `entropy` is the same per-step value passed to `ingest`; reused here
 /// so a held-recovery accept gets a deterministic jittered re-emission
@@ -665,8 +707,15 @@ where
 {
     state.tick_count = state.tick_count.saturating_add(1);
 
+    // Drain the WHOLE held cache this tick — not one entry per tick. Each parked
+    // entry gets exactly one retry against the current (post-ingest) arena state
+    // and is then either installed or discarded; we never re-park (the livelock
+    // guard), so the loop strictly shrinks the cache and terminates, bounded by
+    // its capacity. Draining fully means the cache is empty after every tick, so
+    // the engine's wake-up scheduling never has to account for still-parked work
+    // — retry was never time-driven, it was just paced by the old poll cadence.
     let mut recovered_from_held_count = 0;
-    if let Some(held) = state.held_announces_cache.take_next() {
+    while let Some(held) = state.held_announces_cache.take_next() {
         use crate::routing::held_cache::HoldReason;
         match held.reason() {
             HoldReason::RoutingArenaPressure => {
@@ -988,6 +1037,73 @@ mod tests {
         assert_eq!(identity_only.self_announced_destination(), None);
     }
 
+    #[test]
+    fn next_wakeup_is_idle_for_a_relay_with_no_scheduled_work() {
+        let state: DefaultEngineState = DefaultEngineState::default();
+        assert_eq!(
+            state.next_wakeup(InstantMillis(1_000)),
+            NextScheduledWakeup::Idle
+        );
+    }
+
+    #[test]
+    fn next_wakeup_is_immediate_when_a_self_announce_is_due() {
+        // A fresh announcer has never announced → due immediately.
+        let state = personal_node_announcer();
+        assert_eq!(
+            state.next_wakeup(InstantMillis(0)),
+            NextScheduledWakeup::Immediate
+        );
+    }
+
+    #[test]
+    fn next_wakeup_reports_the_reannounce_deadline_once_we_have_announced() {
+        let mut state = personal_node_announcer();
+        let mut buf = [0u8; MTU];
+        state
+            .write_due_self_announce(InstantMillis(1_000), 0, &mut buf)
+            .expect("first announce is due");
+
+        let interval = ReannounceSchedule::default().interval_millis();
+        assert_eq!(
+            state.next_wakeup(InstantMillis(2_000)),
+            NextScheduledWakeup::At(InstantMillis(1_000 + interval)),
+        );
+    }
+
+    #[test]
+    fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let _ = ingest(
+            &mut state,
+            &[InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &raw,
+            }],
+            TEST_ENTROPY,
+        );
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+
+        // Before its (jittered) due time → wake At that instant, within the
+        // window after arrival.
+        match state.next_wakeup(InstantMillis(0)) {
+            NextScheduledWakeup::At(t) => assert!(
+                t.0 >= 1_000 && t.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                "due_at {} should sit within the jitter window after arrival",
+                t.0,
+            ),
+            other => panic!("expected At(_), got {other:?}"),
+        }
+
+        // Well past the due time → Immediate.
+        assert_eq!(
+            state.next_wakeup(InstantMillis(1_000_000)),
+            NextScheduledWakeup::Immediate,
+        );
+    }
+
     // A genuine RNS 1.3.1 announce (the same vector the announce module validates).
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -1266,7 +1382,7 @@ mod tests {
     }
 
     #[test]
-    fn tick_retries_one_held_entry_and_discards_it_when_the_arena_is_still_full() {
+    fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = DefaultEngineState::<4, 64, 8>::default();
         let _ = ingest(
@@ -1286,6 +1402,67 @@ mod tests {
         assert_eq!(out.recovered_from_held_count, 0);
         assert_eq!(state.held_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
+    fn tick_drains_the_entire_held_cache_in_one_pass() {
+        // Two distinct destinations both hit arena pressure and park. A single
+        // tick must retry BOTH — the cache is drained fully, not one-per-tick —
+        // so it is empty afterward (here both discard, the arena stays full).
+        use crate::engine::egress::write_announce_wire_packet;
+        use crate::routing::announce::expand_name;
+
+        let mut state = DefaultEngineState::<4, 64, 8>::default(); // 8-byte arena
+
+        // A second valid announce for a *different* destination than RAW_ANNOUNCE
+        // (fixture identity + a distinct aspect), framed onto the wire so ingest
+        // takes it through the same path.
+        let key = fixed_secret_key();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
+        let announce2 = Announce::build_signed(
+            &identity,
+            expand_name("personal", &["other"]).unwrap(),
+            AnnounceId::from_wire([0x55; 10]),
+            None,
+            b"hello-personal",
+        )
+        .unwrap();
+        let mut buf2 = [0u8; MTU];
+        let n2 = write_announce_wire_packet(&announce2, 0, &mut buf2).unwrap();
+
+        let raw1 = hx(RAW_ANNOUNCE);
+        let _ = ingest(
+            &mut state,
+            &[
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0u8; 16]),
+                    bytes: &raw1,
+                },
+                InboundPacket {
+                    arrived_at: InstantMillis(1_001),
+                    source_interface: InterfaceId::new([0u8; 16]),
+                    bytes: &buf2[..n2],
+                },
+            ],
+            TEST_ENTROPY,
+        );
+        assert_eq!(
+            state.held_announce_count(),
+            2,
+            "both distinct destinations parked under arena pressure"
+        );
+
+        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
+        assert_eq!(
+            state.held_announce_count(),
+            0,
+            "one tick drains the entire held cache, not just one entry"
+        );
+        assert_eq!(
+            out.recovered_from_held_count, 0,
+            "arena still full → both discard"
+        );
     }
 
     #[test]

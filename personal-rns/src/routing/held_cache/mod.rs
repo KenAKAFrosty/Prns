@@ -8,9 +8,11 @@
 //! ## Why announces are held
 //!
 //! Today's caller: [`upsert_route`](crate::routing::RoutingTable::upsert_route)
-//! returns `Dropped(PayloadArenaFull)` and the engine parks the announce here
-//! for retry on subsequent ticks. RNS rate-limiting and bandwidth-aware
-//! emission ratios will share this cache as those slices arrive.
+//! returns `Dropped(PayloadArenaFull)` and the engine parks the announce here.
+//! The next tick fully drains the cache (one retry per parked entry, then
+//! install-or-discard); nothing carries across more than that one tick. RNS
+//! rate-limiting and bandwidth-aware emission ratios will share this cache as
+//! those slices arrive.
 //!
 //! ## Behavior (RNS parity)
 //!
@@ -81,11 +83,12 @@ pub enum ParkOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HoldReason {
     /// The routing-table `app_data` arena was full at upsert time, so the
-    /// announce was never installed. Release condition: any subsequent
-    /// tick (the arena may have cleared). Follow-up: retry
-    /// [`upsert_route`](crate::routing::RoutingTable::upsert_route); on
-    /// success the destination installs into the routing table for the
-    /// first time (pre-install hold, mirroring RNS Path A semantics).
+    /// announce was never installed. Released on the next tick, which retries
+    /// [`upsert_route`](crate::routing::RoutingTable::upsert_route) against the
+    /// then-current arena: on success the destination installs into the routing
+    /// table for the first time (pre-install hold, mirroring RNS Path A
+    /// semantics); if it still doesn't fit it is discarded (never re-parked —
+    /// the livelock guard).
     #[default]
     RoutingArenaPressure,
     // Future variants when their slices land:

@@ -68,14 +68,14 @@ pub enum SelfAnnounceConfigError {
 /// The engine's resolved self-announce: the destination name hash it derived
 /// once, the app data it carries, the cadence, and when it last emitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelfAnnounce {
+pub struct SelfAnnounceSettings {
     name_hash: DottedNameHash,
     app_data: HeaplessVec<u8, MAX_SELF_ANNOUNCE_APP_DATA_LEN>,
     schedule: ReannounceSchedule,
     last_announced: Option<InstantMillis>,
 }
 
-impl SelfAnnounce {
+impl SelfAnnounceSettings {
     /// Parse a [`SelfAnnounceConfig`] into resolved state: derive the
     /// destination name hash from the app name + aspects once, and copy the app
     /// data into bounded storage. This is the parse-don't-validate seam — every
@@ -115,6 +115,13 @@ impl SelfAnnounce {
         }
     }
 
+    /// The companion to `is_due` for the engine's wake-up scheduler, kept here so
+    /// the deadline and the due-check can't drift apart.
+    pub fn next_due_at(&self) -> Option<InstantMillis> {
+        self.last_announced
+            .map(|last| InstantMillis(last.0.saturating_add(self.schedule.interval_millis())))
+    }
+
     /// Record that we emitted an announce at `now`.
     pub fn mark_announced(&mut self, now: InstantMillis) {
         self.last_announced = Some(now);
@@ -125,8 +132,8 @@ impl SelfAnnounce {
 mod tests {
     use super::*;
 
-    fn personal_node() -> SelfAnnounce {
-        SelfAnnounce::from_config(SelfAnnounceConfig {
+    fn personal_node() -> SelfAnnounceSettings {
+        SelfAnnounceSettings::from_config(SelfAnnounceConfig {
             app_name: "personal",
             aspects: &["node"],
             app_data: b"hello-personal",
@@ -172,7 +179,7 @@ mod tests {
     #[test]
     fn from_config_rejects_dotted_names_and_overlong_app_data() {
         assert_eq!(
-            SelfAnnounce::from_config(SelfAnnounceConfig {
+            SelfAnnounceSettings::from_config(SelfAnnounceConfig {
                 app_name: "per.sonal",
                 aspects: &[],
                 app_data: b"",
@@ -183,7 +190,7 @@ mod tests {
 
         let too_long = [0u8; MAX_SELF_ANNOUNCE_APP_DATA_LEN + 1];
         assert_eq!(
-            SelfAnnounce::from_config(SelfAnnounceConfig {
+            SelfAnnounceSettings::from_config(SelfAnnounceConfig {
                 app_name: "personal",
                 aspects: &["node"],
                 app_data: &too_long,
