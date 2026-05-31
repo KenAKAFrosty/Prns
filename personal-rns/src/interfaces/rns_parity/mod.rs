@@ -3,9 +3,11 @@
 //! stock RNS on the same media. Each is a named interface fulfilled per host by
 //! a platform worker shell.
 //!
-//! Today: [`auto_interface`] (the WiFi/IP multicast LAN interface) and
-//! [`serial`] (the RNS `SerialInterface` over any byte stream — USB-CDC,
-//! RS-232). Future parity ports — TCP, UDP, RNode — land here as siblings.
+//! Today: [`auto_interface`] (the WiFi/IP multicast LAN interface), [`serial`]
+//! (the RNS `SerialInterface` over any byte stream — USB-CDC, RS-232), and
+//! [`rnode_lora`] (RNode-compatible LoRa — we are the modem). Future parity ports —
+//! TCP, UDP — land here as siblings.
 
 pub mod auto_interface;
+pub mod rnode_lora;
 pub mod serial;
