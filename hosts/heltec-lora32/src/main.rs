@@ -24,11 +24,12 @@ extern crate alloc;
 
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
+use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
-use esp_hal::rng::{Rng, TrngSource};
+use esp_hal::rng::Rng;
 use esp_hal::time::{Instant, Rate};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
@@ -38,11 +39,10 @@ use embassy_net::{Config as NetConfig, Runner, Stack, StackResources};
 use static_cell::StaticCell;
 
 use core::fmt::Write as _;
-use embedded_graphics::mono_font::ascii::FONT_6X10;
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::text::{Baseline, Text};
+use core::sync::atomic::AtomicBool;
+use embassy_futures::join::join;
+use embassy_futures::select::{select, Either};
+use embassy_time::{Duration, Instant as EmbassyInstant, Ticker, Timer};
 use heapless::{String as HString, Vec as HVec};
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
@@ -53,13 +53,15 @@ use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface,
 use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::auto_interface::embassy::{
-    run as run_auto_worker, EmbassyAutoInterface, OutboundChannel, OutboundReceiver,
+    run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceWorker};
 use personal_rns::runtime::manifold::impls::embassy::{
-    run as run_manifold, InboundChannel, InboundReceiver, InboundSender,
+    run as run_manifold, InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
 };
-use personal_rns::runtime::Manifold;
+use personal_rns::runtime::{InterfaceView, Manifold, RuntimeSnapshot};
+
+mod display;
 
 esp_app_desc!();
 
@@ -82,6 +84,14 @@ const INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-rnsaut");
 /// the same compile-time-knob discipline as the engine preset below.
 const PACKET_BUFFER_SIZE: usize = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
 
+/// Live link state, shared from the worker shell (writer) to its handle's
+/// `health()` (reader) so the runtime snapshot's `online` is honest.
+static LINK_UP: LinkUp = AtomicBool::new(false);
+
+/// The runtime fires its post-cycle [`RuntimeSnapshot`] out on this; the OLED
+/// render loop subscribes and wakes only when engine state changes — no poll.
+static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
+
 /// Small engine-state preset for the S3: a desk node tracks a handful of
 /// destinations, so the desktop default (256 dests / 4096-id history / 8 KB
 /// arena) is wildly oversized and doesn't fit alongside WiFi + the worker. The
@@ -91,6 +101,24 @@ type S3EngineState = DefaultEngineState<24, 32, 1024, 4, 128, 4>;
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Node (S3)";
+
+/// Heltec V3 VBAT sense: the on-board divider is ~4.9x ((390k+100k)/100k), so
+/// VBAT(mV) = pin(mV) * 49 / 10. Tune against a multimeter once on battery.
+const VBAT_DIVIDER_NUM: u32 = 49;
+const VBAT_DIVIDER_DEN: u32 = 10;
+/// LiPo range for the %; `VBAT_EXTERNAL_MV` and up reads as on USB/charging.
+const VBAT_EMPTY_MV: u32 = 3300;
+const VBAT_FULL_MV: u32 = 4200;
+const VBAT_EXTERNAL_MV: u32 = 4300;
+/// Below this no connected LiPo is plausible (a protected cell cuts off ~3.0 V;
+/// USB with no battery reads ~0), so show `Unknown` rather than a misleading 0%.
+const VBAT_ABSENT_MV: u32 = 3000;
+
+/// Blank the OLED after this long with no Reticulum activity (no change to any
+/// interface's traffic / destinations / liveness); it wakes instantly when
+/// traffic resumes. Saves the panel's draw on battery; on a busy fabric it
+/// effectively never blanks because announces keep arriving.
+const OLED_IDLE_BLANK_SECS: u64 = 30;
 
 /// Busy-wait a few ms during setup (before the async loop runs).
 fn block_ms(ms: u64) {
@@ -127,7 +155,7 @@ async fn auto_worker_task(
     inbound: InboundSender<PACKET_BUFFER_SIZE>,
     outbound: OutboundReceiver,
 ) {
-    run_auto_worker(stack, INTERFACE_ID, mac, inbound, outbound).await
+    run_auto_worker(stack, INTERFACE_ID, mac, inbound, outbound, &LINK_UP).await
 }
 
 #[esp_rtos::main]
@@ -141,10 +169,10 @@ async fn main(spawner: Spawner) {
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    // Hardware TRNG as the system entropy source, before the radio: esp-radio
-    // draws WPA entropy from it, and the manifold draws announce-id entropy from
-    // it (via the closure below). Held alive for the whole program.
-    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+    // No TrngSource: the hardware RNG is already true-random whenever the RF
+    // subsystem is enabled (our WiFi stays on), which frees ADC1 for the battery
+    // sense (VBAT is on ADC1/GPIO1). All crypto/WPA/announce-jitter randomness
+    // happens after WiFi is up, so it draws from the true RNG.
 
     // Route the worker's `log` output (in personal-rns) to the JTAG serial.
     esp_println::logger::init_logger(log::LevelFilter::Info);
@@ -201,23 +229,17 @@ async fn main(spawner: Spawner) {
     .expect("i2c0")
     .with_sda(peripherals.GPIO17)
     .with_scl(peripherals.GPIO18);
+    // Portrait, title at the far end from the buttons (the non-RST button will
+    // scroll the card stack once there's more than one interface).
     let mut display = Ssd1306::new(
         I2CDisplayInterface::new(i2c),
         DisplaySize128x64,
-        DisplayRotation::Rotate0,
+        DisplayRotation::Rotate90,
     )
     .into_buffered_graphics_mode();
     let oled_ok = display.init().is_ok();
-    let text = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     if oled_ok {
-        display.clear_buffer();
-        let _ = Text::with_baseline("Personal RNS  S3", Point::new(0, 0), text, Baseline::Top)
-            .draw(&mut display);
-        let mut l: HString<24> = HString::new();
-        let _ = write!(l, "node {dest_hex}");
-        let _ = Text::with_baseline(&l, Point::new(0, 13), text, Baseline::Top).draw(&mut display);
-        let _ = Text::with_baseline("WiFi: connecting", Point::new(0, 26), text, Baseline::Top)
-            .draw(&mut display);
+        display::splash(&mut display, "connecting");
         let _ = display.flush();
     }
 
@@ -246,16 +268,10 @@ async fn main(spawner: Spawner) {
         .expect("disable wifi power save");
 
     println!("HELTEC_S3 WIFI connecting (ssid len {})", WIFI_SSID.len());
-    let wifi_line = match controller.connect_async().await {
-        Ok(_) => {
-            println!("HELTEC_S3 WIFI connected");
-            "WiFi: UP"
-        }
-        Err(e) => {
-            println!("HELTEC_S3 WIFI connect failed: {e:?}");
-            "WiFi: FAIL"
-        }
-    };
+    match controller.connect_async().await {
+        Ok(_) => println!("HELTEC_S3 WIFI connected"),
+        Err(e) => println!("HELTEC_S3 WIFI connect failed: {e:?}"),
+    }
     if let Ok(ap) = controller.ap_info() {
         let b = ap.bssid;
         println!(
@@ -290,35 +306,124 @@ async fn main(spawner: Spawner) {
     let outbound_tx = outbound_ch.sender();
     let outbound_rx: OutboundReceiver = outbound_ch.receiver();
 
-    let worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_tx);
+    let worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_tx, &LINK_UP);
     let manifold = Manifold::new(state, worker);
 
-    spawner.spawn(auto_worker_task(stack, sta_mac, inbound_tx, outbound_rx).expect("spawn auto worker"));
+    spawner.spawn(
+        auto_worker_task(stack, sta_mac, inbound_tx, outbound_rx).expect("spawn auto worker"),
+    );
     println!("HELTEC_S3 worker spawned (node {dest_hex}); manifold running");
-
-    if oled_ok {
-        display.clear_buffer();
-        let _ = Text::with_baseline("Personal RNS  S3", Point::new(0, 0), text, Baseline::Top)
-            .draw(&mut display);
-        let mut l: HString<24> = HString::new();
-        let _ = write!(l, "node {dest_hex}");
-        let _ = Text::with_baseline(&l, Point::new(0, 13), text, Baseline::Top).draw(&mut display);
-        let _ = Text::with_baseline(wifi_line, Point::new(0, 26), text, Baseline::Top)
-            .draw(&mut display);
-        let _ = Text::with_baseline("RNS auto: up", Point::new(0, 39), text, Baseline::Top)
-            .draw(&mut display);
-        let _ = display.flush();
-    }
 
     // Keep the radio alive (dropping the controller disconnects).
     let _controller = controller;
 
+    // Battery sense (Heltec V3): VBAT divider on GPIO1 (ADC1), gated by ADC_Ctrl
+    // on GPIO37 — drive it low to connect the divider, then leave it (the ~8uA
+    // draw is negligible on a mains/USB-powered hotspot).
+    let mut adc_ctrl = Output::new(peripherals.GPIO37, Level::Low, OutputConfig::default());
+    adc_ctrl.set_low();
+    let mut adc_cfg = AdcConfig::new();
+    let mut vbat_pin =
+        adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(peripherals.GPIO1, Attenuation::_11dB);
+    let mut vbat_adc = Adc::new(peripherals.ADC1, adc_cfg);
+
     // Run the manifold loop: aggregate the worker's inbound, drive the engine,
-    // route egress back. CSPRNG entropy from the hardware TRNG per cycle.
-    run_manifold(manifold, inbound_rx, || {
+    // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.
+    // CSPRNG entropy from the (radio-seeded) RNG per cycle.
+    let manifold_fut = run_manifold(manifold, inbound_rx, SNAPSHOT_WATCH.sender(), || {
         let mut bytes = [0u8; 8];
         Rng::new().read(&mut bytes);
         u64::from_le_bytes(bytes)
-    })
-    .await
+    });
+
+    // Render the Hopspot screen alongside it. Event-driven: subscribe to the
+    // runtime snapshot and wake only when engine state changes (no polling),
+    // plus a slow ticker so the (non-engine) battery readout still refreshes.
+    // After OLED_IDLE_BLANK_SECS with no Reticulum activity the panel powers off
+    // to save battery, waking the instant traffic resumes. Joined, not spawned,
+    // so it can borrow `display`.
+    let oled_fut = async {
+        if !oled_ok {
+            core::future::pending::<()>().await;
+        }
+        let mut snapshot_rx = SNAPSHOT_WATCH.receiver().expect("one snapshot receiver");
+        let mut snapshot: Option<RuntimeSnapshot> = None;
+        // The interfaces view as of the last activity, to detect change.
+        let mut shown_interfaces: Option<HVec<InterfaceView, 8>> = None;
+        let mut last_active = EmbassyInstant::now();
+        let mut panel_on = true;
+        let mut battery_tick = Ticker::every(Duration::from_secs(2));
+        loop {
+            // VBAT (mV at the pin, calibrated) scaled by the ~4.9x divider. An
+            // implausibly low reading means no LiPo (USB-only) → Unknown.
+            let mut pin_mv = 0u16;
+            for _ in 0..1000 {
+                if let Ok(v) = vbat_adc.read_oneshot(&mut vbat_pin) {
+                    pin_mv = v;
+                    break;
+                }
+            }
+            let vbat_mv = pin_mv as u32 * VBAT_DIVIDER_NUM / VBAT_DIVIDER_DEN;
+            let battery = if vbat_mv >= VBAT_EXTERNAL_MV {
+                display::BatteryState::Charging
+            } else if vbat_mv < VBAT_ABSENT_MV {
+                display::BatteryState::Unknown
+            } else {
+                let span = VBAT_FULL_MV - VBAT_EMPTY_MV;
+                let pct = (vbat_mv.saturating_sub(VBAT_EMPTY_MV) * 100 / span).min(100) as u8;
+                display::BatteryState::Percent(pct)
+            };
+            log::info!("BATT pin_mv={pin_mv} vbat_mv={vbat_mv}");
+
+            // Reticulum activity = the interfaces view changed (traffic bytes,
+            // destinations, or liveness). Battery drift alone doesn't count, so
+            // a quiet node still sleeps its panel.
+            if let Some(snap) = &snapshot {
+                if shown_interfaces.as_ref() != Some(&snap.interfaces) {
+                    last_active = EmbassyInstant::now();
+                    shown_interfaces = Some(snap.interfaces.clone());
+                }
+            }
+            let idle = last_active.elapsed() >= Duration::from_secs(OLED_IDLE_BLANK_SECS);
+            if idle && panel_on {
+                let _ = display.set_display_on(false);
+                panel_on = false;
+            } else if !idle && !panel_on {
+                let _ = display.set_display_on(true);
+                panel_on = true;
+            }
+
+            if panel_on {
+                // One card per interface in the latest snapshot. Mapping an
+                // interface id to its icon/label is the host's job (one match);
+                // today there's a single WiFi auto-interface.
+                let mut cards: HVec<display::Card, 8> = HVec::new();
+                if let Some(snap) = &snapshot {
+                    for view in &snap.interfaces {
+                        let _ = cards.push(display::Card {
+                            kind: display::CardKind::Wifi,
+                            label: "WiFi LAN",
+                            online: view.online,
+                            tx_bytes: view.reticulum_tx_bytes,
+                            rx_bytes: view.reticulum_rx_bytes,
+                            destinations: view.tracked_destinations,
+                        });
+                    }
+                }
+                display::draw(&mut display, &cards, battery);
+                let _ = display.flush();
+            }
+
+            // Sleep until the engine state changes or the battery cadence
+            // elapses — whichever first. A short floor coalesces an announce
+            // burst into at most one render per ~100ms.
+            match select(snapshot_rx.changed(), battery_tick.next()).await {
+                Either::First(new_snapshot) => snapshot = Some(new_snapshot),
+                Either::Second(()) => {}
+            }
+            Timer::after(Duration::from_millis(100)).await;
+        }
+    };
+
+    join(manifold_fut, oled_fut).await;
 }

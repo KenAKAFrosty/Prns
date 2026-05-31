@@ -8,4 +8,4 @@
 
 pub mod manifold;
 
-pub use manifold::Manifold;
+pub use manifold::{InterfaceView, Manifold, RuntimeSnapshot};

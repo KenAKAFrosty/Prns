@@ -6,6 +6,7 @@
 //! about *how this talks to the world* stays in here.
 
 use core::net::Ipv6Addr;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
@@ -44,14 +45,26 @@ pub type OutboundChannel = Channel<CriticalSectionRawMutex, PacketBuf, OUTBOX_DE
 pub type OutboundSender = Sender<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 pub type OutboundReceiver = Receiver<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 
+/// A `'static` liveness flag a host shares between the worker handle and its
+/// shell: the shell stores the live link state into it (from `is_link_up`), and
+/// the handle's [`health`](EmbassyAutoInterface::health) reads it. `AtomicBool`
+/// because it's a single flag touched from two tasks with no ordering needs —
+/// a stale read for one render is harmless. The traffic/destination counters an
+/// app cares about are metered by the runtime ([`Manifold::snapshot`]), not here.
+///
+/// [`Manifold::snapshot`]: crate::runtime::Manifold::snapshot
+pub type LinkUp = AtomicBool;
+
 pub struct EmbassyAutoInterface {
     descriptor: InterfaceDescriptor,
     outbound: OutboundSender,
+    link_up: &'static LinkUp,
 }
 
 impl EmbassyAutoInterface {
-    /// Build the handle for interface `id`, sending to the worker over `outbound`.
-    pub fn new(id: InterfaceId, outbound: OutboundSender) -> Self {
+    /// Build the handle for interface `id`, sending to the worker over
+    /// `outbound` and reading liveness from `link_up` (the shell writes it).
+    pub fn new(id: InterfaceId, outbound: OutboundSender, link_up: &'static LinkUp) -> Self {
         Self {
             descriptor: InterfaceDescriptor {
                 id,
@@ -68,6 +81,7 @@ impl EmbassyAutoInterface {
                 state: ConnectionState::Connected,
             },
             outbound,
+            link_up,
         }
     }
 }
@@ -82,11 +96,11 @@ impl InterfaceWorker for EmbassyAutoInterface {
     }
 
     fn health(&self) -> InterfaceStats {
-        // Slice-1 stub: the interface is up once registered. Live counters
-        // (peers/rx/tx) come from the worker's own log for now; wire a shared
-        // snapshot here when health drives the OLED/UI.
+        // Liveness is the live link state the shell publishes into `link_up`.
+        // The packet/byte counters belong to the runtime's view (metered in
+        // `Manifold::snapshot`), so they stay at their defaults here.
         InterfaceStats {
-            online: true,
+            online: self.link_up.load(Ordering::Relaxed),
             ..InterfaceStats::default()
         }
     }
@@ -119,6 +133,7 @@ pub async fn run(
     our_mac_address: [u8; 6], //REVIEW yeah again probably newtype here?
     inbound: InboundSender<HW_MTU>,
     outbound: OutboundReceiver,
+    link_up: &'static LinkUp,
 ) {
     let mut brain = AutoInterfaceProtocol::<MAX_PEERS>::new(our_mac_address);
     log::info!(
@@ -192,6 +207,11 @@ pub async fn run(
     let mut ucast_rx: u32 = 0;
     let mut data_rx: u32 = 0;
 
+    // The shell owns the live link state; the handle's `health()` reads it. The
+    // stack is up by the time the host spawns us, so seed it true and refresh
+    // each beacon in case WiFi drops.
+    link_up.store(true, Ordering::Relaxed);
+
     loop {
         match select(
             select4(
@@ -259,6 +279,7 @@ pub async fn run(
             Either::First(Either4::Fourth(_)) => {
                 cycle = cycle.wrapping_add(1);
                 let now = now_millis().0;
+                link_up.store(stack.is_link_up(), Ordering::Relaxed);
                 if let Err(e) = disc
                     .send_to(
                         brain.our_peering_token(),

@@ -15,10 +15,11 @@
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_sync::watch::{Receiver as WatchReceiver, Sender as WatchSender, Watch};
 use embassy_time::{Instant as EmbassyInstant, Timer};
 use heapless::Vec as HVec;
 
-use super::super::Manifold;
+use super::super::{Manifold, RuntimeSnapshot};
 use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup};
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
@@ -56,6 +57,24 @@ pub type InboundSender<const PACKET_BUFFER_SIZE: usize> =
 pub type InboundReceiver<const PACKET_BUFFER_SIZE: usize> =
     Receiver<'static, CriticalSectionRawMutex, InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH>;
 
+/// How many subscribers can read the runtime snapshot. One display task today;
+/// bump if more consumers (a metrics exporter, a control UI) subscribe.
+pub const RUNTIME_SNAPSHOT_RECEIVERS: usize = 1;
+
+/// The latest-wins channel the runtime fires its post-cycle [`RuntimeSnapshot`]
+/// out on — `Watch`, not a queue, so a burst of cycles coalesces to the newest
+/// value and a subscriber that wakes late never replays stale snapshots. An app
+/// awaits [`changed`](WatchReceiver::changed) and so sleeps until engine state
+/// actually moves — no polling.
+pub type RuntimeSnapshotWatch =
+    Watch<CriticalSectionRawMutex, RuntimeSnapshot, RUNTIME_SNAPSHOT_RECEIVERS>;
+/// The publishing end the runtime loop holds.
+pub type RuntimeSnapshotSender =
+    WatchSender<'static, CriticalSectionRawMutex, RuntimeSnapshot, RUNTIME_SNAPSHOT_RECEIVERS>;
+/// The subscribing end an app holds.
+pub type RuntimeSnapshotReceiver =
+    WatchReceiver<'static, CriticalSectionRawMutex, RuntimeSnapshot, RUNTIME_SNAPSHOT_RECEIVERS>;
+
 fn now_millis() -> InstantMillis {
     InstantMillis(EmbassyInstant::now().as_millis())
 }
@@ -69,9 +88,15 @@ fn now_millis() -> InstantMillis {
 /// `PACKET_BUFFER_SIZE` is inferred from `inbound`, which the host sizes off the
 /// registered worker's [`InterfaceWorker::PACKET_BUFFER_SIZE`] — the driver
 /// never picks a size itself.
+///
+/// After each cycle it fires the manifold's [`RuntimeSnapshot`] out on
+/// `snapshot_out` — the "read the data out into your app" seam. Sending every
+/// cycle is cheap: cycles are sleepy (inbound or the next deadline), and the
+/// `Watch` coalesces, so a subscriber sees the newest view and never a backlog.
 pub async fn run<const PACKET_BUFFER_SIZE: usize, W, R, A, H, D, const MAX_HELD: usize, E>(
     mut manifold: Manifold<W, R, A, H, D, MAX_HELD>,
     inbound: InboundReceiver<PACKET_BUFFER_SIZE>,
+    snapshot_out: RuntimeSnapshotSender,
     mut draw_entropy: E,
 ) where
     W: InterfaceWorker,
@@ -114,6 +139,10 @@ pub async fn run<const PACKET_BUFFER_SIZE: usize, W, R, A, H, D, const MAX_HELD:
         }
         drop(batch);
         drop(msgs);
+
+        // Surface this cycle's state to whatever app is subscribed (e.g. the
+        // host's display). Latest-wins, so this is fire-and-forget.
+        snapshot_out.send(manifold.snapshot());
 
         let now = now_millis();
         match manifold.next_wakeup(now) {
