@@ -5,9 +5,10 @@ use crate::interfaces::{Capabilities, ConnectionState, InterfaceId, InterfaceMod
 /// shape (id, capabilities, mode, medium), the observable lifecycle
 /// state, and the universal byte I/O surface every transport
 /// accommodates (`try_read`, `write`). Semantic markers like
-/// [`PointToPointInterface`](crate::interfaces::PointToPointInterface)
+/// [`PointToPointInterface`](crate::interfaces::PointToPointInterface),
+/// [`SharedBroadcastInterface`](crate::interfaces::SharedBroadcastInterface),
 /// and
-/// [`SharedBroadcastInterface`](crate::interfaces::SharedBroadcastInterface)
+/// [`SharedMulticastInterface`](crate::interfaces::SharedMulticastInterface)
 /// extend this trait to declare medium-specific intent without adding
 /// API today. Add methods there once a medium needs behavior the base
 /// interface cannot honestly express.

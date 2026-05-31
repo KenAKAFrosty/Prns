@@ -2,15 +2,19 @@
 //!
 //! - **Stage A/B** (done): the Personal Reticulum engine runs on the S3, with
 //!   live state on the OLED.
-//! - **RNSAutoInterface** (this file): the RNS-compatible UDP-multicast LAN
-//!   interface, brought up via `esp-radio` (async-first → an embassy executor
-//!   under `#[esp_rtos::main]`; engine tick + OLED live in an async loop).
+//! - **RNSAutoInterface** (this file): the RNS-compatible UDP LAN interface,
+//!   brought up via `esp-radio` (async-first → an embassy executor under
+//!   `#[esp_rtos::main]`; engine tick + OLED live in an async loop).
 //!   M1 WiFi association, M2 embassy-net IP stack (SLAAC link-local), M3
-//!   multicast group join, and now **M4: the RNS-exact discovery handshake** —
-//!   we beacon `sha256(group_id ++ our link-local)` to the discovery group and
-//!   peer with any node whose beacon authenticates against its source address.
-//!   Wire format lives in [`rns_auto`]. Data plane (unicast on the data port)
-//!   + engine wiring are M5.
+//!   multicast group join, M4 the RNS-exact discovery handshake (we beacon
+//!   `sha256(group_id ++ our link-local)` and peer with any node whose beacon
+//!   authenticates against its source address), and now **M5: the data plane** —
+//!   the engine's self-announce is fanned out as unicast to every discovered
+//!   peer on the data port, and inbound RNS packets are fed back into the
+//!   engine. The self-announce targets an `lxmf.delivery` destination with an
+//!   LXMF display-name payload, so LXMF apps (Sideband / Columba) list the
+//!   board as a messageable peer. Wire format + the engine-facing
+//!   [`rns_auto::RnsAutoInterface`] live in [`rns_auto`].
 //!
 //! Board: Heltec WiFi LoRa 32 V3 (ESP32-S3). OLED `SDA=17 SCL=18 RST=21`,
 //! `Vext=GPIO36` (active-low). WiFi creds come from build-time env
@@ -31,12 +35,13 @@ use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
+use esp_hal::rng::{Rng, TrngSource};
 use esp_hal::time::{Instant, Rate};
 use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
 use embassy_net::{Config as NetConfig, IpAddress, Runner, StackResources};
 use embassy_time::{Duration, Ticker};
@@ -56,9 +61,10 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
 use personal_rns::engine::{
-    tick, DefaultEngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig,
+    ingest, tick, DefaultEngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::Interface;
 
 esp_app_desc!();
 
@@ -74,6 +80,15 @@ const WIFI_BSSID: Option<&str> = option_env!("WIFI_BSSID");
 
 fn now_millis() -> InstantMillis {
     InstantMillis(Instant::now().duration_since_epoch().as_millis())
+}
+
+/// Eight bytes of CSPRNG-grade entropy from the hardware TRNG (true-random
+/// while the radio is up and a [`TrngSource`] is installed). Drives the
+/// engine's announce-id minting and rebroadcast jitter each step.
+fn entropy_u64() -> u64 {
+    let mut bytes = [0u8; 8];
+    Rng::new().read(&mut bytes);
+    u64::from_le_bytes(bytes)
 }
 
 /// Busy-wait a few ms during setup (before the async loop runs).
@@ -153,19 +168,43 @@ async fn main(spawner: Spawner) {
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    println!("HELTEC_S3: boot — Personal Reticulum on ESP32-S3, WiFi bring-up (RNSAutoInterface M1)");
+    // Install the hardware TRNG as the system entropy source before the radio
+    // comes up: esp-radio draws WPA entropy from it, and the engine mints
+    // announce ids + rebroadcast jitter from it via `entropy_u64`. Held alive
+    // for the whole program (true-random only while the radio is running).
+    let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1);
+
+    println!("HELTEC_S3: boot — Personal Reticulum on ESP32-S3, WiFi bring-up (RNSAutoInterface M5)");
 
     // --- Engine: announcing node, pinned fixture identity. ---
     let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
     secret_key[..32].fill(0x22);
     secret_key[32..].fill(0x11);
+
+    // We announce an `lxmf.delivery` destination so LXMF apps (Sideband /
+    // Columba) surface us as a messageable peer — a bare `personal.node`
+    // announce is a valid RNS announce but matches none of the aspects an LXMF
+    // app's announce stream filters for. The app_data is the exact shape LXMF
+    // 0.9.9 emits: `msgpack([display_name_bytes, stamp_cost])` — the name
+    // bin8-encoded (LXMF packs it as bytes, not a string) and a nil stamp cost.
+    const DISPLAY_NAME: &str = "Personal Node (S3)";
+    let mut lxmf_app_data: HVec<u8, 64> = HVec::new();
+    let _ = lxmf_app_data.push(0x92); // msgpack: 2-element array
+    let _ = lxmf_app_data.push(0xc4); // msgpack: bin8
+    let _ = lxmf_app_data.push(DISPLAY_NAME.len() as u8);
+    let _ = lxmf_app_data.extend_from_slice(DISPLAY_NAME.as_bytes());
+    let _ = lxmf_app_data.push(0xc0); // msgpack: nil (no stamp cost)
+
     let mut state: DefaultEngineState = DefaultEngineState::announcing(
         &secret_key,
         SelfAnnounceConfig {
-            app_name: "personal",
-            aspects: &["node"],
-            app_data: b"heltec-s3",
-            schedule: ReannounceSchedule::default(),
+            app_name: "lxmf",
+            aspects: &["delivery"],
+            app_data: lxmf_app_data.as_slice(),
+            // Fast re-announce so a listening node reliably catches us during
+            // bring-up — the first announce can fire before any peer is
+            // discovered. Production cadence is the 6 h `default()`.
+            schedule: ReannounceSchedule::every(15_000),
         },
     )
     .expect("static self-announce config is valid");
@@ -335,6 +374,22 @@ async fn main(spawner: Spawner) {
         .bind(rns_auto::UNICAST_DISCOVERY_PORT)
         .expect("bind unicast discovery port");
 
+    // Data socket (42671): inbound RNS packets land here, and the engine's
+    // writes are unicast from here to each discovered peer's data port. Buffers
+    // hold a full HW_MTU datagram with headroom.
+    let mut data_rx_meta = [PacketMetadata::EMPTY; 8];
+    let mut data_rx_buf = [0u8; 1280];
+    let mut data_tx_meta = [PacketMetadata::EMPTY; 8];
+    let mut data_tx_buf = [0u8; 1280];
+    let mut data = UdpSocket::new(
+        stack,
+        &mut data_rx_meta,
+        &mut data_rx_buf,
+        &mut data_tx_meta,
+        &mut data_tx_buf,
+    );
+    data.bind(rns_auto::DATA_PORT).expect("bind data port");
+
     // Our peering token — the multicast beacon payload and the unicast
     // reverse-peering payload. Printed for the golden cross-check against
     // `sha256(b"reticulum" + b"<our ll>")` (laptop-computed).
@@ -353,6 +408,16 @@ async fn main(spawner: Spawner) {
 
     let mut peers: rns_auto::PeerTable<8> = rns_auto::PeerTable::new();
 
+    // The engine-facing RNS AutoInterface: the engine writes to it (we fan
+    // those writes out to peers below), and inbound datagrams are injected into
+    // it for the engine to read. Registering it lets the engine originate its
+    // self-announce onto this interface.
+    let mut iface = rns_auto::RnsAutoInterface::new();
+    state
+        .register_routable_interface(&iface)
+        .expect("RnsAutoInterface is Connected and transmits");
+    println!("HELTEC_S3 IFACE registered, data plane on {}", rns_auto::DATA_PORT);
+
     // --- Discovery + engine loop. ---
     // `select3` parks on a multicast datagram (29716), a unicast reverse-peering
     // datagram (29717), and a 1.6 s beacon tick at once, handling whichever
@@ -362,20 +427,22 @@ async fn main(spawner: Spawner) {
     let _controller = controller; // keep the radio alive (dropping disconnects)
     let mut rx = [0u8; 256];
     let mut urx = [0u8; 256];
+    let mut drx = [0u8; 1280];
     let mut beacons: u32 = 0;
     let mut auth_failures: u32 = 0;
     let mut cycle: u32 = 0;
     let mut beacon_ticker = Ticker::every(Duration::from_millis(1600));
     loop {
-        match select3(
+        match select4(
             disc.recv_from(&mut rx),
             udisc.recv_from(&mut urx),
+            data.recv_from(&mut drx),
             beacon_ticker.next(),
         )
         .await
         {
             // Multicast discovery datagram (29716).
-            Either3::First(Ok((n, meta))) => {
+            Either4::First(Ok((n, meta))) => {
                 if let Some(src) = ipv6_src(&meta) {
                     note_peer(
                         &rx[..n],
@@ -388,9 +455,9 @@ async fn main(spawner: Spawner) {
                     );
                 }
             }
-            Either3::First(Err(e)) => println!("HELTEC_S3 RECV mcast err: {e:?}"),
+            Either4::First(Err(e)) => println!("HELTEC_S3 RECV mcast err: {e:?}"),
             // Unicast reverse-peering datagram (29717).
-            Either3::Second(Ok((n, meta))) => {
+            Either4::Second(Ok((n, meta))) => {
                 if let Some(src) = ipv6_src(&meta) {
                     note_peer(
                         &urx[..n],
@@ -403,12 +470,60 @@ async fn main(spawner: Spawner) {
                     );
                 }
             }
-            Either3::Second(Err(e)) => println!("HELTEC_S3 RECV ucast err: {e:?}"),
-            // Beacon tick: drive the engine, emit beacons, age out peers.
-            Either3::Third(_) => {
+            Either4::Second(Err(e)) => println!("HELTEC_S3 RECV ucast err: {e:?}"),
+            // Data datagram (42671): an inbound RNS packet. Queue it on the
+            // interface and drain it into the engine via `ingest`.
+            Either4::Third(Ok((n, meta))) => {
+                let src = ipv6_src(&meta);
+                if iface.inject_inbound(&drx[..n]) {
+                    let now = now_millis();
+                    let entropy = entropy_u64();
+                    let mut scratch = [0u8; rns_auto::HW_MTU];
+                    // `read_inbound` stamps arrived_at + source_interface for us.
+                    while let Ok(Some(packet)) = iface.read_inbound(&mut scratch, now) {
+                        let out = ingest(&mut state, core::slice::from_ref(&packet), entropy);
+                        if out.accepted_announce_count() > 0 {
+                            match src {
+                                Some(s) => println!(
+                                    "HELTEC_S3 RX announce from {s} accepted={} routes={}",
+                                    out.accepted_announce_count(),
+                                    state.route_count(),
+                                ),
+                                None => println!(
+                                    "HELTEC_S3 RX announce accepted={}",
+                                    out.accepted_announce_count(),
+                                ),
+                            }
+                        }
+                    }
+                } else {
+                    println!("HELTEC_S3 RX data {n}B dropped (oversize/full)");
+                }
+            }
+            Either4::Third(Err(e)) => println!("HELTEC_S3 RECV data err: {e:?}"),
+            // Beacon tick: drive the engine, originate + fan out the
+            // self-announce, emit discovery beacons, age out peers.
+            Either4::Fourth(_) => {
                 let now = now_millis();
-                let _ = tick(&mut state, now, 0xA5A5_A5A5_A5A5_A5A5);
+                let entropy = entropy_u64();
+                let _ = tick(&mut state, now, entropy);
                 cycle = cycle.wrapping_add(1);
+
+                // Self-announce when due: hand the framed packet to the
+                // interface; the fanout below unicasts it to every peer.
+                let mut announce_buf = [0u8; rns_auto::HW_MTU];
+                if !state.registered_interfaces().is_empty() {
+                    if let Some(len) =
+                        state.write_due_self_announce(now, entropy, &mut announce_buf)
+                    {
+                        match iface.write(&announce_buf[..len]) {
+                            Ok(()) => {
+                                println!("HELTEC_S3 SELF-ANNOUNCE {len}B (node {dest_hex})")
+                            }
+                            Err(e) => println!("HELTEC_S3 SELF-ANNOUNCE write err: {e:?}"),
+                        }
+                    }
+                }
 
                 // Multicast discovery beacon.
                 match disc
@@ -443,6 +558,35 @@ async fn main(spawner: Spawner) {
                 let pruned = peers.prune(now.0);
                 if pruned > 0 {
                     println!("HELTEC_S3 pruned {pruned} stale peer(s) (peers={})", peers.len());
+                }
+
+                // Fan the engine's outbound packets out as unicast to every
+                // discovered peer's data port (RNS `process_outgoing`). With no
+                // peers yet the packet is dropped; the 15 s re-announce recovers.
+                {
+                    let mut targets: HVec<core::net::Ipv6Addr, 8> = HVec::new();
+                    for addr in peers.addrs() {
+                        let _ = targets.push(addr);
+                    }
+                    let mut out_scratch = [0u8; rns_auto::HW_MTU];
+                    while let Some(len) = iface.take_outbound(&mut out_scratch) {
+                        if targets.is_empty() {
+                            println!("HELTEC_S3 TX {len}B dropped — no peers yet");
+                            continue;
+                        }
+                        for addr in &targets {
+                            if let Err(e) = data
+                                .send_to(
+                                    &out_scratch[..len],
+                                    (IpAddress::Ipv6(*addr), rns_auto::DATA_PORT),
+                                )
+                                .await
+                            {
+                                println!("HELTEC_S3 TX err to {addr}: {e:?}");
+                            }
+                        }
+                        println!("HELTEC_S3 TX {len}B to {} peer(s)", targets.len());
+                    }
                 }
 
                 println!(

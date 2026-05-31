@@ -1,10 +1,14 @@
 //! RNS AutoInterface discovery protocol, wire-exact against Python RNS 1.3.1
 //! ([`AutoInterface.py`](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py)).
 //!
-//! This milestone (M4) implements the **discovery handshake only**: the
-//! SHA-256 peering token, the RFC 5952 link-local rendering the token hashes
-//! over, and a fixed-capacity peer table. The data plane (unicast RNS packets
-//! on [`DATA_PORT`]) and the `SharedBroadcastInterface` engine wiring are M5.
+//! M4 implemented the **discovery handshake**: the SHA-256 peering token, the
+//! RFC 5952 link-local rendering the token hashes over, and a fixed-capacity
+//! peer table. M5 adds the **data plane** — [`RnsAutoInterface`], a regular
+//! engine [`Interface`] (and [`SharedMulticastInterface`]) that carries
+//! unicast RNS packets on [`DATA_PORT`]: the async loop fans the engine's
+//! writes out to every discovered peer and feeds inbound datagrams back in.
+//! Discovery is multicast-found, data is unicast-delivered — hence
+//! shared-*multicast*, not shared-*broadcast*.
 //!
 //! The protocol: each node periodically multicasts a beacon whose payload is
 //! `sha256(group_id ++ <its own link-local, as a canonical string>)`. A
@@ -16,8 +20,12 @@
 use core::fmt::Write as _;
 use core::net::Ipv6Addr;
 
-use heapless::{String as HString, Vec as HVec};
+use heapless::{Deque, String as HString, Vec as HVec};
 use personal_rns::crypto::sha256;
+use personal_rns::interfaces::{
+    Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
+    SharedMulticastInterface,
+};
 
 /// RNS default group id; the discovery multicast group and every peering token
 /// derive from it (`AutoInterface.py` L49).
@@ -34,14 +42,13 @@ pub const DISCOVERY_PORT: u16 = 29716;
 /// reference RNS AutoInterface robust to one-way multicast.
 pub const UNICAST_DISCOVERY_PORT: u16 = DISCOVERY_PORT + 1;
 
-/// Unicast data port (`AutoInterface.py` L48). The data plane lands in M5;
-/// declared here so the module stays the single home for the wire spec.
-#[allow(dead_code)]
+/// Unicast data port (`AutoInterface.py` L48): inbound RNS packets arrive
+/// here, and [`RnsAutoInterface`]'s writes are unicast to each peer's data
+/// port (`process_outgoing`, L636-647).
 pub const DATA_PORT: u16 = 42671;
 
 /// Fixed hardware MTU RNS pins for the AutoInterface (`AutoInterface.py` L44).
-/// Used by M5's data plane; declared here with [`DATA_PORT`].
-#[allow(dead_code)]
+/// Sizes the scratch buffers the engine reads/writes packets through.
 pub const HW_MTU: usize = 1196;
 
 /// Discovery multicast group for the default "reticulum" group id:
@@ -199,6 +206,139 @@ impl<const N: usize> PeerTable<N> {
 }
 
 impl<const N: usize> Default for PeerTable<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Stable engine-facing id for this host's single RNS AutoInterface. Opaque to
+/// the engine (it only compares ids); a readable label rather than a hash so
+/// it is obvious in logs which interface a `fire_on` entry names.
+pub const INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-rnsaut");
+
+/// Per-packet capacity of the data-plane queues. M5 carries announces, which
+/// sit well under this; raise toward [`HW_MTU`] once the data plane carries
+/// link and resource packets. Kept small so the whole interface fits a stack
+/// local without crowding the other socket buffers.
+const DATA_PACKET_CAP: usize = 512;
+
+/// How many packets each direction buffers between turns of the async loop.
+const DATA_QUEUE_DEPTH: usize = 4;
+
+/// What went wrong moving a packet across the data-plane queues.
+#[derive(Debug)]
+pub enum DataPlaneError {
+    /// The packet exceeded [`DATA_PACKET_CAP`] — too large to queue (on write)
+    /// or to hand to the caller's buffer (on read).
+    PacketTooLarge,
+    /// The outbound queue was full; the packet was dropped rather than block.
+    OutboundFull,
+}
+
+/// The engine-facing half of the RNS AutoInterface: a regular [`Interface`]
+/// (and [`SharedMulticastInterface`]) backed by two small packet queues.
+///
+/// The async discovery loop owns the actual UDP sockets and the peer set; it
+/// [`inject_inbound`](Self::inject_inbound)s datagrams that arrive on the data
+/// port and drains [`take_outbound`](Self::take_outbound) to fan the engine's
+/// writes out as unicast to every discovered peer. This keeps the synchronous,
+/// non-blocking [`Interface`] surface the engine drives cleanly separated from
+/// embassy-net's async socket I/O — the same queue decoupling the in-core
+/// `NoAllocLoopback` uses between its two ends. The peer fanout lives in the
+/// loop, not here, so this stays a faithful actor and not a routing decision.
+pub struct RnsAutoInterface {
+    inbound: Deque<HVec<u8, DATA_PACKET_CAP>, DATA_QUEUE_DEPTH>,
+    outbound: Deque<HVec<u8, DATA_PACKET_CAP>, DATA_QUEUE_DEPTH>,
+}
+
+impl RnsAutoInterface {
+    pub fn new() -> Self {
+        Self {
+            inbound: Deque::new(),
+            outbound: Deque::new(),
+        }
+    }
+
+    /// Queue a datagram that arrived on the data port for the engine to read on
+    /// its next [`try_read`](Interface::try_read). Returns whether it was
+    /// accepted — dropped if it exceeds [`DATA_PACKET_CAP`] or the inbound
+    /// queue is full.
+    pub fn inject_inbound(&mut self, bytes: &[u8]) -> bool {
+        let Ok(packet) = HVec::from_slice(bytes) else {
+            return false; // larger than DATA_PACKET_CAP
+        };
+        self.inbound.push_back(packet).is_ok()
+    }
+
+    /// Pop one packet the engine wrote, copying it into `buf` (which must be at
+    /// least [`DATA_PACKET_CAP`]). Returns the byte length, or `None` when the
+    /// outbound queue is empty.
+    pub fn take_outbound(&mut self, buf: &mut [u8]) -> Option<usize> {
+        let packet = self.outbound.pop_front()?;
+        let n = packet.len();
+        buf[..n].copy_from_slice(&packet);
+        Some(n)
+    }
+}
+
+impl Interface for RnsAutoInterface {
+    type Error = DataPlaneError;
+
+    fn id(&self) -> InterfaceId {
+        INTERFACE_ID
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            receives: true,
+            transmits: true,
+            forwards: true,
+            // Switched fabric: a packet reaches the next hop by per-peer unicast
+            // fanout the engine drives via its fire_on lists, not by the medium
+            // re-propagating a transmission — so repeats is false (unlike a
+            // shared-broadcast medium, where retransmission IS the propagation).
+            repeats: false,
+        }
+    }
+
+    fn mode(&self) -> InterfaceMode {
+        InterfaceMode::Full
+    }
+
+    fn medium_kind(&self) -> MediumKind {
+        MediumKind::Multicast
+    }
+
+    fn state(&self) -> ConnectionState {
+        // The interface exists only once WiFi + the IP stack are up, and the
+        // loop never tears it down, so it is always Connected from the engine's
+        // view; per-peer reachability is the peer table's concern, not this.
+        ConnectionState::Connected
+    }
+
+    fn try_read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+        let Some(packet) = self.inbound.pop_front() else {
+            return Ok(None);
+        };
+        if packet.len() > buf.len() {
+            return Err(DataPlaneError::PacketTooLarge);
+        }
+        buf[..packet.len()].copy_from_slice(&packet);
+        Ok(Some(packet.len()))
+    }
+
+    fn write(&mut self, packet: &[u8]) -> Result<(), Self::Error> {
+        let queued: HVec<u8, DATA_PACKET_CAP> =
+            HVec::from_slice(packet).map_err(|_| DataPlaneError::PacketTooLarge)?;
+        self.outbound
+            .push_back(queued)
+            .map_err(|_| DataPlaneError::OutboundFull)
+    }
+}
+
+impl SharedMulticastInterface for RnsAutoInterface {}
+
+impl Default for RnsAutoInterface {
     fn default() -> Self {
         Self::new()
     }

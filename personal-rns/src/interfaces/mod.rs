@@ -2,8 +2,8 @@
 //!
 //! The engine defines what every interface IS (the data shapes here and
 //! the base [`Interface`] trait) and what each kind can DO (per-medium
-//! sub-traits like [`PointToPointInterface`] and
-//! [`SharedBroadcastInterface`]). Hosts fulfill the contracts with
+//! sub-traits like [`PointToPointInterface`], [`SharedBroadcastInterface`],
+//! and [`SharedMulticastInterface`]). Hosts fulfill the contracts with
 //! concrete implementations: TCP socket, UDP socket, LoRa radio, BLE
 //! GATT, in-process loopback, sim, and so on. Reticulum policy
 //! decisions stay in the engine; an interface impl is a faithful actor
@@ -39,7 +39,9 @@ pub use id::InterfaceId;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 
-pub use contract::{Interface, PointToPointInterface, SharedBroadcastInterface};
+pub use contract::{
+    Interface, PointToPointInterface, SharedBroadcastInterface, SharedMulticastInterface,
+};
 
 pub use framing::rns_serial_framing;
 

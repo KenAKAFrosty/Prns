@@ -2,7 +2,8 @@
 //!
 //! The base [`Interface`] trait says what any interface must do; the
 //! per-medium refinements ([`PointToPointInterface`],
-//! [`SharedBroadcastInterface`]) mark what a given kind can do on top of it.
+//! [`SharedBroadcastInterface`], [`SharedMulticastInterface`]) mark what a
+//! given kind can do on top of it.
 //! The inert vocabulary these traits traffic in (`Capabilities`,
 //! `ConnectionState`, `InterfaceId`, `MediumKind`, `InterfaceMode`) lives at
 //! the [`interfaces`](crate::interfaces) root, not here — the contract is the
@@ -11,7 +12,9 @@
 mod interface;
 mod point_to_point;
 mod shared_broadcast;
+mod shared_multicast;
 
 pub use interface::Interface;
 pub use point_to_point::PointToPointInterface;
 pub use shared_broadcast::SharedBroadcastInterface;
+pub use shared_multicast::SharedMulticastInterface;
