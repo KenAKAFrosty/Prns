@@ -28,7 +28,8 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 
 use embassy_executor::Spawner;
-use embassy_net::{Config as NetConfig, Runner, StackResources};
+use embassy_net::udp::{PacketMetadata, UdpSocket};
+use embassy_net::{Config as NetConfig, IpAddress, Ipv6Address, Runner, StackResources};
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
 
@@ -195,15 +196,63 @@ async fn main(spawner: Spawner) {
     let mut ip6_line: HString<24> = HString::new();
     let _ = write!(ip6_line, "ll ..{h2:x}:{h3:x}");
 
+    // --- M3: join the RNS discovery multicast group and beacon on it. ---
+    // group "reticulum" → sha256 → ff12:0:d70b:fb1c:16e4:5e39:485e:31e1 (RNS
+    // temporary + link-local scope), discovery port 29716. (RNS AutoInterface.)
+    const RNS_DISCOVERY_PORT: u16 = 29716;
+    let rns_group = Ipv6Address::new(
+        0xff12, 0x0, 0xd70b, 0xfb1c, 0x16e4, 0x5e39, 0x485e, 0x31e1,
+    );
+    match stack.join_multicast_group(IpAddress::Ipv6(rns_group)) {
+        Ok(()) => println!("HELTEC_S3 MCAST joined ff12:0:d70b:fb1c:16e4:5e39:485e:31e1"),
+        Err(e) => println!("HELTEC_S3 MCAST join failed: {e:?}"),
+    }
+
+    let mut rx_meta = [PacketMetadata::EMPTY; 8];
+    let mut rx_buf = [0u8; 512];
+    let mut tx_meta = [PacketMetadata::EMPTY; 8];
+    let mut tx_buf = [0u8; 512];
+    let mut sock = UdpSocket::new(
+        stack,
+        &mut rx_meta,
+        &mut rx_buf,
+        &mut tx_meta,
+        &mut tx_buf,
+    );
+    sock.bind(RNS_DISCOVERY_PORT).expect("bind discovery port");
+
+    // Our link-local as 16 bytes — the beacon payload (RNS discovery beacons
+    // carry the sender's link-local so peers can unicast back). Tagged so the
+    // laptop sniffer can recognise us this milestone.
+    let link_local: [u8; 16] = [
+        0xfe, 0x80, 0, 0, 0, 0, 0, 0,
+        sta_mac[0] ^ 0x02, sta_mac[1], sta_mac[2], 0xff,
+        0xfe, sta_mac[3], sta_mac[4], sta_mac[5],
+    ];
+    let mut beacon = [0u8; 32];
+    beacon[..16].copy_from_slice(b"PERSONAL-RNS-S3:");
+    beacon[16..].copy_from_slice(&link_local);
+
     // --- Engine loop. ---
+    let mut beacons: u32 = 0;
     let _controller = controller; // keep the radio alive (dropping disconnects)
     let mut cycle: u32 = 0;
     loop {
         let now = now_millis();
         let _ = tick(&mut state, now, 0xA5A5_A5A5_A5A5_A5A5);
         cycle = cycle.wrapping_add(1);
+
+        // Beacon on the RNS discovery group.
+        match sock
+            .send_to(&beacon, (IpAddress::Ipv6(rns_group), RNS_DISCOVERY_PORT))
+            .await
+        {
+            Ok(()) => beacons = beacons.wrapping_add(1),
+            Err(e) => println!("HELTEC_S3 BEACON send err: {e:?}"),
+        }
+
         println!(
-            "HELTEC_S3_CYCLE {cycle} now_ms={} tick={} {wifi_line}",
+            "HELTEC_S3_CYCLE {cycle} now_ms={} tick={} {wifi_line} beacons={beacons}",
             now.0,
             state.tick_count(),
         );
@@ -220,7 +269,7 @@ async fn main(spawner: Spawner) {
             let _ = Text::with_baseline(&ip6_line, Point::new(0, 39), text, Baseline::Top)
                 .draw(&mut display);
             l.clear();
-            let _ = write!(l, "cyc {cycle}  up {}s", now.0 / 1000);
+            let _ = write!(l, "mcast beacons {beacons}");
             let _ = Text::with_baseline(&l, Point::new(0, 52), text, Baseline::Top)
                 .draw(&mut display);
             let _ = display.flush();
