@@ -22,6 +22,13 @@ esp-backtrace = { version = "0.19", default-features = false, features = ["esp32
 esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial", "log-04"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 
+# Onboard SSD1306 OLED (I2C) — Stage B visual feedback. embedded-hal 1.0
+# compatible, no_std, no alloc (buffered mode keeps the framebuffer on the
+# stack). Small heapless strings for no-alloc line formatting.
+ssd1306 = "0.9"
+embedded-graphics = "0.8"
+heapless = { version = "0.8", default-features = false }
+
 [profile.release]
 codegen-units = 1
 debug = 2
