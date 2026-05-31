@@ -936,6 +936,10 @@ dependencies = [
  "document-features",
  "embassy-net-driver",
  "embassy-sync 0.8.0",
+ "embedded-io 0.6.1",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
  "enumset",
  "esp-alloc",
  "esp-config",
@@ -1255,6 +1259,7 @@ name = "heltec-lora32"
 version = "0.1.0"
 dependencies = [
  "embassy-executor",
+ "embassy-futures",
  "embassy-net",
  "embassy-time",
  "embedded-graphics",

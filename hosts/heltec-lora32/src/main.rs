@@ -2,11 +2,15 @@
 //!
 //! - **Stage A/B** (done): the Personal Reticulum engine runs on the S3, with
 //!   live state on the OLED.
-//! - **RNSAutoInterface Milestone 1** (this file): associate to the WiFi AP via
-//!   `esp-radio`, the first step toward the RNS-compatible UDP-multicast LAN
-//!   interface. esp-radio is async-first, so this brings up an embassy executor
-//!   (`#[esp_rtos::main]`); the engine tick + OLED now live in an async loop.
-//!   No IP stack / multicast yet (M2+).
+//! - **RNSAutoInterface** (this file): the RNS-compatible UDP-multicast LAN
+//!   interface, brought up via `esp-radio` (async-first → an embassy executor
+//!   under `#[esp_rtos::main]`; engine tick + OLED live in an async loop).
+//!   M1 WiFi association, M2 embassy-net IP stack (SLAAC link-local), M3
+//!   multicast group join, and now **M4: the RNS-exact discovery handshake** —
+//!   we beacon `sha256(group_id ++ our link-local)` to the discovery group and
+//!   peer with any node whose beacon authenticates against its source address.
+//!   Wire format lives in [`rns_auto`]. Data plane (unicast on the data port)
+//!   + engine wiring are M5.
 //!
 //! Board: Heltec WiFi LoRa 32 V3 (ESP32-S3). OLED `SDA=17 SCL=18 RST=21`,
 //! `Vext=GPIO36` (active-low). WiFi creds come from build-time env
@@ -16,6 +20,8 @@
 #![no_main]
 
 extern crate alloc;
+
+mod rns_auto;
 
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
@@ -28,9 +34,10 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 
 use embassy_executor::Spawner;
+use embassy_futures::select::{select, Either};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{Config as NetConfig, IpAddress, Ipv6Address, Runner, StackResources};
-use embassy_time::{Duration, Timer};
+use embassy_net::{Config as NetConfig, IpAddress, Runner, StackResources};
+use embassy_time::{Duration, Ticker};
 use static_cell::StaticCell;
 
 use core::fmt::Write as _;
@@ -44,7 +51,7 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use esp_radio::wifi::sta::StationConfig;
-use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface};
+use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
 use personal_rns::engine::{
     tick, DefaultEngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig,
@@ -156,6 +163,12 @@ async fn main(spawner: Spawner) {
     controller
         .set_config(&WifiConfig::Station(sta))
         .expect("set STA config");
+    // Disable modem power save: a sleeping STA misses AP-buffered multicast,
+    // which is exactly how RNS discovery beacons arrive. An always-on receiver
+    // is worth the power on a desk-tethered node.
+    controller
+        .set_power_saving(PowerSaveMode::None)
+        .expect("disable wifi power save");
 
     println!("HELTEC_S3 WIFI connecting (ssid len {})", WIFI_SSID.len());
     let wifi_line = match controller.connect_async().await {
@@ -187,24 +200,26 @@ async fn main(spawner: Spawner) {
     spawner.spawn(net_task(runner).expect("spawn net_task"));
 
     stack.wait_link_up().await;
-    // The SLAAC link-local: fe80::<EUI-64 of the MAC> (U/L bit flipped).
-    let h0 = (((sta_mac[0] ^ 0x02) as u16) << 8) | sta_mac[1] as u16;
-    let h1 = ((sta_mac[2] as u16) << 8) | 0x00ff;
-    let h2 = 0xfe00u16 | sta_mac[3] as u16;
-    let h3 = ((sta_mac[4] as u16) << 8) | sta_mac[5] as u16;
-    println!("HELTEC_S3 NET link up; IPv6 link-local fe80::{h0:x}:{h1:x}:{h2:x}:{h3:x}");
+    // The SLAAC link-local (fe80::<EUI-64 of the MAC>) — the source address a
+    // peer sees on our beacons, and the address our own peering token hashes.
+    let our_link_local = rns_auto::link_local_from_mac(sta_mac);
+    println!("HELTEC_S3 NET link up; IPv6 link-local {our_link_local}");
     let mut ip6_line: HString<24> = HString::new();
-    let _ = write!(ip6_line, "ll ..{h2:x}:{h3:x}");
-
-    // --- M3: join the RNS discovery multicast group and beacon on it. ---
-    // group "reticulum" → sha256 → ff12:0:d70b:fb1c:16e4:5e39:485e:31e1 (RNS
-    // temporary + link-local scope), discovery port 29716. (RNS AutoInterface.)
-    const RNS_DISCOVERY_PORT: u16 = 29716;
-    let rns_group = Ipv6Address::new(
-        0xff12, 0x0, 0xd70b, 0xfb1c, 0x16e4, 0x5e39, 0x485e, 0x31e1,
+    // The last two hextets are enough to recognise us on the 21-char OLED line.
+    let _ = write!(
+        ip6_line,
+        "ll ..{:x}:{:x}",
+        0xfe00u16 | sta_mac[3] as u16,
+        ((sta_mac[4] as u16) << 8) | sta_mac[5] as u16,
     );
-    match stack.join_multicast_group(IpAddress::Ipv6(rns_group)) {
-        Ok(()) => println!("HELTEC_S3 MCAST joined ff12:0:d70b:fb1c:16e4:5e39:485e:31e1"),
+
+    // --- M4: RNS AutoInterface discovery handshake (wire-exact vs RNS 1.3.1). ---
+    // Join the discovery multicast group and exchange peering beacons: a beacon
+    // is sha256("reticulum" ++ <sender link-local>); a receiver authenticates it
+    // against the datagram's source address. We beacon ours and peer with any
+    // node whose beacon checks out. (Data plane on the data port is M5.)
+    match stack.join_multicast_group(IpAddress::Ipv6(rns_auto::DISCOVERY_GROUP)) {
+        Ok(()) => println!("HELTEC_S3 MCAST joined {}", rns_auto::DISCOVERY_GROUP),
         Err(e) => println!("HELTEC_S3 MCAST join failed: {e:?}"),
     }
 
@@ -212,68 +227,113 @@ async fn main(spawner: Spawner) {
     let mut rx_buf = [0u8; 512];
     let mut tx_meta = [PacketMetadata::EMPTY; 8];
     let mut tx_buf = [0u8; 512];
-    let mut sock = UdpSocket::new(
-        stack,
-        &mut rx_meta,
-        &mut rx_buf,
-        &mut tx_meta,
-        &mut tx_buf,
+    // `bind` needs &mut; `recv_from`/`send_to` take &self, so the discovery
+    // loop reads and writes this one socket without re-borrowing conflicts.
+    let mut sock = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    sock.bind(rns_auto::DISCOVERY_PORT).expect("bind discovery port");
+
+    // Our peering token — the beacon payload. Printed for the golden
+    // cross-check against `sha256(b"reticulum" + b"<our ll>")` (laptop-computed).
+    let our_token = rns_auto::peering_token(&our_link_local);
+    println!(
+        "HELTEC_S3 token {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}.. for {our_link_local}",
+        our_token[0],
+        our_token[1],
+        our_token[2],
+        our_token[3],
+        our_token[4],
+        our_token[5],
+        our_token[6],
+        our_token[7],
     );
-    sock.bind(RNS_DISCOVERY_PORT).expect("bind discovery port");
 
-    // Our link-local as 16 bytes — the beacon payload (RNS discovery beacons
-    // carry the sender's link-local so peers can unicast back). Tagged so the
-    // laptop sniffer can recognise us this milestone.
-    let link_local: [u8; 16] = [
-        0xfe, 0x80, 0, 0, 0, 0, 0, 0,
-        sta_mac[0] ^ 0x02, sta_mac[1], sta_mac[2], 0xff,
-        0xfe, sta_mac[3], sta_mac[4], sta_mac[5],
-    ];
-    let mut beacon = [0u8; 32];
-    beacon[..16].copy_from_slice(b"PERSONAL-RNS-S3:");
-    beacon[16..].copy_from_slice(&link_local);
+    let mut peers: rns_auto::PeerTable<8> = rns_auto::PeerTable::new();
 
-    // --- Engine loop. ---
-    let mut beacons: u32 = 0;
+    // --- Discovery + engine loop. ---
+    // One task drives both directions: `select` parks on an inbound datagram
+    // and a 1.6 s beacon tick (RNS ANNOUNCE_INTERVAL) at once, handling whichever
+    // fires. Inbound beacons update the peer table; the tick drives the engine,
+    // emits our beacon, ages out stale peers, and redraws the OLED.
     let _controller = controller; // keep the radio alive (dropping disconnects)
+    let mut rx = [0u8; 256];
+    let mut beacons: u32 = 0;
+    let mut auth_failures: u32 = 0;
     let mut cycle: u32 = 0;
+    let mut beacon_ticker = Ticker::every(Duration::from_millis(1600));
     loop {
-        let now = now_millis();
-        let _ = tick(&mut state, now, 0xA5A5_A5A5_A5A5_A5A5);
-        cycle = cycle.wrapping_add(1);
+        match select(sock.recv_from(&mut rx), beacon_ticker.next()).await {
+            // Inbound discovery datagram.
+            Either::First(Ok((n, meta))) => {
+                let src = match meta.endpoint.addr {
+                    IpAddress::Ipv6(addr) => addr,
+                    // proto-ipv4 is off, so this is unreachable; stay robust.
+                    #[allow(unreachable_patterns)]
+                    _ => continue,
+                };
+                match rns_auto::classify_beacon(&rx[..n], &src, &our_link_local) {
+                    rns_auto::BeaconVerdict::Peer => match peers.observe(src, now_millis().0) {
+                        rns_auto::PeerObservation::NewlyDiscovered => {
+                            println!("HELTEC_S3 PEER+ {src} (peers={})", peers.len());
+                        }
+                        rns_auto::PeerObservation::TableFull => {
+                            println!("HELTEC_S3 PEER table full, dropped {src}");
+                        }
+                        rns_auto::PeerObservation::Refreshed => {}
+                    },
+                    rns_auto::BeaconVerdict::AuthenticationFailed => {
+                        auth_failures = auth_failures.wrapping_add(1);
+                    }
+                    rns_auto::BeaconVerdict::SelfEcho | rns_auto::BeaconVerdict::TooShort => {}
+                }
+            }
+            Either::First(Err(e)) => println!("HELTEC_S3 RECV err: {e:?}"),
+            // Beacon tick: drive the engine, emit our beacon, age out peers.
+            Either::Second(_) => {
+                let now = now_millis();
+                let _ = tick(&mut state, now, 0xA5A5_A5A5_A5A5_A5A5);
+                cycle = cycle.wrapping_add(1);
 
-        // Beacon on the RNS discovery group.
-        match sock
-            .send_to(&beacon, (IpAddress::Ipv6(rns_group), RNS_DISCOVERY_PORT))
-            .await
-        {
-            Ok(()) => beacons = beacons.wrapping_add(1),
-            Err(e) => println!("HELTEC_S3 BEACON send err: {e:?}"),
-        }
+                match sock
+                    .send_to(
+                        &our_token,
+                        (IpAddress::Ipv6(rns_auto::DISCOVERY_GROUP), rns_auto::DISCOVERY_PORT),
+                    )
+                    .await
+                {
+                    Ok(()) => beacons = beacons.wrapping_add(1),
+                    Err(e) => println!("HELTEC_S3 BEACON send err: {e:?}"),
+                }
+                let pruned = peers.prune(now.0);
+                if pruned > 0 {
+                    println!("HELTEC_S3 pruned {pruned} stale peer(s) (peers={})", peers.len());
+                }
 
-        println!(
-            "HELTEC_S3_CYCLE {cycle} now_ms={} tick={} {wifi_line} beacons={beacons}",
-            now.0,
-            state.tick_count(),
-        );
-        if oled_ok {
-            display.clear_buffer();
-            let _ = Text::with_baseline("Personal RNS  S3", Point::new(0, 0), text, Baseline::Top)
-                .draw(&mut display);
-            let mut l: HString<24> = HString::new();
-            let _ = write!(l, "node {dest_hex}");
-            let _ = Text::with_baseline(&l, Point::new(0, 13), text, Baseline::Top)
-                .draw(&mut display);
-            let _ = Text::with_baseline(wifi_line, Point::new(0, 26), text, Baseline::Top)
-                .draw(&mut display);
-            let _ = Text::with_baseline(&ip6_line, Point::new(0, 39), text, Baseline::Top)
-                .draw(&mut display);
-            l.clear();
-            let _ = write!(l, "mcast beacons {beacons}");
-            let _ = Text::with_baseline(&l, Point::new(0, 52), text, Baseline::Top)
-                .draw(&mut display);
-            let _ = display.flush();
+                println!(
+                    "HELTEC_S3_CYCLE {cycle} now_ms={} tick={} {wifi_line} beacons={beacons} peers={} authfail={auth_failures}",
+                    now.0,
+                    state.tick_count(),
+                    peers.len(),
+                );
+                if oled_ok {
+                    display.clear_buffer();
+                    let _ =
+                        Text::with_baseline("Personal RNS  S3", Point::new(0, 0), text, Baseline::Top)
+                            .draw(&mut display);
+                    let mut l: HString<24> = HString::new();
+                    let _ = write!(l, "node {dest_hex}");
+                    let _ = Text::with_baseline(&l, Point::new(0, 13), text, Baseline::Top)
+                        .draw(&mut display);
+                    let _ = Text::with_baseline(wifi_line, Point::new(0, 26), text, Baseline::Top)
+                        .draw(&mut display);
+                    let _ = Text::with_baseline(&ip6_line, Point::new(0, 39), text, Baseline::Top)
+                        .draw(&mut display);
+                    l.clear();
+                    let _ = write!(l, "peers {} beacons {beacons}", peers.len());
+                    let _ = Text::with_baseline(&l, Point::new(0, 52), text, Baseline::Top)
+                        .draw(&mut display);
+                    let _ = display.flush();
+                }
+            }
         }
-        Timer::after(Duration::from_secs(1)).await;
     }
 }
