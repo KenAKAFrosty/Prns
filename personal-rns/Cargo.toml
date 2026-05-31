@@ -17,7 +17,7 @@ std-host = ["std"]
 # embassy stack in as optional deps; OFF by default so the pure-no_std and
 # no-std-esp-build gates never see it. An embedded host turns it on to get the
 # embassy worker shells (e.g. the AutoInterface). No alloc — heapless throughout.
-embassy-host = ["dep:embassy-net", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:log"]
+embassy-host = ["dep:embassy-net", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:embedded-io-async", "dep:log"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -47,6 +47,11 @@ embassy-net = { version = "0.9.1", optional = true, default-features = false, fe
 embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5", optional = true, default-features = false }
 embassy-futures = { version = "0.1", optional = true, default-features = false }
+# Async byte-stream traits for serial-style worker shells — lets the shell stay
+# hardware-agnostic (the host hands it any `Read`/`Write`, e.g. esp-hal's
+# usb-serial-jtag halves) so `personal-rns` never depends on a specific HAL.
+# 0.6 matches what esp-hal 1.1 implements for its serial peripherals.
+embedded-io-async = { version = "0.6", optional = true, default-features = false }
 # Logging facade for the worker shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
 
