@@ -55,6 +55,17 @@ impl SerialUsbInterface<Box<dyn serialport::SerialPort>> {
             .map_err(|e| SerialUsbError::Io(io::Error::other(e)))?;
         Ok(Self::from_io(id, port))
     }
+
+    /// Set how long the next [`read_inbound`](personal_rns::interfaces::Interface::read_inbound)
+    /// blocks waiting for bytes before reporting idle. This is the daemon's
+    /// "wait" knob: a deadline-driven runtime sets it to the time until the
+    /// engine's next scheduled work, so the read returns either when a packet
+    /// arrives or when that deadline elapses — no separate timer, no busy poll.
+    /// Best-effort: a backend that rejects the change just keeps its prior
+    /// timeout.
+    pub fn set_read_timeout(&mut self, timeout: Duration) {
+        let _ = self.port.set_timeout(timeout);
+    }
 }
 
 impl<P: Read + Write> SerialUsbInterface<P> {

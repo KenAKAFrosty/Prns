@@ -6,7 +6,8 @@
 use std::time::{Duration, Instant};
 
 use personal_rns::engine::{
-    DefaultEngineState, EngineDriver, InstantMillis, ReannounceSchedule, SelfAnnounceConfig,
+    DefaultEngineState, EngineDriver, InstantMillis, NextScheduledWakeup, ReannounceSchedule,
+    SelfAnnounceConfig,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{ConnectionState, Interface, InterfaceId};
@@ -50,10 +51,66 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-/// Idle poll cadence between steps. The interface read itself blocks up to its
-/// own short timeout, so this only adds a small floor when the link is busy.
-const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const USB_RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Upper bound on how long a single read may block before the loop loops back to
+/// re-check the link's health (so an unplug is noticed and we reconnect).
+/// Caps `WakeOnDeadline` so a far-off deadline or an idle engine still yields to
+/// that check. A USB host is mains-powered, so this cap costs nothing here; the
+/// deep-sleep payoff is the embedded story.
+const MAX_BLOCKING_WAIT: Duration = Duration::from_secs(1);
+
+// REVISIT(host-runtime-api): `WaitMode` + the loop below are an AD-HOC,
+// daemon-local wiring of a behavior that is NOT daemon-specific — every host
+// (this daemon, the C6 spike loop, a future tokio/embassy runtime) re-derives
+// "how long do I wait between steps" by hand. That is the same shape as the
+// identity-custody work we dropped: a technique proven inside `personal-rnsd`
+// rather than baked into the shared, structured Runtime/Manifold/EngineDriver
+// layer where it belongs (one implementation, every host). This keeps coming
+// up — lift `WaitMode` (and the deadline→wait translation) into that layer soon
+// so hosts *configure* the runtime instead of re-implementing its loop.
+//
+/// How the runtime loop decides how long to wait between engine steps. The
+/// engine is passive and (by design) has no reason to wake except its own
+/// scheduled work or an inbound packet, so the default drives the loop straight
+/// off [`EngineState::next_wakeup`] — the read blocks until that deadline or a
+/// packet, whichever comes first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitMode {
+    /// Wake on the engine's next scheduled deadline, or an inbound packet — the
+    /// default; the loop only runs when there is something to do.
+    WakeOnDeadline,
+    /// Always wait a fixed period regardless of schedule. The pre-deadline poll,
+    /// kept for comparison and deterministic tests.
+    FixedInterval(Duration),
+}
+
+impl WaitMode {
+    fn read_timeout(self, next: NextScheduledWakeup, now: InstantMillis) -> Duration {
+        match self {
+            WaitMode::FixedInterval(period) => period,
+            WaitMode::WakeOnDeadline => match next {
+                NextScheduledWakeup::Immediate => Duration::ZERO,
+                NextScheduledWakeup::At(deadline) => {
+                    Duration::from_millis(deadline.0.saturating_sub(now.0)).min(MAX_BLOCKING_WAIT)
+                }
+                NextScheduledWakeup::Idle => MAX_BLOCKING_WAIT,
+            },
+        }
+    }
+}
+
+/// `RNSD_POLL_INTERVAL_MS=<n>` forces the legacy fixed-interval poll (for
+/// comparison / tests); unset uses the deadline-driven default.
+fn wait_mode_from_env() -> WaitMode {
+    match std::env::var("RNSD_POLL_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(ms) => WaitMode::FixedInterval(Duration::from_millis(ms)),
+        None => WaitMode::WakeOnDeadline,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UsbLifecycleAction {
@@ -111,6 +168,9 @@ fn main() {
             .collect();
         println!("RNSD_SELF_ANNOUNCE_DEST {hex} name=personal.node");
     }
+
+    let wait_mode = wait_mode_from_env();
+    println!("RNSD_WAIT_MODE {wait_mode:?}");
 
     let mut announced_routes = 0;
 
@@ -171,7 +231,12 @@ fn main() {
                 }
             }
 
-            std::thread::sleep(RUNTIME_POLL_INTERVAL);
+            // Deadline-driven wait: size the next read's blocking window to the
+            // engine's next scheduled work (or a packet, whichever lands first).
+            // No fixed sleep — the engine has no reason to be woken otherwise.
+            let now = InstantMillis(clock.elapsed().as_millis() as u64);
+            let timeout = wait_mode.read_timeout(state.next_wakeup(now), now);
+            iface.set_read_timeout(timeout);
         }
 
         std::thread::sleep(USB_RECONNECT_INTERVAL);
@@ -219,6 +284,55 @@ mod tests {
             UsbLifecycleAction::Reopen {
                 marker: "RNSD_USB_DISCONNECTED"
             }
+        );
+    }
+
+    #[test]
+    fn fixed_interval_wait_ignores_the_schedule() {
+        let mode = WaitMode::FixedInterval(Duration::from_millis(5));
+        let now = InstantMillis(1_000);
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::Idle, now),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::Immediate, now),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(9_999)), now),
+            Duration::from_millis(5),
+        );
+    }
+
+    #[test]
+    fn wake_on_deadline_sizes_the_wait_to_the_next_obligation() {
+        let mode = WaitMode::WakeOnDeadline;
+        let now = InstantMillis(1_000);
+
+        // Work due now → don't block.
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::Immediate, now),
+            Duration::ZERO
+        );
+        // A near deadline → exactly the gap until it.
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(1_200)), now),
+            Duration::from_millis(200),
+        );
+        // A deadline already in the past → zero (saturating), never a panic.
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(500)), now),
+            Duration::ZERO,
+        );
+        // A far deadline and a fully idle engine both cap at the lifecycle bound.
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::At(InstantMillis(u64::MAX)), now),
+            MAX_BLOCKING_WAIT,
+        );
+        assert_eq!(
+            mode.read_timeout(NextScheduledWakeup::Idle, now),
+            MAX_BLOCKING_WAIT
         );
     }
 }
