@@ -13,6 +13,11 @@ default = ["std", "std-host"]
 alloc = []
 std = ["alloc"]
 std-host = ["std"]
+# Embedded host shells that run on embassy-net (ESP32-S3, ESP32-C6, …). Pulls the
+# embassy stack in as optional deps; OFF by default so the pure-no_std and
+# no-std-esp-build gates never see it. An embedded host turns it on to get the
+# embassy worker shells (e.g. the AutoInterface). No alloc — heapless throughout.
+embassy-host = ["dep:embassy-net", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:log"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -34,6 +39,16 @@ zeroize = { version = "1", default-features = false, features = ["derive"] }
 
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
+
+# Embassy stack for the `embassy-host` worker shells. Optional + version-matched
+# to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),
+# so enabling the feature adds no redundant copy. Never built by the core gates.
+embassy-net = { version = "0.9.1", optional = true, default-features = false, features = ["udp", "proto-ipv6", "medium-ethernet", "multicast"] }
+embassy-sync = { version = "0.8.0", optional = true, default-features = false }
+embassy-time = { version = "0.5", optional = true, default-features = false }
+embassy-futures = { version = "0.1", optional = true, default-features = false }
+# Logging facade for the worker shells — the host installs the sink (esp-println).
+log = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
 proptest = "1"

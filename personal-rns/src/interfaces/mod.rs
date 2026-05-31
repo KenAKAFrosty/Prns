@@ -30,8 +30,11 @@ pub mod medium;
 pub mod mode;
 
 mod contract;
+mod descriptor;
 mod framing;
 mod impls;
+pub mod rns_parity;
+mod worker;
 
 pub use capabilities::Capabilities;
 pub use connection_state::ConnectionState;
@@ -42,6 +45,9 @@ pub use mode::InterfaceMode;
 pub use contract::{
     Interface, PointToPointInterface, SharedBroadcastInterface, SharedMulticastInterface,
 };
+
+pub use descriptor::InterfaceDescriptor;
+pub use worker::{InterfaceStats, InterfaceWorker, QueueFull, RuntimeDriven};
 
 pub use framing::rns_serial_framing;
 

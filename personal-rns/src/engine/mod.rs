@@ -19,7 +19,7 @@ use crate::engine::egress::write_announce_wire_packet;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{ConnectionState, Interface, InterfaceId};
+use crate::interfaces::{ConnectionState, Interface, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, ANNOUNCE_ID_WIRE_LEN,
@@ -258,29 +258,46 @@ where
         &mut self,
         interface: &I,
     ) -> Result<(), RegisterInterfaceError> {
-        let connection_state = interface.state();
-        match connection_state {
+        self.register_routable_descriptor(&InterfaceDescriptor {
+            id: interface.id(),
+            capabilities: interface.capabilities(),
+            mode: interface.mode(),
+            medium: interface.medium_kind(),
+            state: interface.state(),
+        })
+    }
+
+    /// Register the interface named by a descriptor — the path an
+    /// [`InterfaceWorker`](crate::interfaces::InterfaceWorker) uses, since a
+    /// worker owns its byte I/O and presents only its routing facts. Same rules
+    /// as [`register_routable_interface`](Self::register_routable_interface): it
+    /// must be `Connected`/`Degraded` and able to transmit; idempotent on a
+    /// known id.
+    pub fn register_routable_descriptor(
+        &mut self,
+        descriptor: &InterfaceDescriptor,
+    ) -> Result<(), RegisterInterfaceError> {
+        match descriptor.state {
             ConnectionState::Connected | ConnectionState::Degraded => {}
             ConnectionState::Initializing
             | ConnectionState::Reconnecting
             | ConnectionState::Failed
             | ConnectionState::Disconnected => {
                 return Err(RegisterInterfaceError::NotRoutable {
-                    state: connection_state,
+                    state: descriptor.state,
                 });
             }
         }
 
-        if !interface.capabilities().transmits {
+        if !descriptor.capabilities.transmits {
             return Err(RegisterInterfaceError::NotTransmitting);
         }
 
-        let id = interface.id();
-        if self.interfaces.contains(&id) {
+        if self.interfaces.contains(&descriptor.id) {
             return Ok(());
         }
         self.interfaces
-            .push(id)
+            .push(descriptor.id)
             .map_err(|_| RegisterInterfaceError::RegistryFull)
     }
 
