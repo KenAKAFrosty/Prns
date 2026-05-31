@@ -13,22 +13,24 @@ use crate::routing::storage::{
 };
 
 /// The substrate-neutral engine-bolt: it owns the engine and the registered
-/// worker, and turns one drive cycle into intake → engine step → exhaust.
+/// workers, and turns one drive cycle into intake → engine step → exhaust.
 ///
 /// It is the multi-worker generalization of [`EngineDriver`]: given the inbound
 /// the runtime aggregated plus a fresh clock and entropy, [`cycle`](Manifold::cycle)
-/// ingests, ticks, and routes every egress directive to the worker named in its
-/// `fire_on` list via [`InterfaceWorker::submit`]. The over-time loop that
+/// ingests, ticks, and routes every egress directive to the worker(s) named in
+/// its `fire_on` list via [`InterfaceWorker::submit`]. The over-time loop that
 /// decides *when* to cycle, draws entropy, and aggregates inbound is the
 /// per-platform runtime, layered above this — never part of it. `now`/`entropy`
 /// are passed in so the manifold itself touches no clock or RNG and stays
 /// neutral across std and embassy hosts.
 ///
-/// Generic over the engine-state storage so a constrained host can pick a small
-/// preset (a desk node needs far fewer tracked destinations / history slots than
-/// the desktop default). Single-worker today; the worker field grows to a
-/// registry when a host runs more than one — the routing (`fire_on` id → that
-/// worker's `submit`) is already the shape a multi-worker manifold uses.
+/// Holds a set of workers (capacity [`MAX_REGISTERED_INTERFACES`], the same cap
+/// the engine routes within). A host that runs more than one interface composes
+/// `W` as its own worker enum so the set stays a single concrete type — no
+/// `dyn`, no alloc, and the inbound mailbox stays sized to one compile-time
+/// [`InterfaceWorker::PACKET_BUFFER_SIZE`]. Generic over the engine-state
+/// storage so a constrained host can pick a small preset (a desk node needs far
+/// fewer tracked destinations / history slots than the desktop default).
 pub struct Manifold<W, R, A, H, D, const MAX_HELD: usize>
 where
     W: InterfaceWorker,
@@ -38,7 +40,7 @@ where
     D: RetainedAppData,
 {
     engine: EngineState<R, A, H, D, MAX_HELD>,
-    worker: W,
+    workers: HeaplessVec<W, MAX_REGISTERED_INTERFACES>,
     traffic: TrafficLedger,
 }
 
@@ -50,22 +52,36 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Bolt `engine` to `worker`, registering the worker (by its descriptor) so
-    /// the engine routes to it. Panics if the worker is not routable
-    /// (`Connected`/`Degraded` + transmits) — a host wires a live worker.
-    pub fn new(mut engine: EngineState<R, A, H, D, MAX_HELD>, worker: W) -> Self {
-        engine
-            .register_routable_descriptor(&worker.descriptor())
-            .expect("worker descriptor is connected and transmits");
+    /// Bolt `engine` to `workers`, registering each (by its descriptor) so the
+    /// engine routes to it. Panics if a worker is not routable
+    /// (`Connected`/`Degraded` + transmits) or if more than
+    /// [`MAX_REGISTERED_INTERFACES`] are supplied — a host wires a known-good
+    /// set at boot. Pass an array, e.g. `Manifold::new(state, [wifi])` or
+    /// `Manifold::new(state, [HostWorker::Wifi(w), HostWorker::Usb(u)])`.
+    pub fn new(
+        mut engine: EngineState<R, A, H, D, MAX_HELD>,
+        workers: impl IntoIterator<Item = W>,
+    ) -> Self {
+        let mut set: HeaplessVec<W, MAX_REGISTERED_INTERFACES> = HeaplessVec::new();
+        for worker in workers {
+            let descriptor = worker.descriptor();
+            engine
+                .register_routable_descriptor(&descriptor)
+                .expect("worker descriptor is connected and transmits");
+            if set.push(worker).is_err() {
+                panic!("more workers than MAX_REGISTERED_INTERFACES");
+            }
+        }
         Self {
             engine,
-            worker,
+            workers: set,
             traffic: TrafficLedger::new(),
         }
     }
 
     /// One drive cycle: ingest `inbound`, tick at `now` with `entropy`, and
-    /// route the resulting egress to the worker. Returns the step summary.
+    /// route the resulting egress to the worker(s) named in each directive's
+    /// `fire_on`. Returns the step summary.
     pub fn cycle(
         &mut self,
         now: InstantMillis,
@@ -74,14 +90,14 @@ where
     ) -> StepOutput {
         let Self {
             engine,
-            worker,
+            workers,
             traffic,
         } = self;
         let mut driver = ManifoldDriver {
             now,
             entropy,
             inbound,
-            worker,
+            workers: workers.as_mut_slice(),
             traffic,
         };
         driver
@@ -100,18 +116,23 @@ where
     /// changes without polling.
     pub fn snapshot(&self) -> RuntimeSnapshot {
         let mut interfaces = HeaplessVec::new();
-        let descriptor = self.worker.descriptor();
-        let (reticulum_rx_bytes, reticulum_tx_bytes) = self.traffic.totals_for(descriptor.id);
-        let _ = interfaces.push(InterfaceView {
-            id: descriptor.id,
-            online: self.worker.health().online,
-            reticulum_rx_bytes,
-            reticulum_tx_bytes,
-            // Single worker today; once the routing table records the learned-on
-            // interface, this reads its per-interface share instead of the whole
-            // table. Correct as-is while a node runs one interface.
-            tracked_destinations: self.engine.route_count() as u32,
-        });
+        for worker in &self.workers {
+            let descriptor = worker.descriptor();
+            let (reticulum_rx_bytes, reticulum_tx_bytes) = self.traffic.totals_for(descriptor.id);
+            // `push` can't overflow: workers.len() <= MAX_REGISTERED_INTERFACES,
+            // the same cap RuntimeSnapshot.interfaces is sized to.
+            let _ = interfaces.push(InterfaceView {
+                id: descriptor.id,
+                online: worker.health().online,
+                reticulum_rx_bytes,
+                reticulum_tx_bytes,
+                // Until the routing table records the learned-on interface, this
+                // is the whole table for every interface (exact for a node with
+                // a single interface; the per-interface split lands on that
+                // planned column).
+                tracked_destinations: self.engine.route_count() as u32,
+            });
+        }
         RuntimeSnapshot { interfaces }
     }
 
@@ -121,8 +142,8 @@ where
         self.engine.next_wakeup(now)
     }
 
-    pub fn worker(&self) -> &W {
-        &self.worker
+    pub fn workers(&self) -> &[W] {
+        &self.workers
     }
 
     pub fn engine(&self) -> &EngineState<R, A, H, D, MAX_HELD> {
@@ -131,13 +152,13 @@ where
 }
 
 /// Per-cycle [`EngineDriver`] the manifold builds over borrowed pieces: the
-/// runtime's `now`/`entropy`, the aggregated inbound batch, and the worker to
+/// runtime's `now`/`entropy`, the aggregated inbound batch, and the workers to
 /// exhaust to. Infallible — every op is a copy or a non-blocking submit.
 struct ManifoldDriver<'a, W: InterfaceWorker> {
     now: InstantMillis,
     entropy: u64,
     inbound: &'a [InboundPacket<'a>],
-    worker: &'a mut W,
+    workers: &'a mut [W],
     traffic: &'a mut TrafficLedger,
 }
 
@@ -177,10 +198,14 @@ impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
         for id in fire_on {
             self.traffic.add_tx(*id, bytes.len() as u64);
         }
-        if fire_on.contains(&self.worker.descriptor().id) {
-            // Non-blocking; a full worker queue drops this packet — the engine
-            // re-emits announces on its own cadence, so a drop self-heals.
-            let _ = self.worker.submit(bytes);
+        // Hand the packet to every registered worker the engine named.
+        for worker in self.workers.iter_mut() {
+            if fire_on.contains(&worker.descriptor().id) {
+                // Non-blocking; a full worker queue drops this packet — the
+                // engine re-emits announces on its own cadence, so a drop
+                // self-heals.
+                let _ = worker.submit(bytes);
+            }
         }
         Ok(())
     }

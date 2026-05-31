@@ -312,7 +312,9 @@ async fn main(spawner: Spawner) {
     let outbound_rx: OutboundReceiver = outbound_ch.receiver();
 
     let worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_tx, &LINK_UP);
-    let manifold = Manifold::new(state, worker);
+    // A single WiFi worker today; the multi-worker Manifold takes a set, so the
+    // USB worker just joins this array when it lands.
+    let manifold = Manifold::new(state, [worker]);
 
     spawner.spawn(
         auto_worker_task(stack, sta_mac, inbound_tx, outbound_rx).expect("spawn auto worker"),
