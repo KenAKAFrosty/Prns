@@ -159,3 +159,125 @@ pub fn run<P: Read + Write>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+    use std::sync::mpsc;
+    use std::sync::Mutex;
+
+    use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
+
+    /// In-memory byte pipe: serves preloaded `rx` bytes, then errors so [`run`]
+    /// returns (a simulated unplug / end of stream); captures all writes into a
+    /// handle the test keeps after `run` consumes the port.
+    struct MockPort {
+        rx: Vec<u8>,
+        pos: usize,
+        tx: std::sync::Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl MockPort {
+        fn new(rx: Vec<u8>) -> (Self, std::sync::Arc<Mutex<Vec<u8>>>) {
+            let tx = std::sync::Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    rx,
+                    pos: 0,
+                    tx: tx.clone(),
+                },
+                tx,
+            )
+        }
+    }
+
+    impl io::Read for MockPort {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pos >= self.rx.len() {
+                // Stream exhausted → error so the worker's read loop returns.
+                return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+            }
+            let n = (self.rx.len() - self.pos).min(buf.len());
+            buf[..n].copy_from_slice(&self.rx[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    impl io::Write for MockPort {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.tx.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn test_id() -> InterfaceId {
+        InterfaceId::new([0xD0; 16])
+    }
+
+    #[test]
+    fn deframes_inbound_bytes_and_stamps_them_into_the_mailbox() {
+        // Payload includes FLAG and ESC so the round-trip exercises unstuffing.
+        let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
+        let mut framed = [0u8; 32];
+        let n = rns_serial_framing::encode(&payload, &mut framed).unwrap();
+
+        let (inbound_tx, inbound_rx) = mpsc::channel();
+        let (_outbound_tx, outbound_rx) = mpsc::channel::<Vec<u8>>();
+        let link_up: LinkUp = std::sync::Arc::new(AtomicBool::new(false));
+        let (port, _tx) = MockPort::new(framed[..n].to_vec());
+
+        run(
+            port,
+            test_id(),
+            &inbound_tx,
+            &outbound_rx,
+            &link_up,
+            Instant::now(),
+        );
+
+        let entry = inbound_rx
+            .try_recv()
+            .expect("the worker stamped one frame into the mailbox");
+        assert_eq!(entry.bytes, payload);
+        assert_eq!(entry.source, test_id());
+    }
+
+    #[test]
+    fn frames_an_outbound_packet_onto_the_wire() {
+        // Packet contains a FLAG so the framing must escape it.
+        let packet = [0xAAu8, FLAG, 0xBB];
+        let (inbound_tx, _inbound_rx) = mpsc::channel();
+        let (outbound_tx, outbound_rx) = mpsc::channel::<Vec<u8>>();
+        outbound_tx.send(packet.to_vec()).unwrap();
+        let link_up: LinkUp = std::sync::Arc::new(AtomicBool::new(false));
+        // Empty rx → the first read errors, but the outbound drain runs first.
+        let (port, written) = MockPort::new(Vec::new());
+
+        run(
+            port,
+            test_id(),
+            &inbound_tx,
+            &outbound_rx,
+            &link_up,
+            Instant::now(),
+        );
+
+        // De-frame what was written; it must reconstruct the original packet.
+        let bytes = written.lock().unwrap().clone();
+        let mut decoder = RnsSerialDecoder::<SERIAL_MTU>::new();
+        let mut decoded = None;
+        for byte in bytes {
+            if let Ok(Some(frame)) = decoder.feed(byte) {
+                if !frame.is_empty() {
+                    decoded = Some(frame.to_vec());
+                }
+            }
+        }
+        assert_eq!(decoded.expect("a framed packet was written"), packet);
+    }
+}

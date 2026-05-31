@@ -44,6 +44,19 @@ const MAX_BATCH: usize = 16;
 /// costs nothing; it mirrors the embassy driver's bounded wait.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
+/// How long the next inbound-wait should block, given the engine's next
+/// scheduled work and the current time: due now → don't block; a future deadline
+/// → exactly the gap (capped at `max`); idle → `max`.
+fn wait_until(next: NextScheduledWakeup, now: InstantMillis, max: Duration) -> Duration {
+    match next {
+        NextScheduledWakeup::Immediate => Duration::ZERO,
+        NextScheduledWakeup::Idle => max,
+        NextScheduledWakeup::At(deadline) => {
+            Duration::from_millis(deadline.0.saturating_sub(now.0)).min(max)
+        }
+    }
+}
+
 /// Drive `manifold` forever on a std host: aggregate the inbound the worker(s)
 /// stamped, cycle the engine, route egress, hand the fresh [`RuntimeSnapshot`] to
 /// `on_snapshot`, then block until new inbound arrives or the engine's next
@@ -106,13 +119,7 @@ pub fn run<W, R, A, H, D, const MAX_HELD: usize, E, S>(
         // Block until the engine's next deadline or a stamped packet — whichever
         // first. No fixed sleep; the engine has no reason to wake otherwise.
         let now = InstantMillis(base.elapsed().as_millis() as u64);
-        let wait = match manifold.next_wakeup(now) {
-            NextScheduledWakeup::Immediate => Duration::ZERO,
-            NextScheduledWakeup::Idle => MAX_WAIT,
-            NextScheduledWakeup::At(deadline) => {
-                Duration::from_millis(deadline.0.saturating_sub(now.0)).min(MAX_WAIT)
-            }
-        };
+        let wait = wait_until(manifold.next_wakeup(now), now, MAX_WAIT);
         if wait.is_zero() {
             continue;
         }
@@ -123,5 +130,37 @@ pub fn run<W, R, A, H, D, const MAX_HELD: usize, E, S>(
             // arrive again; the host is shutting down.
             Err(RecvTimeoutError::Disconnected) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_until_sizes_the_block_to_the_next_obligation() {
+        let now = InstantMillis(1_000);
+        // Work due now → don't block.
+        assert_eq!(
+            wait_until(NextScheduledWakeup::Immediate, now, MAX_WAIT),
+            Duration::ZERO
+        );
+        // Idle → the bounded cap.
+        assert_eq!(wait_until(NextScheduledWakeup::Idle, now, MAX_WAIT), MAX_WAIT);
+        // A near deadline → exactly the gap until it.
+        assert_eq!(
+            wait_until(NextScheduledWakeup::At(InstantMillis(1_200)), now, MAX_WAIT),
+            Duration::from_millis(200)
+        );
+        // A far deadline → capped at the cap.
+        assert_eq!(
+            wait_until(NextScheduledWakeup::At(InstantMillis(9_999_999)), now, MAX_WAIT),
+            MAX_WAIT
+        );
+        // A deadline already in the past → don't block.
+        assert_eq!(
+            wait_until(NextScheduledWakeup::At(InstantMillis(500)), now, MAX_WAIT),
+            Duration::ZERO
+        );
     }
 }
