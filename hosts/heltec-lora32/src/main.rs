@@ -102,17 +102,22 @@ type S3EngineState = DefaultEngineState<24, 32, 1024, 4, 128, 4>;
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Node (S3)";
 
-/// Heltec V3 VBAT sense: the on-board divider is ~4.9x ((390k+100k)/100k), so
+/// Heltec V4 VBAT sense: the on-board divider is ~4.9x ((390k+100k)/100k), so
 /// VBAT(mV) = pin(mV) * 49 / 10. Tune against a multimeter once on battery.
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
-/// LiPo range for the %; `VBAT_EXTERNAL_MV` and up reads as on USB/charging.
+/// LiPo range for the bar fill (datasheet: 3.3 V empty … 4.2 V full).
 const VBAT_EMPTY_MV: u32 = 3300;
 const VBAT_FULL_MV: u32 = 4200;
-const VBAT_EXTERNAL_MV: u32 = 4300;
 /// Below this no connected LiPo is plausible (a protected cell cuts off ~3.0 V;
-/// USB with no battery reads ~0), so show `Unknown` rather than a misleading 0%.
+/// USB with no battery reads ~0), so show `Unknown` rather than misleading bars.
 const VBAT_ABSENT_MV: u32 = 3000;
+
+// No charging/bolt indicator: the V4 exposes no charge-status pin, and this
+// board's charger floats the cell at only ~4.10 V — inside a full pack's normal
+// loaded range — so voltage alone can't tell charging from a full battery
+// draining. We just show the level bars; a real charge signal could add a bolt
+// later.
 
 /// Blank the OLED after this long with no Reticulum activity (no change to any
 /// interface's traffic / destinations / liveness); it wakes instantly when
@@ -317,11 +322,12 @@ async fn main(spawner: Spawner) {
     // Keep the radio alive (dropping the controller disconnects).
     let _controller = controller;
 
-    // Battery sense (Heltec V3): VBAT divider on GPIO1 (ADC1), gated by ADC_Ctrl
-    // on GPIO37 — drive it low to connect the divider, then leave it (the ~8uA
-    // draw is negligible on a mains/USB-powered hotspot).
-    let mut adc_ctrl = Output::new(peripherals.GPIO37, Level::Low, OutputConfig::default());
-    adc_ctrl.set_low();
+    // Battery sense (Heltec V4): VBAT divider on GPIO1 (ADC1_CH0), gated by
+    // ADC_Ctrl on GPIO37. NOTE: the V4 flips the V3 convention — GPIO37 must be
+    // driven HIGH to connect the divider (V3 used LOW), per the V4 datasheet.
+    // Held high and left; the ~8uA through the 490k divider is negligible.
+    let mut adc_ctrl = Output::new(peripherals.GPIO37, Level::High, OutputConfig::default());
+    adc_ctrl.set_high();
     let mut adc_cfg = AdcConfig::new();
     let mut vbat_pin =
         adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(peripherals.GPIO1, Attenuation::_11dB);
@@ -352,6 +358,9 @@ async fn main(spawner: Spawner) {
         let mut shown_interfaces: Option<HVec<InterfaceView, 8>> = None;
         let mut last_active = EmbassyInstant::now();
         let mut panel_on = true;
+        // Smoothed VBAT (0 mV = uninitialized) so the bar level doesn't jitter
+        // on ADC noise.
+        let mut vbat_ema_mv: u32 = 0;
         let mut battery_tick = Ticker::every(Duration::from_secs(2));
         loop {
             // VBAT (mV at the pin, calibrated) scaled by the ~4.9x divider. An
@@ -364,16 +373,22 @@ async fn main(spawner: Spawner) {
                 }
             }
             let vbat_mv = pin_mv as u32 * VBAT_DIVIDER_NUM / VBAT_DIVIDER_DEN;
-            let battery = if vbat_mv >= VBAT_EXTERNAL_MV {
-                display::BatteryState::Charging
-            } else if vbat_mv < VBAT_ABSENT_MV {
+
+            // Battery level bars from the smoothed voltage; an implausibly low
+            // reading means no LiPo (USB-only) → Unknown.
+            let battery = if vbat_mv < VBAT_ABSENT_MV {
                 display::BatteryState::Unknown
             } else {
+                vbat_ema_mv = if vbat_ema_mv == 0 {
+                    vbat_mv
+                } else {
+                    (vbat_ema_mv * 7 + vbat_mv) / 8
+                };
                 let span = VBAT_FULL_MV - VBAT_EMPTY_MV;
-                let pct = (vbat_mv.saturating_sub(VBAT_EMPTY_MV) * 100 / span).min(100) as u8;
-                display::BatteryState::Percent(pct)
+                let pct = (vbat_ema_mv.saturating_sub(VBAT_EMPTY_MV) * 100 / span).min(100) as u8;
+                display::BatteryState::Level(pct)
             };
-            log::info!("BATT pin_mv={pin_mv} vbat_mv={vbat_mv}");
+            log::info!("BATT pin_mv={pin_mv} vbat_mv={vbat_mv} ema={vbat_ema_mv}");
 
             // Reticulum activity = the interfaces view changed (traffic bytes,
             // destinations, or liveness). Battery drift alone doesn't count, so

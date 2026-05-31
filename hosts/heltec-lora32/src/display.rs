@@ -14,7 +14,7 @@
 
 use core::fmt::Write as _;
 
-use embedded_graphics::mono_font::ascii::{FONT_4X6, FONT_5X8, FONT_6X10, FONT_9X15_BOLD};
+use embedded_graphics::mono_font::ascii::{FONT_5X8, FONT_6X10, FONT_9X15_BOLD};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -50,13 +50,13 @@ pub struct Card {
     pub destinations: u32,
 }
 
-/// Power state shown by the title-bar battery glyph: `Charging` (a bolt) when on
-/// external/USB power, `Percent` (the whole-number percentage drawn inside the
-/// frame) on battery, `Unknown` (a dash) when no plausible battery is present.
+/// What the title-bar battery glyph shows: `Level` (filled segment bars to the
+/// given percent) for a present battery, or `Unknown` (a dash) when no plausible
+/// battery is detected. No charging/bolt state — the V4 has no charge-status pin
+/// and its ~4.10 V float is indistinguishable from a full pack draining.
 #[derive(Clone, Copy)]
 pub enum BatteryState {
-    Charging,
-    Percent(u8),
+    Level(u8),
     Unknown,
 }
 
@@ -105,9 +105,9 @@ fn line<D: DrawTarget<Color = BinaryColor>>(display: &mut D, a: Point, b: Point)
 }
 
 /// A battery glyph drawn in the background color (it sits on the inverted title
-/// bar): a 13x9 outline + terminal nub, then by state a whole-number percentage
-/// inside the frame, a charging bolt, or a dash for no/unknown battery. The
-/// frame is tall enough for `FONT_4X6` digits so the readout reads as e.g. `74`.
+/// bar): a 15x9 outline + terminal nub, then either four filled segment bars
+/// (to the nearest quarter) for a present battery, or a dash for unknown. The
+/// bars are inset 1px from the outline on each side for breathing room.
 fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     x: i32,
@@ -116,35 +116,29 @@ fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
 ) {
     let outline = stroke(BinaryColor::Off);
     let solid = fill(BinaryColor::Off);
-    let _ = Rectangle::new(Point::new(x, y), Size::new(13, 9))
+    let _ = Rectangle::new(Point::new(x, y), Size::new(15, 9))
         .into_styled(outline)
         .draw(display);
-    let _ = Rectangle::new(Point::new(x + 13, y + 3), Size::new(2, 3))
+    let _ = Rectangle::new(Point::new(x + 15, y + 3), Size::new(2, 3))
         .into_styled(solid)
         .draw(display);
-    let bolt = |d: &mut D, a: Point, b: Point| {
-        let _ = Line::new(a, b).into_styled(outline).draw(d);
-    };
     match state {
-        BatteryState::Percent(pct) => {
-            // Whole-number percent inside the frame; clamp to two digits (a
-            // momentary 100% reads as `99`). `%` won't fit alongside.
-            let p = pct.min(99);
-            let mut label: HString<3> = HString::new();
-            let _ = write!(label, "{p}");
-            let digit = MonoTextStyle::new(&FONT_4X6, BinaryColor::Off);
-            let text_x = if p < 10 { x + 5 } else { x + 3 };
-            let _ = Text::with_baseline(&label, Point::new(text_x, y + 2), digit, Baseline::Top)
-                .draw(display);
-        }
-        BatteryState::Charging => {
-            // a small lightning bolt: external/USB power
-            bolt(display, Point::new(x + 8, y + 1), Point::new(x + 5, y + 5));
-            bolt(display, Point::new(x + 5, y + 5), Point::new(x + 8, y + 5));
-            bolt(display, Point::new(x + 8, y + 5), Point::new(x + 5, y + 8));
+        BatteryState::Level(pct) => {
+            // Four segments (2px bar + 1px gap) inset 1px inside the outline, so
+            // they span x+2..x+12; filled to the nearest quarter — coarse by
+            // design.
+            let filled = (pct as u32 * 4 + 50) / 100;
+            for i in 0..filled.min(4) {
+                let bar_x = x + 2 + i as i32 * 3;
+                let _ = Rectangle::new(Point::new(bar_x, y + 2), Size::new(2, 5))
+                    .into_styled(solid)
+                    .draw(display);
+            }
         }
         BatteryState::Unknown => {
-            bolt(display, Point::new(x + 4, y + 4), Point::new(x + 9, y + 4));
+            let _ = Line::new(Point::new(x + 5, y + 4), Point::new(x + 10, y + 4))
+                .into_styled(outline)
+                .draw(display);
         }
     }
 }
@@ -159,7 +153,9 @@ fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(display: &mut D, battery: 
     // Line 1: small left "Personal" (8*5=40px) + battery on the right.
     let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
-    draw_battery(display, 47, 1, battery);
+    // x=46: the 15px outline + 2px nub ends at col 62, a 1px margin from the
+    // 64px-wide panel edge, with ~4px clearance from "Personal" on the left.
+    draw_battery(display, 46, 1, battery);
     // Line 2: big bold "Hopspot" (7*9=63px, fills the width).
     let big = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::Off);
     let _ = Text::with_baseline("Hopspot", Point::new(1, 10), big, Baseline::Top).draw(display);
@@ -302,7 +298,7 @@ pub fn draw<D: DrawTarget<Color = BinaryColor>>(
 /// A boot/connecting splash: title bar + a centered status line.
 pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, status: &str) {
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, BatteryState::Charging);
+    draw_title_bar(display, BatteryState::Unknown);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(status, Point::new(2, CARD_TOP + 4), style, Baseline::Top)
         .draw(display);
