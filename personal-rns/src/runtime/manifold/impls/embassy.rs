@@ -1,0 +1,132 @@
+//! The embassy driver for a [`Manifold`] — the ESP32 family (S3, C6) and any
+//! embassy-net host.
+//!
+//! This is the substrate-specific half of the runtime: it owns the clock
+//! (embassy-time), the sleep primitive (`select` of inbound-ready vs the
+//! engine's next deadline), and the shared inbound mailbox the workers stamp
+//! into. The neutral aggregation point it drives is [`Manifold`].
+//!
+//! The mailbox types live here — with their draining end. The runtime drains
+//! inbound, so [`InboxEntry`] and the inbound channel aliases belong to the
+//! runtime; a worker is *handed* an [`InboundSender`] and stamps into it. (The
+//! outbound queue drains the other way — into the worker — so it lives with the
+//! worker shell.)
+
+use embassy_futures::select::{select, Either};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::{Channel, Receiver, Sender};
+use embassy_time::{Instant as EmbassyInstant, Timer};
+use heapless::Vec as HVec;
+
+use super::super::Manifold;
+use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::interfaces::{InterfaceId, InterfaceWorker};
+use crate::routing::storage::{
+    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
+};
+
+/// How many inbound packets the shared mailbox holds before a worker's stamp is
+/// dropped. A drop self-heals — the engine re-emits announces on its own cadence
+/// and Reticulum tolerates loss — so a shallow queue is the right trade on a
+/// constrained node.
+pub const INBOX_DEPTH: usize = 4;
+
+/// One inbound packet a worker has stamped into the shared mailbox: the wire
+/// bytes plus the provenance the manifold needs (which interface heard it, and
+/// when). An *owned* [`InboundPacket`] — it must outlive the socket read that
+/// produced it to ride into the next cycle's batch.
+///
+/// `PACKET_BUFFER_SIZE` is the producing worker's
+/// [`InterfaceWorker::PACKET_BUFFER_SIZE`]; the host sizes the mailbox off that
+/// one well-known number so a stamped packet always fits.
+pub struct InboxEntry<const PACKET_BUFFER_SIZE: usize> {
+    pub arrived_at: InstantMillis,
+    pub source: InterfaceId,
+    pub bytes: HVec<u8, PACKET_BUFFER_SIZE>,
+}
+
+/// The shared inbound mailbox: workers stamp [`InboxEntry`]s in, the runtime
+/// drains them each cycle. Sized to the worker's `PACKET_BUFFER_SIZE`.
+pub type InboundChannel<const PACKET_BUFFER_SIZE: usize> =
+    Channel<CriticalSectionRawMutex, InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH>;
+/// The stamping end a worker holds.
+pub type InboundSender<const PACKET_BUFFER_SIZE: usize> =
+    Sender<'static, CriticalSectionRawMutex, InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH>;
+/// The draining end this driver holds.
+pub type InboundReceiver<const PACKET_BUFFER_SIZE: usize> =
+    Receiver<'static, CriticalSectionRawMutex, InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH>;
+
+fn now_millis() -> InstantMillis {
+    InstantMillis(EmbassyInstant::now().as_millis())
+}
+
+/// Drive `manifold` forever on the embassy substrate: aggregate the inbound the
+/// workers stamped, cycle the engine, route egress, then sleep until either new
+/// inbound arrives or the engine's next deadline. `draw_entropy` is the host's
+/// CSPRNG (the one input the manifold can't supply itself); the clock is
+/// embassy-time.
+///
+/// `PACKET_BUFFER_SIZE` is inferred from `inbound`, which the host sizes off the
+/// registered worker's [`InterfaceWorker::PACKET_BUFFER_SIZE`] — the driver
+/// never picks a size itself.
+pub async fn run<const PACKET_BUFFER_SIZE: usize, W, R, A, H, D, const MAX_HELD: usize, E>(
+    mut manifold: Manifold<W, R, A, H, D, MAX_HELD>,
+    inbound: InboundReceiver<PACKET_BUFFER_SIZE>,
+    mut draw_entropy: E,
+) where
+    W: InterfaceWorker,
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+    E: FnMut() -> u64,
+{
+    // A packet received while waiting carries into the next cycle's batch.
+    let mut pending: Option<InboxEntry<PACKET_BUFFER_SIZE>> = None;
+    loop {
+        let mut msgs: HVec<InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH> = HVec::new();
+        if let Some(msg) = pending.take() {
+            let _ = msgs.push(msg);
+        }
+        while let Ok(msg) = inbound.try_receive() {
+            if msgs.push(msg).is_err() {
+                break;
+            }
+        }
+
+        let mut batch: HVec<InboundPacket<'_>, INBOX_DEPTH> = HVec::new();
+        for m in &msgs {
+            let _ = batch.push(InboundPacket {
+                arrived_at: m.arrived_at,
+                source_interface: m.source,
+                bytes: &m.bytes,
+            });
+        }
+
+        let now = now_millis();
+        let out = manifold.cycle(now, draw_entropy(), &batch);
+        if out.ingest.accepted_announce_count() > 0 {
+            log::info!(
+                "RNS_MANIFOLD RX accepted={} routes={}",
+                out.ingest.accepted_announce_count(),
+                manifold.engine().route_count(),
+            );
+        }
+        drop(batch);
+        drop(msgs);
+
+        let now = now_millis();
+        match manifold.next_wakeup(now) {
+            NextScheduledWakeup::Immediate => {}
+            NextScheduledWakeup::At(deadline) => {
+                let at = EmbassyInstant::from_millis(deadline.0);
+                if let Either::First(msg) = select(inbound.receive(), Timer::at(at)).await {
+                    pending = Some(msg);
+                }
+            }
+            NextScheduledWakeup::Idle => {
+                pending = Some(inbound.receive().await);
+            }
+        }
+    }
+}

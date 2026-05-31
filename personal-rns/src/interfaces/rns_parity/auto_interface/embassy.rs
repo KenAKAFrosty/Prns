@@ -12,46 +12,34 @@ use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
-use embassy_time::{Duration, Instant as EmbassyInstant, Ticker, Timer};
+use embassy_time::{Duration, Instant as EmbassyInstant, Ticker};
 use heapless::Vec as HVec;
 
 use super::core::{
     AutoInterfaceProtocol, DATA_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, HW_MTU,
     UNICAST_DISCOVERY_PORT,
 };
-use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::engine::InstantMillis;
 use crate::interfaces::{
     Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceStats,
     InterfaceWorker, MediumKind, QueueFull,
 };
-use crate::routing::storage::{
-    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
-};
-use crate::runtime::Manifold;
+use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
-pub const INBOX_DEPTH: usize = 4;
 pub const OUTBOX_DEPTH: usize = 4;
 const CHANNEL_PACKET_LEN_CAP: usize = HW_MTU;
 pub type PacketBuf = HVec<u8, CHANNEL_PACKET_LEN_CAP>;
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL_MS: u64 = 1600;
 
-//REVIEW rename here, unifying terms. Still WIP, thoughts on these?
-pub struct InboxEntry {
-    pub arrived_at: InstantMillis,
-    pub source: InterfaceId,
-    pub bytes: PacketBuf,
-}
-
-pub type InboundChannel = Channel<CriticalSectionRawMutex, InboxEntry, INBOX_DEPTH>;
-pub type InboundSender = Sender<'static, CriticalSectionRawMutex, InboxEntry, INBOX_DEPTH>;
-pub type InboundReceiver = Receiver<'static, CriticalSectionRawMutex, InboxEntry, INBOX_DEPTH>;
-
-/// Runtime → worker outbound. The handle holds an [`OutboundSender`] (via
-/// `submit`); the worker drains the [`OutboundReceiver`] and fans out.
-///
-/// REVIEW wait a minute.. is this in/out flipped? Since we're declaring it here it should be the worker's perspective, not the opposite. ANd that said it makes me realize these channels need to probably be set up somehow properly to be a part of the INterfaceWorker trait? I'll dig more into that trait soon, I'm going file by file alphabetically right now
-///
+/// Outbound: packets leaving the system through this worker. Names are from the
+/// engine's perspective — *outbound* = headed for the wire — not the channel's.
+/// The runtime fills it (the handle holds the [`OutboundSender`], pushed via
+/// [`EmbassyAutoInterface::submit`]); the worker drains the [`OutboundReceiver`]
+/// and fans each packet out to its peers. It lives here, with the worker — its
+/// *draining* end — the same rule that puts the inbound mailbox with the runtime
+/// that drains it (`runtime::manifold::impls::embassy`). Sized to this worker's
+/// [`HW_MTU`].
 pub type OutboundChannel = Channel<CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 pub type OutboundSender = Sender<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 pub type OutboundReceiver = Receiver<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
@@ -85,6 +73,10 @@ impl EmbassyAutoInterface {
 }
 
 impl InterfaceWorker for EmbassyAutoInterface {
+    // RNS pins the AutoInterface MTU at 1196 bytes; the inbound mailbox sizes to
+    // it so a stamped packet always fits.
+    const PACKET_BUFFER_SIZE: usize = HW_MTU;
+
     fn descriptor(&self) -> InterfaceDescriptor {
         self.descriptor
     }
@@ -125,7 +117,7 @@ pub async fn run(
     stack: Stack<'static>,
     id: InterfaceId,
     our_mac_address: [u8; 6], //REVIEW yeah again probably newtype here?
-    inbound: InboundSender,
+    inbound: InboundSender<HW_MTU>,
     outbound: OutboundReceiver,
 ) {
     let mut brain = AutoInterfaceProtocol::<MAX_PEERS>::new(our_mac_address);
@@ -319,74 +311,6 @@ pub async fn run(
                     }
                     log::info!("RNS_AUTO TX {}B to {} peer(s)", packet.len(), targets.len());
                 }
-            }
-        }
-    }
-}
-
-//REVIEW getting a smell down here. The worker having a "run_manifold" operation feels off; feels inverse of the relationship. The 'run' above made perfect sense; it's the worker's mini-program. So what's this here for? Is this a sign of what a real manifold setup actualy needs and we just plopped it here so far? The manifold is *fundamentally* the multi-interface aggregation point; so idk what the hellthis is for. Plese explain or discuss what to do with this
-
-/// The per-platform runtime loop that drives a [`Manifold`]: aggregate the
-/// worker's inbound, cycle the engine, and sleep until inbound arrives or the
-/// engine's next deadline. `draw_entropy` is the host's CSPRNG (the one bit the
-/// manifold can't supply itself); the clock is embassy-time. Runs forever.
-pub async fn run_manifold<W, R, A, H, D, const MAX_HELD: usize, E>(
-    mut manifold: Manifold<W, R, A, H, D, MAX_HELD>,
-    inbound: InboundReceiver,
-    mut draw_entropy: E,
-) where
-    W: InterfaceWorker,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-    E: FnMut() -> u64,
-{
-    // A packet received while waiting carries into the next cycle's batch.
-    let mut pending: Option<InboxEntry> = None;
-    loop {
-        let mut msgs: HVec<InboxEntry, INBOX_DEPTH> = HVec::new();
-        if let Some(msg) = pending.take() {
-            let _ = msgs.push(msg);
-        }
-        while let Ok(msg) = inbound.try_receive() {
-            if msgs.push(msg).is_err() {
-                break;
-            }
-        }
-
-        let mut batch: HVec<InboundPacket<'_>, INBOX_DEPTH> = HVec::new();
-        for m in &msgs {
-            let _ = batch.push(InboundPacket {
-                arrived_at: m.arrived_at,
-                source_interface: m.source,
-                bytes: &m.bytes,
-            });
-        }
-
-        let now = now_millis();
-        let out = manifold.cycle(now, draw_entropy(), &batch);
-        if out.ingest.accepted_announce_count() > 0 {
-            log::info!(
-                "RNS_MANIFOLD RX accepted={} routes={}",
-                out.ingest.accepted_announce_count(),
-                manifold.engine().route_count(),
-            );
-        }
-        drop(batch);
-        drop(msgs);
-
-        let now = now_millis();
-        match manifold.next_wakeup(now) {
-            NextScheduledWakeup::Immediate => {}
-            NextScheduledWakeup::At(deadline) => {
-                let at = EmbassyInstant::from_millis(deadline.0);
-                if let Either::First(msg) = select(inbound.receive(), Timer::at(at)).await {
-                    pending = Some(msg);
-                }
-            }
-            NextScheduledWakeup::Idle => {
-                pending = Some(inbound.receive().await);
             }
         }
     }

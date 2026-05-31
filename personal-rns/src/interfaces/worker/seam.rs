@@ -29,6 +29,15 @@ pub struct QueueFull;
 /// it cooperatively. The `Send`-ness and trait set a worker offers are exactly
 /// the capabilities a host matches against what it can provide.
 pub trait InterfaceWorker {
+    /// The maximum serialized packet length, in bytes, this worker handles —
+    /// the buffer capacity a runtime sizes its shared inbound mailbox to so a
+    /// stamped packet always fits. A compile-time knob, well-known on the trait
+    /// so a host wires the mailbox off this one number instead of reaching into
+    /// the worker's internals (RNS pins 1196 for the AutoInterface; a LoRa
+    /// worker is far smaller). The runtime stays generic over it and infers it
+    /// from the wired mailbox — it never picks a size itself.
+    const PACKET_BUFFER_SIZE: usize;
+
     /// The routing facts the engine registers and routes on.
     fn descriptor(&self) -> InterfaceDescriptor;
 

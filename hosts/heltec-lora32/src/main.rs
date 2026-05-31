@@ -53,10 +53,12 @@ use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface,
 use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::auto_interface::embassy::{
-    run as run_auto_worker, run_manifold, EmbassyAutoInterface, InboundChannel, InboundReceiver,
-    InboundSender, OutboundChannel, OutboundReceiver,
+    run as run_auto_worker, EmbassyAutoInterface, OutboundChannel, OutboundReceiver,
 };
-use personal_rns::interfaces::InterfaceId;
+use personal_rns::interfaces::{InterfaceId, InterfaceWorker};
+use personal_rns::runtime::manifold::impls::embassy::{
+    run as run_manifold, InboundChannel, InboundReceiver, InboundSender,
+};
 use personal_rns::runtime::Manifold;
 
 esp_app_desc!();
@@ -74,6 +76,11 @@ const WIFI_BSSID: Option<&str> = option_env!("WIFI_BSSID");
 /// Engine-facing id for this host's single RNS AutoInterface. Opaque to the
 /// engine; a readable label so it's obvious in `fire_on` logs.
 const INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-rnsaut");
+
+/// Inbound mailbox buffer size: the worker's own `PACKET_BUFFER_SIZE`, so the
+/// host sizes the shared mailbox off one well-known number — no runtime sizing,
+/// the same compile-time-knob discipline as the engine preset below.
+const PACKET_BUFFER_SIZE: usize = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
 
 /// Small engine-state preset for the S3: a desk node tracks a handful of
 /// destinations, so the desktop default (256 dests / 4096-id history / 8 KB
@@ -117,7 +124,7 @@ async fn net_task(mut runner: Runner<'static, WifiStaInterface<'static>>) -> ! {
 async fn auto_worker_task(
     stack: Stack<'static>,
     mac: [u8; 6],
-    inbound: InboundSender,
+    inbound: InboundSender<PACKET_BUFFER_SIZE>,
     outbound: OutboundReceiver,
 ) {
     run_auto_worker(stack, INTERFACE_ID, mac, inbound, outbound).await
@@ -273,12 +280,13 @@ async fn main(spawner: Spawner) {
     println!("HELTEC_S3 NET link up");
 
     // --- Worker channels + manifold. ---
-    static INBOUND: StaticCell<InboundChannel> = StaticCell::new();
+    static INBOUND: StaticCell<InboundChannel<PACKET_BUFFER_SIZE>> = StaticCell::new();
     static OUTBOUND: StaticCell<OutboundChannel> = StaticCell::new();
-    let inbound_ch: &'static InboundChannel = INBOUND.init(InboundChannel::new());
+    let inbound_ch: &'static InboundChannel<PACKET_BUFFER_SIZE> =
+        INBOUND.init(InboundChannel::new());
     let outbound_ch: &'static OutboundChannel = OUTBOUND.init(OutboundChannel::new());
-    let inbound_tx: InboundSender = inbound_ch.sender();
-    let inbound_rx: InboundReceiver = inbound_ch.receiver();
+    let inbound_tx: InboundSender<PACKET_BUFFER_SIZE> = inbound_ch.sender();
+    let inbound_rx: InboundReceiver<PACKET_BUFFER_SIZE> = inbound_ch.receiver();
     let outbound_tx = outbound_ch.sender();
     let outbound_rx: OutboundReceiver = outbound_ch.receiver();
 
