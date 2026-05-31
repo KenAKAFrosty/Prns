@@ -93,3 +93,117 @@ impl<'a> Ingress<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{
+        Context, ContextFlag, DestinationHash, IfacFlag, PropagationType, WirePacketHeader,
+        HEADER_LEN,
+    };
+
+    const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
+                                59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
+                                0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
+                                7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
+                                4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
+
+    fn hx(s: &str) -> std::vec::Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    fn iface(byte: u8) -> InterfaceId {
+        InterfaceId::new([byte; 16])
+    }
+
+    fn header_bytes(packet_type: PacketType) -> [u8; HEADER_LEN] {
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type,
+            hops: 0,
+            transport_id: None,
+            destination: DestinationHash::new([0xA5; 16]),
+            context: Context::None,
+        };
+        let mut bytes = [0u8; HEADER_LEN];
+        assert_eq!(header.write(&mut bytes).unwrap(), HEADER_LEN);
+        bytes
+    }
+
+    #[test]
+    fn malformed_headers_are_unparseable() {
+        let packet = InboundPacket {
+            arrived_at: InstantMillis(7),
+            source_interface: iface(0x01),
+            bytes: &[0x01],
+        };
+
+        assert!(matches!(Ingress::classify(&packet), Ingress::Unparseable));
+    }
+
+    #[test]
+    fn recognized_non_announce_packets_classify_from_the_header() {
+        for packet_type in [PacketType::Data, PacketType::LinkRequest, PacketType::Proof] {
+            let bytes = header_bytes(packet_type);
+            let packet = InboundPacket {
+                arrived_at: InstantMillis(9),
+                source_interface: iface(0x02),
+                bytes: &bytes,
+            };
+
+            let classified = Ingress::classify(&packet);
+            match packet_type {
+                PacketType::Data => assert!(matches!(classified, Ingress::Data)),
+                PacketType::LinkRequest => assert!(matches!(classified, Ingress::LinkRequest)),
+                PacketType::Proof => assert!(matches!(classified, Ingress::Proof)),
+                PacketType::Announce => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn announce_packets_must_target_a_single_destination() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        raw[0] |= (DestinationType::Group as u8) << 2;
+        let packet = InboundPacket {
+            arrived_at: InstantMillis(11),
+            source_interface: iface(0x03),
+            bytes: &raw,
+        };
+
+        assert!(matches!(Ingress::classify(&packet), Ingress::Unparseable));
+    }
+
+    #[test]
+    fn announce_received_hops_saturates_at_wire_max() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        raw[1] = u8::MAX;
+        let source_interface = iface(0x04);
+        let arrived_at = InstantMillis(13);
+        let packet = InboundPacket {
+            arrived_at,
+            source_interface,
+            bytes: &raw,
+        };
+
+        let classified = Ingress::classify(&packet);
+        let Ingress::Announce {
+            received_hops,
+            source_interface: classified_source,
+            arrived_at: classified_arrival,
+            ..
+        } = classified
+        else {
+            panic!("valid announce should classify as announce");
+        };
+        assert_eq!(received_hops, u8::MAX);
+        assert_eq!(classified_source, source_interface);
+        assert_eq!(classified_arrival, arrived_at);
+    }
+}

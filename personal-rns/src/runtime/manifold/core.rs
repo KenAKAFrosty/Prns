@@ -272,3 +272,163 @@ impl TrafficLedger {
             .unwrap_or((0, 0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::DefaultEngineState;
+    use crate::interfaces::{
+        Capabilities, ConnectionState, InterfaceDescriptor, InterfaceMode, InterfaceStats,
+        MediumKind,
+    };
+    use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+    use crate::wire::{PacketType, WirePacketHeader};
+
+    const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
+                                59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
+                                0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
+                                7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
+                                4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
+
+    #[derive(Debug)]
+    struct TestWorker {
+        descriptor: InterfaceDescriptor,
+        health: InterfaceStats,
+        submitted: std::vec::Vec<std::vec::Vec<u8>>,
+    }
+
+    impl InterfaceWorker for TestWorker {
+        const PACKET_BUFFER_SIZE: usize = 500;
+
+        fn descriptor(&self) -> InterfaceDescriptor {
+            self.descriptor
+        }
+
+        fn health(&self) -> InterfaceStats {
+            self.health
+        }
+
+        fn submit(&mut self, packet: &[u8]) -> Result<(), crate::interfaces::QueueFull> {
+            self.submitted.push(packet.to_vec());
+            Ok(())
+        }
+    }
+
+    fn hx(s: &str) -> std::vec::Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    fn iface(byte: u8) -> InterfaceId {
+        InterfaceId::new([byte; 16])
+    }
+
+    fn worker(id: InterfaceId, online: bool) -> TestWorker {
+        TestWorker {
+            descriptor: InterfaceDescriptor {
+                id,
+                capabilities: Capabilities {
+                    receives: true,
+                    transmits: true,
+                    forwards: true,
+                    repeats: false,
+                },
+                mode: InterfaceMode::Full,
+                medium: MediumKind::Loopback,
+                state: ConnectionState::Connected,
+            },
+            health: InterfaceStats {
+                online,
+                rx_packet_count: 0,
+                tx_packet_count: 0,
+                active_peer_count: 0,
+            },
+            submitted: std::vec::Vec::new(),
+        }
+    }
+
+    #[test]
+    fn new_registers_workers_and_snapshot_reflects_worker_health() {
+        let first = iface(0xA1);
+        let second = iface(0xB2);
+        let engine: DefaultEngineState = DefaultEngineState::default();
+
+        let manifold = Manifold::new(engine, [worker(first, true), worker(second, false)]);
+
+        assert_eq!(manifold.engine().registered_interfaces(), &[first, second]);
+        assert_eq!(manifold.workers().len(), 2);
+        let snapshot = manifold.snapshot();
+        assert_eq!(snapshot.interfaces.len(), 2);
+        assert_eq!(
+            snapshot.interfaces[0],
+            InterfaceView {
+                id: first,
+                online: true,
+                reticulum_rx_bytes: 0,
+                reticulum_tx_bytes: 0,
+                tracked_destinations: 0,
+            }
+        );
+        assert_eq!(
+            snapshot.interfaces[1],
+            InterfaceView {
+                id: second,
+                online: false,
+                reticulum_rx_bytes: 0,
+                reticulum_tx_bytes: 0,
+                tracked_destinations: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn cycle_meters_traffic_and_submits_due_rebroadcast_to_fire_on_worker() {
+        let raw = hx(RAW_ANNOUNCE);
+        let source = iface(0xA1);
+        let peer = iface(0xB2);
+        let arrival = InstantMillis(1_000);
+        let inbound = [InboundPacket {
+            arrived_at: arrival,
+            source_interface: source,
+            bytes: &raw,
+        }];
+        let engine: DefaultEngineState = DefaultEngineState::default();
+        let mut manifold = Manifold::new(engine, [worker(source, true), worker(peer, true)]);
+
+        let out = manifold.cycle(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            0xCAFE_F00D_DEAD_BEEF,
+            &inbound,
+        );
+
+        assert_eq!(out.ingest.accepted_announce_count(), 1);
+        assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
+        assert_eq!(out.tick.egress_directive_count, 1);
+        assert!(manifold.workers()[0].submitted.is_empty());
+        assert_eq!(manifold.workers()[1].submitted.len(), 1);
+
+        let (original_header, original_payload) = WirePacketHeader::parse(&raw).unwrap();
+        let submitted = &manifold.workers()[1].submitted[0];
+        let (submitted_header, submitted_payload) = WirePacketHeader::parse(submitted).unwrap();
+        assert_eq!(submitted_header.packet_type, PacketType::Announce);
+        assert_eq!(submitted_header.hops, original_header.hops + 1);
+        assert_eq!(submitted_header.destination, original_header.destination);
+        assert_eq!(submitted_payload, original_payload);
+
+        let snapshot = manifold.snapshot();
+        assert_eq!(snapshot.interfaces.len(), 2);
+        assert_eq!(snapshot.interfaces[0].id, source);
+        assert_eq!(snapshot.interfaces[0].reticulum_rx_bytes, raw.len() as u64);
+        assert_eq!(snapshot.interfaces[0].reticulum_tx_bytes, 0);
+        assert_eq!(snapshot.interfaces[0].tracked_destinations, 1);
+        assert_eq!(snapshot.interfaces[1].id, peer);
+        assert_eq!(snapshot.interfaces[1].reticulum_rx_bytes, 0);
+        assert_eq!(
+            snapshot.interfaces[1].reticulum_tx_bytes,
+            submitted.len() as u64
+        );
+        assert_eq!(snapshot.interfaces[1].tracked_destinations, 1);
+    }
+}
