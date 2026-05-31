@@ -1,0 +1,32 @@
+[package]
+name = "heltec-lora32"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Heltec WiFi LoRa 32 (ESP32-S3 + SX1262 + OLED) host: drives the Personal Reticulum engine on bare metal."
+
+# Standalone: its own workspace so the suite's host workspace never tries to
+# build this no_std/no_main bare-metal crate for the host target. Mirrors the
+# esp32-c6 host's layout. (Heltec board revision is recorded in src/main.rs once
+# confirmed against the silkscreen.)
+[workspace]
+
+[dependencies]
+personal-rns = { path = "../../personal-rns", default-features = false }
+
+# Same esp-hal 1.1 stack the C6 host pins, retargeted to the S3 (Xtensa LX7,
+# dual-core). Stage A is a pure sync poll loop — no embassy executor / time
+# driver yet, so none of those deps appear here.
+esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial", "log-04"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = false

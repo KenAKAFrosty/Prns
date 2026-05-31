@@ -1,0 +1,5 @@
+# The S3 is Xtensa; xtensa-esp32s3-none-elf only exists in the `esp` Rust fork
+# (installed via espup). The C6 host got away without pinning because RISC-V
+# targets exist on stock nightly — Xtensa does not.
+[toolchain]
+channel = "esp"
