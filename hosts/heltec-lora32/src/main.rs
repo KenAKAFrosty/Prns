@@ -28,7 +28,9 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_println::println;
 
 use embassy_executor::Spawner;
+use embassy_net::{Config as NetConfig, Runner, StackResources};
 use embassy_time::{Duration, Timer};
+use static_cell::StaticCell;
 
 use core::fmt::Write as _;
 use embedded_graphics::mono_font::ascii::FONT_6X10;
@@ -41,7 +43,7 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use esp_radio::wifi::sta::StationConfig;
-use esp_radio::wifi::{self, Config as WifiConfig};
+use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface};
 
 use personal_rns::engine::{
     tick, DefaultEngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig,
@@ -65,8 +67,15 @@ fn block_ms(ms: u64) {
     while Instant::now().duration_since_epoch().as_millis() < target {}
 }
 
+/// The embassy-net background task: polls the WiFi device and runs the IP stack.
+/// Must own the device + resources for 'static, hence the `StaticCell` below.
+#[embassy_executor::task]
+async fn net_task(mut runner: Runner<'static, WifiStaInterface<'static>>) -> ! {
+    runner.run().await
+}
+
 #[esp_rtos::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
@@ -138,7 +147,7 @@ async fn main(_spawner: Spawner) {
     }
 
     // --- WiFi association (esp-radio). ---
-    let (mut controller, _interfaces) =
+    let (mut controller, interfaces) =
         wifi::new(peripherals.WIFI, Default::default()).expect("esp-radio wifi::new");
     let sta = StationConfig::default()
         .with_ssid(WIFI_SSID)
@@ -158,6 +167,33 @@ async fn main(_spawner: Spawner) {
             "WiFi: FAIL"
         }
     };
+
+    // --- M2: IP stack (embassy-net) with SLAAC → IPv6 link-local. ---
+    // Capture the STA MAC before the device moves into the stack; we use it to
+    // report the link-local (embassy-net assigns it from the MAC via EUI-64, but
+    // config_v6() only surfaces static/global addresses, not link-local).
+    let sta_mac = interfaces.station.mac_address();
+
+    let net_config = NetConfig::slaac();
+    static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+    let resources = RESOURCES.init(StackResources::new());
+    let (stack, runner) = embassy_net::new(
+        interfaces.station,
+        net_config,
+        resources,
+        0x5eed_1234_c0ff_ee01,
+    );
+    spawner.spawn(net_task(runner).expect("spawn net_task"));
+
+    stack.wait_link_up().await;
+    // The SLAAC link-local: fe80::<EUI-64 of the MAC> (U/L bit flipped).
+    let h0 = (((sta_mac[0] ^ 0x02) as u16) << 8) | sta_mac[1] as u16;
+    let h1 = ((sta_mac[2] as u16) << 8) | 0x00ff;
+    let h2 = 0xfe00u16 | sta_mac[3] as u16;
+    let h3 = ((sta_mac[4] as u16) << 8) | sta_mac[5] as u16;
+    println!("HELTEC_S3 NET link up; IPv6 link-local fe80::{h0:x}:{h1:x}:{h2:x}:{h3:x}");
+    let mut ip6_line: HString<24> = HString::new();
+    let _ = write!(ip6_line, "ll ..{h2:x}:{h3:x}");
 
     // --- Engine loop. ---
     let _controller = controller; // keep the radio alive (dropping disconnects)
@@ -181,9 +217,11 @@ async fn main(_spawner: Spawner) {
                 .draw(&mut display);
             let _ = Text::with_baseline(wifi_line, Point::new(0, 26), text, Baseline::Top)
                 .draw(&mut display);
+            let _ = Text::with_baseline(&ip6_line, Point::new(0, 39), text, Baseline::Top)
+                .draw(&mut display);
             l.clear();
             let _ = write!(l, "cyc {cycle}  up {}s", now.0 / 1000);
-            let _ = Text::with_baseline(&l, Point::new(0, 39), text, Baseline::Top)
+            let _ = Text::with_baseline(&l, Point::new(0, 52), text, Baseline::Top)
                 .draw(&mut display);
             let _ = display.flush();
         }
