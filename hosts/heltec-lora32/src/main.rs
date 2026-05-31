@@ -490,6 +490,24 @@ async fn main(spawner: Spawner) {
                 if shown_interfaces.as_ref() != Some(&snap.interfaces) {
                     last_active = EmbassyInstant::now();
                     shown_interfaces = Some(snap.interfaces.clone());
+                    // Mirror what the OLED now shows, so per-interface counts are
+                    // observable headlessly on the muxed CDC: destinations are
+                    // attributed to the interface each route was learned on, not
+                    // a shared global total.
+                    for view in &snap.interfaces {
+                        let label = if view.id == SERIAL_INTERFACE_ID {
+                            "USB"
+                        } else {
+                            "WiFi"
+                        };
+                        log::info!(
+                            "HELTEC_S3 IFACE {label} online={} dest={} rx={} tx={}",
+                            view.online,
+                            view.tracked_destinations,
+                            view.reticulum_rx_bytes,
+                            view.reticulum_tx_bytes,
+                        );
+                    }
                 }
             }
             let idle = last_active.elapsed() >= Duration::from_secs(OLED_IDLE_BLANK_SECS);

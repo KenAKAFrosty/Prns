@@ -18,6 +18,7 @@ pub mod storage;
 pub mod types;
 
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 use announce::Announce;
 use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
@@ -112,6 +113,18 @@ where
         self.routes.len()
     }
 
+    /// How many tracked destinations were learned on (are reachable via)
+    /// `interface` — the per-interface slice of [`route_count`](Self::route_count).
+    /// A linear scan of the receiving-interface column; the table is small and
+    /// already scanned linearly for lookups.
+    pub fn route_count_via(&self, interface: InterfaceId) -> usize {
+        self.routes
+            .receiving_interfaces()
+            .iter()
+            .filter(|&&learned_on| learned_on == interface)
+            .count()
+    }
+
     pub fn hop_count_to(&self, destination: &DestinationHash) -> Option<u8> {
         self.index_of(destination).map(|i| self.routes.hops()[i])
     }
@@ -149,12 +162,13 @@ where
         &mut self,
         hops: u8,
         arrived_at: InstantMillis,
+        receiving_interface: InterfaceId,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
         let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
-            None => self.insert_new_route(hops, expires_at, announce),
-            Some(i) => self.refresh_existing_route(i, hops, expires_at, announce),
+            None => self.insert_new_route(hops, expires_at, receiving_interface, announce),
+            Some(i) => self.refresh_existing_route(i, hops, expires_at, receiving_interface, announce),
         }
     }
 
@@ -162,6 +176,7 @@ where
         &mut self,
         hops: u8,
         expires_at: InstantMillis,
+        receiving_interface: InterfaceId,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
         // Bound-check the routes columns *before* taking up arena space,
@@ -178,6 +193,7 @@ where
             hops,
             expires: expires_at,
             responsiveness: RouteResponsiveness::Responsive,
+            receiving_interface,
         };
         let announce_entry = RetainedAnnounceEntry {
             public_keys: announce.public_keys,
@@ -209,6 +225,7 @@ where
         i: usize,
         hops: u8,
         expires_at: InstantMillis,
+        receiving_interface: InterfaceId,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
         // Try the announce-coherent replace FIRST. If the arena can't hold
@@ -236,6 +253,9 @@ where
                 hops,
                 expires: expires_at,
                 responsiveness: RouteResponsiveness::Responsive,
+                // A refresh re-points the route at the interface the freshest
+                // accepted announce arrived on, as RNS does on a path update.
+                receiving_interface,
             },
         );
         self.retained_announces.set_row(
@@ -290,6 +310,17 @@ mod tests {
         DestinationHash::new([byte; 16])
     }
 
+    fn iface(byte: u8) -> InterfaceId {
+        InterfaceId::new([byte; 16])
+    }
+
+    /// The receiving interface for the tests that don't exercise per-interface
+    /// attribution (most of them — they predate the receiving-interface column
+    /// and only care about hops/app_data/ratchet behaviour).
+    fn source() -> InterfaceId {
+        iface(0xEE)
+    }
+
     fn announce_id(nonce_byte: u8, timebase: u64) -> AnnounceId {
         let mut bytes = [0u8; 10];
         bytes[..5].copy_from_slice(&[nonce_byte; 5]);
@@ -338,6 +369,7 @@ mod tests {
         table.upsert_route(
             hops,
             arrival,
+            source(),
             &announce_for(destination, announce_id, None, app_data),
         )
     }
@@ -359,6 +391,50 @@ mod tests {
         assert_eq!(table.route_count(), 1);
         assert_eq!(table.hop_count_to(&dest(1)), Some(2));
         assert_eq!(table.hop_count_to(&dest(2)), None);
+    }
+
+    #[test]
+    fn route_count_via_attributes_destinations_to_the_receiving_interface() {
+        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let wifi = iface(0x01);
+        let usb = iface(0x02);
+        let silent = iface(0x03);
+
+        // Two destinations heard over wifi, one over usb.
+        for (dest_byte, id_byte, learned_on) in
+            [(1u8, 0xA1u8, wifi), (2, 0xA2, wifi), (3, 0xA3, usb)]
+        {
+            assert_eq!(
+                table.upsert_route(
+                    1,
+                    InstantMillis(100),
+                    learned_on,
+                    &announce_for(dest(dest_byte), announce_id(id_byte, 1), None, &app_data(id_byte)),
+                ),
+                UpsertRouteOutcome::Inserted
+            );
+        }
+
+        // The global total stays the sum; each interface owns only its share.
+        assert_eq!(table.route_count(), 3);
+        assert_eq!(table.route_count_via(wifi), 2);
+        assert_eq!(table.route_count_via(usb), 1);
+        // An interface that never carried an announce tallies zero, not the total.
+        assert_eq!(table.route_count_via(silent), 0);
+
+        // A refresh that re-hears dest 1 over usb moves it off wifi's tally.
+        assert_eq!(
+            table.upsert_route(
+                1,
+                InstantMillis(200),
+                usb,
+                &announce_for(dest(1), announce_id(0xB1, 2), None, &app_data(0xB1)),
+            ),
+            UpsertRouteOutcome::Updated
+        );
+        assert_eq!(table.route_count(), 3);
+        assert_eq!(table.route_count_via(wifi), 1);
+        assert_eq!(table.route_count_via(usb), 2);
     }
 
     #[test]
@@ -624,6 +700,7 @@ mod tests {
         table.upsert_route(
             3,
             InstantMillis(0),
+            source(),
             &announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();

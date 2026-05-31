@@ -38,12 +38,10 @@ pub struct InterfaceView {
     /// Cumulative Reticulum bytes the engine has emitted to this interface
     /// since boot (wrapping).
     pub reticulum_tx_bytes: u64,
-    /// Routing-table destinations reachable via this interface.
-    ///
-    /// Until the routing table records the interface a destination was learned
-    /// on (a planned `RouteEntry` column), this is the whole table — exact
-    /// while a node runs a single interface, and the field the per-interface
-    /// split lands on once that column exists.
+    /// Routing-table destinations reachable via this interface — the routes
+    /// whose accepted announce arrived on it (RNS's `receiving_interface`).
+    /// A node with several interfaces sees each one's own share here, not the
+    /// global total.
     pub tracked_destinations: u32,
 }
 

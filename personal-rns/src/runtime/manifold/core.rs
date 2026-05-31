@@ -126,11 +126,9 @@ where
                 online: worker.health().online,
                 reticulum_rx_bytes,
                 reticulum_tx_bytes,
-                // Until the routing table records the learned-on interface, this
-                // is the whole table for every interface (exact for a node with
-                // a single interface; the per-interface split lands on that
-                // planned column).
-                tracked_destinations: self.engine.route_count() as u32,
+                // Destinations whose route was learned on this interface — the
+                // routing table's per-interface tally, not the global total.
+                tracked_destinations: self.engine.route_count_via(descriptor.id) as u32,
             });
         }
         RuntimeSnapshot { interfaces }
@@ -422,6 +420,7 @@ mod tests {
         assert_eq!(snapshot.interfaces[0].id, source);
         assert_eq!(snapshot.interfaces[0].reticulum_rx_bytes, raw.len() as u64);
         assert_eq!(snapshot.interfaces[0].reticulum_tx_bytes, 0);
+        // The destination was learned on `source`, so only it tallies the route.
         assert_eq!(snapshot.interfaces[0].tracked_destinations, 1);
         assert_eq!(snapshot.interfaces[1].id, peer);
         assert_eq!(snapshot.interfaces[1].reticulum_rx_bytes, 0);
@@ -429,6 +428,8 @@ mod tests {
             snapshot.interfaces[1].reticulum_tx_bytes,
             submitted.len() as u64
         );
-        assert_eq!(snapshot.interfaces[1].tracked_destinations, 1);
+        // `peer` only re-broadcast the announce; it didn't learn the route, so
+        // its per-interface tally stays zero — the global total would say 1.
+        assert_eq!(snapshot.interfaces[1].tracked_destinations, 0);
     }
 }

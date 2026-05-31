@@ -37,19 +37,29 @@ pub use impls::{
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 
 /// The routing-coherent row written to [`RouteColumns`] — fields whose
-/// updates are independent of the announce payload (hops/expires update on
-/// every accept; responsiveness flips on path probes; future next_hop +
-/// interface land here too).
+/// updates are independent of the announce payload (hops/expires/the
+/// receiving interface update on every accept; responsiveness flips on path
+/// probes; the next-hop transport address lands here too once directed
+/// forwarding exists).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteEntry {
     pub hops: u8,
     pub expires: InstantMillis,
     pub responsiveness: RouteResponsiveness,
+    /// The interface the accepted announce arrived on — RNS's
+    /// [`receiving_interface`](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L2011)
+    /// (index 5 of a `path_table` entry). The destination is reachable *via*
+    /// this interface, so it serves both
+    /// the per-interface destination tally a runtime surfaces and, once
+    /// directed forwarding exists, the egress interface for traffic aimed at
+    /// the destination.
+    pub receiving_interface: InterfaceId,
 }
 
 /// The announce-coherent row written to [`RetainedAnnounceColumns`] — fields
@@ -134,6 +144,11 @@ pub trait RouteColumns {
     fn hops(&self) -> &[u8];
     fn expires(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
+
+    /// The interface each route was learned on (RNS's `receiving_interface`)
+    /// — the per-destination provenance a runtime tallies per interface, and
+    /// the future egress interface for directed traffic.
+    fn receiving_interfaces(&self) -> &[InterfaceId];
 
     /// Row-coherent overwrite of slot `i`'s routing fields. Backends that
     /// need transactional writes anchor atomicity here.

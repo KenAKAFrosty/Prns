@@ -7,6 +7,7 @@
 //! [`ColumnsFull`](crate::routing::storage::ColumnsFull) at the `push` call site.
 
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::routing::storage::{ColumnsFull, RouteColumns, RouteEntry};
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
@@ -25,6 +26,7 @@ pub struct FixedArrayRouteColumns<const MAX_TRACKED_DESTINATIONS: usize> {
     hops: [u8; MAX_TRACKED_DESTINATIONS],
     expires: [InstantMillis; MAX_TRACKED_DESTINATIONS],
     responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
+    receiving_interface: [InterfaceId; MAX_TRACKED_DESTINATIONS],
 }
 
 impl<const MAX_TRACKED_DESTINATIONS: usize> Default
@@ -37,6 +39,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             hops: [0u8; MAX_TRACKED_DESTINATIONS],
             expires: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
+            receiving_interface: [InterfaceId::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
         }
     }
 }
@@ -63,11 +66,15 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness[..self.len]
     }
+    fn receiving_interfaces(&self) -> &[InterfaceId] {
+        &self.receiving_interface[..self.len]
+    }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.expires[i] = row.expires;
         self.responsiveness[i] = row.responsiveness;
+        self.receiving_interface[i] = row.receiving_interface;
     }
 
     fn push(
@@ -94,11 +101,21 @@ mod tests {
         DestinationHash::new([byte; 16])
     }
 
-    fn row(hops: u8, expires: u64, responsiveness: RouteResponsiveness) -> RouteEntry {
+    fn iface(byte: u8) -> InterfaceId {
+        InterfaceId::new([byte; 16])
+    }
+
+    fn row(
+        hops: u8,
+        expires: u64,
+        responsiveness: RouteResponsiveness,
+        receiving_interface: InterfaceId,
+    ) -> RouteEntry {
         RouteEntry {
             hops,
             expires: InstantMillis(expires),
             responsiveness,
+            receiving_interface,
         }
     }
 
@@ -109,11 +126,17 @@ mod tests {
         assert_eq!(columns.capacity(), 3);
         assert!(columns.is_empty());
         assert_eq!(
-            columns.push(dest(0xA1), row(1, 10, RouteResponsiveness::Responsive)),
+            columns.push(
+                dest(0xA1),
+                row(1, 10, RouteResponsiveness::Responsive, iface(0xE1))
+            ),
             Ok(0)
         );
         assert_eq!(
-            columns.push(dest(0xB2), row(2, 20, RouteResponsiveness::Unresponsive)),
+            columns.push(
+                dest(0xB2),
+                row(2, 20, RouteResponsiveness::Unresponsive, iface(0xE2))
+            ),
             Ok(1)
         );
 
@@ -128,19 +151,29 @@ mod tests {
                 RouteResponsiveness::Unresponsive
             ]
         );
+        assert_eq!(columns.receiving_interfaces(), &[iface(0xE1), iface(0xE2)]);
     }
 
     #[test]
     fn set_row_updates_route_fields_without_changing_destination_or_len() {
         let mut columns: FixedArrayRouteColumns<2> = FixedArrayRouteColumns::default();
         columns
-            .push(dest(0xA1), row(1, 10, RouteResponsiveness::Responsive))
+            .push(
+                dest(0xA1),
+                row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
+            )
             .unwrap();
         columns
-            .push(dest(0xB2), row(2, 20, RouteResponsiveness::Responsive))
+            .push(
+                dest(0xB2),
+                row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
+            )
             .unwrap();
 
-        columns.set_row(0, row(7, 70, RouteResponsiveness::Unresponsive));
+        columns.set_row(
+            0,
+            row(7, 70, RouteResponsiveness::Unresponsive, iface(0xE9)),
+        );
 
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xA1), dest(0xB2)]);
@@ -153,6 +186,8 @@ mod tests {
                 RouteResponsiveness::Responsive
             ]
         );
+        // set_row rewrites the receiving interface alongside the other fields.
+        assert_eq!(columns.receiving_interfaces(), &[iface(0xE9), iface(0xE2)]);
     }
 
     #[test]
@@ -160,7 +195,10 @@ mod tests {
         let mut columns: FixedArrayRouteColumns<0> = FixedArrayRouteColumns::default();
 
         assert_eq!(
-            columns.push(dest(0xA1), row(1, 10, RouteResponsiveness::Responsive)),
+            columns.push(
+                dest(0xA1),
+                row(1, 10, RouteResponsiveness::Responsive, iface(0xE1))
+            ),
             Err(ColumnsFull)
         );
         assert_eq!(columns.len(), 0);
@@ -168,5 +206,6 @@ mod tests {
         assert!(columns.hops().is_empty());
         assert!(columns.expires().is_empty());
         assert!(columns.responsiveness().is_empty());
+        assert!(columns.receiving_interfaces().is_empty());
     }
 }

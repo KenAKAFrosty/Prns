@@ -242,6 +242,12 @@ where
         self.routing_table.route_count()
     }
 
+    /// Tracked destinations reachable via `interface` — the per-interface
+    /// slice of [`route_count`](Self::route_count) a runtime surfaces per card.
+    pub fn route_count_via(&self, interface: InterfaceId) -> usize {
+        self.routing_table.route_count_via(interface)
+    }
+
     pub fn held_announce_count(&self) -> usize {
         self.held_announces_cache.len()
     }
@@ -660,7 +666,7 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
 
     let outcome = state
         .routing_table
-        .upsert_route(received_hops, arrived_at, &announce);
+        .upsert_route(received_hops, arrived_at, source_interface, &announce);
     match outcome {
         UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
             counters.accepted += 1;
@@ -751,10 +757,12 @@ where
                 }
                 .determine_acceptance();
                 if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-                    let outcome =
-                        state
-                            .routing_table
-                            .upsert_route(received_hops, arrival, &announce);
+                    let outcome = state.routing_table.upsert_route(
+                        received_hops,
+                        arrival,
+                        source_interface,
+                        &announce,
+                    );
                     if matches!(
                         outcome,
                         UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
