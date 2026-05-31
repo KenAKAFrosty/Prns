@@ -9,10 +9,10 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
-use embassy_time::{with_timeout, Duration, Instant as EmbassyInstant};
+use embassy_time::{with_timeout, Duration, Instant as EmbassyInstant, Ticker};
 use embedded_io_async::{Read, Write};
 use heapless::Vec as HVec;
 
@@ -25,11 +25,19 @@ use crate::interfaces::{
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
 pub const OUTBOX_DEPTH: usize = 4;
-/// Upper bound on one frame's write. If nothing is draining the CDC (e.g. the
-/// board is on battery with no USB host attached), an unbounded write would
-/// block the link forever; on timeout we drop the frame instead — RNS
-/// re-announces, so it self-heals — and get back to reading.
+/// Upper bound on one frame's write. If nothing is draining the CDC (no USB host
+/// attached, or no peer reading), an unbounded write would block the link
+/// forever; on timeout we drop the frame — RNS re-announces, so it self-heals —
+/// and treat the link as offline.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
+/// How often to send an empty keepalive frame when the link is otherwise idle.
+/// It doubles as the liveness probe: whether the write lands (peer draining) or
+/// times out (no peer) sets `health().online`, so the link state tracks
+/// plug/unplug within this interval. Empty frames are valid RNS keepalives — a
+/// stock peer's decoder yields and discards them.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_millis(1000);
+/// An empty RNS serial frame: `FLAG FLAG`, the canonical keepalive.
+const KEEPALIVE_FRAME: [u8; 2] = [rns_serial_framing::FLAG, rns_serial_framing::FLAG];
 /// Outbound packets are raw Reticulum wire packets (≤ [`SERIAL_MTU`]); the shell
 /// frames them on the way out.
 pub type PacketBuf = HVec<u8, SERIAL_MTU>;
@@ -97,17 +105,27 @@ fn now_millis() -> InstantMillis {
     InstantMillis(EmbassyInstant::now().as_millis())
 }
 
+/// Write one already-framed buffer, bounded by [`WRITE_TIMEOUT`]. Returns
+/// whether a peer drained it: `true` if the whole frame went out, `false` on a
+/// write error or timeout (nothing reading) — that boolean is the link's
+/// liveness.
+async fn write_framed<W: Write>(tx: &mut W, framed: &[u8]) -> bool {
+    matches!(with_timeout(WRITE_TIMEOUT, tx.write_all(framed)).await, Ok(Ok(())))
+}
+
 /// Drive the serial link forever: de-frame inbound bytes off `rx` into the
-/// runtime's shared inbound mailbox, and frame outbound packets from the worker
-/// queue onto `tx`.
+/// runtime's shared inbound mailbox, frame outbound packets from the worker
+/// queue onto `tx`, and emit an idle keepalive that doubles as the liveness
+/// probe.
 ///
 /// Generic over `MAILBOX` — the host's `PACKET_BUFFER_SIZE`, which is ≥
 /// [`SERIAL_MTU`] — so several worker kinds can stamp into one shared mailbox;
 /// and over the byte stream, so any [`embedded_io_async`] transport works (USB
 /// CDC, a UART, a test pipe). `id` stamps provenance on each inbound frame.
-/// `link_up` goes true once running (a raw serial cable has no link-state to
-/// poll; a host with a real disconnect signal can clear it). Pre-frame noise —
-/// e.g. a board sharing this CDC between log text and frames — is skipped by the
+/// `link_up` tracks whether a peer is draining the wire: every write (real or
+/// keepalive) sets it from whether the frame landed, so plug/unplug shows up in
+/// `health().online` within [`KEEPALIVE_INTERVAL`]. Pre-frame noise — e.g. a
+/// board sharing this CDC between log text and frames — is skipped by the
 /// decoder until a `FLAG`, exactly as stock RNS does.
 pub async fn run<const MAILBOX: usize, R, W>(
     mut rx: R,
@@ -120,16 +138,18 @@ pub async fn run<const MAILBOX: usize, R, W>(
     R: Read,
     W: Write,
 {
-    link_up.store(true, Ordering::Relaxed);
+    // Offline until a write proves a peer is draining the link.
+    link_up.store(false, Ordering::Relaxed);
     let mut decoder: RnsSerialDecoder<SERIAL_MTU> = RnsSerialDecoder::new();
     let mut read_buf = [0u8; 64];
     let mut frame_buf = [0u8; rns_serial_framing::max_encoded_len(SERIAL_MTU)];
+    let mut keepalive = Ticker::every(KEEPALIVE_INTERVAL);
 
     loop {
-        match select(rx.read(&mut read_buf), outbound.receive()).await {
+        match select3(rx.read(&mut read_buf), outbound.receive(), keepalive.next()).await {
             // Inbound bytes: feed the decoder; each closed non-empty frame is a
             // Reticulum packet → stamp it into the shared mailbox.
-            Either::First(result) => {
+            Either3::First(result) => {
                 let n = result.unwrap_or(0);
                 for &byte in &read_buf[..n] {
                     match decoder.feed(byte) {
@@ -156,20 +176,24 @@ pub async fn run<const MAILBOX: usize, R, W>(
                     }
                 }
             }
-            // Outbound packet: frame it and write the whole frame to the wire,
-            // bounded by WRITE_TIMEOUT so a stalled (unread) link can't wedge us.
-            Either::Second(packet) => match rns_serial_framing::encode(&packet, &mut frame_buf) {
-                Ok(m) => match with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m])).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(_)) => {
-                        log::warn!("RNS_SERIAL TX write failed, dropped {}B", packet.len())
+            // Outbound packet: frame it and write it; the write result is the
+            // freshest liveness signal, so fold it into `link_up`.
+            Either3::Second(packet) => match rns_serial_framing::encode(&packet, &mut frame_buf) {
+                Ok(m) => {
+                    let drained = write_framed(&mut tx, &frame_buf[..m]).await;
+                    link_up.store(drained, Ordering::Relaxed);
+                    if !drained {
+                        log::warn!("RNS_SERIAL TX dropped {}B (no reader?)", packet.len());
                     }
-                    Err(_) => {
-                        log::warn!("RNS_SERIAL TX stalled (no reader?), dropped {}B", packet.len())
-                    }
-                },
+                }
                 Err(_) => log::warn!("RNS_SERIAL packet {}B exceeds serial MTU", packet.len()),
             },
+            // Idle keepalive: an empty frame that probes whether a peer is still
+            // draining the link, refreshing `link_up` between real packets.
+            Either3::Third(_) => {
+                let drained = write_framed(&mut tx, &KEEPALIVE_FRAME).await;
+                link_up.store(drained, Ordering::Relaxed);
+            }
         }
     }
 }

@@ -36,6 +36,7 @@ const MAX_VISIBLE_CARDS: usize = 3;
 #[derive(Clone, Copy)]
 pub enum CardKind {
     Wifi,
+    Usb,
 }
 
 /// One interface's card. The host fills the static bits (kind, label) and the
@@ -217,6 +218,16 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
             ] {
                 let _ = chevron.into_styled(stroke(BinaryColor::On)).draw(display);
             }
+        }
+        // USB: a connector "mouth" with the plastic tongue + a short cable stub.
+        CardKind::Usb => {
+            line(display, Point::new(x + 4, y), Point::new(x + 4, y + 2));
+            let _ = Rectangle::new(Point::new(x + 1, y + 2), Size::new(7, 6))
+                .into_styled(stroke(BinaryColor::On))
+                .draw(display);
+            let _ = Rectangle::new(Point::new(x + 2, y + 5), Size::new(4, 2))
+                .into_styled(fill(BinaryColor::On))
+                .draw(display);
         }
     }
     if !online {

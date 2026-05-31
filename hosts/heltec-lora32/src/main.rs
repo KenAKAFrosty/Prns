@@ -32,6 +32,8 @@ use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
 use esp_hal::time::{Instant, Rate};
 use esp_hal::timer::timg::TimerGroup;
+use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
+use esp_hal::Async;
 use esp_println::println;
 
 use embassy_executor::Spawner;
@@ -55,7 +57,13 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::auto_interface::embassy::{
     run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
 };
-use personal_rns::interfaces::{InterfaceId, InterfaceWorker};
+use personal_rns::interfaces::rns_parity::serial::embassy::{
+    run as run_serial_worker, EmbassySerialInterface, OutboundChannel as SerialOutboundChannel,
+    OutboundReceiver as SerialOutboundReceiver,
+};
+use personal_rns::interfaces::{
+    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
+};
 use personal_rns::runtime::manifold::impls::embassy::{
     run as run_manifold, InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
 };
@@ -75,18 +83,65 @@ const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 /// its peers. Unset = associate to the strongest BSSID (may roam between units).
 const WIFI_BSSID: Option<&str> = option_env!("WIFI_BSSID");
 
-/// Engine-facing id for this host's single RNS AutoInterface. Opaque to the
+/// Engine-facing id for this host's RNS AutoInterface (WiFi LAN). Opaque to the
 /// engine; a readable label so it's obvious in `fire_on` logs.
 const INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-rnsaut");
 
-/// Inbound mailbox buffer size: the worker's own `PACKET_BUFFER_SIZE`, so the
-/// host sizes the shared mailbox off one well-known number — no runtime sizing,
-/// the same compile-time-knob discipline as the engine preset below.
-const PACKET_BUFFER_SIZE: usize = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
+/// Engine-facing id for this host's USB serial interface (the cable to a laptop
+/// or another board). Opaque to the engine; readable in `fire_on` logs.
+const SERIAL_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-usbser");
 
-/// Live link state, shared from the worker shell (writer) to its handle's
+/// The S3 runs two interface workers, so the multi-worker manifold holds them as
+/// one concrete type — this enum. Dispatch is explicit per the no-wildcard rule.
+enum HostWorker {
+    Wifi(EmbassyAutoInterface),
+    Serial(EmbassySerialInterface),
+}
+
+impl InterfaceWorker for HostWorker {
+    // The shared inbound mailbox sizes to this, so it must fit either worker's
+    // frames — the max of the two.
+    const PACKET_BUFFER_SIZE: usize = {
+        let wifi = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
+        let serial = EmbassySerialInterface::PACKET_BUFFER_SIZE;
+        if wifi > serial {
+            wifi
+        } else {
+            serial
+        }
+    };
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        match self {
+            HostWorker::Wifi(w) => w.descriptor(),
+            HostWorker::Serial(s) => s.descriptor(),
+        }
+    }
+
+    fn health(&self) -> InterfaceStats {
+        match self {
+            HostWorker::Wifi(w) => w.health(),
+            HostWorker::Serial(s) => s.health(),
+        }
+    }
+
+    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
+        match self {
+            HostWorker::Wifi(w) => w.submit(packet),
+            HostWorker::Serial(s) => s.submit(packet),
+        }
+    }
+}
+
+/// Inbound mailbox buffer size: the largest worker's `PACKET_BUFFER_SIZE`, so
+/// the host sizes the shared mailbox off one well-known number — no runtime
+/// sizing, the same compile-time-knob discipline as the engine preset below.
+const PACKET_BUFFER_SIZE: usize = HostWorker::PACKET_BUFFER_SIZE;
+
+/// Live link state, shared from each worker shell (writer) to its handle's
 /// `health()` (reader) so the runtime snapshot's `online` is honest.
 static LINK_UP: LinkUp = AtomicBool::new(false);
+static SERIAL_LINK_UP: AtomicBool = AtomicBool::new(false);
 
 /// The runtime fires its post-cycle [`RuntimeSnapshot`] out on this; the OLED
 /// render loop subscribes and wakes only when engine state changes — no poll.
@@ -161,6 +216,19 @@ async fn auto_worker_task(
     outbound: OutboundReceiver,
 ) {
     run_auto_worker(stack, INTERFACE_ID, mac, inbound, outbound, &LINK_UP).await
+}
+
+/// The USB serial worker — its own task. Owns the usb-serial-jtag halves and
+/// talks to the manifold only through the channels (shared inbound mailbox +
+/// its own outbound queue).
+#[embassy_executor::task]
+async fn serial_worker_task(
+    rx: UsbSerialJtagRx<'static, Async>,
+    tx: UsbSerialJtagTx<'static, Async>,
+    inbound: InboundSender<PACKET_BUFFER_SIZE>,
+    outbound: SerialOutboundReceiver,
+) {
+    run_serial_worker(rx, tx, SERIAL_INTERFACE_ID, inbound, outbound, &SERIAL_LINK_UP).await
 }
 
 #[esp_rtos::main]
@@ -301,25 +369,48 @@ async fn main(spawner: Spawner) {
     println!("HELTEC_S3 NET link up");
 
     // --- Worker channels + manifold. ---
+    // One shared inbound mailbox (both workers stamp into it; the manifold
+    // drains it), and a per-worker outbound queue (the manifold fills, the
+    // worker shell drains).
     static INBOUND: StaticCell<InboundChannel<PACKET_BUFFER_SIZE>> = StaticCell::new();
     static OUTBOUND: StaticCell<OutboundChannel> = StaticCell::new();
+    static SERIAL_OUTBOUND: StaticCell<SerialOutboundChannel> = StaticCell::new();
     let inbound_ch: &'static InboundChannel<PACKET_BUFFER_SIZE> =
         INBOUND.init(InboundChannel::new());
     let outbound_ch: &'static OutboundChannel = OUTBOUND.init(OutboundChannel::new());
-    let inbound_tx: InboundSender<PACKET_BUFFER_SIZE> = inbound_ch.sender();
+    let serial_outbound_ch: &'static SerialOutboundChannel =
+        SERIAL_OUTBOUND.init(SerialOutboundChannel::new());
     let inbound_rx: InboundReceiver<PACKET_BUFFER_SIZE> = inbound_ch.receiver();
-    let outbound_tx = outbound_ch.sender();
     let outbound_rx: OutboundReceiver = outbound_ch.receiver();
+    let serial_outbound_rx: SerialOutboundReceiver = serial_outbound_ch.receiver();
 
-    let worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_tx, &LINK_UP);
-    // A single WiFi worker today; the multi-worker Manifold takes a set, so the
-    // USB worker just joins this array when it lands.
-    let manifold = Manifold::new(state, [worker]);
+    // The S3's USB-C is the native usb-serial-jtag; share it for RNS frames (the
+    // serial worker) and esp-println logs (register pokes) — the C6 precedent.
+    let (usb_rx, usb_tx) = UsbSerialJtag::new(peripherals.USB_DEVICE)
+        .into_async()
+        .split();
+
+    // Two workers — WiFi LAN + USB serial — both registered in the manifold.
+    let wifi_worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP);
+    let serial_worker =
+        EmbassySerialInterface::new(SERIAL_INTERFACE_ID, serial_outbound_ch.sender(), &SERIAL_LINK_UP);
+    let manifold = Manifold::new(
+        state,
+        [
+            HostWorker::Wifi(wifi_worker),
+            HostWorker::Serial(serial_worker),
+        ],
+    );
 
     spawner.spawn(
-        auto_worker_task(stack, sta_mac, inbound_tx, outbound_rx).expect("spawn auto worker"),
+        auto_worker_task(stack, sta_mac, inbound_ch.sender(), outbound_rx)
+            .expect("spawn auto worker"),
     );
-    println!("HELTEC_S3 worker spawned (node {dest_hex}); manifold running");
+    spawner.spawn(
+        serial_worker_task(usb_rx, usb_tx, inbound_ch.sender(), serial_outbound_rx)
+            .expect("spawn serial worker"),
+    );
+    println!("HELTEC_S3 workers spawned (node {dest_hex}); manifold running");
 
     // Keep the radio alive (dropping the controller disconnects).
     let _controller = controller;
@@ -412,14 +503,18 @@ async fn main(spawner: Spawner) {
 
             if panel_on {
                 // One card per interface in the latest snapshot. Mapping an
-                // interface id to its icon/label is the host's job (one match);
-                // today there's a single WiFi auto-interface.
+                // interface id to its icon/label is the host's job (one match).
                 let mut cards: HVec<display::Card, 8> = HVec::new();
                 if let Some(snap) = &snapshot {
                     for view in &snap.interfaces {
+                        let (kind, label) = if view.id == SERIAL_INTERFACE_ID {
+                            (display::CardKind::Usb, "USB")
+                        } else {
+                            (display::CardKind::Wifi, "WiFi LAN")
+                        };
                         let _ = cards.push(display::Card {
-                            kind: display::CardKind::Wifi,
-                            label: "WiFi LAN",
+                            kind,
+                            label,
                             online: view.online,
                             tx_bytes: view.reticulum_tx_bytes,
                             rx_bytes: view.reticulum_rx_bytes,
