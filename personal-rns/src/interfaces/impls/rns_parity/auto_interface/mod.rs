@@ -8,8 +8,8 @@
 pub mod core;
 pub use core::{
     classify_beacon, link_local_from_mac, peering_token, AutoInterfaceProtocol, BeaconVerdict,
-    Peer, PeerObservation, PeerTable, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP,
-    GROUP_ID, HARDWARE_MTU, PEERING_TIMEOUT_MS, UNICAST_DISCOVERY_PORT,
+    Peer, PeerObservation, PeerTable, PeeringToken, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT,
+    DISCOVERY_GROUP, GROUP_ID, HARDWARE_MTU, PEERING_TIMEOUT_MS, UNICAST_DISCOVERY_PORT,
 };
 
 #[cfg(feature = "embassy-host")]

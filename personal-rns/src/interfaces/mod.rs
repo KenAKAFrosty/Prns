@@ -27,6 +27,7 @@
 pub mod capabilities;
 pub mod connection_state;
 pub mod id;
+pub mod mac;
 pub mod medium;
 pub mod mode;
 
@@ -39,6 +40,7 @@ mod worker;
 pub use capabilities::Capabilities;
 pub use connection_state::ConnectionState;
 pub use id::InterfaceId;
+pub use mac::MacAddress;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 

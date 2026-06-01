@@ -18,6 +18,7 @@ use core::net::Ipv6Addr;
 use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::sha256;
+use crate::interfaces::MacAddress;
 
 /// RNS's default group id
 pub const GROUP_ID: &[u8] = b"reticulum";
@@ -38,8 +39,9 @@ pub const UNICAST_DISCOVERY_PORT: u16 = DEFAULT_DISCOVERY_PORT + 1;
 
 pub const DEFAULT_DATA_PORT: u16 = 42671;
 
-/// RNS's `HW_MTU`
-/// REVIEW this is correct? HW stands for hardware in this context?
+/// The interface's hardware (link-layer) MTU, distinct from Reticulum's
+/// logical 500-byte `MTU`. RNS pins it at 1196 for the AutoInterface
+/// ([`AutoInterface.py` L44](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L44)).
 pub const HARDWARE_MTU: usize = 1196;
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 
@@ -48,7 +50,8 @@ pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 /// of the first octet and splicing `ff:fe` into the middle. This is the address
 /// a peer sees as our packet source, so it is the address our own
 /// [`peering_token`] must hash over.
-pub fn link_local_from_mac(mac: [u8; 6]) -> Ipv6Addr {
+pub fn link_local_from_mac(mac: MacAddress) -> Ipv6Addr {
+    let mac = mac.octets();
     Ipv6Addr::new(
         0xfe80,
         0,
@@ -61,6 +64,25 @@ pub fn link_local_from_mac(mac: [u8; 6]) -> Ipv6Addr {
     )
 }
 
+/// The 32-byte peering token a beacon carries (in the clear) in its first 32
+/// bytes: `sha256(group_id ++ canonical(source_addr))`. not a secret; it
+/// authenticates only that the sender's source address belongs to the shared
+/// group, and it rides the wire unencrypted, so a plain (non-constant-time)
+/// `==` matches RNS and leaks nothing an eavesdropper couldn't already read.
+#[derive(PartialEq, Eq)]
+pub struct PeeringToken([u8; 32]);
+
+impl PeeringToken {
+    pub fn from_beacon_prefix(bytes: &[u8]) -> Option<Self> {
+        let prefix: [u8; 32] = bytes.get(..32)?.try_into().ok()?;
+        Some(Self(prefix))
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
 /// The RNS peering token authenticating a beacon from `addr`:
 /// `sha256(group_id ++ canonical(addr))` ([`AutoInterface.py` L491-L494](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L491-L494)).
 ///
@@ -69,7 +91,7 @@ pub fn link_local_from_mac(mac: [u8; 6]) -> Ipv6Addr {
 /// to `::`) which is byte-identical to the string Python's `socket.recvfrom` reports
 /// for the same source. This makes our token equal the peer's `expected_hash`
 /// ([`AutoInterface.py` L364-L366](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L364-L366)).
-pub fn peering_token(addr: &Ipv6Addr) -> [u8; 32] {
+pub fn peering_token(addr: &Ipv6Addr) -> PeeringToken {
     // Any IPv6 address renders in <= 45 chars; this write never truncates.
     let mut rendered: HString<48> = HString::new();
     let _ = write!(rendered, "{addr}");
@@ -78,7 +100,7 @@ pub fn peering_token(addr: &Ipv6Addr) -> [u8; 32] {
     let mut material: HVec<u8, 64> = HVec::new();
     let _ = material.extend_from_slice(GROUP_ID);
     let _ = material.extend_from_slice(rendered.as_bytes());
-    sha256(&material)
+    PeeringToken(sha256(&material))
 }
 
 pub enum BeaconVerdict {
@@ -93,10 +115,10 @@ pub fn classify_beacon(bytes: &[u8], src: &Ipv6Addr, self_addr: &Ipv6Addr) -> Be
     if src == self_addr {
         return BeaconVerdict::SelfEcho;
     }
-    if bytes.len() < 32 {
+    let Some(claimed) = PeeringToken::from_beacon_prefix(bytes) else {
         return BeaconVerdict::TooShort;
-    }
-    if peering_token(src)[..] == bytes[..32] {
+    };
+    if claimed == peering_token(src) {
         BeaconVerdict::Peer
     } else {
         BeaconVerdict::AuthenticationFailed
@@ -176,16 +198,15 @@ impl<const N: usize> Default for PeerTable<N> {
     }
 }
 
-/// REVIEW our token probably should get a newtype yeah?
 pub struct AutoInterfaceProtocol<const MAX_PEER_COUNT: usize> {
     our_link_local: Ipv6Addr,
-    our_token: [u8; 32],
+    our_token: PeeringToken,
     peers: PeerTable<MAX_PEER_COUNT>,
     auth_failure_count: u32,
 }
 
 impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
-    pub fn new(our_mac_address: [u8; 6]) -> Self {
+    pub fn new(our_mac_address: MacAddress) -> Self {
         let our_link_local = link_local_from_mac(our_mac_address);
         Self {
             our_token: peering_token(&our_link_local),
@@ -199,7 +220,7 @@ impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
         self.our_link_local
     }
 
-    pub fn our_peering_token(&self) -> &[u8; 32] {
+    pub fn our_peering_token(&self) -> &PeeringToken {
         &self.our_token
     }
 

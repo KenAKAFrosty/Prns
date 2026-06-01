@@ -23,7 +23,7 @@ use super::core::{
 use crate::engine::InstantMillis;
 use crate::interfaces::{
     Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceStats,
-    InterfaceWorker, MediumKind, QueueFull,
+    InterfaceWorker, MacAddress, MediumKind, QueueFull,
 };
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
@@ -130,7 +130,7 @@ fn ipv6_src(meta: &UdpMetadata) -> Option<Ipv6Addr> {
 pub async fn run(
     stack: Stack<'static>,
     id: InterfaceId,
-    our_mac_address: [u8; 6], //REVIEW yeah again probably newtype here?
+    our_mac_address: MacAddress,
     inbound: InboundSender<HARDWARE_MTU>,
     outbound: OutboundReceiver,
     link_up: &'static LinkUp,
@@ -139,10 +139,10 @@ pub async fn run(
     log::info!(
         "RNS_AUTO up: link-local {} token {:02x}{:02x}{:02x}{:02x}..",
         brain.our_link_local(),
-        brain.our_peering_token()[0],
-        brain.our_peering_token()[1],
-        brain.our_peering_token()[2],
-        brain.our_peering_token()[3],
+        brain.our_peering_token().as_bytes()[0],
+        brain.our_peering_token().as_bytes()[1],
+        brain.our_peering_token().as_bytes()[2],
+        brain.our_peering_token().as_bytes()[3],
     );
 
     match stack.join_multicast_group(IpAddress::Ipv6(DISCOVERY_GROUP)) {
@@ -283,7 +283,7 @@ pub async fn run(
                 link_up.store(stack.is_link_up(), Ordering::Relaxed);
                 if let Err(e) = disc
                     .send_to(
-                        brain.our_peering_token(),
+                        brain.our_peering_token().as_bytes(),
                         (IpAddress::Ipv6(DISCOVERY_GROUP), DEFAULT_DISCOVERY_PORT),
                     )
                     .await
@@ -298,7 +298,7 @@ pub async fn run(
                     for addr in targets {
                         let _ = udisc
                             .send_to(
-                                brain.our_peering_token(),
+                                brain.our_peering_token().as_bytes(),
                                 (IpAddress::Ipv6(addr), UNICAST_DISCOVERY_PORT),
                             )
                             .await;

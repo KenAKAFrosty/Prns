@@ -69,6 +69,7 @@ use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::{
 use personal_rns::interfaces::impls::rns_parity::auto_interface::embassy::{
     run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
 };
+use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::impls::rns_parity::serial::embassy::{
     run as run_serial_worker, EmbassySerialInterface, OutboundChannel as SerialOutboundChannel,
     OutboundReceiver as SerialOutboundReceiver,
@@ -279,7 +280,7 @@ async fn auto_worker_task(
     inbound: InboundSender<PACKET_BUFFER_SIZE>,
     outbound: OutboundReceiver,
 ) {
-    run_auto_worker(stack, INTERFACE_ID, mac, inbound, outbound, &LINK_UP).await
+    run_auto_worker(stack, INTERFACE_ID, MacAddress::new(mac), inbound, outbound, &LINK_UP).await
 }
 
 /// The USB serial worker — its own task. Owns the usb-serial-jtag halves and
