@@ -20,7 +20,7 @@ use embassy_time::{Instant as EmbassyInstant, Timer};
 use heapless::Vec as HVec;
 
 use super::super::{Manifold, RuntimeSnapshot};
-use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup, StepSeed};
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -104,7 +104,7 @@ pub async fn run<const PACKET_BUFFER_SIZE: usize, W, R, A, H, D, const MAX_HELD:
     A: RetainedAnnounceColumns,
     H: AnnounceIdHistory,
     D: RetainedAppData,
-    E: FnMut() -> u64,
+    E: FnMut() -> StepSeed,
 {
     // A packet received while waiting carries into the next cycle's batch.
     let mut pending: Option<InboxEntry<PACKET_BUFFER_SIZE>> = None;

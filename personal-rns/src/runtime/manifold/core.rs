@@ -5,7 +5,7 @@ use heapless::Vec as HeaplessVec;
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     EngineDriver, EngineState, InboundPacket, InstantMillis, NextScheduledWakeup, OutboundPacket,
-    StepOutput, MAX_REGISTERED_INTERFACES,
+    StepOutput, StepSeed, MAX_REGISTERED_INTERFACES,
 };
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
@@ -79,13 +79,14 @@ where
         }
     }
 
-    /// One drive cycle: ingest `inbound`, tick at `now` with `entropy`, and
-    /// route the resulting egress to the worker(s) named in each directive's
-    /// `fire_on`. Returns the step summary.
+    /// One drive cycle: ingest `inbound`, tick at `now` with the step `seed`,
+    /// and route the resulting egress to the worker(s) named in each directive's
+    /// `fire_on`. Returns the step summary. The `seed` is one full per-step
+    /// entropy draw; the engine carves it into its typed packages at `step`.
     pub fn cycle(
         &mut self,
         now: InstantMillis,
-        entropy: u64,
+        seed: StepSeed,
         inbound: &[InboundPacket<'_>],
     ) -> StepOutput {
         let Self {
@@ -95,7 +96,7 @@ where
         } = self;
         let mut driver = ManifoldDriver {
             now,
-            entropy,
+            seed,
             inbound,
             workers: workers.as_mut_slice(),
             traffic,
@@ -150,11 +151,11 @@ where
 }
 
 /// Per-cycle [`EngineDriver`] the manifold builds over borrowed pieces: the
-/// runtime's `now`/`entropy`, the aggregated inbound batch, and the workers to
+/// runtime's `now`/`seed`, the aggregated inbound batch, and the workers to
 /// exhaust to. Infallible — every op is a copy or a non-blocking submit.
 struct ManifoldDriver<'a, W: InterfaceWorker> {
     now: InstantMillis,
-    entropy: u64,
+    seed: StepSeed,
     inbound: &'a [InboundPacket<'a>],
     workers: &'a mut [W],
     traffic: &'a mut TrafficLedger,
@@ -168,10 +169,10 @@ impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
     }
 
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // The runtime drew CSPRNG-grade bytes this cycle; spread them across the
-        // engine's request, cycling to fill whatever the step draws.
-        let bytes = self.entropy.to_le_bytes();
-        for (dst, src) in buf.iter_mut().zip(bytes.iter().cycle()) {
+        // The runtime already drew one full per-step seed; copy it straight in.
+        // The engine carves these bytes into typed packages at `step` — no
+        // cycling, so the self-announce nonce no longer reuses the jitter bytes.
+        for (dst, src) in buf.iter_mut().zip(self.seed.as_bytes()) {
             *dst = *src;
         }
         Ok(())
@@ -400,7 +401,7 @@ mod tests {
 
         let out = manifold.cycle(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            0xCAFE_F00D_DEAD_BEEF,
+            StepSeed::new([0xCA; crate::engine::STEP_ENTROPY_LEN]),
             &inbound,
         );
 

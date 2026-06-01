@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use super::super::{Manifold, RuntimeSnapshot};
-use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup, StepSeed};
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -82,7 +82,7 @@ pub fn run<W, R, A, H, D, const MAX_HELD: usize, E, S>(
     A: RetainedAnnounceColumns,
     H: AnnounceIdHistory,
     D: RetainedAppData,
-    E: FnMut() -> u64,
+    E: FnMut() -> StepSeed,
     S: FnMut(&RuntimeSnapshot),
 {
     let base = clock_base;

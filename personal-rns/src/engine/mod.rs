@@ -62,6 +62,26 @@ const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 /// randomness need.
 pub const STEP_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
+/// The raw CSPRNG bytes a host draws for exactly one engine step, before the
+/// engine carves them into typed packages at [`StepEntropy::from_seed`]. A
+/// newtype so a host's per-cycle draw is named on the runtime seam and can't be
+/// confused with any other buffer; move-only so each step consumes a fresh draw
+/// rather than silently reusing one across cycles.
+pub struct StepSeed([u8; STEP_ENTROPY_LEN]);
+
+impl StepSeed {
+    /// Wrap a freshly drawn per-step seed.
+    pub const fn new(bytes: [u8; STEP_ENTROPY_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw bytes, for a runtime that hands them straight to the engine's
+    /// `step` (the one site that splits them into typed packages).
+    pub const fn as_bytes(&self) -> &[u8; STEP_ENTROPY_LEN] {
+        &self.0
+    }
+}
+
 /// One step's entropy, split into a named package per consumer so the type
 /// declares exactly what randomness the step needs and for what. Adding a
 /// consumer means adding a field here — which forces [`from_seed`](Self::from_seed)
@@ -76,11 +96,12 @@ impl StepEntropy {
     /// Carve the raw step seed into its packages at the one auditable site:
     /// the low `JITTER_SEED_LEN` bytes seed the jitter spreader, the next
     /// [`SelfAnnounceEntropy::LEN`] are the self-announce nonce.
-    pub fn from_seed(seed: [u8; STEP_ENTROPY_LEN]) -> Self {
+    pub fn from_seed(seed: StepSeed) -> Self {
+        let bytes = seed.as_bytes();
         let mut jitter = [0u8; JITTER_SEED_LEN];
-        jitter.copy_from_slice(&seed[..JITTER_SEED_LEN]);
+        jitter.copy_from_slice(&bytes[..JITTER_SEED_LEN]);
         let mut nonce = [0u8; SelfAnnounceEntropy::LEN];
-        nonce.copy_from_slice(&seed[JITTER_SEED_LEN..]);
+        nonce.copy_from_slice(&bytes[JITTER_SEED_LEN..]);
         Self {
             jitter: JitterSeed(u64::from_le_bytes(jitter)),
             self_announce: SelfAnnounceEntropy::new(nonce),

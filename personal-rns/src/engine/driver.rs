@@ -15,7 +15,7 @@
 
 use crate::engine::{
     ingest, tick, EngineState, InboundPacket, IngestOutput, InstantMillis, OutboundPacket,
-    StepEntropy, STEP_ENTROPY_LEN,
+    StepEntropy, StepSeed, STEP_ENTROPY_LEN,
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{
@@ -129,7 +129,7 @@ pub trait EngineDriver {
         // the seed) so deterministic-replay tests compare bit-for-bit.
         let mut seed = [0u8; STEP_ENTROPY_LEN];
         self.fill_entropy(&mut seed)?;
-        let entropy = StepEntropy::from_seed(seed);
+        let entropy = StepEntropy::from_seed(StepSeed::new(seed));
 
         let packets = self.drain_inbound_packets()?;
         let ingest = ingest(state, packets, entropy.jitter);
