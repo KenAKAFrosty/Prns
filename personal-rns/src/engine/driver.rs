@@ -159,7 +159,7 @@ pub trait EngineDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
+    use crate::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
     use crate::engine::{InboundPacket, InstantMillis};
     use crate::identity::IDENTITY_SECRET_KEY_LEN;
     use crate::interfaces::{
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn step_ticks_once_when_the_queue_is_empty() {
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let mut driver = IdleEngineDriver;
 
         let out = driver.step(&mut state).unwrap();
@@ -256,7 +256,7 @@ mod tests {
                 bytes: &[0xBB, 0xCC],
             },
         ];
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let mut driver = QueuedEngineDriver { queued: &queued };
 
         let out = driver.step(&mut state).unwrap();
@@ -378,7 +378,7 @@ mod tests {
             source_interface,
             bytes: &raw,
         }];
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         // Register both: the engine should compute fire_on = [peer]
         // (source excluded). Without `peer` registered, fanout would be
         // empty and the engine would elide the directive entirely.
@@ -428,7 +428,7 @@ mod tests {
             source_interface,
             bytes: &raw,
         }];
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let source = StaticInterface::new(source_interface);
         state.register_routable_interface(&source).unwrap();
         let mut driver = CapturingEngineDriver {
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
     }
 
-    fn announcing_state() -> DefaultEngineState {
+    fn announcing_state() -> FixedCapacityEngineState {
         let mut secret_key = [0u8; IDENTITY_SECRET_KEY_LEN];
         secret_key[..32].fill(0x22);
         secret_key[32..].fill(0x11);

@@ -59,7 +59,7 @@ use esp_radio::esp_now::{EspNowError, EspNowReceiver, EspNowSender, BROADCAST_AD
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
-use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::{
@@ -210,11 +210,13 @@ static ESPNOW_LINK_UP: AtomicBool = AtomicBool::new(false);
 static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 
 /// Small engine-state preset for the S3: a desk node tracks a handful of
-/// destinations, so the desktop default (256 dests / 4096-id history / 8 KB
-/// arena) is wildly oversized and doesn't fit alongside WiFi + the worker. The
-/// params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
+/// destinations, so the `FixedCapacityEngineState` default (64 dests /
+/// 64 ids-per-dest / 4 KB app-data arena, ~65 KB total) is oversized and
+/// doesn't fit comfortably alongside WiFi + the worker — this preset is ~12 KB.
+/// The params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
 /// history_overflow, held_cache>`.
-type S3EngineState = DefaultEngineState<24, 32, 1024, 4, 128, 4>;
+type S3EngineState = FixedCapacityEngineState<24, 32, 1024, 4, 128, 4>;
+
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";

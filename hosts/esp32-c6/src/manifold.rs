@@ -27,7 +27,7 @@ use esp_hal::rng::Rng;
 use esp_hal::time::Instant;
 use heapless::Vec as HeaplessVec;
 
-use personal_rns::engine::{DefaultEngineState, EngineDriver, InboundPacket, InstantMillis};
+use personal_rns::engine::{EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis};
 use personal_rns::interfaces::{
     Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
 };
@@ -82,7 +82,7 @@ pub struct CycleSummary {
 
 /// Bolted to the engine: owns it + the one-shot boot seed. Substrate-agnostic.
 pub struct Manifold {
-    state: DefaultEngineState,
+    state: FixedCapacityEngineState,
     seed: Option<&'static [u8]>,
 }
 
@@ -91,7 +91,7 @@ impl Manifold {
     /// keeps only its id + capabilities; the peripheral lives in its
     /// `InterfaceWorker`).
     pub fn new(seed: &'static [u8]) -> Self {
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         state
             .register_routable_interface(&UsbInterfaceDescriptor)
             .expect("usb descriptor is connected and transmits");

@@ -34,7 +34,7 @@ use crate::routing::storage::{
 };
 use crate::routing::{
     DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    DEFAULT_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
+    DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_TRACKED_DESTINATIONS,
     DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -69,7 +69,7 @@ pub enum NextScheduledWakeup {
 
 /// Retained engine state. **Purely abstract** in its type parameters — does
 /// not name a preset. The no_std stack-resident preset lives in
-/// [`DefaultEngineState`]; that's the canonical embedded entry point. A
+/// [`FixedCapacityEngineState`]; that's the canonical embedded entry point. A
 /// capable host substitutes alternate routing-storage backends at the type
 /// parameters directly.
 ///
@@ -154,10 +154,10 @@ pub enum RegisterInterfaceError {
 
 /// The no_std stack-resident engine-state preset — the only place the
 /// default backend choices are named. Mirrors
-/// [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable).
-pub type DefaultEngineState<
+/// [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable)
+pub type FixedCapacityEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_HISTORY_CAP_PER_DESTINATION,
+    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
@@ -406,6 +406,7 @@ where
     }
 }
 
+//REVIEW why is this in here and not in announces?
 /// Mint an announce id (RNS `random_hash`) from a step's entropy and clock: the
 /// 5-byte replay nonce comes from `entropy`, the 5-byte monotonic timebase from
 /// the low 40 bits of `now` in milliseconds. Receivers only ever compare
@@ -664,9 +665,10 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
         return;
     }
 
-    let outcome = state
-        .routing_table
-        .upsert_route(received_hops, arrived_at, source_interface, &announce);
+    let outcome =
+        state
+            .routing_table
+            .upsert_route(received_hops, arrived_at, source_interface, &announce);
     match outcome {
         UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
             counters.accepted += 1;
@@ -720,7 +722,7 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
 pub fn tick<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     now: InstantMillis,
-    entropy: u64,
+    entropy: u64, //REVIEW why is entropy only a u64 here?
 ) -> TickOutput<'_, R, A, H, D, MAX_HELD_ANNOUNCES>
 where
     R: RouteColumns,
@@ -905,8 +907,8 @@ mod tests {
 
     #[test]
     fn tick_advances_count_deterministically() {
-        let mut left: DefaultEngineState = DefaultEngineState::default();
-        let mut right: DefaultEngineState = DefaultEngineState::default();
+        let mut left: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut right: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000));
         let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000));
@@ -921,7 +923,7 @@ mod tests {
 
     #[test]
     fn ingest_counts_the_batch_without_a_clock() {
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let batch = [
             InboundPacket {
                 arrived_at: InstantMillis(10),
@@ -956,7 +958,7 @@ mod tests {
 
     // A node that announces destination `personal.node` with app data
     // `hello-personal` on the default cadence.
-    fn personal_node_announcer() -> DefaultEngineState {
+    fn personal_node_announcer() -> FixedCapacityEngineState {
         EngineState::announcing(
             &fixed_secret_key(),
             SelfAnnounceConfig {
@@ -1028,7 +1030,7 @@ mod tests {
 
     #[test]
     fn a_relay_default_state_never_originates() {
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
@@ -1038,7 +1040,7 @@ mod tests {
 
     #[test]
     fn an_identity_only_node_never_originates() {
-        let mut state: DefaultEngineState = EngineState::new(&fixed_secret_key());
+        let mut state: FixedCapacityEngineState = EngineState::new(&fixed_secret_key());
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
@@ -1056,15 +1058,15 @@ mod tests {
             )),
         );
         // A relay and an identity-only node have no announced destination.
-        let relay: DefaultEngineState = DefaultEngineState::default();
+        let relay: FixedCapacityEngineState = FixedCapacityEngineState::default();
         assert_eq!(relay.self_announced_destination(), None);
-        let identity_only: DefaultEngineState = EngineState::new(&fixed_secret_key());
+        let identity_only: FixedCapacityEngineState = EngineState::new(&fixed_secret_key());
         assert_eq!(identity_only.self_announced_destination(), None);
     }
 
     #[test]
     fn next_wakeup_is_idle_for_a_relay_with_no_scheduled_work() {
-        let state: DefaultEngineState = DefaultEngineState::default();
+        let state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         assert_eq!(
             state.next_wakeup(InstantMillis(1_000)),
             NextScheduledWakeup::Idle
@@ -1099,7 +1101,7 @@ mod tests {
     #[test]
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let _ = ingest(
             &mut state,
             &[InboundPacket {
@@ -1206,7 +1208,7 @@ mod tests {
         }
     }
 
-    fn register_static_interface(state: &mut DefaultEngineState, id: InterfaceId) {
+    fn register_static_interface(state: &mut FixedCapacityEngineState, id: InterfaceId) {
         let iface = StaticInterface::new(id);
         state.register_routable_interface(&iface).unwrap();
     }
@@ -1215,7 +1217,7 @@ mod tests {
     fn register_routable_interface_uses_the_interface_contract() {
         let id = InterfaceId::new([0xAB; 16]);
         let iface = StaticInterface::new(id);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         assert_eq!(state.register_routable_interface(&iface), Ok(()));
         assert_eq!(state.registered_interfaces(), &[id]);
@@ -1225,7 +1227,7 @@ mod tests {
     fn register_routable_interface_accepts_degraded_transmitting_interfaces() {
         let id = InterfaceId::new([0xBC; 16]);
         let iface = StaticInterface::new(id).with_state(ConnectionState::Degraded);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         assert_eq!(state.register_routable_interface(&iface), Ok(()));
         assert_eq!(state.registered_interfaces(), &[id]);
@@ -1234,7 +1236,7 @@ mod tests {
     #[test]
     fn register_routable_interface_rejects_non_transmitting_interfaces() {
         let iface = StaticInterface::new(InterfaceId::new([0xCD; 16])).without_transmit();
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         assert_eq!(
             state.register_routable_interface(&iface),
@@ -1256,7 +1258,7 @@ mod tests {
         {
             let iface = StaticInterface::new(InterfaceId::new([idx as u8; 16]))
                 .with_state(connection_state);
-            let mut state: DefaultEngineState = DefaultEngineState::default();
+            let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
             assert_eq!(
                 state.register_routable_interface(&iface),
@@ -1271,7 +1273,7 @@ mod tests {
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         let first = ingest(
             &mut state,
@@ -1309,7 +1311,7 @@ mod tests {
         // leaves the announce's signature intact.
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -1323,7 +1325,7 @@ mod tests {
 
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -1344,7 +1346,7 @@ mod tests {
         let destination =
             DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
 
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -1371,7 +1373,7 @@ mod tests {
 
     #[test]
     fn ingest_processes_but_does_not_accept_non_announce_bytes() {
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
             source_interface: InterfaceId::new([0u8; 16]),
@@ -1388,7 +1390,7 @@ mod tests {
         // Arena tuned to 8 bytes — smaller than the real announce's 14-byte
         // app_data ("hello-personal") — so upsert returns Dropped(PayloadArenaFull).
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = DefaultEngineState::<4, 64, 8>::default();
+        let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
 
         let out = ingest(
             &mut state,
@@ -1409,7 +1411,7 @@ mod tests {
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = DefaultEngineState::<4, 64, 8>::default();
+        let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
         let _ = ingest(
             &mut state,
             &[InboundPacket {
@@ -1437,7 +1439,7 @@ mod tests {
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = DefaultEngineState::<4, 64, 8>::default(); // 8-byte arena
+        let mut state = FixedCapacityEngineState::<4, 64, 8>::default(); // 8-byte arena
 
         // A second valid announce for a *different* destination than RAW_ANNOUNCE
         // (fixture identity + a distinct aspect), framed onto the wire so ingest
@@ -1496,7 +1498,7 @@ mod tests {
         // ingest is generic over it — same engine, no heap, no API change. (Very
         // large widths belong on the heap; this inline default lives on the stack.)
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = DefaultEngineState::<64, 128>::default();
+        let mut state = FixedCapacityEngineState::<64, 128>::default();
         let out = ingest(
             &mut state,
             &[InboundPacket {
@@ -1513,7 +1515,7 @@ mod tests {
     #[test]
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         // Register a peer so fanout has a target (source is [0u8;16]; the
         // engine's fire_on = registered minus source = [peer]).
         register_static_interface(&mut state, InterfaceId::new([0xFE; 16]));
@@ -1561,7 +1563,7 @@ mod tests {
     #[test]
     fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let arrival = InstantMillis(1_000);
         let _ = ingest(
             &mut state,
@@ -1591,8 +1593,8 @@ mod tests {
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
 
-        let mut left: DefaultEngineState = DefaultEngineState::default();
-        let mut right: DefaultEngineState = DefaultEngineState::default();
+        let mut left: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut right: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         for state in [&mut left, &mut right] {
             // Identical registries: byte-identical emissions depend on
@@ -1624,7 +1626,7 @@ mod tests {
         // accepts schedule. (The successful held-recovery case is exercised
         // once eviction lands and a follow-up packet can free arena space.)
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = DefaultEngineState::<4, 64, 8, 4, 16, 4>::default();
+        let mut state = FixedCapacityEngineState::<4, 64, 8, 4, 16, 4>::default();
         let _ = ingest(
             &mut state,
             &[InboundPacket {
@@ -1683,7 +1685,7 @@ mod tests {
         //             registered. Fanout = registered - source = empty,
         //             so the engine elides the directive and the host
         //             sees nothing this tick. ==
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         state.register_routable_interface(&engine_half).unwrap();
         let ingest_out = ingest(&mut state, &[packet], TEST_ENTROPY);
         assert_eq!(ingest_out.accepted_announce_count(), 1);
@@ -1738,7 +1740,7 @@ mod tests {
         let arrived_at = InstantMillis(1_000);
         let mut buf_a = [0u8; MTU];
         let mut buf_b = [0u8; MTU];
-        let mut state: DefaultEngineState = DefaultEngineState::default();
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         state.register_routable_interface(&engine_a).unwrap();
         state.register_routable_interface(&engine_b).unwrap();
         {

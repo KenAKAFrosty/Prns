@@ -23,7 +23,7 @@ use crate::wire::DestinationHash;
 use announce::Announce;
 use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 pub use defaults::{
-    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_HISTORY_CAP_PER_DESTINATION,
+    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
     DEFAULT_HISTORY_FLOOR_PER_DESTINATION, DEFAULT_HISTORY_OVERFLOW_CAPACITY,
     DEFAULT_MAX_TRACKED_DESTINATIONS, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -86,7 +86,7 @@ where
 /// `DEFAULT_*` sizing knobs from [`crate::routing::defaults`].
 pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_HISTORY_CAP_PER_DESTINATION,
+    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
@@ -168,7 +168,9 @@ where
         let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             None => self.insert_new_route(hops, expires_at, receiving_interface, announce),
-            Some(i) => self.refresh_existing_route(i, hops, expires_at, receiving_interface, announce),
+            Some(i) => {
+                self.refresh_existing_route(i, hops, expires_at, receiving_interface, announce)
+            }
         }
     }
 
@@ -409,7 +411,12 @@ mod tests {
                     1,
                     InstantMillis(100),
                     learned_on,
-                    &announce_for(dest(dest_byte), announce_id(id_byte, 1), None, &app_data(id_byte)),
+                    &announce_for(
+                        dest(dest_byte),
+                        announce_id(id_byte, 1),
+                        None,
+                        &app_data(id_byte)
+                    ),
                 ),
                 UpsertRouteOutcome::Inserted
             );
@@ -497,7 +504,7 @@ mod tests {
     fn seen_set_evicts_oldest_when_full() {
         let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         // Fill past capacity; the first id must be evicted, the last retained.
-        for n in 0..(DEFAULT_HISTORY_CAP_PER_DESTINATION as u64 + 3) {
+        for n in 0..(DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION as u64 + 3) {
             record(
                 &mut table,
                 dest(1),
@@ -510,13 +517,13 @@ mod tests {
         let view = table.existing_route_for(&dest(1)).unwrap();
         assert_eq!(
             view.announce_id_history.len(),
-            DEFAULT_HISTORY_CAP_PER_DESTINATION
+            DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION
         );
         // Oldest (timebase 0,1,2) gone; newest present.
         assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
         assert!(view.announce_id_history.contains(&announce_id(
             0,
-            DEFAULT_HISTORY_CAP_PER_DESTINATION as u64 + 2
+            DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION as u64 + 2
         )));
     }
 

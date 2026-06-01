@@ -19,7 +19,7 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use personal_rns::engine::{DefaultEngineState, EngineDriver, InboundPacket, InstantMillis};
+use personal_rns::engine::{EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis};
 use personal_rns::interfaces::InterfaceId;
 
 uniffi::include_scaffolding!("prns");
@@ -73,7 +73,7 @@ impl EngineDriver for SdkEngineDriver {
 }
 
 struct RuntimeInner {
-    state: DefaultEngineState,
+    state: FixedCapacityEngineState,
     driver: SdkEngineDriver,
 }
 
@@ -88,7 +88,7 @@ impl ReticulumRuntime {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(RuntimeInner {
-                state: DefaultEngineState::default(),
+                state: FixedCapacityEngineState::default(),
                 driver: SdkEngineDriver {
                     base: Instant::now(),
                 },

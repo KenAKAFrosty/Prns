@@ -13,9 +13,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{
-    DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig,
-};
+use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
     run as run_serial_worker, StdSerialInterface,
@@ -83,7 +81,7 @@ fn main() {
     // `personal.node` announce on the schedule (default 6h), the first as soon as
     // the interface is registered in the manifold below.
     let identity_secret_key = load_identity_secret_key();
-    let state: DefaultEngineState = DefaultEngineState::announcing(
+    let state: FixedCapacityEngineState = FixedCapacityEngineState::announcing(
         &identity_secret_key,
         SelfAnnounceConfig {
             app_name: SELF_ANNOUNCE_APP_NAME,

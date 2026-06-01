@@ -25,7 +25,7 @@ pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 64;
 /// predicate. RNS's `Transport.MAX_RANDOM_BLOBS` uses 64; this is a local
 /// memory bound, not a wire-observable constant — each node decides its own
 /// cap independently.
-pub const DEFAULT_HISTORY_CAP_PER_DESTINATION: usize = 64;
+pub const DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION: usize = 64;
 
 /// Per-destination inline floor for `AnnounceIdHistory` retention. Every
 /// tracked destination is guaranteed this many slots regardless of arena

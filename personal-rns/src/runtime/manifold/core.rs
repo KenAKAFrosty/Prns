@@ -274,7 +274,7 @@ impl TrafficLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::DefaultEngineState;
+    use crate::engine::FixedCapacityEngineState;
     use crate::interfaces::{
         Capabilities, ConnectionState, InterfaceDescriptor, InterfaceMode, InterfaceStats,
         MediumKind,
@@ -351,7 +351,7 @@ mod tests {
     fn new_registers_workers_and_snapshot_reflects_worker_health() {
         let first = iface(0xA1);
         let second = iface(0xB2);
-        let engine: DefaultEngineState = DefaultEngineState::default();
+        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         let manifold = Manifold::new(engine, [worker(first, true), worker(second, false)]);
 
@@ -392,7 +392,7 @@ mod tests {
             source_interface: source,
             bytes: &raw,
         }];
-        let engine: DefaultEngineState = DefaultEngineState::default();
+        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let mut manifold = Manifold::new(engine, [worker(source, true), worker(peer, true)]);
 
         let out = manifold.cycle(
