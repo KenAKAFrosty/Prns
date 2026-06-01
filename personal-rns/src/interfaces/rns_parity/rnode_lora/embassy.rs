@@ -7,7 +7,9 @@
 //! the inbound mailbox the shell *stamps into* belongs to the runtime
 //! (`runtime::manifold::impls::embassy`). LoRa is a half-duplex broadcast medium,
 //! so the loop sits in continuous RX and, when the runtime hands it a packet,
-//! breaks off to transmit and returns to RX — never both at once.
+//! breaks off to transmit (one or two frames, RNode-split) and returns to RX —
+//! never both at once. Received frames feed a [`LoRaReassembler`] that rebuilds
+//! split packets before they reach the engine.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,14 +23,15 @@ use lora_phy::mod_traits::RadioKind;
 use lora_phy::{DelayNs, LoRa};
 
 use super::core::{
-    decode_air_frame, descriptor, encode_air_frame, LoRaModulation, LORA_SINGLE_FRAME_MAX,
-    LORA_SINGLE_FRAME_PAYLOAD_MAX,
+    air_frame_count, descriptor, encode_air_frame_part, LoRaModulation, LoRaReassembler,
+    LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
 use crate::engine::InstantMillis;
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
 };
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
+use crate::wire::MTU;
 
 pub const OUTBOX_DEPTH: usize = 4;
 
@@ -38,12 +41,10 @@ pub const OUTBOX_DEPTH: usize = 4;
 /// Proven to reach a real RNode at ~33 cm; raise it for real range.
 const TX_OUTPUT_POWER_DBM: i32 = -9;
 
-/// Outbound packets are raw Reticulum wire packets that fit a single LoRa frame
-/// (≤ [`LORA_SINGLE_FRAME_PAYLOAD_MAX`]); the shell prepends RNode's link header
-/// on the way out. A packet too large for one frame is rejected at
-/// [`submit`](EmbassyRnodeLoraInterface::submit) — multi-frame split isn't
-/// implemented yet (announces, the first traffic we carry, fit one frame).
-pub type PacketBuf = HVec<u8, LORA_SINGLE_FRAME_PAYLOAD_MAX>;
+/// Outbound packets are raw Reticulum wire packets (≤ engine [`MTU`]); the shell
+/// frames each on the way out, splitting across two LoRa frames when it exceeds
+/// what one carries (RNode-style).
+pub type PacketBuf = HVec<u8, MTU>;
 
 /// Outbound: packets the runtime hands the worker to transmit. The handle holds
 /// the [`OutboundSender`]; the shell drains the [`OutboundReceiver`], frames each,
@@ -77,10 +78,10 @@ impl EmbassyRnodeLoraInterface {
 }
 
 impl InterfaceWorker for EmbassyRnodeLoraInterface {
-    // One LoRa frame's payload. A multi-worker host sizes its shared inbound
-    // mailbox to the largest worker's buffer, so these ≤254-byte frames always
-    // fit a mailbox sized for this or anything larger.
-    const PACKET_BUFFER_SIZE: usize = LORA_SINGLE_FRAME_PAYLOAD_MAX;
+    // The engine MTU. A multi-worker host sizes its shared inbound mailbox to the
+    // largest worker's buffer, so a reassembled LoRa packet always fits a mailbox
+    // sized for this or anything larger.
+    const PACKET_BUFFER_SIZE: usize = MTU;
 
     fn descriptor(&self) -> InterfaceDescriptor {
         self.descriptor
@@ -94,8 +95,8 @@ impl InterfaceWorker for EmbassyRnodeLoraInterface {
     }
 
     fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
-        // `from_slice` rejects a packet larger than a single LoRa frame (split
-        // deferred); the caller treats that like a full queue and re-emits later.
+        // `from_slice` rejects a packet larger than the engine MTU; the caller
+        // treats that like a full queue and re-emits later.
         let buf = PacketBuf::from_slice(packet).map_err(|_| QueueFull)?;
         self.outbound.try_send(buf).map_err(|_| QueueFull)
     }
@@ -148,12 +149,13 @@ enum Step {
 
 /// Drive the LoRa link forever. Build the modulation + packet params from
 /// `profile`, then loop: arm continuous RX and wait for either a received frame
-/// (decode RNode's header → stamp the payload into the shared mailbox) or a
-/// packet from the worker queue (frame it → transmit, then return to RX).
+/// (reassemble RNode's split → stamp the whole packet into the shared mailbox) or
+/// a packet from the worker queue (frame it, splitting across two LoRa frames if
+/// needed → transmit, then return to RX).
 ///
 /// Generic over `MAILBOX` (the host's `PACKET_BUFFER_SIZE`, ≥ this worker's) so
 /// several worker kinds share one mailbox, and over the lora-phy radio kind /
-/// delay so any SX126x board works. `id` stamps provenance on each inbound frame.
+/// delay so any SX126x board works. `id` stamps provenance on each inbound packet.
 pub async fn run<const MAILBOX: usize, RK, DLY>(
     mut lora: LoRa<RK, DLY>,
     id: InterfaceId,
@@ -208,8 +210,9 @@ pub async fn run<const MAILBOX: usize, RK, DLY>(
 
     let mut rx_buf = [0u8; LORA_SINGLE_FRAME_MAX];
     let mut tx_frame = [0u8; LORA_SINGLE_FRAME_MAX];
-    // RNode's header sequence nibble; bumped per TX so split fragments would share
-    // a tag once that lands (a single frame doesn't care about the value).
+    let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
+    // RNode's header sequence nibble; one value per *packet* (both frames of a
+    // split share it so the peer reassembles them), bumped after each send.
     let mut seq: u8 = 0;
 
     loop {
@@ -238,13 +241,11 @@ pub async fn run<const MAILBOX: usize, RK, DLY>(
         match step {
             Step::ReceiveFailed => {}
             Step::Received(len) => {
-                // Strip RNode's header; stamp the Reticulum payload into the mailbox.
-                if let Some(frame) = decode_air_frame(&rx_buf[..len]) {
-                    if frame.is_split_fragment {
-                        // Multi-frame reassembly isn't implemented yet — drop it.
-                        log::warn!("RNS_LORA dropping split fragment ({}B)", frame.payload.len());
-                    } else if !frame.payload.is_empty() {
-                        match HVec::<u8, MAILBOX>::from_slice(frame.payload) {
+                // Feed the frame to the reassembler; a whole packet (single frame,
+                // or the second part of a split) comes back ready to ingest.
+                if let Some(packet) = reassembler.feed(&rx_buf[..len]) {
+                    if !packet.is_empty() {
+                        match HVec::<u8, MAILBOX>::from_slice(packet) {
                             Ok(bytes) => {
                                 let entry = InboxEntry {
                                     arrived_at: now_millis(),
@@ -254,34 +255,48 @@ pub async fn run<const MAILBOX: usize, RK, DLY>(
                                 if inbound.try_send(entry).is_err() {
                                     log::warn!(
                                         "RNS_LORA inbound mailbox full, dropped {}B",
-                                        frame.payload.len()
+                                        packet.len()
                                     );
                                 }
                             }
                             Err(_) => log::warn!(
-                                "RNS_LORA rx frame {}B exceeds mailbox",
-                                frame.payload.len()
+                                "RNS_LORA reassembled packet {}B exceeds mailbox",
+                                packet.len()
                             ),
                         }
                     }
                 }
             }
-            Step::Transmit(packet) => match encode_air_frame(&packet, seq, &mut tx_frame) {
-                Ok(n) => {
-                    seq = seq.wrapping_add(0x10);
-                    if let Err(e) = lora
-                        .prepare_for_tx(&modulation, &mut tx_pkt, TX_OUTPUT_POWER_DBM, &tx_frame[..n])
-                        .await
-                    {
-                        log::warn!("RNS_LORA prepare_for_tx failed: {e:?}");
-                    } else if let Err(e) = lora.tx().await {
-                        log::warn!("RNS_LORA tx failed: {e:?}");
+            Step::Transmit(packet) => {
+                // One frame, or two RNode-split frames sharing this packet's seq.
+                for index in 0..air_frame_count(packet.len()) {
+                    match encode_air_frame_part(&packet, seq, index, &mut tx_frame) {
+                        Ok(n) => {
+                            if let Err(e) = lora
+                                .prepare_for_tx(
+                                    &modulation,
+                                    &mut tx_pkt,
+                                    TX_OUTPUT_POWER_DBM,
+                                    &tx_frame[..n],
+                                )
+                                .await
+                            {
+                                log::warn!("RNS_LORA prepare_for_tx failed: {e:?}");
+                                break;
+                            }
+                            if let Err(e) = lora.tx().await {
+                                log::warn!("RNS_LORA tx failed: {e:?}");
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("RNS_LORA frame {index} encode failed: {e:?}");
+                            break;
+                        }
                     }
                 }
-                Err(_) => {
-                    log::warn!("RNS_LORA packet {}B exceeds a single LoRa frame", packet.len())
-                }
-            },
+                seq = seq.wrapping_add(0x10);
+            }
         }
     }
 }

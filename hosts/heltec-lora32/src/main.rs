@@ -115,8 +115,8 @@ enum HostWorker {
 }
 
 impl InterfaceWorker for HostWorker {
-    // The shared inbound mailbox sizes to this, so it must fit either worker's
-    // frames — the max of the two.
+    // The shared inbound mailbox sizes to this, so it must fit any worker's
+    // frames — the max across all three.
     const PACKET_BUFFER_SIZE: usize = {
         let wifi = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
         let serial = EmbassySerialInterface::PACKET_BUFFER_SIZE;
@@ -177,7 +177,7 @@ static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 type S3EngineState = DefaultEngineState<24, 32, 1024, 4, 128, 4>;
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
-const DISPLAY_NAME: &str = "Personal Node (S3)";
+const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";
 
 /// Heltec V4 VBAT sense: the on-board divider is ~4.9x ((390k+100k)/100k), so
 /// VBAT(mV) = pin(mV) * 49 / 10. Tune against a multimeter once on battery.
