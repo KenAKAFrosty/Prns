@@ -104,8 +104,7 @@ pub fn peering_token(addr: &Ipv6Addr) -> PeeringToken {
 }
 
 pub enum BeaconVerdict {
-    /// A valid peering beacon from another node — peered on its source address.
-    Peer, //REVIEW shouldnt we put that source address in here in this arm as data?
+    Peer(Ipv6Addr),
     SelfEcho,
     AuthenticationFailed,
     TooShort,
@@ -119,7 +118,7 @@ pub fn classify_beacon(bytes: &[u8], src: &Ipv6Addr, self_addr: &Ipv6Addr) -> Be
         return BeaconVerdict::TooShort;
     };
     if claimed == peering_token(src) {
-        BeaconVerdict::Peer
+        BeaconVerdict::Peer(*src)
     } else {
         BeaconVerdict::AuthenticationFailed
     }
@@ -139,8 +138,6 @@ pub struct Peer {
 /// Fixed-capacity table of discovered peers, keyed by link-local address.
 /// Capacity is small by design — a desk LAN carries a handful of nodes, and a
 /// constrained node keeps no allocator headroom for an unbounded map.
-///
-/// //REVIEW, flip to SoA?  I iknow it's small but just in case; better to do it now. Then we can scan on address, especiallyu since that one byte throws off alignment I think?
 pub struct PeerTable<const N: usize> {
     peers: HVec<Peer, N>,
 }
@@ -232,8 +229,8 @@ impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
     ) -> BeaconVerdict {
         let verdict = classify_beacon(bytes, &src, &self.our_link_local);
         match verdict {
-            BeaconVerdict::Peer => {
-                self.peers.upsert_peer(src, now_ms);
+            BeaconVerdict::Peer(addr) => {
+                self.peers.upsert_peer(addr, now_ms);
             }
             BeaconVerdict::AuthenticationFailed => {
                 self.auth_failure_count = self.auth_failure_count.wrapping_add(1);

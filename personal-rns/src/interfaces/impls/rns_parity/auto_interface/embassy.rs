@@ -9,7 +9,7 @@ use core::net::Ipv6Addr;
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use embassy_futures::select::{select, select4, Either, Either4};
-use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
+use embassy_net::udp::{PacketMetadata, RecvError, UdpMetadata, UdpSocket};
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
@@ -137,6 +137,61 @@ fn ipv6_src(meta: &UdpMetadata) -> Option<Ipv6Addr> {
     }
 }
 
+/// Handle one discovery-beacon recv: count it, peer on the source, and log a
+/// newly discovered peer. The multicast and unicast arms differ only in their
+/// socket, buffer, counter, and `via` label, so they share this.
+fn ingest_discovery_arm(
+    brain: &mut AutoInterfaceProtocol<MAX_PEERS>,
+    rx_count: &mut u32,
+    recv: Result<(usize, UdpMetadata), RecvError>,
+    read_buf: &[u8],
+    via: &str,
+) {
+    match recv {
+        Ok((n, meta)) => {
+            *rx_count = rx_count.wrapping_add(1);
+            if let Some(src) = ipv6_src(&meta) {
+                let before = brain.peer_count();
+                brain.ingest_discovery_datagram(src, &read_buf[..n], now_millis().0);
+                if brain.peer_count() > before {
+                    log::info!(
+                        "RNS_AUTO PEER+ {src} via {via} (peers={})",
+                        brain.peer_count()
+                    );
+                }
+            }
+        }
+        Err(e) => log::warn!("RNS_AUTO {via} discovery recv err: {e:?}"),
+    }
+}
+
+/// Handle one inbound data-packet recv: stamp it and hand it to the runtime
+/// mailbox, logging a drop if the mailbox is full.
+fn ingest_data_arm(
+    id: InterfaceId,
+    rx_count: &mut u32,
+    recv: Result<(usize, UdpMetadata), RecvError>,
+    read_buf: &[u8],
+    inbound: &InboundSender<HARDWARE_MTU>,
+) {
+    match recv {
+        Ok((n, _meta)) => {
+            *rx_count = rx_count.wrapping_add(1);
+            if let Ok(bytes) = PacketBuf::from_slice(&read_buf[..n]) {
+                let msg = InboxEntry {
+                    arrived_at: now_millis(),
+                    source: id,
+                    bytes,
+                };
+                if inbound.try_send(msg).is_err() {
+                    log::warn!("RNS_AUTO inbound mailbox full, dropped {n}B");
+                }
+            }
+        }
+        Err(e) => log::warn!("RNS_AUTO data recv err: {e:?}"),
+    }
+}
+
 /// The worker's own task/mini-program: own the three UDP sockets, drive the discovery brain,
 /// stamp inbound data into `inbound`, and fan `outbound` writes to every peer.
 /// Runs forever. `stack` must already be up (host brought up WiFi + IP).
@@ -236,64 +291,32 @@ pub async fn run(
         )
         .await
         {
-            //REVIEW helper functions for each arm will keep the matching branch site easier to understand and I think is very very worth doing now
             // Multicast discovery beacon (29716).
-            Either::First(Either4::First(Ok((n, meta)))) => {
-                discovery_rx_count = discovery_rx_count.wrapping_add(1);
-                if let Some(src) = ipv6_src(&meta) {
-                    let before = brain.peer_count();
-                    brain.ingest_discovery_datagram(src, &discovery_read_buf[..n], now_millis().0);
-                    if brain.peer_count() > before {
-                        log::info!(
-                            "RNS_AUTO PEER+ {src} via mcast (peers={})",
-                            brain.peer_count()
-                        );
-                    }
-                }
-            }
-
-            Either::First(Either4::First(Err(e))) => {
-                log::warn!("RNS_AUTO discovery recv err: {e:?}")
+            Either::First(Either4::First(recv)) => {
+                ingest_discovery_arm(
+                    &mut brain,
+                    &mut discovery_rx_count,
+                    recv,
+                    &discovery_read_buf,
+                    "mcast",
+                );
             }
 
             // Unicast reverse-peering beacon (29717).
-            Either::First(Either4::Second(Ok((n, meta)))) => {
-                unicast_discovery_rx_count = unicast_discovery_rx_count.wrapping_add(1);
-                if let Some(src) = ipv6_src(&meta) {
-                    let before = brain.peer_count();
-                    brain.ingest_discovery_datagram(
-                        src,
-                        &unicast_discovery_read_buf[..n],
-                        now_millis().0,
-                    );
-                    if brain.peer_count() > before {
-                        log::info!(
-                            "RNS_AUTO PEER+ {src} via ucast (peers={})",
-                            brain.peer_count()
-                        );
-                    }
-                }
-            }
-            Either::First(Either4::Second(Err(e))) => {
-                log::warn!("RNS_AUTO unicast discovery recv err: {e:?}")
+            Either::First(Either4::Second(recv)) => {
+                ingest_discovery_arm(
+                    &mut brain,
+                    &mut unicast_discovery_rx_count,
+                    recv,
+                    &unicast_discovery_read_buf,
+                    "ucast",
+                );
             }
 
             // Inbound data packet (42671) → stamp + hand to the runtime mailbox.
-            Either::First(Either4::Third(Ok((n, _meta)))) => {
-                data_rx_count = data_rx_count.wrapping_add(1);
-                if let Ok(bytes) = PacketBuf::from_slice(&data_read_buf[..n]) {
-                    let msg = InboxEntry {
-                        arrived_at: now_millis(),
-                        source: id,
-                        bytes,
-                    };
-                    if inbound.try_send(msg).is_err() {
-                        log::warn!("RNS_AUTO inbound mailbox full, dropped {n}B");
-                    }
-                }
+            Either::First(Either4::Third(recv)) => {
+                ingest_data_arm(id, &mut data_rx_count, recv, &data_read_buf, &inbound);
             }
-
-            Either::First(Either4::Third(Err(e))) => log::warn!("RNS_AUTO data recv err: {e:?}"),
 
             // Beacon tick: multicast our token, reverse-peer, age out peers.
             Either::First(Either4::Fourth(_)) => {

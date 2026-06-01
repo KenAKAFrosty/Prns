@@ -543,10 +543,10 @@ where
     /// borrowing from `&self` (the announce body comes from the
     /// routing table; the `fire_on` slice comes from this
     /// `TickOutput`'s fanout arena). The host can re-iterate, count,
-    /// peek, find, collect snapshots. On Drop the engine commits:
-    /// exactly the set of entries yielded here is removed from
-    /// whichever per-kind schedule produced them; everything else
-    /// stays in state for a future tick. Today the only source is the
+    /// peek, find, collect snapshots. On [`commit`](Self::commit) (or
+    /// Drop as a backstop) the engine removes exactly the set of entries
+    /// yielded here from whichever per-kind schedule produced them;
+    /// everything else stays in state for a future tick. Today the only source is the
     /// rebroadcast schedule; as more directive kinds land the
     /// iterator will chain across additional sources, each with its
     /// own commit.
@@ -563,6 +563,26 @@ where
             })
         })
     }
+
+    /// Commit the tick: remove the due re-emissions this tick yielded from state
+    /// so they don't re-fire on a later tick. Consumes the output — releasing its
+    /// `&mut state` borrow — so call it once the host has iterated
+    /// [`egress_directives`](Self::egress_directives). [`Drop`] runs the same
+    /// commit as a backstop if you forget; the drain is idempotent, so the
+    /// explicit call plus the Drop backstop never double-commit.
+    pub fn commit(mut self) {
+        self.commit_in_place();
+    }
+
+    /// The commit's work, shared by [`commit`](Self::commit) and [`Drop`]. Each
+    /// per-kind schedule drops exactly the entries it just yielded to the host
+    /// (today: the rebroadcast set, drained by `due_at <= now`); everything else
+    /// stays in state for a future tick. Dispatch failures are NOT retried here —
+    /// failure feedback flows back via future inputs (interface state changes,
+    /// the re-broadcast cycle), never via cancelling this commit.
+    fn commit_in_place(&mut self) {
+        self.state.pending_rebroadcasts.drain_due(self.now);
+    }
 }
 
 impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> Drop
@@ -574,16 +594,8 @@ where
     D: RetainedAppData,
 {
     fn drop(&mut self) {
-        // Commit the tick: each per-kind schedule drops exactly the
-        // entries it just yielded to the host. Anything else stays
-        // in state for a later tick. Today the only schedule is the
-        // rebroadcast set (drain by `due_at <= self.now`); as more
-        // directive kinds land we add their commits here. Failures
-        // the host had during dispatch are not retried — per the
-        // architecture, failure feedback flows back via future inputs
-        // (interface state changes, the protocol's re-broadcast
-        // cycle), never via cancellation of the current tick.
-        self.state.pending_rebroadcasts.drain_due(self.now);
+        // Backstop for a caller that didn't call `commit` explicitly.
+        self.commit_in_place();
     }
 }
 

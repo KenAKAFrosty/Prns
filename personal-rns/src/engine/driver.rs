@@ -151,12 +151,7 @@ pub trait EngineDriver {
                 directive.fire_on(),
             )?;
         }
-        // Drop the tick output here → its Drop drains state's due rebroadcasts,
-        // and releases the `&mut state` borrow so origination below can take it.
-        // NOTE/REVIEW we may want to intentionally return the owned output back
-        // out as part of StepOutput, so the runtime above can choose when that
-        // drop actually triggers — or leave that to a custom impl override only.
-        drop(tick_output);
+        tick_output.commit();
 
         // Originate our own announce when one is due (engine-owned identity +
         // schedule). Independent of the tick's rebroadcasts; it fans out to
