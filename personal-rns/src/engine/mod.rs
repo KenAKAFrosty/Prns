@@ -19,7 +19,7 @@ use crate::engine::egress::write_announce_wire_packet;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{ConnectionState, Interface, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, ANNOUNCE_ID_WIRE_LEN,
@@ -90,12 +90,12 @@ pub enum NextScheduledWakeup {
 /// parameters directly.
 ///
 /// The engine owns its **interface registry** — the host calls
-/// [`register_routable_interface`] at startup for each concrete interface it
-/// presents. From then on the engine computes positive `fire_on` fanout
-/// targets per directive (see [`EgressDirective`]) rather than asking the host
-/// to apply "don't reflect back to source" by hand.
+/// [`register_routable_descriptor`] at startup for each interface it presents.
+/// From then on the engine computes positive `fire_on` fanout targets per
+/// directive (see [`EgressDirective`]) rather than asking the host to apply
+/// "don't reflect back to source" by hand.
 ///
-/// [`register_routable_interface`]: EngineState::register_routable_interface
+/// [`register_routable_descriptor`]: EngineState::register_routable_descriptor
 /// [`EgressDirective`]: crate::engine::EgressDirective
 ///
 /// `Default` builds a **relay**: no identity, no self-announce — it forwards
@@ -272,29 +272,14 @@ where
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// Register a concrete interface for engine fanout after checking the
-    /// load-bearing interface contract: it must be connected enough to route and
-    /// it must be able to transmit. Idempotent: registering an already-known
-    /// interface id is a no-op that returns `Ok(())`.
-    pub fn register_routable_interface<I: Interface + ?Sized>(
-        &mut self,
-        interface: &I,
-    ) -> Result<(), RegisterInterfaceError> {
-        self.register_routable_descriptor(&InterfaceDescriptor {
-            id: interface.id(),
-            capabilities: interface.capabilities(),
-            mode: interface.mode(),
-            medium: interface.medium_kind(),
-            state: interface.state(),
-        })
-    }
-
-    /// Register the interface named by a descriptor — the path an
-    /// [`InterfaceWorker`](crate::interfaces::InterfaceWorker) uses, since a
-    /// worker owns its byte I/O and presents only its routing facts. Same rules
-    /// as [`register_routable_interface`](Self::register_routable_interface): it
-    /// must be `Connected`/`Degraded` and able to transmit; idempotent on a
-    /// known id.
+    /// Register an interface for engine fanout by its
+    /// [`InterfaceDescriptor`] — the routing facts an
+    /// [`InterfaceWorker`](crate::interfaces::InterfaceWorker) presents, since a
+    /// worker owns its byte I/O and surfaces only what the engine routes on.
+    /// Checks the load-bearing contract: it must be `Connected`/`Degraded`
+    /// (connected enough to route) and it must be able to transmit. Idempotent:
+    /// registering an already-known interface id is a no-op that returns
+    /// `Ok(())`.
     pub fn register_routable_descriptor(
         &mut self,
         descriptor: &InterfaceDescriptor,
@@ -1161,108 +1146,69 @@ mod tests {
             .collect()
     }
 
-    struct StaticInterface {
-        id: InterfaceId,
-        capabilities: Capabilities,
-        state: ConnectionState,
-    }
-
-    impl StaticInterface {
-        fn new(id: InterfaceId) -> Self {
-            Self {
-                id,
-                capabilities: Capabilities {
-                    receives: true,
-                    transmits: true,
-                    forwards: true,
-                    repeats: false,
-                },
-                state: ConnectionState::Connected,
-            }
-        }
-
-        fn with_state(mut self, state: ConnectionState) -> Self {
-            self.state = state;
-            self
-        }
-
-        fn without_transmit(mut self) -> Self {
-            self.capabilities.transmits = false;
-            self
+    /// A connected, transmitting, full-medium descriptor — the routing facts a
+    /// healthy interface presents. Tests tweak individual fields off this base.
+    fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            id,
+            capabilities: Capabilities {
+                receives: true,
+                transmits: true,
+                forwards: true,
+                repeats: false,
+            },
+            mode: InterfaceMode::Full,
+            medium: MediumKind::Loopback,
+            state: ConnectionState::Connected,
         }
     }
 
-    impl Interface for StaticInterface {
-        type Error = core::convert::Infallible;
-
-        fn id(&self) -> InterfaceId {
-            self.id
-        }
-
-        fn capabilities(&self) -> Capabilities {
-            self.capabilities
-        }
-
-        fn mode(&self) -> InterfaceMode {
-            InterfaceMode::Full
-        }
-
-        fn medium_kind(&self) -> MediumKind {
-            MediumKind::Loopback
-        }
-
-        fn state(&self) -> ConnectionState {
-            self.state
-        }
-
-        fn try_read(&mut self, _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
-            Ok(None)
-        }
-
-        fn write(&mut self, _packet: &[u8]) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
-    fn register_static_interface(state: &mut FixedCapacityEngineState, id: InterfaceId) {
-        let iface = StaticInterface::new(id);
-        state.register_routable_interface(&iface).unwrap();
+    fn register_test_interface(state: &mut FixedCapacityEngineState, id: InterfaceId) {
+        state
+            .register_routable_descriptor(&routable_descriptor(id))
+            .unwrap();
     }
 
     #[test]
-    fn register_routable_interface_uses_the_interface_contract() {
+    fn register_routable_descriptor_accepts_a_connected_transmitting_interface() {
         let id = InterfaceId::new([0xAB; 16]);
-        let iface = StaticInterface::new(id);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-
-        assert_eq!(state.register_routable_interface(&iface), Ok(()));
-        assert_eq!(state.registered_interfaces(), &[id]);
-    }
-
-    #[test]
-    fn register_routable_interface_accepts_degraded_transmitting_interfaces() {
-        let id = InterfaceId::new([0xBC; 16]);
-        let iface = StaticInterface::new(id).with_state(ConnectionState::Degraded);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-
-        assert_eq!(state.register_routable_interface(&iface), Ok(()));
-        assert_eq!(state.registered_interfaces(), &[id]);
-    }
-
-    #[test]
-    fn register_routable_interface_rejects_non_transmitting_interfaces() {
-        let iface = StaticInterface::new(InterfaceId::new([0xCD; 16])).without_transmit();
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         assert_eq!(
-            state.register_routable_interface(&iface),
+            state.register_routable_descriptor(&routable_descriptor(id)),
+            Ok(())
+        );
+        assert_eq!(state.registered_interfaces(), &[id]);
+    }
+
+    #[test]
+    fn register_routable_descriptor_accepts_degraded_transmitting_interfaces() {
+        let id = InterfaceId::new([0xBC; 16]);
+        let descriptor = InterfaceDescriptor {
+            state: ConnectionState::Degraded,
+            ..routable_descriptor(id)
+        };
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+
+        assert_eq!(state.register_routable_descriptor(&descriptor), Ok(()));
+        assert_eq!(state.registered_interfaces(), &[id]);
+    }
+
+    #[test]
+    fn register_routable_descriptor_rejects_non_transmitting_interfaces() {
+        let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
+        descriptor.capabilities.transmits = false;
+        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+
+        assert_eq!(
+            state.register_routable_descriptor(&descriptor),
             Err(RegisterInterfaceError::NotTransmitting)
         );
         assert!(state.registered_interfaces().is_empty());
     }
 
     #[test]
-    fn register_routable_interface_rejects_unroutable_connection_states() {
+    fn register_routable_descriptor_rejects_unroutable_connection_states() {
         for (idx, connection_state) in [
             ConnectionState::Initializing,
             ConnectionState::Reconnecting,
@@ -1272,12 +1218,14 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let iface = StaticInterface::new(InterfaceId::new([idx as u8; 16]))
-                .with_state(connection_state);
+            let descriptor = InterfaceDescriptor {
+                state: connection_state,
+                ..routable_descriptor(InterfaceId::new([idx as u8; 16]))
+            };
             let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
             assert_eq!(
-                state.register_routable_interface(&iface),
+                state.register_routable_descriptor(&descriptor),
                 Err(RegisterInterfaceError::NotRoutable {
                     state: connection_state
                 })
@@ -1534,7 +1482,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         // Register a peer so fanout has a target (source is [0u8;16]; the
         // engine's fire_on = registered minus source = [peer]).
-        register_static_interface(&mut state, InterfaceId::new([0xFE; 16]));
+        register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
         let out = ingest(
@@ -1615,7 +1563,7 @@ mod tests {
         for state in [&mut left, &mut right] {
             // Identical registries: byte-identical emissions depend on
             // both engines computing the same fanout target sets.
-            register_static_interface(state, InterfaceId::new([0xFE; 16]));
+            register_test_interface(state, InterfaceId::new([0xFE; 16]));
             let _ = ingest(
                 state,
                 &[InboundPacket {
@@ -1660,179 +1608,5 @@ mod tests {
         assert_eq!(tick_out.egress_directive_count, 0);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
         assert!(bytes.is_empty());
-    }
-
-    /// Engine elides empty-fanout directives. Drives a real announce
-    /// through a single LoopbackInterface pair, registers only that
-    /// engine half, and verifies the engine accepts + schedules the
-    /// announce but produces zero directives (fanout = registered −
-    /// source = empty). The rebroadcast still drains on tick commit,
-    /// so it does not re-fire on a later tick.
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn engine_elides_directives_with_only_the_source_registered() {
-        use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
-
-        let raw = hx(RAW_ANNOUNCE);
-
-        // Two halves of a paired loopback. `seed_half` is what an
-        // upstream peer would hold; `engine_half` is what the engine
-        // pulls from and writes back to.
-        let (mut seed_half, mut engine_half) =
-            LoopbackInterface::pair(InterfaceId::new([0x01; 16]), InterfaceId::new([0x02; 16]));
-        let engine_iface_id = engine_half.id();
-
-        // == Phase 1: upstream peer sends an announce in ==
-        seed_half.write(&raw).unwrap();
-
-        // == Phase 2: engine drains the interface ==
-        // `read_inbound` is a default trait method on
-        // PointToPointInterface — wraps `try_read` and stamps the
-        // InboundPacket with the interface's own id().
-        let arrived_at = InstantMillis(1_000);
-        let mut read_buf = [0u8; MTU];
-        let packet = engine_half
-            .read_inbound(&mut read_buf, arrived_at)
-            .unwrap()
-            .expect("seeded packet ready to read");
-        assert_eq!(packet.source_interface, engine_iface_id);
-
-        // == Phase 3: engine ingests, with the one engine-owned interface
-        //             registered. Fanout = registered - source = empty,
-        //             so the engine elides the directive and the host
-        //             sees nothing this tick. ==
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        state.register_routable_interface(&engine_half).unwrap();
-        let ingest_out = ingest(&mut state, &[packet], TEST_ENTROPY);
-        assert_eq!(ingest_out.accepted_announce_count(), 1);
-        assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
-        assert_eq!(state.route_count(), 1);
-
-        // == Phase 4: tick past the jitter window — engine elides the
-        //             empty-fanout directive but still drains it. ==
-        let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        {
-            let tick_out = tick(&mut state, now, TEST_ENTROPY);
-            assert_eq!(tick_out.egress_directive_count(), 0);
-            assert!(tick_out.egress_directives().next().is_none());
-        }
-        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
-
-        // == Phase 5: the upstream peer sees nothing — the engine had no
-        //             other interface to fan out to. ==
-        assert_eq!(seed_half.try_read(&mut read_buf).unwrap(), None);
-    }
-
-    /// Multi-interface forcing-function test, Stage 3 edition. A real
-    /// announce arrives on interface A; the engine — which owns both
-    /// registered interfaces — computes `fire_on = [B]` (positive,
-    /// source excluded) and the host writes the bytes to B with no
-    /// exclusion logic of its own. The test is the canonical proof
-    /// that Stage 3 holds: the host code that used to have
-    /// `if source != engine_X_id { … }` filters is GONE.
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn engine_computed_fire_on_drives_fanout_with_no_host_side_filter() {
-        use crate::interfaces::{Interface, InterfaceId, LoopbackInterface};
-
-        let raw = hx(RAW_ANNOUNCE);
-
-        // Two paired loopbacks. Engine "owns" the right halves; the
-        // upstream peers (test code) own the left halves.
-        let (mut seed_a, mut engine_a) =
-            LoopbackInterface::pair(InterfaceId::new([0xA1; 16]), InterfaceId::new([0xA2; 16]));
-        let (mut seed_b, mut engine_b) =
-            LoopbackInterface::pair(InterfaceId::new([0xB1; 16]), InterfaceId::new([0xB2; 16]));
-        let engine_a_id = engine_a.id();
-        let engine_b_id = engine_b.id();
-
-        // Phase 1: peer reachable via A sends an announce.
-        seed_a.write(&raw).unwrap();
-
-        // Phase 2: engine drains BOTH interfaces, builds one batch.
-        // Separate scratch buf per interface — a shared buf would let
-        // the second drain clobber the first's contents (the
-        // InboundPackets borrow from the bufs).
-        let arrived_at = InstantMillis(1_000);
-        let mut buf_a = [0u8; MTU];
-        let mut buf_b = [0u8; MTU];
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        state.register_routable_interface(&engine_a).unwrap();
-        state.register_routable_interface(&engine_b).unwrap();
-        {
-            let mut batch = std::vec::Vec::new();
-            if let Some(p) = engine_a.read_inbound(&mut buf_a, arrived_at).unwrap() {
-                batch.push(p);
-            }
-            if let Some(p) = engine_b.read_inbound(&mut buf_b, arrived_at).unwrap() {
-                batch.push(p);
-            }
-            assert_eq!(batch.len(), 1, "only A had a packet queued");
-            assert_eq!(batch[0].source_interface, engine_a_id);
-
-            // Phase 3: ingest the unified batch.
-            let ingest_out = ingest(&mut state, &batch, TEST_ENTROPY);
-            assert_eq!(ingest_out.accepted_announce_count(), 1);
-            assert_eq!(ingest_out.scheduled_rebroadcast_count(), 1);
-            assert_eq!(state.route_count(), 1);
-            // batch (and the buf borrows it holds) drops at end of block
-        }
-
-        // Phase 4 + 5: tick past the jitter window — engine produces one
-        // directive with `fire_on = [engine_b_id]`. The host writes the
-        // bytes to each id in fire_on, no source filter. Both phases
-        // live inside the tick_out scope so the borrow on state is
-        // released before Phase 6/7 reads.
-        let now = InstantMillis(arrived_at.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
-        let mut wire_buf = [0u8; MTU];
-        {
-            let tick_out = tick(&mut state, now, TEST_ENTROPY);
-            assert_eq!(tick_out.egress_directive_count(), 1);
-
-            let mut wrote = 0usize;
-            for directive in tick_out.egress_directives() {
-                assert_eq!(
-                    directive.fire_on(),
-                    &[engine_b_id],
-                    "engine must compute fire_on as registered interfaces minus source"
-                );
-                let n = directive
-                    .to_wire(&mut wire_buf)
-                    .expect("serialize directive");
-
-                // HOST is now a pure pump: write to each fire_on id.
-                // No `if source != X` filter — the engine already did it.
-                for target in directive.fire_on() {
-                    if *target == engine_a_id {
-                        engine_a.write(&wire_buf[..n]).unwrap();
-                    } else if *target == engine_b_id {
-                        engine_b.write(&wire_buf[..n]).unwrap();
-                    }
-                }
-                wrote += 1;
-            }
-            assert_eq!(wrote, 1);
-        }
-
-        // Phase 6: A's peer should NOT have received the rebroadcast
-        // (engine excluded A from fire_on).
-        assert_eq!(
-            seed_a.try_read(&mut buf_a).unwrap(),
-            None,
-            "A is the source — engine-computed fire_on excludes A"
-        );
-
-        // Phase 7: B's peer SHOULD have received the rebroadcast, with
-        // hop count incremented (received_hops = orig + 1 on the
-        // engine's receive, re-emitted at that value).
-        let n = seed_b
-            .try_read(&mut buf_b)
-            .unwrap()
-            .expect("B should receive the fan-out");
-        let rebroadcast_bytes = &buf_b[..n];
-        let (orig_header, _) = WirePacketHeader::parse(&raw).unwrap();
-        let (rebroadcast_header, _) = WirePacketHeader::parse(rebroadcast_bytes).unwrap();
-        assert_eq!(rebroadcast_header.hops, orig_header.hops + 1);
-        assert_eq!(rebroadcast_header.destination, orig_header.destination);
     }
 }

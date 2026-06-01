@@ -11,15 +11,13 @@ pub struct QueueFull;
 /// peers, fan-out, and discovery — opaquely — and meets the system only through
 /// this seam.
 ///
-/// Deliberately **not** a sub-trait of [`Interface`](crate::interfaces::Interface).
-/// An `Interface` is called inline for byte I/O (`try_read`/`write`), which
-/// pulls byte-management up into whoever holds it; a worker is the opposite —
-/// the system never reads or writes its bytes directly. It hands the worker
-/// packets to send via [`submit`](InterfaceWorker::submit), and receives the
-/// worker's inbound by draining the runtime's shared mailbox, into which the
+/// The system never reads or writes a worker's bytes directly: it hands the
+/// worker packets to send via [`submit`](InterfaceWorker::submit), and receives
+/// the worker's inbound by draining the runtime's shared mailbox, into which the
 /// worker stamps and pushes its own
 /// [`InboundPacket`](crate::engine::InboundPacket)s (its own id + arrival time).
-/// So the two are siblings, not parent and child.
+/// Byte-management stays inside the worker rather than being pulled up into
+/// whoever holds it.
 ///
 /// How a worker actually runs is its own call — its own OS thread, its own
 /// async task, or, if it cannot run itself, by also implementing

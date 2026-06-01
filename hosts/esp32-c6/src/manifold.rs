@@ -31,7 +31,7 @@ use personal_rns::engine::{
     EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis, OutboundPacket,
 };
 use personal_rns::interfaces::{
-    Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
+    Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind,
 };
 
 use crate::rns_frame_ingest::PacketBytes;
@@ -95,7 +95,18 @@ impl Manifold {
     pub fn new(seed: &'static [u8]) -> Self {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         state
-            .register_routable_interface(&UsbInterfaceDescriptor)
+            .register_routable_descriptor(&InterfaceDescriptor {
+                id: USB_INTERFACE_ID,
+                capabilities: Capabilities {
+                    receives: true,
+                    transmits: true,
+                    forwards: true,
+                    repeats: false,
+                },
+                mode: InterfaceMode::PointToPoint,
+                medium: MediumKind::DirectPeer,
+                state: ConnectionState::Connected,
+            })
             .expect("usb descriptor is connected and transmits");
         Self {
             state,
@@ -174,49 +185,6 @@ impl Manifold {
             egress: egress.frames.len(),
             accepted,
         }
-    }
-}
-
-/// Inert stand-in registered so the engine knows the topology (id +
-/// capabilities) for fanout. Its `try_read`/`write` are never reached: RX
-/// arrives via the zero-copy channel and egress is written directly by the
-/// Runtime, so the engine only ever consults this at registration.
-struct UsbInterfaceDescriptor;
-
-impl Interface for UsbInterfaceDescriptor {
-    type Error = Infallible;
-
-    fn id(&self) -> InterfaceId {
-        USB_INTERFACE_ID
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            receives: true,
-            transmits: true,
-            forwards: true,
-            repeats: false,
-        }
-    }
-
-    fn mode(&self) -> InterfaceMode {
-        InterfaceMode::PointToPoint
-    }
-
-    fn medium_kind(&self) -> MediumKind {
-        MediumKind::DirectPeer
-    }
-
-    fn state(&self) -> ConnectionState {
-        ConnectionState::Connected
-    }
-
-    fn try_read(&mut self, _buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
-        Ok(None)
-    }
-
-    fn write(&mut self, _packet: &[u8]) -> Result<(), Self::Error> {
-        Ok(())
     }
 }
 

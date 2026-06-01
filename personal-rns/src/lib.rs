@@ -4,11 +4,10 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![doc = "Reticulum"]
 
-// Make the `alloc` crate addressable as `alloc::*` whenever any module
-// gated on the `alloc` feature is in scope (currently only
-// `interfaces::loopback`). Under std the alloc crate is reachable via
-// `std::*` paths too, but `alloc::*` paths only resolve when the crate
-// is extern-declared explicitly.
+// Make the `alloc` crate addressable as `alloc::*` for any module gated on the
+// `alloc` feature. Under std the alloc crate is reachable via `std::*` paths
+// too, but `alloc::*` paths only resolve when the crate is extern-declared
+// explicitly.
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
