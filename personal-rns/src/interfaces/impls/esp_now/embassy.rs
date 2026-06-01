@@ -134,6 +134,7 @@ fn ingest_frame<const MAILBOX: usize>(
 ) {
     match decode_frame(frame) {
         Ok(reader) => {
+            let mut stamped = 0usize;
             for packet in reader {
                 if packet.is_empty() {
                     continue;
@@ -150,12 +151,19 @@ fn ingest_frame<const MAILBOX: usize>(
                                 "RNS_ESPNOW inbound mailbox full, dropped {}B",
                                 packet.len()
                             );
+                        } else {
+                            stamped += 1;
                         }
                     }
                     Err(_) => {
                         log::warn!("RNS_ESPNOW packet {}B exceeds mailbox", packet.len())
                     }
                 }
+            }
+            // The direct OTA proof, and the coalescing factor made visible: one
+            // received frame carried `stamped` whole packets.
+            if stamped > 0 {
+                log::info!("RNS_ESPNOW rx frame: {stamped} packet(s) in {}B", frame.len());
             }
         }
         Err(e) => log::warn!("RNS_ESPNOW dropping malformed frame: {e:?}"),

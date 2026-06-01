@@ -43,7 +43,7 @@ use static_cell::StaticCell;
 
 use core::fmt::Write as _;
 use core::sync::atomic::AtomicBool;
-use embassy_futures::join::join3;
+use embassy_futures::join::join4;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Delay, Duration, Instant as EmbassyInstant, Ticker, Timer};
 use heapless::{String as HString, Vec as HVec};
@@ -55,6 +55,7 @@ use lora_phy::iv::GenericSx126xInterfaceVariant;
 use lora_phy::sx126x::{Config as Sx126xConfig, Sx1262, Sx126x, TcxoCtrlVoltage};
 use lora_phy::LoRa;
 
+use esp_radio::esp_now::{EspNowError, EspNowReceiver, EspNowSender, BROADCAST_ADDRESS};
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
@@ -71,6 +72,10 @@ use personal_rns::interfaces::impls::rns_parity::auto_interface::embassy::{
 use personal_rns::interfaces::impls::rns_parity::serial::embassy::{
     run as run_serial_worker, EmbassySerialInterface, OutboundChannel as SerialOutboundChannel,
     OutboundReceiver as SerialOutboundReceiver,
+};
+use personal_rns::interfaces::impls::esp_now::embassy::{
+    run as run_esp_now_worker, EmbassyEspNowInterface, EspNowLink,
+    OutboundChannel as EspNowOutboundChannel, OutboundReceiver as EspNowOutboundReceiver,
 };
 use personal_rns::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
@@ -106,12 +111,17 @@ const SERIAL_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-usbser");
 /// the engine; readable in `fire_on` logs.
 const LORA_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-lora62");
 
-/// The S3 runs two interface workers, so the multi-worker manifold holds them as
+/// Engine-facing id for this host's ESP-NOW interface (broadcast over the 2.4 GHz
+/// radio to other Hopspots). Opaque to the engine; readable in `fire_on` logs.
+const ESPNOW_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-espnow");
+
+/// The S3 runs four interface workers, so the multi-worker manifold holds them as
 /// one concrete type — this enum. Dispatch is explicit per the no-wildcard rule.
 enum HostWorker {
     Wifi(EmbassyAutoInterface),
     Serial(EmbassySerialInterface),
     LoRa(EmbassyRnodeLoraInterface),
+    EspNow(EmbassyEspNowInterface),
 }
 
 impl InterfaceWorker for HostWorker {
@@ -121,11 +131,13 @@ impl InterfaceWorker for HostWorker {
         let wifi = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
         let serial = EmbassySerialInterface::PACKET_BUFFER_SIZE;
         let lora = EmbassyRnodeLoraInterface::PACKET_BUFFER_SIZE;
-        let larger = if wifi > serial { wifi } else { serial };
-        if larger > lora {
-            larger
+        let espnow = EmbassyEspNowInterface::PACKET_BUFFER_SIZE;
+        let m = if wifi > serial { wifi } else { serial };
+        let m = if m > lora { m } else { lora };
+        if m > espnow {
+            m
         } else {
-            lora
+            espnow
         }
     };
 
@@ -134,6 +146,7 @@ impl InterfaceWorker for HostWorker {
             HostWorker::Wifi(w) => w.descriptor(),
             HostWorker::Serial(s) => s.descriptor(),
             HostWorker::LoRa(l) => l.descriptor(),
+            HostWorker::EspNow(e) => e.descriptor(),
         }
     }
 
@@ -142,6 +155,7 @@ impl InterfaceWorker for HostWorker {
             HostWorker::Wifi(w) => w.health(),
             HostWorker::Serial(s) => s.health(),
             HostWorker::LoRa(l) => l.health(),
+            HostWorker::EspNow(e) => e.health(),
         }
     }
 
@@ -150,7 +164,32 @@ impl InterfaceWorker for HostWorker {
             HostWorker::Wifi(w) => w.submit(packet),
             HostWorker::Serial(s) => s.submit(packet),
             HostWorker::LoRa(l) => l.submit(packet),
+            HostWorker::EspNow(e) => e.submit(packet),
         }
+    }
+}
+
+/// The host's ESP-NOW radio adapter: implements `personal-rns`'s [`EspNowLink`]
+/// over esp-radio's split sender/receiver, so the worker shell names no chip HAL.
+/// Broadcast goes to the ESP-NOW broadcast address; receive copies one frame in.
+struct S3EspNowLink<'d> {
+    sender: EspNowSender<'d>,
+    receiver: EspNowReceiver<'d>,
+}
+
+impl EspNowLink for S3EspNowLink<'_> {
+    type Error = EspNowError;
+
+    async fn broadcast(&mut self, frame: &[u8]) -> Result<(), Self::Error> {
+        self.sender.send_async(&BROADCAST_ADDRESS, frame).await
+    }
+
+    async fn receive_into(&mut self, buf: &mut [u8]) -> usize {
+        let data = self.receiver.receive_async().await;
+        let src = data.data();
+        let n = src.len().min(buf.len());
+        buf[..n].copy_from_slice(&src[..n]);
+        n
     }
 }
 
@@ -164,6 +203,7 @@ const PACKET_BUFFER_SIZE: usize = HostWorker::PACKET_BUFFER_SIZE;
 static LINK_UP: LinkUp = AtomicBool::new(false);
 static SERIAL_LINK_UP: AtomicBool = AtomicBool::new(false);
 static LORA_LINK_UP: AtomicBool = AtomicBool::new(false);
+static ESPNOW_LINK_UP: AtomicBool = AtomicBool::new(false);
 
 /// The runtime fires its post-cycle [`RuntimeSnapshot`] out on this; the OLED
 /// render loop subscribes and wakes only when engine state changes — no poll.
@@ -375,6 +415,21 @@ async fn main(spawner: Spawner) {
         );
     }
 
+    // --- ESP-NOW (Personal-native broadcast). Rides the same STA radio (esp-now
+    // feature on esp-radio): once associated, ESP-NOW's channel is locked to the
+    // AP's, so two Hopspots on the same AP are co-channel and hear each other's
+    // broadcasts with no extra config. The broadcast peer is auto-added on split.
+    let (esp_now_manager, esp_now_sender, esp_now_receiver) = interfaces.esp_now.split();
+    match esp_now_manager.version() {
+        Ok(v) => {
+            println!("HELTEC_S3 ESPNOW up — version {v} (v2 => 1470 B frames, no fragmentation)")
+        }
+        Err(e) => println!("HELTEC_S3 ESPNOW version query failed: {e:?}"),
+    }
+    // Keep the manager alive for the program's life — it holds the endpoint up
+    // alongside the sender/receiver the worker owns.
+    let _esp_now_manager = esp_now_manager;
+
     // --- IP stack (embassy-net) with SLAAC → IPv6 link-local. ---
     let sta_mac = interfaces.station.mac_address();
     let net_config = NetConfig::slaac();
@@ -398,6 +453,7 @@ async fn main(spawner: Spawner) {
     static OUTBOUND: StaticCell<OutboundChannel> = StaticCell::new();
     static SERIAL_OUTBOUND: StaticCell<SerialOutboundChannel> = StaticCell::new();
     static LORA_OUTBOUND: StaticCell<LoraOutboundChannel> = StaticCell::new();
+    static ESPNOW_OUTBOUND: StaticCell<EspNowOutboundChannel> = StaticCell::new();
     let inbound_ch: &'static InboundChannel<PACKET_BUFFER_SIZE> =
         INBOUND.init(InboundChannel::new());
     let outbound_ch: &'static OutboundChannel = OUTBOUND.init(OutboundChannel::new());
@@ -405,10 +461,13 @@ async fn main(spawner: Spawner) {
         SERIAL_OUTBOUND.init(SerialOutboundChannel::new());
     let lora_outbound_ch: &'static LoraOutboundChannel =
         LORA_OUTBOUND.init(LoraOutboundChannel::new());
+    let espnow_outbound_ch: &'static EspNowOutboundChannel =
+        ESPNOW_OUTBOUND.init(EspNowOutboundChannel::new());
     let inbound_rx: InboundReceiver<PACKET_BUFFER_SIZE> = inbound_ch.receiver();
     let outbound_rx: OutboundReceiver = outbound_ch.receiver();
     let serial_outbound_rx: SerialOutboundReceiver = serial_outbound_ch.receiver();
     let lora_outbound_rx: LoraOutboundReceiver = lora_outbound_ch.receiver();
+    let espnow_outbound_rx: EspNowOutboundReceiver = espnow_outbound_ch.receiver();
 
     // The S3's USB-C is the native usb-serial-jtag; share it for RNS frames (the
     // serial worker) and esp-println logs (register pokes) — the C6 precedent.
@@ -416,18 +475,21 @@ async fn main(spawner: Spawner) {
         .into_async()
         .split();
 
-    // Three workers — WiFi LAN + USB serial + LoRa — all registered in the manifold.
+    // Four workers — WiFi LAN + USB serial + LoRa + ESP-NOW — all in the manifold.
     let wifi_worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP);
     let serial_worker =
         EmbassySerialInterface::new(SERIAL_INTERFACE_ID, serial_outbound_ch.sender(), &SERIAL_LINK_UP);
     let lora_worker =
         EmbassyRnodeLoraInterface::new(LORA_INTERFACE_ID, lora_outbound_ch.sender(), &LORA_LINK_UP);
+    let espnow_worker =
+        EmbassyEspNowInterface::new(ESPNOW_INTERFACE_ID, espnow_outbound_ch.sender(), &ESPNOW_LINK_UP);
     let manifold = Manifold::new(
         state,
         [
             HostWorker::Wifi(wifi_worker),
             HostWorker::Serial(serial_worker),
             HostWorker::LoRa(lora_worker),
+            HostWorker::EspNow(espnow_worker),
         ],
     );
 
@@ -530,6 +592,20 @@ async fn main(spawner: Spawner) {
         }
     };
 
+    // The ESP-NOW worker: hand it the host's radio adapter (esp-radio sender +
+    // receiver) and run. No init handshake — ESP-NOW is connectionless — so the
+    // shell is live as soon as it starts.
+    let espnow_fut = run_esp_now_worker(
+        S3EspNowLink {
+            sender: esp_now_sender,
+            receiver: esp_now_receiver,
+        },
+        ESPNOW_INTERFACE_ID,
+        inbound_ch.sender(),
+        espnow_outbound_rx,
+        &ESPNOW_LINK_UP,
+    );
+
     // Run the manifold loop: aggregate the worker's inbound, drive the engine,
     // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.
     // CSPRNG entropy from the (radio-seeded) RNG per cycle.
@@ -603,6 +679,8 @@ async fn main(spawner: Spawner) {
                             "USB"
                         } else if view.id == LORA_INTERFACE_ID {
                             "LoRa"
+                        } else if view.id == ESPNOW_INTERFACE_ID {
+                            "ESP-NOW"
                         } else {
                             "WiFi"
                         };
@@ -631,10 +709,18 @@ async fn main(spawner: Spawner) {
                 let mut cards: HVec<display::Card, 8> = HVec::new();
                 if let Some(snap) = &snapshot {
                     for view in &snap.interfaces {
+                        // TEMP (ESP-NOW bring-up): hide the USB card so ESP-NOW —
+                        // the 4th interface — fits the 3-card panel and is visible.
+                        // Revert when card scrolling lands.
+                        if view.id == SERIAL_INTERFACE_ID {
+                            continue;
+                        }
                         let (kind, label) = if view.id == SERIAL_INTERFACE_ID {
                             (display::CardKind::Usb, "USB")
                         } else if view.id == LORA_INTERFACE_ID {
                             (display::CardKind::LoRa, "LoRa")
+                        } else if view.id == ESPNOW_INTERFACE_ID {
+                            (display::CardKind::EspNow, "ESP-NOW")
                         } else {
                             (display::CardKind::Wifi, "WiFi LAN")
                         };
@@ -663,5 +749,5 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    join3(manifold_fut, oled_fut, lora_fut).await;
+    join4(manifold_fut, oled_fut, lora_fut, espnow_fut).await;
 }

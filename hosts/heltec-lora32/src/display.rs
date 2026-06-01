@@ -38,6 +38,7 @@ pub enum CardKind {
     Wifi,
     Usb,
     LoRa,
+    EspNow,
 }
 
 /// One interface's card. The host fills the static bits (kind, label) and the
@@ -241,6 +242,19 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
             )
             .into_styled(stroke(BinaryColor::On))
             .draw(display);
+        }
+        // ESP-NOW: an omni broadcast node — a center dot with a wave opening to
+        // each side (distinct from WiFi's upward arcs and LoRa's antenna).
+        CardKind::EspNow => {
+            let _ = Rectangle::new(Point::new(x + 3, y + 4), Size::new(2, 2))
+                .into_styled(fill(BinaryColor::On))
+                .draw(display);
+            // right-opening wave
+            line(display, Point::new(x + 6, y + 2), Point::new(x + 8, y + 4));
+            line(display, Point::new(x + 8, y + 4), Point::new(x + 6, y + 6));
+            // left-opening wave
+            line(display, Point::new(x + 2, y + 2), Point::new(x, y + 4));
+            line(display, Point::new(x, y + 4), Point::new(x + 2, y + 6));
         }
     }
     if !online {

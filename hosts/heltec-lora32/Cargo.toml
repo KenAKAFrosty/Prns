@@ -35,7 +35,7 @@ heapless = { version = "0.8", default-features = false }
 # `#[esp_rtos::main]`; embassy-executor/-time are the user-facing async API.
 # `unstable` exposes `set_power_saving` — a STA in modem sleep misses
 # AP-buffered multicast, which is how RNS discovery beacons arrive.
-esp-radio = { version = "0.18.0", features = ["esp32s3", "wifi", "unstable"] }
+esp-radio = { version = "0.18.0", features = ["esp32s3", "wifi", "esp-now", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
 esp-alloc = "0.10.0"
 embassy-executor = { version = "0.10", default-features = false }
