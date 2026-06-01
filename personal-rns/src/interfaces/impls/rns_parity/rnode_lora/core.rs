@@ -135,8 +135,8 @@ pub fn encode_air_frame_part(
     if out.len() < LORA_HEADER_LEN + chunk.len() {
         return Err(AirFrameError::OutputBufferTooSmall);
     }
-    out[0] = (sequence_entropy & HEADER_SEQUENCE_NIBBLE)
-        | if split { HEADER_FLAG_SPLIT } else { 0 };
+    out[0] =
+        (sequence_entropy & HEADER_SEQUENCE_NIBBLE) | if split { HEADER_FLAG_SPLIT } else { 0 };
     out[LORA_HEADER_LEN..LORA_HEADER_LEN + chunk.len()].copy_from_slice(chunk);
     Ok(LORA_HEADER_LEN + chunk.len())
 }
@@ -310,7 +310,7 @@ mod tests {
 
         let mut r = LoRaReassembler::<512>::new();
         assert_eq!(r.feed(&f0[..n0]), None); // partial split parked
-        // A whole-in-one-frame packet arrives mid-split → deliver it, drop the partial.
+                                             // A whole-in-one-frame packet arrives mid-split → deliver it, drop the partial.
         assert_eq!(r.feed(&whole[..wn]), Some(&[0xEE; 4][..]));
     }
 

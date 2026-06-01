@@ -163,7 +163,10 @@ fn ingest_frame<const MAILBOX: usize>(
             // The direct OTA proof, and the coalescing factor made visible: one
             // received frame carried `stamped` whole packets.
             if stamped > 0 {
-                log::info!("RNS_ESPNOW rx frame: {stamped} packet(s) in {}B", frame.len());
+                log::info!(
+                    "RNS_ESPNOW rx frame: {stamped} packet(s) in {}B",
+                    frame.len()
+                );
             }
         }
         Err(e) => log::warn!("RNS_ESPNOW dropping malformed frame: {e:?}"),

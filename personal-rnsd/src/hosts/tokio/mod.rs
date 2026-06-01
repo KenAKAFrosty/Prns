@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use personal_rns::engine::{FixedCapacityEngineState, EngineDriver};
+use personal_rns::engine::{EngineDriver, FixedCapacityEngineState};
 
 use crate::StdEngineDriver;
 

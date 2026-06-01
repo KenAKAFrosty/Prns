@@ -315,8 +315,13 @@ fn draw_card<D: DrawTarget<Color = BinaryColor>>(display: &mut D, top: i32, card
     draw_person(display, 3, top + 21);
     let mut destinations: HString<4> = HString::new();
     let _ = write!(destinations, "{}", card.destinations.min(99));
-    let _ = Text::with_baseline(&destinations, Point::new(13, top + 22), num_style, Baseline::Top)
-        .draw(display);
+    let _ = Text::with_baseline(
+        &destinations,
+        Point::new(13, top + 22),
+        num_style,
+        Baseline::Top,
+    )
+    .draw(display);
 }
 
 /// Render the full screen: title bar + a card per interface (up to what fits).

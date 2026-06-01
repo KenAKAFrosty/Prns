@@ -245,14 +245,25 @@ mod tests {
         let bogus = [ESP_NOW_FRAME_VERSION.wrapping_add(7), 0x00, 0x01, 0xFF];
         assert_eq!(
             decode_frame(&bogus).err(),
-            Some(FrameDecodeError::UnknownVersion(ESP_NOW_FRAME_VERSION.wrapping_add(7))),
+            Some(FrameDecodeError::UnknownVersion(
+                ESP_NOW_FRAME_VERSION.wrapping_add(7)
+            )),
         );
     }
 
     #[test]
     fn a_truncated_trailing_record_ends_iteration_after_the_clean_packets() {
         // version | len=2, [0xAA,0xBB] | len=9 but only 1 byte follows.
-        let frame = [ESP_NOW_FRAME_VERSION, 0x00, 0x02, 0xAA, 0xBB, 0x00, 0x09, 0xCC];
+        let frame = [
+            ESP_NOW_FRAME_VERSION,
+            0x00,
+            0x02,
+            0xAA,
+            0xBB,
+            0x00,
+            0x09,
+            0xCC,
+        ];
         let mut reader = decode_frame(&frame).unwrap();
         assert_eq!(reader.next(), Some(&[0xAA, 0xBB][..]));
         assert_eq!(reader.next(), None); // truncated second record dropped

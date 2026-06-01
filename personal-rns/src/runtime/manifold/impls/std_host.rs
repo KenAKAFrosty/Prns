@@ -146,7 +146,10 @@ mod tests {
             Duration::ZERO
         );
         // Idle → the bounded cap.
-        assert_eq!(wait_until(NextScheduledWakeup::Idle, now, MAX_WAIT), MAX_WAIT);
+        assert_eq!(
+            wait_until(NextScheduledWakeup::Idle, now, MAX_WAIT),
+            MAX_WAIT
+        );
         // A near deadline → exactly the gap until it.
         assert_eq!(
             wait_until(NextScheduledWakeup::At(InstantMillis(1_200)), now, MAX_WAIT),
@@ -154,7 +157,11 @@ mod tests {
         );
         // A far deadline → capped at the cap.
         assert_eq!(
-            wait_until(NextScheduledWakeup::At(InstantMillis(9_999_999)), now, MAX_WAIT),
+            wait_until(
+                NextScheduledWakeup::At(InstantMillis(9_999_999)),
+                now,
+                MAX_WAIT
+            ),
             MAX_WAIT
         );
         // A deadline already in the past → don't block.

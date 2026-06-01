@@ -28,9 +28,9 @@ use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
-use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::{Instant, Rate};
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
@@ -63,23 +63,23 @@ use personal_rns::engine::{
     FixedCapacityEngineState, OutboundPacket, ReannounceSchedule, SelfAnnounceConfig,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::impls::esp_now::embassy::{
+    run as run_esp_now_worker, EmbassyEspNowInterface, EspNowLink,
+    OutboundChannel as EspNowOutboundChannel, OutboundReceiver as EspNowOutboundReceiver,
+};
+use personal_rns::interfaces::impls::rns_parity::auto_interface::embassy::{
+    run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
+};
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::{
     run as run_lora_worker, EmbassyRnodeLoraInterface, OutboundChannel as LoraOutboundChannel,
     OutboundReceiver as LoraOutboundReceiver,
 };
-use personal_rns::interfaces::impls::rns_parity::auto_interface::embassy::{
-    run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
-};
-use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::impls::rns_parity::serial::embassy::{
     run as run_serial_worker, EmbassySerialInterface, OutboundChannel as SerialOutboundChannel,
     OutboundReceiver as SerialOutboundReceiver,
 };
-use personal_rns::interfaces::impls::esp_now::embassy::{
-    run as run_esp_now_worker, EmbassyEspNowInterface, EspNowLink,
-    OutboundChannel as EspNowOutboundChannel, OutboundReceiver as EspNowOutboundReceiver,
-};
+use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
 };
@@ -221,7 +221,6 @@ static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 /// history_overflow, held_cache>`.
 type S3EngineState = FixedCapacityEngineState<24, 32, 1024, 4, 128, 4>;
 
-
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";
 
@@ -305,7 +304,15 @@ async fn serial_worker_task(
     inbound: InboundSender<PACKET_BUFFER_SIZE>,
     outbound: SerialOutboundReceiver,
 ) {
-    run_serial_worker(rx, tx, SERIAL_INTERFACE_ID, inbound, outbound, &SERIAL_LINK_UP).await
+    run_serial_worker(
+        rx,
+        tx,
+        SERIAL_INTERFACE_ID,
+        inbound,
+        outbound,
+        &SERIAL_LINK_UP,
+    )
+    .await
 }
 
 #[esp_rtos::main]
@@ -493,12 +500,18 @@ async fn main(spawner: Spawner) {
     // Four workers — WiFi LAN + USB serial + LoRa + ESP-NOW — all in the manifold.
     let wifi_worker =
         EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP, &WIFI_PEERS);
-    let serial_worker =
-        EmbassySerialInterface::new(SERIAL_INTERFACE_ID, serial_outbound_ch.sender(), &SERIAL_LINK_UP);
+    let serial_worker = EmbassySerialInterface::new(
+        SERIAL_INTERFACE_ID,
+        serial_outbound_ch.sender(),
+        &SERIAL_LINK_UP,
+    );
     let lora_worker =
         EmbassyRnodeLoraInterface::new(LORA_INTERFACE_ID, lora_outbound_ch.sender(), &LORA_LINK_UP);
-    let espnow_worker =
-        EmbassyEspNowInterface::new(ESPNOW_INTERFACE_ID, espnow_outbound_ch.sender(), &ESPNOW_LINK_UP);
+    let espnow_worker = EmbassyEspNowInterface::new(
+        ESPNOW_INTERFACE_ID,
+        espnow_outbound_ch.sender(),
+        &ESPNOW_LINK_UP,
+    );
     let manifold = Manifold::new(
         state,
         [

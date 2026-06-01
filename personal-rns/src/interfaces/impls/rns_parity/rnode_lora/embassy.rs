@@ -216,7 +216,10 @@ pub async fn run<const MAILBOX: usize, RK, DLY>(
     let mut seq: u8 = 0;
 
     loop {
-        if let Err(e) = lora.prepare_for_rx(RxMode::Continuous, &modulation, &rx_pkt).await {
+        if let Err(e) = lora
+            .prepare_for_rx(RxMode::Continuous, &modulation, &rx_pkt)
+            .await
+        {
             log::warn!("RNS_LORA prepare_for_rx failed: {e:?}");
             link_up.store(false, Ordering::Relaxed);
             Timer::after(Duration::from_millis(500)).await;

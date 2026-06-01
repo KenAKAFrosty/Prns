@@ -68,7 +68,9 @@ impl InterfaceWorker for StdSerialInterface {
     fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
         // The mpsc channel is unbounded; the only failure is a gone receiver
         // (the worker thread exited), which the caller treats like a full queue.
-        self.outbound.send(packet.bytes.to_vec()).map_err(|_| QueueFull)
+        self.outbound
+            .send(packet.bytes.to_vec())
+            .map_err(|_| QueueFull)
     }
 }
 
@@ -129,9 +131,7 @@ pub fn run<P: Read + Write>(
                             // A peer is sending → the link is alive.
                             link_up.store(true, Ordering::Relaxed);
                             let entry = InboxEntry {
-                                arrived_at: InstantMillis(
-                                    clock_base.elapsed().as_millis() as u64
-                                ),
+                                arrived_at: InstantMillis(clock_base.elapsed().as_millis() as u64),
                                 source: id,
                                 bytes: frame.to_vec(),
                             };

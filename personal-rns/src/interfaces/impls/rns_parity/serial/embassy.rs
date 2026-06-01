@@ -110,7 +110,10 @@ fn now_millis() -> InstantMillis {
 /// write error or timeout (nothing reading) — that boolean is the link's
 /// liveness.
 async fn write_framed<W: Write>(tx: &mut W, framed: &[u8]) -> bool {
-    matches!(with_timeout(WRITE_TIMEOUT, tx.write_all(framed)).await, Ok(Ok(())))
+    matches!(
+        with_timeout(WRITE_TIMEOUT, tx.write_all(framed)).await,
+        Ok(Ok(()))
+    )
 }
 
 /// Drive the serial link forever: de-frame inbound bytes off `rx` into the
