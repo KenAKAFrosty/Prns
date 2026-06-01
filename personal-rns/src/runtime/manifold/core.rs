@@ -169,7 +169,7 @@ impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
 
     fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
         // The runtime drew CSPRNG-grade bytes this cycle; spread them across the
-        // engine's request (it asks for 8).
+        // engine's request, cycling to fill whatever the step draws.
         let bytes = self.entropy.to_le_bytes();
         for (dst, src) in buf.iter_mut().zip(bytes.iter().cycle()) {
             *dst = *src;
@@ -190,7 +190,7 @@ impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
         Ok(inbound)
     }
 
-    fn handle_egress(
+    fn handle_outbound_packet(
         &mut self,
         packet: OutboundPacket,
         fire_on: &[InterfaceId],

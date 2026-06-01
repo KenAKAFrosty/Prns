@@ -63,7 +63,7 @@ impl EngineDriver for SdkEngineDriver {
         Ok(&[])
     }
 
-    fn handle_egress(
+    fn handle_outbound_packet(
         &mut self,
         _packet: OutboundPacket,
         _fire_on: &[InterfaceId],

@@ -15,6 +15,7 @@
 
 use crate::engine::{
     ingest, tick, EngineState, InboundPacket, IngestOutput, InstantMillis, OutboundPacket,
+    StepEntropy, STEP_ENTROPY_LEN,
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{
@@ -34,6 +35,17 @@ pub struct TickSummary {
 pub struct StepOutput {
     pub ingest: IngestOutput,
     pub tick: TickSummary,
+    /// Whether this step actually drew on its [`StepEntropy`](crate::engine::StepEntropy):
+    /// the self-announce nonce was minted, or jitter was used to schedule a
+    /// re-emission (in ingest or held-recovery). The default `step` re-draws
+    /// every cycle regardless — cheap enough that it's the right default (a
+    /// `getrandom` syscall on hosts, a sub-µs gated TRNG read on ESP32). A host
+    /// that wants to avoid even that on quiet cycles can override `step` and
+    /// only re-fill its `StepEntropy` after a step reports `true`. The nonce
+    /// term is exact (it gates a wire-exposed, must-be-unique value); the jitter
+    /// term is a faithful proxy off the re-emission counts, and a false negative
+    /// there would only mildly correlate two spreads — never a correctness bug.
+    pub entropy_consumed: bool,
 }
 
 /// One platform's per-cycle fuel for the engine. A host implements the four
@@ -85,7 +97,7 @@ pub trait EngineDriver {
     /// the step early. Most drivers will want to log and swallow per-
     /// interface dispatch failures, returning `Ok` so the rest of the
     /// tick's directives still get a chance to dispatch.
-    fn handle_egress(
+    fn handle_outbound_packet(
         &mut self,
         packet: OutboundPacket,
         fire_on: &[InterfaceId],
@@ -95,7 +107,7 @@ pub trait EngineDriver {
     /// `ingest`, runs `tick`, then iterates every directive the tick
     /// produced — serializing each via `EgressDirective::to_wire` and
     /// handing the bytes (plus provenance) to this driver's
-    /// `handle_egress`. The `TickOutput`'s Drop commits the tick's
+    /// `handle_outbound_packet`. The `TickOutput`'s Drop commits the tick's
     /// emissions on the way out.
     ///
     /// The engine state stays a passed argument — one driver can step several
@@ -112,20 +124,18 @@ pub trait EngineDriver {
         H: AnnounceIdHistory,
         D: RetainedAppData,
     {
-        // Sip 8 bytes of driver entropy for this step. CSPRNG-quality is the
-        // driver's contract (see `EngineDriver::fill_entropy`); the engine
-        // doesn't check, it just consumes opaque bytes. These same 8 bytes also drive
-        // ingest jitter and tick's held-recovery jitter so deterministic-replay
-        // tests can compare bit-for-bit.
-        let mut entropy_bytes = [0u8; 8];
-        self.fill_entropy(&mut entropy_bytes)?;
-        let entropy = u64::from_le_bytes(entropy_bytes);
+        // CSPRNG-quality is the driver's contract (see `EngineDriver::fill_entropy`);
+        // the engine doesn't check, it just consumes the bytes (deterministically given
+        // the seed) so deterministic-replay tests compare bit-for-bit.
+        let mut seed = [0u8; STEP_ENTROPY_LEN];
+        self.fill_entropy(&mut seed)?;
+        let entropy = StepEntropy::from_seed(seed);
 
         let packets = self.drain_inbound_packets()?;
-        let ingest = ingest(state, packets, entropy);
+        let ingest = ingest(state, packets, entropy.jitter);
 
         let now = self.now_millis()?;
-        let tick_output = tick(state, now, entropy);
+        let tick_output = tick(state, now, entropy.jitter);
         let tick_summary = TickSummary {
             egress_directive_count: tick_output.egress_directive_count(),
             recovered_from_held_count: tick_output.recovered_from_held_count(),
@@ -136,7 +146,10 @@ pub trait EngineDriver {
             let n = directive
                 .to_wire(&mut emit_buffer)
                 .expect("MTU-sized buf fits any valid wire packet");
-            self.handle_egress(OutboundPacket::new(&emit_buffer[..n]), directive.fire_on())?;
+            self.handle_outbound_packet(
+                OutboundPacket::new(&emit_buffer[..n]),
+                directive.fire_on(),
+            )?;
         }
         // Drop the tick output here → its Drop drains state's due rebroadcasts,
         // and releases the `&mut state` borrow so origination below can take it.
@@ -149,18 +162,30 @@ pub trait EngineDriver {
         // schedule). Independent of the tick's rebroadcasts; it fans out to
         // every registered interface — no source to exclude — so we only mint
         // and mark it emitted when there is at least one interface to carry it.
+        let mut self_announce_minted = false;
         if !state.registered_interfaces().is_empty() {
-            if let Some(n) = state.write_due_self_announce(now, entropy, &mut emit_buffer) {
-                self.handle_egress(
+            if let Some(n) =
+                state.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
+            {
+                self.handle_outbound_packet(
                     OutboundPacket::new(&emit_buffer[..n]),
                     state.registered_interfaces(),
                 )?;
+                self_announce_minted = true;
             }
         }
+
+        // Did the step touch its entropy? The nonce term is exact; the jitter
+        // terms mirror the re-emission schedules drawn in ingest and held
+        // recovery. Surfaced for a host that re-fills entropy lazily.
+        let entropy_consumed = self_announce_minted
+            || ingest.scheduled_rebroadcast_count() > 0
+            || tick_summary.recovered_from_held_count > 0;
 
         Ok(StepOutput {
             ingest,
             tick: tick_summary,
+            entropy_consumed,
         })
     }
 }
@@ -200,7 +225,7 @@ mod tests {
             Ok(&[])
         }
 
-        fn handle_egress(
+        fn handle_outbound_packet(
             &mut self,
             _packet: OutboundPacket,
             _fire_on: &[InterfaceId],
@@ -230,7 +255,7 @@ mod tests {
             Ok(self.queued)
         }
 
-        fn handle_egress(
+        fn handle_outbound_packet(
             &mut self,
             _packet: OutboundPacket,
             _fire_on: &[InterfaceId],
@@ -249,6 +274,9 @@ mod tests {
         assert_eq!(state.tick_count(), 1);
         assert_eq!(out.ingest.processed_packet_count(), 0);
         assert_eq!(out.tick.egress_directive_count, 0);
+        // A relay with nothing to do drew on no entropy package — the signal a
+        // lazy host watches to skip re-filling its StepEntropy.
+        assert!(!out.entropy_consumed);
     }
 
     #[test]
@@ -278,7 +306,7 @@ mod tests {
     /// End-to-end driver-facing contract: a single `step` ingests a real
     /// announce, accepts it, schedules a rebroadcast, and — once the
     /// driver's `now` is past the jitter window — hands the wire bytes
-    /// back via `handle_egress` with an engine-computed positive `fire_on`
+    /// back via `handle_outbound_packet` with an engine-computed positive `fire_on`
     /// list (registered interfaces minus the source).
     struct CapturingEngineDriver<'q> {
         queued: &'q [InboundPacket<'q>],
@@ -305,7 +333,7 @@ mod tests {
             Ok(self.queued)
         }
 
-        fn handle_egress(
+        fn handle_outbound_packet(
             &mut self,
             packet: OutboundPacket,
             fire_on: &[InterfaceId],
@@ -379,6 +407,8 @@ mod tests {
         assert_eq!(out.ingest.accepted_announce_count(), 1);
         assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
         assert_eq!(out.tick.egress_directive_count, 1);
+        // Scheduling the re-emission drew the jitter package.
+        assert!(out.entropy_consumed);
         assert_eq!(driver.handled.len(), 1);
         assert_eq!(
             driver.handled[0].0,
@@ -398,7 +428,7 @@ mod tests {
     fn step_elides_directives_when_the_only_registered_interface_is_the_source() {
         // Edge case: the only target the engine knows about IS the source.
         // Fanout would be empty, so the engine elides the directive — the
-        // driver sees no handle_egress call this tick. The rebroadcast is
+        // driver sees no handle_outbound_packet call this tick. The rebroadcast is
         // still drained (engine processed it; nothing to do), so it won't
         // re-fire on a later tick.
         let raw = hx(RAW_ANNOUNCE);
@@ -464,8 +494,10 @@ mod tests {
             handled: std::vec::Vec::new(),
         };
 
-        driver.step(&mut state).unwrap();
+        let out = driver.step(&mut state).unwrap();
 
+        // Minting the self-announce nonce drew the self-announce package.
+        assert!(out.entropy_consumed);
         // Exactly one origination, fanned out to both registered interfaces.
         assert_eq!(driver.handled.len(), 1);
         let (fire_on, bytes) = &driver.handled[0];

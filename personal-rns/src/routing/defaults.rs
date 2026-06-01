@@ -68,17 +68,22 @@ pub const DEFAULT_HISTORY_OVERFLOW_CAPACITY: usize =
 /// but local — peers don't enforce any particular timing.
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;
 
+/// A spreading seed, not cryptographic randomness:  [`jitter_offset_for`] mixes it per-destination,
+/// so a flood of simultaneous receives doesn't resynchronize into one re-broadcast burst.
+#[derive(Debug, Clone, Copy)]
+pub struct JitterSeed(pub u64);
+
 /// Determinism is the contract: the same `(entropy, destination, window_ms)`
 /// always returns the same value, so a tick can be replayed exactly.
 pub(crate) fn jitter_offset_for(
-    entropy: u64,
+    seed: JitterSeed,
     destination: &DestinationHash,
     window_ms: u64,
 ) -> u64 {
     // A wyhash-style splitmix step per 8 bytes of the destination is
     // sufficient mixing here; the goal is "spread out", not "indistinguishable
     // from random". The 16-byte destination is exactly two u64 chunks.
-    let mut h = entropy;
+    let mut h = seed.0;
     for chunk in destination.as_bytes().chunks_exact(8) {
         let word = u64::from_le_bytes(chunk.try_into().expect("chunks_exact(8) yields 8 bytes"));
         h ^= word;
@@ -103,8 +108,8 @@ mod tests {
     #[test]
     fn jitter_is_deterministic_and_inside_the_window() {
         let window = 500;
-        let a = jitter_offset_for(0xCAFE_F00D, &dest(0x11), window);
-        let b = jitter_offset_for(0xCAFE_F00D, &dest(0x11), window);
+        let a = jitter_offset_for(JitterSeed(0xCAFE_F00D), &dest(0x11), window);
+        let b = jitter_offset_for(JitterSeed(0xCAFE_F00D), &dest(0x11), window);
         assert_eq!(a, b, "same inputs must produce the same offset");
         assert!(a < window, "offset must be inside the jitter window");
     }
@@ -115,7 +120,7 @@ mod tests {
         // must land at different points in a 500ms window or there's no point
         // jittering. Spot-check a handful — they should not all collide.
         let window = 500;
-        let entropy = 0xDEAD_BEEF;
+        let entropy = JitterSeed(0xDEAD_BEEF);
         let offsets: std::vec::Vec<u64> = (0u8..8)
             .map(|b| jitter_offset_for(entropy, &dest(b), window))
             .collect();
@@ -127,8 +132,8 @@ mod tests {
     fn varying_entropy_moves_the_offset() {
         let window = 500;
         let d = dest(0x42);
-        let lo = jitter_offset_for(0, &d, window);
-        let hi = jitter_offset_for(u64::MAX, &d, window);
+        let lo = jitter_offset_for(JitterSeed(0), &d, window);
+        let hi = jitter_offset_for(JitterSeed(u64::MAX), &d, window);
         assert_ne!(
             lo, hi,
             "different entropy should not collapse to the same offset"
@@ -137,6 +142,6 @@ mod tests {
 
     #[test]
     fn zero_window_yields_zero_offset() {
-        assert_eq!(jitter_offset_for(0xCAFE, &dest(0xAA), 0), 0);
+        assert_eq!(jitter_offset_for(JitterSeed(0xCAFE), &dest(0xAA), 0), 0);
     }
 }

@@ -26,6 +26,17 @@ impl AnnounceNonce {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SelfAnnounceEntropy([u8; NONCE_LEN]);
+
+impl SelfAnnounceEntropy {
+    pub const LEN: usize = NONCE_LEN;
+
+    pub const fn new(bytes: [u8; NONCE_LEN]) -> Self {
+        Self(bytes)
+    }
+}
+
 /// The origin's clock at announce emission: a 5-byte big-endian count
 /// (`0..=2^40-1`, ~34,800 years). Receivers only ever *compare* these, never
 /// add them to a wall-clock value, so the type stays distinct from epoch
@@ -70,13 +81,11 @@ pub struct AnnounceId {
 }
 
 impl AnnounceId {
-    pub fn mint(entropy: u64, now: InstantMillis) -> Self {
-        let mut nonce = [0u8; NONCE_LEN];
-        nonce.copy_from_slice(&entropy.to_be_bytes()[..NONCE_LEN]);
+    pub fn mint(nonce: SelfAnnounceEntropy, now: InstantMillis) -> Self {
         let mut timebase = [0u8; TIMEBASE_LEN];
         timebase.copy_from_slice(&now.0.to_be_bytes()[8 - TIMEBASE_LEN..]);
         Self {
-            nonce: AnnounceNonce(nonce),
+            nonce: AnnounceNonce(nonce.0),
             timebase: MonotonicTimebase(timebase),
         }
     }

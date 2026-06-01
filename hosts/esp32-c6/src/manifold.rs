@@ -17,7 +17,7 @@
 //! per-platform Runtime, not the Manifold.
 //!
 //! Egress is **direct, not channelled**: the engine's synchronous
-//! `handle_egress` stages frames into a small reused buffer, and the Runtime
+//! `handle_outbound_packet` stages frames into a small reused buffer, and the Runtime
 //! flushes them straight to the owned TX with a non-blocking write. No egress
 //! channel, no per-fanout owned message — staging is one reused buffer.
 
@@ -167,7 +167,7 @@ impl Manifold {
         };
 
         // DRIVE one engine step over the intake batch; EXHAUST happens inside
-        // it, via the driver's `handle_egress` staging into `egress`.
+        // it, via the driver's `handle_outbound_packet` staging into `egress`.
         let accepted = {
             let mut driver = StagingExampleEngineDriver {
                 inbound: batch.as_slice(),
@@ -215,7 +215,7 @@ impl EngineDriver for StagingExampleEngineDriver<'_> {
         Ok(self.inbound)
     }
 
-    fn handle_egress(
+    fn handle_outbound_packet(
         &mut self,
         packet: OutboundPacket,
         fire_on: &[InterfaceId],

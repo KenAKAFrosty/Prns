@@ -22,9 +22,9 @@ use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
-    AnnounceId,
+    AnnounceId, SelfAnnounceEntropy,
 };
-use crate::routing::defaults::jitter_offset_for;
+use crate::routing::defaults::{jitter_offset_for, JitterSeed};
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
 use crate::routing::schedule::PendingRebroadcasts;
 use crate::routing::storage::{
@@ -53,6 +53,41 @@ pub const MAX_REGISTERED_INTERFACES: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
+/// Bytes the jitter package draws from the per-step seed (a `u64`).
+const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
+
+/// Raw entropy a single step needs, drawn once from
+/// [`EngineDriver::fill_entropy`](crate::engine::EngineDriver::fill_entropy)
+/// and split by [`StepEntropy::from_seed`] into one typed package per genuine
+/// randomness need.
+pub const STEP_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
+
+/// One step's entropy, split into a named package per consumer so the type
+/// declares exactly what randomness the step needs and for what. Adding a
+/// consumer means adding a field here — which forces [`from_seed`](Self::from_seed)
+/// and every caller to account for the new draw, rather than silently widening
+/// an opaque scalar.
+pub struct StepEntropy {
+    pub jitter: JitterSeed,
+    pub self_announce: SelfAnnounceEntropy,
+}
+
+impl StepEntropy {
+    /// Carve the raw step seed into its packages at the one auditable site:
+    /// the low [`JITTER_SEED_LEN`] bytes seed the jitter spreader, the next
+    /// [`SelfAnnounceEntropy::LEN`] are the self-announce nonce.
+    pub fn from_seed(seed: [u8; STEP_ENTROPY_LEN]) -> Self {
+        let mut jitter = [0u8; JITTER_SEED_LEN];
+        jitter.copy_from_slice(&seed[..JITTER_SEED_LEN]);
+        let mut nonce = [0u8; SelfAnnounceEntropy::LEN];
+        nonce.copy_from_slice(&seed[JITTER_SEED_LEN..]);
+        Self {
+            jitter: JitterSeed(u64::from_le_bytes(jitter)),
+            self_announce: SelfAnnounceEntropy::new(nonce),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InboundPacket<'a> {
     pub arrived_at: InstantMillis,
@@ -62,7 +97,7 @@ pub struct InboundPacket<'a> {
 
 /// One serialized Reticulum wire packet on its way out — the outbound
 /// counterpart to [`InboundPacket`]. A newtype over the bytes so the egress
-/// seam (`EngineDriver::handle_egress`, `InterfaceWorker::submit`) names
+/// seam (`EngineDriver::handle_outbound_packet`, `InterfaceWorker::submit`) names
 /// *exactly one packet* rather than a bare `&[u8]` a reader might mistake for a
 /// batch of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,7 +414,7 @@ where
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
-        entropy: u64,
+        entropy: SelfAnnounceEntropy,
         buf: &mut [u8],
     ) -> Option<usize> {
         let identity = self.identity.as_ref()?;
@@ -559,7 +594,7 @@ where
 pub fn ingest<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     packets: &[InboundPacket<'_>],
-    entropy: u64,
+    jitter: JitterSeed,
 ) -> IngestOutput
 where
     R: RouteColumns,
@@ -586,7 +621,7 @@ where
                 received_hops,
                 source_interface,
                 arrived_at,
-                entropy,
+                jitter,
                 &mut counters,
             ),
 
@@ -629,7 +664,7 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     received_hops: u8,
     source_interface: InterfaceId,
     arrived_at: InstantMillis,
-    entropy: u64,
+    jitter: JitterSeed,
     counters: &mut IngestCounters,
 ) where
     R: RouteColumns,
@@ -661,7 +696,7 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
         UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
             counters.accepted += 1;
             let offset = jitter_offset_for(
-                entropy,
+                jitter,
                 &announce.destination,
                 DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
             );
@@ -710,7 +745,7 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
 pub fn tick<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     now: InstantMillis,
-    entropy: u64, //REVIEW why is entropy only a u64 here?
+    jitter: JitterSeed,
 ) -> TickOutput<'_, R, A, H, D, MAX_HELD_ANNOUNCES>
 where
     R: RouteColumns,
@@ -759,7 +794,7 @@ where
                     ) {
                         recovered_from_held_count += 1;
                         let offset = jitter_offset_for(
-                            entropy,
+                            jitter,
                             &announce.destination,
                             DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
                         );
@@ -828,7 +863,9 @@ mod tests {
 
     /// Fixed entropy so determinism tests can compare two runs apples-to-apples;
     /// the engine treats entropy as opaque data, the value just has to be stable.
-    const TEST_ENTROPY: u64 = 0xCAFE_F00D_DEAD_BEEF;
+    const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
+    const TEST_NONCE: SelfAnnounceEntropy =
+        SelfAnnounceEntropy::new([0xAB; SelfAnnounceEntropy::LEN]);
 
     /// What the tests need to assert against a tick, snapshotted to a
     /// value type so it can outlive the `TickOutput` borrow on state.
@@ -973,15 +1010,15 @@ mod tests {
     #[test]
     fn self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer();
-        // `now`'s low 5 bytes become the announce-id timebase and `entropy`'s
-        // high 5 bytes the nonce, so the minted random_hash is [0x44; 10] —
-        // matching the deterministic oracle vector.
+        // `now`'s low 5 bytes become the announce-id timebase and the nonce
+        // package supplies the other 5, so the minted random_hash is [0x44; 10]
+        // — matching the deterministic oracle vector.
         let now = InstantMillis(0x44_4444_4444);
-        let entropy = 0x4444_4444_4444_4444;
+        let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
 
         let mut buf = [0u8; MTU];
         let n = state
-            .write_due_self_announce(now, entropy, &mut buf)
+            .write_due_self_announce(now, nonce, &mut buf)
             .expect("a self-announce is due on the first call");
 
         let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
@@ -1004,15 +1041,15 @@ mod tests {
         let interval = ReannounceSchedule::default().interval_millis();
 
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000), 0, &mut buf)
+            .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
             .is_some());
         // Immediately after, nothing is due.
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000), 0, &mut buf)
+            .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
             .is_none());
         // One interval later, due again.
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000 + interval), 0, &mut buf)
+            .write_due_self_announce(InstantMillis(1_000 + interval), TEST_NONCE, &mut buf)
             .is_some());
     }
 
@@ -1021,7 +1058,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let mut buf = [0u8; MTU];
         assert_eq!(
-            state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
+            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
             None,
         );
     }
@@ -1031,7 +1068,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = EngineState::new(&fixed_secret_key());
         let mut buf = [0u8; MTU];
         assert_eq!(
-            state.write_due_self_announce(InstantMillis(1_000), 0, &mut buf),
+            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
             None,
         );
     }
@@ -1076,7 +1113,7 @@ mod tests {
         let mut state = personal_node_announcer();
         let mut buf = [0u8; MTU];
         state
-            .write_due_self_announce(InstantMillis(1_000), 0, &mut buf)
+            .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
             .expect("first announce is due");
 
         let interval = ReannounceSchedule::default().interval_millis();
