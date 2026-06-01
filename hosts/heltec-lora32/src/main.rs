@@ -84,10 +84,11 @@ use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
 };
+use personal_rns::runtime::host::impls::EmbassyHost;
 use personal_rns::runtime::manifold::impls::embassy::{
-    run as run_manifold, InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
+    InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
 };
-use personal_rns::runtime::{InterfaceView, Manifold, RuntimeSnapshot};
+use personal_rns::runtime::{run, InterfaceView, Manifold, RuntimeSnapshot};
 
 mod display;
 
@@ -639,10 +640,14 @@ async fn main(spawner: Spawner) {
     // Run the manifold loop: aggregate the worker's inbound, drive the engine,
     // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.
     // CSPRNG entropy from the (radio-seeded) RNG per cycle.
-    let manifold_fut = run_manifold(manifold, inbound_rx, SNAPSHOT_WATCH.sender(), || {
+    let host = EmbassyHost::new(inbound_rx, || {
         let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
+    });
+    let snapshot_tx = SNAPSHOT_WATCH.sender();
+    let manifold_fut = run(manifold, host, move |snapshot: &RuntimeSnapshot| {
+        snapshot_tx.send(snapshot.clone());
     });
 
     // Render the Hopspot screen alongside it. Event-driven: subscribe to the
