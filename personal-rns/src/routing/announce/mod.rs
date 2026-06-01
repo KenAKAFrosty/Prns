@@ -18,6 +18,8 @@ use crate::wire::{
     TRUNCATED_HASH_BYTE_LEN,
 };
 use heapless::Vec as HeaplessVec;
+pub const ANNOUNCE_FIXED_FIELDS_LEN: usize =
+    ANNOUNCE_PUBLIC_KEY_LEN + DOTTED_NAME_HASH_LEN + ANNOUNCE_ID_WIRE_LEN + SIGNATURE_LEN;
 
 /// The 64-byte announced public key, split by role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,11 +169,7 @@ impl<'a> Announce<'a> {
 
         let has_ratchet = header.context_flag == ContextFlag::Set;
         let ratchet_len = if has_ratchet { RATCHET_LEN } else { 0 };
-        let fixed_len = ANNOUNCE_PUBLIC_KEY_LEN
-            + DOTTED_NAME_HASH_LEN
-            + ANNOUNCE_ID_WIRE_LEN
-            + ratchet_len
-            + SIGNATURE_LEN;
+        let fixed_len = ANNOUNCE_FIXED_FIELDS_LEN + ratchet_len;
 
         if payload.len() < fixed_len {
             return Err(AnnounceValidationError::PayloadTooSmall);

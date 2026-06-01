@@ -47,11 +47,9 @@ use crate::engine::InstantMillis;
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::{
-    Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_ID_WIRE_LEN,
+    Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_FIXED_FIELDS_LEN,
 };
-use crate::wire::{
-    DestinationHash, ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, HEADER_LEN, MTU, SIGNATURE_LEN,
-};
+use crate::wire::{DestinationHash, HEADER_LEN, MTU};
 
 pub const DEFAULT_HELD_CACHE_CAPACITY: usize = 64;
 
@@ -59,12 +57,7 @@ pub const DEFAULT_HELD_CACHE_CAPACITY: usize = 64;
 /// max after the fixed-width fields. Computed from the wire constants so it
 /// stays coupled to MTU and field widths; every valid announce on the wire
 /// fits without `AppDataTooLarge`.
-pub const HELD_APP_DATA_LIMIT: usize = MTU
-    - HEADER_LEN
-    - ANNOUNCE_PUBLIC_KEY_LEN
-    - DOTTED_NAME_HASH_LEN
-    - ANNOUNCE_ID_WIRE_LEN
-    - SIGNATURE_LEN;
+pub const HELD_APP_DATA_LIMIT: usize = MTU - HEADER_LEN - ANNOUNCE_FIXED_FIELDS_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParkOutcome {
@@ -356,6 +349,8 @@ impl<const CAPACITY: usize> HeldAnnouncesCache<CAPACITY> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::announce::ANNOUNCE_ID_WIRE_LEN;
+    use crate::wire::{ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, SIGNATURE_LEN};
 
     fn ts(n: u64) -> InstantMillis {
         InstantMillis(n)

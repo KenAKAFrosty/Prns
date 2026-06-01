@@ -247,20 +247,12 @@ mod kani_proofs {
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
     use crate::routing::announce::{
-        AnnounceId, DottedNameHash, IdentityPublicKeys, ANNOUNCE_ID_WIRE_LEN,
+        AnnounceId, DottedNameHash, IdentityPublicKeys, ANNOUNCE_FIXED_FIELDS_LEN,
     };
-    use crate::wire::{
-        DestinationHash, ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, SIGNATURE_LEN,
-    };
+    use crate::wire::DestinationHash;
 
     const APP_DATA_LEN: usize = 2;
-
-    //REVIEW why was this re-built here? Checking if this is a sign that this ANNOUNCE_WIRE_LEN needs to go into wire/ ?
-    const ANNOUNCE_WIRE_LEN: usize = ANNOUNCE_PUBLIC_KEY_LEN
-        + DOTTED_NAME_HASH_LEN
-        + ANNOUNCE_ID_WIRE_LEN
-        + SIGNATURE_LEN
-        + APP_DATA_LEN;
+    const ANNOUNCE_WIRE_LEN: usize = ANNOUNCE_FIXED_FIELDS_LEN + APP_DATA_LEN;
     const EXACT_REEMIT_LEN: usize = HEADER_LEN + ANNOUNCE_WIRE_LEN;
     static APP_DATA: [u8; APP_DATA_LEN] = [0xA5, 0x5A];
 

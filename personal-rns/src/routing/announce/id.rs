@@ -6,6 +6,8 @@
 //! (big-endian, the monotonic "announce time" receivers compare per
 //! destination). Splitting at the type level keeps the names honest.
 
+use crate::engine::InstantMillis;
+
 pub const ANNOUNCE_ID_WIRE_LEN: usize = 10;
 const NONCE_LEN: usize = 5;
 const TIMEBASE_LEN: usize = 5;
@@ -68,6 +70,17 @@ pub struct AnnounceId {
 }
 
 impl AnnounceId {
+    pub fn mint(entropy: u64, now: InstantMillis) -> Self {
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce.copy_from_slice(&entropy.to_be_bytes()[..NONCE_LEN]);
+        let mut timebase = [0u8; TIMEBASE_LEN];
+        timebase.copy_from_slice(&now.0.to_be_bytes()[8 - TIMEBASE_LEN..]);
+        Self {
+            nonce: AnnounceNonce(nonce),
+            timebase: MonotonicTimebase(timebase),
+        }
+    }
+
     pub fn from_wire(bytes: [u8; ANNOUNCE_ID_WIRE_LEN]) -> Self {
         let mut nonce = [0u8; NONCE_LEN];
         nonce.copy_from_slice(&bytes[..NONCE_LEN]);

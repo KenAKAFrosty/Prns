@@ -22,7 +22,7 @@ use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
-    AnnounceId, ANNOUNCE_ID_WIRE_LEN,
+    AnnounceId,
 };
 use crate::routing::defaults::jitter_offset_for;
 use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
@@ -391,7 +391,7 @@ where
         let announce = Announce::build_signed(
             identity,
             self_announce.name_hash(),
-            mint_announce_id(entropy, now),
+            AnnounceId::mint(entropy, now),
             None,
             self_announce.app_data(),
         )
@@ -405,19 +405,6 @@ where
             .mark_announced(now);
         Some(written)
     }
-}
-
-//REVIEW why is this in here and not in announces?
-/// Mint an announce id (RNS `random_hash`) from a step's entropy and clock: the
-/// 5-byte replay nonce comes from `entropy`, the 5-byte monotonic timebase from
-/// the low 40 bits of `now` in milliseconds. Receivers only ever compare
-/// timebases per origin, so our millisecond clock plays the same role RNS's
-/// second-resolution `time()` does on the wire.
-fn mint_announce_id(entropy: u64, now: InstantMillis) -> AnnounceId {
-    let mut wire = [0u8; ANNOUNCE_ID_WIRE_LEN];
-    wire[..5].copy_from_slice(&entropy.to_be_bytes()[..5]);
-    wire[5..].copy_from_slice(&now.0.to_be_bytes()[3..8]);
-    AnnounceId::from_wire(wire)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
