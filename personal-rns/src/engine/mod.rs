@@ -135,7 +135,7 @@ impl<'a> OutboundPacket<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NextScheduledWakeup {
+pub enum NextScheduledEngineWork {
     Immediate,
     At(InstantMillis),
     Idle,
@@ -390,11 +390,11 @@ where
     /// that folds every timed obligation — any new scheduled behavior MUST be
     /// represented here, or a deadline-driven host would sleep through it. Pure;
     /// call it after a step to decide how long to sleep before the next one.
-    pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledWakeup {
+    pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
         // Parked held entries are fully drained on the next tick, so any parked
         // entry means there is work to do right now.
         if self.held_announce_count() > 0 {
-            return NextScheduledWakeup::Immediate;
+            return NextScheduledEngineWork::Immediate;
         }
 
         let mut earliest: Option<InstantMillis> = None;
@@ -402,7 +402,7 @@ where
         // Our own re-announce cadence.
         if let Some(self_announce) = &self.self_announce {
             if self_announce.is_due(now) {
-                return NextScheduledWakeup::Immediate;
+                return NextScheduledEngineWork::Immediate;
             }
             if let Some(deadline) = self_announce.next_due_at() {
                 earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
@@ -412,14 +412,14 @@ where
         // Queued rebroadcasts: due now → Immediate, else fold the earliest.
         if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
             if due_at <= now {
-                return NextScheduledWakeup::Immediate;
+                return NextScheduledEngineWork::Immediate;
             }
             earliest = Some(earliest.map_or(due_at, |e| e.min(due_at)));
         }
 
         match earliest {
-            Some(instant) => NextScheduledWakeup::At(instant),
-            None => NextScheduledWakeup::Idle,
+            Some(instant) => NextScheduledEngineWork::At(instant),
+            None => NextScheduledEngineWork::Idle,
         }
     }
 
@@ -1126,7 +1126,7 @@ mod tests {
         let state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         assert_eq!(
             state.next_wakeup(InstantMillis(1_000)),
-            NextScheduledWakeup::Idle
+            NextScheduledEngineWork::Idle
         );
     }
 
@@ -1136,7 +1136,7 @@ mod tests {
         let state = personal_node_announcer();
         assert_eq!(
             state.next_wakeup(InstantMillis(0)),
-            NextScheduledWakeup::Immediate
+            NextScheduledEngineWork::Immediate
         );
     }
 
@@ -1151,7 +1151,7 @@ mod tests {
         let interval = ReannounceSchedule::default().interval_millis();
         assert_eq!(
             state.next_wakeup(InstantMillis(2_000)),
-            NextScheduledWakeup::At(InstantMillis(1_000 + interval)),
+            NextScheduledEngineWork::At(InstantMillis(1_000 + interval)),
         );
     }
 
@@ -1173,7 +1173,7 @@ mod tests {
         // Before its (jittered) due time → wake At that instant, within the
         // window after arrival.
         match state.next_wakeup(InstantMillis(0)) {
-            NextScheduledWakeup::At(t) => assert!(
+            NextScheduledEngineWork::At(t) => assert!(
                 t.0 >= 1_000 && t.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
                 "due_at {} should sit within the jitter window after arrival",
                 t.0,
@@ -1184,7 +1184,7 @@ mod tests {
         // Well past the due time → Immediate.
         assert_eq!(
             state.next_wakeup(InstantMillis(1_000_000)),
-            NextScheduledWakeup::Immediate,
+            NextScheduledEngineWork::Immediate,
         );
     }
 

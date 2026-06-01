@@ -1,4 +1,4 @@
-use crate::engine::{InstantMillis, NextScheduledWakeup};
+use crate::engine::{InstantMillis, NextScheduledEngineWork};
 use crate::interfaces::InterfaceWorker;
 
 /// OPTIONAL refinement of [`InterfaceWorker`] for workers that cannot run
@@ -14,5 +14,5 @@ pub trait RuntimeDriven: InterfaceWorker {
     /// be polled, folded the same way the engine folds its own
     /// [`next_wakeup`](crate::engine::EngineState::next_wakeup): `Immediate` if
     /// there is work due now, `At` for a deadline, `Idle` if nothing is pending.
-    fn poll(&mut self, now: InstantMillis) -> NextScheduledWakeup;
+    fn poll(&mut self, now: InstantMillis) -> NextScheduledEngineWork;
 }

@@ -13,7 +13,9 @@ use embassy_time::{Instant as EmbassyInstant, Timer};
 use heapless::Vec as HVec;
 
 use super::super::{CycleStamp, RuntimeHost};
-use crate::engine::{EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::engine::{
+    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
+};
 use crate::runtime::manifold::impls::embassy::{InboundReceiver, InboxEntry, INBOX_DEPTH};
 
 /// The embassy host: the inbound `Channel` the worker tasks stamp into, an
@@ -46,20 +48,20 @@ impl<const PACKET_BUFFER_SIZE: usize, E> RuntimeHost for EmbassyHost<PACKET_BUFF
 where
     E: FnMut() -> EngineCycleEntropySeed,
 {
-    async fn wait(&mut self, wake: NextScheduledWakeup) -> CycleStamp {
+    async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp {
         self.batch.clear();
 
         // Suspend until the engine's next deadline or a stamped packet. This is
         // the genuine `.await`: the embassy executor sleeps the core here.
         match wake {
-            NextScheduledWakeup::Immediate => {}
-            NextScheduledWakeup::At(deadline) => {
+            NextScheduledEngineWork::Immediate => {}
+            NextScheduledEngineWork::At(deadline) => {
                 let at = EmbassyInstant::from_millis(deadline.0);
                 if let Either::First(entry) = select(self.inbound.receive(), Timer::at(at)).await {
                     let _ = self.batch.push(entry);
                 }
             }
-            NextScheduledWakeup::Idle => {
+            NextScheduledEngineWork::Idle => {
                 let entry = self.inbound.receive().await;
                 let _ = self.batch.push(entry);
             }

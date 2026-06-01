@@ -3,7 +3,9 @@ use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
 use super::super::{Manifold, RuntimeSnapshot};
-use crate::engine::{EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::engine::{
+    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
+};
 use crate::interfaces::InterfaceWorker;
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -34,7 +36,7 @@ pub trait RuntimeHost {
     /// then sample the clock and draw a fresh per-cycle seed. This is the only
     /// `.await` in the loop: where an executor-backed host suspends and a sync
     /// host blocks.
-    async fn wait(&mut self, wake: NextScheduledWakeup) -> CycleStamp;
+    async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp;
 
     /// Lend the inbound drained by the last [`wait`](Self::wait) as borrowed
     /// packets — a lazy view over the host's batch buffer. Returning an iterator
@@ -68,11 +70,13 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    let mut wake = NextScheduledWakeup::Immediate;
+    let mut wake = NextScheduledEngineWork::Immediate;
     loop {
         let CycleStamp { now, seed } = host.wait(wake).await;
         let _ = manifold.cycle_once(now, seed, host.inbound_packets());
         observe(&manifold.snapshot());
+
+        //REVIEW somewhere in here we lost the part where we want to race between outputs that came from the engine operations (like our next scheduled item based on the engine), and then race that with the next inbound packet that comes in. We messed something up with these seams!!
         wake = manifold.next_wakeup(now);
     }
 }
@@ -129,7 +133,7 @@ mod tests {
         bytes: [u8; 1],
     }
     impl RuntimeHost for OneShotHost {
-        async fn wait(&mut self, _wake: NextScheduledWakeup) -> CycleStamp {
+        async fn wait(&mut self, _wake: NextScheduledEngineWork) -> CycleStamp {
             CycleStamp {
                 now: InstantMillis(10),
                 seed: EngineCycleEntropySeed::new([0u8; ENGINE_CYCLE_ENTROPY_LEN]),
@@ -168,7 +172,7 @@ mod tests {
         let mut host = OneShotHost { bytes: [0xAA] };
 
         let processed = block_on(async {
-            let CycleStamp { now, seed } = host.wait(NextScheduledWakeup::Immediate).await;
+            let CycleStamp { now, seed } = host.wait(NextScheduledEngineWork::Immediate).await;
             manifold
                 .cycle_once(now, seed, host.inbound_packets())
                 .ingest

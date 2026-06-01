@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use super::super::{Manifold, RuntimeSnapshot};
-use crate::engine::{EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledWakeup};
+use crate::engine::{
+    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
+};
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -47,11 +49,11 @@ const MAX_WAIT: Duration = Duration::from_secs(1);
 /// How long the next inbound-wait should block, given the engine's next
 /// scheduled work and the current time: due now → don't block; a future deadline
 /// → exactly the gap (capped at `max`); idle → `max`.
-fn wait_until(next: NextScheduledWakeup, now: InstantMillis, max: Duration) -> Duration {
+fn wait_until(next: NextScheduledEngineWork, now: InstantMillis, max: Duration) -> Duration {
     match next {
-        NextScheduledWakeup::Immediate => Duration::ZERO,
-        NextScheduledWakeup::Idle => max,
-        NextScheduledWakeup::At(deadline) => {
+        NextScheduledEngineWork::Immediate => Duration::ZERO,
+        NextScheduledEngineWork::Idle => max,
+        NextScheduledEngineWork::At(deadline) => {
             Duration::from_millis(deadline.0.saturating_sub(now.0)).min(max)
         }
     }
@@ -142,23 +144,27 @@ mod tests {
         let now = InstantMillis(1_000);
         // Work due now → don't block.
         assert_eq!(
-            wait_until(NextScheduledWakeup::Immediate, now, MAX_WAIT),
+            wait_until(NextScheduledEngineWork::Immediate, now, MAX_WAIT),
             Duration::ZERO
         );
         // Idle → the bounded cap.
         assert_eq!(
-            wait_until(NextScheduledWakeup::Idle, now, MAX_WAIT),
+            wait_until(NextScheduledEngineWork::Idle, now, MAX_WAIT),
             MAX_WAIT
         );
         // A near deadline → exactly the gap until it.
         assert_eq!(
-            wait_until(NextScheduledWakeup::At(InstantMillis(1_200)), now, MAX_WAIT),
+            wait_until(
+                NextScheduledEngineWork::At(InstantMillis(1_200)),
+                now,
+                MAX_WAIT
+            ),
             Duration::from_millis(200)
         );
         // A far deadline → capped at the cap.
         assert_eq!(
             wait_until(
-                NextScheduledWakeup::At(InstantMillis(9_999_999)),
+                NextScheduledEngineWork::At(InstantMillis(9_999_999)),
                 now,
                 MAX_WAIT
             ),
@@ -166,7 +172,11 @@ mod tests {
         );
         // A deadline already in the past → don't block.
         assert_eq!(
-            wait_until(NextScheduledWakeup::At(InstantMillis(500)), now, MAX_WAIT),
+            wait_until(
+                NextScheduledEngineWork::At(InstantMillis(500)),
+                now,
+                MAX_WAIT
+            ),
             Duration::ZERO
         );
     }

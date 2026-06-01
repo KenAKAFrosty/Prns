@@ -3,7 +3,7 @@ use heapless::Vec as HeaplessVec;
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InboundPacket,
-    InstantMillis, NextScheduledWakeup, OutboundPacket, StepOutput, TickSummary,
+    InstantMillis, NextScheduledEngineWork, OutboundPacket, StepOutput, TickSummary,
     MAX_REGISTERED_INTERFACES,
 };
 use crate::interfaces::{InterfaceId, InterfaceWorker};
@@ -190,7 +190,7 @@ where
 
     /// When the engine next needs a cycle — the runtime mins this with its own
     /// inbound readiness to size its sleep.
-    pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledWakeup {
+    pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
         self.engine.next_wakeup(now)
     }
 

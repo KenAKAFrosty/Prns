@@ -13,7 +13,7 @@ use std::vec::Vec;
 
 use super::super::{CycleStamp, RuntimeHost};
 use crate::engine::{
-    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledWakeup,
+    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
     ENGINE_CYCLE_ENTROPY_LEN,
 };
 use crate::runtime::manifold::impls::std_host::InboxEntry;
@@ -54,18 +54,18 @@ impl LinuxSync {
 
 /// How long the next inbound-wait should block: due now → don't block; a future
 /// deadline → exactly the gap (capped); idle → the cap.
-fn wait_for(next: NextScheduledWakeup, now: InstantMillis, max: Duration) -> Duration {
+fn wait_for(next: NextScheduledEngineWork, now: InstantMillis, max: Duration) -> Duration {
     match next {
-        NextScheduledWakeup::Immediate => Duration::ZERO,
-        NextScheduledWakeup::Idle => max,
-        NextScheduledWakeup::At(deadline) => {
+        NextScheduledEngineWork::Immediate => Duration::ZERO,
+        NextScheduledEngineWork::Idle => max,
+        NextScheduledEngineWork::At(deadline) => {
             Duration::from_millis(deadline.0.saturating_sub(now.0)).min(max)
         }
     }
 }
 
 impl RuntimeHost for LinuxSync {
-    async fn wait(&mut self, wake: NextScheduledWakeup) -> CycleStamp {
+    async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp {
         self.batch.clear();
 
         // Block until the engine's next deadline or a stamped packet — whichever
@@ -121,7 +121,7 @@ mod tests {
         .unwrap();
 
         // Immediate wake → no block; drains the queued entry into the batch.
-        let _stamp = block_on(host.wait(NextScheduledWakeup::Immediate));
+        let _stamp = block_on(host.wait(NextScheduledEngineWork::Immediate));
 
         let packets: Vec<InboundPacket<'_>> = host.inbound_packets().collect();
         assert_eq!(packets.len(), 1);
