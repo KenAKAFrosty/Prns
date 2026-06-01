@@ -50,9 +50,9 @@ pub type OutboundReceiver = Receiver<'static, CriticalSectionRawMutex, PacketBuf
 /// the handle's [`health`](EmbassyAutoInterface::health) reads it. `AtomicBool`
 /// because it's a single flag touched from two tasks with no ordering needs —
 /// a stale read for one render is harmless. The traffic/destination counters an
-/// app cares about are metered by the runtime ([`Manifold::snapshot`]), not here.
+/// app cares about are metered by the runtime ([`Runtime::snapshot`]), not here.
 ///
-/// [`Manifold::snapshot`]: crate::runtime::Manifold::snapshot
+/// [`Runtime::snapshot`]: crate::runtime::Runtime::snapshot
 pub type LinkUp = AtomicBool;
 
 pub struct EmbassyAutoInterface {
@@ -106,7 +106,7 @@ impl InterfaceWorker for EmbassyAutoInterface {
     fn health(&self) -> InterfaceStats {
         // Liveness is the live link state the shell publishes into `link_up`.
         // The packet/byte counters belong to the runtime's view (metered in
-        // `Manifold::snapshot`), so they stay at their defaults here.
+        // `Runtime::snapshot`), so they stay at their defaults here.
         InterfaceStats {
             link: LinkState::from_up(self.link_up.load(Ordering::Relaxed)),
             ..InterfaceStats::default()

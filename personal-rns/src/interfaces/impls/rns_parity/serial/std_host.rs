@@ -3,7 +3,7 @@
 //! test pipe). The host twin of the `embassy` shell: same shared `core`
 //! framing, expressed with std threads + channels instead of async.
 //!
-//! The handle ([`StdSerialInterface`]) is what the manifold holds and routes to;
+//! The handle ([`StdSerialInterface`]) is what the runtime holds and routes to;
 //! the byte I/O runs in [`run`], which a host calls on its own thread.
 
 use std::io::{Read, Write};
@@ -22,7 +22,7 @@ use crate::interfaces::{
 use crate::runtime::manifold::impls::std_host::InboxEntry;
 
 /// Outbound packets are raw Reticulum wire packets (the shell frames them); the
-/// manifold fills this, the shell drains it.
+/// runtime fills this, the shell drains it.
 pub type OutboundSender = Sender<Vec<u8>>;
 pub type OutboundReceiver = Receiver<Vec<u8>>;
 
@@ -115,7 +115,7 @@ pub fn run<P: Read + Write>(
                     Err(_) => {}
                 },
                 Err(TryRecvError::Empty) => break,
-                // The manifold's sender is gone — the host is shutting down.
+                // The runtime's sender is gone — the host is shutting down.
                 Err(TryRecvError::Disconnected) => return,
             }
         }

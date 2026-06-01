@@ -1,5 +1,6 @@
 use heapless::Vec as HeaplessVec;
 
+use super::super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InboundPacket,
@@ -12,26 +13,21 @@ use crate::routing::storage::{
 };
 use crate::wire::MTU;
 
-/// The substrate-neutral engine-bolt: it owns the engine and the registered
-/// workers, and turns one drive cycle into intake → engine step → exhaust.
-///
-/// Given the inbound the runtime aggregated plus a fresh clock and entropy,
-/// [`cycle_once`](Manifold::cycle_once) applies the engine primitives directly —
-/// ingesting, ticking, and routing every egress directive to the worker(s) named in
-/// its `fire_on` list via [`InterfaceWorker::submit`]. The over-time loop that
-/// decides *when* to cycle, draws entropy, and aggregates inbound is the
-/// per-platform runtime, layered above this — never part of it. `now`/`entropy`
-/// are passed in so the manifold itself touches no clock or RNG and stays
-/// neutral across std and embassy hosts.
+/// The runtime: it owns the engine and the registered workers as siblings, plus
+/// the traffic meter and a [`Host`]. The engine and the workers never speak
+/// directly — the runtime is their only seam: it aggregates the inbound the
+/// workers stamp, applies the engine's per-cycle primitives, and fans the egress
+/// back to the workers the engine named. The over-time loop ([`run`]) asks the
+/// host for clock + entropy + the sleep; the per-interface I/O is the workers'.
 ///
 /// Holds a set of workers (capacity [`MAX_REGISTERED_INTERFACES`], the same cap
 /// the engine routes within). A host that runs more than one interface composes
 /// `W` as its own worker enum so the set stays a single concrete type — no
-/// `dyn`, no alloc, and the inbound mailbox stays sized to one compile-time
-/// [`InterfaceWorker::PACKET_BUFFER_SIZE`]. Generic over the engine-state
-/// storage so a constrained host can pick a small preset (a desk node needs far
-/// fewer tracked destinations / history slots than the desktop default).
-pub struct Manifold<W, R, A, H, D, const MAX_HELD: usize>
+/// `dyn`, no alloc. Generic over the engine-state storage so a constrained host
+/// can pick a small preset (a desk node needs far fewer tracked destinations /
+/// history slots than the desktop default). `Ho` is unbounded on the struct so
+/// the cycle can be tested with a unit host; [`run`] is what requires [`Host`].
+pub struct Runtime<Ho, W, R, A, H, D, const MAX_HELD: usize>
 where
     W: InterfaceWorker,
     R: RouteColumns,
@@ -42,9 +38,10 @@ where
     engine: EngineState<R, A, H, D, MAX_HELD>,
     workers: HeaplessVec<W, MAX_REGISTERED_INTERFACES>,
     traffic: TrafficLedger,
+    host: Ho,
 }
 
-impl<W, R, A, H, D, const MAX_HELD: usize> Manifold<W, R, A, H, D, MAX_HELD>
+impl<Ho, W, R, A, H, D, const MAX_HELD: usize> Runtime<Ho, W, R, A, H, D, MAX_HELD>
 where
     W: InterfaceWorker,
     R: RouteColumns,
@@ -52,15 +49,15 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Bolt `engine` to `workers`, registering each (by its descriptor) so the
-    /// engine routes to it. Panics if a worker is not routable
+    /// Bolt `engine` to `workers` and a `host`, registering each worker (by its
+    /// descriptor) so the engine routes to it. Panics if a worker is not routable
     /// (`Connected`/`Degraded` + transmits) or if more than
-    /// [`MAX_REGISTERED_INTERFACES`] are supplied — a host wires a known-good
-    /// set at boot. Pass an array, e.g. `Manifold::new(state, [wifi])` or
-    /// `Manifold::new(state, [HostWorker::Wifi(w), HostWorker::Usb(u)])`.
+    /// [`MAX_REGISTERED_INTERFACES`] are supplied — a host wires a known-good set
+    /// at boot. Pass an array, e.g. `Runtime::new(state, [wifi], host)`.
     pub fn new(
         mut engine: EngineState<R, A, H, D, MAX_HELD>,
         workers: impl IntoIterator<Item = W>,
+        host: Ho,
     ) -> Self {
         let mut set: HeaplessVec<W, MAX_REGISTERED_INTERFACES> = HeaplessVec::new();
         for worker in workers {
@@ -76,119 +73,40 @@ where
             engine,
             workers: set,
             traffic: TrafficLedger::new(),
+            host,
         }
     }
 
-    /// The whole per-cycle orchestration, applied directly
-    /// against the manifold's own engine, workers, and traffic meter: carve the
-    /// step `seed`, ingest `inbound` (metering each packet to the interface that
-    /// stamped it), tick at `now`, fan every due egress directive to the workers
-    /// it names, and originate a due self-announce. The substrate — clock,
-    /// entropy, the inbound stream — is the caller's; the per-interface I/O is
-    /// the workers'. Returns the step summary.
+    /// One drive cycle over the runtime's own engine + workers + meter — the
+    /// interfaces↔engine seam: ingest `inbound` (metering each packet to the
+    /// interface that stamped it), tick at `now`, fan every due egress directive
+    /// to the workers it names, and originate a due self-announce. The host's
+    /// substrate (clock, entropy, the inbound stream) is supplied by the caller.
     pub fn cycle_once<'p>(
         &mut self,
         now: InstantMillis,
         entropy_seed: EngineCycleEntropySeed,
         inbound: impl IntoIterator<Item = InboundPacket<'p>>,
     ) -> StepOutput {
-        let Self {
-            engine,
-            workers,
-            traffic,
-        } = self;
-        let entropy = EngineCycleEntropy::from_seed(entropy_seed);
-
-        // Ingest the inbound batch, metering each packet to the interface that
-        // stamped it (a worker stamps only real Reticulum traffic; its own
-        // discovery chatter never reaches here).
-        let traffic_meter = &mut *traffic;
-        let ingest_output = ingest_packets(
-            engine,
-            inbound.into_iter().inspect(move |packet| {
-                traffic_meter.add_rx(packet.source_interface, packet.bytes.len() as u64);
-            }),
-            entropy.jitter,
-        );
-
-        // Tick, then fan each due egress directive out to the workers it names.
-        let tick_output = tick(engine, now, entropy.jitter);
-        let tick_summary = TickSummary {
-            egress_directive_count: tick_output.egress_directive_count(),
-            recovered_from_held_count: tick_output.recovered_from_held_count(),
-        };
-        let mut emit_buffer = [0u8; MTU];
-        for directive in tick_output.egress_directives() {
-            let n = directive
-                .to_wire(&mut emit_buffer)
-                .expect("MTU-sized buf fits any valid wire packet");
-            fan_out(
-                workers.as_mut_slice(),
-                traffic,
-                OutboundPacket::new(&emit_buffer[..n]),
-                directive.fire_on(),
-            );
-        }
-        tick_output.commit();
-
-        // Originate our own announce when one is due — fanned to every registered
-        // interface (no source to exclude), only when there is one to carry it.
-        let mut self_announce_minted = false;
-        if !engine.registered_interfaces().is_empty() {
-            if let Some(n) =
-                engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
-            {
-                fan_out(
-                    workers.as_mut_slice(),
-                    traffic,
-                    OutboundPacket::new(&emit_buffer[..n]),
-                    engine.registered_interfaces(),
-                );
-                self_announce_minted = true;
-            }
-        }
-
-        let entropy_consumed = self_announce_minted
-            || ingest_output.scheduled_rebroadcast_count() > 0
-            || tick_summary.recovered_from_held_count > 0;
-
-        StepOutput {
-            ingest: ingest_output,
-            tick: tick_summary,
-            entropy_consumed,
-        }
+        cycle_engine(
+            &mut self.engine,
+            &mut self.workers,
+            &mut self.traffic,
+            now,
+            entropy_seed,
+            inbound,
+        )
     }
 
     /// The app-facing [`RuntimeSnapshot`] for this cycle: per registered
     /// interface, its liveness, the cumulative Reticulum bytes it has carried,
-    /// and the destinations the routing table tracks behind it.
-    ///
-    /// This is the one seam an app reads the engine through — it never touches
-    /// engine internals — so the manifold decides here what is visible. Cheap
-    /// and non-blocking; the per-platform runtime publishes it post-cycle (e.g.
-    /// into a `Watch` a display subscribes to), so the app reacts to engine
-    /// changes without polling.
+    /// and the destinations the routing table tracks behind it. The one seam an
+    /// app reads the engine through — it never touches engine internals.
     pub fn snapshot(&self) -> RuntimeSnapshot {
-        let mut interfaces = HeaplessVec::new();
-        for worker in &self.workers {
-            let descriptor = worker.descriptor();
-            let (reticulum_rx_bytes, reticulum_tx_bytes) = self.traffic.totals_for(descriptor.id);
-            // `push` can't overflow: workers.len() <= MAX_REGISTERED_INTERFACES,
-            // the same cap RuntimeSnapshot.interfaces is sized to.
-            let _ = interfaces.push(InterfaceView {
-                id: descriptor.id,
-                online: worker.health().link.is_up(),
-                reticulum_rx_bytes,
-                reticulum_tx_bytes,
-                // Destinations whose route was learned on this interface — the
-                // routing table's per-interface tally, not the global total.
-                tracked_destinations: self.engine.route_count_via(descriptor.id) as u32,
-            });
-        }
-        RuntimeSnapshot { interfaces }
+        snapshot_of(&self.engine, &self.workers, &self.traffic)
     }
 
-    /// When the engine next needs a cycle — the runtime mins this with its own
+    /// When the engine next needs a cycle — the run loop mins this with its own
     /// inbound readiness to size its sleep.
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
         self.engine.next_wakeup(now)
@@ -201,6 +119,165 @@ where
     pub fn engine(&self) -> &EngineState<R, A, H, D, MAX_HELD> {
         &self.engine
     }
+}
+
+/// Drive `runtime` forever: ask its host for one cycle's clock + entropy (which
+/// sleeps until there is work), cycle the engine on the host's inbound, surface
+/// the fresh snapshot to `observe`, and feed the engine's next deadline back as
+/// the next sleep target. The single per-platform loop — every substrate differs
+/// only in its [`Host`] impl. A free fn, not a method, so the one fixed loop
+/// can't be overridden, and so it can destructure the runtime to drive the host
+/// while the engine/workers are borrowed separately.
+///
+/// `observe` is the app-facing read seam (a daemon logging route growth, a
+/// display's `Watch` sender) — the embryonic read half of the consumer surface,
+/// kept off [`Host`] because it is app concern, not substrate.
+pub async fn run<Ho, Observe, W, R, A, H, D, const MAX_HELD: usize>(
+    runtime: Runtime<Ho, W, R, A, H, D, MAX_HELD>,
+    mut observe: Observe,
+) -> !
+where
+    Ho: Host,
+    Observe: FnMut(&RuntimeSnapshot),
+    W: InterfaceWorker,
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    let Runtime {
+        mut engine,
+        mut workers,
+        mut traffic,
+        mut host,
+    } = runtime;
+    let mut wake = NextScheduledEngineWork::Immediate;
+    loop {
+        let CycleStamp { now, seed } = host.wait(wake).await;
+        let _ = cycle_engine(
+            &mut engine,
+            &mut workers,
+            &mut traffic,
+            now,
+            seed,
+            host.inbound_packets(),
+        );
+        observe(&snapshot_of(&engine, &workers, &traffic));
+        wake = engine.next_wakeup(now);
+    }
+}
+
+/// The interfaces↔engine cycle over borrowed parts (so [`run`] can drive it
+/// while the host's inbound is borrowed separately): ingest, tick, fan egress,
+/// originate a due self-announce. Both [`Runtime::cycle_once`] and [`run`] route
+/// through here.
+fn cycle_engine<'p, W, R, A, H, D, const MAX_HELD: usize>(
+    engine: &mut EngineState<R, A, H, D, MAX_HELD>,
+    workers: &mut HeaplessVec<W, MAX_REGISTERED_INTERFACES>,
+    traffic: &mut TrafficLedger,
+    now: InstantMillis,
+    entropy_seed: EngineCycleEntropySeed,
+    inbound: impl IntoIterator<Item = InboundPacket<'p>>,
+) -> StepOutput
+where
+    W: InterfaceWorker,
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    let entropy = EngineCycleEntropy::from_seed(entropy_seed);
+
+    // Ingest the inbound batch, metering each packet to the interface that
+    // stamped it (a worker stamps only real Reticulum traffic; its own
+    // discovery chatter never reaches here).
+    let traffic_meter = &mut *traffic;
+    let ingest_output = ingest_packets(
+        engine,
+        inbound.into_iter().inspect(move |packet| {
+            traffic_meter.add_rx(packet.source_interface, packet.bytes.len() as u64);
+        }),
+        entropy.jitter,
+    );
+
+    // Tick, then fan each due egress directive out to the workers it names.
+    let tick_output = tick(engine, now, entropy.jitter);
+    let tick_summary = TickSummary {
+        egress_directive_count: tick_output.egress_directive_count(),
+        recovered_from_held_count: tick_output.recovered_from_held_count(),
+    };
+    let mut emit_buffer = [0u8; MTU];
+    for directive in tick_output.egress_directives() {
+        let n = directive
+            .to_wire(&mut emit_buffer)
+            .expect("MTU-sized buf fits any valid wire packet");
+        fan_out(
+            workers.as_mut_slice(),
+            traffic,
+            OutboundPacket::new(&emit_buffer[..n]),
+            directive.fire_on(),
+        );
+    }
+    tick_output.commit();
+
+    // Originate our own announce when one is due — fanned to every registered
+    // interface (no source to exclude), only when there is one to carry it.
+    let mut self_announce_minted = false;
+    if !engine.registered_interfaces().is_empty() {
+        if let Some(n) =
+            engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
+        {
+            fan_out(
+                workers.as_mut_slice(),
+                traffic,
+                OutboundPacket::new(&emit_buffer[..n]),
+                engine.registered_interfaces(),
+            );
+            self_announce_minted = true;
+        }
+    }
+
+    let entropy_consumed = self_announce_minted
+        || ingest_output.scheduled_rebroadcast_count() > 0
+        || tick_summary.recovered_from_held_count > 0;
+
+    StepOutput {
+        ingest: ingest_output,
+        tick: tick_summary,
+        entropy_consumed,
+    }
+}
+
+/// The app-facing [`RuntimeSnapshot`], over borrowed parts.
+fn snapshot_of<W, R, A, H, D, const MAX_HELD: usize>(
+    engine: &EngineState<R, A, H, D, MAX_HELD>,
+    workers: &[W],
+    traffic: &TrafficLedger,
+) -> RuntimeSnapshot
+where
+    W: InterfaceWorker,
+    R: RouteColumns,
+    A: RetainedAnnounceColumns,
+    H: AnnounceIdHistory,
+    D: RetainedAppData,
+{
+    let mut interfaces = HeaplessVec::new();
+    for worker in workers {
+        let descriptor = worker.descriptor();
+        let (reticulum_rx_bytes, reticulum_tx_bytes) = traffic.totals_for(descriptor.id);
+        // `push` can't overflow: workers.len() <= MAX_REGISTERED_INTERFACES, the
+        // same cap RuntimeSnapshot.interfaces is sized to.
+        let _ = interfaces.push(InterfaceView {
+            id: descriptor.id,
+            online: worker.health().link.is_up(),
+            reticulum_rx_bytes,
+            reticulum_tx_bytes,
+            // Destinations whose route was learned on this interface — the
+            // routing table's per-interface tally, not the global total.
+            tracked_destinations: engine.route_count_via(descriptor.id) as u32,
+        });
+    }
+    RuntimeSnapshot { interfaces }
 }
 
 /// Fan one outgoing packet to the workers the engine named in `fire_on`,
@@ -223,7 +300,7 @@ fn fan_out<W: InterfaceWorker>(
     }
 }
 
-/// Cumulative Reticulum byte totals per interface, the manifold's own meter of
+/// Cumulative Reticulum byte totals per interface, the runtime's own meter of
 /// the fabric traffic crossing its seam. Capacity is [`MAX_REGISTERED_INTERFACES`]
 /// — the same cap the engine's fanout uses — so an id from any registered
 /// interface always has a slot.
@@ -366,11 +443,12 @@ mod tests {
         let second = iface(0xB2);
         let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
-        let manifold = Manifold::new(engine, [worker(first, true), worker(second, false)]);
+        // A unit host (`()`): the cycle/snapshot seam needs no real substrate.
+        let runtime = Runtime::new(engine, [worker(first, true), worker(second, false)], ());
 
-        assert_eq!(manifold.engine().registered_interfaces(), &[first, second]);
-        assert_eq!(manifold.workers().len(), 2);
-        let snapshot = manifold.snapshot();
+        assert_eq!(runtime.engine().registered_interfaces(), &[first, second]);
+        assert_eq!(runtime.workers().len(), 2);
+        let snapshot = runtime.snapshot();
         assert_eq!(snapshot.interfaces.len(), 2);
         assert_eq!(
             snapshot.interfaces[0],
@@ -406,9 +484,9 @@ mod tests {
             bytes: &raw,
         }];
         let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let mut manifold = Manifold::new(engine, [worker(source, true), worker(peer, true)]);
+        let mut runtime = Runtime::new(engine, [worker(source, true), worker(peer, true)], ());
 
-        let out = manifold.cycle_once(
+        let out = runtime.cycle_once(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             EngineCycleEntropySeed::new([0xCA; crate::engine::ENGINE_CYCLE_ENTROPY_LEN]),
             inbound.iter().copied(),
@@ -417,18 +495,18 @@ mod tests {
         assert_eq!(out.ingest.accepted_announce_count(), 1);
         assert_eq!(out.ingest.scheduled_rebroadcast_count(), 1);
         assert_eq!(out.tick.egress_directive_count, 1);
-        assert!(manifold.workers()[0].submitted.is_empty());
-        assert_eq!(manifold.workers()[1].submitted.len(), 1);
+        assert!(runtime.workers()[0].submitted.is_empty());
+        assert_eq!(runtime.workers()[1].submitted.len(), 1);
 
         let (original_header, original_payload) = WirePacketHeader::parse(&raw).unwrap();
-        let submitted = &manifold.workers()[1].submitted[0];
+        let submitted = &runtime.workers()[1].submitted[0];
         let (submitted_header, submitted_payload) = WirePacketHeader::parse(submitted).unwrap();
         assert_eq!(submitted_header.packet_type, PacketType::Announce);
         assert_eq!(submitted_header.hops, original_header.hops + 1);
         assert_eq!(submitted_header.destination, original_header.destination);
         assert_eq!(submitted_payload, original_payload);
 
-        let snapshot = manifold.snapshot();
+        let snapshot = runtime.snapshot();
         assert_eq!(snapshot.interfaces.len(), 2);
         assert_eq!(snapshot.interfaces[0].id, source);
         assert_eq!(snapshot.interfaces[0].reticulum_rx_bytes, raw.len() as u64);

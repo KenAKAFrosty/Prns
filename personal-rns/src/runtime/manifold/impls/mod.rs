@@ -1,8 +1,10 @@
-//! Per-platform drivers that run a [`Manifold`](super::Manifold) over time.
+//! Per-platform inbound-mailbox + snapshot-channel types a [`Host`](super::super::Host)
+//! wires its workers through.
 //!
-//! Each driver is the substrate-specific half of the runtime: it owns the
-//! clock, the sleep primitive, and the host's entropy source, and drives the
-//! neutral `Manifold` through them. One module per platform class, gated by its
+//! Each module is the substrate-specific plumbing between the workers and the
+//! neutral [`Runtime`](super::Runtime): the shared inbound mailbox a worker
+//! stamps into (the host drains it each cycle) and, on embassy, the `Watch` the
+//! runtime fires its snapshot out on. One module per platform class, gated by its
 //! feature: `embassy` (async tasks, no_std) and [`std_host`] (threads + std
 //! channels, the host twin).
 

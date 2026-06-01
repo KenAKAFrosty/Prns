@@ -6,7 +6,7 @@
 //!   (`interfaces::impls::rns_parity::auto_interface`) as a shared brain + an embassy
 //!   worker shell. This host's job shrinks to platform bring-up: WiFi
 //!   association, the embassy-net IP stack (SLAAC link-local), the channels, and
-//!   spawning the worker + running the [`Manifold`] loop. The worker owns all of
+//!   spawning the worker + running the [`Runtime`] loop. The worker owns all of
 //!   discovery, peers, fan-out, and the data plane opaquely; the engine sees
 //!   only bytes. Announces ride OTA to/from stock Reticulum, surfaced in LXMF
 //!   apps as an `lxmf.delivery` destination.
@@ -88,7 +88,7 @@ use personal_rns::runtime::host::impls::EmbassyHost;
 use personal_rns::runtime::manifold::impls::embassy::{
     InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
 };
-use personal_rns::runtime::{run, InterfaceView, Manifold, RuntimeSnapshot};
+use personal_rns::runtime::{run, InterfaceView, Runtime, RuntimeSnapshot};
 
 mod display;
 
@@ -120,7 +120,7 @@ const LORA_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-lora62");
 /// radio to other Hopspots). Opaque to the engine; readable in `fire_on` logs.
 const ESPNOW_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-espnow");
 
-/// The S3 runs four interface workers, so the multi-worker manifold holds them as
+/// The S3 runs four interface workers, so the multi-worker runtime holds them as
 /// one concrete type — this enum. Dispatch is explicit per the no-wildcard rule.
 enum HostWorker {
     Wifi(EmbassyAutoInterface),
@@ -276,7 +276,7 @@ async fn net_task(mut runner: Runner<'static, WifiStaInterface<'static>>) -> ! {
 }
 
 /// The RNS AutoInterface worker — its own task. Owns the discovery + data
-/// sockets and talks to the manifold only through the channels.
+/// sockets and talks to the runtime only through the channels.
 #[embassy_executor::task]
 async fn auto_worker_task(
     stack: Stack<'static>,
@@ -297,7 +297,7 @@ async fn auto_worker_task(
 }
 
 /// The USB serial worker — its own task. Owns the usb-serial-jtag halves and
-/// talks to the manifold only through the channels (shared inbound mailbox +
+/// talks to the runtime only through the channels (shared inbound mailbox +
 /// its own outbound queue).
 #[embassy_executor::task]
 async fn serial_worker_task(
@@ -469,9 +469,9 @@ async fn main(spawner: Spawner) {
     stack.wait_link_up().await;
     println!("HELTEC_S3 NET link up");
 
-    // --- Worker channels + manifold. ---
-    // One shared inbound mailbox (both workers stamp into it; the manifold
-    // drains it), and a per-worker outbound queue (the manifold fills, the
+    // --- Worker channels + runtime. ---
+    // One shared inbound mailbox (every worker stamps into it; the runtime
+    // drains it), and a per-worker outbound queue (the runtime fills, the
     // worker shell drains).
     static INBOUND: StaticCell<InboundChannel<PACKET_BUFFER_SIZE>> = StaticCell::new();
     static OUTBOUND: StaticCell<OutboundChannel> = StaticCell::new();
@@ -499,7 +499,7 @@ async fn main(spawner: Spawner) {
         .into_async()
         .split();
 
-    // Four workers — WiFi LAN + USB serial + LoRa + ESP-NOW — all in the manifold.
+    // Four workers — WiFi LAN + USB serial + LoRa + ESP-NOW — all in the runtime.
     let wifi_worker =
         EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP, &WIFI_PEERS);
     let serial_worker = EmbassySerialInterface::new(
@@ -514,7 +514,15 @@ async fn main(spawner: Spawner) {
         espnow_outbound_ch.sender(),
         &ESPNOW_LINK_UP,
     );
-    let manifold = Manifold::new(
+    // The embassy host owns the inbound mailbox's draining end + the per-cycle
+    // CSPRNG draw (the radio-seeded hardware RNG, true-random now WiFi is up); the
+    // runtime bolts it to the engine + the four worker handles.
+    let host = EmbassyHost::new(inbound_rx, || {
+        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
+        Rng::new().read(&mut bytes);
+        EngineCycleEntropySeed::new(bytes)
+    });
+    let runtime = Runtime::new(
         state,
         [
             HostWorker::Wifi(wifi_worker),
@@ -522,6 +530,7 @@ async fn main(spawner: Spawner) {
             HostWorker::LoRa(lora_worker),
             HostWorker::EspNow(espnow_worker),
         ],
+        host,
     );
 
     spawner.spawn(
@@ -532,7 +541,7 @@ async fn main(spawner: Spawner) {
         serial_worker_task(usb_rx, usb_tx, inbound_ch.sender(), serial_outbound_rx)
             .expect("spawn serial worker"),
     );
-    println!("HELTEC_S3 workers spawned (node {dest_hex}); manifold running");
+    println!("HELTEC_S3 workers spawned (node {dest_hex}); runtime running");
 
     // Keep the radio alive (dropping the controller disconnects).
     let _controller = controller;
@@ -637,16 +646,12 @@ async fn main(spawner: Spawner) {
         &ESPNOW_LINK_UP,
     );
 
-    // Run the manifold loop: aggregate the worker's inbound, drive the engine,
+    // Run the runtime loop: aggregate the workers' inbound, drive the engine,
     // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.
-    // CSPRNG entropy from the (radio-seeded) RNG per cycle.
-    let host = EmbassyHost::new(inbound_rx, || {
-        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        Rng::new().read(&mut bytes);
-        EngineCycleEntropySeed::new(bytes)
-    });
+    // (The host built above draws CSPRNG entropy from the radio-seeded RNG per
+    // cycle and owns the embassy-time clock + sleep.)
     let snapshot_tx = SNAPSHOT_WATCH.sender();
-    let manifold_fut = run(manifold, host, move |snapshot: &RuntimeSnapshot| {
+    let runtime_fut = run(runtime, move |snapshot: &RuntimeSnapshot| {
         snapshot_tx.send(snapshot.clone());
     });
 
@@ -784,5 +789,5 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    join4(manifold_fut, oled_fut, lora_fut, espnow_fut).await;
+    join4(runtime_fut, oled_fut, lora_fut, espnow_fut).await;
 }

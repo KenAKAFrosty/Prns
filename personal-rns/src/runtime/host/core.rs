@@ -2,40 +2,34 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
-use super::super::{Manifold, RuntimeSnapshot};
 use crate::engine::{
     EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
 };
-use crate::interfaces::InterfaceWorker;
-use crate::routing::storage::{
-    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
-};
 
-/// The clock reading and entropy seed a [`RuntimeHost`] samples at wake, handed
-/// to one [`Manifold::cycle_once`]. Owned (not borrowed) so the runner can move
-/// the move-only seed into the cycle while the host's inbound batch is borrowed
-/// separately through [`RuntimeHost::inbound_packets`].
+/// The clock reading and entropy seed a [`Host`] samples at wake, handed to one
+/// cycle of the runtime. Owned (not borrowed) so the runner can move the
+/// move-only seed into the cycle while the host's inbound batch is borrowed
+/// separately through [`Host::inbound_packets`].
 pub struct CycleStamp {
     pub now: InstantMillis,
     pub seed: EngineCycleEntropySeed,
 }
 
-/// A host for the runtime: the one place a platform's outside world is touched.
-/// A `RuntimeHost` owns the real clock, the CSPRNG, the inbound mailbox, and the
-/// sleep primitive — whatever pieces it needs flow *up* to it rather than into
-/// the engine. [`run`] drives a [`Manifold`] forever by asking the host for one
-/// cycle's fuel at a time.
+/// A host: the few substrate methods a platform implements so the runtime can
+/// drive it. The host owns the real clock, the CSPRNG, the inbound mailbox, and
+/// the sleep primitive — whatever the runtime needs from the outside world flows
+/// *up* to it. The runtime (which owns the engine + workers) asks the host for
+/// one cycle's fuel at a time; see [`run`](super::super::run).
 ///
-/// `async` because that is the unifying substrate (see the module docs): an
-/// executor-backed host suspends in [`wait`](Self::wait); a sync poll-loop host
-/// blocks there and never yields, so [`block_on`] drives it with no executor.
+/// `async` because that is the unifying substrate: an executor-backed host
+/// suspends in [`wait`](Self::wait); a sync poll-loop host blocks there and never
+/// yields, so [`block_on`] drives it with no executor.
 #[allow(async_fn_in_trait)]
-pub trait RuntimeHost {
-    /// Sleep until `wake` (the engine's next deadline) elapses or inbound
+pub trait Host {
+    /// Sleep until the engine's next scheduled work (`wake`) is due or inbound
     /// arrives — draining whatever queued into the host's own batch buffer —
-    /// then sample the clock and draw a fresh per-cycle seed. This is the only
-    /// `.await` in the loop: where an executor-backed host suspends and a sync
-    /// host blocks.
+    /// then sample the clock and draw a fresh per-cycle seed. The only `.await`
+    /// in the loop: where an executor-backed host suspends and a sync host blocks.
     async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp;
 
     /// Lend the inbound drained by the last [`wait`](Self::wait) as borrowed
@@ -47,45 +41,11 @@ pub trait RuntimeHost {
     fn inbound_packets(&self) -> impl Iterator<Item = InboundPacket<'_>>;
 }
 
-/// Drive `manifold` forever on `host`: ask the host for one cycle's clock +
-/// entropy (which sleeps until there is work), cycle the engine on the host's
-/// inbound, surface the fresh snapshot to `observe`, and feed the engine's next
-/// deadline back as the next sleep target. The single per-platform loop — every
-/// substrate differs only in its [`RuntimeHost`] impl.
-///
-/// `observe` is the app-facing read seam (a daemon logging route growth, a
-/// display's `Watch` sender) — the embryonic read half of the consumer surface,
-/// kept off [`RuntimeHost`] because it is app concern, not substrate.
-pub async fn run<Host, Observe, W, R, A, H, D, const MAX_HELD: usize>(
-    mut manifold: Manifold<W, R, A, H, D, MAX_HELD>,
-    mut host: Host,
-    mut observe: Observe,
-) -> !
-where
-    Host: RuntimeHost,
-    Observe: FnMut(&RuntimeSnapshot),
-    W: InterfaceWorker,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
-    let mut wake = NextScheduledEngineWork::Immediate;
-    loop {
-        let CycleStamp { now, seed } = host.wait(wake).await;
-        let _ = manifold.cycle_once(now, seed, host.inbound_packets());
-        observe(&manifold.snapshot());
-
-        //REVIEW somewhere in here we lost the part where we want to race between outputs that came from the engine operations (like our next scheduled item based on the engine), and then race that with the next inbound packet that comes in. We messed something up with these seams!!
-        wake = manifold.next_wakeup(now);
-    }
-}
-
 /// Drive a runtime future on a substrate with no async executor — a sync
-/// poll-loop host. Such a host's [`RuntimeHost::wait`] blocks internally and
-/// never yields `Pending`, so the future runs straight through; the noop waker
-/// is never actually scheduled. An executor-backed host drives [`run`] with its
-/// own executor and never calls this.
+/// poll-loop host. Such a host's [`Host::wait`] blocks internally and never
+/// yields `Pending`, so the future runs straight through; the noop waker is never
+/// actually scheduled. An executor-backed host drives [`run`](super::super::run)
+/// with its own executor and never calls this.
 pub fn block_on<F: Future>(future: F) -> F::Output {
     let mut future = pin!(future);
     let mut cx = Context::from_waker(Waker::noop());
@@ -100,8 +60,8 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{FixedCapacityEngineState, OutboundPacket, ENGINE_CYCLE_ENTROPY_LEN};
-    use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceStats, QueueFull};
+    use crate::engine::ENGINE_CYCLE_ENTROPY_LEN;
+    use crate::interfaces::InterfaceId;
 
     #[test]
     fn block_on_runs_a_ready_future_to_completion() {
@@ -127,12 +87,12 @@ mod tests {
         assert_eq!(block_on(YieldOnce(false)), 7);
     }
 
-    /// A host serving exactly one canned inbound packet, to drive one real cycle
-    /// through the `wait` → `inbound` → `cycle_once` seam without an executor.
+    /// A host serving exactly one canned inbound packet — exercises the `Host`
+    /// contract (wait → stamp, inbound_packets → the batch) without an executor.
     struct OneShotHost {
         bytes: [u8; 1],
     }
-    impl RuntimeHost for OneShotHost {
+    impl Host for OneShotHost {
         async fn wait(&mut self, _wake: NextScheduledEngineWork) -> CycleStamp {
             CycleStamp {
                 now: InstantMillis(10),
@@ -148,40 +108,15 @@ mod tests {
         }
     }
 
-    /// An uninhabited worker, to build a zero-interface `Manifold` for the cycle
-    /// plumbing test without registering a real interface.
-    enum NoWorker {}
-    impl InterfaceWorker for NoWorker {
-        const PACKET_BUFFER_SIZE: usize = 1;
-        fn descriptor(&self) -> InterfaceDescriptor {
-            match *self {}
-        }
-        fn health(&self) -> InterfaceStats {
-            match *self {}
-        }
-        fn submit(&mut self, _packet: OutboundPacket) -> Result<(), QueueFull> {
-            match *self {}
-        }
-    }
-
     #[test]
-    fn wait_and_inbound_drive_one_cycle() {
-        let no_workers: [NoWorker; 0] = [];
-        let state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let mut manifold = Manifold::new(state, no_workers);
+    fn host_wait_yields_a_stamp_and_lends_its_inbound() {
         let mut host = OneShotHost { bytes: [0xAA] };
+        let stamp = block_on(host.wait(NextScheduledEngineWork::Immediate));
+        assert_eq!(stamp.now, InstantMillis(10));
 
-        let processed = block_on(async {
-            let CycleStamp { now, seed } = host.wait(NextScheduledEngineWork::Immediate).await;
-            manifold
-                .cycle_once(now, seed, host.inbound_packets())
-                .ingest
-                .processed_packet_count()
-        });
-
-        // The host's one inbound packet flowed wait → inbound → cycle_once into
-        // the engine.
-        assert_eq!(processed, 1);
-        assert_eq!(manifold.engine().ingested_packet_count(), 1);
+        let packets: std::vec::Vec<InboundPacket<'_>> = host.inbound_packets().collect();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].source_interface, InterfaceId::new([0u8; 16]));
+        assert_eq!(packets[0].bytes, &[0xAA][..]);
     }
 }

@@ -1,10 +1,10 @@
-//! `EmbassyHost` — the embassy-executor [`RuntimeHost`](super::super::RuntimeHost)
-//! for any embassy-net device (ESP32-S3, ESP32-C6, nRF, …).
+//! `EmbassyHost` — the embassy-executor [`Host`] for any embassy-net device
+//! (ESP32-S3, ESP32-C6, nRF, …).
 //!
 //! Owns the embassy substrate: the embassy-time clock, the shared inbound
 //! `Channel` the worker tasks stamp into, and the sleep. [`wait`](EmbassyHost::wait)
 //! genuinely suspends on `select(inbound.receive(), Timer::at(deadline))`, so an
-//! embassy executor drives the generic [`run`](super::super::run) loop. The
+//! embassy executor drives the generic [`run`](crate::runtime::run) loop. The
 //! device-specific entropy source (e.g. the ESP32 hardware RNG) is injected as a
 //! closure, since `personal-rns` names no specific HAL.
 
@@ -12,7 +12,7 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Instant as EmbassyInstant, Timer};
 use heapless::Vec as HVec;
 
-use super::super::{CycleStamp, RuntimeHost};
+use super::super::{CycleStamp, Host};
 use crate::engine::{
     EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
 };
@@ -44,7 +44,7 @@ where
     }
 }
 
-impl<const PACKET_BUFFER_SIZE: usize, E> RuntimeHost for EmbassyHost<PACKET_BUFFER_SIZE, E>
+impl<const PACKET_BUFFER_SIZE: usize, E> Host for EmbassyHost<PACKET_BUFFER_SIZE, E>
 where
     E: FnMut() -> EngineCycleEntropySeed,
 {

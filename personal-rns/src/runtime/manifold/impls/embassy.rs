@@ -1,32 +1,20 @@
-//! The embassy driver for a [`Manifold`] — the ESP32 family (S3, C6) and any
-//! embassy-net host.
+//! The embassy inbound mailbox + snapshot channel. A worker task stamps
+//! [`InboxEntry`]s into the `Channel` the runtime drains, and the runtime fires
+//! each cycle's [`RuntimeSnapshot`] out on the `Watch` an app subscribes to.
 //!
-//! This is the substrate-specific half of the runtime: it owns the clock
-//! (embassy-time), the sleep primitive (`select` of inbound-ready vs the
-//! engine's next deadline), and the shared inbound mailbox the workers stamp
-//! into. The neutral aggregation point it drives is [`Manifold`].
-//!
-//! The mailbox types live here — with their draining end. The runtime drains
-//! inbound, so [`InboxEntry`] and the inbound channel aliases belong to the
-//! runtime; a worker is *handed* an [`InboundSender`] and stamps into it. (The
-//! outbound queue drains the other way — into the worker — so it lives with the
-//! worker shell.)
+//! The mailbox lives here, with its draining end — a worker is *handed* an
+//! [`InboundSender`] and stamps into it; the host (e.g. `EmbassyHost`) holds the
+//! [`InboundReceiver`]. (The outbound queue drains the other way — into the
+//! worker — so it lives with the worker shell.)
 
-use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::watch::{Receiver as WatchReceiver, Sender as WatchSender, Watch};
-use embassy_time::{Instant as EmbassyInstant, Timer};
 use heapless::Vec as HVec;
 
-use super::super::{Manifold, RuntimeSnapshot};
-use crate::engine::{
-    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
-};
-use crate::interfaces::{InterfaceId, InterfaceWorker};
-use crate::routing::storage::{
-    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
-};
+use super::super::RuntimeSnapshot;
+use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 
 /// How many inbound packets the shared mailbox holds before a worker's stamp is
 /// dropped. A drop self-heals — the engine re-emits announces on its own cadence
@@ -35,13 +23,14 @@ use crate::routing::storage::{
 pub const INBOX_DEPTH: usize = 4;
 
 /// One inbound packet a worker has stamped into the shared mailbox: the wire
-/// bytes plus the provenance the manifold needs (which interface heard it, and
-/// when). An *owned* [`InboundPacket`] — it must outlive the socket read that
-/// produced it to ride into the next cycle's batch.
+/// bytes plus the provenance the runtime needs (which interface heard it, and
+/// when). An *owned* [`InboundPacket`](crate::engine::InboundPacket) — it must
+/// outlive the socket read that produced it to ride into the next cycle's batch.
 ///
 /// `PACKET_BUFFER_SIZE` is the producing worker's
-/// [`InterfaceWorker::PACKET_BUFFER_SIZE`]; the host sizes the mailbox off that
-/// one well-known number so a stamped packet always fits.
+/// [`InterfaceWorker::PACKET_BUFFER_SIZE`](crate::interfaces::InterfaceWorker::PACKET_BUFFER_SIZE);
+/// the host sizes the mailbox off that one well-known number so a stamped packet
+/// always fits.
 pub struct InboxEntry<const PACKET_BUFFER_SIZE: usize> {
     pub arrived_at: InstantMillis,
     pub source: InterfaceId,
@@ -55,7 +44,7 @@ pub type InboundChannel<const PACKET_BUFFER_SIZE: usize> =
 /// The stamping end a worker holds.
 pub type InboundSender<const PACKET_BUFFER_SIZE: usize> =
     Sender<'static, CriticalSectionRawMutex, InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH>;
-/// The draining end this driver holds.
+/// The draining end the host holds.
 pub type InboundReceiver<const PACKET_BUFFER_SIZE: usize> =
     Receiver<'static, CriticalSectionRawMutex, InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH>;
 
@@ -76,88 +65,3 @@ pub type RuntimeSnapshotSender =
 /// The subscribing end an app holds.
 pub type RuntimeSnapshotReceiver =
     WatchReceiver<'static, CriticalSectionRawMutex, RuntimeSnapshot, RUNTIME_SNAPSHOT_RECEIVERS>;
-
-fn now_millis() -> InstantMillis {
-    InstantMillis(EmbassyInstant::now().as_millis())
-}
-
-/// Drive `manifold` forever on the embassy substrate: aggregate the inbound the
-/// workers stamped, cycle the engine, route egress, then sleep until either new
-/// inbound arrives or the engine's next deadline. `draw_entropy` is the host's
-/// CSPRNG (the one input the manifold can't supply itself); the clock is
-/// embassy-time.
-///
-/// `PACKET_BUFFER_SIZE` is inferred from `inbound`, which the host sizes off the
-/// registered worker's [`InterfaceWorker::PACKET_BUFFER_SIZE`] — the driver
-/// never picks a size itself.
-///
-/// After each cycle it fires the manifold's [`RuntimeSnapshot`] out on
-/// `snapshot_out` — the "read the data out into your app" seam. Sending every
-/// cycle is cheap: cycles are sleepy (inbound or the next deadline), and the
-/// `Watch` coalesces, so a subscriber sees the newest view and never a backlog.
-pub async fn run<const PACKET_BUFFER_SIZE: usize, W, R, A, H, D, const MAX_HELD: usize, E>(
-    mut manifold: Manifold<W, R, A, H, D, MAX_HELD>,
-    inbound: InboundReceiver<PACKET_BUFFER_SIZE>,
-    snapshot_out: RuntimeSnapshotSender,
-    mut draw_entropy: E,
-) where
-    W: InterfaceWorker,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-    E: FnMut() -> EngineCycleEntropySeed,
-{
-    // A packet received while waiting carries into the next cycle's batch.
-    let mut pending: Option<InboxEntry<PACKET_BUFFER_SIZE>> = None;
-    loop {
-        let mut msgs: HVec<InboxEntry<PACKET_BUFFER_SIZE>, INBOX_DEPTH> = HVec::new();
-        if let Some(msg) = pending.take() {
-            let _ = msgs.push(msg);
-        }
-        while let Ok(msg) = inbound.try_receive() {
-            if msgs.push(msg).is_err() {
-                break;
-            }
-        }
-
-        let mut batch: HVec<InboundPacket<'_>, INBOX_DEPTH> = HVec::new();
-        for m in &msgs {
-            let _ = batch.push(InboundPacket {
-                arrived_at: m.arrived_at,
-                source_interface: m.source,
-                bytes: &m.bytes,
-            });
-        }
-
-        let now = now_millis();
-        let out = manifold.cycle_once(now, draw_entropy(), batch.iter().copied());
-        if out.ingest.accepted_announce_count() > 0 {
-            log::info!(
-                "RNS_MANIFOLD RX accepted={} routes={}",
-                out.ingest.accepted_announce_count(),
-                manifold.engine().route_count(),
-            );
-        }
-        drop(batch);
-        drop(msgs);
-
-        // Surface this cycle's state to whatever app is subscribed (e.g. the
-        // host's display). Latest-wins, so this is fire-and-forget.
-        snapshot_out.send(manifold.snapshot());
-
-        let now = now_millis();
-        match manifold.next_wakeup(now) {
-            NextScheduledEngineWork::Immediate => {}
-            NextScheduledEngineWork::At(deadline) => {
-                let at = EmbassyInstant::from_millis(deadline.0);
-                if let Either::First(msg) = select(inbound.receive(), Timer::at(at)).await {
-                    pending = Some(msg);
-                }
-            }
-            NextScheduledEngineWork::Idle => {
-                pending = Some(inbound.receive().await);
-            }
-        }
-    }
-}

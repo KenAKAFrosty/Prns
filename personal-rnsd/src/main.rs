@@ -1,12 +1,12 @@
 //! Personal Reticulum daemon: drive the engine over a USB-serial interface using
-//! the shared `InterfaceWorker` + `Manifold` runtime — the *same* abstraction the
-//! embedded hosts (ESP32) use, just on the std substrate.
+//! the shared `InterfaceWorker` + `Runtime` — the *same* abstraction the embedded
+//! hosts (ESP32) use, just on the std substrate.
 //!
 //! A worker thread owns the serial port (reopening on unplug) and runs the RNS
-//! `SerialInterface` shell; the std `Manifold` runtime drives the engine,
-//! deadline-driven, and surfaces a snapshot each cycle. The daemon both forwards
-//! others' announces and emits its own `personal.node` announce (first one as
-//! soon as the link is up).
+//! `SerialInterface` shell; the `Runtime` over a `LinuxSync` host drives the
+//! engine, deadline-driven, and surfaces a snapshot each cycle. The daemon both
+//! forwards others' announces and emits its own `personal.node` announce (first
+//! one as soon as the link is up).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -21,7 +21,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::manifold::impls::std_host::InboxEntry;
-use personal_rns::runtime::{block_on, run, Manifold};
+use personal_rns::runtime::{block_on, run, Runtime};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -72,7 +72,7 @@ fn main() {
 
     // Build an announcing node: forwards others' announces AND emits its own
     // `personal.node` announce on the schedule (default 6h), the first as soon as
-    // the interface is registered in the manifold below.
+    // the interface is registered in the runtime below.
     let identity_secret_key = load_identity_secret_key();
     let state: FixedCapacityEngineState = FixedCapacityEngineState::announcing(
         &identity_secret_key,
@@ -101,13 +101,16 @@ fn main() {
     let clock_base = Instant::now();
 
     // Shared inbound mailbox (worker stamps → runtime drains), per-worker outbound
-    // queue (manifold fills → worker drains), and shared liveness.
+    // queue (runtime fills → worker drains), and shared liveness.
     let (inbound_tx, inbound_rx) = mpsc::channel::<InboxEntry>();
     let (outbound_tx, outbound_rx) = mpsc::channel::<Vec<u8>>();
     let link_up: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     let worker = StdSerialInterface::new(USB_INTERFACE_ID, outbound_tx, link_up.clone());
-    let manifold = Manifold::new(state, [worker]);
+    // The std poll-loop host owns the clock + CSPRNG + the inbound mailbox's
+    // draining end; the runtime bolts it to the engine + worker.
+    let host = LinuxSync::new(inbound_rx, clock_base);
+    let runtime = Runtime::new(state, [worker], host);
 
     // Worker thread: own the serial port, reopen on unplug, run the shell. The
     // handle stays registered across reconnects — only the byte stream churns.
@@ -134,11 +137,10 @@ fn main() {
         });
     }
 
-    // Runtime: drive the manifold forever; log when the routing table grows — the
-    // proof the cable carried a real announce into the engine.
+    // Drive the runtime forever; log when the routing table grows — the proof the
+    // cable carried a real announce into the engine.
     let mut announced_routes = 0u32;
-    let host = LinuxSync::new(inbound_rx, clock_base);
-    block_on(run(manifold, host, |snapshot| {
+    block_on(run(runtime, |snapshot| {
         let routes = snapshot
             .interfaces
             .iter()

@@ -1,7 +1,7 @@
-//! The host catalogue — concrete [`RuntimeHost`](super::RuntimeHost) impls, one
-//! per platform + execution model (`LinuxSync`, `Esp32S3Embassy`,
-//! `Esp32C6Sync`, …). Each is gated by its platform feature; the neutral
-//! contract in the parent module carries no gate. Populated as the hosts land.
+//! The host catalogue — concrete [`Host`](super::Host) impls, one per platform +
+//! execution model (`LinuxSync`, `EmbassyHost`, …). Each is gated by its platform
+//! feature; the neutral contract in the parent module carries no gate. Populated
+//! as the hosts land.
 
 #[cfg(feature = "std-host")]
 mod linux_sync;

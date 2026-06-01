@@ -1,17 +1,17 @@
-//! `LinuxSync` — the std poll-loop [`RuntimeHost`](super::super::RuntimeHost).
+//! `LinuxSync` — the std poll-loop [`Host`].
 //!
 //! Owns the std substrate a daemon-style host needs: the OS monotonic clock, the
 //! OS CSPRNG, and the inbound mailbox the interface worker threads stamp into.
 //! [`wait`](LinuxSync::wait) blocks the thread on `recv_timeout` until the
 //! engine's next deadline or a stamped packet — the sync-host shape: it never
 //! `.await`s, so [`block_on`](super::super::block_on) drives the generic
-//! [`run`](super::super::run) loop straight through with no executor.
+//! [`run`](crate::runtime::run) loop straight through with no executor.
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use std::vec::Vec;
 
-use super::super::{CycleStamp, RuntimeHost};
+use super::super::{CycleStamp, Host};
 use crate::engine::{
     EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
     ENGINE_CYCLE_ENTROPY_LEN,
@@ -26,8 +26,8 @@ const MAX_BATCH: usize = 16;
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
 /// The std poll-loop host: an OS clock + CSPRNG + the mpsc inbound mailbox the
-/// interface worker threads stamp into. Drive it with
-/// `block_on(run(manifold, host, observe))`.
+/// interface worker threads stamp into. Hand it to `Runtime::new(state, workers,
+/// host)`, then drive with `block_on(run(runtime, observe))`.
 pub struct LinuxSync {
     inbound: Receiver<InboxEntry>,
     clock_base: Instant,
@@ -64,7 +64,7 @@ fn wait_for(next: NextScheduledEngineWork, now: InstantMillis, max: Duration) ->
     }
 }
 
-impl RuntimeHost for LinuxSync {
+impl Host for LinuxSync {
     async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp {
         self.batch.clear();
 
