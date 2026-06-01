@@ -19,8 +19,8 @@ use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
     run as run_serial_worker, StdSerialInterface,
 };
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::runtime::channels::std_host::InboxEntry;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::manifold::impls::std_host::InboxEntry;
 use personal_rns::runtime::{block_on, run, Runtime};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).

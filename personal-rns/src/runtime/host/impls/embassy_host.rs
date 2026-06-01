@@ -16,7 +16,7 @@ use super::super::{CycleStamp, Host};
 use crate::engine::{
     EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
 };
-use crate::runtime::manifold::impls::embassy::{InboundReceiver, InboxEntry, INBOX_DEPTH};
+use crate::runtime::channels::embassy::{InboundReceiver, InboxEntry, INBOX_DEPTH};
 
 /// The embassy host: the inbound `Channel` the worker tasks stamp into, an
 /// injected entropy draw, and the embassy-time clock + sleep. `PACKET_BUFFER_SIZE`

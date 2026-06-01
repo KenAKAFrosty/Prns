@@ -1,4 +1,4 @@
-//! Per-platform inbound-mailbox + snapshot-channel types a [`Host`](super::super::Host)
+//! Per-platform inbound-mailbox + snapshot-channel types a [`Host`](super::Host)
 //! wires its workers through.
 //!
 //! Each module is the substrate-specific plumbing between the workers and the

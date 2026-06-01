@@ -28,7 +28,7 @@ use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
-use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
+use crate::runtime::channels::embassy::{InboundSender, InboxEntry};
 use crate::wire::MTU;
 
 /// How long to keep packing a frame after its first packet before transmitting.

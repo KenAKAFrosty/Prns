@@ -1,6 +1,6 @@
 use heapless::Vec as HeaplessVec;
 
-use super::super::host::{CycleStamp, Host};
+use super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InboundPacket,

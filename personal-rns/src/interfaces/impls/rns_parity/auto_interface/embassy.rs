@@ -25,7 +25,7 @@ use crate::interfaces::{
     Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceStats,
     InterfaceWorker, LinkState, MacAddress, MediumKind, QueueFull, TrackedPeerMulticastInterface,
 };
-use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
+use crate::runtime::channels::embassy::{InboundSender, InboxEntry};
 
 pub const OUTBOX_DEPTH: usize = 4;
 const CHANNEL_PACKET_LEN_CAP: usize = HARDWARE_MTU;
@@ -39,7 +39,7 @@ const BEACON_INTERVAL_MS: u64 = 1600;
 /// [`EmbassyAutoInterface::submit`]); the worker drains the [`OutboundReceiver`]
 /// and fans each packet out to its peers. It lives here, with the worker — its
 /// *draining* end — the same rule that puts the inbound mailbox with the runtime
-/// that drains it (`runtime::manifold::impls::embassy`). Sized to this worker's
+/// that drains it (`runtime::channels::embassy`). Sized to this worker's
 /// [`HARDWARE_MTU`].
 pub type OutboundChannel = Channel<CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 pub type OutboundSender = Sender<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
@@ -357,7 +357,7 @@ pub async fn run(
                     brain.auth_failures(),
                 );
             }
-            // Outbound from the manifold: fan out to every peer's data port.
+            // Outbound from the runtime: fan out to every peer's data port.
             Either::Second(packet) => {
                 let mut targets: HVec<Ipv6Addr, MAX_PEERS> = HVec::new();
                 for addr in brain.known_peer_addresses() {

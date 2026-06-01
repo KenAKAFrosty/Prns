@@ -5,7 +5,7 @@
 //!
 //! Like the auto-interface shell, the outbound queue lives here (the shell is
 //! its draining end); the inbound mailbox the shell *stamps into* belongs to the
-//! runtime (`runtime::manifold::impls::embassy`).
+//! runtime (`runtime::channels::embassy`).
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -22,7 +22,7 @@ use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
-use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
+use crate::runtime::channels::embassy::{InboundSender, InboxEntry};
 
 pub const OUTBOX_DEPTH: usize = 4;
 /// Upper bound on one frame's write. If nothing is draining the CDC (no USB host

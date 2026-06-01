@@ -16,7 +16,7 @@ use crate::engine::{
     EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
     ENGINE_CYCLE_ENTROPY_LEN,
 };
-use crate::runtime::manifold::impls::std_host::InboxEntry;
+use crate::runtime::channels::std_host::InboxEntry;
 
 /// Cap on packets ingested per cycle, so a burst can't make one cycle do
 /// unbounded work — the rest waits for the next.

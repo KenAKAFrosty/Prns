@@ -84,10 +84,10 @@ use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
 };
-use personal_rns::runtime::host::impls::EmbassyHost;
-use personal_rns::runtime::manifold::impls::embassy::{
+use personal_rns::runtime::channels::embassy::{
     InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
 };
+use personal_rns::runtime::host::impls::EmbassyHost;
 use personal_rns::runtime::{run, InterfaceView, Runtime, RuntimeSnapshot};
 
 mod display;

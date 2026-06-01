@@ -6,9 +6,18 @@
 //! [`Host`] for one cycle's clock + entropy + inbound at a time, so a platform
 //! varies only in its `Host` impl — drawing entropy, aggregating each worker's
 //! inbound, and sleeping until the next deadline.
+//!
+//! - `core` holds the [`Runtime`] + the [`run`] loop.
+//! - [`host`] holds the substrate seam ([`Host`]) + its per-platform impls.
+//! - [`channels`] holds the per-platform mailbox + snapshot-channel types a host
+//!   wires its workers and apps through.
+//! - `snapshot` holds the app-facing [`RuntimeSnapshot`] view.
 
+pub mod channels;
+mod core;
 pub mod host;
-pub mod manifold;
+mod snapshot;
 
+pub use core::{run, Runtime};
 pub use host::{block_on, CycleStamp, Host};
-pub use manifold::{run, InterfaceView, Runtime, RuntimeSnapshot};
+pub use snapshot::{InterfaceView, RuntimeSnapshot};

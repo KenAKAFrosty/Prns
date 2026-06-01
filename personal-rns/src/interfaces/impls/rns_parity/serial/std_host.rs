@@ -19,7 +19,7 @@ use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
-use crate::runtime::manifold::impls::std_host::InboxEntry;
+use crate::runtime::channels::std_host::InboxEntry;
 
 /// Outbound packets are raw Reticulum wire packets (the shell frames them); the
 /// runtime fills this, the shell drains it.

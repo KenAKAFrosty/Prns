@@ -5,7 +5,7 @@
 //!
 //! Like the serial shell, the outbound queue lives here (the shell drains it);
 //! the inbound mailbox the shell *stamps into* belongs to the runtime
-//! (`runtime::manifold::impls::embassy`). LoRa is a half-duplex broadcast medium,
+//! (`runtime::channels::embassy`). LoRa is a half-duplex broadcast medium,
 //! so the loop sits in continuous RX and, when the runtime hands it a packet,
 //! breaks off to transmit (one or two frames, RNode-split) and returns to RX —
 //! never both at once. Received frames feed a [`LoRaReassembler`] that rebuilds
@@ -30,7 +30,7 @@ use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
-use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
+use crate::runtime::channels::embassy::{InboundSender, InboxEntry};
 use crate::wire::MTU;
 
 pub const OUTBOX_DEPTH: usize = 4;
