@@ -150,63 +150,60 @@ pub async fn run(
         Err(e) => log::warn!("RNS_AUTO mcast join failed: {e:?}"),
     }
 
-    //REVEIEW better names for all these. "disc" and "udisc" are not very helpful at all.
-    let mut disc_rx_meta = [PacketMetadata::EMPTY; 8];
-    let mut disc_rx = [0u8; 512];
-    let mut disc_tx_meta = [PacketMetadata::EMPTY; 8];
-    let mut disc_tx = [0u8; 512];
-    let mut disc = UdpSocket::new(
+    let mut discovery_rx_meta = [PacketMetadata::EMPTY; 8];
+    let mut discovery_rx_payload = [0u8; 512];
+    let mut discovery_tx_meta = [PacketMetadata::EMPTY; 8];
+    let mut discovery_tx_payload = [0u8; 512];
+    let mut discovery_socket = UdpSocket::new(
         stack,
-        &mut disc_rx_meta,
-        &mut disc_rx,
-        &mut disc_tx_meta,
-        &mut disc_tx,
+        &mut discovery_rx_meta,
+        &mut discovery_rx_payload,
+        &mut discovery_tx_meta,
+        &mut discovery_tx_payload,
     );
-    disc.bind(DEFAULT_DISCOVERY_PORT)
+    discovery_socket
+        .bind(DEFAULT_DISCOVERY_PORT)
         .expect("bind discovery port");
 
-    let mut udisc_rx_meta = [PacketMetadata::EMPTY; 8];
-    let mut udisc_rx = [0u8; 512];
-    let mut udisc_tx_meta = [PacketMetadata::EMPTY; 8];
-    let mut udisc_tx = [0u8; 512];
-    let mut udisc = UdpSocket::new(
+    let mut unicast_discovery_rx_meta = [PacketMetadata::EMPTY; 8];
+    let mut unicast_discovery_rx_payload = [0u8; 512];
+    let mut unicast_discovery_tx_meta = [PacketMetadata::EMPTY; 8];
+    let mut unicast_discovery_tx_payload = [0u8; 512];
+    let mut unicast_discovery_socket = UdpSocket::new(
         stack,
-        &mut udisc_rx_meta,
-        &mut udisc_rx,
-        &mut udisc_tx_meta,
-        &mut udisc_tx,
+        &mut unicast_discovery_rx_meta,
+        &mut unicast_discovery_rx_payload,
+        &mut unicast_discovery_tx_meta,
+        &mut unicast_discovery_tx_payload,
     );
-    udisc
+    unicast_discovery_socket
         .bind(UNICAST_DISCOVERY_PORT)
         .expect("bind unicast discovery port");
 
     let mut data_rx_meta = [PacketMetadata::EMPTY; 8];
-    let mut data_rx = [0u8; 1280];
+    let mut data_rx_payload = [0u8; 1280];
     let mut data_tx_meta = [PacketMetadata::EMPTY; 8];
-    let mut data_tx = [0u8; 1280];
-    let mut data = UdpSocket::new(
+    let mut data_tx_payload = [0u8; 1280];
+    let mut data_socket = UdpSocket::new(
         stack,
         &mut data_rx_meta,
-        &mut data_rx,
+        &mut data_rx_payload,
         &mut data_tx_meta,
-        &mut data_tx,
+        &mut data_tx_payload,
     );
-    data.bind(DEFAULT_DATA_PORT).expect("bind data port");
+    data_socket.bind(DEFAULT_DATA_PORT).expect("bind data port");
 
-    //REVIEW the names! the names! my kingdom for a legible name!
-    let mut drx = [0u8; HARDWARE_MTU];
-    let mut rx = [0u8; 64];
-    let mut urx = [0u8; 64];
+    let mut discovery_read_buf = [0u8; 64];
+    let mut unicast_discovery_read_buf = [0u8; 64];
+    let mut data_read_buf = [0u8; HARDWARE_MTU];
     let mut beacon = Ticker::every(Duration::from_millis(BEACON_INTERVAL_MS));
     let mut cycle: u32 = 0;
 
-    // RX activity counters — so a status line each tick shows whether we keep
-    // receiving (vs. discover-once-then-go-deaf).
-
-    // REVIEW again, better names here would not only help but make the above comment unnecessary
-    let mut mcast_rx: u32 = 0;
-    let mut ucast_rx: u32 = 0;
-    let mut data_rx: u32 = 0;
+    // Per-socket RX tallies, logged each tick to catch a socket that goes deaf
+    // (a count that stops climbing) after discovering once.
+    let mut discovery_rx_count: u32 = 0;
+    let mut unicast_discovery_rx_count: u32 = 0;
+    let mut data_rx_count: u32 = 0;
 
     // The shell owns the live link state; the handle's `health()` reads it. The
     // stack is up by the time the host spawns us, so seed it true and refresh
@@ -216,9 +213,9 @@ pub async fn run(
     loop {
         match select(
             select4(
-                disc.recv_from(&mut rx),
-                udisc.recv_from(&mut urx),
-                data.recv_from(&mut drx),
+                discovery_socket.recv_from(&mut discovery_read_buf),
+                unicast_discovery_socket.recv_from(&mut unicast_discovery_read_buf),
+                data_socket.recv_from(&mut data_read_buf),
                 beacon.next(),
             ),
             outbound.receive(),
@@ -228,10 +225,10 @@ pub async fn run(
             //REVIEW helper functions for each arm will keep the matching branch site easier to understand and I think is very very worth doing now
             // Multicast discovery beacon (29716).
             Either::First(Either4::First(Ok((n, meta)))) => {
-                mcast_rx = mcast_rx.wrapping_add(1);
+                discovery_rx_count = discovery_rx_count.wrapping_add(1);
                 if let Some(src) = ipv6_src(&meta) {
                     let before = brain.peer_count();
-                    brain.ingest_discovery_datagram(src, &rx[..n], now_millis().0);
+                    brain.ingest_discovery_datagram(src, &discovery_read_buf[..n], now_millis().0);
                     if brain.peer_count() > before {
                         log::info!(
                             "RNS_AUTO PEER+ {src} via mcast (peers={})",
@@ -241,14 +238,20 @@ pub async fn run(
                 }
             }
 
-            Either::First(Either4::First(Err(e))) => log::warn!("RNS_AUTO disc recv err: {e:?}"),
+            Either::First(Either4::First(Err(e))) => {
+                log::warn!("RNS_AUTO discovery recv err: {e:?}")
+            }
 
             // Unicast reverse-peering beacon (29717).
             Either::First(Either4::Second(Ok((n, meta)))) => {
-                ucast_rx = ucast_rx.wrapping_add(1);
+                unicast_discovery_rx_count = unicast_discovery_rx_count.wrapping_add(1);
                 if let Some(src) = ipv6_src(&meta) {
                     let before = brain.peer_count();
-                    brain.ingest_discovery_datagram(src, &urx[..n], now_millis().0);
+                    brain.ingest_discovery_datagram(
+                        src,
+                        &unicast_discovery_read_buf[..n],
+                        now_millis().0,
+                    );
                     if brain.peer_count() > before {
                         log::info!(
                             "RNS_AUTO PEER+ {src} via ucast (peers={})",
@@ -257,12 +260,14 @@ pub async fn run(
                     }
                 }
             }
-            Either::First(Either4::Second(Err(e))) => log::warn!("RNS_AUTO udisc recv err: {e:?}"),
+            Either::First(Either4::Second(Err(e))) => {
+                log::warn!("RNS_AUTO unicast discovery recv err: {e:?}")
+            }
 
             // Inbound data packet (42671) → stamp + hand to the runtime mailbox.
             Either::First(Either4::Third(Ok((n, _meta)))) => {
-                data_rx = data_rx.wrapping_add(1);
-                if let Ok(bytes) = PacketBuf::from_slice(&drx[..n]) {
+                data_rx_count = data_rx_count.wrapping_add(1);
+                if let Ok(bytes) = PacketBuf::from_slice(&data_read_buf[..n]) {
                     let msg = InboxEntry {
                         arrived_at: now_millis(),
                         source: id,
@@ -281,7 +286,7 @@ pub async fn run(
                 cycle = cycle.wrapping_add(1);
                 let now = now_millis().0;
                 link_up.store(stack.is_link_up(), Ordering::Relaxed);
-                if let Err(e) = disc
+                if let Err(e) = discovery_socket
                     .send_to(
                         brain.our_peering_token().as_bytes(),
                         (IpAddress::Ipv6(DISCOVERY_GROUP), DEFAULT_DISCOVERY_PORT),
@@ -296,7 +301,7 @@ pub async fn run(
                         let _ = targets.push(addr);
                     }
                     for addr in targets {
-                        let _ = udisc
+                        let _ = unicast_discovery_socket
                             .send_to(
                                 brain.our_peering_token().as_bytes(),
                                 (IpAddress::Ipv6(addr), UNICAST_DISCOVERY_PORT),
@@ -309,7 +314,7 @@ pub async fn run(
                     log::info!("RNS_AUTO pruned {pruned} (peers={})", brain.peer_count());
                 }
                 log::info!(
-                    "RNS_AUTO cyc={cycle} peers={} mcast_rx={mcast_rx} ucast_rx={ucast_rx} data_rx={data_rx} authfail={}",
+                    "RNS_AUTO cyc={cycle} peers={} discovery_rx={discovery_rx_count} unicast_rx={unicast_discovery_rx_count} data_rx={data_rx_count} authfail={}",
                     brain.peer_count(),
                     brain.auth_failures(),
                 );
@@ -324,7 +329,7 @@ pub async fn run(
                     log::info!("RNS_AUTO TX {}B dropped — no peers yet", packet.len());
                 } else {
                     for addr in &targets {
-                        if let Err(e) = data
+                        if let Err(e) = data_socket
                             .send_to(&packet, (IpAddress::Ipv6(*addr), DEFAULT_DATA_PORT))
                             .await
                         {
