@@ -53,31 +53,33 @@ pub const MAX_REGISTERED_INTERFACES: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
-/// Bytes the jitter package draws from the per-step seed (a `u64`).
+/// Bytes the jitter package draws from the per-cycle seed. The jitter package is
+/// a `u64`, not raw bytes like the announce nonce, because it is consumed
+/// *numerically*: `jitter_offset_for` mixes it with the destination through a
+/// splitmix step, so an integer is its natural form and the split converts these
+/// bytes to one. (The nonce stays bytes — it is copied to the wire, not computed
+/// on.)
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
 /// Raw entropy a single step needs, drawn once from
-/// [`EngineDriver::fill_entropy`] and split by [`StepEntropy::from_seed`] into
+/// [`EngineDriver::fill_entropy`] and split by [`EngineCycleEntropy::from_seed`] into
 /// one typed package per genuine
 /// randomness need.
-pub const STEP_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
+pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
-/// The raw CSPRNG bytes a host draws for exactly one engine step, before the
-/// engine carves them into typed packages at [`StepEntropy::from_seed`]. A
+/// The raw CSPRNG bytes a host draws for exactly one engine cycle, before the
+/// engine carves them into typed packages at [`EngineCycleEntropy::from_seed`]. A
 /// newtype so a host's per-cycle draw is named on the runtime seam and can't be
 /// confused with any other buffer; move-only so each step consumes a fresh draw
 /// rather than silently reusing one across cycles.
-pub struct StepSeed([u8; STEP_ENTROPY_LEN]);
+pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
 
-impl StepSeed {
-    /// Wrap a freshly drawn per-step seed.
-    pub const fn new(bytes: [u8; STEP_ENTROPY_LEN]) -> Self {
+impl EngineCycleEntropySeed {
+    pub const fn new(bytes: [u8; ENGINE_CYCLE_ENTROPY_LEN]) -> Self {
         Self(bytes)
     }
 
-    /// The raw bytes, for a runtime that hands them straight to the engine's
-    /// `step` (the one site that splits them into typed packages).
-    pub const fn as_bytes(&self) -> &[u8; STEP_ENTROPY_LEN] {
+    pub const fn as_bytes(&self) -> &[u8; ENGINE_CYCLE_ENTROPY_LEN] {
         &self.0
     }
 }
@@ -87,16 +89,16 @@ impl StepSeed {
 /// consumer means adding a field here — which forces [`from_seed`](Self::from_seed)
 /// and every caller to account for the new draw, rather than silently widening
 /// an opaque scalar.
-pub struct StepEntropy {
+pub struct EngineCycleEntropy {
     pub jitter: JitterSeed,
     pub self_announce: SelfAnnounceEntropy,
 }
 
-impl StepEntropy {
+impl EngineCycleEntropy {
     /// Carve the raw step seed into its packages at the one auditable site:
     /// the low `JITTER_SEED_LEN` bytes seed the jitter spreader, the next
     /// [`SelfAnnounceEntropy::LEN`] are the self-announce nonce.
-    pub fn from_seed(seed: StepSeed) -> Self {
+    pub fn from_seed(seed: EngineCycleEntropySeed) -> Self {
         let bytes = seed.as_bytes();
         let mut jitter = [0u8; JITTER_SEED_LEN];
         jitter.copy_from_slice(&bytes[..JITTER_SEED_LEN]);
@@ -621,27 +623,27 @@ where
 }
 
 /// Process a batch of inbound packets. Clock-free: each packet carries its own
-/// arrival instant, so the result is a pure function of `(state, packets,
+/// arrival instant, so the result is a deterministic function of `(state, packets,
 /// entropy)`. An empty batch is valid and a no-op.
 #[must_use]
-pub fn ingest<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
+pub fn ingest_packets<'p, I, R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
-    packets: &[InboundPacket<'_>],
+    packets: impl IntoIterator<Item = I>,
     jitter: JitterSeed,
 ) -> IngestOutput
 where
+    I: core::borrow::Borrow<InboundPacket<'p>>,
     R: RouteColumns,
     A: RetainedAnnounceColumns,
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    state.ingested_packet_count = state
-        .ingested_packet_count
-        .saturating_add(packets.len() as u64);
-
     let mut counters = IngestCounters::default();
+    let mut processed: usize = 0;
 
     for packet in packets {
+        processed += 1;
+        let packet: &InboundPacket = core::borrow::Borrow::borrow(&packet);
         match Ingress::classify(packet) {
             Ingress::Announce {
                 announce,
@@ -667,8 +669,10 @@ where
         }
     }
 
+    state.ingested_packet_count = state.ingested_packet_count.saturating_add(processed as u64);
+
     IngestOutput {
-        processed_packet_count: packets.len(),
+        processed_packet_count: processed,
         accepted_announce_count: counters.accepted,
         held_for_retry_count: counters.held,
         scheduled_rebroadcast_count: counters.scheduled,
@@ -684,13 +688,8 @@ struct IngestCounters {
     scheduled: usize,
 }
 
-/// Mutates `state` and `counters` in place; returns nothing because
+/// Mutates `state` and `counters` in place; currently returns nothing because
 /// every branch's side effects are already captured by the counters.
-///
-/// WIP - "Always-returns-()" is a current posture, not a committed stance.
-/// We need to continue to observe the other handlers' impls and stay
-/// vigilant at unifying & coupling what should be, while avoiding
-/// doing so for what shouldn't be.
 fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     announce: Announce<'_>,
@@ -995,12 +994,12 @@ mod tests {
             },
         ];
 
-        let out = ingest(&mut state, &batch, TEST_ENTROPY);
+        let out = ingest_packets(&mut state, &batch, TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
 
         // Empty batch is valid and does not move state.
-        let empty = ingest(&mut state, &[], TEST_ENTROPY);
+        let empty = ingest_packets(&mut state, &[], TEST_ENTROPY);
         assert_eq!(empty.processed_packet_count(), 0);
         assert_eq!(state.ingested_packet_count(), 2);
     }
@@ -1160,7 +1159,7 @@ mod tests {
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let _ = ingest(
+        let _ = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1296,7 +1295,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
-        let first = ingest(
+        let first = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1309,7 +1308,7 @@ mod tests {
         assert_eq!(state.route_count(), 1);
 
         // The identical announce again is a known-route replay: rejected, no new path.
-        let second = ingest(
+        let second = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(2_000),
@@ -1333,7 +1332,7 @@ mod tests {
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let out = ingest(
+        let out = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1347,7 +1346,7 @@ mod tests {
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let out = ingest(
+        let out = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1368,7 +1367,7 @@ mod tests {
             DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
 
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let out = ingest(
+        let out = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1400,7 +1399,7 @@ mod tests {
             source_interface: InterfaceId::new([0u8; 16]),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = ingest(&mut state, &[junk], TEST_ENTROPY);
+        let out = ingest_packets(&mut state, &[junk], TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 1);
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -1413,7 +1412,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
 
-        let out = ingest(
+        let out = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1433,7 +1432,7 @@ mod tests {
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
-        let _ = ingest(
+        let _ = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1479,7 +1478,7 @@ mod tests {
         let n2 = write_announce_wire_packet(&announce2, 0, &mut buf2).unwrap();
 
         let raw1 = hx(RAW_ANNOUNCE);
-        let _ = ingest(
+        let _ = ingest_packets(
             &mut state,
             &[
                 InboundPacket {
@@ -1520,7 +1519,7 @@ mod tests {
         // large widths belong on the heap; this inline default lives on the stack.)
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<64, 128>::default();
-        let out = ingest(
+        let out = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1542,7 +1541,7 @@ mod tests {
         register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
-        let out = ingest(
+        let out = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: arrival,
@@ -1586,7 +1585,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let arrival = InstantMillis(1_000);
-        let _ = ingest(
+        let _ = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: arrival,
@@ -1621,7 +1620,7 @@ mod tests {
             // Identical registries: byte-identical emissions depend on
             // both engines computing the same fanout target sets.
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
-            let _ = ingest(
+            let _ = ingest_packets(
                 state,
                 &[InboundPacket {
                     arrived_at: arrival,
@@ -1648,7 +1647,7 @@ mod tests {
         // once eviction lands and a follow-up packet can free arena space.)
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<4, 64, 8, 4, 16, 4>::default();
-        let _ = ingest(
+        let _ = ingest_packets(
             &mut state,
             &[InboundPacket {
                 arrived_at: InstantMillis(1_000),

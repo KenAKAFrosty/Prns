@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use super::super::{Manifold, RuntimeSnapshot};
-use crate::engine::{InboundPacket, InstantMillis, NextScheduledWakeup, StepSeed};
+use crate::engine::{EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledWakeup};
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -82,7 +82,7 @@ pub fn run<W, R, A, H, D, const MAX_HELD: usize, E, S>(
     A: RetainedAnnounceColumns,
     H: AnnounceIdHistory,
     D: RetainedAppData,
-    E: FnMut() -> StepSeed,
+    E: FnMut() -> EngineCycleEntropySeed,
     S: FnMut(&RuntimeSnapshot),
 {
     let base = clock_base;
@@ -111,7 +111,7 @@ pub fn run<W, R, A, H, D, const MAX_HELD: usize, E, S>(
             .collect();
 
         let now = InstantMillis(base.elapsed().as_millis() as u64);
-        let _ = manifold.cycle(now, draw_entropy(), &batch);
+        let _ = manifold.cycle_once(now, draw_entropy(), batch.iter().copied());
         on_snapshot(&manifold.snapshot());
         drop(batch);
         drop(entries);

@@ -26,7 +26,11 @@ impl AnnounceNonce {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+/// The 5-byte per-emission announce nonce, freshly drawn each cycle. Move-only
+/// (no `Copy`/`Clone`): it is a wire-exposed, must-be-unique value, so the type
+/// enforces single-use — `AnnounceId::mint` consumes it, and there is no way to
+/// silently mint two announces from one draw.
+#[derive(Debug)]
 pub struct SelfAnnounceEntropy([u8; NONCE_LEN]);
 
 impl SelfAnnounceEntropy {

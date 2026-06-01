@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use personal_rns::engine::{
-    FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig, StepSeed, STEP_ENTROPY_LEN,
+    EngineCycleEntropySeed, FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig,
+    ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
@@ -67,10 +68,10 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 /// Draw one full per-step seed of OS-CSPRNG entropy for an engine cycle — the
 /// same `os.urandom` bar RNS holds to.
-fn draw_entropy() -> StepSeed {
-    let mut bytes = [0u8; STEP_ENTROPY_LEN];
+fn draw_entropy() -> EngineCycleEntropySeed {
+    let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
     getrandom::getrandom(&mut bytes).expect("OS CSPRNG must provide cycle entropy");
-    StepSeed::new(bytes)
+    EngineCycleEntropySeed::new(bytes)
 }
 
 fn main() {

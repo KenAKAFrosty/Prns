@@ -1,23 +1,23 @@
-use core::convert::Infallible;
-
 use heapless::Vec as HeaplessVec;
 
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
-    EngineDriver, EngineState, InboundPacket, InstantMillis, NextScheduledWakeup, OutboundPacket,
-    StepOutput, StepSeed, MAX_REGISTERED_INTERFACES,
+    ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InboundPacket,
+    InstantMillis, NextScheduledWakeup, OutboundPacket, StepOutput, TickSummary,
+    MAX_REGISTERED_INTERFACES,
 };
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
 };
+use crate::wire::MTU;
 
 /// The substrate-neutral engine-bolt: it owns the engine and the registered
 /// workers, and turns one drive cycle into intake → engine step → exhaust.
 ///
-/// It is the multi-worker generalization of [`EngineDriver`]: given the inbound
-/// the runtime aggregated plus a fresh clock and entropy, [`cycle`](Manifold::cycle)
-/// ingests, ticks, and routes every egress directive to the worker(s) named in
+/// Given the inbound the runtime aggregated plus a fresh clock and entropy,
+/// [`cycle_once`](Manifold::cycle_once) applies the engine primitives directly —
+/// ingesting, ticking, and routing every egress directive to the worker(s) named in
 /// its `fire_on` list via [`InterfaceWorker::submit`]. The over-time loop that
 /// decides *when* to cycle, draws entropy, and aggregates inbound is the
 /// per-platform runtime, layered above this — never part of it. `now`/`entropy`
@@ -79,31 +79,84 @@ where
         }
     }
 
-    /// One drive cycle: ingest `inbound`, tick at `now` with the step `seed`,
-    /// and route the resulting egress to the worker(s) named in each directive's
-    /// `fire_on`. Returns the step summary. The `seed` is one full per-step
-    /// entropy draw; the engine carves it into its typed packages at `step`.
-    pub fn cycle(
+    /// The whole per-cycle orchestration, applied directly
+    /// against the manifold's own engine, workers, and traffic meter: carve the
+    /// step `seed`, ingest `inbound` (metering each packet to the interface that
+    /// stamped it), tick at `now`, fan every due egress directive to the workers
+    /// it names, and originate a due self-announce. The substrate — clock,
+    /// entropy, the inbound stream — is the caller's; the per-interface I/O is
+    /// the workers'. Returns the step summary.
+    pub fn cycle_once<'p>(
         &mut self,
         now: InstantMillis,
-        seed: StepSeed,
-        inbound: &[InboundPacket<'_>],
+        entropy_seed: EngineCycleEntropySeed,
+        inbound: impl IntoIterator<Item = InboundPacket<'p>>,
     ) -> StepOutput {
         let Self {
             engine,
             workers,
             traffic,
         } = self;
-        let mut driver = ManifoldDriver {
-            now,
-            seed,
-            inbound,
-            workers: workers.as_mut_slice(),
-            traffic,
+        let entropy = EngineCycleEntropy::from_seed(entropy_seed);
+
+        // Ingest the inbound batch, metering each packet to the interface that
+        // stamped it (a worker stamps only real Reticulum traffic; its own
+        // discovery chatter never reaches here).
+        let traffic_meter = &mut *traffic;
+        let ingest_output = ingest_packets(
+            engine,
+            inbound.into_iter().inspect(move |packet| {
+                traffic_meter.add_rx(packet.source_interface, packet.bytes.len() as u64);
+            }),
+            entropy.jitter,
+        );
+
+        // Tick, then fan each due egress directive out to the workers it names.
+        let tick_output = tick(engine, now, entropy.jitter);
+        let tick_summary = TickSummary {
+            egress_directive_count: tick_output.egress_directive_count(),
+            recovered_from_held_count: tick_output.recovered_from_held_count(),
         };
-        driver
-            .step(engine)
-            .expect("manifold driver ops are infallible")
+        let mut emit_buffer = [0u8; MTU];
+        for directive in tick_output.egress_directives() {
+            let n = directive
+                .to_wire(&mut emit_buffer)
+                .expect("MTU-sized buf fits any valid wire packet");
+            fan_out(
+                workers.as_mut_slice(),
+                traffic,
+                OutboundPacket::new(&emit_buffer[..n]),
+                directive.fire_on(),
+            );
+        }
+        tick_output.commit();
+
+        // Originate our own announce when one is due — fanned to every registered
+        // interface (no source to exclude), only when there is one to carry it.
+        let mut self_announce_minted = false;
+        if !engine.registered_interfaces().is_empty() {
+            if let Some(n) =
+                engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
+            {
+                fan_out(
+                    workers.as_mut_slice(),
+                    traffic,
+                    OutboundPacket::new(&emit_buffer[..n]),
+                    engine.registered_interfaces(),
+                );
+                self_announce_minted = true;
+            }
+        }
+
+        let entropy_consumed = self_announce_minted
+            || ingest_output.scheduled_rebroadcast_count() > 0
+            || tick_summary.recovered_from_held_count > 0;
+
+        StepOutput {
+            ingest: ingest_output,
+            tick: tick_summary,
+            entropy_consumed,
+        }
     }
 
     /// The app-facing [`RuntimeSnapshot`] for this cycle: per registered
@@ -150,67 +203,23 @@ where
     }
 }
 
-/// Per-cycle [`EngineDriver`] the manifold builds over borrowed pieces: the
-/// runtime's `now`/`seed`, the aggregated inbound batch, and the workers to
-/// exhaust to. Infallible — every op is a copy or a non-blocking submit.
-struct ManifoldDriver<'a, W: InterfaceWorker> {
-    now: InstantMillis,
-    seed: StepSeed,
-    inbound: &'a [InboundPacket<'a>],
-    workers: &'a mut [W],
-    traffic: &'a mut TrafficLedger,
-}
-
-impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
-    type Error = Infallible;
-
-    fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
-        Ok(self.now)
+/// Fan one outgoing packet to the workers the engine named in `fire_on`,
+/// metering its bytes to each target. Non-blocking: a full worker queue drops
+/// the packet — the engine re-emits announces on its own cadence, so a drop
+/// self-heals.
+fn fan_out<W: InterfaceWorker>(
+    workers: &mut [W],
+    traffic: &mut TrafficLedger,
+    packet: OutboundPacket,
+    fire_on: &[InterfaceId],
+) {
+    for id in fire_on {
+        traffic.add_tx(*id, packet.bytes.len() as u64);
     }
-
-    fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // The runtime already drew one full per-step seed; copy it straight in.
-        // The engine carves these bytes into typed packages at `step` — no
-        // cycling, so the self-announce nonce no longer reuses the jitter bytes.
-        for (dst, src) in buf.iter_mut().zip(self.seed.as_bytes()) {
-            *dst = *src;
+    for worker in workers.iter_mut() {
+        if fire_on.contains(&worker.descriptor().id) {
+            let _ = worker.submit(packet);
         }
-        Ok(())
-    }
-
-    fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
-        // Every packet here is real Reticulum traffic the worker stamped — its
-        // own discovery/beacon chatter never reaches the mailbox — so this is
-        // the exact point to meter inbound fabric bytes, attributed to the
-        // interface that heard each one.
-        let inbound = self.inbound;
-        for packet in inbound {
-            self.traffic
-                .add_rx(packet.source_interface, packet.bytes.len() as u64);
-        }
-        Ok(inbound)
-    }
-
-    fn handle_outbound_packet(
-        &mut self,
-        packet: OutboundPacket,
-        fire_on: &[InterfaceId],
-    ) -> Result<(), Self::Error> {
-        // Mirror of the inbound meter: the engine emits a real Reticulum packet
-        // on each `fire_on` interface, so count its bytes once per target.
-        for id in fire_on {
-            self.traffic.add_tx(*id, packet.bytes.len() as u64);
-        }
-        // Hand the packet to every registered worker the engine named.
-        for worker in self.workers.iter_mut() {
-            if fire_on.contains(&worker.descriptor().id) {
-                // Non-blocking; a full worker queue drops this packet — the
-                // engine re-emits announces on its own cadence, so a drop
-                // self-heals.
-                let _ = worker.submit(packet);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -399,10 +408,10 @@ mod tests {
         let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let mut manifold = Manifold::new(engine, [worker(source, true), worker(peer, true)]);
 
-        let out = manifold.cycle(
+        let out = manifold.cycle_once(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            StepSeed::new([0xCA; crate::engine::STEP_ENTROPY_LEN]),
-            &inbound,
+            EngineCycleEntropySeed::new([0xCA; crate::engine::ENGINE_CYCLE_ENTROPY_LEN]),
+            inbound.iter().copied(),
         );
 
         assert_eq!(out.ingest.accepted_announce_count(), 1);

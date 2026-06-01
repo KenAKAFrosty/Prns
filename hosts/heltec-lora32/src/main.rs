@@ -60,8 +60,8 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
 use personal_rns::engine::{
-    FixedCapacityEngineState, OutboundPacket, ReannounceSchedule, SelfAnnounceConfig, StepSeed,
-    STEP_ENTROPY_LEN,
+    EngineCycleEntropySeed, FixedCapacityEngineState, OutboundPacket, ReannounceSchedule,
+    SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::esp_now::embassy::{
@@ -640,9 +640,9 @@ async fn main(spawner: Spawner) {
     // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.
     // CSPRNG entropy from the (radio-seeded) RNG per cycle.
     let manifold_fut = run_manifold(manifold, inbound_rx, SNAPSHOT_WATCH.sender(), || {
-        let mut bytes = [0u8; STEP_ENTROPY_LEN];
+        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
         Rng::new().read(&mut bytes);
-        StepSeed::new(bytes)
+        EngineCycleEntropySeed::new(bytes)
     });
 
     // Render the Hopspot screen alongside it. Event-driven: subscribe to the

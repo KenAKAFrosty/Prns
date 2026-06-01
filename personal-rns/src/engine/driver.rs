@@ -14,8 +14,8 @@
 //! runtime decides when.
 
 use crate::engine::{
-    ingest, tick, EngineState, InboundPacket, IngestOutput, InstantMillis, OutboundPacket,
-    StepEntropy, StepSeed, STEP_ENTROPY_LEN,
+    ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InboundPacket,
+    IngestOutput, InstantMillis, OutboundPacket, ENGINE_CYCLE_ENTROPY_LEN,
 };
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{
@@ -35,13 +35,13 @@ pub struct TickSummary {
 pub struct StepOutput {
     pub ingest: IngestOutput,
     pub tick: TickSummary,
-    /// Whether this step actually drew on its [`StepEntropy`]:
+    /// Whether this step actually drew on its [`EngineCycleEntropy`]:
     /// the self-announce nonce was minted, or jitter was used to schedule a
     /// re-emission (in ingest or held-recovery). The default `step` re-draws
     /// every cycle regardless — cheap enough that it's the right default (a
     /// `getrandom` syscall on hosts, a sub-µs gated TRNG read on ESP32). A host
     /// that wants to avoid even that on quiet cycles can override `step` and
-    /// only re-fill its `StepEntropy` after a step reports `true`. The nonce
+    /// only re-fill its `EngineCycleEntropy` after a step reports `true`. The nonce
     /// term is exact (it gates a wire-exposed, must-be-unique value); the jitter
     /// term is a faithful proxy off the re-emission counts, and a false negative
     /// there would only mildly correlate two spreads — never a correctness bug.
@@ -127,12 +127,12 @@ pub trait EngineDriver {
         // CSPRNG-quality is the driver's contract (see `EngineDriver::fill_entropy`);
         // the engine doesn't check, it just consumes the bytes (deterministically given
         // the seed) so deterministic-replay tests compare bit-for-bit.
-        let mut seed = [0u8; STEP_ENTROPY_LEN];
+        let mut seed = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
         self.fill_entropy(&mut seed)?;
-        let entropy = StepEntropy::from_seed(StepSeed::new(seed));
+        let entropy = EngineCycleEntropy::from_seed(EngineCycleEntropySeed::new(seed));
 
         let packets = self.drain_inbound_packets()?;
-        let ingest = ingest(state, packets, entropy.jitter);
+        let ingest = ingest_packets(state, packets, entropy.jitter);
 
         let now = self.now_millis()?;
         let tick_output = tick(state, now, entropy.jitter);
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(out.ingest.processed_packet_count(), 0);
         assert_eq!(out.tick.egress_directive_count, 0);
         // A relay with nothing to do drew on no entropy package — the signal a
-        // lazy host watches to skip re-filling its StepEntropy.
+        // lazy host watches to skip re-filling its EngineCycleEntropy.
         assert!(!out.entropy_consumed);
     }
 
