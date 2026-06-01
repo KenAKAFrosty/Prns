@@ -26,7 +26,7 @@ use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
+use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -52,6 +52,7 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use embedded_hal_bus::spi::ExclusiveDevice;
 use lora_phy::iv::GenericSx126xInterfaceVariant;
+use lora_phy::mod_params::{Bandwidth, CodingRate, SpreadingFactor};
 use lora_phy::sx126x::{Config as Sx126xConfig, Sx1262, Sx126x, TcxoCtrlVoltage};
 use lora_phy::LoRa;
 
@@ -60,6 +61,9 @@ use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface,
 
 use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::rnode_lora::core::{
+    encode_air_frame, DEFAULT_915_LORA_PROFILE, LORA_SINGLE_FRAME_MAX,
+};
 use personal_rns::interfaces::rns_parity::auto_interface::embassy::{
     run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
 };
@@ -474,7 +478,66 @@ async fn main(spawner: Spawner) {
         match LoRa::new(lora_radio, false, Delay).await {
             Ok(mut lora) => {
                 println!("HELTEC_S3 LORA init ok — SX1262 up (TCXO 1.8V, private sync 0x1424)");
+
+                // --- V4 front-end (FEM) enable for TX [slice 1b-ii]. PWR_EN(7)+
+                // CSD(2) power the FEM; detect the IC the RNode way (PWR_EN high,
+                // read CSD) to know which switch pin the SX1262's DIO2 owns. For
+                // this TX-only smoke we hold the *non-DIO2* switch pin HIGH (TX
+                // position) and leave the DIO2-owned pin high-Z for the chip to
+                // drive — never both (that'd fight DIO2).
+                let _pa_pwr = Output::new(peripherals.GPIO7, Level::High, OutputConfig::default());
+                let mut csd = Flex::new(peripherals.GPIO2);
+                csd.apply_input_config(&InputConfig::default());
+                csd.set_input_enable(true);
+                Timer::after(Duration::from_millis(5)).await;
+                let is_kct8103l = csd.is_high();
+                csd.set_output_enable(true);
+                csd.set_high(); // CSD high = FEM enabled (LNA/PA powered)
+                let _fem_switch = if is_kct8103l {
+                    println!("HELTEC_S3 LORA FEM=KCT8103L (DIO2 drives CPS46; hold CTX5 high)");
+                    Output::new(peripherals.GPIO5, Level::High, OutputConfig::default())
+                } else {
+                    println!("HELTEC_S3 LORA FEM=GC1109 (DIO2 drives CTX5; hold CPS46 high)");
+                    Output::new(peripherals.GPIO46, Level::High, OutputConfig::default())
+                };
+
+                // Modulation: the shared 915 profile, mapped to lora-phy.
+                let modulation = lora
+                    .create_modulation_params(
+                        SpreadingFactor::_8,
+                        Bandwidth::_125KHz,
+                        CodingRate::_4_5,
+                        DEFAULT_915_LORA_PROFILE.frequency_hz,
+                    )
+                    .expect("lora modulation params");
+                let mut tx_pkt = lora
+                    .create_tx_packet_params(
+                        DEFAULT_915_LORA_PROFILE.preamble_symbols,
+                        false, // explicit header
+                        true,  // payload CRC on
+                        false, // IQ not inverted
+                        &modulation,
+                    )
+                    .expect("lora tx packet params");
+
+                // Frame a recognizable payload with RNode's 1-byte header and
+                // transmit it a handful of times. Low TX power (-9 dBm at the
+                // SX1262) for the ~33 cm bench — the external PA still adds gain.
+                let payload = b"PERSONAL-HOPSPOT-LORA-SMOKE";
+                let mut frame = [0u8; LORA_SINGLE_FRAME_MAX];
+                let n = encode_air_frame(payload, 0x10, &mut frame).expect("frame fits one LoRa frame");
+                for i in 0..20u32 {
+                    match lora.prepare_for_tx(&modulation, &mut tx_pkt, -9, &frame[..n]).await {
+                        Ok(()) => match lora.tx().await {
+                            Ok(()) => println!("HELTEC_S3 LORA TX #{i} ok ({n} bytes on air)"),
+                            Err(e) => println!("HELTEC_S3 LORA TX #{i} send failed: {e:?}"),
+                        },
+                        Err(e) => println!("HELTEC_S3 LORA TX #{i} prepare failed: {e:?}"),
+                    }
+                    Timer::after(Duration::from_secs(2)).await;
+                }
                 let _ = lora.sleep(false).await;
+                println!("HELTEC_S3 LORA TX smoke done");
             }
             Err(e) => println!("HELTEC_S3 LORA init FAILED: {e:?}"),
         }
