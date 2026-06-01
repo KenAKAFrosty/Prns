@@ -11,7 +11,7 @@
 //!   only bytes. Announces ride OTA to/from stock Reticulum, surfaced in LXMF
 //!   apps as an `lxmf.delivery` destination.
 //!
-//! Board: Heltec WiFi LoRa 32 V3 (ESP32-S3). OLED `SDA=17 SCL=18 RST=21`,
+//! Board: Heltec WiFi LoRa 32 V4 (ESP32-S3). OLED `SDA=17 SCL=18 RST=21`,
 //! `Vext=GPIO36` (active-low). WiFi creds come from build-time env
 //! `WIFI_SSID` / `WIFI_PASSWORD` so they never enter source; optional
 //! `WIFI_BSSID` pins the STA to one AP (mesh units don't bridge the
@@ -26,8 +26,9 @@ use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Level, Output, OutputConfig};
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
 use esp_hal::time::{Instant, Rate};
@@ -44,10 +45,15 @@ use core::fmt::Write as _;
 use core::sync::atomic::AtomicBool;
 use embassy_futures::join::join;
 use embassy_futures::select::{select, Either};
-use embassy_time::{Duration, Instant as EmbassyInstant, Ticker, Timer};
+use embassy_time::{Delay, Duration, Instant as EmbassyInstant, Ticker, Timer};
 use heapless::{String as HString, Vec as HVec};
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
+
+use embedded_hal_bus::spi::ExclusiveDevice;
+use lora_phy::iv::GenericSx126xInterfaceVariant;
+use lora_phy::sx126x::{Config as Sx126xConfig, Sx1262, Sx126x, TcxoCtrlVoltage};
+use lora_phy::LoRa;
 
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
@@ -287,7 +293,7 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    // --- OLED (Heltec V3 pinout). ---
+    // --- OLED (Heltec V4 pinout). ---
     let mut vext = Output::new(peripherals.GPIO36, Level::Low, OutputConfig::default());
     vext.set_low();
     let mut oled_rst = Output::new(peripherals.GPIO21, Level::High, OutputConfig::default());
@@ -425,6 +431,54 @@ async fn main(spawner: Spawner) {
     let mut vbat_pin =
         adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(peripherals.GPIO1, Attenuation::_11dB);
     let mut vbat_adc = Adc::new(peripherals.ADC1, adc_cfg);
+
+    // --- LoRa radio (SX1262) bring-up smoke [slice 1b-i]. Prove the chip answers
+    // over SPI with the V4's 1.8 V TCXO before wrapping it as an interface worker.
+    // SPI2 on SCK=9/MOSI=10/MISO=11 + CS=8; RESET=12, BUSY=13, DIO1=14. The SX1262
+    // drives the antenna switch itself (DIO2-as-RF-switch) so the RF-switch hooks
+    // are unused (None,None); the V4 front-end (PWR_EN/CSD) gates only the RF path,
+    // not SPI, so init needs no FEM power — that lands with TX/RX in 1c.
+    {
+        let lora_spi = Spi::new(
+            peripherals.SPI2,
+            SpiConfig::default().with_frequency(Rate::from_mhz(8)),
+        )
+        .expect("lora spi2")
+        .with_sck(peripherals.GPIO9)
+        .with_mosi(peripherals.GPIO10)
+        .with_miso(peripherals.GPIO11)
+        .into_async();
+        let lora_cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
+        let lora_spi_device =
+            ExclusiveDevice::new(lora_spi, lora_cs, Delay).expect("lora spi device");
+
+        let lora_reset = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
+        let lora_busy = Input::new(peripherals.GPIO13, InputConfig::default());
+        let lora_dio1 = Input::new(peripherals.GPIO14, InputConfig::default());
+        let lora_iv =
+            GenericSx126xInterfaceVariant::new(lora_reset, lora_dio1, lora_busy, None, None)
+                .expect("lora interface variant");
+
+        let lora_radio = Sx126x::new(
+            lora_spi_device,
+            lora_iv,
+            Sx126xConfig {
+                chip: Sx1262,
+                // V4 TCXO is 1.8 V (V3 was 3.3 V) — wrong voltage = no clock.
+                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
+                use_dcdc: true,
+                rx_boost: true,
+            },
+        );
+        // `false` = private (non-LoRaWAN) network → RNode's 0x1424 sync word.
+        match LoRa::new(lora_radio, false, Delay).await {
+            Ok(mut lora) => {
+                println!("HELTEC_S3 LORA init ok — SX1262 up (TCXO 1.8V, private sync 0x1424)");
+                let _ = lora.sleep(false).await;
+            }
+            Err(e) => println!("HELTEC_S3 LORA init FAILED: {e:?}"),
+        }
+    }
 
     // Run the manifold loop: aggregate the worker's inbound, drive the engine,
     // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.

@@ -52,6 +52,16 @@ static_cell = "2"
 # install esp-println as the sink in main. esp-println's `log-04` feature.
 log = "0.4"
 
+# LoRa radio (SX1262). lora-phy is the no_std/async PHY driver (LoRa-only;
+# RNode-compatible params live in rns_parity::rnode_lora::core). We hand it an
+# eh-async SpiDevice — esp-hal async SPI + the NSS pin, wrapped by
+# embedded-hal-bus's async ExclusiveDevice — plus a hand-written InterfaceVariant
+# for the Heltec V4 (reset/busy/dio1/RF-switch + the V4 front-end). The async
+# `Wait` trait the variant uses to await BUSY/DIO1 edges comes from embedded-hal-async.
+lora-phy = "3.0.1"
+embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
+embedded-hal-async = "1.0"
+
 [profile.release]
 codegen-units = 1
 debug = 2
