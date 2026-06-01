@@ -12,9 +12,14 @@ use crate::routing::announce::{expand_name, DottedNameHash, ExpandNameError};
 use heapless::Vec as HeaplessVec;
 
 /// Maximum app-data bytes carried in our own announce. RNS app data on an
-/// announce is small (a node label, an LXMF display name); 128 bytes is
-/// generous and keeps the announce well within [`MTU`](crate::wire::MTU).
-pub const MAX_SELF_ANNOUNCE_APP_DATA_LEN: usize = 128;
+/// announce (a node label, an LXMF display name, optional ticket bytes) is
+/// modest; 256 bytes is generous, keeps the announce within
+/// [`MTU`](crate::wire::MTU) (≈165 B overhead + app_data ≤ 500), and lets a
+/// longer announce span two LoRa frames — so a self-announce exercises the
+/// LoRa interface's split/reassembly, not just single frames. `from_config`
+/// rejects app_data beyond this with [`SelfAnnounceConfigError::AppDataTooLong`]
+/// rather than overflowing.
+pub const MAX_SELF_ANNOUNCE_APP_DATA_LEN: usize = 256;
 
 /// Reticulum's default re-announce cadence — every 6 hours, in milliseconds.
 pub const DEFAULT_REANNOUNCE_INTERVAL_MS: u64 = 6 * 60 * 60 * 1000;
