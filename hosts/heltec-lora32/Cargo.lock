@@ -1635,6 +1635,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "log",
+ "lora-phy",
  "sha2",
  "x25519-dalek",
  "zeroize",

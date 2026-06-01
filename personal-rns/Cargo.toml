@@ -17,7 +17,7 @@ std-host = ["std"]
 # embassy stack in as optional deps; OFF by default so the pure-no_std and
 # no-std-esp-build gates never see it. An embedded host turns it on to get the
 # embassy worker shells (e.g. the AutoInterface). No alloc — heapless throughout.
-embassy-host = ["dep:embassy-net", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:embedded-io-async", "dep:log"]
+embassy-host = ["dep:embassy-net", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:embedded-io-async", "dep:lora-phy", "dep:log"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -52,6 +52,10 @@ embassy-futures = { version = "0.1", optional = true, default-features = false }
 # usb-serial-jtag halves) so `personal-rns` never depends on a specific HAL.
 # 0.6 matches what esp-hal 1.1 implements for its serial peripherals.
 embedded-io-async = { version = "0.6", optional = true, default-features = false }
+# LoRa PHY driver for the RNode-compatible LoRa worker shell. The host builds the
+# `LoRa<RK, DLY>` (SX1262 + board InterfaceVariant) and hands it to the shell, so
+# `personal-rns` names lora-phy but no specific radio HAL. no_std, async.
+lora-phy = { version = "3.0.1", optional = true }
 # Logging facade for the worker shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
 

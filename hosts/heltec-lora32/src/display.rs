@@ -37,6 +37,7 @@ const MAX_VISIBLE_CARDS: usize = 3;
 pub enum CardKind {
     Wifi,
     Usb,
+    LoRa,
 }
 
 /// One interface's card. The host fills the static bits (kind, label) and the
@@ -228,6 +229,18 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
             let _ = Rectangle::new(Point::new(x + 2, y + 5), Size::new(4, 2))
                 .into_styled(fill(BinaryColor::On))
                 .draw(display);
+        }
+        // LoRa: a whip antenna — vertical mast + base, with an RF wave at the tip.
+        CardKind::LoRa => {
+            line(display, Point::new(x + 4, y + 2), Point::new(x + 4, y + 9));
+            line(display, Point::new(x + 2, y + 9), Point::new(x + 6, y + 9));
+            let _ = Triangle::new(
+                Point::new(x + 1, y + 2),
+                Point::new(x + 4, y),
+                Point::new(x + 7, y + 2),
+            )
+            .into_styled(stroke(BinaryColor::On))
+            .draw(display);
         }
     }
     if !online {

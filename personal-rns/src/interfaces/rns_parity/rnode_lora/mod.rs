@@ -8,3 +8,6 @@
 //! it for hosts that have the radio.
 
 pub mod core;
+
+#[cfg(feature = "embassy-host")]
+pub mod embassy;

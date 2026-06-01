@@ -43,7 +43,7 @@ use static_cell::StaticCell;
 
 use core::fmt::Write as _;
 use core::sync::atomic::AtomicBool;
-use embassy_futures::join::join;
+use embassy_futures::join::join3;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Delay, Duration, Instant as EmbassyInstant, Ticker, Timer};
 use heapless::{String as HString, Vec as HVec};
@@ -52,7 +52,6 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use embedded_hal_bus::spi::ExclusiveDevice;
 use lora_phy::iv::GenericSx126xInterfaceVariant;
-use lora_phy::mod_params::{Bandwidth, CodingRate, SpreadingFactor};
 use lora_phy::sx126x::{Config as Sx126xConfig, Sx1262, Sx126x, TcxoCtrlVoltage};
 use lora_phy::LoRa;
 
@@ -61,8 +60,10 @@ use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface,
 
 use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::rnode_lora::core::{
-    encode_air_frame, DEFAULT_915_LORA_PROFILE, LORA_SINGLE_FRAME_MAX,
+use personal_rns::interfaces::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
+use personal_rns::interfaces::rns_parity::rnode_lora::embassy::{
+    run as run_lora_worker, EmbassyRnodeLoraInterface, OutboundChannel as LoraOutboundChannel,
+    OutboundReceiver as LoraOutboundReceiver,
 };
 use personal_rns::interfaces::rns_parity::auto_interface::embassy::{
     run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
@@ -101,11 +102,16 @@ const INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-rnsaut");
 /// or another board). Opaque to the engine; readable in `fire_on` logs.
 const SERIAL_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-usbser");
 
+/// Engine-facing id for this host's LoRa interface (the SX1262 radio). Opaque to
+/// the engine; readable in `fire_on` logs.
+const LORA_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-lora62");
+
 /// The S3 runs two interface workers, so the multi-worker manifold holds them as
 /// one concrete type — this enum. Dispatch is explicit per the no-wildcard rule.
 enum HostWorker {
     Wifi(EmbassyAutoInterface),
     Serial(EmbassySerialInterface),
+    LoRa(EmbassyRnodeLoraInterface),
 }
 
 impl InterfaceWorker for HostWorker {
@@ -114,10 +120,12 @@ impl InterfaceWorker for HostWorker {
     const PACKET_BUFFER_SIZE: usize = {
         let wifi = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
         let serial = EmbassySerialInterface::PACKET_BUFFER_SIZE;
-        if wifi > serial {
-            wifi
+        let lora = EmbassyRnodeLoraInterface::PACKET_BUFFER_SIZE;
+        let larger = if wifi > serial { wifi } else { serial };
+        if larger > lora {
+            larger
         } else {
-            serial
+            lora
         }
     };
 
@@ -125,6 +133,7 @@ impl InterfaceWorker for HostWorker {
         match self {
             HostWorker::Wifi(w) => w.descriptor(),
             HostWorker::Serial(s) => s.descriptor(),
+            HostWorker::LoRa(l) => l.descriptor(),
         }
     }
 
@@ -132,6 +141,7 @@ impl InterfaceWorker for HostWorker {
         match self {
             HostWorker::Wifi(w) => w.health(),
             HostWorker::Serial(s) => s.health(),
+            HostWorker::LoRa(l) => l.health(),
         }
     }
 
@@ -139,6 +149,7 @@ impl InterfaceWorker for HostWorker {
         match self {
             HostWorker::Wifi(w) => w.submit(packet),
             HostWorker::Serial(s) => s.submit(packet),
+            HostWorker::LoRa(l) => l.submit(packet),
         }
     }
 }
@@ -152,6 +163,7 @@ const PACKET_BUFFER_SIZE: usize = HostWorker::PACKET_BUFFER_SIZE;
 /// `health()` (reader) so the runtime snapshot's `online` is honest.
 static LINK_UP: LinkUp = AtomicBool::new(false);
 static SERIAL_LINK_UP: AtomicBool = AtomicBool::new(false);
+static LORA_LINK_UP: AtomicBool = AtomicBool::new(false);
 
 /// The runtime fires its post-cycle [`RuntimeSnapshot`] out on this; the OLED
 /// render loop subscribes and wakes only when engine state changes — no poll.
@@ -385,14 +397,18 @@ async fn main(spawner: Spawner) {
     static INBOUND: StaticCell<InboundChannel<PACKET_BUFFER_SIZE>> = StaticCell::new();
     static OUTBOUND: StaticCell<OutboundChannel> = StaticCell::new();
     static SERIAL_OUTBOUND: StaticCell<SerialOutboundChannel> = StaticCell::new();
+    static LORA_OUTBOUND: StaticCell<LoraOutboundChannel> = StaticCell::new();
     let inbound_ch: &'static InboundChannel<PACKET_BUFFER_SIZE> =
         INBOUND.init(InboundChannel::new());
     let outbound_ch: &'static OutboundChannel = OUTBOUND.init(OutboundChannel::new());
     let serial_outbound_ch: &'static SerialOutboundChannel =
         SERIAL_OUTBOUND.init(SerialOutboundChannel::new());
+    let lora_outbound_ch: &'static LoraOutboundChannel =
+        LORA_OUTBOUND.init(LoraOutboundChannel::new());
     let inbound_rx: InboundReceiver<PACKET_BUFFER_SIZE> = inbound_ch.receiver();
     let outbound_rx: OutboundReceiver = outbound_ch.receiver();
     let serial_outbound_rx: SerialOutboundReceiver = serial_outbound_ch.receiver();
+    let lora_outbound_rx: LoraOutboundReceiver = lora_outbound_ch.receiver();
 
     // The S3's USB-C is the native usb-serial-jtag; share it for RNS frames (the
     // serial worker) and esp-println logs (register pokes) — the C6 precedent.
@@ -400,15 +416,18 @@ async fn main(spawner: Spawner) {
         .into_async()
         .split();
 
-    // Two workers — WiFi LAN + USB serial — both registered in the manifold.
+    // Three workers — WiFi LAN + USB serial + LoRa — all registered in the manifold.
     let wifi_worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP);
     let serial_worker =
         EmbassySerialInterface::new(SERIAL_INTERFACE_ID, serial_outbound_ch.sender(), &SERIAL_LINK_UP);
+    let lora_worker =
+        EmbassyRnodeLoraInterface::new(LORA_INTERFACE_ID, lora_outbound_ch.sender(), &LORA_LINK_UP);
     let manifold = Manifold::new(
         state,
         [
             HostWorker::Wifi(wifi_worker),
             HostWorker::Serial(serial_worker),
+            HostWorker::LoRa(lora_worker),
         ],
     );
 
@@ -436,112 +455,80 @@ async fn main(spawner: Spawner) {
         adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(peripherals.GPIO1, Attenuation::_11dB);
     let mut vbat_adc = Adc::new(peripherals.ADC1, adc_cfg);
 
-    // --- LoRa radio (SX1262) bring-up smoke [slice 1b-i]. Prove the chip answers
-    // over SPI with the V4's 1.8 V TCXO before wrapping it as an interface worker.
-    // SPI2 on SCK=9/MOSI=10/MISO=11 + CS=8; RESET=12, BUSY=13, DIO1=14. The SX1262
-    // drives the antenna switch itself (DIO2-as-RF-switch) so the RF-switch hooks
-    // are unused (None,None); the V4 front-end (PWR_EN/CSD) gates only the RF path,
-    // not SPI, so init needs no FEM power — that lands with TX/RX in 1c.
-    {
-        let lora_spi = Spi::new(
-            peripherals.SPI2,
-            SpiConfig::default().with_frequency(Rate::from_mhz(8)),
-        )
-        .expect("lora spi2")
-        .with_sck(peripherals.GPIO9)
-        .with_mosi(peripherals.GPIO10)
-        .with_miso(peripherals.GPIO11)
-        .into_async();
-        let lora_cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
-        let lora_spi_device =
-            ExclusiveDevice::new(lora_spi, lora_cs, Delay).expect("lora spi device");
+    // --- LoRa radio (SX1262) [slice 1c]. Build the radio + V4 front-end here in
+    // main scope (the FEM GPIOs must stay driven for the program's life), then
+    // hand the radio to the LoRa worker, joined below. SPI2 on SCK9/MOSI10/MISO11
+    // + CS8; RESET12/BUSY13/DIO1-14; DIO2-as-RF-switch (so the variant takes no
+    // GPIO switch pins). TCXO is 1.8 V on the V4 (3.3 V on the V3).
+    let lora_spi = Spi::new(
+        peripherals.SPI2,
+        SpiConfig::default().with_frequency(Rate::from_mhz(8)),
+    )
+    .expect("lora spi2")
+    .with_sck(peripherals.GPIO9)
+    .with_mosi(peripherals.GPIO10)
+    .with_miso(peripherals.GPIO11)
+    .into_async();
+    let lora_cs = Output::new(peripherals.GPIO8, Level::High, OutputConfig::default());
+    let lora_spi_device = ExclusiveDevice::new(lora_spi, lora_cs, Delay).expect("lora spi device");
+    let lora_reset = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
+    let lora_busy = Input::new(peripherals.GPIO13, InputConfig::default());
+    let lora_dio1 = Input::new(peripherals.GPIO14, InputConfig::default());
+    let lora_iv = GenericSx126xInterfaceVariant::new(lora_reset, lora_dio1, lora_busy, None, None)
+        .expect("lora interface variant");
+    let lora_radio = Sx126x::new(
+        lora_spi_device,
+        lora_iv,
+        Sx126xConfig {
+            chip: Sx1262,
+            tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
+            use_dcdc: true,
+            rx_boost: true,
+        },
+    );
 
-        let lora_reset = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
-        let lora_busy = Input::new(peripherals.GPIO13, InputConfig::default());
-        let lora_dio1 = Input::new(peripherals.GPIO14, InputConfig::default());
-        let lora_iv =
-            GenericSx126xInterfaceVariant::new(lora_reset, lora_dio1, lora_busy, None, None)
-                .expect("lora interface variant");
+    // V4 front-end (FEM) enable. PWR_EN(7)+CSD(2) power it; detect the IC the
+    // RNode way (PWR_EN high, read CSD). Our board is the GC1109: DIO2 drives
+    // CTX(5), we hold CPS(46) high (the non-DIO2 switch pin); never drive the
+    // DIO2-owned pin (that'd fight DIO2). These GPIOs live in main scope so the
+    // FEM stays powered for the program's life — the worker, joined below, never
+    // returns.
+    let _lora_pa_pwr = Output::new(peripherals.GPIO7, Level::High, OutputConfig::default());
+    let mut lora_csd = Flex::new(peripherals.GPIO2);
+    lora_csd.apply_input_config(&InputConfig::default());
+    lora_csd.set_input_enable(true);
+    Timer::after(Duration::from_millis(5)).await;
+    let lora_is_kct8103l = lora_csd.is_high();
+    lora_csd.set_output_enable(true);
+    lora_csd.set_high(); // CSD high = FEM enabled (LNA/PA powered)
+    let _lora_fem_switch = if lora_is_kct8103l {
+        println!("HELTEC_S3 LORA FEM=KCT8103L (DIO2 drives CPS46; hold CTX5 high)");
+        Output::new(peripherals.GPIO5, Level::High, OutputConfig::default())
+    } else {
+        println!("HELTEC_S3 LORA FEM=GC1109 (DIO2 drives CTX5; hold CPS46 high)");
+        Output::new(peripherals.GPIO46, Level::High, OutputConfig::default())
+    };
 
-        let lora_radio = Sx126x::new(
-            lora_spi_device,
-            lora_iv,
-            Sx126xConfig {
-                chip: Sx1262,
-                // V4 TCXO is 1.8 V (V3 was 3.3 V) — wrong voltage = no clock.
-                tcxo_ctrl: Some(TcxoCtrlVoltage::Ctrl1V8),
-                use_dcdc: true,
-                rx_boost: true,
-            },
-        );
-        // `false` = private (non-LoRaWAN) network → RNode's 0x1424 sync word.
+    // Init the radio (`false` = private network → RNode's 0x1424 sync) and run
+    // the LoRa worker. On init failure the LoRa card stays offline but the rest
+    // of the node runs.
+    let lora_fut = async move {
         match LoRa::new(lora_radio, false, Delay).await {
-            Ok(mut lora) => {
+            Ok(lora) => {
                 println!("HELTEC_S3 LORA init ok — SX1262 up (TCXO 1.8V, private sync 0x1424)");
-
-                // --- V4 front-end (FEM) enable for TX [slice 1b-ii]. PWR_EN(7)+
-                // CSD(2) power the FEM; detect the IC the RNode way (PWR_EN high,
-                // read CSD) to know which switch pin the SX1262's DIO2 owns. For
-                // this TX-only smoke we hold the *non-DIO2* switch pin HIGH (TX
-                // position) and leave the DIO2-owned pin high-Z for the chip to
-                // drive — never both (that'd fight DIO2).
-                let _pa_pwr = Output::new(peripherals.GPIO7, Level::High, OutputConfig::default());
-                let mut csd = Flex::new(peripherals.GPIO2);
-                csd.apply_input_config(&InputConfig::default());
-                csd.set_input_enable(true);
-                Timer::after(Duration::from_millis(5)).await;
-                let is_kct8103l = csd.is_high();
-                csd.set_output_enable(true);
-                csd.set_high(); // CSD high = FEM enabled (LNA/PA powered)
-                let _fem_switch = if is_kct8103l {
-                    println!("HELTEC_S3 LORA FEM=KCT8103L (DIO2 drives CPS46; hold CTX5 high)");
-                    Output::new(peripherals.GPIO5, Level::High, OutputConfig::default())
-                } else {
-                    println!("HELTEC_S3 LORA FEM=GC1109 (DIO2 drives CTX5; hold CPS46 high)");
-                    Output::new(peripherals.GPIO46, Level::High, OutputConfig::default())
-                };
-
-                // Modulation: the shared 915 profile, mapped to lora-phy.
-                let modulation = lora
-                    .create_modulation_params(
-                        SpreadingFactor::_8,
-                        Bandwidth::_125KHz,
-                        CodingRate::_4_5,
-                        DEFAULT_915_LORA_PROFILE.frequency_hz,
-                    )
-                    .expect("lora modulation params");
-                let mut tx_pkt = lora
-                    .create_tx_packet_params(
-                        DEFAULT_915_LORA_PROFILE.preamble_symbols,
-                        false, // explicit header
-                        true,  // payload CRC on
-                        false, // IQ not inverted
-                        &modulation,
-                    )
-                    .expect("lora tx packet params");
-
-                // Frame a recognizable payload with RNode's 1-byte header and
-                // transmit it a handful of times. Low TX power (-9 dBm at the
-                // SX1262) for the ~33 cm bench — the external PA still adds gain.
-                let payload = b"PERSONAL-HOPSPOT-LORA-SMOKE";
-                let mut frame = [0u8; LORA_SINGLE_FRAME_MAX];
-                let n = encode_air_frame(payload, 0x10, &mut frame).expect("frame fits one LoRa frame");
-                for i in 0..20u32 {
-                    match lora.prepare_for_tx(&modulation, &mut tx_pkt, -9, &frame[..n]).await {
-                        Ok(()) => match lora.tx().await {
-                            Ok(()) => println!("HELTEC_S3 LORA TX #{i} ok ({n} bytes on air)"),
-                            Err(e) => println!("HELTEC_S3 LORA TX #{i} send failed: {e:?}"),
-                        },
-                        Err(e) => println!("HELTEC_S3 LORA TX #{i} prepare failed: {e:?}"),
-                    }
-                    Timer::after(Duration::from_secs(2)).await;
-                }
-                let _ = lora.sleep(false).await;
-                println!("HELTEC_S3 LORA TX smoke done");
+                run_lora_worker(
+                    lora,
+                    LORA_INTERFACE_ID,
+                    DEFAULT_915_LORA_PROFILE,
+                    inbound_ch.sender(),
+                    lora_outbound_rx,
+                    &LORA_LINK_UP,
+                )
+                .await;
             }
             Err(e) => println!("HELTEC_S3 LORA init FAILED: {e:?}"),
         }
-    }
+    };
 
     // Run the manifold loop: aggregate the worker's inbound, drive the engine,
     // route egress back, and fire each cycle's snapshot out on SNAPSHOT_WATCH.
@@ -614,6 +601,8 @@ async fn main(spawner: Spawner) {
                     for view in &snap.interfaces {
                         let label = if view.id == SERIAL_INTERFACE_ID {
                             "USB"
+                        } else if view.id == LORA_INTERFACE_ID {
+                            "LoRa"
                         } else {
                             "WiFi"
                         };
@@ -644,6 +633,8 @@ async fn main(spawner: Spawner) {
                     for view in &snap.interfaces {
                         let (kind, label) = if view.id == SERIAL_INTERFACE_ID {
                             (display::CardKind::Usb, "USB")
+                        } else if view.id == LORA_INTERFACE_ID {
+                            (display::CardKind::LoRa, "LoRa")
                         } else {
                             (display::CardKind::Wifi, "WiFi LAN")
                         };
@@ -672,5 +663,5 @@ async fn main(spawner: Spawner) {
         }
     };
 
-    join(manifold_fut, oled_fut).await;
+    join3(manifold_fut, oled_fut, lora_fut).await;
 }
