@@ -10,10 +10,10 @@
 //! addresses, sockets, sockets' platform) ever surfaces. [`InterfaceStats`] is
 //! the worker's self-reported meta surface.
 
+mod core;
 mod runtime_driven;
-mod seam;
 mod stats;
 
+pub use core::{InterfaceWorker, QueueFull};
 pub use runtime_driven::RuntimeDriven;
-pub use seam::{InterfaceWorker, QueueFull};
 pub use stats::InterfaceStats;

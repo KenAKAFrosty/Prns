@@ -3,7 +3,7 @@
 //! - **Stage A/B** (done): the Personal Reticulum engine runs on the S3.
 //! - **RNSAutoInterface** (now an `InterfaceWorker`): the RNS-compatible WiFi/IP
 //!   LAN interface lives in `personal-rns`
-//!   (`interfaces::rns_parity::auto_interface`) as a shared brain + an embassy
+//!   (`interfaces::impls::rns_parity::auto_interface`) as a shared brain + an embassy
 //!   worker shell. This host's job shrinks to platform bring-up: WiFi
 //!   association, the embassy-net IP stack (SLAAC link-local), the channels, and
 //!   spawning the worker + running the [`Manifold`] loop. The worker owns all of
@@ -60,15 +60,15 @@ use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface,
 
 use personal_rns::engine::{DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
-use personal_rns::interfaces::rns_parity::rnode_lora::embassy::{
+use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
+use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::{
     run as run_lora_worker, EmbassyRnodeLoraInterface, OutboundChannel as LoraOutboundChannel,
     OutboundReceiver as LoraOutboundReceiver,
 };
-use personal_rns::interfaces::rns_parity::auto_interface::embassy::{
+use personal_rns::interfaces::impls::rns_parity::auto_interface::embassy::{
     run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
 };
-use personal_rns::interfaces::rns_parity::serial::embassy::{
+use personal_rns::interfaces::impls::rns_parity::serial::embassy::{
     run as run_serial_worker, EmbassySerialInterface, OutboundChannel as SerialOutboundChannel,
     OutboundReceiver as SerialOutboundReceiver,
 };

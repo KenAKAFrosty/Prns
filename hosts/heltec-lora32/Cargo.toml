@@ -53,7 +53,7 @@ static_cell = "2"
 log = "0.4"
 
 # LoRa radio (SX1262). lora-phy is the no_std/async PHY driver (LoRa-only;
-# RNode-compatible params live in rns_parity::rnode_lora::core). We hand it an
+# RNode-compatible params live in impls::rns_parity::rnode_lora::core). We hand it an
 # eh-async SpiDevice — esp-hal async SPI + the NSS pin, wrapped by
 # embedded-hal-bus's async ExclusiveDevice — plus a hand-written InterfaceVariant
 # for the Heltec V4 (reset/busy/dio1/RF-switch + the V4 front-end). The async

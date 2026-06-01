@@ -17,7 +17,7 @@ use personal_rns::engine::{
     DefaultEngineState, ReannounceSchedule, SelfAnnounceConfig,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::serial::std_host::{
+use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
     run as run_serial_worker, StdSerialInterface,
 };
 use personal_rns::interfaces::InterfaceId;

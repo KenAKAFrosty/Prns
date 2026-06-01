@@ -17,7 +17,8 @@
 //!   each concrete impl signs.
 //! - **`framing/`**: byte-stream framing codecs interfaces build on
 //!   (`rns_serial_framing`) — building blocks, not interfaces themselves.
-//! - **`impls/`**: the concrete implementations the core ships (`loopback/`).
+//! - **`impls/`**: the concrete implementations — in-process `loopback/` and the
+//!   wire-exact `rns_parity/` ports of the interfaces stock Python RNS ships.
 //!
 //! Everything is re-exported flat here, so consumers reach for
 //! `interfaces::Interface` / `interfaces::LoopbackInterface` /
@@ -32,8 +33,7 @@ pub mod mode;
 mod contract;
 mod descriptor;
 mod framing;
-mod impls;
-pub mod rns_parity;
+pub mod impls;
 mod worker;
 
 pub use capabilities::Capabilities;

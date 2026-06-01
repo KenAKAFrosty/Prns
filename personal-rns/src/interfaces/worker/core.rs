@@ -1,8 +1,5 @@
 use crate::interfaces::{InterfaceDescriptor, InterfaceStats};
 
-//REVIEW i'm not understanding why it's in its own "seam" file; seems like just something to put into 'mod' right? Or at least a name like "core" if that makes sense based on how we're using it elsewhere. Something like that
-//REVIEW also, the entire "rns_parity" should go under impls, where there was a shell directory already there
-
 /// The runtime tried to hand a worker more than its outbound queue can hold; the
 /// packet was not enqueued. The caller decides drop vs retry — submitting never
 /// blocks.
