@@ -4,8 +4,8 @@ use heapless::Vec as HeaplessVec;
 
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
-    EngineDriver, EngineState, InboundPacket, InstantMillis, NextScheduledWakeup, StepOutput,
-    MAX_REGISTERED_INTERFACES,
+    EngineDriver, EngineState, InboundPacket, InstantMillis, NextScheduledWakeup, OutboundPacket,
+    StepOutput, MAX_REGISTERED_INTERFACES,
 };
 use crate::interfaces::{InterfaceId, InterfaceWorker};
 use crate::routing::storage::{
@@ -190,11 +190,15 @@ impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
         Ok(inbound)
     }
 
-    fn handle_egress(&mut self, bytes: &[u8], fire_on: &[InterfaceId]) -> Result<(), Self::Error> {
+    fn handle_egress(
+        &mut self,
+        packet: OutboundPacket,
+        fire_on: &[InterfaceId],
+    ) -> Result<(), Self::Error> {
         // Mirror of the inbound meter: the engine emits a real Reticulum packet
         // on each `fire_on` interface, so count its bytes once per target.
         for id in fire_on {
-            self.traffic.add_tx(*id, bytes.len() as u64);
+            self.traffic.add_tx(*id, packet.bytes.len() as u64);
         }
         // Hand the packet to every registered worker the engine named.
         for worker in self.workers.iter_mut() {
@@ -202,7 +206,7 @@ impl<W: InterfaceWorker> EngineDriver for ManifoldDriver<'_, W> {
                 // Non-blocking; a full worker queue drops this packet — the
                 // engine re-emits announces on its own cadence, so a drop
                 // self-heals.
-                let _ = worker.submit(bytes);
+                let _ = worker.submit(packet);
             }
         }
         Ok(())
@@ -306,8 +310,8 @@ mod tests {
             self.health
         }
 
-        fn submit(&mut self, packet: &[u8]) -> Result<(), crate::interfaces::QueueFull> {
-            self.submitted.push(packet.to_vec());
+        fn submit(&mut self, packet: OutboundPacket) -> Result<(), crate::interfaces::QueueFull> {
+            self.submitted.push(packet.bytes.to_vec());
             Ok(())
         }
     }

@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use personal_rns::engine::{EngineDriver, InboundPacket, InstantMillis};
+use personal_rns::engine::{EngineDriver, InboundPacket, InstantMillis, OutboundPacket};
 use personal_rns::interfaces::InterfaceId;
 
 pub struct StdEngineDriver {
@@ -60,7 +60,7 @@ impl EngineDriver for StdEngineDriver {
 
     fn handle_egress(
         &mut self,
-        _bytes: &[u8],
+        _packet: OutboundPacket,
         _fire_on: &[InterfaceId],
     ) -> Result<(), Self::Error> {
         // No transport wired yet — every egress hits this and fails

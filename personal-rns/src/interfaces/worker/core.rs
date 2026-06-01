@@ -1,3 +1,4 @@
+use crate::engine::OutboundPacket;
 use crate::interfaces::{InterfaceDescriptor, InterfaceStats};
 
 /// The runtime tried to hand a worker more than its outbound queue can hold; the
@@ -41,10 +42,10 @@ pub trait InterfaceWorker {
     /// A cheap snapshot of liveness + counters. Never blocks.
     fn health(&self) -> InterfaceStats;
 
-    /// Hand the worker one serialized Reticulum wire packet to transmit. The
-    /// worker delivers it however its medium requires — a shared-multicast
-    /// worker fans it out to every peer it knows, opaquely. Non-blocking:
-    /// [`QueueFull`] means the worker is backed up and the caller chooses drop
-    /// vs retry.
-    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull>;
+    /// Hand the worker one serialized Reticulum wire packet — an
+    /// [`OutboundPacket`] — to transmit. The worker delivers it however its
+    /// medium requires — a shared-multicast worker fans it out to every peer it
+    /// knows, opaquely. Non-blocking: [`QueueFull`] means the worker is backed
+    /// up and the caller chooses drop vs retry.
+    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull>;
 }

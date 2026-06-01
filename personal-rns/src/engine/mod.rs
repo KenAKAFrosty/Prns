@@ -60,6 +60,22 @@ pub struct InboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
+/// One serialized Reticulum wire packet on its way out — the outbound
+/// counterpart to [`InboundPacket`]. A newtype over the bytes so the egress
+/// seam (`EngineDriver::handle_egress`, `InterfaceWorker::submit`) names
+/// *exactly one packet* rather than a bare `&[u8]` a reader might mistake for a
+/// batch of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutboundPacket<'a> {
+    pub bytes: &'a [u8],
+}
+
+impl<'a> OutboundPacket<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextScheduledWakeup {
     Immediate,

@@ -14,7 +14,7 @@ use std::time::Instant;
 use std::vec::Vec;
 
 use super::core::{descriptor, SERIAL_MTU};
-use crate::engine::InstantMillis;
+use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
@@ -65,10 +65,10 @@ impl InterfaceWorker for StdSerialInterface {
         }
     }
 
-    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
+    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
         // The mpsc channel is unbounded; the only failure is a gone receiver
         // (the worker thread exited), which the caller treats like a full queue.
-        self.outbound.send(packet.to_vec()).map_err(|_| QueueFull)
+        self.outbound.send(packet.bytes.to_vec()).map_err(|_| QueueFull)
     }
 }
 

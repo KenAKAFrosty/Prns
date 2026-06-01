@@ -27,7 +27,9 @@ use esp_hal::rng::Rng;
 use esp_hal::time::Instant;
 use heapless::Vec as HeaplessVec;
 
-use personal_rns::engine::{EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis};
+use personal_rns::engine::{
+    EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis, OutboundPacket,
+};
 use personal_rns::interfaces::{
     Capabilities, ConnectionState, Interface, InterfaceId, InterfaceMode, MediumKind,
 };
@@ -245,11 +247,15 @@ impl EngineDriver for StagingExampleEngineDriver<'_> {
         Ok(self.inbound)
     }
 
-    fn handle_egress(&mut self, bytes: &[u8], fire_on: &[InterfaceId]) -> Result<(), Self::Error> {
+    fn handle_egress(
+        &mut self,
+        packet: OutboundPacket,
+        fire_on: &[InterfaceId],
+    ) -> Result<(), Self::Error> {
         for id in fire_on {
             if *id == USB_INTERFACE_ID {
                 let mut frame = PacketBytes::new();
-                if frame.extend_from_slice(bytes).is_ok() {
+                if frame.extend_from_slice(packet.bytes).is_ok() {
                     let _ = self.egress.frames.push(frame);
                 }
             }

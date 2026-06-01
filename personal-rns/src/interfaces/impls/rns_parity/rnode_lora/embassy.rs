@@ -26,7 +26,7 @@ use super::core::{
     air_frame_count, descriptor, encode_air_frame_part, LoRaModulation, LoRaReassembler,
     LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
-use crate::engine::InstantMillis;
+use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
@@ -94,10 +94,10 @@ impl InterfaceWorker for EmbassyRnodeLoraInterface {
         }
     }
 
-    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
+    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
         // `from_slice` rejects a packet larger than the engine MTU; the caller
         // treats that like a full queue and re-emits later.
-        let buf = PacketBuf::from_slice(packet).map_err(|_| QueueFull)?;
+        let buf = PacketBuf::from_slice(packet.bytes).map_err(|_| QueueFull)?;
         self.outbound.try_send(buf).map_err(|_| QueueFull)
     }
 }

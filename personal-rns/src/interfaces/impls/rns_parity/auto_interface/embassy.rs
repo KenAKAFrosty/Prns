@@ -20,7 +20,7 @@ use super::core::{
     AutoInterfaceProtocol, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP,
     HARDWARE_MTU, UNICAST_DISCOVERY_PORT,
 };
-use crate::engine::InstantMillis;
+use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::{
     Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceStats,
     InterfaceWorker, LinkState, MacAddress, MediumKind, QueueFull, TrackedPeerMulticastInterface,
@@ -113,9 +113,8 @@ impl InterfaceWorker for EmbassyAutoInterface {
         }
     }
 
-    //REVIEW seems like the interfaceworker should still get the typed EgressDirective or some other typed data structure right? I'll need to check, this is worth an iterative discussion about
-    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
-        let buf = PacketBuf::from_slice(packet).map_err(|_| QueueFull)?;
+    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
+        let buf = PacketBuf::from_slice(packet.bytes).map_err(|_| QueueFull)?;
         self.outbound.try_send(buf).map_err(|_| QueueFull)
     }
 }

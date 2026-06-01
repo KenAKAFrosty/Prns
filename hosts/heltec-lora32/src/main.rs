@@ -59,7 +59,9 @@ use esp_radio::esp_now::{EspNowError, EspNowReceiver, EspNowSender, BROADCAST_AD
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
-use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::{
+    FixedCapacityEngineState, OutboundPacket, ReannounceSchedule, SelfAnnounceConfig,
+};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::{
@@ -160,7 +162,7 @@ impl InterfaceWorker for HostWorker {
         }
     }
 
-    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
+    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
         match self {
             HostWorker::Wifi(w) => w.submit(packet),
             HostWorker::Serial(s) => s.submit(packet),

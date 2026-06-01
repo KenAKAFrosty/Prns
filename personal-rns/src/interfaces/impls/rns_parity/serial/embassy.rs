@@ -17,7 +17,7 @@ use embedded_io_async::{Read, Write};
 use heapless::Vec as HVec;
 
 use super::core::{descriptor, SERIAL_MTU};
-use crate::engine::InstantMillis;
+use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
@@ -95,8 +95,8 @@ impl InterfaceWorker for EmbassySerialInterface {
         }
     }
 
-    fn submit(&mut self, packet: &[u8]) -> Result<(), QueueFull> {
-        let buf = PacketBuf::from_slice(packet).map_err(|_| QueueFull)?;
+    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
+        let buf = PacketBuf::from_slice(packet.bytes).map_err(|_| QueueFull)?;
         self.outbound.try_send(buf).map_err(|_| QueueFull)
     }
 }

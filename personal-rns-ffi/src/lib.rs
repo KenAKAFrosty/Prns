@@ -19,7 +19,9 @@
 use std::sync::Mutex;
 use std::time::Instant;
 
-use personal_rns::engine::{EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis};
+use personal_rns::engine::{
+    EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis, OutboundPacket,
+};
 use personal_rns::interfaces::InterfaceId;
 
 uniffi::include_scaffolding!("prns");
@@ -63,7 +65,7 @@ impl EngineDriver for SdkEngineDriver {
 
     fn handle_egress(
         &mut self,
-        _bytes: &[u8],
+        _packet: OutboundPacket,
         _fire_on: &[InterfaceId],
     ) -> Result<(), Self::Error> {
         // No transport wired yet; every egress fails honestly until a

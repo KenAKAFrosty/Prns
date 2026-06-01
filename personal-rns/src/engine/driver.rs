@@ -13,7 +13,9 @@
 //! not part of it. The driver fuels the engine and advances it one cycle; the
 //! runtime decides when.
 
-use crate::engine::{ingest, tick, EngineState, InboundPacket, IngestOutput, InstantMillis};
+use crate::engine::{
+    ingest, tick, EngineState, InboundPacket, IngestOutput, InstantMillis, OutboundPacket,
+};
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -83,7 +85,11 @@ pub trait EngineDriver {
     /// the step early. Most drivers will want to log and swallow per-
     /// interface dispatch failures, returning `Ok` so the rest of the
     /// tick's directives still get a chance to dispatch.
-    fn handle_egress(&mut self, bytes: &[u8], fire_on: &[InterfaceId]) -> Result<(), Self::Error>;
+    fn handle_egress(
+        &mut self,
+        packet: OutboundPacket,
+        fire_on: &[InterfaceId],
+    ) -> Result<(), Self::Error>;
 
     /// One engine pass: pulls entropy, drains the inbound queue into
     /// `ingest`, runs `tick`, then iterates every directive the tick
@@ -130,7 +136,7 @@ pub trait EngineDriver {
             let n = directive
                 .to_wire(&mut emit_buffer)
                 .expect("MTU-sized buf fits any valid wire packet");
-            self.handle_egress(&emit_buffer[..n], directive.fire_on())?;
+            self.handle_egress(OutboundPacket::new(&emit_buffer[..n]), directive.fire_on())?;
         }
         // Drop the tick output here → its Drop drains state's due rebroadcasts,
         // and releases the `&mut state` borrow so origination below can take it.
@@ -145,7 +151,10 @@ pub trait EngineDriver {
         // and mark it emitted when there is at least one interface to carry it.
         if !state.registered_interfaces().is_empty() {
             if let Some(n) = state.write_due_self_announce(now, entropy, &mut emit_buffer) {
-                self.handle_egress(&emit_buffer[..n], state.registered_interfaces())?;
+                self.handle_egress(
+                    OutboundPacket::new(&emit_buffer[..n]),
+                    state.registered_interfaces(),
+                )?;
             }
         }
 
@@ -193,7 +202,7 @@ mod tests {
 
         fn handle_egress(
             &mut self,
-            _bytes: &[u8],
+            _packet: OutboundPacket,
             _fire_on: &[InterfaceId],
         ) -> Result<(), Self::Error> {
             Ok(())
@@ -223,7 +232,7 @@ mod tests {
 
         fn handle_egress(
             &mut self,
-            _bytes: &[u8],
+            _packet: OutboundPacket,
             _fire_on: &[InterfaceId],
         ) -> Result<(), Self::Error> {
             Ok(())
@@ -298,10 +307,10 @@ mod tests {
 
         fn handle_egress(
             &mut self,
-            bytes: &[u8],
+            packet: OutboundPacket,
             fire_on: &[InterfaceId],
         ) -> Result<(), Self::Error> {
-            self.handled.push((fire_on.to_vec(), bytes.to_vec()));
+            self.handled.push((fire_on.to_vec(), packet.bytes.to_vec()));
             Ok(())
         }
     }
