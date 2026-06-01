@@ -29,8 +29,4 @@ pub struct InterfaceStats {
     pub link: LinkState,
     pub rx_packet_count: u32,
     pub tx_packet_count: u32,
-    /// Peers the worker currently holds, when that is a meaningful concept for
-    /// the medium: `None` for a point-to-point link (no peer-count there),
-    /// `Some(n)` for a multi-peer medium like the WiFi auto-interface.
-    pub active_peer_count: Option<u16>,
 }

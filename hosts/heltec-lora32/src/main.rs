@@ -42,7 +42,7 @@ use embassy_net::{Config as NetConfig, Runner, Stack, StackResources};
 use static_cell::StaticCell;
 
 use core::fmt::Write as _;
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicBool, AtomicU16};
 use embassy_futures::join::join4;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Delay, Duration, Instant as EmbassyInstant, Ticker, Timer};
@@ -202,6 +202,7 @@ const PACKET_BUFFER_SIZE: usize = HostWorker::PACKET_BUFFER_SIZE;
 /// Live link state, shared from each worker shell (writer) to its handle's
 /// `health()` (reader) so the runtime snapshot's `online` is honest.
 static LINK_UP: LinkUp = AtomicBool::new(false);
+static WIFI_PEERS: AtomicU16 = AtomicU16::new(0);
 static SERIAL_LINK_UP: AtomicBool = AtomicBool::new(false);
 static LORA_LINK_UP: AtomicBool = AtomicBool::new(false);
 static ESPNOW_LINK_UP: AtomicBool = AtomicBool::new(false);
@@ -280,7 +281,16 @@ async fn auto_worker_task(
     inbound: InboundSender<PACKET_BUFFER_SIZE>,
     outbound: OutboundReceiver,
 ) {
-    run_auto_worker(stack, INTERFACE_ID, MacAddress::new(mac), inbound, outbound, &LINK_UP).await
+    run_auto_worker(
+        stack,
+        INTERFACE_ID,
+        MacAddress::new(mac),
+        inbound,
+        outbound,
+        &LINK_UP,
+        &WIFI_PEERS,
+    )
+    .await
 }
 
 /// The USB serial worker — its own task. Owns the usb-serial-jtag halves and
@@ -479,7 +489,8 @@ async fn main(spawner: Spawner) {
         .split();
 
     // Four workers — WiFi LAN + USB serial + LoRa + ESP-NOW — all in the manifold.
-    let wifi_worker = EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP);
+    let wifi_worker =
+        EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP, &WIFI_PEERS);
     let serial_worker =
         EmbassySerialInterface::new(SERIAL_INTERFACE_ID, serial_outbound_ch.sender(), &SERIAL_LINK_UP);
     let lora_worker =

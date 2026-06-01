@@ -11,9 +11,11 @@
 //! the worker's self-reported meta surface.
 
 mod core;
+mod multicast;
 mod runtime_driven;
 mod stats;
 
 pub use core::{InterfaceWorker, QueueFull};
+pub use multicast::TrackedPeerMulticastInterface;
 pub use runtime_driven::RuntimeDriven;
 pub use stats::{InterfaceStats, LinkState};

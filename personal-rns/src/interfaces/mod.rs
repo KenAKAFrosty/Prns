@@ -49,7 +49,10 @@ pub use contract::{
 };
 
 pub use descriptor::InterfaceDescriptor;
-pub use worker::{InterfaceStats, InterfaceWorker, LinkState, QueueFull, RuntimeDriven};
+pub use worker::{
+    InterfaceStats, InterfaceWorker, LinkState, QueueFull, RuntimeDriven,
+    TrackedPeerMulticastInterface,
+};
 
 pub use framing::rns_serial_framing;
 

@@ -341,7 +341,6 @@ mod tests {
                 link: LinkState::from_up(online),
                 rx_packet_count: 0,
                 tx_packet_count: 0,
-                active_peer_count: None,
             },
             submitted: std::vec::Vec::new(),
         }

@@ -6,7 +6,7 @@
 //! about *how this talks to the world* stays in here.
 
 use core::net::Ipv6Addr;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use embassy_futures::select::{select, select4, Either, Either4};
 use embassy_net::udp::{PacketMetadata, UdpMetadata, UdpSocket};
@@ -23,7 +23,7 @@ use super::core::{
 use crate::engine::InstantMillis;
 use crate::interfaces::{
     Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceStats,
-    InterfaceWorker, LinkState, MacAddress, MediumKind, QueueFull,
+    InterfaceWorker, LinkState, MacAddress, MediumKind, QueueFull, TrackedPeerMulticastInterface,
 };
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
@@ -59,12 +59,19 @@ pub struct EmbassyAutoInterface {
     descriptor: InterfaceDescriptor,
     outbound: OutboundSender,
     link_up: &'static LinkUp,
+    peers: &'static AtomicU16,
 }
 
 impl EmbassyAutoInterface {
     /// Build the handle for interface `id`, sending to the worker over
-    /// `outbound` and reading liveness from `link_up` (the shell writes it).
-    pub fn new(id: InterfaceId, outbound: OutboundSender, link_up: &'static LinkUp) -> Self {
+    /// `outbound`, reading liveness from `link_up` and the live group size from
+    /// `peers` (the shell writes both).
+    pub fn new(
+        id: InterfaceId,
+        outbound: OutboundSender,
+        link_up: &'static LinkUp,
+        peers: &'static AtomicU16,
+    ) -> Self {
         Self {
             descriptor: InterfaceDescriptor {
                 id,
@@ -82,6 +89,7 @@ impl EmbassyAutoInterface {
             },
             outbound,
             link_up,
+            peers,
         }
     }
 }
@@ -112,6 +120,12 @@ impl InterfaceWorker for EmbassyAutoInterface {
     }
 }
 
+impl TrackedPeerMulticastInterface for EmbassyAutoInterface {
+    fn active_peer_count(&self) -> u16 {
+        self.peers.load(Ordering::Relaxed)
+    }
+}
+
 fn now_millis() -> InstantMillis {
     InstantMillis(EmbassyInstant::now().as_millis())
 }
@@ -134,6 +148,7 @@ pub async fn run(
     inbound: InboundSender<HARDWARE_MTU>,
     outbound: OutboundReceiver,
     link_up: &'static LinkUp,
+    peers: &'static AtomicU16,
 ) {
     let mut brain = AutoInterfaceProtocol::<MAX_PEERS>::new(our_mac_address);
     log::info!(
@@ -313,6 +328,7 @@ pub async fn run(
                 if pruned > 0 {
                     log::info!("RNS_AUTO pruned {pruned} (peers={})", brain.peer_count());
                 }
+                peers.store(brain.peer_count() as u16, Ordering::Relaxed);
                 log::info!(
                     "RNS_AUTO cyc={cycle} peers={} discovery_rx={discovery_rx_count} unicast_rx={unicast_discovery_rx_count} data_rx={data_rx_count} authfail={}",
                     brain.peer_count(),
