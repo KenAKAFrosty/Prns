@@ -1,5 +1,5 @@
-//! The std driver for a [`Manifold`](super::super::Manifold) — threads, std
-//! channels, and the OS clock/CSPRNG. The host twin of [`embassy`](super::embassy).
+//! The std driver for a [`Manifold`] — threads, std
+//! channels, and the OS clock/CSPRNG. The host twin of the `embassy` driver.
 //!
 //! A worker runs in its own OS thread and stamps [`InboxEntry`]s into the mpsc
 //! mailbox this loop drains; [`run`] aggregates that inbound, cycles the engine,

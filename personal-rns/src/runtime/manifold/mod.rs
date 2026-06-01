@@ -1,9 +1,9 @@
 //! The manifold: the engine-bolt above the passive engine.
 //!
-//! - [`core`] holds the substrate-neutral [`Manifold`] — it owns the engine and
+//! - `core` holds the substrate-neutral [`Manifold`] — it owns the engine and
 //!   its registered worker and turns one drive cycle into intake → step →
 //!   exhaust, touching no clock, RNG, sockets, or `.await`.
-//! - [`snapshot`] holds the app-facing view ([`RuntimeSnapshot`]) the manifold
+//! - `snapshot` holds the app-facing view ([`RuntimeSnapshot`]) the manifold
 //!   surfaces each cycle — the one seam an app reads engine state through.
 //! - [`impls`] holds the per-platform drivers that run a `Manifold` over time
 //!   (drawing entropy, aggregating each worker's inbound, deciding when to

@@ -68,7 +68,7 @@ pub const DEFAULT_HISTORY_OVERFLOW_CAPACITY: usize =
 /// but local — peers don't enforce any particular timing.
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;
 
-/// A spreading seed, not cryptographic randomness:  [`jitter_offset_for`] mixes it per-destination,
+/// A spreading seed, not cryptographic randomness: `jitter_offset_for` mixes it per-destination,
 /// so a flood of simultaneous receives doesn't resynchronize into one re-broadcast burst.
 #[derive(Debug, Clone, Copy)]
 pub struct JitterSeed(pub u64);

@@ -57,8 +57,8 @@ pub struct InstantMillis(pub u64);
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
 /// Raw entropy a single step needs, drawn once from
-/// [`EngineDriver::fill_entropy`](crate::engine::EngineDriver::fill_entropy)
-/// and split by [`StepEntropy::from_seed`] into one typed package per genuine
+/// [`EngineDriver::fill_entropy`] and split by [`StepEntropy::from_seed`] into
+/// one typed package per genuine
 /// randomness need.
 pub const STEP_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
@@ -74,7 +74,7 @@ pub struct StepEntropy {
 
 impl StepEntropy {
     /// Carve the raw step seed into its packages at the one auditable site:
-    /// the low [`JITTER_SEED_LEN`] bytes seed the jitter spreader, the next
+    /// the low `JITTER_SEED_LEN` bytes seed the jitter spreader, the next
     /// [`SelfAnnounceEntropy::LEN`] are the self-announce nonce.
     pub fn from_seed(seed: [u8; STEP_ENTROPY_LEN]) -> Self {
         let mut jitter = [0u8; JITTER_SEED_LEN];

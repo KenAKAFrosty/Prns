@@ -128,11 +128,11 @@ fn derive_identity_hash(
 }
 
 pub mod in_memory {
-    //! The in-memory implementation of [`IdentitySigner`](super::IdentitySigner): the
+    //! The in-memory implementation of [`IdentitySigner`]: the
     //! one that actually holds the secret keys. Built transiently from key
     //! material (host-custodied bytes, or a fixed seed for tests/spikes), it signs
     //! and agrees with the secrets in RAM. Reach for the
-    //! [`IdentitySigner`](super::IdentitySigner) capability everywhere else; this is
+    //! [`IdentitySigner`] capability everywhere else; this is
     //! just where the secret lives when *we* are the signer, not "the" identity.
 
     use super::{
@@ -157,7 +157,7 @@ pub mod in_memory {
     }
 
     impl InMemoryNodeIdentity {
-        /// Build an identity from its [`IDENTITY_SECRET_KEY_LEN`](super::IDENTITY_SECRET_KEY_LEN)
+        /// Build an identity from its [`IDENTITY_SECRET_KEY_LEN`]
         /// bytes of secret key material: the first 32 *are* the X25519 (encryption)
         /// private key, the next 32 *are* the Ed25519 (signing) private key — used
         /// verbatim, not stretched, so the bytes' quality is the keys' quality.

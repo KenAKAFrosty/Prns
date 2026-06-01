@@ -1,8 +1,8 @@
 /// EXPERIMENTAL / ITERATIVE
 ///
 /// Classification of the underlying physical or virtual medium an
-/// interface carries traffic over. Complements [`Capabilities`] (what
-/// the interface can do) and [`InterfaceMode`] (the engine's policy
+/// interface carries traffic over. Complements [`Capabilities`](crate::interfaces::Capabilities) (what
+/// the interface can do) and [`InterfaceMode`](crate::interfaces::InterfaceMode) (the engine's policy
 /// for it) by describing the medium's nature.
 ///
 /// This is **not** a direct port of an RNS concept: RNS distinguishes
@@ -18,7 +18,7 @@
 /// - The engine MAY use this later for medium-aware decisions (e.g.,
 ///   not expecting packet ordering on a contended shared medium).
 ///
-/// Like [`Capabilities`] and [`InterfaceMode`], this is the
+/// Like [`Capabilities`](crate::interfaces::Capabilities) and [`InterfaceMode`](crate::interfaces::InterfaceMode), this is the
 /// declaration shape, i.e., what a host or config parser fills in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MediumKind {
@@ -35,7 +35,7 @@ pub enum MediumKind {
     /// Shared broadcast medium where every neighbor hears every
     /// transmission, including the sender hearing its own echo back.
     /// LoRa, plain ESP-NOW broadcast, classic packet radio. Pairs
-    /// naturally with [`Capabilities::repeats`] = true.
+    /// naturally with [`Capabilities::repeats`](crate::interfaces::Capabilities::repeats) = true.
     SharedHalfDuplex,
 
     /// Group-addressed shared medium reaching a declared subset of

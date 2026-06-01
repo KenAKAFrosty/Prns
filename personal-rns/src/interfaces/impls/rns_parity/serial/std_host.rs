@@ -1,6 +1,6 @@
 //! The std serial worker shell — runs the RNS `SerialInterface` over any
 //! blocking [`std::io`] byte stream (a `serialport`, a UART, a TCP stream, a
-//! test pipe). The host twin of [`embassy`](super::embassy): same shared `core`
+//! test pipe). The host twin of the `embassy` shell: same shared `core`
 //! framing, expressed with std threads + channels instead of async.
 //!
 //! The handle ([`StdSerialInterface`]) is what the manifold holds and routes to;

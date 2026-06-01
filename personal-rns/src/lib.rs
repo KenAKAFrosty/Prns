@@ -3,6 +3,10 @@
 // non-test builds still verify the core is no_std — see scripts/no-std-esp-build.sh.
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![doc = "Reticulum"]
+// Intra-doc links are load-bearing navigation; a broken one is a hard error so
+// a rename can't silently rot the docs. Run `cargo doc` (the fmt-check gate's
+// doc step) to enforce.
+#![deny(rustdoc::broken_intra_doc_links)]
 
 // Make the `alloc` crate addressable as `alloc::*` for any module gated on the
 // `alloc` feature. Under std the alloc crate is reachable via `std::*` paths

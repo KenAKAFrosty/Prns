@@ -4,7 +4,7 @@
 //! Owning a node identity (so we can sign and agree) is separate from choosing
 //! to announce ourselves: a pure repeater forwards others' announces and never
 //! announces a destination of its own. So an engine holds at most one
-//! [`SelfAnnounce`] — absent for a relay, present for a node that periodically
+//! [`SelfAnnounceSettings`] — absent for a relay, present for a node that periodically
 //! emits its own announce.
 
 use super::InstantMillis;
@@ -50,7 +50,7 @@ impl Default for ReannounceSchedule {
 
 /// What a node announces about itself: which destination (app name + aspects),
 /// what app data rides along, and how often. The transient input the engine
-/// parses into a [`SelfAnnounce`] at construction.
+/// parses into a [`SelfAnnounceSettings`] at construction.
 pub struct SelfAnnounceConfig<'a> {
     pub app_name: &'a str,
     pub aspects: &'a [&'a str],

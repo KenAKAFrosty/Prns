@@ -4,7 +4,7 @@
 //! struct (and therefore inline in whatever `RoutingTable` it lives in).
 //! No allocator, no heap, no growth: footprint is known at compile time and
 //! sized by the const generic. Capacity overflow surfaces as
-//! [`ColumnsFull`](crate::routing::storage::ColumnsFull) at the `push` call site.
+//! [`ColumnsFull`] at the `push` call site.
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;

@@ -2,7 +2,7 @@
 //! discovers peers by link-local multicast beacon and exchanges data as unicast
 //! to each peer. Wire-exact against Python RNS 1.3.1.
 //!
-//! - [`protocol`] is the platform-agnostic brain (token, peer table, discovery).
+//! - [`core`] is the platform-agnostic brain (token, peer table, discovery).
 //! - The per-platform worker shells own the sockets and drive the brain
 
 pub mod core;

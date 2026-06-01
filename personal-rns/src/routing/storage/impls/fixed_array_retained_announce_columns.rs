@@ -15,7 +15,7 @@ use crate::routing::storage::{
 
 /// SoA retained-announce columns backed by inline fixed-size arrays. The
 /// capacity is the const generic; reaching it returns `ColumnsFull` from
-/// `push`. The engine pushes here in lockstep with [`FixedArrayRouteColumns`]
+/// `push`. The engine pushes here in lockstep with [`FixedArrayRouteColumns`](super::FixedArrayRouteColumns)
 /// so the slot indices stay synchronized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixedArrayRetainedAnnounceColumns<const MAX_TRACKED_DESTINATIONS: usize> {

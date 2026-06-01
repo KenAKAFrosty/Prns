@@ -5,12 +5,12 @@
 ///
 /// Mode is policy: it tells the engine WHAT KINDS OF DECISIONS to
 /// make about announce fanout, transit forwarding, and path
-/// discovery on this interface. It composes with [`Capabilities`]:
+/// discovery on this interface. It composes with [`Capabilities`](crate::interfaces::Capabilities):
 /// capabilities say what the interface can technically do (receive
 /// bytes, transmit bytes, …); mode says what the engine should do
 /// with that capability.
 ///
-/// Like [`Capabilities`], this is the declaration shape, i.e., what a
+/// Like [`Capabilities`](crate::interfaces::Capabilities), this is the declaration shape, i.e., what a
 /// parsed `rnsd`-compatible config would surface. A normalized
 /// engine-side type may replace it later as we learn what the engine
 /// actually consumes.

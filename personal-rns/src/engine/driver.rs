@@ -35,7 +35,7 @@ pub struct TickSummary {
 pub struct StepOutput {
     pub ingest: IngestOutput,
     pub tick: TickSummary,
-    /// Whether this step actually drew on its [`StepEntropy`](crate::engine::StepEntropy):
+    /// Whether this step actually drew on its [`StepEntropy`]:
     /// the self-announce nonce was minted, or jitter was used to schedule a
     /// re-emission (in ingest or held-recovery). The default `step` re-draws
     /// every cycle regardless — cheap enough that it's the right default (a

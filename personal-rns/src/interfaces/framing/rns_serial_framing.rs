@@ -1,7 +1,7 @@
 //! Canonical RNS serial byte framing.
 //!
 //! This module intentionally uses Reticulum's reference
-//! [`SerialInterface`] framing rather than inventing a local transport
+//! `SerialInterface` framing rather than inventing a local transport
 //! wrapper. That keeps USB serial, RS-232, and similar byte-stream
 //! hosts wire-compatible with a stock RNS daemon with zero adapter
 //! code.
@@ -30,10 +30,10 @@
 //! oversize recovery.
 //!
 //! Reference RNS serial framing:
-//! https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L38-L48
+//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L38-L48>
 //!
 //! Reference escape handling:
-//! https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L180-L186
+//! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L180-L186>
 
 use heapless::Vec;
 
