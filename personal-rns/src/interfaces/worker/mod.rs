@@ -16,4 +16,4 @@ mod stats;
 
 pub use core::{InterfaceWorker, QueueFull};
 pub use runtime_driven::RuntimeDriven;
-pub use stats::InterfaceStats;
+pub use stats::{InterfaceStats, LinkState};

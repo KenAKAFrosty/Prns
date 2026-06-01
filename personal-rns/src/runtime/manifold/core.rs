@@ -123,7 +123,7 @@ where
             // the same cap RuntimeSnapshot.interfaces is sized to.
             let _ = interfaces.push(InterfaceView {
                 id: descriptor.id,
-                online: worker.health().online,
+                online: worker.health().link.is_up(),
                 reticulum_rx_bytes,
                 reticulum_tx_bytes,
                 // Destinations whose route was learned on this interface — the
@@ -277,7 +277,7 @@ mod tests {
     use crate::engine::FixedCapacityEngineState;
     use crate::interfaces::{
         Capabilities, ConnectionState, InterfaceDescriptor, InterfaceMode, InterfaceStats,
-        MediumKind,
+        LinkState, MediumKind,
     };
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{PacketType, WirePacketHeader};
@@ -338,10 +338,10 @@ mod tests {
                 state: ConnectionState::Connected,
             },
             health: InterfaceStats {
-                online,
+                link: LinkState::from_up(online),
                 rx_packet_count: 0,
                 tx_packet_count: 0,
-                active_peer_count: 0,
+                active_peer_count: None,
             },
             submitted: std::vec::Vec::new(),
         }

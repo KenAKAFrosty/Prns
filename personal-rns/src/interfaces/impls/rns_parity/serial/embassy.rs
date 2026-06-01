@@ -20,7 +20,7 @@ use super::core::{descriptor, SERIAL_MTU};
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
-    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
+    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
@@ -90,7 +90,7 @@ impl InterfaceWorker for EmbassySerialInterface {
 
     fn health(&self) -> InterfaceStats {
         InterfaceStats {
-            online: self.link_up.load(Ordering::Relaxed),
+            link: LinkState::from_up(self.link_up.load(Ordering::Relaxed)),
             ..InterfaceStats::default()
         }
     }

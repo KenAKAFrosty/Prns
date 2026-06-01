@@ -23,7 +23,7 @@ use super::core::{
 use crate::engine::InstantMillis;
 use crate::interfaces::{
     Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceStats,
-    InterfaceWorker, MacAddress, MediumKind, QueueFull,
+    InterfaceWorker, LinkState, MacAddress, MediumKind, QueueFull,
 };
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
@@ -100,7 +100,7 @@ impl InterfaceWorker for EmbassyAutoInterface {
         // The packet/byte counters belong to the runtime's view (metered in
         // `Manifold::snapshot`), so they stay at their defaults here.
         InterfaceStats {
-            online: self.link_up.load(Ordering::Relaxed),
+            link: LinkState::from_up(self.link_up.load(Ordering::Relaxed)),
             ..InterfaceStats::default()
         }
     }

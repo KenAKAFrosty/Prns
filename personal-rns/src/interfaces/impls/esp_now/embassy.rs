@@ -26,7 +26,7 @@ use heapless::Vec as HVec;
 use super::core::{decode_frame, descriptor, EspNowFrameWriter, ESP_NOW_MAX_FRAME_PAYLOAD};
 use crate::engine::InstantMillis;
 use crate::interfaces::{
-    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
+    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
 };
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 use crate::wire::MTU;
@@ -107,7 +107,7 @@ impl InterfaceWorker for EmbassyEspNowInterface {
 
     fn health(&self) -> InterfaceStats {
         InterfaceStats {
-            online: self.link_up.load(Ordering::Relaxed),
+            link: LinkState::from_up(self.link_up.load(Ordering::Relaxed)),
             ..InterfaceStats::default()
         }
     }
