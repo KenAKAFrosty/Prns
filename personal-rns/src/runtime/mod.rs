@@ -6,6 +6,8 @@
 //! entropy, aggregating each worker's inbound, and deciding when to cycle —
 //! lives under [`manifold::impls`], gated by that platform's feature.
 
+pub mod host;
 pub mod manifold;
 
+pub use host::{block_on, run, CycleStamp, RuntimeHost};
 pub use manifold::{InterfaceView, Manifold, RuntimeSnapshot};
