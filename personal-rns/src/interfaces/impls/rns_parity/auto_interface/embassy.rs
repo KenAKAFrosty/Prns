@@ -17,8 +17,8 @@ use embassy_time::{Duration, Instant as EmbassyInstant, Ticker};
 use heapless::Vec as HVec;
 
 use super::core::{
-    AutoInterfaceProtocol, DATA_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, HW_MTU,
-    UNICAST_DISCOVERY_PORT,
+    AutoInterfaceProtocol, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP,
+    HARDWARE_MTU, UNICAST_DISCOVERY_PORT,
 };
 use crate::engine::InstantMillis;
 use crate::interfaces::{
@@ -28,7 +28,7 @@ use crate::interfaces::{
 use crate::runtime::manifold::impls::embassy::{InboundSender, InboxEntry};
 
 pub const OUTBOX_DEPTH: usize = 4;
-const CHANNEL_PACKET_LEN_CAP: usize = HW_MTU;
+const CHANNEL_PACKET_LEN_CAP: usize = HARDWARE_MTU;
 pub type PacketBuf = HVec<u8, CHANNEL_PACKET_LEN_CAP>;
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL_MS: u64 = 1600;
@@ -40,7 +40,7 @@ const BEACON_INTERVAL_MS: u64 = 1600;
 /// and fans each packet out to its peers. It lives here, with the worker — its
 /// *draining* end — the same rule that puts the inbound mailbox with the runtime
 /// that drains it (`runtime::manifold::impls::embassy`). Sized to this worker's
-/// [`HW_MTU`].
+/// [`HARDWARE_MTU`].
 pub type OutboundChannel = Channel<CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 pub type OutboundSender = Sender<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
 pub type OutboundReceiver = Receiver<'static, CriticalSectionRawMutex, PacketBuf, OUTBOX_DEPTH>;
@@ -89,7 +89,7 @@ impl EmbassyAutoInterface {
 impl InterfaceWorker for EmbassyAutoInterface {
     // RNS pins the AutoInterface MTU at 1196 bytes; the inbound mailbox sizes to
     // it so a stamped packet always fits.
-    const PACKET_BUFFER_SIZE: usize = HW_MTU;
+    const PACKET_BUFFER_SIZE: usize = HARDWARE_MTU;
 
     fn descriptor(&self) -> InterfaceDescriptor {
         self.descriptor
@@ -131,7 +131,7 @@ pub async fn run(
     stack: Stack<'static>,
     id: InterfaceId,
     our_mac_address: [u8; 6], //REVIEW yeah again probably newtype here?
-    inbound: InboundSender<HW_MTU>,
+    inbound: InboundSender<HARDWARE_MTU>,
     outbound: OutboundReceiver,
     link_up: &'static LinkUp,
 ) {
@@ -162,7 +162,8 @@ pub async fn run(
         &mut disc_tx_meta,
         &mut disc_tx,
     );
-    disc.bind(DISCOVERY_PORT).expect("bind discovery port");
+    disc.bind(DEFAULT_DISCOVERY_PORT)
+        .expect("bind discovery port");
 
     let mut udisc_rx_meta = [PacketMetadata::EMPTY; 8];
     let mut udisc_rx = [0u8; 512];
@@ -190,10 +191,10 @@ pub async fn run(
         &mut data_tx_meta,
         &mut data_tx,
     );
-    data.bind(DATA_PORT).expect("bind data port");
+    data.bind(DEFAULT_DATA_PORT).expect("bind data port");
 
     //REVIEW the names! the names! my kingdom for a legible name!
-    let mut drx = [0u8; HW_MTU];
+    let mut drx = [0u8; HARDWARE_MTU];
     let mut rx = [0u8; 64];
     let mut urx = [0u8; 64];
     let mut beacon = Ticker::every(Duration::from_millis(BEACON_INTERVAL_MS));
@@ -283,7 +284,7 @@ pub async fn run(
                 if let Err(e) = disc
                     .send_to(
                         brain.our_peering_token(),
-                        (IpAddress::Ipv6(DISCOVERY_GROUP), DISCOVERY_PORT),
+                        (IpAddress::Ipv6(DISCOVERY_GROUP), DEFAULT_DISCOVERY_PORT),
                     )
                     .await
                 {
@@ -324,7 +325,7 @@ pub async fn run(
                 } else {
                     for addr in &targets {
                         if let Err(e) = data
-                            .send_to(&packet, (IpAddress::Ipv6(*addr), DATA_PORT))
+                            .send_to(&packet, (IpAddress::Ipv6(*addr), DEFAULT_DATA_PORT))
                             .await
                         {
                             log::warn!("RNS_AUTO TX err to {addr}: {e:?}");

@@ -68,14 +68,8 @@ pub const DEFAULT_HISTORY_OVERFLOW_CAPACITY: usize =
 /// but local — peers don't enforce any particular timing.
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;
 
-/// Derive a deterministic per-destination jitter offset from a `(entropy,
-/// destination)` pair. Returned value is `< window_ms`, so callers add it
-/// directly to an arrival instant to get a due-time inside the jitter window.
-///
-///  REVIEW please be more specific here in this comment
-/// Not crypto — just enough mixing that two destinations accepted in the same
-/// batch land at different offsets. Determinism is the contract: same
-/// `(entropy, destination, window_ms)` always returns the same value.
+/// Determinism is the contract: the same `(entropy, destination, window_ms)`
+/// always returns the same value, so a tick can be replayed exactly.
 pub(crate) fn jitter_offset_for(
     entropy: u64,
     destination: &DestinationHash,

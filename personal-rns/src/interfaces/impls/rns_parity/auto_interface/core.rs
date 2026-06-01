@@ -6,13 +6,11 @@
 //! `sha256(group_id ++ <its own link-local, as a canonical string>)`. A
 //! receiver recomputes that hash from the datagram's *source* address and peers
 //! only on a match; the token authenticates the sender's source address as
-//! a member of the shared group (`AutoInterface.py` L364-L366, L491-L494). Data
-//! is unicast to each discovered peer's [`DATA_PORT`]; discovery completes over
+//! a member of the shared group ([`AutoInterface.py` L364-L366](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L364-L366), [L491-L494](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L491-L494)). Data
+//! is unicast to each discovered peer's [`DEFAULT_DATA_PORT`]; discovery completes over
 //! multicast either direction plus the unicast reverse-peering channel
 //! ([`UNICAST_DISCOVERY_PORT`]).
 //!
-//!
-//! //REVIEW all the mentions of line numbers below should also just give the full permalink with line numbers still
 
 use core::fmt::Write as _;
 use core::net::Ipv6Addr;
@@ -27,33 +25,22 @@ pub const GROUP_ID: &[u8] = b"reticulum";
 /// `ff12:0:d70b:fb1c:16e4:5e39:485e:31e1`.
 ///
 /// RNS builds it as `"ff" + type"1" + scope"2" + ":0:"` followed by group hash
-/// bytes `[2..14]` rendered as six big-endian hextets (`AutoInterface.py`
-/// L202-L212; type = `MULTICAST_TEMPORARY_ADDRESS_TYPE`, scope = `SCOPE_LINK`).
+/// bytes `[2..14]` rendered as six big-endian hextets
+/// ([`AutoInterface.py` L202-L212](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L202-L212);
+/// type = `MULTICAST_TEMPORARY_ADDRESS_TYPE`, scope = `SCOPE_LINK`).
 /// Constant because the group id is fixed; recompute the literal if [`GROUP_ID`]
 /// ever changes.
 pub const DISCOVERY_GROUP: Ipv6Addr =
     Ipv6Addr::new(0xff12, 0x0, 0xd70b, 0xfb1c, 0x16e4, 0x5e39, 0x485e, 0x31e1);
 
-/// Multicast discovery port (`AutoInterface.py` L47).
-pub const DISCOVERY_PORT: u16 = 29716;
+pub const DEFAULT_DISCOVERY_PORT: u16 = 29716;
+pub const UNICAST_DISCOVERY_PORT: u16 = DEFAULT_DISCOVERY_PORT + 1;
 
-/// Unicast reverse-peering port (`AutoInterface.py` L173 = `discovery_port + 1`).
-/// A node that *heard* a peer's multicast beacon unicasts its own token back
-/// here (`reverse_announce`, L477-489, driven by `peer_jobs` L394-401), so
-/// discovery completes even when the reverse multicast path is blocked, e.g. a
-/// mesh AP that won't forward the group across its backhaul. REVIEW just realized, is it common place for home routers to set up the 2.4 band as a mesh thing, so thatthey can conect on the same virtual interface but still communicate with the 5Ghz (presumably the default for speed) users? if so we can note that here as the example to make it more "real" and useful immediately
-pub const UNICAST_DISCOVERY_PORT: u16 = DISCOVERY_PORT + 1;
+pub const DEFAULT_DATA_PORT: u16 = 42671;
 
-/// Unicast data port (`AutoInterface.py` L48): inbound RNS packets arrive here,
-/// and a worker unicasts its writes to each peer's data port
-/// (`process_outgoing`, L636-647).
-pub const DATA_PORT: u16 = 42671;
-
-/// Fixed hardware MTU RNS pins for the AutoInterface (`AutoInterface.py` L44).
-pub const HW_MTU: usize = 1196;
-
-/// RNS prunes a peer it has not heard from within this window
-/// (`PEERING_TIMEOUT = 22.0` s, `AutoInterface.py` L61).
+/// RNS's `HW_MTU`
+/// REVIEW this is correct? HW stands for hardware in this context?
+pub const HARDWARE_MTU: usize = 1196;
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 
 /// Reconstruct the IPv6 link-local address an SLAAC stack derives from `mac` via
@@ -75,13 +62,13 @@ pub fn link_local_from_mac(mac: [u8; 6]) -> Ipv6Addr {
 }
 
 /// The RNS peering token authenticating a beacon from `addr`:
-/// `sha256(group_id ++ canonical(addr))` (`AutoInterface.py` L491-L494).
+/// `sha256(group_id ++ canonical(addr))` ([`AutoInterface.py` L491-L494](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L491-L494)).
 ///
 /// The address is rendered in RFC 5952 canonical form via
 /// [`core::net::Ipv6Addr`]'s `Display` (lowercase, longest zero-run compressed
-/// to `::`) - byte-identical to the string Python's `socket.recvfrom` reports
-/// for the same source - so our token equals the peer's `expected_hash`
-/// (`AutoInterface.py` L364-L366).
+/// to `::`) which is byte-identical to the string Python's `socket.recvfrom` reports
+/// for the same source. This makes our token equal the peer's `expected_hash`
+/// ([`AutoInterface.py` L364-L366](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L364-L366)).
 pub fn peering_token(addr: &Ipv6Addr) -> [u8; 32] {
     // Any IPv6 address renders in <= 45 chars; this write never truncates.
     let mut rendered: HString<48> = HString::new();
@@ -97,8 +84,6 @@ pub fn peering_token(addr: &Ipv6Addr) -> [u8; 32] {
 pub enum BeaconVerdict {
     /// A valid peering beacon from another node — peered on its source address.
     Peer, //REVIEW shouldnt we put that source address in here in this arm as data?
-
-    ///  RNS treats this as a carrier liveness signal, not a peer (`AutoInterface.py` L514-L524).
     SelfEcho,
     AuthenticationFailed,
     TooShort,
@@ -200,7 +185,6 @@ pub struct AutoInterfaceProtocol<const MAX_PEER_COUNT: usize> {
 }
 
 impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
-    //REVIEW this should be renamed for clarity in stead, i did so, just make sure that's accurate.
     pub fn new(our_mac_address: [u8; 6]) -> Self {
         let our_link_local = link_local_from_mac(our_mac_address);
         Self {
