@@ -13,17 +13,15 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{
-    EngineCycleEntropySeed, FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig,
-    ENGINE_CYCLE_ENTROPY_LEN,
-};
+use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
     run as run_serial_worker, StdSerialInterface,
 };
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::runtime::manifold::impls::std_host::{run as run_manifold, InboxEntry};
-use personal_rns::runtime::Manifold;
+use personal_rns::runtime::host::impls::LinuxSync;
+use personal_rns::runtime::manifold::impls::std_host::InboxEntry;
+use personal_rns::runtime::{block_on, run, Manifold};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -64,14 +62,6 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     }
 
     key
-}
-
-/// Draw one full per-step seed of OS-CSPRNG entropy for an engine cycle — the
-/// same `os.urandom` bar RNS holds to.
-fn draw_entropy() -> EngineCycleEntropySeed {
-    let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-    getrandom::getrandom(&mut bytes).expect("OS CSPRNG must provide cycle entropy");
-    EngineCycleEntropySeed::new(bytes)
 }
 
 fn main() {
@@ -147,7 +137,8 @@ fn main() {
     // Runtime: drive the manifold forever; log when the routing table grows — the
     // proof the cable carried a real announce into the engine.
     let mut announced_routes = 0u32;
-    run_manifold(manifold, inbound_rx, clock_base, draw_entropy, |snapshot| {
+    let host = LinuxSync::new(inbound_rx, clock_base);
+    block_on(run(manifold, host, |snapshot| {
         let routes = snapshot
             .interfaces
             .iter()
@@ -158,5 +149,5 @@ fn main() {
             announced_routes = routes;
             println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
         }
-    });
+    }));
 }

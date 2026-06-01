@@ -12,7 +12,7 @@ path = "src/lib.rs"
 default = ["std", "std-host"]
 alloc = []
 std = ["alloc"]
-std-host = ["std"]
+std-host = ["std", "dep:getrandom"]
 # Embedded host shells that run on embassy-net (ESP32-S3, ESP32-C6, …). Pulls the
 # embassy stack in as optional deps; OFF by default so the pure-no_std and
 # no-std-esp-build gates never see it. An embedded host turns it on to get the
@@ -39,6 +39,11 @@ zeroize = { version = "1", default-features = false, features = ["derive"] }
 
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
+
+# OS CSPRNG for the std host catalogue (LinuxSync, under `std-host`). The no_std
+# core never sees an RNG — entropy is data the host supplies — so this is optional
+# and only the host layer pulls it in.
+getrandom = { version = "0.2", optional = true }
 
 # Embassy stack for the `embassy-host` worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),

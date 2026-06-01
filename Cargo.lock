@@ -1003,6 +1003,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-io-async 0.6.1",
+ "getrandom 0.2.17",
  "heapless 0.8.0",
  "hkdf",
  "hmac",

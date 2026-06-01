@@ -12,7 +12,7 @@ use crate::routing::storage::{
 /// The clock reading and entropy seed a [`RuntimeHost`] samples at wake, handed
 /// to one [`Manifold::cycle_once`]. Owned (not borrowed) so the runner can move
 /// the move-only seed into the cycle while the host's inbound batch is borrowed
-/// separately through [`RuntimeHost::inbound`].
+/// separately through [`RuntimeHost::inbound_packets`].
 pub struct CycleStamp {
     pub now: InstantMillis,
     pub seed: EngineCycleEntropySeed,
@@ -42,7 +42,7 @@ pub trait RuntimeHost {
     /// the host owns the bytes and yields views on the fly, so nothing stores a
     /// contiguous packet array borrowing its own buffer (which would be
     /// self-referential).
-    fn inbound(&self) -> impl Iterator<Item = InboundPacket<'_>>;
+    fn inbound_packets(&self) -> impl Iterator<Item = InboundPacket<'_>>;
 }
 
 /// Drive `manifold` forever on `host`: ask the host for one cycle's clock +
@@ -71,7 +71,7 @@ where
     let mut wake = NextScheduledWakeup::Immediate;
     loop {
         let CycleStamp { now, seed } = host.wait(wake).await;
-        let _ = manifold.cycle_once(now, seed, host.inbound());
+        let _ = manifold.cycle_once(now, seed, host.inbound_packets());
         observe(&manifold.snapshot());
         wake = manifold.next_wakeup(now);
     }
@@ -135,7 +135,7 @@ mod tests {
                 seed: EngineCycleEntropySeed::new([0u8; ENGINE_CYCLE_ENTROPY_LEN]),
             }
         }
-        fn inbound(&self) -> impl Iterator<Item = InboundPacket<'_>> {
+        fn inbound_packets(&self) -> impl Iterator<Item = InboundPacket<'_>> {
             core::iter::once(InboundPacket {
                 arrived_at: InstantMillis(5),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -170,7 +170,7 @@ mod tests {
         let processed = block_on(async {
             let CycleStamp { now, seed } = host.wait(NextScheduledWakeup::Immediate).await;
             manifold
-                .cycle_once(now, seed, host.inbound())
+                .cycle_once(now, seed, host.inbound_packets())
                 .ingest
                 .processed_packet_count()
         });
