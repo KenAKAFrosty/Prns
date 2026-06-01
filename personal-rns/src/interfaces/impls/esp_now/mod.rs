@@ -6,6 +6,10 @@
 //!
 //! [`core`] is the platform-agnostic part: the routing descriptor and the
 //! coalescing frame codec. The embassy worker shell (driving esp-radio's ESP-NOW
-//! sender/receiver) lands alongside it for hosts that have the radio.
+//! sender/receiver behind an `EspNowLink` seam) lands alongside it for hosts that
+//! have the radio.
 
 pub mod core;
+
+#[cfg(feature = "embassy-host")]
+pub mod embassy;
