@@ -80,17 +80,6 @@ log = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
 proptest = "1"
-# Host-only embassy test substrate — compiled for `cargo test`/bench but NEVER for
-# `cargo build`, so the embedded gates and off-target cross-builds stay untouched.
-# `mock-driver` registers a manually-advanced embassy-time clock, so the
-# `EmbassyContractHost` wait race is tested *deterministically* (advance the clock,
-# re-poll) rather than by wall-clock sleeps; `critical-section/std` provides the host
-# critical-section impl that both the mock driver and the `WakeSignal` mutex need. On
-# target, esp-hal supplies the real time driver and critical section instead.
-# `generic-queue-8` makes the timer queue self-contained on the host (the default
-# integrated queue wants an embassy-executor symbol the host test binary lacks).
-embassy-time = { version = "0.5", default-features = false, features = ["mock-driver", "generic-queue-8"] }
-critical-section = { version = "1", features = ["std"] }
 
 [lints]
 workspace = true
