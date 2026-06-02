@@ -41,8 +41,8 @@ use embassy_executor::Spawner;
 use embassy_net::{Config as NetConfig, Runner, Stack, StackResources};
 use static_cell::StaticCell;
 
+use core::convert::Infallible;
 use core::fmt::Write as _;
-use core::sync::atomic::{AtomicBool, AtomicU16};
 use embassy_futures::join::join4;
 use embassy_futures::select::{select, Either};
 use embassy_time::{Delay, Duration, Instant as EmbassyInstant, Ticker, Timer};
@@ -60,35 +60,37 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
 use personal_rns::engine::{
-    EngineCycleEntropySeed, FixedCapacityEngineState, OutboundPacket, ReannounceSchedule,
-    SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
+    EngineCycleEntropySeed, FixedCapacityEngineState, InboundPacket, OutboundPacket,
+    ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::impls::esp_now::embassy::{
-    run as run_esp_now_worker, EmbassyEspNowInterface, EspNowLink,
-    OutboundChannel as EspNowOutboundChannel, OutboundReceiver as EspNowOutboundReceiver,
-};
+use personal_rns::interfaces::impls::esp_now::core::descriptor as espnow_descriptor;
+use personal_rns::interfaces::impls::esp_now::embassy::{serve as serve_esp_now, EspNowLink};
+use personal_rns::interfaces::impls::rns_parity::auto_interface::core::HARDWARE_MTU;
 use personal_rns::interfaces::impls::rns_parity::auto_interface::embassy::{
-    run as run_auto_worker, EmbassyAutoInterface, LinkUp, OutboundChannel, OutboundReceiver,
+    descriptor as auto_descriptor, serve as serve_auto,
 };
-use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::DEFAULT_915_LORA_PROFILE;
-use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::{
-    run as run_lora_worker, EmbassyRnodeLoraInterface, OutboundChannel as LoraOutboundChannel,
-    OutboundReceiver as LoraOutboundReceiver,
+use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::{
+    descriptor as lora_descriptor, DEFAULT_915_LORA_PROFILE,
 };
-use personal_rns::interfaces::impls::rns_parity::serial::embassy::{
-    run as run_serial_worker, EmbassySerialInterface, OutboundChannel as SerialOutboundChannel,
-    OutboundReceiver as SerialOutboundReceiver,
+use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::serve as serve_lora;
+use personal_rns::interfaces::impls::rns_parity::serial::embassy_contract::serve as serve_serial;
+use personal_rns::interfaces::impls::rns_parity::serial::{
+    descriptor as serial_descriptor, SERIAL_MTU,
 };
 use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
-    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, QueueFull,
+    ControlReport, DriverMode, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
+    StartedInterface,
 };
-use personal_rns::runtime::channels::embassy::{
-    InboundChannel, InboundReceiver, InboundSender, RuntimeSnapshotWatch,
+use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
+use personal_rns::runtime::channels::embassy_seam::{
+    new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle,
+    EmbassyInterfaceSeam, WakeSignal,
 };
-use personal_rns::runtime::host::impls::EmbassyHost;
-use personal_rns::runtime::{run, InterfaceView, Runtime, RuntimeSnapshot};
+use personal_rns::runtime::host::impls::EmbassyContractHost;
+use personal_rns::runtime::{run_contract, ContractRuntime, InterfaceView, RuntimeSnapshot};
+use personal_rns::wire::MTU;
 
 mod display;
 
@@ -120,56 +122,76 @@ const LORA_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-lora62");
 /// radio to other Hopspots). Opaque to the engine; readable in `fire_on` logs.
 const ESPNOW_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-espnow");
 
-/// The S3 runs four interface workers, so the multi-worker runtime holds them as
-/// one concrete type — this enum. Dispatch is explicit per the no-wildcard rule.
-enum HostWorker {
-    Wifi(EmbassyAutoInterface),
-    Serial(EmbassySerialInterface),
-    LoRa(EmbassyRnodeLoraInterface),
-    EspNow(EmbassyEspNowInterface),
+/// In-flight ring depth per interface seam (inbound + outbound). Modest — a desk
+/// node's bursts are small; ESP-NOW gets more to give its coalescing room.
+const AUTO_DEPTH: usize = 4;
+const SERIAL_DEPTH: usize = 8;
+const LORA_DEPTH: usize = 4;
+const ESPNOW_DEPTH: usize = 8;
+
+/// Each interface's four channels live in one board `static` (the embassy idiom);
+/// every seam shares the one [`WakeSignal`] the contract host sleeps on. Sized to
+/// each interface's own MTU — the AutoInterface's 1196 B, the engine MTU elsewhere.
+static AUTO_CH: EmbassyInterfaceChannels<HARDWARE_MTU, AUTO_DEPTH> =
+    EmbassyInterfaceChannels::new();
+static SERIAL_CH: EmbassyInterfaceChannels<SERIAL_MTU, SERIAL_DEPTH> =
+    EmbassyInterfaceChannels::new();
+static LORA_CH: EmbassyInterfaceChannels<MTU, LORA_DEPTH> = EmbassyInterfaceChannels::new();
+static ESPNOW_CH: EmbassyInterfaceChannels<MTU, ESPNOW_DEPTH> = EmbassyInterfaceChannels::new();
+static WAKE: WakeSignal = new_wake_signal();
+
+/// The worker-side seam each *spawned* interface task runs against (auto + serial;
+/// lora + espnow are joined in `main`, their context types inferred from the split).
+type AutoContext = InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, AUTO_DEPTH>>;
+type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_DEPTH>>;
+
+/// The runtime holds one handle type, but the S3's four interfaces have four
+/// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU, and
+/// per-interface depths) — so their `EmbassyInterfaceHandle`s are four distinct
+/// types. This enum unifies them into the one `InterfaceHandle` the
+/// [`ContractRuntime`] pools, dispatching each call to the held variant (the
+/// contract analog of the old `HostWorker` enum; explicit per the no-wildcard rule).
+enum HeltecHandle {
+    Auto(EmbassyInterfaceHandle<HARDWARE_MTU, AUTO_DEPTH>),
+    Serial(EmbassyInterfaceHandle<SERIAL_MTU, SERIAL_DEPTH>),
+    Lora(EmbassyInterfaceHandle<MTU, LORA_DEPTH>),
+    EspNow(EmbassyInterfaceHandle<MTU, ESPNOW_DEPTH>),
 }
 
-impl InterfaceWorker for HostWorker {
-    // The shared inbound mailbox sizes to this, so it must fit any worker's
-    // frames — the max across all three.
-    const PACKET_BUFFER_SIZE: usize = {
-        let wifi = EmbassyAutoInterface::PACKET_BUFFER_SIZE;
-        let serial = EmbassySerialInterface::PACKET_BUFFER_SIZE;
-        let lora = EmbassyRnodeLoraInterface::PACKET_BUFFER_SIZE;
-        let espnow = EmbassyEspNowInterface::PACKET_BUFFER_SIZE;
-        let m = if wifi > serial { wifi } else { serial };
-        let m = if m > lora { m } else { lora };
-        if m > espnow {
-            m
-        } else {
-            espnow
-        }
-    };
-
-    fn descriptor(&self) -> InterfaceDescriptor {
+impl InterfaceHandle for HeltecHandle {
+    fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize {
         match self {
-            HostWorker::Wifi(w) => w.descriptor(),
-            HostWorker::Serial(s) => s.descriptor(),
-            HostWorker::LoRa(l) => l.descriptor(),
-            HostWorker::EspNow(e) => e.descriptor(),
+            HeltecHandle::Auto(h) => h.drain_inbound(f),
+            HeltecHandle::Serial(h) => h.drain_inbound(f),
+            HeltecHandle::Lora(h) => h.drain_inbound(f),
+            HeltecHandle::EspNow(h) => h.drain_inbound(f),
         }
     }
 
-    fn health(&self) -> InterfaceStats {
+    fn send(&mut self, packet: OutboundPacket<'_>) -> bool {
         match self {
-            HostWorker::Wifi(w) => w.health(),
-            HostWorker::Serial(s) => s.health(),
-            HostWorker::LoRa(l) => l.health(),
-            HostWorker::EspNow(e) => e.health(),
+            HeltecHandle::Auto(h) => h.send(packet),
+            HeltecHandle::Serial(h) => h.send(packet),
+            HeltecHandle::Lora(h) => h.send(packet),
+            HeltecHandle::EspNow(h) => h.send(packet),
         }
     }
 
-    fn submit(&mut self, packet: OutboundPacket) -> Result<(), QueueFull> {
+    fn request_stop(&mut self) {
         match self {
-            HostWorker::Wifi(w) => w.submit(packet),
-            HostWorker::Serial(s) => s.submit(packet),
-            HostWorker::LoRa(l) => l.submit(packet),
-            HostWorker::EspNow(e) => e.submit(packet),
+            HeltecHandle::Auto(h) => h.request_stop(),
+            HeltecHandle::Serial(h) => h.request_stop(),
+            HeltecHandle::Lora(h) => h.request_stop(),
+            HeltecHandle::EspNow(h) => h.request_stop(),
+        }
+    }
+
+    fn next_report(&mut self) -> Option<ControlReport> {
+        match self {
+            HeltecHandle::Auto(h) => h.next_report(),
+            HeltecHandle::Serial(h) => h.next_report(),
+            HeltecHandle::Lora(h) => h.next_report(),
+            HeltecHandle::EspNow(h) => h.next_report(),
         }
     }
 }
@@ -197,19 +219,6 @@ impl EspNowLink for S3EspNowLink<'_> {
         n
     }
 }
-
-/// Inbound mailbox buffer size: the largest worker's `PACKET_BUFFER_SIZE`, so
-/// the host sizes the shared mailbox off one well-known number — no runtime
-/// sizing, the same compile-time-knob discipline as the engine preset below.
-const PACKET_BUFFER_SIZE: usize = HostWorker::PACKET_BUFFER_SIZE;
-
-/// Live link state, shared from each worker shell (writer) to its handle's
-/// `health()` (reader) so the runtime snapshot's `online` is honest.
-static LINK_UP: LinkUp = AtomicBool::new(false);
-static WIFI_PEERS: AtomicU16 = AtomicU16::new(0);
-static SERIAL_LINK_UP: AtomicBool = AtomicBool::new(false);
-static LORA_LINK_UP: AtomicBool = AtomicBool::new(false);
-static ESPNOW_LINK_UP: AtomicBool = AtomicBool::new(false);
 
 /// The runtime fires its post-cycle [`RuntimeSnapshot`] out on this; the OLED
 /// render loop subscribes and wakes only when engine state changes — no poll.
@@ -275,46 +284,22 @@ async fn net_task(mut runner: Runner<'static, WifiStaInterface<'static>>) -> ! {
     runner.run().await
 }
 
-/// The RNS AutoInterface worker — its own task. Owns the discovery + data
-/// sockets and talks to the runtime only through the channels.
+/// The RNS AutoInterface worker — its own task. Owns the discovery + data sockets
+/// and meets the runtime only through its seam.
 #[embassy_executor::task]
-async fn auto_worker_task(
-    stack: Stack<'static>,
-    mac: [u8; 6],
-    inbound: InboundSender<PACKET_BUFFER_SIZE>,
-    outbound: OutboundReceiver,
-) {
-    run_auto_worker(
-        stack,
-        INTERFACE_ID,
-        MacAddress::new(mac),
-        inbound,
-        outbound,
-        &LINK_UP,
-        &WIFI_PEERS,
-    )
-    .await
+async fn auto_worker_task(stack: Stack<'static>, mac: [u8; 6], context: AutoContext) {
+    serve_auto(stack, MacAddress::new(mac), context).await
 }
 
-/// The USB serial worker — its own task. Owns the usb-serial-jtag halves and
-/// talks to the runtime only through the channels (shared inbound mailbox +
-/// its own outbound queue).
+/// The USB serial worker — its own task. Owns the usb-serial-jtag halves and meets
+/// the runtime only through its seam.
 #[embassy_executor::task]
 async fn serial_worker_task(
     rx: UsbSerialJtagRx<'static, Async>,
     tx: UsbSerialJtagTx<'static, Async>,
-    inbound: InboundSender<PACKET_BUFFER_SIZE>,
-    outbound: SerialOutboundReceiver,
+    context: SerialContext,
 ) {
-    run_serial_worker(
-        rx,
-        tx,
-        SERIAL_INTERFACE_ID,
-        inbound,
-        outbound,
-        &SERIAL_LINK_UP,
-    )
-    .await
+    serve_serial(rx, tx, context).await
 }
 
 #[esp_rtos::main]
@@ -469,29 +454,26 @@ async fn main(spawner: Spawner) {
     stack.wait_link_up().await;
     println!("HELTEC_S3 NET link up");
 
-    // --- Worker channels + runtime. ---
-    // One shared inbound mailbox (every worker stamps into it; the runtime
-    // drains it), and a per-worker outbound queue (the runtime fills, the
-    // worker shell drains).
-    static INBOUND: StaticCell<InboundChannel<PACKET_BUFFER_SIZE>> = StaticCell::new();
-    static OUTBOUND: StaticCell<OutboundChannel> = StaticCell::new();
-    static SERIAL_OUTBOUND: StaticCell<SerialOutboundChannel> = StaticCell::new();
-    static LORA_OUTBOUND: StaticCell<LoraOutboundChannel> = StaticCell::new();
-    static ESPNOW_OUTBOUND: StaticCell<EspNowOutboundChannel> = StaticCell::new();
-    let inbound_ch: &'static InboundChannel<PACKET_BUFFER_SIZE> =
-        INBOUND.init(InboundChannel::new());
-    let outbound_ch: &'static OutboundChannel = OUTBOUND.init(OutboundChannel::new());
-    let serial_outbound_ch: &'static SerialOutboundChannel =
-        SERIAL_OUTBOUND.init(SerialOutboundChannel::new());
-    let lora_outbound_ch: &'static LoraOutboundChannel =
-        LORA_OUTBOUND.init(LoraOutboundChannel::new());
-    let espnow_outbound_ch: &'static EspNowOutboundChannel =
-        ESPNOW_OUTBOUND.init(EspNowOutboundChannel::new());
-    let inbound_rx: InboundReceiver<PACKET_BUFFER_SIZE> = inbound_ch.receiver();
-    let outbound_rx: OutboundReceiver = outbound_ch.receiver();
-    let serial_outbound_rx: SerialOutboundReceiver = serial_outbound_ch.receiver();
-    let lora_outbound_rx: LoraOutboundReceiver = lora_outbound_ch.receiver();
-    let espnow_outbound_rx: EspNowOutboundReceiver = espnow_outbound_ch.receiver();
+    // --- Worker seams + runtime. ---
+    // Each interface meets the runtime through its own three-lane seam (split from a
+    // board `static`); the runtime keeps the four handles (unified by `HeltecHandle`),
+    // each worker its context. All four share the one `WAKE` the host sleeps on.
+    let EmbassyInterfaceSeam {
+        worker_context: auto_context,
+        runtime_handle: auto_handle,
+    } = EmbassyInterfaceSeam::split(INTERFACE_ID, &AUTO_CH, &WAKE);
+    let EmbassyInterfaceSeam {
+        worker_context: serial_context,
+        runtime_handle: serial_handle,
+    } = EmbassyInterfaceSeam::split(SERIAL_INTERFACE_ID, &SERIAL_CH, &WAKE);
+    let EmbassyInterfaceSeam {
+        worker_context: lora_context,
+        runtime_handle: lora_handle,
+    } = EmbassyInterfaceSeam::split(LORA_INTERFACE_ID, &LORA_CH, &WAKE);
+    let EmbassyInterfaceSeam {
+        worker_context: espnow_context,
+        runtime_handle: espnow_handle,
+    } = EmbassyInterfaceSeam::split(ESPNOW_INTERFACE_ID, &ESPNOW_CH, &WAKE);
 
     // The S3's USB-C is the native usb-serial-jtag; share it for RNS frames (the
     // serial worker) and esp-println logs (register pokes) — the C6 precedent.
@@ -499,48 +481,45 @@ async fn main(spawner: Spawner) {
         .into_async()
         .split();
 
-    // Four workers — WiFi LAN + USB serial + LoRa + ESP-NOW — all in the runtime.
-    let wifi_worker =
-        EmbassyAutoInterface::new(INTERFACE_ID, outbound_ch.sender(), &LINK_UP, &WIFI_PEERS);
-    let serial_worker = EmbassySerialInterface::new(
-        SERIAL_INTERFACE_ID,
-        serial_outbound_ch.sender(),
-        &SERIAL_LINK_UP,
-    );
-    let lora_worker =
-        EmbassyRnodeLoraInterface::new(LORA_INTERFACE_ID, lora_outbound_ch.sender(), &LORA_LINK_UP);
-    let espnow_worker = EmbassyEspNowInterface::new(
-        ESPNOW_INTERFACE_ID,
-        espnow_outbound_ch.sender(),
-        &ESPNOW_LINK_UP,
-    );
-    // The embassy host owns the inbound mailbox's draining end + the per-cycle
-    // CSPRNG draw (the radio-seeded hardware RNG, true-random now WiFi is up); the
-    // runtime bolts it to the engine + the four worker handles.
-    let host = EmbassyHost::new(inbound_rx, || {
+    // Four self-driven interfaces — WiFi LAN + USB serial + LoRa + ESP-NOW — each a
+    // descriptor + its runtime handle. auto + serial run as spawned tasks (below);
+    // lora + espnow are joined in `main` (they borrow non-'static radio resources), so
+    // their serve futures are built further down with the contexts captured here.
+    let started: [StartedInterface<HeltecHandle, Infallible>; 4] = [
+        StartedInterface {
+            descriptor: auto_descriptor(INTERFACE_ID),
+            handle: HeltecHandle::Auto(auto_handle),
+            drive: DriverMode::SelfDriven,
+        },
+        StartedInterface {
+            descriptor: serial_descriptor(SERIAL_INTERFACE_ID),
+            handle: HeltecHandle::Serial(serial_handle),
+            drive: DriverMode::SelfDriven,
+        },
+        StartedInterface {
+            descriptor: lora_descriptor(LORA_INTERFACE_ID),
+            handle: HeltecHandle::Lora(lora_handle),
+            drive: DriverMode::SelfDriven,
+        },
+        StartedInterface {
+            descriptor: espnow_descriptor(ESPNOW_INTERFACE_ID),
+            handle: HeltecHandle::EspNow(espnow_handle),
+            drive: DriverMode::SelfDriven,
+        },
+    ];
+
+    // The embassy contract host sleeps the executor on the shared wake + the engine's
+    // next deadline, drawing each cycle's CSPRNG from the radio-seeded RNG (true-random
+    // now WiFi is up).
+    let host = EmbassyContractHost::new(&WAKE, || {
         let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
     });
-    let runtime = Runtime::new(
-        state,
-        [
-            HostWorker::Wifi(wifi_worker),
-            HostWorker::Serial(serial_worker),
-            HostWorker::LoRa(lora_worker),
-            HostWorker::EspNow(espnow_worker),
-        ],
-        host,
-    );
+    let runtime = ContractRuntime::new(state, started, host);
 
-    spawner.spawn(
-        auto_worker_task(stack, sta_mac, inbound_ch.sender(), outbound_rx)
-            .expect("spawn auto worker"),
-    );
-    spawner.spawn(
-        serial_worker_task(usb_rx, usb_tx, inbound_ch.sender(), serial_outbound_rx)
-            .expect("spawn serial worker"),
-    );
+    spawner.spawn(auto_worker_task(stack, sta_mac, auto_context).expect("spawn auto worker"));
+    spawner.spawn(serial_worker_task(usb_rx, usb_tx, serial_context).expect("spawn serial worker"));
     println!("HELTEC_S3 workers spawned (node {dest_hex}); runtime running");
 
     // Keep the radio alive (dropping the controller disconnects).
@@ -618,15 +597,7 @@ async fn main(spawner: Spawner) {
         match LoRa::new(lora_radio, false, Delay).await {
             Ok(lora) => {
                 println!("HELTEC_S3 LORA init ok — SX1262 up (TCXO 1.8V, private sync 0x1424)");
-                run_lora_worker(
-                    lora,
-                    LORA_INTERFACE_ID,
-                    DEFAULT_915_LORA_PROFILE,
-                    inbound_ch.sender(),
-                    lora_outbound_rx,
-                    &LORA_LINK_UP,
-                )
-                .await;
+                serve_lora(lora, DEFAULT_915_LORA_PROFILE, lora_context).await;
             }
             Err(e) => println!("HELTEC_S3 LORA init FAILED: {e:?}"),
         }
@@ -635,15 +606,12 @@ async fn main(spawner: Spawner) {
     // The ESP-NOW worker: hand it the host's radio adapter (esp-radio sender +
     // receiver) and run. No init handshake — ESP-NOW is connectionless — so the
     // shell is live as soon as it starts.
-    let espnow_fut = run_esp_now_worker(
+    let espnow_fut = serve_esp_now(
         S3EspNowLink {
             sender: esp_now_sender,
             receiver: esp_now_receiver,
         },
-        ESPNOW_INTERFACE_ID,
-        inbound_ch.sender(),
-        espnow_outbound_rx,
-        &ESPNOW_LINK_UP,
+        espnow_context,
     );
 
     // Run the runtime loop: aggregate the workers' inbound, drive the engine,
@@ -651,7 +619,7 @@ async fn main(spawner: Spawner) {
     // (The host built above draws CSPRNG entropy from the radio-seeded RNG per
     // cycle and owns the embassy-time clock + sleep.)
     let snapshot_tx = SNAPSHOT_WATCH.sender();
-    let runtime_fut = run(runtime, move |snapshot: &RuntimeSnapshot| {
+    let runtime_fut = run_contract(runtime, move |snapshot: &RuntimeSnapshot| {
         snapshot_tx.send(snapshot.clone());
     });
 
