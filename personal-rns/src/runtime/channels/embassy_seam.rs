@@ -35,6 +35,13 @@ const CONTROL_DEPTH: usize = 4;
 /// it as a `static` and hands `&'static` references to every seam.
 pub type WakeSignal = Signal<CriticalSectionRawMutex, ()>;
 
+/// A fresh, un-signaled [`WakeSignal`] for a board `static` — so a board writes
+/// `static WAKE: WakeSignal = new_wake_signal();` without having to name
+/// `embassy_sync` itself.
+pub const fn new_wake_signal() -> WakeSignal {
+    Signal::new()
+}
+
 /// One inbound slot: the worker fills `bytes[..len]` in place and the sink stamps
 /// `arrived_at`. Rides the channel by value — an MTU-bounded move, no allocation.
 struct InboundSlot<const MTU: usize> {

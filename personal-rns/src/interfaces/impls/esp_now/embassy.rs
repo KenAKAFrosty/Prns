@@ -26,9 +26,11 @@ use heapless::Vec as HVec;
 use super::core::{decode_frame, descriptor, EspNowFrameWriter, ESP_NOW_MAX_FRAME_PAYLOAD};
 use crate::engine::{InstantMillis, OutboundPacket};
 use crate::interfaces::{
-    InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker, LinkState, QueueFull,
+    InboundSink, InterfaceDescriptor, InterfaceId, InterfaceStats, InterfaceWorker,
+    InterfaceWorkerContext, LinkState, QueueFull,
 };
 use crate::runtime::channels::embassy::{InboundSender, InboxEntry};
+use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
 use crate::wire::MTU;
 
 /// How long to keep packing a frame after its first packet before transmitting.
@@ -243,6 +245,125 @@ pub async fn run<const MAILBOX: usize, L>(
                     if !writer.try_push(&pkt) {
                         leftover = Some(pkt);
                         break;
+                    }
+                }
+            }
+        }
+
+        let packed = writer.packet_count();
+        if let Err(e) = link.broadcast(writer.frame()).await {
+            log::warn!("RNS_ESPNOW broadcast of {packed} packet(s) failed: {e:?}");
+        }
+    }
+}
+
+/// Un-coalesce one received frame and [`submit`](InboundSink::submit) each whole
+/// packet into the interface's inbound ring (the seam stamps arrival + tags the
+/// source). The contract-seam twin of [`ingest_frame`]; a malformed frame drops
+/// what it can't parse — the engine validates every packet downstream regardless.
+fn submit_frame_packets(frame: &[u8], inbound: &mut impl InboundSink) {
+    match decode_frame(frame) {
+        Ok(reader) => {
+            let mut stamped = 0usize;
+            for packet in reader {
+                if packet.is_empty() || packet.len() > MTU {
+                    continue;
+                }
+                match inbound.submit(|buf| {
+                    buf[..packet.len()].copy_from_slice(packet);
+                    packet.len()
+                }) {
+                    Ok(()) => stamped += 1,
+                    Err(_) => {
+                        log::warn!("RNS_ESPNOW inbound ring full, dropped {}B", packet.len())
+                    }
+                }
+            }
+            if stamped > 0 {
+                log::info!(
+                    "RNS_ESPNOW rx frame: {stamped} packet(s) in {}B",
+                    frame.len()
+                );
+            }
+        }
+        Err(e) => log::warn!("RNS_ESPNOW dropping malformed frame: {e:?}"),
+    }
+}
+
+/// Drive the ESP-NOW link forever over the contract seam — the going-forward twin of
+/// [`run`]. Same connectionless broadcast loop: await either a received frame
+/// (un-coalesce → `submit` each packet) or the first outbound packet; on a packet,
+/// pack every packet queued within [`COALESCE_LINGER`] into one fat v2 frame, then
+/// broadcast once. A packet that doesn't fit leads the next frame (held in
+/// `leftover_buf`) so nothing is lost.
+///
+/// Generic over the seam `DEPTH` and the [`EspNowLink`] radio. Re-plumbed to the seam:
+/// inbound rides [`InboundSink::submit`], outbound is pulled with
+/// [`ready`](crate::runtime::channels::embassy_seam::EmbassyOutboundDrain::ready) +
+/// `try_next_into` (the copy-out the async write needs). No `link_up` — liveness rides
+/// a control report under the new contract (deferred).
+pub async fn serve<const DEPTH: usize, L>(
+    mut link: L,
+    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, DEPTH>>,
+) where
+    L: EspNowLink,
+{
+    let mut rx_buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
+    let mut tx_buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
+    // Scratch for one packet pulled off the outbound ring, and the held-back packet
+    // that leads the next frame (the copy-out flavor of the legacy owned `leftover`).
+    let mut pkt_buf = [0u8; MTU];
+    let mut leftover_buf = [0u8; MTU];
+    let mut leftover: Option<usize> = None;
+
+    loop {
+        // The first packet of the next frame: one held back last time, or — while
+        // idle — whichever comes first, a received frame (ingest and loop) or a fresh
+        // outbound packet pulled off the ring.
+        let first_len = match leftover.take() {
+            Some(len) => {
+                pkt_buf[..len].copy_from_slice(&leftover_buf[..len]);
+                len
+            }
+            None => match select(link.receive_into(&mut rx_buf), context.outbound.ready()).await {
+                Either::First(len) => {
+                    submit_frame_packets(&rx_buf[..len], &mut context.inbound);
+                    continue;
+                }
+                Either::Second(()) => match context.outbound.try_next_into(&mut pkt_buf) {
+                    Some(len) => len,
+                    None => continue,
+                },
+            },
+        };
+
+        let mut writer = EspNowFrameWriter::new(&mut tx_buf);
+        if !writer.try_push(&pkt_buf[..first_len]) {
+            log::warn!("RNS_ESPNOW packet {first_len}B too large for one frame, dropped");
+            continue;
+        }
+
+        // Coalesce: pack everything queued, then wait up to one fixed window for
+        // stragglers, until the frame fills or the window closes.
+        let deadline = EmbassyInstant::now() + COALESCE_LINGER;
+        loop {
+            if let Some(len) = context.outbound.try_next_into(&mut pkt_buf) {
+                if !writer.try_push(&pkt_buf[..len]) {
+                    leftover_buf[..len].copy_from_slice(&pkt_buf[..len]);
+                    leftover = Some(len);
+                    break;
+                }
+                continue;
+            }
+            match select(Timer::at(deadline), context.outbound.ready()).await {
+                Either::First(_) => break, // window closed → transmit
+                Either::Second(()) => {
+                    if let Some(len) = context.outbound.try_next_into(&mut pkt_buf) {
+                        if !writer.try_push(&pkt_buf[..len]) {
+                            leftover_buf[..len].copy_from_slice(&pkt_buf[..len]);
+                            leftover = Some(len);
+                            break;
+                        }
                     }
                 }
             }
