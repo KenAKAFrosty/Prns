@@ -22,7 +22,9 @@ pub use context::{
     OutboundDrain, Substrate,
 };
 pub use core::{InterfaceWorker, QueueFull};
-pub use interface::{DriverMode, Interface, InterfaceHandle, StartedInterface};
+pub use interface::{
+    DriverMode, Interface, InterfaceHandle, SelfDrivenInterface, StartedInterface,
+};
 pub use multicast::TrackedPeerMulticastInterface;
 pub use runtime_driven::RuntimeDriven;
 pub use stats::{InterfaceStats, LinkState};

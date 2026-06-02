@@ -46,7 +46,7 @@ pub use descriptor::InterfaceDescriptor;
 pub use worker::{
     ControlCommand, ControlEndpoint, ControlReport, DriverMode, InboundSink, Interface,
     InterfaceHandle, InterfaceStats, InterfaceWorker, InterfaceWorkerContext, LinkState,
-    OutboundDrain, QueueFull, RuntimeDriven, StartedInterface, Substrate,
+    OutboundDrain, QueueFull, RuntimeDriven, SelfDrivenInterface, StartedInterface, Substrate,
     TrackedPeerMulticastInterface,
 };
 

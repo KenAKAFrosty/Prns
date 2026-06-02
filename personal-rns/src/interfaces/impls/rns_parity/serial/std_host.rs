@@ -3,12 +3,12 @@
 //! The host twin of the `embassy` shell: same shared `core` framing, expressed
 //! with a std thread + the contract seam instead of async.
 //!
-//! [`StdSerialInterface`] is an [`Interface`]: [`start`](Interface::start) spawns a
-//! thread that owns the device lifecycle — open, run a connection, reconnect on
-//! unplug — and runs the read→deframe→submit / drain→frame→write loop against the
-//! worker side of the seam it is handed. It never names a HAL: a host supplies an
-//! `open` closure that hands it a fresh `Read + Write` stream, so the same shell
-//! serves USB-CDC, a UART, or a test pipe.
+//! [`std_serial_interface`] builds a [`SelfDrivenInterface`] whose launch closure
+//! spawns a thread that owns the device lifecycle — open, run a connection,
+//! reconnect on unplug — running the read→deframe→submit / drain→frame→write loop
+//! against the worker side of the seam it is handed. It never names a HAL: the
+//! caller supplies an `open` closure that hands it a fresh `Read + Write` stream, so
+//! the same shell serves USB-CDC, a UART, or a test pipe.
 
 use std::io::{self, Read, Write};
 use std::time::Duration;
@@ -16,8 +16,8 @@ use std::time::Duration;
 use super::core::{descriptor, SERIAL_MTU};
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
-    ControlCommand, ControlEndpoint, ControlReport, DriverMode, InboundSink, Interface,
-    InterfaceDescriptor, InterfaceId, InterfaceWorkerContext, OutboundDrain,
+    ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceId,
+    InterfaceWorkerContext, OutboundDrain, SelfDrivenInterface,
 };
 use crate::runtime::channels::std_host::StdHostSubstrate;
 
@@ -25,63 +25,52 @@ use crate::runtime::channels::std_host::StdHostSubstrate;
 /// serial MTU.
 type SerialContext = InterfaceWorkerContext<StdHostSubstrate<SERIAL_MTU>>;
 
-/// A serial-link interface on interface `id`. Cheap until [`start`](Interface::start):
-/// a descriptor, the host's `open` closure (hands it a fresh byte stream), and the
-/// backoff between reconnect attempts.
-pub struct StdSerialInterface<Open> {
-    descriptor: InterfaceDescriptor,
+/// Build a self-driven serial [`Interface`](crate::interfaces::Interface) on
+/// interface `id`. The returned [`SelfDrivenInterface`]'s launch closure spawns a
+/// thread that owns the device lifecycle — open, `serve_connection`, reconnect on
+/// unplug — running the loop against the worker side of the seam. `open` is called
+/// to (re)acquire the byte stream (a caller closes `serialport` or any HAL inside
+/// it, so this shell never names one); `reconnect` is the backoff before re-opening
+/// after an unplug or open failure.
+pub fn std_serial_interface<Open, Port>(
+    id: InterfaceId,
     open: Open,
     reconnect: Duration,
-}
-
-impl<Open> StdSerialInterface<Open> {
-    /// `open` is called to (re)acquire the byte stream — a host closes `serialport`
-    /// (or any HAL) inside it, so this shell never names one. `reconnect` is the
-    /// backoff before re-opening after an unplug or open failure.
-    pub fn new(id: InterfaceId, open: Open, reconnect: Duration) -> Self {
-        Self {
-            descriptor: descriptor(id),
-            open,
-            reconnect,
-        }
-    }
-}
-
-impl<Open, Port> Interface<StdHostSubstrate<SERIAL_MTU>> for StdSerialInterface<Open>
+) -> SelfDrivenInterface<impl FnOnce(SerialContext)>
 where
     Open: FnMut() -> io::Result<Port> + Send + 'static,
     Port: Read + Write + Send + 'static,
 {
-    fn descriptor(&self) -> InterfaceDescriptor {
-        self.descriptor
-    }
+    SelfDrivenInterface::new(descriptor(id), move |context| {
+        std::thread::spawn(move || serve_until_stopped(open, reconnect, context));
+    })
+}
 
-    fn start(self, mut context: SerialContext) -> DriverMode<Self> {
-        let StdSerialInterface {
-            mut open,
-            reconnect,
-            ..
-        } = self;
-        std::thread::spawn(move || {
-            loop {
-                match open() {
-                    Ok(port) => match serve_connection(port, &mut context) {
-                        ConnectionEnd::Stopped => break,
-                        ConnectionEnd::Disconnected => {}
-                    },
-                    // Open failed (not plugged in yet); back off and retry.
-                    Err(_) => {}
-                }
-                // Honor a stop issued while we're between connections, too.
-                if matches!(context.control.next_command(), Some(ControlCommand::Stop)) {
-                    break;
-                }
-                std::thread::sleep(reconnect);
-            }
-            context.control.report(ControlReport::Stopped);
-        });
-        DriverMode::SelfDriven
+/// Own one serial link for the life of the interface: (re)open via `open`, serve the
+/// connection until it drops or a stop arrives, back off, repeat — reporting
+/// [`Stopped`](ControlReport::Stopped) once a [`Stop`](ControlCommand::Stop) ends the
+/// loop. Runs on the thread the launch closure spawned.
+fn serve_until_stopped<Open, Port>(mut open: Open, reconnect: Duration, mut context: SerialContext)
+where
+    Open: FnMut() -> io::Result<Port>,
+    Port: Read + Write,
+{
+    loop {
+        match open() {
+            Ok(port) => match serve_connection(port, &mut context) {
+                ConnectionEnd::Stopped => break,
+                ConnectionEnd::Disconnected => {}
+            },
+            // Open failed (not plugged in yet); back off and retry.
+            Err(_) => {}
+        }
+        // Honor a stop issued while we're between connections, too.
+        if matches!(context.control.next_command(), Some(ControlCommand::Stop)) {
+            break;
+        }
+        std::thread::sleep(reconnect);
     }
+    context.control.report(ControlReport::Stopped);
 }
 
 /// Why one connection ended: the runtime asked us to stop, or the transport died

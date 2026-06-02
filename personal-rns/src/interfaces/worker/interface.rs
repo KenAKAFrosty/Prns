@@ -97,3 +97,47 @@ pub trait Interface<S: Substrate>: Sized {
     /// drive mode, return the [`DriverMode`].
     fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self>;
 }
+
+/// The ready-made [`Interface`] for the common case: one that drives its own loop.
+/// It carries its [`InterfaceDescriptor`] and a `launch` closure that, handed the
+/// worker side of the seam, starts that loop on whatever the platform runs
+/// concurrent work with — a std thread, an embassy task — and returns. Every
+/// self-driven interface, on every platform, has exactly this shape, so the launch
+/// mechanism is the *only* thing that varies, and it lives where it must: with the
+/// platform that owns concurrency. [`start`](Interface::start) just fires the
+/// launcher and reports [`SelfDriven`](DriverMode::SelfDriven).
+///
+/// The launcher is `FnOnce(InterfaceWorkerContext<S>)` for *every* interface — the
+/// device it transmits over is captured *inside* the closure (built beside the
+/// platform's spawn primitive, e.g. at an embassy board next to its `#[task]`), so
+/// it never surfaces in this generic signature. That is what lets a single wrapper
+/// serve serial, LoRa, ESP-NOW, AutoInterface, … across both std and embassy.
+pub struct SelfDrivenInterface<Launch> {
+    descriptor: InterfaceDescriptor,
+    launch: Launch,
+}
+
+impl<Launch> SelfDrivenInterface<Launch> {
+    /// `descriptor` is the routing facts the engine registers (read before `start`
+    /// consumes the interface); `launch`, handed the worker side of the seam, must
+    /// start the interface's loop and return promptly — spawn a thread or task, do
+    /// not block.
+    pub fn new(descriptor: InterfaceDescriptor, launch: Launch) -> Self {
+        Self { descriptor, launch }
+    }
+}
+
+impl<S, Launch> Interface<S> for SelfDrivenInterface<Launch>
+where
+    S: Substrate,
+    Launch: FnOnce(InterfaceWorkerContext<S>),
+{
+    fn descriptor(&self) -> InterfaceDescriptor {
+        self.descriptor
+    }
+
+    fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self> {
+        (self.launch)(context);
+        DriverMode::SelfDriven
+    }
+}

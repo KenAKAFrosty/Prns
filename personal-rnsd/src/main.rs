@@ -2,7 +2,7 @@
 //! the shared `Interface` contract + `ContractRuntime` — the *same* abstraction
 //! the embedded hosts (ESP32) will use, just on the std substrate.
 //!
-//! The `StdSerialInterface` owns the serial port (reopening on unplug) on its own
+//! The serial interface owns the serial port (reopening on unplug) on its own
 //! thread, meeting the runtime through a three-lane seam; the `ContractRuntime`
 //! over a `LinuxSync` host pools that seam into the engine, deadline-driven, and
 //! surfaces a snapshot each cycle. The daemon both forwards others' announces and
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::{
-    std_host::StdSerialInterface, SERIAL_MTU,
+    std_host::std_serial_interface, SERIAL_MTU,
 };
 use personal_rns::interfaces::{DriverMode, Interface, InterfaceId, StartedInterface};
 use personal_rns::runtime::channels::std_host::StdInterfaceSeam;
@@ -119,7 +119,7 @@ fn main() {
             .open()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     };
-    let interface = StdSerialInterface::new(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
+    let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
     let descriptor = interface.descriptor();
     // The serial interface is self-driven (its own thread), so `start` always
     // returns `SelfDriven`; this daemon has no runtime-driven interfaces, hence
