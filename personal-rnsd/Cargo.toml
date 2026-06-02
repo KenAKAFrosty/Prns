@@ -5,9 +5,6 @@ edition = "2021"
 description = "Thin daemon host for the Personal Reticulum engine"
 publish = false
 
-[lib]
-path = "src/lib.rs"
-
 [[bin]]
 name = "personal-rnsd"
 path = "src/main.rs"
@@ -18,20 +15,15 @@ default = ["std-host"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
 std-host = ["std", "dep:serialport", "personal-rns/std-host"]
-tokio-host = ["std", "dep:tokio"]
 fixture-identity = []
-interfaces-host-shell = ["std"]
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
 # USB-serial transport (std-host only). default-features off drops the libudev
-# system dep — we open ports by path, never enumerate. Wrapped behind
-# `SerialUsbInterface` so the crate stays the only thing that sees it.
+# system dep — we open ports by path, never enumerate.
 serialport = { version = "4", default-features = false, optional = true }
-# OS CSPRNG shim: maps to getrandom(2) / BCryptGenRandom / SecRandomCopyBytes.
-# Implements the `EngineHost::fill_entropy` contract on every std platform
-# we ship — same source RNS uses (`os.urandom`).
+# OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
+# the same source RNS uses (`os.urandom`).
 getrandom = "0.2"
 
 [lints]

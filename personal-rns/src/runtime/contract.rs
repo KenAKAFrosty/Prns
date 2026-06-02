@@ -32,10 +32,9 @@ use crate::routing::storage::{
 };
 use crate::wire::MTU;
 
-/// What one pooled drive cycle did — the contract runtime's analogue of the legacy
-/// `StepOutput`, summed across every interface's intake plus the tick's egress.
-/// `next_poll` carries when the runtime-driven interfaces next need polling, folded
-/// into the loop's sleep alongside the engine's own deadline.
+/// What one pooled drive cycle did — summed across every interface's intake plus the
+/// tick's egress. `next_poll` carries when the runtime-driven interfaces next need
+/// polling, folded into the loop's sleep alongside the engine's own deadline.
 #[derive(Debug)]
 pub struct ContractStepOutput {
     pub ingested_packet_count: usize,

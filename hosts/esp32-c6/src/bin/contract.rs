@@ -9,10 +9,8 @@
 //! shared [`WakeSignal`] + the engine's next deadline; [`run_contract`] pools the
 //! interface's seam into the engine each cycle.
 //!
-//! This replaces the bespoke `Manifold`/`rns_frame_ingest` spike: the engine-bolt is
-//! now the real `ContractRuntime`, and sync-vs-async is settled per-platform by the
-//! `Host` (`LinuxSync` sync, `EmbassyContractHost` async), so the comparison spikes
-//! are retired.
+//! The engine-bolt is the real `ContractRuntime`; sync-vs-async is settled per-platform
+//! by the `Host` (`LinuxSync` sync, `EmbassyContractHost` async).
 
 #![no_std]
 #![no_main]

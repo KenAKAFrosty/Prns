@@ -5,12 +5,10 @@
 //! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
 //! sockets, or storage directly.
 
-mod driver;
 pub mod egress;
 pub mod ingress;
 pub mod self_announce;
 
-pub use driver::{EngineDriver, StepOutput, TickSummary};
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
@@ -61,10 +59,9 @@ pub struct InstantMillis(pub u64);
 /// on.)
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
-/// Raw entropy a single step needs, drawn once from
-/// [`EngineDriver::fill_entropy`] and split by [`EngineCycleEntropy::from_seed`] into
-/// one typed package per genuine
-/// randomness need.
+/// Raw entropy a single step needs, drawn once per cycle by the host and split by
+/// [`EngineCycleEntropy::from_seed`] into one typed package per genuine randomness
+/// need.
 pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
 /// The raw CSPRNG bytes a host draws for exactly one engine cycle, before the
@@ -120,9 +117,8 @@ pub struct InboundPacket<'a> {
 
 /// One serialized Reticulum wire packet on its way out — the outbound
 /// counterpart to [`InboundPacket`]. A newtype over the bytes so the egress
-/// seam (`EngineDriver::handle_outbound_packet`, `InterfaceWorker::submit`) names
-/// *exactly one packet* rather than a bare `&[u8]` a reader might mistake for a
-/// batch of them.
+/// seam (`InterfaceHandle::send`) names *exactly one packet* rather than a bare
+/// `&[u8]` a reader might mistake for a batch of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
@@ -266,8 +262,8 @@ where
     /// keys (X25519 ‖ Ed25519, RNS `prv_bytes` layout) — used verbatim, never
     /// stretched. It arrives through a [`Zeroizing`] buffer the host fills from
     /// its own secret store; that is a deliberately separate channel from the
-    /// driver's CSPRNG [`fill_entropy`](EngineDriver::fill_entropy) (which seeds
-    /// re-announce-timing jitter and must never be the source of key material).
+    /// per-cycle CSPRNG seed (which seeds re-announce-timing jitter and must never be
+    /// the source of key material).
     pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self
     where
         R: Default,
@@ -429,8 +425,8 @@ where
     ///
     /// The announce id (RNS `random_hash`) is minted from `entropy` (its 5-byte
     /// replay nonce) and `now` (its 5-byte monotonic timebase) — both already
-    /// owned by the [`step`](EngineDriver::step) that drives the engine, so
-    /// origination needs no clock or RNG of its own. `buf` should be
+    /// owned by the cycle that drives the engine, so origination needs no clock or RNG
+    /// of its own. `buf` should be
     /// [`MTU`](crate::wire::MTU)-sized; the framed announce always fits because
     /// the app data is bounded at construction.
     pub fn write_due_self_announce(
