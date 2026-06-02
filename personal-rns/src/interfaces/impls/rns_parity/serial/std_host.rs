@@ -56,14 +56,14 @@ where
     Port: Read + Write,
 {
     loop {
-        match open() {
-            Ok(port) => match serve_connection(port, &mut context) {
+        if let Ok(port) = open() {
+            match serve_connection(port, &mut context) {
                 ConnectionEnd::Stopped => break,
                 ConnectionEnd::Disconnected => {}
-            },
-            // Open failed (not plugged in yet); back off and retry.
-            Err(_) => {}
+            }
         }
+        // An open failure means the device is not plugged in yet; back off and
+        // retry unless a stop arrived while we were between connections.
         // Honor a stop issued while we're between connections, too.
         if matches!(context.control.next_command(), Some(ControlCommand::Stop)) {
             break;
@@ -108,15 +108,12 @@ fn serve_connection<Port: Read + Write>(
             if transport_failed {
                 return;
             }
-            match rns_serial_framing::encode(packet.bytes, &mut frame_buf) {
-                Ok(n) => {
-                    if port.write_all(&frame_buf[..n]).is_err() {
-                        transport_failed = true;
-                    }
+            if let Ok(n) = rns_serial_framing::encode(packet.bytes, &mut frame_buf) {
+                if port.write_all(&frame_buf[..n]).is_err() {
+                    transport_failed = true;
                 }
-                // Oversize packet: drop it (self-heals — RNS re-announces).
-                Err(_) => {}
             }
+            // Oversize packets are dropped: RNS self-heals by re-announcing.
         });
         if transport_failed {
             return ConnectionEnd::Disconnected;

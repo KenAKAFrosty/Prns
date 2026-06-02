@@ -12,17 +12,16 @@
 //!
 //! This crate is std-only (uniffi requires std). The `personal-rns`
 //! core it wraps stays `no_std` with no allocator; that constraint sits
-//! on the core, not on this bindings layer. The SDK is just another
-//! engine driver: it brings a thin std-clock adapter and drives the
-//! shared engine through `engine::EngineDriver::step`.
+//! on the core, not on this bindings layer. The SDK brings a thin
+//! std-clock/entropy adapter and drives the shared engine directly.
 
 use std::sync::Mutex;
 use std::time::Instant;
 
 use personal_rns::engine::{
-    EngineDriver, FixedCapacityEngineState, InboundPacket, InstantMillis, OutboundPacket,
+    tick, EngineCycleEntropy, EngineCycleEntropySeed, FixedCapacityEngineState, InstantMillis,
+    ENGINE_CYCLE_ENTROPY_LEN,
 };
-use personal_rns::interfaces::InterfaceId;
 
 uniffi::include_scaffolding!("prns");
 
@@ -32,55 +31,34 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// The SDK's thin engine host: a real monotonic clock, but no transport
-/// wired yet. So it reports no inbound and refuses to transmit, like
-/// every other minimal body until the protocol slices land.
-struct SdkEngineDriver {
+/// The SDK's thin engine substrate: a real monotonic clock and CSPRNG, but no
+/// transport wired yet.
+struct SdkEngineSubstrate {
     base: Instant,
 }
 
-#[derive(Debug)]
-enum SdkEngineDriverError {
-    NoTransport,
-    EntropySourceUnavailable,
-}
-
-impl EngineDriver for SdkEngineDriver {
-    type Error = SdkEngineDriverError;
-
-    fn now_millis(&mut self) -> Result<InstantMillis, Self::Error> {
-        Ok(InstantMillis(self.base.elapsed().as_millis() as u64))
+impl SdkEngineSubstrate {
+    fn now_millis(&self) -> InstantMillis {
+        InstantMillis(self.base.elapsed().as_millis() as u64)
     }
 
-    fn fill_entropy(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // Same OS CSPRNG path as StdEngineDriver: getrandom backs onto Android's
+    fn cycle_entropy(&self) -> EngineCycleEntropy {
+        let mut seed = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
+        // Same OS CSPRNG path as the std host: getrandom backs onto Android's
         // `/dev/urandom` (via `getrandom(2)` on API ≥17) and iOS's
         // `SecRandomCopyBytes`. Crypto-grade by host contract.
-        getrandom::getrandom(buf).map_err(|_| SdkEngineDriverError::EntropySourceUnavailable)
-    }
-
-    fn drain_inbound_packets(&mut self) -> Result<&[InboundPacket<'_>], Self::Error> {
-        Ok(&[])
-    }
-
-    fn handle_outbound_packet(
-        &mut self,
-        _packet: OutboundPacket,
-        _fire_on: &[InterfaceId],
-    ) -> Result<(), Self::Error> {
-        // No transport wired yet; every egress fails honestly until a
-        // real interface lands.
-        Err(SdkEngineDriverError::NoTransport)
+        getrandom::getrandom(&mut seed).expect("OS CSPRNG must provide cycle entropy");
+        EngineCycleEntropy::from_seed(EngineCycleEntropySeed::new(seed))
     }
 }
 
 struct RuntimeInner {
     state: FixedCapacityEngineState,
-    driver: SdkEngineDriver,
+    substrate: SdkEngineSubstrate,
 }
 
-/// SDK-facing runtime handle. Wraps the pure [`EngineState`] and the
-/// SDK's [`SdkEngineDriver`] behind a `Mutex` because uniffi interface objects
+/// SDK-facing runtime handle. Wraps the pure engine state and the SDK's thin
+/// substrate behind a `Mutex` because uniffi interface objects
 /// must be `Send + Sync` and each `tick` mutates engine state.
 pub struct ReticulumRuntime {
     inner: Mutex<RuntimeInner>,
@@ -91,20 +69,22 @@ impl ReticulumRuntime {
         Self {
             inner: Mutex::new(RuntimeInner {
                 state: FixedCapacityEngineState::default(),
-                driver: SdkEngineDriver {
+                substrate: SdkEngineSubstrate {
                     base: Instant::now(),
                 },
             }),
         }
     }
 
-    /// Drive one step over the SDK clock host (ingest the queue, then tick);
-    /// returns the directive count the periodic pass emitted.
+    /// Drive one periodic tick over the SDK clock/entropy substrate; returns
+    /// the directive count the periodic pass emitted.
     pub fn tick(&self) -> u64 {
         let mut inner = self.inner.lock().expect("ReticulumRuntime mutex poisoned");
-        let RuntimeInner { state, driver } = &mut *inner;
-        let output = driver.step(state).expect("clock-only step cannot fail");
-        output.tick.egress_directive_count as u64
+        let RuntimeInner { state, substrate } = &mut *inner;
+        let now = substrate.now_millis();
+        let entropy = substrate.cycle_entropy();
+        let output = tick(state, now, entropy.jitter);
+        output.egress_directive_count() as u64
     }
 
     /// Total ticks advanced since construction.

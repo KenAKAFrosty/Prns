@@ -9,7 +9,8 @@ footer-tagline = Personal チームがお届けしています。
 # ランディング
 landing-kicker = 止められないメッシュネットワークを、すべての人に
 landing-title = Rust で書かれた Reticulum (RNS) の本番品質ポート。
-landing-subtitle = 決定論的で no_std、アロケータを必要としないコア。RNS と LXMF を余すところなくカバーします。Kotlin、Swift、Python、TypeScript、C# のネイティブバインディング一式に加え、ブラウザや Cloudflare Workers・Fastly・Spin といったエッジランタイム向けの WebAssembly まで揃います。5 ドルのマイコンからクラウドノードまで、あらゆる Reticulum スタックが必要とする性能とバッテリー寿命を正面から面倒みる設計です。landing-cta-ethos = クレートを選ぶ
+landing-subtitle = 決定論的で no_std、アロケータを必要としないコア。RNS と LXMF を余すところなくカバーします。5 ドルのマイコンからクラウドノードまで、あらゆる Reticulum スタックが必要とする性能とバッテリー寿命を正面から面倒みる設計です。
+landing-cta-ethos = クレートを選ぶ
 landing-cta-crates = どう作っているか
 
 # プルクオート

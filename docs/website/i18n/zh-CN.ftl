@@ -9,7 +9,8 @@ footer-tagline = 由 Personal 团队打造。
 # 着陆页
 landing-kicker = 属于每个人的、势不可挡的网状网络
 landing-title = 用 Rust 重写的 Reticulum (RNS) 生产级移植。
-landing-subtitle = 确定性、no_std、无分配器的内核。完整覆盖 RNS 与 LXMF。Kotlin、Swift、Python、TypeScript、C# 的原生绑定一应俱全。可在浏览器与 Cloudflare Workers、Fastly、Spin 等边缘运行时上以 WebAssembly 运行。每一个 Reticulum 栈所需的性能与续航都被认真照顾——从五美元的单片机一路到云端节点。landing-cta-ethos = 选一个 crate
+landing-subtitle = 确定性、no_std、无分配器的内核。完整覆盖 RNS 与 LXMF。每一个 Reticulum 栈所需的性能与续航都被认真照顾——从五美元的单片机一路到云端节点。
+landing-cta-ethos = 选一个 crate
 landing-cta-crates = 我们如何构建
 
 # 引用

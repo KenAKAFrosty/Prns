@@ -9,7 +9,7 @@ footer-tagline = Brought to you by the Personal team.
 # Landing
 landing-kicker = Unstoppable mesh networks, for the people
 landing-title = A production-grade port of Reticulum (RNS) written in Rust.
-landing-subtitle = A deterministic, no_std, alloc-free core. Covers RNS and LXMF in full. Native bindings for Kotlin, Swift, Python, TypeScript, and C#. WebAssembly for browsers and edge runtimes. Built for the performance and battery life every Reticulum stack needs, from a five-dollar microcontroller to a cloud node.
+landing-subtitle = A deterministic, no_std, alloc-free core. Covers RNS and LXMF in full. Built for the performance and battery life every Reticulum stack needs, from a five-dollar microcontroller to a cloud node.
 landing-cta-ethos = Pick a crate
 landing-cta-crates = How we build it
 

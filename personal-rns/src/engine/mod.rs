@@ -989,12 +989,16 @@ mod tests {
             },
         ];
 
-        let out = ingest_packets(&mut state, &batch, TEST_ENTROPY);
+        let out = ingest_packets(&mut state, batch, TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
 
         // Empty batch is valid and does not move state.
-        let empty = ingest_packets(&mut state, &[], TEST_ENTROPY);
+        let empty = ingest_packets(
+            &mut state,
+            core::iter::empty::<InboundPacket<'_>>(),
+            TEST_ENTROPY,
+        );
         assert_eq!(empty.processed_packet_count(), 0);
         assert_eq!(state.ingested_packet_count(), 2);
     }
@@ -1156,7 +1160,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let _ = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1292,7 +1296,7 @@ mod tests {
 
         let first = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1305,7 +1309,7 @@ mod tests {
         // The identical announce again is a known-route replay: rejected, no new path.
         let second = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1329,7 +1333,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let out = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &at_limit,
@@ -1343,7 +1347,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let out = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &beyond,
@@ -1364,7 +1368,7 @@ mod tests {
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
         let out = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1394,7 +1398,7 @@ mod tests {
             source_interface: InterfaceId::new([0u8; 16]),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = ingest_packets(&mut state, &[junk], TEST_ENTROPY);
+        let out = ingest_packets(&mut state, [junk], TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 1);
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -1409,7 +1413,7 @@ mod tests {
 
         let out = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1429,7 +1433,7 @@ mod tests {
         let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
         let _ = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1475,7 +1479,7 @@ mod tests {
         let raw1 = hx(RAW_ANNOUNCE);
         let _ = ingest_packets(
             &mut state,
-            &[
+            [
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0u8; 16]),
@@ -1516,7 +1520,7 @@ mod tests {
         let mut state = FixedCapacityEngineState::<64, 128>::default();
         let out = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1538,7 +1542,7 @@ mod tests {
         let arrival = InstantMillis(1_000);
         let out = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1582,7 +1586,7 @@ mod tests {
         let arrival = InstantMillis(1_000);
         let _ = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,
@@ -1617,7 +1621,7 @@ mod tests {
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
             let _ = ingest_packets(
                 state,
-                &[InboundPacket {
+                [InboundPacket {
                     arrived_at: arrival,
                     source_interface: InterfaceId::new([0u8; 16]),
                     bytes: &raw,
@@ -1644,7 +1648,7 @@ mod tests {
         let mut state = FixedCapacityEngineState::<4, 64, 8, 4, 16, 4>::default();
         let _ = ingest_packets(
             &mut state,
-            &[InboundPacket {
+            [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
                 bytes: &raw,

@@ -75,7 +75,7 @@ fn App() -> Element {
         document::Meta { name: "viewport", content: "width=device-width, initial-scale=1" }
         document::Meta {
             name: "description",
-            content: "A production-grade Rust port of Reticulum (RNS). Truly pure no_std, alloc-free core. Drop-in for rnsd. First-class Kotlin, Swift, and Python bindings. Built for microcontrollers, mobile, and cloud.",
+            content: "A production-grade Rust port of Reticulum (RNS). Deterministic no_std core, a Linux daemon host, and embedded host work built around the same engine.",
         }
         Router::<Route> {}
     }

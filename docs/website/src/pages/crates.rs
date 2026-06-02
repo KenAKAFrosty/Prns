@@ -31,18 +31,6 @@ const CRATES: &[CrateMeta] = &[
         body: include_str!("../../content/crates/personal-lxmf.md"),
     },
     CrateMeta {
-        name: "personal-rns-ffi",
-        role_key: "crate-ffi-role",
-        blurb_key: "crate-ffi-blurb",
-        body: include_str!("../../content/crates/personal-rns-ffi.md"),
-    },
-    CrateMeta {
-        name: "rvt",
-        role_key: "crate-rvt-role",
-        blurb_key: "crate-rvt-blurb",
-        body: include_str!("../../content/crates/rvt.md"),
-    },
-    CrateMeta {
         name: "hosts-esp32-c6",
         role_key: "crate-esp32c6-role",
         blurb_key: "crate-esp32c6-blurb",

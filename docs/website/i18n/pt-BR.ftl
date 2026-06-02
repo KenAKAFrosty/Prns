@@ -9,7 +9,8 @@ footer-tagline = Construído pelo time Personal.
 # Página inicial
 landing-kicker = Redes mesh imparáveis — para as pessoas
 landing-title = Uma portação de produção do Reticulum (RNS) escrita em Rust.
-landing-subtitle = Um núcleo determinístico, sem std e sem alocador. Cobertura completa de RNS e LXMF. Bindings nativos para Kotlin, Swift, Python, TypeScript e C#. WebAssembly para navegadores e runtimes edge como Cloudflare Workers, Fastly e Spin. Pensado para o desempenho e a autonomia que qualquer stack Reticulum exige — de um microcontrolador de cinco dólares a um nó na nuvem.landing-cta-ethos = Escolha um crate
+landing-subtitle = Um núcleo determinístico, sem std e sem alocador. Cobertura completa de RNS e LXMF. Pensado para o desempenho e a autonomia que qualquer stack Reticulum exige — de um microcontrolador de cinco dólares a um nó na nuvem.
+landing-cta-ethos = Escolha um crate
 landing-cta-crates = Como construímos isto
 
 # Citação

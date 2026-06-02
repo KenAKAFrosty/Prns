@@ -3119,9 +3119,11 @@ dependencies = [
  "aes",
  "cbc",
  "ed25519-dalek",
+ "getrandom 0.2.17",
  "heapless",
  "hkdf",
  "hmac",
+ "rtrb",
  "sha2",
  "x25519-dalek",
  "zeroize",
@@ -3764,6 +3766,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "rtrb"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rustc-hash"

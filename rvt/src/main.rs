@@ -47,7 +47,7 @@ fn App() -> Element {
             }
             button {
                 style: "padding: 8px 18px; font-size: 15px; cursor: pointer;",
-                onclick: move |_| sim.write().step(),
+                onclick: move |_| sim.write().step_engine(),
                 "Step"
             }
         }

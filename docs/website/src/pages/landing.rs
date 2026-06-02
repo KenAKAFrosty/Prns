@@ -90,20 +90,6 @@ pub fn Landing() -> Element {
                     crate_name: "personal-rnsd",
                 }
                 UseCaseCard {
-                    headline: t!("start-mobile-headline"),
-                    body: t!("start-mobile-body"),
-                    code: t!("start-mobile-code"),
-                    target_label: t!("start-mobile-target"),
-                    crate_name: "personal-rns-ffi",
-                }
-                UseCaseCard {
-                    headline: t!("start-game-headline"),
-                    body: t!("start-game-body"),
-                    code: t!("start-game-code"),
-                    target_label: t!("start-game-target"),
-                    crate_name: "personal-rns-ffi",
-                }
-                UseCaseCard {
                     headline: t!("start-embedded-headline"),
                     body: t!("start-embedded-body"),
                     code: t!("start-embedded-code"),

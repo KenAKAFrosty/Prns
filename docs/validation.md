@@ -82,3 +82,17 @@ cargo mutants
 Treat survivors as review prompts, not automatic failures, until the team has
 triaged enough runs to decide which mutants are equivalent and which are true
 coverage gaps.
+
+## Local Build Cleanup
+
+Standalone UI, fuzz, Android, and embedded host builds keep their own ignored
+artifact trees. Use the dry run first when local discovery or disk usage gets
+noisy:
+
+```sh
+sh scripts/clean-local-builds.sh
+sh scripts/clean-local-builds.sh --apply
+```
+
+The script only targets ignored build outputs and prints what it sees before
+removing anything.

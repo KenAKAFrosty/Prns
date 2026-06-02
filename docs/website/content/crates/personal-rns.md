@@ -16,14 +16,14 @@ reach for [the daemon](./personal-rnsd) instead.
 ## What you get
 
 A small Rust crate that owns the wire contract, routing, announces,
-and links — and exposes the whole thing through two functions:
+and links — and exposes the engine through explicit packet/time calls:
 
 ```rust
-ingest(state, inbound_packets) -> outputs;
-tick(state, now) -> outputs;
+ingest_packets(state, inbound_packets, jitter_seed) -> counters;
+tick(state, now, jitter_seed) -> egress directives;
 ```
 
-That's the entire engine surface. You feed it packets and time;
+You feed it packets, time, and per-cycle entropy already drawn by the host;
 it tells you what to send out next and what its routing knows.
 
 No global state. No I/O. No threads. `no_std + alloc` ships, and a
@@ -35,6 +35,5 @@ doesn't care.
 
 The engine is under active development as the wire contract is
 re-grown from the Reticulum reference. Today it handles the
-announce path and routing table on real traffic across Linux,
-ESP32-C6, and the visual simulator. Links and resources are the
-next layer landing.
+announce path and routing table on real traffic across Linux and
+embedded hosts. Links and resources are the next layer landing.

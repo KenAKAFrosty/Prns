@@ -1,21 +1,27 @@
 //! Multi-node simulation of the Personal Reticulum engine on virtual time.
 //!
-//! A bespoke driver, not an `EngineDriver`: it advances a virtual clock, moves
-//! packets across a virtual wire, and runs each node's engine via the public
-//! `ingest`/`tick` primitives — faithful to `step`, which calls the same two in
-//! the same order. Deterministic: given the same inputs, every run is identical,
+//! A bespoke harness: it advances a virtual clock, moves packets across a
+//! virtual wire, and runs each node's engine via the public ingest/tick
+//! primitives. Deterministic: given the same inputs, every run is identical,
 //! which is what makes it a debugger for the protocol rather than just a demo.
 //!
 //! UI-agnostic by design (pure logic, no rendering deps), so the same core
 //! drives a desktop window today and a zero-install web build later.
 
-use personal_rns::engine::{ingest, tick, EngineState, InboundPacket, InstantMillis};
+use personal_rns::engine::{
+    ingest_packets, tick, FixedCapacityEngineState, InboundPacket, InstantMillis,
+};
+use personal_rns::interfaces::InterfaceId;
+use personal_rns::routing::defaults::JitterSeed;
+use personal_rns::wire::TRUNCATED_HASH_BYTE_LEN;
+
+const VIRTUAL_WIRE_INTERFACE: InterfaceId = InterfaceId::new([0x52; TRUNCATED_HASH_BYTE_LEN]);
 
 /// A simulated node: a label, its engine state, and the packets the wire has
 /// delivered to it but not yet ingested.
 pub struct SimNode {
     pub label: String,
-    pub state: EngineState,
+    pub state: FixedCapacityEngineState,
     inbound: Vec<(InstantMillis, Vec<u8>)>,
 }
 
@@ -23,7 +29,7 @@ impl SimNode {
     fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            state: EngineState::default(),
+            state: FixedCapacityEngineState::default(),
             inbound: Vec::new(),
         }
     }
@@ -82,7 +88,7 @@ impl Sim {
     }
 
     /// Advance one step: move the clock, deliver every due wire packet into its
-    /// recipient's inbound queue, then `ingest` + `tick` every node.
+    /// recipient's inbound queue, then ingest and tick every node.
     pub fn step_engine(&mut self) {
         self.now_ms += self.tick_ms;
         let now = InstantMillis(self.now_ms);
@@ -102,14 +108,16 @@ impl Sim {
             let batch: Vec<InboundPacket> = inbound
                 .iter()
                 .map(|(arrival, bytes)| InboundPacket {
-                    arrival: *arrival,
+                    arrived_at: *arrival,
+                    source_interface: VIRTUAL_WIRE_INTERFACE,
                     bytes: bytes.as_slice(),
                 })
                 .collect();
             // The outputs carry no emitted packets yet; once the engine emits,
             // step collects them here and routes them across the wire.
-            let _ = ingest(&mut node.state, &batch);
-            let _ = tick(&mut node.state, now);
+            let _ = ingest_packets(&mut node.state, batch, JitterSeed(0));
+            let output = tick(&mut node.state, now, JitterSeed(0));
+            output.commit();
         }
     }
 }
