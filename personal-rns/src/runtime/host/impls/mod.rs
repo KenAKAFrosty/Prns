@@ -12,3 +12,8 @@ pub use linux_sync::LinuxSync;
 mod embassy_host;
 #[cfg(feature = "embassy-host")]
 pub use embassy_host::EmbassyHost;
+
+#[cfg(feature = "embassy-host")]
+mod embassy_contract;
+#[cfg(feature = "embassy-host")]
+pub use embassy_contract::EmbassyContractHost;

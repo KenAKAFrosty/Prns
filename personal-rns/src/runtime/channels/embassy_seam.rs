@@ -118,6 +118,28 @@ impl<const MTU: usize, const DEPTH: usize> OutboundDrain for EmbassyOutboundDrai
     }
 }
 
+impl<const MTU: usize, const DEPTH: usize> EmbassyOutboundDrain<MTU, DEPTH> {
+    /// Await until at least one outbound packet is queued, without consuming it, so an
+    /// async worker can `select` inbound-vs-outbound and only then drain. The await
+    /// the sync trait can't offer: [`drain_each`](OutboundDrain::drain_each) only
+    /// reports what is *already* there.
+    pub async fn ready(&self) {
+        self.consumer.ready_to_receive().await;
+    }
+
+    /// Copy the next queued outbound packet's bytes into `out`, returning its length,
+    /// or `None` if the ring is empty. The async-worker twin of the sync
+    /// [`drain_each`](OutboundDrain::drain_each): a worker pulls one packet, frames
+    /// it, and `.await`s the write — which a sync closure can't. The copy-out is the
+    /// price of crossing an `.await` (a sync host instead borrows the slot in place).
+    pub fn try_next_into(&mut self, out: &mut [u8]) -> Option<usize> {
+        let slot = self.consumer.try_receive().ok()?;
+        let len = slot.len as usize;
+        out[..len].copy_from_slice(&slot.bytes[..len]);
+        Some(len)
+    }
+}
+
 /// The worker's end of the control lane: pulls commands the runtime issued, pushes
 /// reports back (signaling the host's wake so a report rouses it promptly).
 pub struct EmbassyControlEndpoint {
@@ -136,6 +158,16 @@ impl ControlEndpoint for EmbassyControlEndpoint {
         // duplicate lifecycle signal is benign (the runtime re-checks each cycle).
         let _ = self.reports.try_send(report);
         self.wake.signal(());
+    }
+}
+
+impl EmbassyControlEndpoint {
+    /// Await the next command the runtime issues — the async-worker twin of the
+    /// non-blocking [`next_command`](ControlEndpoint::next_command), so a worker can
+    /// `select` on it and wind down promptly on [`Stop`](ControlCommand::Stop)
+    /// instead of only noticing it the next time some I/O happens to wake the loop.
+    pub async fn await_command(&self) -> ControlCommand {
+        self.commands.receive().await
     }
 }
 
