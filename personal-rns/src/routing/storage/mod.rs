@@ -10,7 +10,7 @@ pub use impls::{
 };
 
 #[cfg(feature = "alloc")]
-pub use impls::HeapRouteColumns;
+pub use impls::{HeapRetainedAnnounceColumns, HeapRouteColumns};
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::InstantMillis;

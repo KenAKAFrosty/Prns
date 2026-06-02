@@ -12,6 +12,10 @@ pub use packed_app_data_arena::PackedAppDataArena;
 pub use tiered_announce_id_history::TieredAnnounceIdHistory;
 
 #[cfg(feature = "alloc")]
+pub use heap_retained_announce_columns::HeapRetainedAnnounceColumns;
+#[cfg(feature = "alloc")]
 pub use heap_route_columns::HeapRouteColumns;
+#[cfg(feature = "alloc")]
+mod heap_retained_announce_columns;
 #[cfg(feature = "alloc")]
 mod heap_route_columns;
