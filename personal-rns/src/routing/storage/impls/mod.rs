@@ -10,3 +10,8 @@ pub use fixed_array_retained_announce_columns::FixedArrayRetainedAnnounceColumns
 pub use fixed_array_route_columns::FixedArrayRouteColumns;
 pub use packed_app_data_arena::PackedAppDataArena;
 pub use tiered_announce_id_history::TieredAnnounceIdHistory;
+
+#[cfg(feature = "alloc")]
+pub use heap_route_columns::HeapRouteColumns;
+#[cfg(feature = "alloc")]
+mod heap_route_columns;
