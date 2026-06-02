@@ -1,13 +1,10 @@
 //! The embassy serial worker on the contract seam — the embassy twin of the std
 //! shell's `serve_until_stopped` ([`std_host`](super::std_host)). Runs the RNS
 //! `SerialInterface` over any async byte stream (the ESP32 usb-serial-jtag halves,
-//! a UART, a test pipe), meeting the runtime through the three-lane seam instead of
-//! the legacy shared mailbox.
+//! a UART, a test pipe), meeting the runtime through the three-lane seam.
 //!
-//! This is the going-forward shell; the legacy [`run`](super::embassy::run) (shared
-//! `InboxEntry` mailbox + `link_up`/keepalive) stays only until heltec migrates off
-//! it, then retires. Gated on the lighter `embassy-contract` feature — no
-//! `embassy-net`/LoRa — so a USB-only board (ESP32-C6) pulls none of the radio stack.
+//! Gated on the lighter `embassy-contract` feature — no `embassy-net`/LoRa — so a
+//! USB-only board (ESP32-C6) pulls none of the radio stack.
 
 use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration};

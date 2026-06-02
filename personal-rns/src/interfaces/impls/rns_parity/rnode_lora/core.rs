@@ -220,8 +220,7 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
 /// medium where every neighbor hears every transmission and the node repeats
 /// into it, participating fully in transport. Reported `Connected` once the
 /// radio is initialized; a broadcast medium has no per-peer link state, so
-/// liveness afterward is the worker's
-/// [`health`](crate::interfaces::InterfaceWorker::health).
+/// liveness afterward rides a control report (deferred under the contract).
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,

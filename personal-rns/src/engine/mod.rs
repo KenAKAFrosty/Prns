@@ -331,9 +331,8 @@ where
     }
 
     /// Register an interface for engine fanout by its
-    /// [`InterfaceDescriptor`] — the routing facts an
-    /// [`InterfaceWorker`](crate::interfaces::InterfaceWorker) presents, since a
-    /// worker owns its byte I/O and surfaces only what the engine routes on.
+    /// [`InterfaceDescriptor`] — the routing facts an interface presents, since it
+    /// owns its byte I/O and surfaces only what the engine routes on.
     /// Checks the load-bearing contract: it must be `Connected`/`Degraded`
     /// (connected enough to route) and it must be able to transmit. Idempotent:
     /// registering an already-known interface id is a no-op that returns

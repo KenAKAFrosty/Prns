@@ -17,12 +17,8 @@
 pub mod core;
 pub use core::{descriptor, SERIAL_MTU};
 
-#[cfg(feature = "embassy-host")]
-pub mod embassy;
-
-/// The going-forward embassy serial shell on the contract seam (gated on the lighter
-/// `embassy-contract` feature, no radio stack). Supersedes [`embassy`], which retires
-/// when heltec migrates off the legacy mailbox.
+/// The embassy serial shell on the contract seam (gated on the lighter
+/// `embassy-contract` feature — no radio stack).
 #[cfg(feature = "embassy-contract")]
 pub mod embassy_contract;
 

@@ -1,10 +1,8 @@
 //! The contract runtime — the pooling engine-bolt for the
-//! [`Interface`](crate::interfaces::Interface) contract, running alongside the
-//! legacy [`Runtime`](super::Runtime) during the migration (rnsd here; heltec/C6
-//! stay on the old path until they follow).
+//! [`Interface`](crate::interfaces::Interface) contract (rnsd, the ESP32-C6, and the
+//! heltec S3 all run on it).
 //!
-//! Where the legacy runtime held workers and called `submit`, this one holds a
-//! [`StartedInterface`] per interface and meets each through its
+//! It holds a [`StartedInterface`] per interface and meets each through its
 //! [`InterfaceHandle`] — the runtime-side end of the per-interface seam. Its job
 //! is to *pool*: each cycle it drains every handle's inbound straight into the
 //! engine (zero-copy, ingested while still borrowed from the ring), ticks, and

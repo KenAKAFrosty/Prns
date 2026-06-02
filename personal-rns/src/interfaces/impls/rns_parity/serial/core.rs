@@ -15,8 +15,8 @@ pub const SERIAL_MTU: usize = MTU;
 /// The routing facts a serial interface registers: a point-to-point direct peer
 /// that receives, transmits, and forwards, with no in-medium repeat (a cable has
 /// no broadcast domain to reflect a packet back into). Reported `Connected` once
-/// the host has opened the port; live liveness afterward is the worker's
-/// [`health`](crate::interfaces::InterfaceWorker::health).
+/// the host has opened the port; live liveness afterward rides a control report
+/// (deferred under the contract).
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,

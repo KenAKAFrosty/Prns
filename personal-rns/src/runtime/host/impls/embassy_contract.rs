@@ -6,8 +6,7 @@
 //! `select(wake.wait(), Timer::at(deadline))`, so an embassy executor drives the
 //! generic [`run_contract`](crate::runtime::run_contract) loop. Inbound flows
 //! through the interfaces' handles, drained by the
-//! [`ContractRuntime`](crate::runtime::ContractRuntime) — not the host — so
-//! [`inbound_packets`](EmbassyContractHost::inbound_packets) is empty.
+//! [`ContractRuntime`](crate::runtime::ContractRuntime) — not the host.
 //!
 //! There is no `clock_base`: the embassy clock is global, and the interface seams
 //! stamp `arrived_at` off the same `Instant::now()`, so arrival and the cycle clock
@@ -17,9 +16,7 @@ use embassy_futures::select::select;
 use embassy_time::{Instant as EmbassyInstant, Timer};
 
 use super::super::{CycleStamp, Host};
-use crate::engine::{
-    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
-};
+use crate::engine::{EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork};
 use crate::runtime::channels::embassy_seam::WakeSignal;
 
 /// The embassy contract host: the shared wake the interface seams poke, an injected
@@ -71,12 +68,5 @@ where
             now: InstantMillis(EmbassyInstant::now().as_millis()),
             seed: (self.draw_entropy)(),
         }
-    }
-
-    fn inbound_packets(&self) -> impl Iterator<Item = InboundPacket<'_>> {
-        // Inbound flows through the interfaces' handles, drained by the runtime — not
-        // the host. Empty during the contract migration; leaves the `Host` trait once
-        // the legacy path retires.
-        core::iter::empty()
     }
 }

@@ -152,8 +152,8 @@ impl<'a> Iterator for EspNowFrameReader<'a> {
 /// broadcast medium where every neighbor hears every transmission and the node
 /// repeats into it, participating fully in transport — the same medium shape as
 /// LoRa, on a different radio. Reported `Connected` once the radio is up; a
-/// broadcast medium has no per-peer link state, so later liveness is the worker's
-/// [`health`](crate::interfaces::InterfaceWorker::health).
+/// broadcast medium has no per-peer link state, so later liveness rides a control
+/// report (deferred under the contract).
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,

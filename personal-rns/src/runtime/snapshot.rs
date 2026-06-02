@@ -2,16 +2,13 @@
 //! engine's state through.
 //!
 //! An app (a status display, a metrics exporter, a control UI) never touches
-//! engine internals; it reads a [`RuntimeSnapshot`]. The [`Runtime`] decides
-//! what is surfaced here — today liveness, Reticulum traffic, and tracked
-//! destinations per interface; the set grows as apps need more, but it stays a
-//! deliberate, named view rather than a window onto raw engine state. The
-//! runtime's [`run`] loop publishes a fresh snapshot each cycle (e.g. into a
-//! `Watch` a display subscribes to), so the app reacts to engine changes
-//! without polling engine internals.
-//!
-//! [`Runtime`]: super::Runtime
-//! [`run`]: super::run
+//! engine internals; it reads a [`RuntimeSnapshot`]. The
+//! [`ContractRuntime`](super::ContractRuntime) decides what is surfaced here — today
+//! liveness, Reticulum traffic, and tracked destinations per interface; the set grows
+//! as apps need more, but it stays a deliberate, named view rather than a window onto
+//! raw engine state. The runtime's [`run_contract`](super::run_contract) loop publishes
+//! a fresh snapshot each cycle (e.g. into a `Watch` a display subscribes to), so the
+//! app reacts to engine changes without polling engine internals.
 
 use heapless::Vec as HeaplessVec;
 

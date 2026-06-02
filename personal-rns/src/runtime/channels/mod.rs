@@ -1,12 +1,10 @@
-//! Per-platform inbound-mailbox + snapshot-channel types a [`Host`](super::Host)
-//! wires its workers through.
+//! Per-platform seam + snapshot-channel types the runtime and its interfaces wire
+//! through.
 //!
-//! Each module is the substrate-specific plumbing between the workers and the
-//! neutral [`Runtime`](super::Runtime): the shared inbound mailbox a worker
-//! stamps into (the host drains it each cycle) and, on embassy, the `Watch` the
-//! runtime fires its snapshot out on. One module per platform class, gated by its
-//! feature: `embassy` (async tasks, no_std) and [`std_host`] (threads + std
-//! channels, the host twin).
+//! - `embassy_seam` / `std_host`: the per-interface three-lane seam (inbound,
+//!   outbound, control) a [`ContractRuntime`](super::ContractRuntime) pools — embassy
+//!   (`embassy_sync` channels, no_std) and std (rtrb rings + threads).
+//! - `embassy`: the snapshot `Watch` an app subscribes to.
 
 #[cfg(feature = "embassy-host")]
 pub mod embassy;

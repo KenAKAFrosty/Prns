@@ -6,17 +6,15 @@
 //! next deadline or an interface signals it has something — the sync-host shape: it
 //! never `.await`s, so [`block_on`](super::super::block_on) drives the generic
 //! [`run_contract`](crate::runtime::run_contract) loop straight through with no
-//! executor. Inbound no longer flows through the host: the
-//! [`ContractRuntime`](crate::runtime::ContractRuntime) drains each interface's
-//! handle, so [`inbound_packets`](LinuxSync::inbound_packets) is empty here.
+//! executor. Inbound does not flow through the host: the
+//! [`ContractRuntime`](crate::runtime::ContractRuntime) drains each interface's handle.
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use super::super::{CycleStamp, Host};
 use crate::engine::{
-    EngineCycleEntropySeed, InboundPacket, InstantMillis, NextScheduledEngineWork,
-    ENGINE_CYCLE_ENTROPY_LEN,
+    EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork, ENGINE_CYCLE_ENTROPY_LEN,
 };
 
 /// Upper bound on one blocking wait, so a far-off deadline or an idle engine still
@@ -79,13 +77,6 @@ impl Host for LinuxSync {
             seed: EngineCycleEntropySeed::new(seed),
         }
     }
-
-    fn inbound_packets(&self) -> impl Iterator<Item = InboundPacket<'_>> {
-        // Inbound flows through the interfaces' handles, drained by the runtime —
-        // not through the host. Empty during the contract migration; the method
-        // leaves the `Host` trait once the legacy path retires.
-        core::iter::empty()
-    }
 }
 
 #[cfg(test)]
@@ -103,8 +94,5 @@ mod tests {
         // returns at once.
         wake_tx.try_send(()).unwrap();
         let _stamp = block_on(host.wait(NextScheduledEngineWork::Idle));
-
-        // The host carries no inbound — that's the runtime's job now.
-        assert_eq!(host.inbound_packets().count(), 0);
     }
 }

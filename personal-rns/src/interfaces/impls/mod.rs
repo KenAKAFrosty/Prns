@@ -1,5 +1,4 @@
-//! Concrete [`InterfaceWorker`](crate::interfaces::InterfaceWorker)
-//! implementations the core ships.
+//! Concrete [`Interface`](crate::interfaces::Interface) implementations the core ships.
 //!
 //! Each is a faithful tx/rx actor honoring the contract, never a source of
 //! routing or fanout decisions.
