@@ -1,9 +1,7 @@
 //! Pure protocol engine boundary.
 //!
-//! The engine has two verbs. [`ingest_packets`] takes inbound packets that
-//! already carry arrival time and source interface, and [`tick`] advances
-//! scheduled work to a caller-supplied `now`. Neither reads clocks, sockets, or
-//! storage directly.
+//! [`ingest_packets`] handles inbound traffic and [`tick`] advances scheduled
+//! work without touching clocks, sockets, or storage directly.
 
 pub mod egress;
 pub mod ingress;
@@ -40,24 +38,18 @@ use crate::wire::DestinationHash;
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
-/// Cap on registered interfaces. Eight covers the expected embedded shape
-/// (radio, serial, diagnostics, and a little headroom) without adding another
-/// const parameter to [`EngineState`].
+/// Cap on registered interfaces.
 pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
-/// Bytes reserved in the per-cycle seed for rebroadcast jitter.
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
-/// Raw entropy a single step needs, drawn once per cycle by the host and split by
-/// [`EngineCycleEntropy::from_seed`] into one typed package per genuine randomness
-/// need.
+/// Raw entropy needed for one engine cycle.
 pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
-/// Raw CSPRNG bytes for one engine cycle, before
-/// [`EngineCycleEntropy::from_seed`] splits them into typed packages.
+/// Raw CSPRNG bytes for one engine cycle.
 pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
 
 impl EngineCycleEntropySeed {
@@ -72,15 +64,14 @@ impl EngineCycleEntropySeed {
 
 /// One cycle's entropy, split by consumer.
 pub struct EngineCycleEntropy {
-    /// Seed used to spread rebroadcast timing inside this engine cycle.
+    /// Seed used to spread rebroadcast timing.
     pub jitter: JitterSeed,
     /// Nonce material consumed only when a self-announce is due.
     pub self_announce: SelfAnnounceEntropy,
 }
 
 impl EngineCycleEntropy {
-    /// Split the raw seed: low `JITTER_SEED_LEN` bytes seed the jitter spreader,
-    /// then [`SelfAnnounceEntropy::LEN`] bytes become the self-announce nonce.
+    /// Split the raw seed into jitter and self-announce entropy.
     pub fn from_seed(seed: EngineCycleEntropySeed) -> Self {
         let bytes = seed.as_bytes();
         let mut jitter = [0u8; JITTER_SEED_LEN];
@@ -101,10 +92,7 @@ pub struct InboundPacket<'a> {
     pub bytes: &'a [u8],
 }
 
-/// One serialized Reticulum wire packet on its way out — the outbound
-/// counterpart to [`InboundPacket`]. A newtype over the bytes so the egress
-/// seam (`InterfaceHandle::send`) names *exactly one packet* rather than a bare
-/// `&[u8]` a reader might mistake for a batch of them.
+/// One serialized Reticulum wire packet on its way out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutboundPacket<'a> {
     pub bytes: &'a [u8],
@@ -118,7 +106,7 @@ impl<'a> OutboundPacket<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextScheduledEngineWork {
-    /// Work is ready now; the host should drive another cycle without delay.
+    /// Work is ready now.
     Immediate,
     /// No work is ready before this timestamp.
     At(InstantMillis),
@@ -126,22 +114,7 @@ pub enum NextScheduledEngineWork {
     Idle,
 }
 
-/// Retained engine state, generic over routing-storage backends. The no_std
-/// stack-resident preset is [`FixedCapacityEngineState`].
-///
-/// The engine owns its interface registry: the host calls
-/// [`register_routable_descriptor`] at startup for each interface it presents.
-/// From then on the engine computes positive `fire_on` fanout targets per
-/// directive instead of making the host filter "don't reflect to source".
-///
-/// [`register_routable_descriptor`]: EngineState::register_routable_descriptor
-/// [`EgressDirective`]: crate::engine::EgressDirective
-///
-/// `Default` builds a relay: no identity, no self-announce. A node that needs
-/// identity material is built with [`new`](EngineState::new) or
-/// [`announcing`](EngineState::announcing). The type is intentionally not
-/// `Clone`/`PartialEq`/`Eq` because it may own secret key material; `Debug`
-/// prints only the public identity hash.
+/// Retained engine state, generic over routing-storage backends.
 #[derive(Default)]
 pub struct EngineState<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
 where
@@ -154,12 +127,8 @@ where
     ingested_packet_count: u64,
     routing_table: RoutingTable<R, A, H, D>,
     held_announces_cache: HeldAnnouncesCache<MAX_HELD_ANNOUNCES>,
-    // Reuses the held-cache dial: both queues track one announce-related unit
-    // per destination, and constrained hosts widen them together for now.
     pending_rebroadcasts: PendingRebroadcasts<MAX_HELD_ANNOUNCES>,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
-    // `None` for a relay. `InMemoryNodeIdentity` redacts and zeroizes its
-    // secret keys.
     identity: Option<InMemoryNodeIdentity>,
     self_announce: Option<SelfAnnounceSettings>,
 }
@@ -180,7 +149,6 @@ where
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
             .field("interfaces", &self.interfaces)
-            // Redacted: only the identity's public hash, never its secret keys.
             .field(
                 "identity_hash",
                 &self.identity.as_ref().map(|id| id.identity_hash()),
@@ -197,9 +165,7 @@ pub enum RegisterInterfaceError {
     NotRoutable { state: ConnectionState },
 }
 
-/// The no_std stack-resident engine-state preset — the only place the
-/// default backend choices are named. Mirrors
-/// [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable).
+/// No-std stack-resident engine-state preset.
 pub type FixedCapacityEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
@@ -227,14 +193,7 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Build an engine with an in-memory identity but no self-announce. Use this
-    /// for a node that needs to sign or agree without periodically announcing
-    /// itself; a pure relay is [`default`](Default::default).
-    ///
-    /// `identity_secret_key` is the 64 bytes that *are* the node's two private
-    /// keys (X25519 ‖ Ed25519, RNS `prv_bytes` layout) — used verbatim, never
-    /// stretched. It arrives through a [`Zeroizing`] buffer supplied by the
-    /// host's secret store, separate from the per-cycle CSPRNG seed.
+    /// Build an engine with an in-memory identity but no self-announce.
     pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self
     where
         R: Default,
@@ -250,10 +209,7 @@ where
         }
     }
 
-    /// Like [`new`](Self::new), and additionally configure the node to announce
-    /// its own destination on a cadence. Returns a [`SelfAnnounceConfigError`]
-    /// if the destination name or app data is malformed; the identity is always
-    /// valid (its bytes are used verbatim).
+    /// Like [`new`](Self::new), plus self-announce configuration.
     pub fn announcing(
         identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         self_announce: SelfAnnounceConfig<'_>,
@@ -283,7 +239,6 @@ where
         self.routing_table.route_count()
     }
 
-    /// Tracked destinations reachable via `interface`.
     pub fn route_count_via(&self, interface: InterfaceId) -> usize {
         self.routing_table.route_count_via(interface)
     }
@@ -296,9 +251,7 @@ where
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// Register an interface for engine fanout by its [`InterfaceDescriptor`].
-    /// It must be routable (`Connected`/`Degraded`) and able to transmit.
-    /// Re-registering the same id is a no-op.
+    /// Register an interface for engine fanout.
     pub fn register_routable_descriptor(
         &mut self,
         descriptor: &InterfaceDescriptor,
@@ -327,15 +280,11 @@ where
             .map_err(|_| RegisterInterfaceError::RegistryFull)
     }
 
-    /// Currently-registered interfaces, in registration order.
     pub fn registered_interfaces(&self) -> &[InterfaceId] {
         &self.interfaces
     }
 
-    /// The destination hash this engine announces itself as, if it self-
-    /// announces — `derive_destination_hash(identity, name)`. `None` for a relay
-    /// or an identity-only node. Lets a host report its own address (e.g. log it
-    /// at startup) without reaching into the identity.
+    /// Destination this engine self-announces as, if any.
     pub fn self_announced_destination(&self) -> Option<DestinationHash> {
         let identity = self.identity.as_ref()?;
         let self_announce = self.self_announce.as_ref()?;
@@ -345,22 +294,14 @@ where
         ))
     }
 
-    /// When the host must next drive the engine, given everything scheduled in
-    /// state right now: parked held entries (retried next tick), our own
-    /// re-announce cadence, and queued rebroadcasts. This is the **single place**
-    /// that folds every timed obligation — any new scheduled behavior MUST be
-    /// represented here, or a deadline-driven host would sleep through it. Pure;
-    /// call it after a step to decide how long to sleep before the next one.
+    /// When the host must next drive the engine.
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
-        // Parked held entries are fully drained on the next tick, so any parked
-        // entry means there is work to do right now.
         if self.held_announce_count() > 0 {
             return NextScheduledEngineWork::Immediate;
         }
 
         let mut earliest: Option<InstantMillis> = None;
 
-        // Our own re-announce cadence.
         if let Some(self_announce) = &self.self_announce {
             if self_announce.is_due(now) {
                 return NextScheduledEngineWork::Immediate;
@@ -370,7 +311,6 @@ where
             }
         }
 
-        // Queued rebroadcasts: due now → Immediate, else fold the earliest.
         if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
             if due_at <= now {
                 return NextScheduledEngineWork::Immediate;
@@ -384,17 +324,7 @@ where
         }
     }
 
-    /// If this engine self-announces and one is due at `now`, build and sign our
-    /// announce, frame it as a fresh (hop-count 0) broadcast packet into `buf`,
-    /// record the emission, and return the bytes written. Returns `None` when we
-    /// don't self-announce (relay, or identity-only) or none is due yet.
-    ///
-    /// The announce id (RNS `random_hash`) is minted from `entropy` (its 5-byte
-    /// replay nonce) and `now` (its 5-byte monotonic timebase) — both already
-    /// owned by the cycle that drives the engine, so origination needs no clock or RNG
-    /// of its own. `buf` should be
-    /// [`MTU`](crate::wire::MTU)-sized; the framed announce always fits because
-    /// the app data is bounded at construction.
+    /// Write a due self-announce into `buf`, if one is due at `now`.
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
@@ -449,29 +379,13 @@ impl IngestOutput {
     }
 }
 
-/// One due directive's fanout target list, materialised at tick-time.
-/// Private to the engine: callers see typed [`EgressDirective`]s via
-/// [`TickOutput::egress_directives`].
 #[derive(Debug, Clone)]
 struct DirectiveFanout {
     destination: DestinationHash,
     fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
 }
 
-/// What [`tick`] produced this cycle.
-///
-/// Holds a mutable borrow on engine state while the host iterates directives.
-/// Dropping or explicitly committing this value drains only the due entries that
-/// were made visible this tick; future scheduled work remains in engine state.
-///
-/// **Fanout is engine-computed**: each yielded [`EgressDirective`]
-/// carries an explicit positive `fire_on: &[InterfaceId]` list. The
-/// engine builds this from the [registered interfaces](
-/// EngineState::registered_interfaces) minus the source. Directives whose
-/// computed list is empty are elided but still committed so they do not re-fire
-/// next tick.
-///
-/// [`egress_directives`]: TickOutput::egress_directives
+/// Output of one [`tick`] call.
 #[must_use]
 pub struct TickOutput<'a, R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
 where
@@ -493,9 +407,6 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Count of directives the host receives this tick.
-    ///
-    /// [`egress_directives`]: TickOutput::egress_directives
     pub fn egress_directive_count(&self) -> usize {
         self.fanouts.len()
     }
@@ -504,9 +415,7 @@ where
         self.recovered_from_held_count
     }
 
-    /// Iterate every directive due this tick. The announce body borrows from the
-    /// routing table; the `fire_on` slice borrows from this output's fanout arena.
-    /// The iterator is read-only and may be traversed before [`commit`](Self::commit).
+    /// Iterate every directive due this tick.
     pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
         let state = &*self.state;
         self.fanouts.iter().filter_map(move |fanout| {
@@ -521,14 +430,10 @@ where
         })
     }
 
-    /// Remove the due entries yielded this tick and release the mutable state
-    /// borrow. [`Drop`] runs the same commit as a backstop.
     pub fn commit(mut self) {
         self.commit_in_place();
     }
 
-    /// Shared commit path for [`commit`](Self::commit) and [`Drop`].
-    /// Dispatch failures are not retried here; future inputs drive recovery.
     fn commit_in_place(&mut self) {
         self.state.pending_rebroadcasts.drain_due(self.now);
     }
@@ -543,14 +448,11 @@ where
     D: RetainedAppData,
 {
     fn drop(&mut self) {
-        // Backstop for a caller that didn't call `commit` explicitly.
         self.commit_in_place();
     }
 }
 
-/// Process a batch of inbound packets. Clock-free: each packet carries its own
-/// arrival instant, so the result is a deterministic function of `(state, packets,
-/// entropy)`. An empty batch is valid and a no-op.
+/// Process a batch of inbound packets.
 #[must_use]
 pub fn ingest_packets<'p, I, R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
@@ -586,10 +488,7 @@ where
                 &mut counters,
             ),
 
-            // Wire-recognised but not yet handled by the engine.
             Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
-
-            // Bad header / failed announce validation; dropped.
             Ingress::Unparseable => {}
         }
     }
@@ -604,7 +503,6 @@ where
     }
 }
 
-/// Per-batch counters shared by inbound packet handlers.
 #[derive(Default)]
 struct IngestCounters {
     accepted: usize,
@@ -612,8 +510,6 @@ struct IngestCounters {
     scheduled: usize,
 }
 
-/// Mutates `state` and `counters` in place; currently returns nothing because
-/// every branch's side effects are already captured by the counters.
 fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     announce: Announce<'_>,
@@ -631,7 +527,6 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     let decision = AnnounceAcceptanceInput {
         packet_hops: received_hops,
         announce_id: announce.announce_id,
-        // No local identities yet, so no announce is ever for us.
         destination_is_local: false,
         existing_route: state
             .routing_table
@@ -664,10 +559,6 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
             counters.scheduled += 1;
         }
         UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
-            // Park the structured announce; retry on tick will
-            // re-evaluate against current arena state. Park can return
-            // CacheFull (cap reached, dropped) — we count only the
-            // successful parks.
             use crate::routing::held_cache::{HoldReason, ParkOutcome};
             match state.held_announces_cache.park(
                 &announce,
@@ -682,22 +573,11 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
                 ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {}
             }
         }
-        UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => {
-            // Nowhere to retry to until route eviction exists.
-        }
+        UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => {}
     }
 }
 
-/// Advance the engine's periodic work to `now`. Fully drains the held-cache
-/// (retrying every parked entry, lowest-hops-first, so nothing is left to retry
-/// on a later tick), maintains the rebroadcast schedule, and returns a
-/// [`TickOutput`] holding `&mut state` until the host has iterated the
-/// directives the engine produced.
-///
-/// `jitter` is the same per-cycle value passed to [`ingest_packets`]; reused here
-/// so a held-recovery accept gets a deterministic jittered re-emission
-/// slot. The returned [`TickOutput`] is itself `#[must_use]`, so
-/// dropping it without iterating is a compile-time warning.
+/// Advance scheduled engine work to `now`.
 pub fn tick<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
     state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
     now: InstantMillis,
@@ -711,9 +591,6 @@ where
 {
     state.tick_count = state.tick_count.saturating_add(1);
 
-    // Draining the whole held cache here avoids time-driven retry state: every
-    // held announce is retried once against the current arena and then installed
-    // or discarded.
     let mut recovered_from_held_count = 0;
     while let Some(held) = state.held_announces_cache.take_next() {
         use crate::routing::held_cache::HoldReason;
@@ -756,15 +633,11 @@ where
                             source_interface,
                         );
                     }
-                    // On Dropped(_) or Reject we discard — see the
-                    // held-cache module note on livelock avoidance.
                 }
             }
         }
     }
 
-    // Materialise fanout for due rebroadcasts. Empty target lists are elided but
-    // still committed by `TickOutput`.
     let mut fanouts: HeaplessVec<DirectiveFanout, MAX_HELD_ANNOUNCES> = HeaplessVec::new();
     for scheduled in state
         .pending_rebroadcasts
@@ -774,17 +647,12 @@ where
         let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> = HeaplessVec::new();
         for &iface in &state.interfaces {
             if iface != scheduled.source_interface {
-                // Push is infallible: state.interfaces is also capped at
-                // MAX_REGISTERED_INTERFACES, so the filter never produces
-                // more than the destination's capacity.
                 let _ = fire_on.push(iface);
             }
         }
         if fire_on.is_empty() {
             continue;
         }
-        // Both caps match (MAX_HELD_ANNOUNCES == max due directives == max fanouts),
-        // so push is infallible here too.
         let _ = fanouts.push(DirectiveFanout {
             destination: scheduled.destination,
             fire_on,
@@ -807,28 +675,16 @@ mod tests {
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
     };
 
-    /// Fixed entropy so determinism tests can compare two runs apples-to-apples;
-    /// the engine treats entropy as opaque data, the value just has to be stable.
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
     const TEST_NONCE: SelfAnnounceEntropy =
         SelfAnnounceEntropy::new([0xAB; SelfAnnounceEntropy::LEN]);
 
-    /// What the tests need to assert against a tick, snapshotted to a
-    /// value type so it can outlive the `TickOutput` borrow on state.
-    /// `TickOutput` itself holds `&mut state` until drop (the commit),
-    /// so we can't bubble it out of `tick_capture` — instead we drain
-    /// the directives, copy their wire serialisation, and return both
-    /// the counters and the captured bytes.
     #[derive(Debug, Default, Clone, PartialEq, Eq)]
     struct TickSnapshot {
         egress_directive_count: usize,
         recovered_from_held_count: usize,
     }
 
-    /// Test-side `tick` helper: runs one tick, serializes every due
-    /// directive into its own owned wire buffer, and returns the
-    /// captured bytes alongside a [`TickSnapshot`]. Tests that don't
-    /// care about emission ignore the byte vec.
     fn tick_capture<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
         state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
         now: InstantMillis,
@@ -853,10 +709,6 @@ mod tests {
         (snapshot, emitted)
     }
 
-    /// The public, observable surface of an engine, snapshotted for
-    /// determinism comparisons. `EngineState` is intentionally not `PartialEq`
-    /// (it owns secret identity material we must never compare byte-wise), so
-    /// "two runs ended in the same place" is asserted through its accessors.
     fn observable_state<R, A, H, D, const N: usize>(
         state: &EngineState<R, A, H, D, N>,
     ) -> (u64, u64, usize, usize, usize, std::vec::Vec<InterfaceId>)
@@ -912,7 +764,6 @@ mod tests {
         assert_eq!(out.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
 
-        // Empty batch is valid and does not move state.
         let empty = ingest_packets(
             &mut state,
             core::iter::empty::<InboundPacket<'_>>(),
@@ -922,8 +773,6 @@ mod tests {
         assert_eq!(state.ingested_packet_count(), 2);
     }
 
-    // The 64 secret-key bytes the identity/crypto vectors pin: X25519 prv
-    // [0x22; 32] ‖ Ed25519 prv [0x11; 32], i.e. RNS `prv_bytes` for this node.
     fn fixed_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
         let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
         bytes[..32].fill(0x22);
@@ -931,8 +780,6 @@ mod tests {
         Zeroizing::new(bytes)
     }
 
-    // A node that announces destination `personal.node` with app data
-    // `hello-personal` on the default cadence.
     fn personal_node_announcer() -> FixedCapacityEngineState {
         EngineState::announcing(
             &fixed_secret_key(),
@@ -946,9 +793,6 @@ mod tests {
         .expect("valid self-announce config")
     }
 
-    // The exact `announce_data` RNS 1.3.1 emits for the fixed identity above,
-    // destination `personal.node`, random_hash [0x44; 10], and app data
-    // `hello-personal` (no ratchet). Generated offline against the oracle.
     const SELF_ANNOUNCE_RNS_ANNOUNCE_DATA: &str =
         "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20\
          d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\
@@ -960,9 +804,6 @@ mod tests {
     #[test]
     fn self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer();
-        // `now`'s low 5 bytes become the announce-id timebase and the nonce
-        // package supplies the other 5, so the minted random_hash is [0x44; 10]
-        // — matching the deterministic oracle vector.
         let now = InstantMillis(0x44_4444_4444);
         let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
 
@@ -980,7 +821,6 @@ mod tests {
             header.destination,
             DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()),
         );
-        // Byte-for-byte equal to what RNS 1.3.1 puts on the wire for this node.
         assert_eq!(payload, hx(SELF_ANNOUNCE_RNS_ANNOUNCE_DATA));
     }
 
@@ -993,11 +833,9 @@ mod tests {
         assert!(state
             .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
             .is_some());
-        // Immediately after, nothing is due.
         assert!(state
             .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
             .is_none());
-        // One interval later, due again.
         assert!(state
             .write_due_self_announce(InstantMillis(1_000 + interval), TEST_NONCE, &mut buf)
             .is_some());
@@ -1025,14 +863,12 @@ mod tests {
 
     #[test]
     fn self_announced_destination_reports_our_address_only_when_announcing() {
-        // An announcer reports the same destination it puts on the wire.
         assert_eq!(
             personal_node_announcer().self_announced_destination(),
             Some(DestinationHash::new(
                 hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
             )),
         );
-        // A relay and an identity-only node have no announced destination.
         let relay: FixedCapacityEngineState = FixedCapacityEngineState::default();
         assert_eq!(relay.self_announced_destination(), None);
         let identity_only: FixedCapacityEngineState = EngineState::new(&fixed_secret_key());
@@ -1050,7 +886,6 @@ mod tests {
 
     #[test]
     fn next_wakeup_is_immediate_when_a_self_announce_is_due() {
-        // A fresh announcer has never announced → due immediately.
         let state = personal_node_announcer();
         assert_eq!(
             state.next_wakeup(InstantMillis(0)),
@@ -1088,8 +923,6 @@ mod tests {
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
-        // Before its (jittered) due time → wake At that instant, within the
-        // window after arrival.
         match state.next_wakeup(InstantMillis(0)) {
             NextScheduledEngineWork::At(t) => assert!(
                 t.0 >= 1_000 && t.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
@@ -1099,14 +932,12 @@ mod tests {
             other => panic!("expected At(_), got {other:?}"),
         }
 
-        // Well past the due time → Immediate.
         assert_eq!(
             state.next_wakeup(InstantMillis(1_000_000)),
             NextScheduledEngineWork::Immediate,
         );
     }
 
-    // A genuine RNS 1.3.1 announce (the same vector the announce module validates).
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
                                 0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
@@ -1120,8 +951,6 @@ mod tests {
             .collect()
     }
 
-    /// A connected, transmitting, full-medium descriptor — the routing facts a
-    /// healthy interface presents. Tests tweak individual fields off this base.
     fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         InterfaceDescriptor {
             id,
@@ -1225,7 +1054,6 @@ mod tests {
         assert_eq!(first.accepted_announce_count(), 1);
         assert_eq!(state.route_count(), 1);
 
-        // The identical announce again is a known-route replay: rejected, no new path.
         let second = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1242,11 +1070,6 @@ mod tests {
 
     #[test]
     fn received_hops_are_incremented_so_the_reach_boundary_matches_pathfinder_m() {
-        // RNS increments hops on receive, then accepts only `incremented <
-        // PATHFINDER_M+1`. So 127 on the wire (128 after the increment) is the
-        // last acceptable value, and 128 on the wire (129 after) is beyond reach.
-        // The hop byte lives in the header, not the signed payload, so editing it
-        // leaves the announce's signature intact.
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
@@ -1296,9 +1119,6 @@ mod tests {
         );
         assert_eq!(out.accepted_announce_count(), 1);
 
-        // The structured retained announce reproduces the wire payload exactly
-        // via to_wire (so the signature still validates on re-emission), and
-        // hops are incremented on receive.
         let retained = state
             .routing_table
             .retained_announce_for(&destination)
@@ -1325,8 +1145,6 @@ mod tests {
 
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
-        // Arena tuned to 8 bytes — smaller than the real announce's 14-byte
-        // app_data ("hello-personal") — so upsert returns Dropped(PayloadArenaFull).
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
 
@@ -1361,8 +1179,6 @@ mod tests {
         );
         assert_eq!(state.held_announce_count(), 1);
 
-        // Arena state unchanged → retry hits Dropped(PayloadArenaFull) again
-        // and the held entry is discarded. We don't re-park (livelock).
         let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
         assert_eq!(out.recovered_from_held_count, 0);
         assert_eq!(state.held_announce_count(), 0);
@@ -1371,17 +1187,11 @@ mod tests {
 
     #[test]
     fn tick_drains_the_entire_held_cache_in_one_pass() {
-        // Two distinct destinations both hit arena pressure and park. A single
-        // tick must retry BOTH — the cache is drained fully, not one-per-tick —
-        // so it is empty afterward (here both discard, the arena stays full).
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = FixedCapacityEngineState::<4, 64, 8>::default(); // 8-byte arena
+        let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
 
-        // A second valid announce for a *different* destination than RAW_ANNOUNCE
-        // (fixture identity + a distinct aspect), framed onto the wire so it takes
-        // the same packet path.
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
         let announce2 = Announce::build_signed(
@@ -1432,9 +1242,6 @@ mod tests {
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
-        // The const-generic lever: a roomier table is just a different type. The
-        // same engine accepts it with no heap and no API change. Very large widths
-        // belong on the heap; this inline default lives on the stack.
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<64, 128>::default();
         let out = ingest_packets(
@@ -1454,8 +1261,6 @@ mod tests {
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        // Register a peer so fanout has a target (source is [0u8;16]; the
-        // engine's fire_on = registered minus source = [peer]).
         register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
@@ -1472,7 +1277,6 @@ mod tests {
         assert_eq!(out.scheduled_rebroadcast_count(), 1);
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
-        // Far past the jitter window: the rebroadcast is due and tick emits it.
         let (tick_out, emitted) = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
@@ -1480,9 +1284,6 @@ mod tests {
         assert_eq!(tick_out.egress_directive_count, 1);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
 
-        // The emitted bytes round-trip back to the same announce, with the
-        // hop count incremented (received_hops becomes emit hops). Same
-        // signature, so the on-wire packet would re-validate on any peer.
         assert_eq!(emitted.len(), 1);
         let wire = &emitted[0];
         let (header, payload) = WirePacketHeader::parse(wire).unwrap();
@@ -1492,8 +1293,6 @@ mod tests {
         let original = WirePacketHeader::parse(&raw).unwrap().0;
         assert_eq!(header.hops, original.hops + 1);
         assert_eq!(header.destination, original.destination);
-        // And the body bytes are byte-for-byte the same as the original wire
-        // payload — `Announce::to_wire(from_wire(payload)) == payload`.
         let original_payload = WirePacketHeader::parse(&raw).unwrap().1;
         assert_eq!(payload, original_payload);
     }
@@ -1514,8 +1313,6 @@ mod tests {
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
-        // `now < arrival` is strictly before any due_at — the offset is
-        // non-negative so `due_at >= arrival > now`, and nothing emits.
         let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1));
         assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
@@ -1524,9 +1321,6 @@ mod tests {
 
     #[test]
     fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
-        // Determinism: two engines fed the same packets + same entropy emit
-        // the same wire bytes at the same tick. The whole point of "entropy
-        // as data" — no hidden RNG state moves results around.
         let raw = hx(RAW_ANNOUNCE);
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
@@ -1535,8 +1329,6 @@ mod tests {
         let mut right: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         for state in [&mut left, &mut right] {
-            // Identical registries: byte-identical emissions depend on
-            // both engines computing the same fanout target sets.
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
             let _ = ingest_packets(
                 state,
@@ -1559,10 +1351,6 @@ mod tests {
 
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
-        // Arena stays full across both calls so the held-cache retry inside
-        // `tick` also fails. The schedule should not move: only successful
-        // accepts schedule. (The successful held-recovery case is exercised
-        // once eviction lands and a follow-up packet can free arena space.)
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<4, 64, 8, 4, 16, 4>::default();
         let _ = ingest_packets(

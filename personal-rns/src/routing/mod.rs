@@ -1,14 +1,4 @@
-//! The routing layer: announces, the routing table, the rebroadcast schedule,
-//! and the storage backends that hold each routing concern.
-//!
-//! `RoutingTable` is generic over four substitutable storage backends —
-//! see [`storage`] for the trait catalogue. The default type parameters
-//! resolve to the no_std stack-resident backends (`FixedArrayRouteColumns`,
-//! `TieredAnnounceIdHistory`, `PackedAppDataArena`), so bare `RoutingTable`
-//! is the embedded-friendly default and `DefaultRoutingTable<...>`
-//! re-introduces the const generics that size them. A capable host
-//! substitutes alternate backends (heap-resident, mmap-backed, etc.) at the
-//! type parameters.
+//! Routing table, rebroadcast schedule, and their storage backends.
 
 pub mod announce;
 pub mod defaults;
@@ -37,32 +27,10 @@ pub use types::{
     DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
 };
 
-/// Routing table composed of four substitutable storage backends:
+/// Routing table composed from four storage backends.
 ///
-/// - `R: RouteColumns` — SoA routing-coherent fields (hops, expires,
-///   responsiveness) keyed by destination. The primary destination index.
-/// - `A: RetainedAnnounceColumns` — SoA announce-coherent fields
-///   (public_keys, dotted_name_hash, ratchet, signature, app_data_handle)
-///   slot-indexed by `R`'s slot.
-/// - `H: AnnounceIdHistory` — per-destination history of announce ids
-///   heard, slot-indexed by `R`'s slot.
-/// - `D: RetainedAppData` — variable-length `app_data` bytes behind
-///   opaque handles, joined into `A` via `app_data_handle`.
-///
-/// Each backend has its own atomicity boundary, matching the data
-/// semantics (routing-coherent vs announce-coherent vs history-accumulate
-/// vs blob-replace). The engine's `upsert_route` orchestrates across them
-/// without packing them into one row.
-///
-/// This type is **purely abstract**. It does not name a preset. The
-/// no_std stack-resident preset lives in [`DefaultRoutingTable`]; that's
-/// the canonical embedded entry point. A capable host substitutes alternate
-/// backends (heap-resident, mmap-backed, etc.) at the type parameters
-/// directly.
-///
-/// `PartialEq` compares every backend's representation
-/// byte-for-byte. The engine's determinism tests rely on this; do not use
-/// it to ask "do two tables built by different routes hold the same paths."
+/// `PartialEq` compares backend representation byte-for-byte because the
+/// determinism tests rely on that.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RoutingTable<R, A, H, D>
 where
@@ -77,13 +45,7 @@ where
     retained_app_data: D,
 }
 
-/// The no_std stack-resident routing-table preset, and the only place the
-/// default backend choices (`FixedArrayRouteColumns`,
-/// `FixedArrayRetainedAnnounceColumns`, `TieredAnnounceIdHistory`,
-/// `PackedAppDataArena`) are named. Lets call sites tune the sizes via
-/// const generics without spelling out the full
-/// `RoutingTable<R, A, H, D>`. Bare `DefaultRoutingTable` uses the
-/// `DEFAULT_*` sizing knobs from [`crate::routing::defaults`].
+/// No-std stack-resident routing-table preset.
 pub type DefaultRoutingTable<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
@@ -113,10 +75,7 @@ where
         self.routes.len()
     }
 
-    /// How many tracked destinations were learned on (are reachable via)
-    /// `interface` — the per-interface slice of [`route_count`](Self::route_count).
-    /// A linear scan of the receiving-interface column; the table is small and
-    /// already scanned linearly for lookups.
+    /// How many tracked destinations were learned on `interface`.
     pub fn route_count_via(&self, interface: InterfaceId) -> usize {
         self.routes
             .receiving_interfaces()
@@ -146,18 +105,7 @@ where
         })
     }
 
-    /// Record an accepted route. Atomic across the four backends — either
-    /// every backend takes the update or none does. The route and its
-    /// retained announce are conceptually coupled (the route exists
-    /// *because* we heard the announce), so a partial success would have
-    /// us claim a freshened route while re-emitting a stale announce id +
-    /// timebase — peers would drop our gossip on replay defence and we
-    /// wouldn't know.
-    ///
-    /// On `Dropped(_)` the table is untouched. Recovering the dropped
-    /// announce (parking it for retry when arena space frees up) is the
-    /// caller's job; we surface the cause so it can route to the right
-    /// queue.
+    /// Record an accepted route atomically across the backing stores.
     pub fn upsert_route(
         &mut self,
         hops: u8,
@@ -181,10 +129,6 @@ where
         receiving_interface: InterfaceId,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
-        // Bound-check the routes columns *before* taking up arena space,
-        // so an out-of-room routes table can't leak an AppDataHandle. For
-        // growable backends, `capacity()` is effectively infinite and this
-        // check is a no-op.
         if self.routes.len() >= self.routes.capacity() {
             return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
         }
@@ -211,11 +155,6 @@ where
                 return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
             }
         };
-        // Keep retained_announces in lockstep with the routes slot. For
-        // both fixed and growable backends with equal capacity, a
-        // successful routes.push means this push will succeed too; we
-        // surface ColumnsFull defensively for backends with mismatched
-        // capacity policies.
         let _ = self.retained_announces.push(announce_entry);
         self.announce_id_history
             .remember(routes_slot, announce.announce_id);
@@ -230,14 +169,7 @@ where
         receiving_interface: InterfaceId,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
-        // Try the announce-coherent replace FIRST. If the arena can't hold
-        // the new app_data, bail with nothing changed — the route and the
-        // announce that motivated it are joined-at-the-hip (re-emission of
-        // a freshened route with stale app_data sends an old announce id +
-        // timebase, which downstream peers drop as a replay). Honest
-        // all-or-nothing.
         let Some(handle) = self.retained_announces.app_data_handle()[i] else {
-            // An inserted destination always has a handle; this is a bug.
             debug_assert!(false, "existing destination missing app_data handle");
             return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
         };
@@ -255,8 +187,6 @@ where
                 hops,
                 expires: expires_at,
                 responsiveness: RouteResponsiveness::Responsive,
-                // A refresh re-points the route at the interface the freshest
-                // accepted announce arrived on, as RNS does on a path update.
                 receiving_interface,
             },
         );
@@ -316,9 +246,6 @@ mod tests {
         InterfaceId::new([byte; 16])
     }
 
-    /// The receiving interface for the tests that don't exercise per-interface
-    /// attribution (most of them — they predate the receiving-interface column
-    /// and only care about hops/app_data/ratchet behaviour).
     fn source() -> InterfaceId {
         iface(0xEE)
     }
@@ -330,14 +257,10 @@ mod tests {
         AnnounceId::from_wire(bytes)
     }
 
-    /// A stand-in announce app_data, tagged so distinct ones are distinguishable.
     fn app_data(tag: u8) -> [u8; 16] {
         [tag; 16]
     }
 
-    /// A synthetic announce with the routing-irrelevant fields zeroed. The path
-    /// table doesn't inspect public_keys / dotted_name_hash / signature, so they
-    /// can be filler for these tests — the ratchet-specific test passes `Some`.
     fn announce_for<'a>(
         destination: DestinationHash,
         announce_id: AnnounceId,
@@ -358,8 +281,6 @@ mod tests {
         }
     }
 
-    /// Record a path with a no-ratchet synthetic announce — the common case for
-    /// these tests; ratchet-specific assertions construct the announce inline.
     fn record<const D: usize, const S: usize, const A: usize, const F: usize, const O: usize>(
         table: &mut DefaultRoutingTable<D, S, A, F, O>,
         destination: DestinationHash,
@@ -402,7 +323,6 @@ mod tests {
         let usb = iface(0x02);
         let silent = iface(0x03);
 
-        // Two destinations heard over wifi, one over usb.
         for (dest_byte, id_byte, learned_on) in
             [(1u8, 0xA1u8, wifi), (2, 0xA2, wifi), (3, 0xA3, usb)]
         {
@@ -422,14 +342,11 @@ mod tests {
             );
         }
 
-        // The global total stays the sum; each interface owns only its share.
         assert_eq!(table.route_count(), 3);
         assert_eq!(table.route_count_via(wifi), 2);
         assert_eq!(table.route_count_via(usb), 1);
-        // An interface that never carried an announce tallies zero, not the total.
         assert_eq!(table.route_count_via(silent), 0);
 
-        // A refresh that re-hears dest 1 over usb moves it off wifi's tally.
         assert_eq!(
             table.upsert_route(
                 1,
@@ -503,7 +420,6 @@ mod tests {
     #[test]
     fn seen_set_evicts_oldest_when_full() {
         let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
-        // Fill past capacity; the first id must be evicted, the last retained.
         for n in 0..(DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION as u64 + 3) {
             record(
                 &mut table,
@@ -519,7 +435,6 @@ mod tests {
             view.announce_id_history.len(),
             DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION
         );
-        // Oldest (timebase 0,1,2) gone; newest present.
         assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
         assert!(view.announce_id_history.contains(&announce_id(
             0,
@@ -529,8 +444,6 @@ mod tests {
 
     #[test]
     fn new_destinations_past_capacity_are_dropped() {
-        // Custom-small capacity isolates the mechanic from the production
-        // default — and keeps `dest(byte)` unique within the u8 it takes.
         const MAX: usize = 8;
         let mut table: DefaultRoutingTable<MAX, 8, 256> = DefaultRoutingTable::default();
         for n in 0..MAX {
@@ -547,7 +460,6 @@ mod tests {
             );
         }
         assert_eq!(table.route_count(), MAX);
-        // One destination too many: dropped, count unchanged.
         assert_eq!(
             record(
                 &mut table,
@@ -560,7 +472,6 @@ mod tests {
             UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull)
         );
         assert_eq!(table.route_count(), MAX);
-        // But a known destination still refreshes.
         assert_eq!(
             record(
                 &mut table,
@@ -586,9 +497,8 @@ mod tests {
             &[1, 2, 3],
         );
         assert_eq!(table.app_data_for(&dest(1)), Some(&[1, 2, 3][..]));
-        assert_eq!(table.app_data_for(&dest(2)), None); // unknown destination
+        assert_eq!(table.app_data_for(&dest(2)), None);
 
-        // A refresh swaps the retained announce, even to a different length.
         record(
             &mut table,
             dest(1),
@@ -634,7 +544,6 @@ mod tests {
 
     #[test]
     fn a_new_path_whose_payload_overflows_the_arena_is_dropped() {
-        // Arena holds 8 bytes total; entry/destination caps are generous.
         let mut table: DefaultRoutingTable<4, 8, 8> = DefaultRoutingTable::default();
         assert_eq!(
             record(
@@ -647,7 +556,6 @@ mod tests {
             ),
             UpsertRouteOutcome::Inserted
         );
-        // The arena is now full, so a second path can't be backed: drop it whole.
         assert_eq!(
             record(
                 &mut table,
@@ -665,7 +573,6 @@ mod tests {
 
     #[test]
     fn refresh_that_cannot_retain_a_better_announce_leaves_the_table_untouched() {
-        // 8-byte arena: the first payload fits, but growing it past reclaim won't.
         let mut table: DefaultRoutingTable<4, 8, 8> = DefaultRoutingTable::default();
         record(
             &mut table,
@@ -677,9 +584,6 @@ mod tests {
         );
         assert_eq!(table.app_data_for(&dest(1)), Some(&[0xAA; 6][..]));
 
-        // A better announce (fewer hops) arrives but its payload (9) won't fit even
-        // after reclaiming the old 6. Atomicity: bail with nothing changed and let
-        // the call site park the announce for retry once arena space frees up.
         let outcome = record(
             &mut table,
             dest(1),
@@ -692,7 +596,6 @@ mod tests {
             outcome,
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull)
         );
-        // Route, hops, and retained app_data all stay at their old values.
         assert_eq!(table.hop_count_to(&dest(1)), Some(5));
         assert_eq!(table.app_data_for(&dest(1)), Some(&[0xAA; 6][..]));
     }
@@ -702,8 +605,6 @@ mod tests {
         let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
         let ratchet = Some(RatchetKey::new([0xFE; 32]));
         let body = app_data(0xAA);
-        // An announce carrying a ratchet must remember it structurally — the
-        // signature is over the ratchet bytes, so re-emission needs the same one.
         table.upsert_route(
             3,
             InstantMillis(0),
@@ -715,7 +616,6 @@ mod tests {
         assert_eq!(retained.hops, 3);
         assert_eq!(retained.announce.app_data, &body[..]);
 
-        // A refresh with a ratchet-less announce updates the retained ratchet.
         record(
             &mut table,
             dest(1),
@@ -728,7 +628,6 @@ mod tests {
         assert_eq!(retained.announce.maybe_ratchet, None);
         assert_eq!(retained.hops, 2);
 
-        // An unknown destination has no retained announce.
         assert!(table.retained_announce_for(&dest(2)).is_none());
     }
 }
