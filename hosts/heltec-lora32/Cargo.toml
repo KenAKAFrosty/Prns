@@ -13,6 +13,9 @@ description = "Heltec WiFi LoRa 32 (ESP32-S3 + SX1262 + OLED) host: drives the P
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-host"] }
+# The shared Hopspot screen renderer (the OLED draw code) — the same crate the
+# Linux debug window uses, so both faces of the app render identical pixels.
+personal-hopspot-ui = { path = "../../personal-hopspot/ui", default-features = false }
 
 # Same esp-hal 1.1 stack the C6 host pins, retargeted to the S3 (Xtensa LX7,
 # dual-core). Stage A is a pure sync poll loop — no embassy executor / time

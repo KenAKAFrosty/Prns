@@ -92,7 +92,7 @@ use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{run_contract, ContractRuntime, InterfaceView, RuntimeSnapshot};
 use personal_rns::wire::MTU;
 
-mod display;
+use personal_hopspot_ui as display;
 
 esp_app_desc!();
 
@@ -713,35 +713,25 @@ async fn main(spawner: Spawner) {
 
             if panel_on {
                 // One card per interface in the latest snapshot. Mapping an
-                // interface id to its icon/label is the host's job (one match).
-                let mut cards: HVec<display::Card, 8> = HVec::new();
-                if let Some(snap) = &snapshot {
-                    for view in &snap.interfaces {
+                // interface id to its icon/label is the host's job; returning
+                // `None` hides that interface from the panel.
+                let cards: HVec<display::Card, 8> = match &snapshot {
+                    Some(snap) => display::snapshot_to_cards(snap, |id| {
                         // TEMP (ESP-NOW bring-up): hide the USB card so ESP-NOW —
                         // the 4th interface — fits the 3-card panel and is visible.
                         // Revert when card scrolling lands.
-                        if view.id == SERIAL_INTERFACE_ID {
-                            continue;
-                        }
-                        let (kind, label) = if view.id == SERIAL_INTERFACE_ID {
-                            (display::CardKind::Usb, "USB")
-                        } else if view.id == LORA_INTERFACE_ID {
-                            (display::CardKind::LoRa, "LoRa")
-                        } else if view.id == ESPNOW_INTERFACE_ID {
-                            (display::CardKind::EspNow, "ESP-NOW")
+                        if id == SERIAL_INTERFACE_ID {
+                            None
+                        } else if id == LORA_INTERFACE_ID {
+                            Some((display::CardKind::LoRa, "LoRa"))
+                        } else if id == ESPNOW_INTERFACE_ID {
+                            Some((display::CardKind::EspNow, "ESP-NOW"))
                         } else {
-                            (display::CardKind::Wifi, "WiFi LAN")
-                        };
-                        let _ = cards.push(display::Card {
-                            kind,
-                            label,
-                            online: view.online,
-                            tx_bytes: view.reticulum_tx_bytes,
-                            rx_bytes: view.reticulum_rx_bytes,
-                            destinations: view.tracked_destinations,
-                        });
-                    }
-                }
+                            Some((display::CardKind::Wifi, "WiFi LAN"))
+                        }
+                    }),
+                    None => HVec::new(),
+                };
                 display::draw(&mut display, &cards, battery);
                 let _ = display.flush();
             }

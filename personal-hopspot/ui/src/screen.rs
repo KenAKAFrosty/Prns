@@ -1,4 +1,6 @@
-//! The "Personal Hopspot" OLED status screen — portrait (64x128), SSD1306.
+//! The "Personal Hopspot" status screen — portrait (64x128), drawn against any
+//! `embedded_graphics` `DrawTarget<Color = BinaryColor>`, so the same pixels land
+//! on the S3's SSD1306 OLED and on the Linux debug window's simulator display.
 //!
 //! A two-line inverted title bar (`Personal` over a **bold** `Hopspot`) above a
 //! vertical stack of interface cards. Each card is a name line (icon + label)
