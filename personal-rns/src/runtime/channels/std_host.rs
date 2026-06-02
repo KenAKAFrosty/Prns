@@ -1,18 +1,12 @@
-//! The std worker seam. Two shapes live here during the contract migration:
-//!
-//! - **Legacy** [`InboxEntry`] mailbox: a worker thread stamps owned-`Vec` packets
-//!   into a shared mpsc the host drains. The pre-contract path; still wires the
-//!   unmigrated `LinuxSync` host.
-//! - **New** per-interface three-lane seam ([`StdInterfaceSeam`]): inbound and
-//!   outbound rings the interface fills/drains in place plus a control lane, each a
-//!   lock-free [`rtrb`] SPSC ring — owned, `Send`, freed on drop, no per-packet
-//!   allocation. The interface's loop holds the [`InterfaceWorkerContext`]; the
-//!   runtime holds the [`StdInterfaceHandle`]. This is what the contract-driven
-//!   runtime drains.
+//! The std worker seam: a per-interface three-lane seam ([`StdInterfaceSeam`]).
+//! Inbound and outbound rings the interface fills/drains in place plus a control
+//! lane, each a lock-free [`rtrb`] SPSC ring — owned, `Send`, freed on drop, no
+//! per-packet allocation. The interface's loop holds the [`InterfaceWorkerContext`];
+//! the runtime holds the [`StdInterfaceHandle`]. This is what the contract-driven
+//! runtime drains.
 
-use std::sync::mpsc::{Receiver, Sender, SyncSender};
+use std::sync::mpsc::SyncSender;
 use std::time::Instant;
-use std::vec::Vec;
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -22,20 +16,6 @@ use crate::interfaces::{
     InterfaceWorkerContext, OutboundDrain, QueueFull, Substrate,
 };
 
-/// One inbound packet a worker stamped: owned wire bytes plus the provenance the
-/// runtime needs (which interface heard it, and when). Owned (not borrowed)
-/// because it rides an mpsc channel from the worker thread to the runtime thread.
-pub struct InboxEntry {
-    pub arrived_at: InstantMillis,
-    pub source: InterfaceId,
-    pub bytes: Vec<u8>,
-}
-
-/// The stamping end a worker holds.
-pub type InboundSender = Sender<InboxEntry>;
-/// The draining end the host holds.
-pub type InboundReceiver = Receiver<InboxEntry>;
-
 // ── the contract seam: per-interface rtrb rings, filled/drained in place ──────
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
@@ -43,7 +23,7 @@ const CONTROL_DEPTH: usize = 4;
 
 /// One inbound slot: the worker fills `bytes[..len]` in place and the sink stamps
 /// `arrived_at`. Rides the ring by value — an MTU-bounded `memcpy`, never a heap
-/// allocation (contrast [`InboxEntry`]'s per-packet `Vec`).
+/// allocation.
 struct InboundSlot<const MTU: usize> {
     arrived_at: InstantMillis,
     len: u16,
@@ -250,6 +230,7 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
 mod tests {
     use super::*;
     use std::sync::mpsc::sync_channel;
+    use std::vec::Vec;
 
     const MTU: usize = 64;
     const DEPTH: usize = 8;

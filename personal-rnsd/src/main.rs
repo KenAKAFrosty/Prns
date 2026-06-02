@@ -1,27 +1,27 @@
 //! Personal Reticulum daemon: drive the engine over a USB-serial interface using
-//! the shared `InterfaceWorker` + `Runtime` — the *same* abstraction the embedded
-//! hosts (ESP32) use, just on the std substrate.
+//! the shared `Interface` contract + `ContractRuntime` — the *same* abstraction
+//! the embedded hosts (ESP32) will use, just on the std substrate.
 //!
-//! A worker thread owns the serial port (reopening on unplug) and runs the RNS
-//! `SerialInterface` shell; the `Runtime` over a `LinuxSync` host drives the
-//! engine, deadline-driven, and surfaces a snapshot each cycle. The daemon both
-//! forwards others' announces and emits its own `personal.node` announce (first
-//! one as soon as the link is up).
+//! The `StdSerialInterface` owns the serial port (reopening on unplug) on its own
+//! thread, meeting the runtime through a three-lane seam; the `ContractRuntime`
+//! over a `LinuxSync` host pools that seam into the engine, deadline-driven, and
+//! surfaces a snapshot each cycle. The daemon both forwards others' announces and
+//! emits its own `personal.node` announce (first one as soon as the link is up).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::Arc;
+use std::convert::Infallible;
+use std::io;
+use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
 
 use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::impls::rns_parity::serial::std_host::{
-    run as run_serial_worker, StdSerialInterface,
+use personal_rns::interfaces::impls::rns_parity::serial::{
+    std_host::StdSerialInterface, SERIAL_MTU,
 };
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::runtime::channels::std_host::InboxEntry;
+use personal_rns::interfaces::{DriverMode, Interface, InterfaceId, StartedInterface};
+use personal_rns::runtime::channels::std_host::StdInterfaceSeam;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, run, Runtime};
+use personal_rns::runtime::{block_on, run_contract, ContractRuntime};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -35,22 +35,24 @@ const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-rnsd";
 /// CDC-ACM nominal baud (USB ignores it, but `serialport` wants a value).
 const USB_BAUD: u32 = 115_200;
 /// The worker's blocking read window: short enough that a quiet link still loops
-/// back to service outbound and refresh liveness, long enough to not busy-spin.
+/// back to service outbound and check for a stop, long enough to not busy-spin.
 const READ_POLL: Duration = Duration::from_millis(50);
 /// How long to wait before re-opening the port after an open failure or unplug.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+/// In-flight capacity of each of the interface's data rings.
+const SEAM_DEPTH: usize = 64;
 
-/// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖
-/// Ed25519 private keys). Handed to the engine through a [`Zeroizing`] buffer so
-/// it is wiped from this stack frame once construction copies it in.
+/// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519
+/// private keys). Handed to the engine through a [`Zeroizing`] buffer so it is
+/// wiped from this stack frame once construction copies it in.
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
 
     #[cfg(feature = "fixture-identity")]
     {
-        // Deterministic bring-up / HITL identity: the same X25519 0x22 ‖
-        // Ed25519 0x11 keypair the personal-rns oracle vectors pin. Never ship
-        // this — every fixture-identity node shares one identity.
+        // Deterministic bring-up / HITL identity: the same X25519 0x22 ‖ Ed25519
+        // 0x11 keypair the personal-rns oracle vectors pin. Never ship this — every
+        // fixture-identity node shares one identity.
         key[..32].fill(0x22);
         key[32..].fill(0x11);
     }
@@ -96,51 +98,51 @@ fn main() {
         println!("RNSD_SELF_ANNOUNCE_DEST {hex} name=personal.node");
     }
 
-    // One monotonic base shared by the worker (frame arrival stamps) and the
-    // runtime (cycle clock), so `arrived_at` and `now` share a timebase.
+    // One monotonic base shared by the interface (frame arrival stamps) and the
+    // host (cycle clock), so `arrived_at` and `now` share a timebase.
     let clock_base = Instant::now();
 
-    // Shared inbound mailbox (worker stamps → runtime drains), per-worker outbound
-    // queue (runtime fills → worker drains), and shared liveness.
-    let (inbound_tx, inbound_rx) = mpsc::channel::<InboxEntry>();
-    let (outbound_tx, outbound_rx) = mpsc::channel::<Vec<u8>>();
-    let link_up: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    // The seam: the interface's worker thread holds the worker context; the runtime
+    // keeps the handle. The wake fires (baked into the inbound/report producers)
+    // whenever the interface has something, rousing the host's sleep.
+    let (wake_tx, wake_rx) = sync_channel::<()>(1);
+    let StdInterfaceSeam {
+        worker_context,
+        runtime_handle,
+    } = StdInterfaceSeam::<SERIAL_MTU>::new(USB_INTERFACE_ID, clock_base, SEAM_DEPTH, wake_tx);
 
-    let worker = StdSerialInterface::new(USB_INTERFACE_ID, outbound_tx, link_up.clone());
-    // The std poll-loop host owns the clock + CSPRNG + the inbound mailbox's
-    // draining end; the runtime bolts it to the engine + worker.
-    let host = LinuxSync::new(inbound_rx, clock_base);
-    let runtime = Runtime::new(state, [worker], host);
+    // The interface owns its device lifecycle: `open` hands it a fresh CDC stream
+    // (re-opened on unplug); `start` spawns the thread and returns its drive mode.
+    let open = move || {
+        serialport::new(&path, USB_BAUD)
+            .timeout(READ_POLL)
+            .open()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    };
+    let interface = StdSerialInterface::new(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
+    let descriptor = interface.descriptor();
+    // The serial interface is self-driven (its own thread), so `start` always
+    // returns `SelfDriven`; this daemon has no runtime-driven interfaces, hence
+    // `Infallible` for the worker type.
+    let drive: DriverMode<Infallible> = match interface.start(worker_context) {
+        DriverMode::SelfDriven => DriverMode::SelfDriven,
+        DriverMode::RuntimeDriven { .. } => unreachable!("the serial interface is self-driven"),
+    };
+    let started = StartedInterface {
+        descriptor,
+        handle: runtime_handle,
+        drive,
+    };
 
-    // Worker thread: own the serial port, reopen on unplug, run the shell. The
-    // handle stays registered across reconnects — only the byte stream churns.
-    {
-        let link_up = link_up.clone();
-        std::thread::spawn(move || loop {
-            match serialport::new(&path, USB_BAUD).timeout(READ_POLL).open() {
-                Ok(port) => {
-                    println!("RNSD_USB_OPEN_OK {path}");
-                    run_serial_worker(
-                        port,
-                        USB_INTERFACE_ID,
-                        &inbound_tx,
-                        &outbound_rx,
-                        &link_up,
-                        clock_base,
-                    );
-                    link_up.store(false, Ordering::Relaxed);
-                    eprintln!("RNSD_USB_DISCONNECTED {path}");
-                }
-                Err(e) => eprintln!("RNSD_USB_OPEN_ERR {path}: {e:?}"),
-            }
-            std::thread::sleep(RECONNECT_INTERVAL);
-        });
-    }
+    // The std poll-loop host owns the clock + CSPRNG + the seam wake; the runtime
+    // bolts it to the engine + the started interface.
+    let host = LinuxSync::new(wake_rx, clock_base);
+    let runtime = ContractRuntime::new(state, [started], host);
 
     // Drive the runtime forever; log when the routing table grows — the proof the
     // cable carried a real announce into the engine.
     let mut announced_routes = 0u32;
-    block_on(run(runtime, |snapshot| {
+    block_on(run_contract(runtime, |snapshot| {
         let routes = snapshot
             .interfaces
             .iter()
