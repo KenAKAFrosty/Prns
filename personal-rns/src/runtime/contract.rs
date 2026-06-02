@@ -15,7 +15,8 @@ use crate::engine::{
     NextScheduledEngineWork, OutboundPacket, MAX_REGISTERED_INTERFACES,
 };
 use crate::interfaces::{
-    ControlReport, DriverMode, InterfaceHandle, InterfaceId, StartedInterface,
+    ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId, SendError,
+    StartedInterface,
 };
 use crate::routing::storage::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
@@ -30,6 +31,12 @@ pub struct ContractStepOutput {
     pub scheduled_rebroadcast_count: usize,
     pub egress_directive_count: usize,
     pub next_poll: NextScheduledEngineWork,
+}
+
+#[derive(Clone, Copy)]
+enum FanoutClass {
+    LocalOriginated,
+    Transit,
 }
 
 /// The engine, started interfaces, traffic meter, and [`Host`] that drives them.
@@ -208,7 +215,13 @@ where
         let n = directive
             .to_wire(&mut emit_buffer)
             .expect("MTU-sized buf fits any valid wire packet");
-        fan_to_handles(interfaces, traffic, &emit_buffer[..n], directive.fire_on());
+        fan_to_handles(
+            interfaces,
+            traffic,
+            &emit_buffer[..n],
+            directive.fire_on(),
+            FanoutClass::Transit,
+        );
     }
     tick_output.commit();
 
@@ -222,6 +235,7 @@ where
                 traffic,
                 &emit_buffer[..n],
                 engine.registered_interfaces(),
+                FanoutClass::LocalOriginated,
             );
         }
     }
@@ -230,8 +244,12 @@ where
     for started in interfaces.iter_mut() {
         while let Some(report) = started.handle.next_report() {
             match report {
-                // Link-state reports are not surfaced yet.
-                ControlReport::Stopped => {}
+                ControlReport::ConnectionState(connection_state) => {
+                    started.descriptor.state = connection_state;
+                }
+                ControlReport::Stopped => {
+                    started.descriptor.state = ConnectionState::Disconnected;
+                }
             }
         }
     }
@@ -252,13 +270,25 @@ fn fan_to_handles<IH: InterfaceHandle, W>(
     traffic: &mut TrafficLedger,
     bytes: &[u8],
     fire_on: &[InterfaceId],
+    fanout_class: FanoutClass,
 ) {
-    for id in fire_on {
-        traffic.add_tx(*id, bytes.len() as u64);
-    }
     for started in interfaces.iter_mut() {
-        if fire_on.contains(&started.descriptor.id) {
-            let _ = started.handle.send(OutboundPacket::new(bytes));
+        if fire_on.contains(&started.descriptor.id)
+            && matches!(
+                started.descriptor.state,
+                ConnectionState::Connected | ConnectionState::Degraded
+            )
+            && match fanout_class {
+                FanoutClass::LocalOriginated => {
+                    started.descriptor.capabilities.allows_local_egress()
+                }
+                FanoutClass::Transit => started.descriptor.capabilities.allows_transit(),
+            }
+        {
+            match started.handle.send(OutboundPacket::new(bytes)) {
+                Ok(()) => traffic.add_tx(started.descriptor.id, bytes.len() as u64),
+                Err(SendError::QueueFull | SendError::PacketTooLarge) => {}
+            }
         }
     }
 }
@@ -279,14 +309,13 @@ where
     let mut views = HeaplessVec::new();
     for started in interfaces {
         let id = started.descriptor.id;
-        let (reticulum_rx_bytes, reticulum_tx_bytes) = traffic.totals_for(id);
+        let (reticulum_rx_byte_count, reticulum_tx_byte_count) = traffic.totals_for(id);
         // `push` can't overflow: interfaces.len() <= MAX_REGISTERED_INTERFACES.
         let _ = views.push(InterfaceView {
             id,
-            // Link-state reports are not surfaced yet.
-            online: true,
-            reticulum_rx_bytes,
-            reticulum_tx_bytes,
+            connection_state: started.descriptor.state,
+            reticulum_rx_byte_count,
+            reticulum_tx_byte_count,
             tracked_destinations: engine.route_count_via(id) as u32,
         });
     }
@@ -307,9 +336,12 @@ fn sooner(a: NextScheduledEngineWork, b: NextScheduledEngineWork) -> NextSchedul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+
     use crate::engine::{FixedCapacityEngineState, InboundPacket, ENGINE_CYCLE_ENTROPY_LEN};
     use crate::interfaces::{
-        Capabilities, ConnectionState, InterfaceDescriptor, InterfaceMode, MediumKind,
+        ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+        InterfaceDescriptor, InterfaceMode, MediumKind, TransitCapability,
     };
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{PacketType, WirePacketHeader};
@@ -325,6 +357,7 @@ mod tests {
     struct TestHandle {
         id: InterfaceId,
         inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
+        reports: VecDeque<ControlReport>,
         sent: std::vec::Vec<std::vec::Vec<u8>>,
     }
 
@@ -343,15 +376,15 @@ mod tests {
             drained
         }
 
-        fn send(&mut self, packet: OutboundPacket<'_>) -> bool {
+        fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
             self.sent.push(packet.bytes.to_vec());
-            true
+            Ok(())
         }
 
         fn request_stop(&mut self) {}
 
         fn next_report(&mut self) -> Option<ControlReport> {
-            None
+            self.reports.pop_front()
         }
     }
 
@@ -366,18 +399,28 @@ mod tests {
         InterfaceId::new([byte; 16])
     }
 
-    fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    fn descriptor_with_state(id: InterfaceId, state: ConnectionState) -> InterfaceDescriptor {
+        descriptor_with_capabilities(
+            id,
+            state,
+            EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+        )
+    }
+
+    fn descriptor_with_capabilities(
+        id: InterfaceId,
+        state: ConnectionState,
+        egress: EgressCapability,
+    ) -> InterfaceDescriptor {
         InterfaceDescriptor {
             id,
-            capabilities: Capabilities {
-                receives: true,
-                transmits: true,
-                forwards: true,
-                repeats: false,
+            capabilities: InterfaceCapabilities {
+                ingress: IngressCapability::Enabled,
+                egress,
             },
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,
-            state: ConnectionState::Connected,
+            state,
         }
     }
 
@@ -387,11 +430,41 @@ mod tests {
         id: InterfaceId,
         inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
     ) -> StartedInterface<TestHandle, core::convert::Infallible> {
+        started_with_state_and_reports(id, ConnectionState::Connected, inbound, [])
+    }
+
+    fn started_with_reports(
+        id: InterfaceId,
+        reports: impl IntoIterator<Item = ControlReport>,
+    ) -> StartedInterface<TestHandle, core::convert::Infallible> {
+        started_with_state_and_reports(
+            id,
+            ConnectionState::Connected,
+            std::vec::Vec::new(),
+            reports,
+        )
+    }
+
+    fn started_with_state_and_reports(
+        id: InterfaceId,
+        state: ConnectionState,
+        inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
+        reports: impl IntoIterator<Item = ControlReport>,
+    ) -> StartedInterface<TestHandle, core::convert::Infallible> {
+        started_with_descriptor_and_reports(descriptor_with_state(id, state), inbound, reports)
+    }
+
+    fn started_with_descriptor_and_reports(
+        descriptor: InterfaceDescriptor,
+        inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
+        reports: impl IntoIterator<Item = ControlReport>,
+    ) -> StartedInterface<TestHandle, core::convert::Infallible> {
         StartedInterface {
-            descriptor: descriptor(id),
+            descriptor,
             handle: TestHandle {
-                id,
+                id: descriptor.id,
                 inbound,
+                reports: reports.into_iter().collect(),
                 sent: std::vec::Vec::new(),
             },
             drive: DriverMode::SelfDriven,
@@ -443,13 +516,161 @@ mod tests {
         // learned on `source`.
         let snapshot = runtime.snapshot();
         assert_eq!(snapshot.interfaces[0].id, source);
-        assert_eq!(snapshot.interfaces[0].reticulum_rx_bytes, raw.len() as u64);
+        assert_eq!(
+            snapshot.interfaces[0].connection_state,
+            ConnectionState::Connected
+        );
+        assert_eq!(
+            snapshot.interfaces[0].reticulum_rx_byte_count,
+            raw.len() as u64
+        );
         assert_eq!(snapshot.interfaces[0].tracked_destinations, 1);
         assert_eq!(snapshot.interfaces[1].id, peer);
         assert_eq!(
-            snapshot.interfaces[1].reticulum_tx_bytes,
+            snapshot.interfaces[1].connection_state,
+            ConnectionState::Connected
+        );
+        assert_eq!(
+            snapshot.interfaces[1].reticulum_tx_byte_count,
             submitted.len() as u64
         );
         assert_eq!(snapshot.interfaces[1].tracked_destinations, 0);
+    }
+
+    #[test]
+    fn snapshot_reflects_reported_connection_state() {
+        let id = iface(0xC3);
+        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut runtime = ContractRuntime::new(
+            engine,
+            [started_with_reports(
+                id,
+                [ControlReport::ConnectionState(ConnectionState::Degraded)],
+            )],
+            (),
+        );
+
+        let _ = runtime.cycle_once(
+            InstantMillis(1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+        );
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.interfaces[0].connection_state,
+            ConnectionState::Degraded
+        );
+    }
+
+    #[test]
+    fn stopped_reports_disconnect_the_snapshot() {
+        let id = iface(0xD4);
+        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut runtime = ContractRuntime::new(
+            engine,
+            [started_with_reports(id, [ControlReport::Stopped])],
+            (),
+        );
+
+        let _ = runtime.cycle_once(
+            InstantMillis(1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+        );
+
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.interfaces[0].connection_state,
+            ConnectionState::Disconnected
+        );
+    }
+
+    #[test]
+    fn fanout_skips_interfaces_that_are_not_connected() {
+        let connected = iface(0xE5);
+        let failed = iface(0xF6);
+        let mut interfaces = HeaplessVec::new();
+        let _ = interfaces.push(started_with_state_and_reports(
+            connected,
+            ConnectionState::Connected,
+            std::vec::Vec::new(),
+            [],
+        ));
+        let _ = interfaces.push(started_with_state_and_reports(
+            failed,
+            ConnectionState::Failed,
+            std::vec::Vec::new(),
+            [],
+        ));
+        let mut traffic = TrafficLedger::new();
+        let bytes = [0xAA, 0xBB, 0xCC];
+
+        fan_to_handles(
+            &mut interfaces,
+            &mut traffic,
+            &bytes,
+            &[connected, failed],
+            FanoutClass::Transit,
+        );
+
+        assert_eq!(interfaces[0].handle.sent, std::vec![bytes.to_vec()]);
+        assert!(interfaces[1].handle.sent.is_empty());
+        assert_eq!(traffic.totals_for(connected), (0, bytes.len() as u64));
+        assert_eq!(traffic.totals_for(failed), (0, 0));
+    }
+
+    #[test]
+    fn fanout_distinguishes_local_only_from_transit_interfaces() {
+        let local_only = iface(0x11);
+        let transit = iface(0x22);
+        let mut interfaces = HeaplessVec::new();
+        let _ = interfaces.push(started_with_descriptor_and_reports(
+            descriptor_with_capabilities(
+                local_only,
+                ConnectionState::Connected,
+                EgressCapability::Enabled(TransitCapability::NoTransit),
+            ),
+            std::vec::Vec::new(),
+            [],
+        ));
+        let _ = interfaces.push(started_with_descriptor_and_reports(
+            descriptor_with_capabilities(
+                transit,
+                ConnectionState::Connected,
+                EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+            ),
+            std::vec::Vec::new(),
+            [],
+        ));
+        let mut traffic = TrafficLedger::new();
+        let bytes = [0xAA, 0xBB, 0xCC];
+
+        fan_to_handles(
+            &mut interfaces,
+            &mut traffic,
+            &bytes,
+            &[local_only, transit],
+            FanoutClass::Transit,
+        );
+
+        assert!(interfaces[0].handle.sent.is_empty());
+        assert_eq!(interfaces[1].handle.sent, std::vec![bytes.to_vec()]);
+        assert_eq!(traffic.totals_for(local_only), (0, 0));
+        assert_eq!(traffic.totals_for(transit), (0, bytes.len() as u64));
+
+        fan_to_handles(
+            &mut interfaces,
+            &mut traffic,
+            &bytes,
+            &[local_only, transit],
+            FanoutClass::LocalOriginated,
+        );
+
+        assert_eq!(interfaces[0].handle.sent, std::vec![bytes.to_vec()]);
+        assert_eq!(
+            interfaces[1].handle.sent,
+            std::vec![bytes.to_vec(), bytes.to_vec()]
+        );
+        assert_eq!(traffic.totals_for(local_only), (0, bytes.len() as u64));
+        assert_eq!(traffic.totals_for(transit), (0, 2 * bytes.len() as u64));
     }
 }

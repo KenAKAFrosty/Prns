@@ -70,3 +70,113 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::ENGINE_CYCLE_ENTROPY_LEN;
+    use crate::runtime::channels::embassy_seam::new_wake_signal;
+    use core::future::Future;
+    use core::pin::{pin, Pin};
+    use core::task::{Context, Poll, Waker};
+    use embassy_time::{Duration as EmbassyDuration, MockDriver};
+
+    /// A constant per-cycle entropy draw. The seed's contents don't matter to the
+    /// wait race — only that the host produces a [`CycleStamp`] when it returns.
+    fn const_entropy() -> EngineCycleEntropySeed {
+        EngineCycleEntropySeed::new([0x5A; ENGINE_CYCLE_ENTROPY_LEN])
+    }
+
+    /// A fresh `&'static WakeSignal` per case. Leaking is fine in a test and keeps
+    /// each case's signal state independent of the others.
+    fn leak_wake() -> &'static WakeSignal {
+        Box::leak(Box::new(new_wake_signal()))
+    }
+
+    /// Poll a pinned future once with a no-op waker. The mock driver is advanced
+    /// by hand between polls, so we never depend on a real executor or wall clock.
+    fn poll_once<F: Future>(fut: Pin<&mut F>) -> Poll<F::Output> {
+        fut.poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    // The embassy-time `MockDriver` is a process-global singleton, so every case that
+    // touches it must run sequentially. Holding them in one `#[test]` keeps the shared
+    // clock deterministic without pulling in `serial_test`. Cases that advance the
+    // clock come last so earlier cases observe a clean `now == 0`.
+    #[test]
+    fn embassy_wait_races_the_deadline_against_the_wake() {
+        let driver = MockDriver::get();
+        driver.reset(); // now == 0
+
+        // Immediate: a cycle is ready now — `wait` must not suspend, and it stamps the
+        // current (un-advanced) clock.
+        {
+            let wake = leak_wake();
+            let mut host = EmbassyContractHost::new(wake, const_entropy);
+            let mut fut = pin!(host.wait(NextScheduledEngineWork::Immediate));
+            match poll_once(fut.as_mut()) {
+                Poll::Ready(stamp) => assert_eq!(stamp.now.0, 0, "stamped at the current clock"),
+                Poll::Pending => panic!("Immediate must not suspend"),
+            }
+        }
+
+        // Idle: no scheduled work and no timer — `wait` suspends on the bare signal and
+        // is released only when an interface pokes it.
+        {
+            let wake = leak_wake();
+            let mut host = EmbassyContractHost::new(wake, const_entropy);
+            let mut fut = pin!(host.wait(NextScheduledEngineWork::Idle));
+            assert!(
+                matches!(poll_once(fut.as_mut()), Poll::Pending),
+                "Idle suspends while the wake is quiet"
+            );
+            wake.signal(());
+            assert!(
+                matches!(poll_once(fut.as_mut()), Poll::Ready(_)),
+                "a poke releases the Idle wait"
+            );
+        }
+
+        // At + pending poke: the race's point on the embassy side — a far deadline must
+        // not stop an already-waiting interface from returning at once. The wake arm
+        // wins the `select`, the timer never fires, the clock never moves.
+        {
+            let wake = leak_wake();
+            let mut host = EmbassyContractHost::new(wake, const_entropy);
+            wake.signal(()); // inbound already queued
+            let far = NextScheduledEngineWork::At(InstantMillis(60_000)); // 60s out
+            let mut fut = pin!(host.wait(far));
+            match poll_once(fut.as_mut()) {
+                Poll::Ready(stamp) => {
+                    assert_eq!(
+                        stamp.now.0, 0,
+                        "returned before the deadline, clock unmoved"
+                    )
+                }
+                Poll::Pending => panic!("a pending poke must short-circuit the deadline"),
+            }
+        }
+
+        // At, no poke: the other side of the race — `wait` suspends until the engine's
+        // deadline comes due, then returns. Advancing the mock clock past the deadline
+        // is what releases it (no executor, no sleep).
+        {
+            let wake = leak_wake();
+            let mut host = EmbassyContractHost::new(wake, const_entropy);
+            let mut fut = pin!(host.wait(NextScheduledEngineWork::At(InstantMillis(100))));
+            assert!(
+                matches!(poll_once(fut.as_mut()), Poll::Pending),
+                "no poke and the deadline is in the future → suspend"
+            );
+            driver.advance(EmbassyDuration::from_millis(100));
+            match poll_once(fut.as_mut()) {
+                Poll::Ready(stamp) => assert!(
+                    stamp.now.0 >= 100,
+                    "woke at {}ms, before the 100ms deadline",
+                    stamp.now.0
+                ),
+                Poll::Pending => panic!("the deadline must release the wait once time advances"),
+            }
+        }
+    }
+}

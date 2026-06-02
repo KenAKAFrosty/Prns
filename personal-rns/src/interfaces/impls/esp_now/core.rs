@@ -18,7 +18,8 @@
 //! engine as-is.
 
 use crate::interfaces::{
-    Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind,
+    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransitCapability,
 };
 
 /// The one-byte tag at the front of every frame. Bumped if the coalescing frame
@@ -156,13 +157,9 @@ impl<'a> Iterator for EspNowFrameReader<'a> {
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
-        capabilities: Capabilities {
-            receives: true,
-            transmits: true,
-            forwards: true,
-            // Every neighbor hears every broadcast, so the node rebroadcasts
-            // announces back into the same air.
-            repeats: true,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::SharedHalfDuplex,
@@ -274,7 +271,10 @@ mod tests {
         assert!(matches!(d.medium, MediumKind::SharedHalfDuplex));
         assert!(matches!(d.mode, InterfaceMode::Full));
         assert!(matches!(d.state, ConnectionState::Connected));
-        assert!(d.capabilities.repeats);
-        assert!(d.capabilities.receives && d.capabilities.transmits && d.capabilities.forwards);
+        assert_eq!(d.capabilities.ingress, IngressCapability::Enabled);
+        assert_eq!(
+            d.capabilities.egress,
+            EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat)
+        );
     }
 }

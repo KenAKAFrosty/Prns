@@ -268,7 +268,7 @@ where
             }
         }
 
-        if !descriptor.capabilities.transmits {
+        if !descriptor.capabilities.allows_transmit() {
             return Err(RegisterInterfaceError::NotTransmitting);
         }
 
@@ -670,7 +670,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::{Capabilities, InterfaceMode, MediumKind};
+    use crate::interfaces::{
+        EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, MediumKind,
+        TransitCapability,
+    };
     use crate::wire::{
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
     };
@@ -954,11 +957,9 @@ mod tests {
     fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         InterfaceDescriptor {
             id,
-            capabilities: Capabilities {
-                receives: true,
-                transmits: true,
-                forwards: true,
-                repeats: false,
+            capabilities: InterfaceCapabilities {
+                ingress: IngressCapability::Enabled,
+                egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,
@@ -1000,7 +1001,7 @@ mod tests {
     #[test]
     fn register_routable_descriptor_rejects_non_transmitting_interfaces() {
         let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
-        descriptor.capabilities.transmits = false;
+        descriptor.capabilities.egress = EgressCapability::Disabled;
         let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
 
         assert_eq!(

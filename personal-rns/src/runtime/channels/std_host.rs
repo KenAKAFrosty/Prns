@@ -11,7 +11,7 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use crate::engine::{InboundPacket, InstantMillis, OutboundPacket};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceHandle, InterfaceId,
-    InterfaceWorkerContext, OutboundDrain, QueueFull, Substrate,
+    InterfaceWorkerContext, OutboundDrain, QueueFull, SendError, Substrate,
 };
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
@@ -139,16 +139,16 @@ impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
         drained
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> bool {
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
         if packet.bytes.len() > MTU {
-            return false;
+            return Err(SendError::PacketTooLarge);
         }
         let mut slot = OutboundSlot {
             len: packet.bytes.len() as u16,
             bytes: [0u8; MTU],
         };
         slot.bytes[..packet.bytes.len()].copy_from_slice(packet.bytes);
-        self.outbound.push(slot).is_ok()
+        self.outbound.push(slot).map_err(|_| SendError::QueueFull)
     }
 
     fn request_stop(&mut self) {
@@ -214,6 +214,8 @@ mod tests {
     use std::sync::mpsc::sync_channel;
     use std::vec::Vec;
 
+    use crate::interfaces::ConnectionState;
+
     const MTU: usize = 64;
     const DEPTH: usize = 8;
 
@@ -230,7 +232,9 @@ mod tests {
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), DEPTH, wake_tx);
 
         // runtime → worker: queue an outbound packet, worker drains it in place.
-        assert!(runtime_handle.send(OutboundPacket::new(&[0xAA, 0xBB, 0xCC])));
+        assert!(runtime_handle
+            .send(OutboundPacket::new(&[0xAA, 0xBB, 0xCC]))
+            .is_ok());
         let mut transmitted: Vec<Vec<u8>> = Vec::new();
         let drained = worker_context
             .outbound
@@ -260,6 +264,13 @@ mod tests {
         assert!(matches!(
             worker_context.control.next_command(),
             Some(ControlCommand::Stop)
+        ));
+        worker_context
+            .control
+            .report(ControlReport::ConnectionState(ConnectionState::Degraded));
+        assert!(matches!(
+            runtime_handle.next_report(),
+            Some(ControlReport::ConnectionState(ConnectionState::Degraded))
         ));
         worker_context.control.report(ControlReport::Stopped);
         assert!(matches!(
@@ -293,6 +304,36 @@ mod tests {
         // So does a control report (the report producer wakes the host too).
         worker_context.control.report(ControlReport::Stopped);
         assert!(wake_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn send_reports_packet_too_large() {
+        let (wake_tx, _wake_rx) = sync_channel::<()>(1);
+        let StdInterfaceSeam {
+            worker_context: _worker_context,
+            mut runtime_handle,
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), DEPTH, wake_tx);
+
+        let too_large = [0xAA; MTU + 1];
+        assert_eq!(
+            runtime_handle.send(OutboundPacket::new(&too_large)),
+            Err(SendError::PacketTooLarge)
+        );
+    }
+
+    #[test]
+    fn send_reports_queue_full() {
+        let (wake_tx, _wake_rx) = sync_channel::<()>(1);
+        let StdInterfaceSeam {
+            worker_context: _worker_context,
+            mut runtime_handle,
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), 1, wake_tx);
+
+        assert!(runtime_handle.send(OutboundPacket::new(&[0x01])).is_ok());
+        assert_eq!(
+            runtime_handle.send(OutboundPacket::new(&[0x02])),
+            Err(SendError::QueueFull)
+        );
     }
 
     #[test]

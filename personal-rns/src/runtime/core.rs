@@ -17,8 +17,8 @@ pub(crate) struct TrafficLedger {
 
 struct InterfaceTraffic {
     id: InterfaceId,
-    reticulum_rx_bytes: u64,
-    reticulum_tx_bytes: u64,
+    reticulum_rx_byte_count: u64,
+    reticulum_tx_byte_count: u64,
 }
 
 impl TrafficLedger {
@@ -38,8 +38,8 @@ impl TrafficLedger {
         self.entries
             .push(InterfaceTraffic {
                 id,
-                reticulum_rx_bytes: 0,
-                reticulum_tx_bytes: 0,
+                reticulum_rx_byte_count: 0,
+                reticulum_tx_byte_count: 0,
             })
             .ok()?;
         self.entries.last_mut()
@@ -47,13 +47,13 @@ impl TrafficLedger {
 
     pub(crate) fn add_rx(&mut self, id: InterfaceId, bytes: u64) {
         if let Some(row) = self.row_mut(id) {
-            row.reticulum_rx_bytes = row.reticulum_rx_bytes.wrapping_add(bytes);
+            row.reticulum_rx_byte_count = row.reticulum_rx_byte_count.wrapping_add(bytes);
         }
     }
 
     pub(crate) fn add_tx(&mut self, id: InterfaceId, bytes: u64) {
         if let Some(row) = self.row_mut(id) {
-            row.reticulum_tx_bytes = row.reticulum_tx_bytes.wrapping_add(bytes);
+            row.reticulum_tx_byte_count = row.reticulum_tx_byte_count.wrapping_add(bytes);
         }
     }
 
@@ -63,7 +63,7 @@ impl TrafficLedger {
         self.entries
             .iter()
             .find(|e| e.id == id)
-            .map(|e| (e.reticulum_rx_bytes, e.reticulum_tx_bytes))
+            .map(|e| (e.reticulum_rx_byte_count, e.reticulum_tx_byte_count))
             .unwrap_or((0, 0))
     }
 }

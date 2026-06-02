@@ -11,7 +11,7 @@
 //! [`InterfaceHandle`](crate::interfaces::InterfaceHandle).
 
 use crate::engine::OutboundPacket;
-use crate::interfaces::QueueFull;
+use crate::interfaces::{ConnectionState, QueueFull};
 
 /// The producer end of an interface's inbox: the interface fills a slot in place
 /// with a decoded Reticulum packet, and the sink publishes it (stamping arrival
@@ -45,6 +45,7 @@ pub enum ControlCommand {
 /// What an interface reports back to the runtime over the control plane.
 #[derive(Clone, Copy, Debug)]
 pub enum ControlReport {
+    ConnectionState(ConnectionState),
     /// Teardown is complete — the loop has exited and the device is released, so
     /// the runtime may drop this interface's seam.
     Stopped,

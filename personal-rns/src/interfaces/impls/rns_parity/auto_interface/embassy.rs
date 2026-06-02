@@ -18,8 +18,9 @@ use super::core::{
 };
 use crate::engine::InstantMillis;
 use crate::interfaces::{
-    Capabilities, ConnectionState, InboundSink, InterfaceDescriptor, InterfaceId, InterfaceMode,
-    InterfaceWorkerContext, MacAddress, MediumKind,
+    ConnectionState, EgressCapability, InboundSink, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceWorkerContext, MacAddress,
+    MediumKind, TransitCapability,
 };
 use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
 
@@ -71,13 +72,9 @@ fn ingest_discovery_arm(
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
-        capabilities: Capabilities {
-            receives: true,
-            transmits: true,
-            forwards: true,
-            // Switched fabric: forwarding is per-peer fanout the engine drives via
-            // fire_on, not source-interface re-propagation.
-            repeats: false,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::Multicast,

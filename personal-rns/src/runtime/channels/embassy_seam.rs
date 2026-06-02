@@ -22,7 +22,7 @@ use embassy_time::Instant as EmbassyInstant;
 use crate::engine::{InboundPacket, InstantMillis, OutboundPacket};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceHandle, InterfaceId,
-    InterfaceWorkerContext, OutboundDrain, QueueFull, Substrate,
+    InterfaceWorkerContext, OutboundDrain, QueueFull, SendError, Substrate,
 };
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
@@ -197,16 +197,18 @@ impl<const MTU: usize, const DEPTH: usize> InterfaceHandle for EmbassyInterfaceH
         drained
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> bool {
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
         if packet.bytes.len() > MTU {
-            return false;
+            return Err(SendError::PacketTooLarge);
         }
         let mut slot = OutboundSlot {
             len: packet.bytes.len() as u16,
             bytes: [0u8; MTU],
         };
         slot.bytes[..packet.bytes.len()].copy_from_slice(packet.bytes);
-        self.outbound.try_send(slot).is_ok()
+        self.outbound
+            .try_send(slot)
+            .map_err(|_| SendError::QueueFull)
     }
 
     fn request_stop(&mut self) {
