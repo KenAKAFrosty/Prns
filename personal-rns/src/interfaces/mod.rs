@@ -44,8 +44,9 @@ pub use mode::InterfaceMode;
 
 pub use descriptor::InterfaceDescriptor;
 pub use worker::{
-    InterfaceStats, InterfaceWorker, LinkState, QueueFull, RuntimeDriven,
-    TrackedPeerMulticastInterface,
+    ControlCommand, ControlEndpoint, ControlReport, DriverMode, InboundSink, Interface,
+    InterfaceStats, InterfaceWorker, InterfaceWorkerContext, LinkState, OutboundDrain, QueueFull,
+    RuntimeDriven, Substrate, TrackedPeerMulticastInterface,
 };
 
 pub use framing::rns_serial_framing;

@@ -10,12 +10,19 @@
 //! [`TrackedPeerMulticastInterface`] extend this contract for interfaces that
 //! can honestly expose more.
 
+mod context;
 mod core;
+mod interface;
 mod multicast;
 mod runtime_driven;
 mod stats;
 
+pub use context::{
+    ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
+    OutboundDrain, Substrate,
+};
 pub use core::{InterfaceWorker, QueueFull};
+pub use interface::{DriverMode, Interface};
 pub use multicast::TrackedPeerMulticastInterface;
 pub use runtime_driven::RuntimeDriven;
 pub use stats::{InterfaceStats, LinkState};
