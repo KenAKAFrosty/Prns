@@ -411,10 +411,24 @@ async fn main(spawner: Spawner) {
         .set_power_saving(PowerSaveMode::None)
         .expect("disable wifi power save");
 
+    // Associate, retrying until the AP accepts us. ESP32 cold-boot association is
+    // racy; a single failed `connect_async` used to fall straight through to the
+    // unconditional `wait_link_up` below and hang forever on the "connecting"
+    // splash. Loop instead — the splash clears the moment we're actually on.
     println!("HELTEC_S3 WIFI connecting (ssid len {})", WIFI_SSID.len());
-    match controller.connect_async().await {
-        Ok(_) => println!("HELTEC_S3 WIFI connected"),
-        Err(e) => println!("HELTEC_S3 WIFI connect failed: {e:?}"),
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match controller.connect_async().await {
+            Ok(_) => {
+                println!("HELTEC_S3 WIFI connected (attempt {attempt})");
+                break;
+            }
+            Err(e) => {
+                println!("HELTEC_S3 WIFI connect attempt {attempt} failed: {e:?}; retrying");
+                Timer::after(Duration::from_millis(1000)).await;
+            }
+        }
     }
     if let Ok(ap) = controller.ap_info() {
         let b = ap.bssid;
@@ -717,11 +731,11 @@ async fn main(spawner: Spawner) {
                 // `None` hides that interface from the panel.
                 let cards: HVec<display::Card, 8> = match &snapshot {
                     Some(snap) => display::snapshot_to_cards(snap, |id| {
-                        // TEMP (ESP-NOW bring-up): hide the USB card so ESP-NOW —
-                        // the 4th interface — fits the 3-card panel and is visible.
-                        // Revert when card scrolling lands.
+                        // 4 interfaces, only 3 fit the panel: the 4th in registration
+                        // order (ESP-NOW) scrolls off the bottom until card scrolling
+                        // lands. WiFi + USB + LoRa are the visible three.
                         if id == SERIAL_INTERFACE_ID {
-                            None
+                            Some((display::CardKind::Usb, "USB"))
                         } else if id == LORA_INTERFACE_ID {
                             Some((display::CardKind::LoRa, "LoRa"))
                         } else if id == ESPNOW_INTERFACE_ID {
