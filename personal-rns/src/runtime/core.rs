@@ -303,8 +303,10 @@ fn fan_out<W: InterfaceWorker>(
 /// Cumulative Reticulum byte totals per interface, the runtime's own meter of
 /// the fabric traffic crossing its seam. Capacity is [`MAX_REGISTERED_INTERFACES`]
 /// — the same cap the engine's fanout uses — so an id from any registered
-/// interface always has a slot.
-struct TrafficLedger {
+/// interface always has a slot. `pub(crate)` so the parallel
+/// [`ContractRuntime`](super::ContractRuntime) meters the same way without
+/// duplicating the ledger.
+pub(crate) struct TrafficLedger {
     entries: HeaplessVec<InterfaceTraffic, MAX_REGISTERED_INTERFACES>,
 }
 
@@ -315,7 +317,7 @@ struct InterfaceTraffic {
 }
 
 impl TrafficLedger {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             entries: HeaplessVec::new(),
         }
@@ -339,13 +341,13 @@ impl TrafficLedger {
         self.entries.last_mut()
     }
 
-    fn add_rx(&mut self, id: InterfaceId, bytes: u64) {
+    pub(crate) fn add_rx(&mut self, id: InterfaceId, bytes: u64) {
         if let Some(row) = self.row_mut(id) {
             row.reticulum_rx_bytes = row.reticulum_rx_bytes.wrapping_add(bytes);
         }
     }
 
-    fn add_tx(&mut self, id: InterfaceId, bytes: u64) {
+    pub(crate) fn add_tx(&mut self, id: InterfaceId, bytes: u64) {
         if let Some(row) = self.row_mut(id) {
             row.reticulum_tx_bytes = row.reticulum_tx_bytes.wrapping_add(bytes);
         }
@@ -353,7 +355,7 @@ impl TrafficLedger {
 
     /// `(rx, tx)` totals for `id`; `(0, 0)` for an interface that hasn't yet
     /// carried any Reticulum traffic.
-    fn totals_for(&self, id: InterfaceId) -> (u64, u64) {
+    pub(crate) fn totals_for(&self, id: InterfaceId) -> (u64, u64) {
         self.entries
             .iter()
             .find(|e| e.id == id)

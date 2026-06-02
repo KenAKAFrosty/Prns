@@ -12,7 +12,7 @@ path = "src/lib.rs"
 default = ["std", "std-host"]
 alloc = []
 std = ["alloc"]
-std-host = ["std", "dep:getrandom"]
+std-host = ["std", "dep:getrandom", "dep:rtrb"]
 # Embedded host shells that run on embassy-net (ESP32-S3, ESP32-C6, …). Pulls the
 # embassy stack in as optional deps; OFF by default so the pure-no_std and
 # no-std-esp-build gates never see it. An embedded host turns it on to get the
@@ -44,6 +44,11 @@ heapless = { version = "0.8", default-features = false }
 # core never sees an RNG — entropy is data the host supplies — so this is optional
 # and only the host layer pulls it in.
 getrandom = { version = "0.2", optional = true }
+
+# Lock-free SPSC ring backing the std worker seam (under `std-host`): owned, Send,
+# freed on drop. The std-native replacement for a leaked `heapless::spsc` — that's
+# an embedded static-storage primitive with no business on a heap-backed host.
+rtrb = { version = "0.3", optional = true }
 
 # Embassy stack for the `embassy-host` worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),

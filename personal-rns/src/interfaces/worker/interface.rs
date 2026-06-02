@@ -1,23 +1,35 @@
-//! The interface drive contract: an [`Interface`] is started once and resolves
-//! into exactly one [`DriverMode`] — self-driven (owns its own loop) or
-//! runtime-driven (the loop ticks its `poll`). The enum makes the choice
-//! mutually exclusive by construction: a value is one variant, never both or
-//! neither, so no two-trait juggling can express an impossible interface.
+//! The interface contract: how an [`Interface`] starts, and what the runtime
+//! holds to drive it afterward.
+//!
+//! Starting an interface answers two separate questions, kept in two separate
+//! shapes so neither bleeds into the other:
+//!
+//! - **Who drives the loop?** — [`DriverMode`]. Either the interface launched its
+//!   own loop ([`SelfDriven`](DriverMode::SelfDriven)) or it cannot run itself and
+//!   the runtime ticks its `poll` ([`RuntimeDriven`](DriverMode::RuntimeDriven)).
+//!   Purely a scheduling question.
+//! - **How does the runtime reach it?** — [`InterfaceHandle`]. Every started
+//!   interface, self-driven or not, leaves the runtime a handle to drain its
+//!   inbound, queue its outbound, and trade control signals. The runtime's
+//!   relationship to a self-driven interface is not "nothing" — it is this handle.
+//!
+//! [`StartedInterface`] bundles both with the descriptor, so a started interface
+//! cannot exist without a runtime handle, and a `SelfDriven` value can never mean
+//! "the runtime has no way to reach it."
 
-use crate::engine::{InstantMillis, NextScheduledEngineWork};
-use crate::interfaces::InterfaceDescriptor;
+use crate::engine::{InboundPacket, InstantMillis, NextScheduledEngineWork, OutboundPacket};
+use crate::interfaces::{ControlReport, InterfaceDescriptor, InterfaceWorkerContext, Substrate};
 
-/// What an interface becomes the moment it starts: the runtime matches this
-/// once, at bring-up, then drives it accordingly — no per-cycle dispatch, no
-/// `dyn`, no allocator. The worker struct is the state; the variant only decides
-/// *where* it lives.
+/// Which side runs an interface's loop — the runtime's *scheduling* decision,
+/// nothing more. The runtime-side data lanes and control plane live in the
+/// interface's [`InterfaceHandle`], not here, so this enum stays narrowly about
+/// "do I poll this worker or not."
 pub enum DriverMode<Worker> {
-    /// The interface launched its own loop (a thread or an executor task). The
-    /// runtime never holds it again — they meet only through the seam built at
-    /// construction (the byte lanes plus the control plane), so this variant
-    /// carries nothing. To wind it down the runtime sends
-    /// [`ControlCommand::Stop`](super::ControlCommand) over the control lane and
-    /// watches for [`ControlReport::Stopped`](super::ControlReport).
+    /// The interface launched its own loop (a thread or an executor task), so the
+    /// runtime never polls it. The runtime still reaches it through its
+    /// [`InterfaceHandle`]; to wind it down it sends
+    /// [`ControlCommand::Stop`](super::ControlCommand) over that handle's control
+    /// lane and watches for [`ControlReport::Stopped`].
     SelfDriven,
 
     /// The interface cannot run itself (no thread, no executor). The runtime owns
@@ -29,22 +41,59 @@ pub enum DriverMode<Worker> {
     },
 }
 
-/// An autonomous interface. `start` consumes it into its running form: a
-/// self-driven interface spawns its loop and returns [`DriverMode::SelfDriven`]; a
-/// runtime-driven one does its synchronous setup and hands itself back to be
-/// polled. The seam (inbound/outbound byte lanes plus the control plane) is
-/// wired in at construction, so by `start` the interface already holds it; see
-/// [`InterfaceWorkerContext`](super::InterfaceWorkerContext).
+/// The runtime's end of one started interface's seam — the mirror image of the
+/// [`InterfaceWorkerContext`] the interface's loop holds. The runtime drains the
+/// inbound the interface stamped, queues outbound for it to transmit, and trades
+/// lifecycle signals, all non-blocking. A platform supplies the concrete type (its
+/// lanes' runtime ends); the runtime stores it and never learns what backs it.
+pub trait InterfaceHandle {
+    /// Lend each inbound packet the interface has stamped to `f`, in order, tagged
+    /// with the interface's id and arrival stamp. Returns how many were drained.
+    fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
+
+    /// Queue a packet for the interface to transmit. `false` if it does not fit or
+    /// the interface's queue is full — a drop self-heals, since the engine re-emits
+    /// announces on its own cadence.
+    fn send(&mut self, packet: OutboundPacket<'_>) -> bool;
+
+    /// Ask the interface to wind down; it reports [`ControlReport::Stopped`] when
+    /// done.
+    fn request_stop(&mut self);
+
+    /// The next report the interface has sent, if any. Never blocks.
+    fn next_report(&mut self) -> Option<ControlReport>;
+}
+
+/// A started interface, as the runtime holds it: the routing facts it registered,
+/// the [`InterfaceHandle`] it reaches the running interface through, and the
+/// [`DriverMode`] saying whether it must also be polled. Coupling the three is
+/// what makes "started but unreachable" unrepresentable.
+pub struct StartedInterface<H: InterfaceHandle, Worker> {
+    pub descriptor: InterfaceDescriptor,
+    pub handle: H,
+    pub drive: DriverMode<Worker>,
+}
+
+/// An autonomous interface, parameterized by the [`Substrate`] it runs on so this
+/// generic contract never names a platform's concrete lane types. `start` consumes
+/// the interface into its running form: it receives the worker side of the seam
+/// (the lanes the platform already built) and returns its [`DriverMode`] — a
+/// self-driven interface spawns its loop and returns
+/// [`SelfDriven`](DriverMode::SelfDriven); a runtime-driven one does its
+/// synchronous setup and hands itself back to be polled. The runtime side of the
+/// seam (the [`InterfaceHandle`]) is the platform's other half, kept by the
+/// runtime — it does not flow back through `start`.
 ///
 /// There is no teardown method. Graceful wind-down rides the control plane — the
-/// worker awaits its own cleanup on [`Stop`](super::ControlCommand), then reports
-/// [`Stopped`](super::ControlReport) — and synchronous resource release is just
-/// the worker's own [`Drop`], the same as any owned handle.
-pub trait Interface: Sized {
-    /// The routing facts the engine registers and routes on — read before
-    /// `start` consumes the interface.
+/// interface awaits its own cleanup on [`Stop`](super::ControlCommand), then
+/// reports [`Stopped`](ControlReport) — and synchronous resource release is just
+/// the interface's own [`Drop`].
+pub trait Interface<S: Substrate>: Sized {
+    /// The routing facts the engine registers and routes on — read before `start`
+    /// consumes the interface.
     fn descriptor(&self) -> InterfaceDescriptor;
 
-    /// Activate: open the device, decide the drive mode, return the [`DriverMode`].
-    fn start(self) -> DriverMode<Self>;
+    /// Activate: open the device, take the worker side of the seam, decide the
+    /// drive mode, return the [`DriverMode`].
+    fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self>;
 }

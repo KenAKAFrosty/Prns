@@ -6,8 +6,9 @@
 //! data ([`InboundSink`] / [`OutboundDrain`], filled and drained in place so no
 //! owned packet crosses the seam); one control lane carries lifecycle signals
 //! ([`ControlCommand`] / [`ControlReport`], passed by value — they're tiny). The
-//! concrete lane ends are a platform's [`Substrate`]; the runtime holds their
-//! mirrors.
+//! concrete worker-side lane ends are a platform's [`Substrate`]; the runtime
+//! holds the other ends as an
+//! [`InterfaceHandle`](crate::interfaces::InterfaceHandle).
 
 use crate::engine::OutboundPacket;
 use crate::interfaces::QueueFull;

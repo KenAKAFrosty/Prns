@@ -14,10 +14,12 @@
 //! - `snapshot` holds the app-facing [`RuntimeSnapshot`] view.
 
 pub mod channels;
+mod contract;
 mod core;
 pub mod host;
 mod snapshot;
 
+pub use contract::{run_contract, ContractRuntime, ContractStepOutput};
 pub use core::{run, Runtime};
 pub use host::{block_on, CycleStamp, Host};
 pub use snapshot::{InterfaceView, RuntimeSnapshot};
