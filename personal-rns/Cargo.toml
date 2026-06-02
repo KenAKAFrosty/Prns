@@ -13,11 +13,15 @@ default = ["std", "std-host"]
 alloc = []
 std = ["alloc"]
 std-host = ["std", "dep:getrandom", "dep:rtrb"]
+# Just the embassy primitives the contract seam needs (`embassy-sync` channels +
+# `embassy-time` clock) — NOT `embassy-net`, so this builds on the host toolchain
+# and the embassy seam is compile-checkable without an ESP cross-build. No alloc.
+embassy-seam = ["dep:embassy-sync", "dep:embassy-time"]
 # Embedded host shells that run on embassy-net (ESP32-S3, ESP32-C6, …). Pulls the
-# embassy stack in as optional deps; OFF by default so the pure-no_std and
+# full embassy stack in as optional deps; OFF by default so the pure-no_std and
 # no-std-esp-build gates never see it. An embedded host turns it on to get the
-# embassy worker shells (e.g. the AutoInterface). No alloc — heapless throughout.
-embassy-host = ["dep:embassy-net", "dep:embassy-sync", "dep:embassy-time", "dep:embassy-futures", "dep:embedded-io-async", "dep:lora-phy", "dep:log"]
+# embassy worker shells (e.g. the AutoInterface). Builds on `embassy-seam`. No alloc.
+embassy-host = ["embassy-seam", "dep:embassy-net", "dep:embassy-futures", "dep:embedded-io-async", "dep:lora-phy", "dep:log"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]

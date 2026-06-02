@@ -11,5 +11,11 @@
 #[cfg(feature = "embassy-host")]
 pub mod embassy;
 
+/// The contract seam for embassy platforms — gated on the narrow `embassy-seam`
+/// feature (just `embassy-sync` + `embassy-time`, no `embassy-net`), so it is
+/// compile-checkable on the host toolchain. `embassy-host` enables it too.
+#[cfg(feature = "embassy-seam")]
+pub mod embassy_seam;
+
 #[cfg(feature = "std-host")]
 pub mod std_host;

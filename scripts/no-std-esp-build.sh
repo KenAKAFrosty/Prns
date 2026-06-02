@@ -9,16 +9,22 @@ cd "$(dirname "$0")/.."
 
 C6_TARGET=riscv32imac-unknown-none-elf
 
-echo "[1/4] core: pure no_std (host)"
+echo "[1/5] core: pure no_std (host)"
 cargo build -p personal-rns --no-default-features
 
-echo "[2/4] core: no_std + alloc (host)"
+echo "[2/5] core: no_std + alloc (host)"
 cargo build -p personal-rns --no-default-features --features alloc
 
-echo "[3/4] core: pure no_std (ESP32-C6 / ${C6_TARGET})"
+echo "[3/5] core: pure no_std (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --target "${C6_TARGET}"
 
-echo "[4/4] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
+echo "[4/5] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --features alloc --target "${C6_TARGET}"
+
+# The embassy contract seam: just embassy-sync + embassy-time (no embassy-net), so
+# it compile-checks on the host toolchain. The full embassy-host stack still needs
+# the ESP cross-build (heltec), but this keeps the seam itself honest every step.
+echo "[5/5] embassy contract seam (no_std, host compile-check)"
+cargo build -p personal-rns --no-default-features --features embassy-seam
 
 echo "NO_STD_ESP_BUILD_GATE_OK"
