@@ -3,7 +3,7 @@
 //! to each peer. Wire-exact against Python RNS 1.3.1.
 //!
 //! - [`core`] is the platform-agnostic brain (token, peer table, discovery).
-//! - The per-platform worker shells own the sockets and drive the brain
+//! - Per-platform workers own the sockets and drive the brain.
 
 pub mod core;
 pub use core::{

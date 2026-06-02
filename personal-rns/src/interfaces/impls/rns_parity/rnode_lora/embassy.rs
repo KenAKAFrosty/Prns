@@ -1,11 +1,11 @@
-//! The embassy LoRa worker shell — runs the RNode-compatible LoRa interface over
+//! The embassy LoRa worker runs the RNode-compatible LoRa interface over
 //! a `lora-phy` radio. The host builds the `LoRa<RK, DLY>` (the SX1262, its board
 //! `InterfaceVariant`, and the front-end GPIOs) and hands it here, so this stays
 //! HAL-agnostic: it names `lora-phy`, never an esp-hal or a specific board.
 //!
-//! Like the serial shell, the outbound queue lives here (the shell drains it);
-//! the inbound mailbox the shell *stamps into* belongs to the runtime
-//! (`runtime::channels::embassy`). LoRa is a half-duplex broadcast medium,
+//! Like the serial worker, the outbound queue lives here; the inbound mailbox it
+//! stamps into belongs to the runtime (`runtime::channels::embassy`). LoRa is a
+//! half-duplex broadcast medium,
 //! so the loop sits in continuous RX and, when the runtime hands it a packet,
 //! breaks off to transmit (one or two frames, RNode-split) and returns to RX —
 //! never both at once. Received frames feed a [`LoRaReassembler`] that rebuilds
@@ -77,9 +77,9 @@ enum ServeStep {
 /// `submit` the whole packet) or an outbound packet (frame it, splitting RNode-style
 /// if needed → transmit, then return to RX).
 ///
-/// Generic over the seam `DEPTH` and the lora-phy radio kind / delay. Re-plumbed to
-/// the seam: inbound rides [`InboundSink::submit`], outbound is pulled with `ready` +
-/// `try_next_into`. No `link_up` — liveness rides a control report (deferred).
+/// Generic over the seam `DEPTH` and the lora-phy radio kind / delay. Inbound
+/// packets are submitted through [`InboundSink::submit`]; outbound packets are
+/// pulled with `ready` + `try_next_into`.
 pub async fn serve<const DEPTH: usize, RK, DLY>(
     mut lora: LoRa<RK, DLY>,
     profile: LoRaModulation,
@@ -129,8 +129,8 @@ pub async fn serve<const DEPTH: usize, RK, DLY>(
 
     let mut rx_buf = [0u8; LORA_SINGLE_FRAME_MAX];
     let mut tx_frame = [0u8; LORA_SINGLE_FRAME_MAX];
-    // Scratch for one packet pulled off the outbound ring (the copy-out the async
-    // transmit needs; the legacy `Step::Transmit` carried it owned).
+    // Scratch for one packet pulled off the outbound ring; async transmit needs
+    // an owned packet buffer.
     let mut out_pkt = [0u8; MTU];
     let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
     // RNode's header sequence nibble; one value per packet (both frames of a split

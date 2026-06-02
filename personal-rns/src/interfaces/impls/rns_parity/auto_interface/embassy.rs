@@ -1,9 +1,8 @@
-//! The embassy-net worker shell for the RNS AutoInterface — the ESP32 family
+//! The embassy-net worker for the RNS AutoInterface on the ESP32 family
 //! (S3, C6) and any embassy-net host.
 //!
-//!  The host supplies the WiFi/IP stack, the
-//! channels (`'static`), the interface id, and an entropy source; everything
-//! about *how this talks to the world* stays in here.
+//! The host supplies the WiFi/IP stack, channels (`'static`), interface id, and
+//! entropy source; this worker owns the AutoInterface sockets and protocol loop.
 
 use core::net::Ipv6Addr;
 
@@ -114,10 +113,9 @@ fn submit_data_arm(
 }
 
 /// The AutoInterface worker over the contract seam: three UDP sockets + discovery brain
-/// + beacon, with inbound data packets riding [`InboundSink::submit`] and the runtime's
-/// outbound pulled with `ready` + `try_next_into`, then fanned to every peer. No
-/// `link_up`/`peers` atomics — liveness + peer count ride a control report under the
-/// new contract (deferred); the brain still logs its live peer count each beacon.
+/// + beacon. Inbound data packets are submitted through [`InboundSink::submit`]; the
+/// runtime's outbound is pulled with `ready` + `try_next_into`, then fanned to every peer. The
+/// brain logs its live peer count each beacon.
 ///
 /// Generic over the seam `DEPTH`. `stack` must already be up (host brought up WiFi +
 /// IP). It takes no `id` — the seam tags inbound provenance.

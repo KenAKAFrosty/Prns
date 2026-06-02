@@ -171,7 +171,6 @@ impl<
         // any) or the new id into floor[floor_len - 1]. The overflow contents
         // rotate in place; the path's overflow length is unchanged, so no
         // other path's offset moves.
-        //
         // The shift is bounded by `floor_len`, not `FLOOR_PER_DESTINATION`, so the
         // visible-slice invariant holds even when `MAX_PER_DESTINATION < FLOOR_PER_DESTINATION`
         // (the path fills its live prefix and rotates inside it).

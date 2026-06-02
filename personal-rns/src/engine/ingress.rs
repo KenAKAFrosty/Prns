@@ -6,12 +6,9 @@
 //! variant. Decision sites then pattern-match, providing exhaustive
 //! compile-time checks and no unnecessary re-parsing.
 //!
-//! Today only `Announce` carries fields; the other wire-kind variants
-//! are bare discriminants documenting "the engine sees these packets
-//! exist" without yet acting on them. As future slices land
-//! (path-request handling, link establishment, data routing, proofs),
-//! each gets a clear place to extend its variant with the fields it
-//! needs.
+//! Today only `Announce` carries fields; the other wire-kind variants are bare
+//! discriminants documenting packet types the engine recognizes but does not yet
+//! handle.
 
 use crate::engine::{InboundPacket, InstantMillis};
 use crate::interfaces::InterfaceId;
@@ -32,10 +29,10 @@ pub enum Ingress<'a> {
     /// sub-contexts (path requests, app data) or act on any of them.
     Data,
 
-    /// Wire packet type `LinkRequest`. Engine sees, doesn't yet act.
+    /// Wire packet type `LinkRequest`. Engine recognizes, doesn't yet act.
     LinkRequest,
 
-    /// Wire packet type `Proof`. Engine sees, doesn't yet act.
+    /// Wire packet type `Proof`. Engine recognizes, doesn't yet act.
     Proof,
 
     /// Bytes didn't decode (truncated header, malformed wire layout,

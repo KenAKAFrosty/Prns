@@ -67,7 +67,7 @@ pub fn link_local_from_mac(mac: MacAddress) -> Ipv6Addr {
 /// The 32-byte peering token a beacon carries (in the clear) in its first 32
 /// bytes: `sha256(group_id ++ canonical(source_addr))`. not a secret; it
 /// authenticates only that the sender's source address belongs to the shared
-/// group, and it rides the wire unencrypted, so a plain (non-constant-time)
+/// group, and it travels on the wire unencrypted, so a plain (non-constant-time)
 /// `==` matches RNS and leaks nothing an eavesdropper couldn't already read.
 #[derive(PartialEq, Eq)]
 pub struct PeeringToken([u8; 32]);

@@ -3,8 +3,7 @@
 //! This module intentionally uses Reticulum's reference
 //! `SerialInterface` framing rather than inventing a local transport
 //! wrapper. That keeps USB serial, RS-232, and similar byte-stream
-//! hosts wire-compatible with a stock RNS daemon with zero adapter
-//! code.
+//! hosts wire-compatible with a stock RNS daemon.
 //!
 //! The reference implementation calls this HDLC framing, but the
 //! behavior here is specifically HDLC-like octet-stuffed framing: frame

@@ -41,7 +41,7 @@ pub const ESP_NOW_LENGTH_PREFIX_LEN: usize = 2;
 /// version tag, until the frame is full. The worker drives it: open a frame,
 /// [`try_push`](Self::try_push) queued packets while they fit, then transmit
 /// [`frame`](Self::frame) once. A packet that does not fit is held by the caller
-/// for the next frame — so a burst of small packets rides far fewer transmissions.
+/// for the next frame, so a burst of small packets uses far fewer transmissions.
 pub struct EspNowFrameWriter<'a> {
     buf: &'a mut [u8],
     len: usize,
@@ -152,8 +152,7 @@ impl<'a> Iterator for EspNowFrameReader<'a> {
 /// broadcast medium where every neighbor hears every transmission and the node
 /// repeats into it, participating fully in transport — the same medium shape as
 /// LoRa, on a different radio. Reported `Connected` once the radio is up; a
-/// broadcast medium has no per-peer link state, so later liveness rides a control
-/// report (deferred under the contract).
+/// broadcast medium has no per-peer link state.
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
@@ -213,7 +212,7 @@ mod tests {
     #[test]
     fn the_fat_v2_frame_coalesces_at_least_two_full_mtu_packets() {
         // The whole point of v2: a 500-byte MTU packet is small next to a 1470 B
-        // frame, so a desk burst of full packets still rides one transmission.
+        // frame, so a burst of full packets still fits in one transmission.
         let mtu_packet = [0x5Au8; crate::wire::MTU];
         let mut buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
         let mut w = EspNowFrameWriter::new(&mut buf);

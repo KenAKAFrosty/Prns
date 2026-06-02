@@ -84,9 +84,6 @@ pub enum HoldReason {
     /// the livelock guard).
     #[default]
     RoutingArenaPressure,
-    // Future variants when their slices land:
-    // IngressBurst — interface ingress-rate burst; release on cooldown,
-    //                follow-up: re-inject via ingest.
 }
 
 /// An owned snapshot of one held entry, returned by

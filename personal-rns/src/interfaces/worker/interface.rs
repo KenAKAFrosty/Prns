@@ -1,17 +1,16 @@
 //! The interface contract: how an [`Interface`] starts, and what the runtime
 //! holds to drive it afterward.
 //!
-//! Starting an interface answers two separate questions, kept in two separate
-//! shapes so neither bleeds into the other:
+//! Starting an interface produces two runtime-facing pieces:
 //!
 //! - **Who drives the loop?** — [`DriverMode`]. Either the interface launched its
 //!   own loop ([`SelfDriven`](DriverMode::SelfDriven)) or it cannot run itself and
 //!   the runtime ticks its `poll` ([`RuntimeDriven`](DriverMode::RuntimeDriven)).
-//!   Purely a scheduling question.
+//!   Purely a scheduling decision.
 //! - **How does the runtime reach it?** — [`InterfaceHandle`]. Every started
 //!   interface, self-driven or not, leaves the runtime a handle to drain its
 //!   inbound, queue its outbound, and trade control signals. The runtime's
-//!   relationship to a self-driven interface is not "nothing" — it is this handle.
+//!   relationship to a self-driven interface is this handle.
 //!
 //! [`StartedInterface`] bundles both with the descriptor, so a started interface
 //! cannot exist without a runtime handle, and a `SelfDriven` value can never mean
@@ -41,19 +40,15 @@ pub enum DriverMode<Worker> {
     },
 }
 
-/// The runtime's end of one started interface's seam — the mirror image of the
-/// [`InterfaceWorkerContext`] the interface's loop holds. The runtime drains the
-/// inbound the interface stamped, queues outbound for it to transmit, and trades
-/// lifecycle signals, all non-blocking. A platform supplies the concrete type (its
-/// lanes' runtime ends); the runtime stores it and never learns what backs it.
+/// The runtime's end of one started interface. All methods are non-blocking; the
+/// concrete handle type decides what queues, channels, or hardware back it.
 pub trait InterfaceHandle {
     /// Lend each inbound packet the interface has stamped to `f`, in order, tagged
     /// with the interface's id and arrival stamp. Returns how many were drained.
     fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
 
-    /// Queue a packet for the interface to transmit. `false` if it does not fit or
-    /// the interface's queue is full — a drop self-heals, since the engine re-emits
-    /// announces on its own cadence.
+    /// Queue a packet for the interface to transmit. Returns `false` if it does
+    /// not fit or the interface queue is full.
     fn send(&mut self, packet: OutboundPacket<'_>) -> bool;
 
     /// Ask the interface to wind down; it reports [`ControlReport::Stopped`] when
@@ -74,19 +69,13 @@ pub struct StartedInterface<H: InterfaceHandle, Worker> {
     pub drive: DriverMode<Worker>,
 }
 
-/// An autonomous interface, parameterized by the [`Substrate`] it runs on so this
-/// generic contract never names a platform's concrete lane types. `start` consumes
-/// the interface into its running form: it receives the worker side of the seam
-/// (the lanes the platform already built) and returns its [`DriverMode`] — a
-/// self-driven interface spawns its loop and returns
-/// [`SelfDriven`](DriverMode::SelfDriven); a runtime-driven one does its
-/// synchronous setup and hands itself back to be polled. The runtime side of the
-/// seam (the [`InterfaceHandle`]) is the platform's other half, kept by the
-/// runtime — it does not flow back through `start`.
+/// An autonomous interface, parameterized by the [`Substrate`] it runs on so the
+/// generic contract never names a platform's concrete lane types. `start`
+/// consumes the interface into its running form and returns its [`DriverMode`].
 ///
-/// There is no teardown method. Graceful wind-down rides the control plane — the
+/// There is no teardown method. Graceful wind-down uses the control plane: the
 /// interface awaits its own cleanup on [`Stop`](super::ControlCommand), then
-/// reports [`Stopped`](ControlReport) — and synchronous resource release is just
+/// reports [`Stopped`](ControlReport), and synchronous resource release is just
 /// the interface's own [`Drop`].
 pub trait Interface<S: Substrate>: Sized {
     /// The routing facts the engine registers and routes on — read before `start`
@@ -98,30 +87,16 @@ pub trait Interface<S: Substrate>: Sized {
     fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self>;
 }
 
-/// The ready-made [`Interface`] for the common case: one that drives its own loop.
-/// It carries its [`InterfaceDescriptor`] and a `launch` closure that, handed the
-/// worker side of the seam, starts that loop on whatever the platform runs
-/// concurrent work with — a std thread, an embassy task — and returns. Every
-/// self-driven interface, on every platform, has exactly this shape, so the launch
-/// mechanism is the *only* thing that varies, and it lives where it must: with the
-/// platform that owns concurrency. [`start`](Interface::start) just fires the
-/// launcher and reports [`SelfDriven`](DriverMode::SelfDriven).
-///
-/// The launcher is `FnOnce(InterfaceWorkerContext<S>)` for *every* interface — the
-/// device it transmits over is captured *inside* the closure (built beside the
-/// platform's spawn primitive, e.g. at an embassy board next to its `#[task]`), so
-/// it never surfaces in this generic signature. That is what lets a single wrapper
-/// serve serial, LoRa, ESP-NOW, AutoInterface, … across both std and embassy.
+/// Ready-made [`Interface`] for the common case: one that starts its own thread
+/// or task and leaves the runtime with only its handle. The launch closure
+/// captures any device-specific state, so this wrapper stays platform-neutral.
 pub struct SelfDrivenInterface<Launch> {
     descriptor: InterfaceDescriptor,
     launch: Launch,
 }
 
 impl<Launch> SelfDrivenInterface<Launch> {
-    /// `descriptor` is the routing facts the engine registers (read before `start`
-    /// consumes the interface); `launch`, handed the worker side of the seam, must
-    /// start the interface's loop and return promptly — spawn a thread or task, do
-    /// not block.
+    /// `launch` must start the interface loop and return promptly.
     pub fn new(descriptor: InterfaceDescriptor, launch: Launch) -> Self {
         Self { descriptor, launch }
     }

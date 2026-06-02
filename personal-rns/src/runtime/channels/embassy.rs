@@ -1,7 +1,7 @@
-//! The embassy snapshot channel: the runtime fires each cycle's [`RuntimeSnapshot`]
-//! out on a `Watch` an app subscribes to (e.g. a display render task). The inbound
-//! mailbox that used to live here retired with the legacy path — interfaces now meet
-//! the runtime through the per-interface seam in [`embassy_seam`](super::embassy_seam).
+//! The embassy snapshot channel: the runtime publishes each cycle's
+//! [`RuntimeSnapshot`] on a `Watch` an app subscribes to, such as a display render
+//! task. Interfaces meet the runtime through the per-interface seam in
+//! [`embassy_seam`](super::embassy_seam).
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::{Receiver as WatchReceiver, Sender as WatchSender, Watch};

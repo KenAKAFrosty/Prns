@@ -1,14 +1,10 @@
-//! The std serial worker shell — runs the RNS `SerialInterface` over any blocking
+//! The std serial worker runs the RNS `SerialInterface` over any blocking
 //! [`std::io`] byte stream (a `serialport`, a UART, a TCP stream, a test pipe).
-//! The host twin of the `embassy` shell: same shared `core` framing, expressed
-//! with a std thread + the contract seam instead of async.
 //!
 //! [`std_serial_interface`] builds a [`SelfDrivenInterface`] whose launch closure
 //! spawns a thread that owns the device lifecycle — open, run a connection,
 //! reconnect on unplug — running the read→deframe→submit / drain→frame→write loop
-//! against the worker side of the seam it is handed. It never names a HAL: the
-//! caller supplies an `open` closure that hands it a fresh `Read + Write` stream, so
-//! the same shell serves USB-CDC, a UART, or a test pipe.
+//! against the worker context it is handed.
 
 use std::io::{self, Read, Write};
 use std::time::Duration;
@@ -21,8 +17,6 @@ use crate::interfaces::{
 };
 use crate::runtime::channels::std_host::StdHostSubstrate;
 
-/// The worker-side seam this shell runs against — the std substrate sized to the
-/// serial MTU.
 type SerialContext = InterfaceWorkerContext<StdHostSubstrate<SERIAL_MTU>>;
 
 /// Build a self-driven serial [`Interface`](crate::interfaces::Interface) on
@@ -30,7 +24,7 @@ type SerialContext = InterfaceWorkerContext<StdHostSubstrate<SERIAL_MTU>>;
 /// thread that owns the device lifecycle — open, `serve_connection`, reconnect on
 /// unplug — running the loop against the worker side of the seam. `open` is called
 /// to (re)acquire the byte stream (a caller closes `serialport` or any HAL inside
-/// it, so this shell never names one); `reconnect` is the backoff before re-opening
+/// it, so this worker never names one); `reconnect` is the backoff before re-opening
 /// after an unplug or open failure.
 pub fn std_serial_interface<Open, Port>(
     id: InterfaceId,
@@ -62,9 +56,8 @@ where
                 ConnectionEnd::Disconnected => {}
             }
         }
-        // An open failure means the device is not plugged in yet; back off and
-        // retry unless a stop arrived while we were between connections.
-        // Honor a stop issued while we're between connections, too.
+        // Honor a stop issued while we were between connections; otherwise
+        // back off after a disconnect or failed open.
         if matches!(context.control.next_command(), Some(ControlCommand::Stop)) {
             break;
         }
@@ -113,7 +106,6 @@ fn serve_connection<Port: Read + Write>(
                     transport_failed = true;
                 }
             }
-            // Oversize packets are dropped: RNS self-heals by re-announcing.
         });
         if transport_failed {
             return ConnectionEnd::Disconnected;

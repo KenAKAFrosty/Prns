@@ -4,8 +4,8 @@
 //!
 //! [`core`] is the platform-agnostic part — routing descriptor, the modulation
 //! profile both ends must agree on, and RNode's one-byte on-air link-header
-//! codec. The embassy shell (the SX1262 driver over `lora-phy`) lands alongside
-//! it for hosts that have the radio.
+//! codec. The embassy worker drives the SX1262 through `lora-phy` for hosts that
+//! have the radio.
 
 pub mod core;
 

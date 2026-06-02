@@ -1,9 +1,7 @@
-//! The std worker seam: a per-interface three-lane seam ([`StdInterfaceSeam`]).
-//! Inbound and outbound rings the interface fills/drains in place plus a control
-//! lane, each a lock-free [`rtrb`] SPSC ring — owned, `Send`, freed on drop, no
-//! per-packet allocation. The interface's loop holds the [`InterfaceWorkerContext`];
-//! the runtime holds the [`StdInterfaceHandle`]. This is what the contract-driven
-//! runtime drains.
+//! Std implementation of the per-interface runtime lanes. Inbound and outbound
+//! use lock-free [`rtrb`] SPSC rings; control uses separate command/report rings.
+//! The interface loop holds the [`InterfaceWorkerContext`], and the runtime holds
+//! the [`StdInterfaceHandle`].
 
 use std::sync::mpsc::SyncSender;
 use std::time::Instant;
@@ -15,8 +13,6 @@ use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceHandle, InterfaceId,
     InterfaceWorkerContext, OutboundDrain, QueueFull, Substrate,
 };
-
-// ── the contract seam: per-interface rtrb rings, filled/drained in place ──────
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
 const CONTROL_DEPTH: usize = 4;
@@ -36,20 +32,16 @@ struct OutboundSlot<const MTU: usize> {
     bytes: [u8; MTU],
 }
 
-/// An rtrb producer with the host wake baked into the primitive: every publish
-/// also pokes the runtime's sleep, so an interface's `submit` / `report`
-/// automatically rouses the host with no separate signal for the worker to
-/// remember. The poke is coalesced (a 1-slot channel) and fires even when the ring
-/// is full — a backed-up ring is exactly when the host should wake to drain. The
-/// runtime owns the receiving end; this is how it pools many independent
-/// interfaces into one blocking sleep.
+/// Producer wrapper that wakes the host after every publish attempt. The wake is
+/// coalesced by the host-side channel, and it fires even when the ring is full so
+/// backpressure wakes the runtime to drain.
 struct WakingProducer<T> {
     ring: Producer<T>,
     wake: SyncSender<()>,
 }
 
 impl<T> WakingProducer<T> {
-    /// Publish `value`, returning whether it fit, and nudge the host either way.
+    /// Publish `value`, returning whether it fit, and wake the host either way.
     fn push(&mut self, value: T) -> bool {
         let pushed = self.ring.push(value).is_ok();
         let _ = self.wake.try_send(());
@@ -57,10 +49,8 @@ impl<T> WakingProducer<T> {
     }
 }
 
-/// The producer end of one interface's inbound ring (held by the worker loop).
-/// Stamps `arrived_at` off the shared `clock_base`, so the worker needs no clock
-/// of its own and the stamp shares the engine's timebase. Publishing wakes the
-/// host automatically (the wake is baked into the `WakingProducer`).
+/// The worker-held producer end of one interface's inbound ring. It stamps
+/// arrival times from the host's shared monotonic origin.
 pub struct StdInboundSink<const MTU: usize> {
     producer: WakingProducer<InboundSlot<MTU>>,
     clock_base: Instant,
@@ -126,9 +116,7 @@ impl<const MTU: usize> Substrate for StdHostSubstrate<MTU> {
     type Control = StdControlEndpoint;
 }
 
-/// The runtime's end of one interface's seam: drains the inbound the worker
-/// stamped (tagging it with the interface id this ring belongs to), queues
-/// outbound for the worker to transmit, and trades control signals.
+/// The runtime-held end of one interface's lanes.
 pub struct StdInterfaceHandle<const MTU: usize> {
     id: InterfaceId,
     inbound: Consumer<InboundSlot<MTU>>,
@@ -180,15 +168,9 @@ pub struct StdInterfaceSeam<const MTU: usize> {
 }
 
 impl<const MTU: usize> StdInterfaceSeam<MTU> {
-    /// Build one interface's three-lane seam: two `depth`-deep data rings (inbound,
-    /// outbound) plus the control lanes, each a lock-free SPSC ring split into the
-    /// worker-held producer/consumer and the runtime-held handle. `clock_base` is
-    /// the host's one monotonic origin — pass the same `Instant` to every seam so
-    /// all interfaces stamp arrival on a shared timebase comparable to the engine's
-    /// cycle clock. `wake` is the runtime's sleep-notify: the inbound and report
-    /// producers poke it on every publish, so the host blocks on its receiving end
-    /// and wakes the instant any interface has something to drain. Nothing is
-    /// leaked: each ring is `Arc`-shared and freed once both ends drop.
+    /// Build one interface's data and control lanes. Pass the same `clock_base`
+    /// to every seam so arrivals share the engine's timebase; `wake` is the
+    /// host's sleep-notify channel.
     pub fn new(id: InterfaceId, clock_base: Instant, depth: usize, wake: SyncSender<()>) -> Self {
         let (in_producer, in_consumer) = RingBuffer::<InboundSlot<MTU>>::new(depth);
         let (out_producer, out_consumer) = RingBuffer::<OutboundSlot<MTU>>::new(depth);

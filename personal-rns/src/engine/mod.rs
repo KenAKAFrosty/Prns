@@ -1,9 +1,9 @@
 //! Pure protocol engine boundary.
 //!
-//! The engine has two verbs. `ingest` takes a batch of inbound packets, each
-//! frozen with the instant it arrived, and is clock-free. `tick` advances the
-//! engine's periodic work to a caller-supplied `now`. Neither reads clocks,
-//! sockets, or storage directly.
+//! The engine has two verbs. [`ingest_packets`] takes inbound packets that
+//! already carry arrival time and source interface, and [`tick`] advances
+//! scheduled work to a caller-supplied `now`. Neither reads clocks, sockets, or
+//! storage directly.
 
 pub mod egress;
 pub mod ingress;
@@ -40,23 +40,15 @@ use crate::wire::DestinationHash;
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
-/// Cap on how many interfaces the engine can own at once. Picked against
-/// embedded reality — a real device typically has 1–4 active interfaces; 8
-/// gives slack for hosts that present a virtual interface (USB, BLE,
-/// loopback for diagnostics) without ballooning per-tick fanout arena
-/// storage. Tunable if a real host outgrows it; not exposed as a const
-/// generic for now, to keep `EngineState`'s type signature manageable.
+/// Cap on registered interfaces. Eight covers the expected embedded shape
+/// (radio, serial, diagnostics, and a little headroom) without adding another
+/// const parameter to [`EngineState`].
 pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
 
-/// Bytes the jitter package draws from the per-cycle seed. The jitter package is
-/// a `u64`, not raw bytes like the announce nonce, because it is consumed
-/// *numerically*: `jitter_offset_for` mixes it with the destination through a
-/// splitmix step, so an integer is its natural form and the split converts these
-/// bytes to one. (The nonce stays bytes — it is copied to the wire, not computed
-/// on.)
+/// Bytes reserved in the per-cycle seed for rebroadcast jitter.
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
 /// Raw entropy a single step needs, drawn once per cycle by the host and split by
@@ -64,11 +56,8 @@ const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 /// need.
 pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
-/// The raw CSPRNG bytes a host draws for exactly one engine cycle, before the
-/// engine carves them into typed packages at [`EngineCycleEntropy::from_seed`]. A
-/// newtype so a host's per-cycle draw is named on the runtime seam and can't be
-/// confused with any other buffer; move-only so each step consumes a fresh draw
-/// rather than silently reusing one across cycles.
+/// Raw CSPRNG bytes for one engine cycle, before
+/// [`EngineCycleEntropy::from_seed`] splits them into typed packages.
 pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
 
 impl EngineCycleEntropySeed {
@@ -81,20 +70,17 @@ impl EngineCycleEntropySeed {
     }
 }
 
-/// One step's entropy, split into a named package per consumer so the type
-/// declares exactly what randomness the step needs and for what. Adding a
-/// consumer means adding a field here — which forces [`from_seed`](Self::from_seed)
-/// and every caller to account for the new draw, rather than silently widening
-/// an opaque scalar.
+/// One cycle's entropy, split by consumer.
 pub struct EngineCycleEntropy {
+    /// Seed used to spread rebroadcast timing inside this engine cycle.
     pub jitter: JitterSeed,
+    /// Nonce material consumed only when a self-announce is due.
     pub self_announce: SelfAnnounceEntropy,
 }
 
 impl EngineCycleEntropy {
-    /// Carve the raw step seed into its packages at the one auditable site:
-    /// the low `JITTER_SEED_LEN` bytes seed the jitter spreader, the next
-    /// [`SelfAnnounceEntropy::LEN`] are the self-announce nonce.
+    /// Split the raw seed: low `JITTER_SEED_LEN` bytes seed the jitter spreader,
+    /// then [`SelfAnnounceEntropy::LEN`] bytes become the self-announce nonce.
     pub fn from_seed(seed: EngineCycleEntropySeed) -> Self {
         let bytes = seed.as_bytes();
         let mut jitter = [0u8; JITTER_SEED_LEN];
@@ -132,33 +118,30 @@ impl<'a> OutboundPacket<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextScheduledEngineWork {
+    /// Work is ready now; the host should drive another cycle without delay.
     Immediate,
+    /// No work is ready before this timestamp.
     At(InstantMillis),
+    /// The engine has no scheduled work.
     Idle,
 }
 
-/// Retained engine state. **Purely abstract** in its type parameters — does
-/// not name a preset. The no_std stack-resident preset lives in
-/// [`FixedCapacityEngineState`]; that's the canonical embedded entry point. A
-/// capable host substitutes alternate routing-storage backends at the type
-/// parameters directly.
+/// Retained engine state, generic over routing-storage backends. The no_std
+/// stack-resident preset is [`FixedCapacityEngineState`].
 ///
-/// The engine owns its **interface registry** — the host calls
+/// The engine owns its interface registry: the host calls
 /// [`register_routable_descriptor`] at startup for each interface it presents.
 /// From then on the engine computes positive `fire_on` fanout targets per
-/// directive (see [`EgressDirective`]) rather than asking the host to apply
-/// "don't reflect back to source" by hand.
+/// directive instead of making the host filter "don't reflect to source".
 ///
 /// [`register_routable_descriptor`]: EngineState::register_routable_descriptor
 /// [`EgressDirective`]: crate::engine::EgressDirective
 ///
-/// `Default` builds a **relay**: no identity, no self-announce — it forwards
-/// others' announces but originates nothing of its own. A node that signs,
-/// agrees, or announces itself is built with [`new`](EngineState::new) or
-/// [`announcing`](EngineState::announcing), which hand the engine its hot
-/// in-memory identity. Not `Clone`/`PartialEq`/`Eq`: it owns secret key
-/// material, which must not be duplicated or compared. `Debug` is hand-written
-/// to redact that material (it prints only the identity's public hash).
+/// `Default` builds a relay: no identity, no self-announce. A node that needs
+/// identity material is built with [`new`](EngineState::new) or
+/// [`announcing`](EngineState::announcing). The type is intentionally not
+/// `Clone`/`PartialEq`/`Eq` because it may own secret key material; `Debug`
+/// prints only the public identity hash.
 #[derive(Default)]
 pub struct EngineState<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
 where
@@ -171,20 +154,12 @@ where
     ingested_packet_count: u64,
     routing_table: RoutingTable<R, A, H, D>,
     held_announces_cache: HeldAnnouncesCache<MAX_HELD_ANNOUNCES>,
-    // The pending-rebroadcast set is capped at `MAX_HELD_ANNOUNCES`, reusing the held-cache
-    // dial: one slot per destination, and the realistic per-tick burst of
-    // unique accepts is the same order of magnitude as `MAX_HELD_ANNOUNCES` (we already park
-    // up to `MAX_HELD_ANNOUNCES` arena-pressure overflows per tick). Hosts that genuinely
-    // see larger bursts widen `MAX_HELD_ANNOUNCES` and get both columns at once. A separate
-    // `MAX_PENDING` dial is the obvious next iteration if that assumption
-    // breaks.
+    // Reuses the held-cache dial: both queues track one announce-related unit
+    // per destination, and constrained hosts widen them together for now.
     pending_rebroadcasts: PendingRebroadcasts<MAX_HELD_ANNOUNCES>,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
-    // The node's own identity, owned hot for the engine's lifetime so every
-    // signing / key-agreement operation reads it from memory rather than
-    // re-deriving or re-fetching per use. `None` for a pure relay. The secret
-    // keys inside zeroize on drop and have no byte accessor (see
-    // `InMemoryNodeIdentity`)
+    // `None` for a relay. `InMemoryNodeIdentity` redacts and zeroizes its
+    // secret keys.
     identity: Option<InMemoryNodeIdentity>,
     self_announce: Option<SelfAnnounceSettings>,
 }
@@ -224,7 +199,7 @@ pub enum RegisterInterfaceError {
 
 /// The no_std stack-resident engine-state preset — the only place the
 /// default backend choices are named. Mirrors
-/// [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable)
+/// [`DefaultRoutingTable`](crate::routing::DefaultRoutingTable).
 pub type FixedCapacityEngineState<
     const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
@@ -252,18 +227,14 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Build an engine that owns `identity_secret_key` as its hot in-memory
-    /// identity (see [`InMemoryNodeIdentity`]) but does not announce a
-    /// destination of its own. Use this for a node that needs to sign or agree
-    /// without periodically announcing itself; a pure relay needs no identity at
-    /// all and is built with [`default`](Default::default).
+    /// Build an engine with an in-memory identity but no self-announce. Use this
+    /// for a node that needs to sign or agree without periodically announcing
+    /// itself; a pure relay is [`default`](Default::default).
     ///
     /// `identity_secret_key` is the 64 bytes that *are* the node's two private
     /// keys (X25519 ‖ Ed25519, RNS `prv_bytes` layout) — used verbatim, never
-    /// stretched. It arrives through a [`Zeroizing`] buffer the host fills from
-    /// its own secret store; that is a deliberately separate channel from the
-    /// per-cycle CSPRNG seed (which seeds re-announce-timing jitter and must never be
-    /// the source of key material).
+    /// stretched. It arrives through a [`Zeroizing`] buffer supplied by the
+    /// host's secret store, separate from the per-cycle CSPRNG seed.
     pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self
     where
         R: Default,
@@ -312,8 +283,7 @@ where
         self.routing_table.route_count()
     }
 
-    /// Tracked destinations reachable via `interface` — the per-interface
-    /// slice of [`route_count`](Self::route_count) a runtime surfaces per card.
+    /// Tracked destinations reachable via `interface`.
     pub fn route_count_via(&self, interface: InterfaceId) -> usize {
         self.routing_table.route_count_via(interface)
     }
@@ -326,13 +296,9 @@ where
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// Register an interface for engine fanout by its
-    /// [`InterfaceDescriptor`] — the routing facts an interface presents, since it
-    /// owns its byte I/O and surfaces only what the engine routes on.
-    /// Checks the load-bearing contract: it must be `Connected`/`Degraded`
-    /// (connected enough to route) and it must be able to transmit. Idempotent:
-    /// registering an already-known interface id is a no-op that returns
-    /// `Ok(())`.
+    /// Register an interface for engine fanout by its [`InterfaceDescriptor`].
+    /// It must be routable (`Connected`/`Degraded`) and able to transmit.
+    /// Re-registering the same id is a no-op.
     pub fn register_routable_descriptor(
         &mut self,
         descriptor: &InterfaceDescriptor,
@@ -492,35 +458,18 @@ struct DirectiveFanout {
     fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
 }
 
-/// What `tick` produced this cycle.
+/// What [`tick`] produced this cycle.
 ///
-/// Holds a mutable borrow on the engine state for its lifetime — so the
-/// host can iterate the typed directives via [`egress_directives`], and
-/// the engine's commit (drain of processed entries) happens
-/// automatically when this value drops. The borrow also structurally
-/// enforces the pseudo-pure tick contract: no other state mutation can
-/// happen while a `TickOutput` is alive.
-///
-/// **What stays behind**: only the directives the host is handed this
-/// tick get committed (removed from engine state) on Drop. Everything
-/// else the engine had scheduled for a future tick — today only
-/// not-yet-due entries in the rebroadcast schedule, tomorrow other
-/// directive kinds with their own lifecycle (data sends, proofs, link
-/// replies, ...) — stays inside engine state and surfaces on a later
-/// tick when its time comes. The engine owns its own schedules; the
-/// host is a dumb tx/rx pump. The fixed-cap backends used today cap
-/// the in-flight schedule — a growable backend is on the roadmap
-/// once we want to mentally validate the "engine has effectively
-/// infinite room to carry stuff over" model at scale.
+/// Holds a mutable borrow on engine state while the host iterates directives.
+/// Dropping or explicitly committing this value drains only the due entries that
+/// were made visible this tick; future scheduled work remains in engine state.
 ///
 /// **Fanout is engine-computed**: each yielded [`EgressDirective`]
 /// carries an explicit positive `fire_on: &[InterfaceId]` list. The
 /// engine builds this from the [registered interfaces](
-/// EngineState::registered_interfaces) minus the source, so the host
-/// stays a pure tx/rx pump with no "don't reflect to source" filter
-/// logic. Directives whose computed `fire_on` would be empty are
-/// elided (engine processed → host sees nothing) but still drained on
-/// Drop so they don't re-fire next tick.
+/// EngineState::registered_interfaces) minus the source. Directives whose
+/// computed list is empty are elided but still committed so they do not re-fire
+/// next tick.
 ///
 /// [`egress_directives`]: TickOutput::egress_directives
 #[must_use]
@@ -544,8 +493,7 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Count of directives the host receives this tick — identical to
-    /// the number of items [`egress_directives`] will yield.
+    /// Count of directives the host receives this tick.
     ///
     /// [`egress_directives`]: TickOutput::egress_directives
     pub fn egress_directive_count(&self) -> usize {
@@ -556,18 +504,9 @@ where
         self.recovered_from_held_count
     }
 
-    /// Iterate every directive the engine is handing to the host this
-    /// tick. Read-only — the iterator yields [`EgressDirective`]
-    /// borrowing from `&self` (the announce body comes from the
-    /// routing table; the `fire_on` slice comes from this
-    /// `TickOutput`'s fanout arena). The host can re-iterate, count,
-    /// peek, find, collect snapshots. On [`commit`](Self::commit) (or
-    /// Drop as a backstop) the engine removes exactly the set of entries
-    /// yielded here from whichever per-kind schedule produced them;
-    /// everything else stays in state for a future tick. Today the only source is the
-    /// rebroadcast schedule; as more directive kinds land the
-    /// iterator will chain across additional sources, each with its
-    /// own commit.
+    /// Iterate every directive due this tick. The announce body borrows from the
+    /// routing table; the `fire_on` slice borrows from this output's fanout arena.
+    /// The iterator is read-only and may be traversed before [`commit`](Self::commit).
     pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
         let state = &*self.state;
         self.fanouts.iter().filter_map(move |fanout| {
@@ -582,22 +521,14 @@ where
         })
     }
 
-    /// Commit the tick: remove the due re-emissions this tick yielded from state
-    /// so they don't re-fire on a later tick. Consumes the output — releasing its
-    /// `&mut state` borrow — so call it once the host has iterated
-    /// [`egress_directives`](Self::egress_directives). [`Drop`] runs the same
-    /// commit as a backstop if you forget; the drain is idempotent, so the
-    /// explicit call plus the Drop backstop never double-commit.
+    /// Remove the due entries yielded this tick and release the mutable state
+    /// borrow. [`Drop`] runs the same commit as a backstop.
     pub fn commit(mut self) {
         self.commit_in_place();
     }
 
-    /// The commit's work, shared by [`commit`](Self::commit) and [`Drop`]. Each
-    /// per-kind schedule drops exactly the entries it just yielded to the host
-    /// (today: the rebroadcast set, drained by `due_at <= now`); everything else
-    /// stays in state for a future tick. Dispatch failures are NOT retried here —
-    /// failure feedback flows back via future inputs (interface state changes,
-    /// the re-broadcast cycle), never via cancelling this commit.
+    /// Shared commit path for [`commit`](Self::commit) and [`Drop`].
+    /// Dispatch failures are not retried here; future inputs drive recovery.
     fn commit_in_place(&mut self) {
         self.state.pending_rebroadcasts.drain_due(self.now);
     }
@@ -655,8 +586,7 @@ where
                 &mut counters,
             ),
 
-            // Wire-recognised but not yet handled by the engine. Future
-            // slices land their dispatch here.
+            // Wire-recognised but not yet handled by the engine.
             Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
 
             // Bad header / failed announce validation; dropped.
@@ -674,8 +604,7 @@ where
     }
 }
 
-/// Per-batch counters mutated by per-variant ingest handlers. Stays
-/// private to `ingest`; the public surface is [`IngestOutput`].
+/// Per-batch counters shared by inbound packet handlers.
 #[derive(Default)]
 struct IngestCounters {
     accepted: usize,
@@ -765,7 +694,7 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
 /// [`TickOutput`] holding `&mut state` until the host has iterated the
 /// directives the engine produced.
 ///
-/// `entropy` is the same per-step value passed to `ingest`; reused here
+/// `jitter` is the same per-cycle value passed to [`ingest_packets`]; reused here
 /// so a held-recovery accept gets a deterministic jittered re-emission
 /// slot. The returned [`TickOutput`] is itself `#[must_use]`, so
 /// dropping it without iterating is a compile-time warning.
@@ -782,13 +711,9 @@ where
 {
     state.tick_count = state.tick_count.saturating_add(1);
 
-    // Drain the WHOLE held cache this tick — not one entry per tick. Each parked
-    // entry gets exactly one retry against the current (post-ingest) arena state
-    // and is then either installed or discarded; we never re-park (the livelock
-    // guard), so the loop strictly shrinks the cache and terminates, bounded by
-    // its capacity. Draining fully means the cache is empty after every tick, so
-    // the engine's wake-up scheduling never has to account for still-parked work
-    // — retry was never time-driven, it was just paced by the old poll cadence.
+    // Draining the whole held cache here avoids time-driven retry state: every
+    // held announce is retried once against the current arena and then installed
+    // or discarded.
     let mut recovered_from_held_count = 0;
     while let Some(held) = state.held_announces_cache.take_next() {
         use crate::routing::held_cache::HoldReason;
@@ -838,14 +763,8 @@ where
         }
     }
 
-    // Materialise per-due-directive fanout: for each rebroadcast whose
-    // due_at <= now, build the positive `fire_on` list (registered
-    // interfaces minus the source). Directives whose computed list is
-    // empty are elided here (engine processed → host sees nothing) but
-    // still drained on Drop so they don't re-fire next tick. The host
-    // iterates the typed directives via `TickOutput::egress_directives`
-    // and commits on Drop. Anything not-yet-due stays parked in
-    // `pending_rebroadcasts` and surfaces on a later tick.
+    // Materialise fanout for due rebroadcasts. Empty target lists are elided but
+    // still committed by `TickOutput`.
     let mut fanouts: HeaplessVec<DirectiveFanout, MAX_HELD_ANNOUNCES> = HeaplessVec::new();
     for scheduled in state
         .pending_rebroadcasts
@@ -1461,8 +1380,8 @@ mod tests {
         let mut state = FixedCapacityEngineState::<4, 64, 8>::default(); // 8-byte arena
 
         // A second valid announce for a *different* destination than RAW_ANNOUNCE
-        // (fixture identity + a distinct aspect), framed onto the wire so ingest
-        // takes it through the same path.
+        // (fixture identity + a distinct aspect), framed onto the wire so it takes
+        // the same packet path.
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
         let announce2 = Announce::build_signed(
@@ -1513,9 +1432,9 @@ mod tests {
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
-        // The const-generic lever: a roomier table is just a different type, and
-        // ingest is generic over it — same engine, no heap, no API change. (Very
-        // large widths belong on the heap; this inline default lives on the stack.)
+        // The const-generic lever: a roomier table is just a different type. The
+        // same engine accepts it with no heap and no API change. Very large widths
+        // belong on the heap; this inline default lives on the stack.
         let raw = hx(RAW_ANNOUNCE);
         let mut state = FixedCapacityEngineState::<64, 128>::default();
         let out = ingest_packets(

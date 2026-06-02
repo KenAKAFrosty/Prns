@@ -1,19 +1,9 @@
-//! The contract runtime — the pooling engine-bolt for the
-//! [`Interface`](crate::interfaces::Interface) contract (rnsd, the ESP32-C6, and the
-//! heltec S3 all run on it).
+//! Runtime for pooling started interfaces into the pure engine.
 //!
-//! It holds a [`StartedInterface`] per interface and meets each through its
-//! [`InterfaceHandle`] — the runtime-side end of the per-interface seam. Its job
-//! is to *pool*: each cycle it drains every handle's inbound straight into the
-//! engine (zero-copy, ingested while still borrowed from the ring), ticks, and
-//! fans the engine's egress back out through `handle.send`. The handles' worker
-//! ends run themselves (a thread, a task) and wake the host through the seam, so
-//! the loop sleeps until an interface has something or a deadline is due.
-//!
-//! Naming is deliberately neutral for now. The pooling will likely split into two
-//! ends — an intake manifold and an exhaust manifold — and the intake earns its
-//! keep the moment there are two interfaces, let alone many. That refactor comes
-//! once this is built up.
+//! Each cycle drains inbound packets from every [`InterfaceHandle`], ticks the
+//! engine, and fans resulting egress back through the handles. Interface workers
+//! wake the host when their queues need service; the runtime sleeps until an
+//! interface wakes it or the engine has scheduled work due.
 
 use heapless::Vec as HeaplessVec;
 
@@ -32,9 +22,7 @@ use crate::routing::storage::{
 };
 use crate::wire::MTU;
 
-/// What one pooled drive cycle did — summed across every interface's intake plus the
-/// tick's egress. `next_poll` carries when the runtime-driven interfaces next need
-/// polling, folded into the loop's sleep alongside the engine's own deadline.
+/// Summary of one pooled drive cycle.
 #[derive(Debug)]
 pub struct ContractStepOutput {
     pub ingested_packet_count: usize,
@@ -44,10 +32,7 @@ pub struct ContractStepOutput {
     pub next_poll: NextScheduledEngineWork,
 }
 
-/// The contract runtime: the engine and its started interfaces as siblings, plus
-/// the traffic meter and a [`Host`]. The engine and the interfaces never speak
-/// directly — this runtime is their only seam, pooling each interface's
-/// [`InterfaceHandle`] into the engine and fanning the engine's egress back out.
+/// The engine, started interfaces, traffic meter, and [`Host`] that drives them.
 ///
 /// Generic over the engine-state storage (a constrained host picks a small preset)
 /// and over the handle type `IH` + the runtime-driven worker type `W` — a host
@@ -78,11 +63,9 @@ where
     H: AnnounceIdHistory,
     D: RetainedAppData,
 {
-    /// Bolt `engine` to the `started` interfaces and a `host`, registering each
-    /// interface (by its descriptor) so the engine routes to it. Panics if an
-    /// interface is not routable (`Connected`/`Degraded` + transmits) or if more
-    /// than [`MAX_REGISTERED_INTERFACES`] are supplied — a host wires a known-good
-    /// set at boot.
+    /// Build a runtime and register each started interface with the engine.
+    /// Panics if the host supplies a non-routable interface or more than
+    /// [`MAX_REGISTERED_INTERFACES`] interfaces.
     pub fn new(
         mut engine: EngineState<R, A, H, D, MAX_HELD>,
         started: impl IntoIterator<Item = StartedInterface<IH, W>>,
@@ -144,13 +127,9 @@ where
     }
 }
 
-/// Drive `runtime` forever: ask its host for one cycle's clock + entropy (which
-/// sleeps until an interface wakes it or the next deadline), pool the interfaces
-/// through one cycle, surface the fresh snapshot to `observe`, and feed the
-/// engine's next deadline — folded with any runtime-driven interface's poll
-/// deadline — back as the next sleep target. A free fn, not a method, so the one
-/// fixed loop can't be overridden and can destructure the runtime to drive the
-/// host while the engine/interfaces are borrowed separately.
+/// Drive `runtime` forever. The host supplies the clock and entropy at each wake;
+/// the loop then pools interfaces, emits a snapshot, and computes the next engine
+/// or interface deadline.
 pub async fn run_contract<Ho, Observe, IH, W, R, A, H, D, const MAX_HELD: usize>(
     runtime: ContractRuntime<Ho, IH, W, R, A, H, D, MAX_HELD>,
     mut observe: Observe,
@@ -198,8 +177,7 @@ where
 {
     let entropy = EngineCycleEntropy::from_seed(entropy_seed);
 
-    // Poll the runtime-driven interfaces; the self-driven ones run themselves and
-    // never appear here. Fold when each next needs driving into the cycle's sleep.
+    // Poll runtime-driven interfaces and fold their next deadlines into sleep.
     let mut next_poll = NextScheduledEngineWork::Idle;
     for started in interfaces.iter_mut() {
         if let DriverMode::RuntimeDriven { worker, poll } = &mut started.drive {
@@ -207,10 +185,7 @@ where
         }
     }
 
-    // INTAKE: pool every interface's inbound straight into ingest — each packet
-    // metered to the interface that heard it and ingested while still borrowed
-    // from its ring slot (zero-copy), since ingest is clock-free and per-packet
-    // idempotent.
+    // Drain inbound while packets still borrow from their interface ring slots.
     let mut ingested_packet_count = 0;
     let mut accepted_announce_count = 0;
     let mut scheduled_rebroadcast_count = 0;
@@ -225,7 +200,7 @@ where
         });
     }
 
-    // STEP: tick, then fan each due egress directive to the interfaces it names.
+    // Tick, then fan each due egress directive to the named interfaces.
     let tick_output = tick(engine, now, entropy.jitter);
     let egress_directive_count = tick_output.egress_directive_count();
     let mut emit_buffer = [0u8; MTU];
@@ -237,8 +212,7 @@ where
     }
     tick_output.commit();
 
-    // Originate our own announce when one is due — fanned to every registered
-    // interface, only when there is one to carry it.
+    // Originate our own announce when due.
     if !engine.registered_interfaces().is_empty() {
         if let Some(n) =
             engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
@@ -252,12 +226,11 @@ where
         }
     }
 
-    // Pool the control reports the same way as inbound.
+    // Drain control reports.
     for started in interfaces.iter_mut() {
         while let Some(report) = started.handle.next_report() {
             match report {
-                // A finished interface should be marked down / removed; nothing in
-                // the rnsd vertical self-stops yet, so this is a no-op for now.
+                // Link-state reports are not surfaced yet.
                 ControlReport::Stopped => {}
             }
         }
@@ -273,8 +246,7 @@ where
 }
 
 /// Fan one outgoing packet to the interfaces the engine named in `fire_on`,
-/// metering its bytes to each target. Non-blocking: a full handle drops the packet
-/// — the engine re-emits announces on its own cadence, so a drop self-heals.
+/// metering its bytes to each target.
 fn fan_to_handles<IH: InterfaceHandle, W>(
     interfaces: &mut HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
     traffic: &mut TrafficLedger,
@@ -311,9 +283,7 @@ where
         // `push` can't overflow: interfaces.len() <= MAX_REGISTERED_INTERFACES.
         let _ = views.push(InterfaceView {
             id,
-            // TODO(liveness): stubbed until link status rides the control plane as
-            // a rare LinkUp/LinkDown report. rnsd's `observe` reads
-            // `tracked_destinations`, not `online`, so nothing regresses meanwhile.
+            // Link-state reports are not surfaced yet.
             online: true,
             reticulum_rx_bytes,
             reticulum_tx_bytes,

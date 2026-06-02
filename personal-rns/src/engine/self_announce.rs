@@ -49,7 +49,7 @@ impl Default for ReannounceSchedule {
 }
 
 /// What a node announces about itself: which destination (app name + aspects),
-/// what app data rides along, and how often. The transient input the engine
+/// which app data is attached, and how often. The transient input the engine
 /// parses into a [`SelfAnnounceSettings`] at construction.
 pub struct SelfAnnounceConfig<'a> {
     pub app_name: &'a str,

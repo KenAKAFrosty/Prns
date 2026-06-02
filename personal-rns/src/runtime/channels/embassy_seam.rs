@@ -1,8 +1,7 @@
-//! The embassy worker seam — the embassy-native analog of the std seam
-//! ([`std_host`](super::std_host)). A per-interface three-lane seam: inbound and
-//! outbound rings the interface fills/drains in place plus a control lane, each an
-//! `embassy_sync::Channel`. The interface's task holds the [`InterfaceWorkerContext`];
-//! the runtime holds the [`EmbassyInterfaceHandle`].
+//! Embassy implementation of the per-interface runtime lanes. Inbound,
+//! outbound, command, and report lanes are `embassy_sync::Channel`s split between
+//! the worker's [`InterfaceWorkerContext`] and the runtime's
+//! [`EmbassyInterfaceHandle`].
 //!
 //! Two embassy specifics versus std:
 //! - **Static storage, not allocated rings.** A `Channel` lives in a `'static`,
@@ -29,15 +28,11 @@ use crate::interfaces::{
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
 const CONTROL_DEPTH: usize = 4;
 
-/// The host's one wake: every interface's seam holds a reference and
-/// [`signal`](Signal::signal)s it on `submit` / `report`, so a host blocked on
-/// `wake.wait()` returns the moment any interface has something. The board declares
-/// it as a `static` and hands `&'static` references to every seam.
+/// Shared host wake. Each interface signals it when inbound data or a report is
+/// queued, so one host sleep can wait on all interfaces.
 pub type WakeSignal = Signal<CriticalSectionRawMutex, ()>;
 
-/// A fresh, un-signaled [`WakeSignal`] for a board `static` — so a board writes
-/// `static WAKE: WakeSignal = new_wake_signal();` without having to name
-/// `embassy_sync` itself.
+/// A fresh [`WakeSignal`] for board `static`s.
 pub const fn new_wake_signal() -> WakeSignal {
     Signal::new()
 }
@@ -56,10 +51,9 @@ struct OutboundSlot<const MTU: usize> {
     bytes: [u8; MTU],
 }
 
-/// One interface's four channels, bundled so the board declares a single `static`
-/// per interface. [`EmbassyInterfaceSeam::split`] hands the worker the producing /
-/// consuming ends it needs and the runtime the mirror ends. `DEPTH` is the in-flight
-/// capacity of each data ring; the control lanes use [`CONTROL_DEPTH`].
+/// One interface's four channels, bundled so the board declares a single
+/// `static` per interface. `DEPTH` is the data-lane capacity; control lanes use
+/// [`CONTROL_DEPTH`].
 pub struct EmbassyInterfaceChannels<const MTU: usize, const DEPTH: usize> {
     inbound: Channel<CriticalSectionRawMutex, InboundSlot<MTU>, DEPTH>,
     outbound: Channel<CriticalSectionRawMutex, OutboundSlot<MTU>, DEPTH>,
@@ -85,9 +79,8 @@ impl<const MTU: usize, const DEPTH: usize> Default for EmbassyInterfaceChannels<
     }
 }
 
-/// The producer end of one interface's inbound channel (held by the worker task).
-/// Stamps `arrived_at` off the embassy-global clock and signals the host's wake on
-/// every publish, so the worker needs no clock and no separate wake of its own.
+/// Worker-held producer end of one interface's inbound channel. It stamps
+/// arrivals from the embassy-global clock and signals the host on publish.
 pub struct EmbassyInboundSink<const MTU: usize, const DEPTH: usize> {
     producer: Sender<'static, CriticalSectionRawMutex, InboundSlot<MTU>, DEPTH>,
     wake: &'static WakeSignal,
@@ -126,19 +119,13 @@ impl<const MTU: usize, const DEPTH: usize> OutboundDrain for EmbassyOutboundDrai
 }
 
 impl<const MTU: usize, const DEPTH: usize> EmbassyOutboundDrain<MTU, DEPTH> {
-    /// Await until at least one outbound packet is queued, without consuming it, so an
-    /// async worker can `select` inbound-vs-outbound and only then drain. The await
-    /// the sync trait can't offer: [`drain_each`](OutboundDrain::drain_each) only
-    /// reports what is *already* there.
+    /// Await until at least one outbound packet is queued, without consuming it.
     pub async fn ready(&self) {
         self.consumer.ready_to_receive().await;
     }
 
-    /// Copy the next queued outbound packet's bytes into `out`, returning its length,
-    /// or `None` if the ring is empty. The async-worker twin of the sync
-    /// [`drain_each`](OutboundDrain::drain_each): a worker pulls one packet, frames
-    /// it, and `.await`s the write — which a sync closure can't. The copy-out is the
-    /// price of crossing an `.await` (a sync host instead borrows the slot in place).
+    /// Copy the next queued outbound packet into `out`, returning its length.
+    /// Copying lets the caller hold the bytes across an `.await`.
     pub fn try_next_into(&mut self, out: &mut [u8]) -> Option<usize> {
         let slot = self.consumer.try_receive().ok()?;
         let len = slot.len as usize;
@@ -187,9 +174,7 @@ impl<const MTU: usize, const DEPTH: usize> Substrate for EmbassyHostSubstrate<MT
     type Control = EmbassyControlEndpoint;
 }
 
-/// The runtime's end of one interface's seam: drains the inbound the worker
-/// stamped (tagging it with the interface id this channel belongs to), queues
-/// outbound for the worker to transmit, and trades control signals.
+/// Runtime-held end of one interface's lanes.
 pub struct EmbassyInterfaceHandle<const MTU: usize, const DEPTH: usize> {
     id: InterfaceId,
     inbound: Receiver<'static, CriticalSectionRawMutex, InboundSlot<MTU>, DEPTH>,

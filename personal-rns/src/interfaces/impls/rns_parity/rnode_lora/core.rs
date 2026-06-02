@@ -11,7 +11,7 @@
 //! [RNode_Firmware 1.86 `transmit`](https://github.com/markqvist/RNode_Firmware/blob/1.86/RNode_Firmware.ino#L716-L760)
 //! / [`receive_callback`](https://github.com/markqvist/RNode_Firmware/blob/1.86/RNode_Firmware.ino#L359-L450).
 //! This module mints, splits, parses, and reassembles those frames; the embassy
-//! shell owns the SX1262 and the modulation.
+//! worker owns the SX1262 and the modulation.
 
 use heapless::Vec as HeaplessVec;
 
@@ -219,8 +219,7 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
 /// The routing facts a LoRa interface registers: a shared half-duplex broadcast
 /// medium where every neighbor hears every transmission and the node repeats
 /// into it, participating fully in transport. Reported `Connected` once the
-/// radio is initialized; a broadcast medium has no per-peer link state, so
-/// liveness afterward rides a control report (deferred under the contract).
+/// radio is initialized; a broadcast medium has no per-peer link state.
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,

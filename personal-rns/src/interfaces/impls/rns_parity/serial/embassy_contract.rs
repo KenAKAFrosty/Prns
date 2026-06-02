@@ -1,7 +1,6 @@
-//! The embassy serial worker on the contract seam — the embassy twin of the std
-//! shell's `serve_until_stopped` ([`std_host`](super::std_host)). Runs the RNS
-//! `SerialInterface` over any async byte stream (the ESP32 usb-serial-jtag halves,
-//! a UART, a test pipe), meeting the runtime through the three-lane seam.
+//! The embassy serial worker on the contract seam. Runs the RNS `SerialInterface`
+//! over any async byte stream (the ESP32 usb-serial-jtag halves, a UART, a test
+//! pipe), meeting the runtime through the three-lane seam.
 //!
 //! Gated on the lighter `embassy-contract` feature — no `embassy-net`/LoRa — so a
 //! USB-only board (ESP32-C6) pulls none of the radio stack.
@@ -18,8 +17,7 @@ use crate::interfaces::{
 use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
 
 /// Upper bound on one frame's write. If nothing is draining the CDC (no USB host
-/// attached, or no peer reading), an unbounded write would wedge the loop forever;
-/// on timeout we drop the frame — RNS re-announces, so it self-heals.
+/// attached, or no peer reading), an unbounded write would wedge the loop.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
 /// Drive the serial link over the contract seam. De-frame inbound bytes off `rx` and
@@ -34,10 +32,9 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 /// the seam `DEPTH`. Pre-frame noise — e.g. a board sharing this CDC between log text
 /// and frames — is skipped by the decoder until a `FLAG`, exactly as stock RNS does.
 ///
-/// Unlike the legacy `run`, there is no `link_up` / keepalive: liveness rides a
-/// control report under the new contract (deferred), so this loop only moves bytes.
-/// The write is still [`WRITE_TIMEOUT`]-bounded so a wire with no reader can't wedge
-/// the loop; a dropped frame self-heals.
+/// There is no `link_up` / keepalive here.
+/// Writes stay [`WRITE_TIMEOUT`]-bounded so a wire with no reader cannot wedge
+/// the loop.
 pub async fn serve<R, W, const DEPTH: usize>(
     mut rx: R,
     mut tx: W,
@@ -59,8 +56,7 @@ pub async fn serve<R, W, const DEPTH: usize>(
         )
         .await
         {
-            // Inbound bytes: feed the decoder; each closed non-empty frame is a
-            // Reticulum packet → submit it (the sink stamps arrival + wakes the host).
+            // Inbound bytes: submit each closed non-empty frame.
             Either3::First(result) => {
                 let n = result.unwrap_or(0);
                 for &byte in &read_buf[..n] {
@@ -80,9 +76,8 @@ pub async fn serve<R, W, const DEPTH: usize>(
             Either3::Third(ControlCommand::Stop) => break,
         }
 
-        // Drain whatever the runtime queued (also opportunistic after inbound): pull
-        // each packet, frame it, write it. `try_next_into` copies out so the write can
-        // cross an `.await`.
+        // Drain whatever the runtime queued; `try_next_into` copies out so the
+        // write can cross an `.await`.
         while let Some(len) = context.outbound.try_next_into(&mut packet_buf) {
             if let Ok(m) = rns_serial_framing::encode(&packet_buf[..len], &mut frame_buf) {
                 let _ = with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m])).await;
