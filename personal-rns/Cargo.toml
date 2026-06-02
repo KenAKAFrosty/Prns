@@ -17,11 +17,16 @@ std-host = ["std", "dep:getrandom", "dep:rtrb"]
 # `embassy-time` clock) — NOT `embassy-net`, so this builds on the host toolchain
 # and the embassy seam is compile-checkable without an ESP cross-build. No alloc.
 embassy-seam = ["dep:embassy-sync", "dep:embassy-time"]
-# Embedded host shells that run on embassy-net (ESP32-S3, ESP32-C6, …). Pulls the
-# full embassy stack in as optional deps; OFF by default so the pure-no_std and
-# no-std-esp-build gates never see it. An embedded host turns it on to get the
-# embassy worker shells (e.g. the AutoInterface). Builds on `embassy-seam`. No alloc.
-embassy-host = ["embassy-seam", "dep:embassy-net", "dep:embassy-futures", "dep:embedded-io-async", "dep:lora-phy", "dep:log"]
+# The embassy contract runtime for USB/serial-only boards (ESP32-C6, …): the channel
+# seam + `embassy-futures` (select) + `embedded-io-async` (byte streams), enough for
+# the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
+# Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
+embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async"]
+# Embedded host shells that also run the WiFi/LoRa stack (ESP32-S3 heltec, …). Adds
+# embassy-net + lora-phy on top of `embassy-contract`; OFF by default so the
+# pure-no_std and no-std-esp-build gates never see it. An embedded host turns it on
+# to get the radio worker shells (e.g. the AutoInterface). No alloc.
+embassy-host = ["embassy-contract", "dep:embassy-net", "dep:lora-phy", "dep:log"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
