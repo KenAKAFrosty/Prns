@@ -47,11 +47,11 @@ where
 
 /// No-std stack-resident routing-table preset.
 pub type DefaultRoutingTable<
-    const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-    const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
+    const MAX_TRACKED_DESTINATIONS: usize,
+    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
+    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+    const HISTORY_FLOOR_PER_DESTINATION: usize,
+    const HISTORY_OVERFLOW_CAPACITY: usize,
 > = RoutingTable<
     FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
     FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
@@ -236,6 +236,9 @@ mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
+
+    /// Test-only canonical sizing — production has no storage defaults.
+    type Rt = DefaultRoutingTable<64, 64, 4096, 4, 512>;
     use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 
     fn dest(byte: u8) -> DestinationHash {
@@ -299,7 +302,7 @@ mod tests {
 
     #[test]
     fn first_record_creates_a_path() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         assert_eq!(
             record(
                 &mut table,
@@ -318,7 +321,7 @@ mod tests {
 
     #[test]
     fn route_count_via_attributes_destinations_to_the_receiving_interface() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         let wifi = iface(0x01);
         let usb = iface(0x02);
         let silent = iface(0x03);
@@ -363,7 +366,7 @@ mod tests {
 
     #[test]
     fn refresh_updates_in_place_and_remembers_distinct_ids() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         record(
             &mut table,
             dest(1),
@@ -389,7 +392,7 @@ mod tests {
 
     #[test]
     fn re_recording_the_same_id_does_not_duplicate_it() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         let id = announce_id(0xAA, 1);
         record(
             &mut table,
@@ -419,7 +422,7 @@ mod tests {
 
     #[test]
     fn seen_set_evicts_oldest_when_full() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         for n in 0..(DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION as u64 + 3) {
             record(
                 &mut table,
@@ -445,7 +448,7 @@ mod tests {
     #[test]
     fn new_destinations_past_capacity_are_dropped() {
         const MAX: usize = 8;
-        let mut table: DefaultRoutingTable<MAX, 8, 256> = DefaultRoutingTable::default();
+        let mut table: DefaultRoutingTable<MAX, 8, 256, 4, 512> = DefaultRoutingTable::default();
         for n in 0..MAX {
             assert_eq!(
                 record(
@@ -487,7 +490,7 @@ mod tests {
 
     #[test]
     fn record_retains_the_payload_and_refresh_replaces_it() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         record(
             &mut table,
             dest(1),
@@ -512,7 +515,7 @@ mod tests {
 
     #[test]
     fn distinct_destinations_retain_independent_payloads() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         record(
             &mut table,
             dest(1),
@@ -544,7 +547,7 @@ mod tests {
 
     #[test]
     fn a_new_path_whose_payload_overflows_the_arena_is_dropped() {
-        let mut table: DefaultRoutingTable<4, 8, 8> = DefaultRoutingTable::default();
+        let mut table: DefaultRoutingTable<4, 8, 8, 4, 512> = DefaultRoutingTable::default();
         assert_eq!(
             record(
                 &mut table,
@@ -573,7 +576,7 @@ mod tests {
 
     #[test]
     fn refresh_that_cannot_retain_a_better_announce_leaves_the_table_untouched() {
-        let mut table: DefaultRoutingTable<4, 8, 8> = DefaultRoutingTable::default();
+        let mut table: DefaultRoutingTable<4, 8, 8, 4, 512> = DefaultRoutingTable::default();
         record(
             &mut table,
             dest(1),
@@ -602,7 +605,7 @@ mod tests {
 
     #[test]
     fn ratchet_is_retained_for_faithful_rebroadcast() {
-        let mut table: DefaultRoutingTable = DefaultRoutingTable::default();
+        let mut table: Rt = Rt::default();
         let ratchet = Some(RatchetKey::new([0xFE; 32]));
         let body = app_data(0xAA);
         table.upsert_route(

@@ -18,12 +18,10 @@ use crate::routing::storage::EngineStorage;
 /// runs on, the secret key it *is*, what it announces about itself, its already-started
 /// interfaces, and the [`Host`] that owns the clock, entropy, and wake.
 ///
-/// `engine_storage` is a zero-sized capacity marker (e.g. [`FixedCapacity::DEFAULT`])
-/// whose *type* `S` decides the routing table's sizing — carrying it as a value is what
-/// lets `Prns::run` infer `S`, so the caller never writes a turbofish. The interface set
-/// `I` and host `Ho` are built by the platform's `main`.
-///
-/// [`FixedCapacity::DEFAULT`]: crate::routing::storage::FixedCapacity::DEFAULT
+/// `engine_storage` is a zero-sized capacity marker (a `FixedCapacity<…>` the host
+/// spells with its own sizing) whose *type* `S` decides the routing table's sizing —
+/// carrying it as a value is what lets `Prns::run` infer `S`, so the caller never writes
+/// a turbofish. The interface set `I` and host `Ho` are built by the platform's `main`.
 pub struct Recipe<'announce, S, Ho, I> {
     pub engine_storage: S,
     pub identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
@@ -54,7 +52,7 @@ impl Prns {
     ///
     /// block_on(Prns::run(
     ///     Recipe {
-    ///         engine_storage: FixedCapacity::DEFAULT, // capacity recipe, as a value (no turbofish)
+    ///         engine_storage: FixedCapacity::<64, 64, 4096, 4, 512, 64>, // sizing as a value
     ///         identity_secret_key,
     ///         self_announce,
     ///         interfaces,

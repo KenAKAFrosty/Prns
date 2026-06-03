@@ -1,13 +1,9 @@
 //! `FixedCapacity` — the no_std storage recipe: every backend is a fixed-size,
-//! alloc-free structure sized by these six const generics.
+//! alloc-free structure sized by these six const generics. There are no defaults;
+//! every node spells the sizing it wants (a preset type can wrap a common choice).
 
 use crate::engine::directives::FixedEngineDirectives;
-use crate::routing::defaults::{
-    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
-    DEFAULT_HISTORY_FLOOR_PER_DESTINATION, DEFAULT_HISTORY_OVERFLOW_CAPACITY,
-    DEFAULT_MAX_TRACKED_DESTINATIONS,
-};
-use crate::routing::held_cache::{FixedHeldAnnounces, DEFAULT_HELD_CACHE_CAPACITY};
+use crate::routing::held_cache::FixedHeldAnnounces;
 use crate::routing::schedule::FixedRebroadcastQueue;
 use crate::routing::storage::{
     FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena, EngineStorage,
@@ -15,22 +11,13 @@ use crate::routing::storage::{
 };
 
 pub struct FixedCapacity<
-    const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-    const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
-    const HELD_CACHE_CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACITY,
+    const MAX_TRACKED_DESTINATIONS: usize,
+    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
+    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+    const HISTORY_FLOOR_PER_DESTINATION: usize,
+    const HISTORY_OVERFLOW_CAPACITY: usize,
+    const HELD_CACHE_CAPACITY: usize,
 >;
-
-impl FixedCapacity {
-    /// The default-capacity recipe as a *value*, for a [`Recipe`]'s `engine_storage`
-    /// field — so the common node spells no const generics and `Prns::run` needs no
-    /// turbofish. Equivalent to the bare `FixedCapacity` type (its six defaults).
-    ///
-    /// [`Recipe`]: crate::runtime::Recipe
-    pub const DEFAULT: Self = FixedCapacity;
-}
 
 impl<
         const MAX_TRACKED_DESTINATIONS: usize,

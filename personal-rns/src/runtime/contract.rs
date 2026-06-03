@@ -317,6 +317,9 @@ mod tests {
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{PacketType, WirePacketHeader};
 
+    /// Test-only canonical sizing — production has no storage defaults.
+    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
                                 0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
@@ -462,7 +465,7 @@ mod tests {
         let peer = iface(0xB2);
         let arrival = InstantMillis(1_000);
 
-        let engine = EngineState::<FixedCapacity>::default();
+        let engine = EngineState::<Cap>::default();
         // A unit host (`()`): the cycle/snapshot seam needs no real substrate.
         let mut runtime = Runtime::new(
             engine,
@@ -555,7 +558,7 @@ mod tests {
     #[test]
     fn snapshot_reflects_reported_connection_state() {
         let id = iface(0xC3);
-        let engine = EngineState::<FixedCapacity>::default();
+        let engine = EngineState::<Cap>::default();
         let mut runtime = Runtime::new(
             engine,
             interface_set([started_with_reports(
@@ -580,7 +583,7 @@ mod tests {
     #[test]
     fn stopped_reports_disconnect_the_snapshot() {
         let id = iface(0xD4);
-        let engine = EngineState::<FixedCapacity>::default();
+        let engine = EngineState::<Cap>::default();
         let mut runtime = Runtime::new(
             engine,
             interface_set([started_with_reports(id, [ControlReport::Stopped])]),

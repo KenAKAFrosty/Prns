@@ -16,11 +16,16 @@ use personal_rns::wire::TRUNCATED_HASH_BYTE_LEN;
 
 const VIRTUAL_WIRE_INTERFACE: InterfaceId = InterfaceId::new([0x52; TRUNCATED_HASH_BYTE_LEN]);
 
+/// Each simulated node's engine-storage sizing (the engine has no storage defaults;
+/// this harness picks a generous preset): 64 dests / 64 ids each / 4 KB arena / 4
+/// floor / 512 overflow / 64 held.
+type SimEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+
 /// A simulated node: a label, its engine state, and the packets the wire has
 /// delivered to it but not yet ingested.
 pub struct SimNode {
     pub label: String,
-    pub state: EngineState<FixedCapacity>,
+    pub state: EngineState<SimEngineStorage>,
     inbound: Vec<(InstantMillis, Vec<u8>)>,
 }
 
@@ -28,7 +33,7 @@ impl SimNode {
     fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            state: EngineState::<FixedCapacity>::default(),
+            state: EngineState::<SimEngineStorage>::default(),
             inbound: Vec::new(),
         }
     }

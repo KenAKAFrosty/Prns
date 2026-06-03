@@ -24,6 +24,11 @@ use personal_rns::engine::{
 };
 use personal_rns::routing::storage::FixedCapacity;
 
+/// This SDK binding's engine-storage sizing (the engine has no storage defaults, so
+/// each consumer picks its own): 64 dests / 64 ids each / 4 KB arena / 4 floor / 512
+/// overflow / 64 held.
+type SdkEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+
 uniffi::include_scaffolding!("prns");
 
 /// The personal-rns crate version. Binding consumers assert ABI
@@ -54,7 +59,7 @@ impl SdkEngineSubstrate {
 }
 
 struct RuntimeInner {
-    state: EngineState<FixedCapacity>,
+    state: EngineState<SdkEngineStorage>,
     substrate: SdkEngineSubstrate,
 }
 
@@ -69,7 +74,7 @@ impl ReticulumRuntime {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(RuntimeInner {
-                state: EngineState::<FixedCapacity>::default(),
+                state: EngineState::<SdkEngineStorage>::default(),
                 substrate: SdkEngineSubstrate {
                     base: Instant::now(),
                 },

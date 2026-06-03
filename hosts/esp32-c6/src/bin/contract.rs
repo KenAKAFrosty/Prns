@@ -56,6 +56,11 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC6; 16]);
 /// In-flight capacity of each of the interface's data rings.
 const MAX_BUFFERED_PACKETS: usize = 8;
 
+/// This board's engine-storage sizing (USB-only, no WiFi stack, so it can afford
+/// the generous preset): 64 dests / 64 ids each / 4 KB arena / 4 floor / 512
+/// overflow / 64 held.
+const ENGINE_STORAGE: FixedCapacity<64, 64, 4096, 4, 512, 64> = FixedCapacity;
+
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal C6")` ‖ `nil` — the shape LXMF apps parse, so they
 /// surface the display name (the `\x0b` length byte = 11 = the name's length).
@@ -141,7 +146,7 @@ async fn node_task(
     let mut announced_routes = 0u32;
     Prns::run(
         Recipe {
-            engine_storage: FixedCapacity::DEFAULT,
+            engine_storage: ENGINE_STORAGE,
             identity_secret_key: secret_key,
             self_announce: SelfAnnounceConfig {
                 app_name: "lxmf",

@@ -51,6 +51,10 @@ const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// In-flight capacity of each of the interface's data rings.
 const MAX_BUFFERED_PACKETS: usize = 64;
 
+/// This debug face's engine-storage sizing (mirrors the daemon — a generous std
+/// host): 64 dests / 64 ids each / 4 KB arena / 4 floor / 512 overflow / 64 held.
+const ENGINE_STORAGE: FixedCapacity<64, 64, 4096, 4, 512, 64> = FixedCapacity;
+
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
 /// UI repaint cadence. The engine pushes snapshots event-driven; this just keeps
@@ -120,7 +124,7 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
 
     block_on(Prns::run(
         Recipe {
-            engine_storage: FixedCapacity::DEFAULT,
+            engine_storage: ENGINE_STORAGE,
             identity_secret_key: load_identity_secret_key(),
             self_announce: SelfAnnounceConfig {
                 app_name: SELF_ANNOUNCE_APP_NAME,
