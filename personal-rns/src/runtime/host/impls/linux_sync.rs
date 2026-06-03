@@ -9,39 +9,60 @@
 //! executor. Inbound does not flow through the host: the
 //! [`ContractRuntime`](crate::runtime::ContractRuntime) drains each interface's handle.
 
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
 use super::super::{CycleStamp, Host};
 use crate::engine::{
     EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork, ENGINE_CYCLE_ENTROPY_LEN,
 };
+use crate::interfaces::substrate::StdInterfaceSeam;
+use crate::interfaces::InterfaceId;
 
 /// Upper bound on one blocking wait, so a far-off deadline or an idle engine still
 /// loops back periodically. A daemon host is mains-powered; the cap is free.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
-/// The std poll-loop host: an OS clock + CSPRNG + the wake receiver the interface
-/// worker threads poke (through the wake baked into their inbound/report
-/// producers). Hand it to `ContractRuntime::new(state, started, host)`, then drive
-/// with `block_on(run_contract(runtime, observe))`.
+/// The std poll-loop host: an OS clock + CSPRNG + the one wake the interface seams
+/// poke. It owns both the clock and the wake; glue each interface's seam from it
+/// with [`glue_seam`](LinuxSync::glue_seam), then hand it to
+/// `ContractRuntime::new(state, started, host)` and drive with
+/// `block_on(run_contract(runtime, observe))`.
 pub struct LinuxSync {
     wake: Receiver<()>,
+    wake_sender: SyncSender<()>,
     clock_base: Instant,
 }
 
 impl LinuxSync {
-    /// `wake` is the receiving end of the seam wake — every interface's seam holds
-    /// a sender that fires on `submit` / `report`, so a blocked `wait` returns the
-    /// moment any interface has something. `clock_base` is the monotonic reference
-    /// the interfaces also stamp arrival against (pass the same `Instant` handed to
-    /// every seam), so `arrived_at` and the cycle clock share a timebase.
-    pub fn new(wake: Receiver<()>, clock_base: Instant) -> Self {
-        Self { wake, clock_base }
+    /// Owns the monotonic clock and the one wake channel. Every seam glued from this
+    /// host shares its `clock_base` (so `arrived_at` and the cycle clock share a
+    /// timebase) and a clone of its wake sender (so any submit/report rouses a
+    /// blocked `wait`).
+    pub fn new() -> Self {
+        let (wake_sender, wake) = sync_channel::<()>(1);
+        Self {
+            wake,
+            wake_sender,
+            clock_base: Instant::now(),
+        }
+    }
+
+    /// Glue an interface seam bound to this host's clock + wake: the worker takes the
+    /// context, the runtime keeps the handle. `MTU` is inferred from how the worker
+    /// context is used (the serial interface pins it to `SERIAL_MTU`).
+    pub fn glue_seam<const MTU: usize>(&self, id: InterfaceId, depth: usize) -> StdInterfaceSeam<MTU> {
+        StdInterfaceSeam::new(id, self.clock_base, depth, self.wake_sender.clone())
     }
 
     fn now(&self) -> InstantMillis {
         InstantMillis(self.clock_base.elapsed().as_millis() as u64)
+    }
+}
+
+impl Default for LinuxSync {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -82,17 +103,22 @@ impl Host for LinuxSync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::InboundSink;
     use crate::runtime::block_on;
-    use std::sync::mpsc::sync_channel;
 
     #[test]
     fn wait_returns_promptly_when_an_interface_pokes_the_wake() {
-        let (wake_tx, wake_rx) = sync_channel::<()>(1);
-        let mut host = LinuxSync::new(wake_rx, Instant::now());
-
-        // A pending poke → an `Idle` wait (which would otherwise block for the cap)
-        // returns at once.
-        wake_tx.try_send(()).unwrap();
+        let mut host = LinuxSync::new();
+        // A seam glued from the host shares its wake; a submit pokes that wake, so an
+        // `Idle` wait (which would otherwise block for the cap) returns at once.
+        let mut seam = host.glue_seam::<8>(InterfaceId::new([0; 16]), 1);
+        seam.worker_context
+            .inbound
+            .submit(|buf| {
+                buf[0] = 1;
+                1
+            })
+            .unwrap();
         let _stamp = block_on(host.wait(NextScheduledEngineWork::Idle));
     }
 }

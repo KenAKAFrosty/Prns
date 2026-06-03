@@ -13,13 +13,12 @@
 #![forbid(unsafe_code)]
 
 use std::io;
-use std::sync::mpsc::sync_channel;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
-use personal_rns::interfaces::impls::rns_parity::serial::{std_serial_interface, SERIAL_MTU};
+use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
 use personal_rns::interfaces::substrate::StdInterfaceSeam;
@@ -101,18 +100,14 @@ fn main() {
         println!("RNSD_SELF_ANNOUNCE_DEST {hex} name=personal.node");
     }
 
-    // One monotonic base shared by the interface (frame arrival stamps) and the
-    // host (cycle clock), so `arrived_at` and `now` share a timebase.
-    let clock_base = Instant::now();
-
-    // The seam: the interface's worker thread holds the worker context; the runtime
-    // keeps the handle. The wake fires (baked into the inbound/report producers)
-    // whenever the interface has something, rousing the host's sleep.
-    let (wake_tx, wake_rx) = sync_channel::<()>(1);
+    // The std poll-loop host owns the clock + CSPRNG + the seam wake. Glue the
+    // interface's seam from it: the worker thread holds the worker context; the
+    // runtime keeps the handle.
+    let host = LinuxSync::new();
     let StdInterfaceSeam {
         worker_context,
         runtime_handle,
-    } = StdInterfaceSeam::<SERIAL_MTU>::new(USB_INTERFACE_ID, clock_base, SEAM_DEPTH, wake_tx);
+    } = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
 
     // The interface owns its device lifecycle: `open` hands it a fresh CDC stream
     // (re-opened on unplug); `start` spawns the thread and returns its drive mode.
@@ -131,9 +126,6 @@ fn main() {
         drive,
     };
 
-    // The std poll-loop host owns the clock + CSPRNG + the seam wake; the runtime
-    // bolts it to the engine + the started interface.
-    let host = LinuxSync::new(wake_rx, clock_base);
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(started);
     let runtime = ContractRuntime::new(state, interfaces, host);

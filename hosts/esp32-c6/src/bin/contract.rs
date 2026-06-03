@@ -131,12 +131,19 @@ async fn node_task(
         println!(" name=personal.node");
     }
 
-    // Split the seam: the serial task holds the worker context; the runtime keeps the
-    // handle. `&WAKE` is shared so any submit/report rouses the host's one sleep.
+    // The embassy contract host owns the shared wake and draws each cycle's jitter
+    // entropy from the TRNG. Glue the serial seam from it (the serial task holds the
+    // worker context, the runtime keeps the handle). The board owns the `static`
+    // CHANNELS — no heap.
+    let host = EmbassyContractHost::new(&WAKE, || {
+        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
+        Rng::new().read(&mut bytes);
+        EngineCycleEntropySeed::new(bytes)
+    });
     let EmbassyInterfaceSeam {
         worker_context,
         runtime_handle,
-    } = EmbassyInterfaceSeam::<SERIAL_MTU, SEAM_DEPTH>::split(USB_INTERFACE_ID, &CHANNELS, &WAKE);
+    } = host.glue_seam(USB_INTERFACE_ID, &CHANNELS);
 
     // The interface launches itself by spawning the board's concrete serial `#[task]`
     // (the device halves are captured here, beside the macro); `start` fires it.
@@ -154,13 +161,6 @@ async fn node_task(
         drive,
     };
 
-    // The embassy contract host: sleeps the executor on the wake + the engine's next
-    // deadline, and draws each cycle's jitter entropy from the TRNG.
-    let host = EmbassyContractHost::new(&WAKE, || {
-        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        Rng::new().read(&mut bytes);
-        EngineCycleEntropySeed::new(bytes)
-    });
     let mut interfaces = FixedInterfaceSet::<_, 1>::new();
     let _ = interfaces.push(started);
     let runtime = ContractRuntime::new(state, interfaces, host);

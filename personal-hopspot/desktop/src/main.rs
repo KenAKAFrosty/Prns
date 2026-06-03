@@ -12,8 +12,8 @@
 //! two will diverge, so the ~60 shared lines are duplicated rather than factored.
 
 use std::io;
-use std::sync::mpsc::{self, sync_channel, Receiver, Sender};
-use std::time::{Duration, Instant};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -25,7 +25,7 @@ use heapless::Vec as HVec;
 use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
-use personal_rns::interfaces::impls::rns_parity::serial::{std_serial_interface, SERIAL_MTU};
+use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
 use personal_rns::interfaces::substrate::StdInterfaceSeam;
@@ -123,15 +123,13 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
         println!("HOPSPOT_SELF_ANNOUNCE_DEST {hex} name=personal.node");
     }
 
-    // One monotonic base shared by the interface (frame arrival stamps) and the
-    // host (cycle clock), so `arrived_at` and `now` share a timebase.
-    let clock_base = Instant::now();
-
-    let (wake_tx, wake_rx) = sync_channel::<()>(1);
+    // The std poll-loop host owns the clock + wake; glue the interface's seam from
+    // it (worker holds the context, runtime keeps the handle).
+    let host = LinuxSync::new();
     let StdInterfaceSeam {
         worker_context,
         runtime_handle,
-    } = StdInterfaceSeam::<SERIAL_MTU>::new(USB_INTERFACE_ID, clock_base, SEAM_DEPTH, wake_tx);
+    } = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
 
     let open = move || {
         serialport::new(&path, USB_BAUD)
@@ -148,7 +146,6 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
         drive,
     };
 
-    let host = LinuxSync::new(wake_rx, clock_base);
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(started);
     let runtime = ContractRuntime::new(state, interfaces, host);

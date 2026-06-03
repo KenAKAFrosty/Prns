@@ -17,7 +17,8 @@ use embassy_time::{Instant as EmbassyInstant, Timer};
 
 use super::super::{CycleStamp, Host};
 use crate::engine::{EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork};
-use crate::interfaces::substrate::WakeSignal;
+use crate::interfaces::substrate::{EmbassyInterfaceChannels, EmbassyInterfaceSeam, WakeSignal};
+use crate::interfaces::InterfaceId;
 
 /// The embassy contract host: the shared wake the interface seams poke, an injected
 /// CSPRNG draw, and the embassy-time clock + sleep. Hand it to
@@ -40,6 +41,17 @@ where
     /// CSPRNG.
     pub fn new(wake: &'static WakeSignal, draw_entropy: E) -> Self {
         Self { wake, draw_entropy }
+    }
+
+    /// Glue an interface seam bound to this host's shared wake. The board owns the
+    /// `'static` channels (no heap); the host supplies the one wake every seam pokes.
+    /// `MTU`/`DEPTH` are inferred from the channels' type.
+    pub fn glue_seam<const MTU: usize, const DEPTH: usize>(
+        &self,
+        id: InterfaceId,
+        channels: &'static EmbassyInterfaceChannels<MTU, DEPTH>,
+    ) -> EmbassyInterfaceSeam<MTU, DEPTH> {
+        EmbassyInterfaceSeam::split(id, channels, self.wake)
     }
 }
 

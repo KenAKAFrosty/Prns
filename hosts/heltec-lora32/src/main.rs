@@ -471,25 +471,31 @@ async fn main(spawner: Spawner) {
     println!("HELTEC_S3 NET link up");
 
     // --- Worker seams + runtime. ---
-    // Each interface meets the runtime through its own three-lane seam (split from a
-    // board `static`); the runtime keeps the four handles (unified by `HeltecHandle`),
-    // each worker its context. All four share the one `WAKE` the host sleeps on.
+    // The embassy contract host owns the one shared wake every seam pokes, and draws
+    // each cycle's CSPRNG from the radio-seeded RNG (true-random now WiFi is up). Glue
+    // each interface's seam from it (split from a board `static`); the runtime keeps
+    // the four handles (unified by `HeltecHandle`), each worker its context.
+    let host = EmbassyContractHost::new(&WAKE, || {
+        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
+        Rng::new().read(&mut bytes);
+        EngineCycleEntropySeed::new(bytes)
+    });
     let EmbassyInterfaceSeam {
         worker_context: auto_context,
         runtime_handle: auto_handle,
-    } = EmbassyInterfaceSeam::split(INTERFACE_ID, &AUTO_CH, &WAKE);
+    } = host.glue_seam(INTERFACE_ID, &AUTO_CH);
     let EmbassyInterfaceSeam {
         worker_context: serial_context,
         runtime_handle: serial_handle,
-    } = EmbassyInterfaceSeam::split(SERIAL_INTERFACE_ID, &SERIAL_CH, &WAKE);
+    } = host.glue_seam(SERIAL_INTERFACE_ID, &SERIAL_CH);
     let EmbassyInterfaceSeam {
         worker_context: lora_context,
         runtime_handle: lora_handle,
-    } = EmbassyInterfaceSeam::split(LORA_INTERFACE_ID, &LORA_CH, &WAKE);
+    } = host.glue_seam(LORA_INTERFACE_ID, &LORA_CH);
     let EmbassyInterfaceSeam {
         worker_context: espnow_context,
         runtime_handle: espnow_handle,
-    } = EmbassyInterfaceSeam::split(ESPNOW_INTERFACE_ID, &ESPNOW_CH, &WAKE);
+    } = host.glue_seam(ESPNOW_INTERFACE_ID, &ESPNOW_CH);
 
     // The S3's USB-C is the native usb-serial-jtag; share it for RNS frames (the
     // serial worker) and esp-println logs (register pokes) — the C6 precedent.
@@ -524,14 +530,6 @@ async fn main(spawner: Spawner) {
         },
     ];
 
-    // The embassy contract host sleeps the executor on the shared wake + the engine's
-    // next deadline, drawing each cycle's CSPRNG from the radio-seeded RNG (true-random
-    // now WiFi is up).
-    let host = EmbassyContractHost::new(&WAKE, || {
-        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        Rng::new().read(&mut bytes);
-        EngineCycleEntropySeed::new(bytes)
-    });
     let mut interfaces = FixedInterfaceSet::<_, 4>::new();
     for interface in started {
         let _ = interfaces.push(interface);
