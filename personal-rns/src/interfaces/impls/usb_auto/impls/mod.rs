@@ -4,3 +4,5 @@
 
 #[cfg(feature = "std-host")]
 mod std;
+#[cfg(feature = "usb-auto")]
+pub use std::usb_auto_interface;

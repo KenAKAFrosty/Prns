@@ -9,3 +9,5 @@
 
 pub mod core;
 mod impls;
+#[cfg(feature = "usb-auto")]
+pub use impls::usb_auto_interface;

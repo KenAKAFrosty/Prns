@@ -1,14 +1,11 @@
 //! The std USB-auto discoverer: it owns the host's plugged CDC devices behind the
-//! one interface seam — probing each on arrival, merging their inbound into the
+//! one interface seam. It probes each on arrival, merging their inbound into the
 //! seam, and fanning each outbound packet across every confirmed link.
 //!
-//! This file is the platform-agnostic device logic, generic over the byte stream
-//! and fed discovery as plain "this port appeared / went away" calls, so it tests
-//! against mock ports with no hardware. The udev + serialport driver that turns
-//! real hotplug events into those calls lives alongside (next).
 
-// TODO(usb-auto driver): drop once the production serve loop drives the Discoverer.
-#![allow(dead_code)]
+// The driver (below) is the Discoverer's only caller and exists only under
+// `usb-auto`; without that feature the device logic compiles but goes unused.
+#![cfg_attr(not(feature = "usb-auto"), allow(dead_code))]
 
 use std::io::{self, Read, Write};
 use std::string::String;
@@ -30,8 +27,15 @@ type UsbAutoContext = InterfaceWorkerContext<StdHostSubstrate<USB_AUTO_MTU>>;
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct PortId(String);
 
+/// How many discovery scans a freshly probed port gets to answer before we give
+/// up. At the driver's ~300 ms scan cadence that's roughly two seconds — long
+/// enough for a booting board, short enough that a non-Personal device (someone
+/// else's serial gadget) is released promptly.
+const PROBE_SCAN_BUDGET: u8 = 7;
+
 enum LinkState {
-    Probing,
+    /// Probed, awaiting a HelloAck; rejected once `scans_left` hits zero.
+    Probing { scans_left: u8 },
     Confirmed(NodeTag),
     /// The port errored this pass and is pruned once servicing finishes.
     Lost,
@@ -46,6 +50,9 @@ struct Device<Port> {
 
 struct Discoverer<Port> {
     devices: Vec<Device<Port>>,
+    /// Ports that were probed but never answered: skipped until they drop out of a
+    /// scan, so we neither re-probe a stranger nor keep its port open.
+    rejected: Vec<PortId>,
     reported_state: ConnectionState,
 }
 
@@ -53,11 +60,12 @@ impl<Port: Read + Write> Discoverer<Port> {
     fn new() -> Self {
         Self {
             devices: Vec::new(),
-            reported_state: ConnectionState::Disconnected,
+            rejected: Vec::new(),
+            reported_state: ConnectionState::Degraded,
         }
     }
 
-    /// A port is present: if new, open it, send a [`Hello`](Message::Hello), and
+    /// A port is present. If new, open it, send a [`Hello`](Message::Hello), and
     /// track it as probing. Idempotent for a port already known.
     fn note_present(&mut self, id: PortId, open: impl FnOnce(&PortId) -> io::Result<Port>) {
         if self.devices.iter().any(|d| d.id == id) {
@@ -73,17 +81,49 @@ impl<Port: Read + Write> Discoverer<Port> {
                 id,
                 port,
                 decoder: RnsSerialDecoder::new(),
-                state: LinkState::Probing,
+                state: LinkState::Probing {
+                    scans_left: PROBE_SCAN_BUDGET,
+                },
             });
         }
     }
 
-    fn note_absent(&mut self, id: &PortId) {
-        self.devices.retain(|d| &d.id != id);
+    /// Reconcile tracked links against the ports present right now: spend probe
+    /// budgets, reject the probes that ran out, drop links that vanished, and probe
+    /// newly-appeared ports. `open` acquires a port for I/O.
+    fn reconcile_present(
+        &mut self,
+        present: &[PortId],
+        open: impl Fn(&PortId) -> io::Result<Port>,
+    ) {
+        // Spend one scan of each probing link's budget.
+        for device in &mut self.devices {
+            if let LinkState::Probing { scans_left } = &mut device.state {
+                *scans_left = scans_left.saturating_sub(1);
+            }
+        }
+        // A probe that ran out is rejected: remember the id so we don't immediately
+        // re-probe it, then drop the link below (releasing its port).
+        for device in &self.devices {
+            if matches!(device.state, LinkState::Probing { scans_left: 0 }) {
+                self.rejected.push(device.id.clone());
+            }
+        }
+        // Keep only present, un-rejected links; forget a rejection once its port is
+        // gone, so a replug there is probed afresh.
+        self.devices
+            .retain(|d| present.contains(&d.id) && !self.rejected.contains(&d.id));
+        self.rejected.retain(|id| present.contains(id));
+        for id in present {
+            if !self.rejected.contains(id) {
+                self.note_present(id.clone(), &open);
+            }
+        }
     }
 
     fn pump(&mut self, ctx: &mut UsbAutoContext) {
         self.read_devices(&mut ctx.inbound);
+        self.dedup_confirmed_links();
         self.fan_out(&mut ctx.outbound);
         self.devices
             .retain(|device| !matches!(device.state, LinkState::Lost));
@@ -114,6 +154,21 @@ impl<Port: Read + Write> Discoverer<Port> {
         }
     }
 
+    fn dedup_confirmed_links(&mut self) {
+        let mut i = 0;
+        while i < self.devices.len() {
+            if let LinkState::Confirmed(tag) = self.devices[i].state {
+                let superseded = self.devices[i + 1..]
+                    .iter()
+                    .any(|d| matches!(d.state, LinkState::Confirmed(newer) if newer == tag));
+                if superseded {
+                    self.devices[i].state = LinkState::Lost;
+                }
+            }
+            i += 1;
+        }
+    }
+
     fn fan_out(&mut self, outbound: &mut impl OutboundDrain) {
         let devices = &mut self.devices;
         let mut frame = [0u8; MAX_FRAMED_BYTES];
@@ -139,7 +194,8 @@ impl<Port: Read + Write> Discoverer<Port> {
         {
             ConnectionState::Connected
         } else {
-            ConnectionState::Disconnected
+            // Up but peerless: still routable, just nothing to fan to yet.
+            ConnectionState::Degraded
         };
         if state != self.reported_state {
             self.reported_state = state;
@@ -174,6 +230,96 @@ fn would_block(e: &io::Error) -> bool {
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
     )
 }
+
+/// The production driver: polls serialport a few times a second for the USB CDC
+/// ports present, reconciles them into the Discoverer's links, and runs the
+/// servicing loop. Cross-platform — serialport cfg-gates its own per-OS backends;
+/// opt-in via `usb-auto`.
+#[cfg(feature = "usb-auto")]
+mod driver {
+    use std::io::{self, Read, Write};
+    use std::thread;
+    use std::time::{Duration, Instant};
+    use std::vec::Vec;
+
+    use super::super::super::core::descriptor;
+    use super::{Discoverer, PortId, UsbAutoContext};
+    use crate::interfaces::{
+        ControlCommand, ControlEndpoint, ControlReport, InterfaceId, SelfDrivenInterface,
+    };
+
+    /// USB CDC ignores baud, but the serialport API still wants a number.
+    const CDC_BAUD: u32 = 115_200;
+    const READ_TIMEOUT: Duration = Duration::from_millis(5);
+    const SERVICE_INTERVAL: Duration = Duration::from_millis(10);
+    const SCAN_INTERVAL: Duration = Duration::from_millis(300);
+
+    /// Build the plug-and-play USB-auto interface on `id`: a self-driven worker that
+    /// discovers and owns the host's USB CDC links — no port argument, no config.
+    pub fn usb_auto_interface(id: InterfaceId) -> SelfDrivenInterface<impl FnOnce(UsbAutoContext)> {
+        SelfDrivenInterface::new(descriptor(id), move |ctx| {
+            thread::spawn(move || serve(ctx));
+        })
+    }
+
+    fn serve(mut ctx: UsbAutoContext) {
+        let mut discoverer = Discoverer::new();
+        let mut last_scan: Option<Instant> = None;
+        loop {
+            if last_scan.is_none_or(|t| t.elapsed() >= SCAN_INTERVAL) {
+                last_scan = Some(Instant::now());
+                discoverer.reconcile_present(&scan_cdc_ports(), open_cdc_port);
+            }
+            discoverer.pump(&mut ctx);
+            if matches!(ctx.control.next_command(), Some(ControlCommand::Stop)) {
+                break;
+            }
+            thread::sleep(SERVICE_INTERVAL);
+        }
+        ctx.control.report(ControlReport::Stopped);
+    }
+
+    /// Every USB serial port present right now. serialport classifies the medium
+    /// per platform, so the USB filter excludes built-in / PCI serial without
+    /// naming any OS-specific device path.
+    fn scan_cdc_ports() -> Vec<PortId> {
+        serialport::available_ports()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
+            .map(|info| PortId(info.port_name))
+            .collect()
+    }
+
+    /// A serialport CDC link as a plain `Read + Write` stream for the Discoverer.
+    struct CdcPort(Box<dyn serialport::SerialPort>);
+
+    impl Read for CdcPort {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+
+    impl Write for CdcPort {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.flush()
+        }
+    }
+
+    fn open_cdc_port(id: &PortId) -> io::Result<CdcPort> {
+        serialport::new(id.0.as_str(), CDC_BAUD)
+            .timeout(READ_TIMEOUT)
+            .open()
+            .map(CdcPort)
+            .map_err(io::Error::other)
+    }
+}
+
+#[cfg(feature = "usb-auto")]
+pub use driver::usb_auto_interface;
 
 #[cfg(test)]
 mod tests {
@@ -326,7 +472,9 @@ mod tests {
 
         match &disc.devices[0].state {
             LinkState::Confirmed(tag) => assert_eq!(*tag, NodeTag([7; 8])),
-            LinkState::Probing | LinkState::Lost => panic!("expected the link to be confirmed"),
+            LinkState::Probing { .. } | LinkState::Lost => {
+                panic!("expected the link to be confirmed")
+            }
         }
         assert!(matches!(
             runtime_handle.next_report(),
@@ -404,28 +552,95 @@ mod tests {
     }
 
     #[test]
-    fn an_unplugged_port_is_dropped_and_reports_disconnected() {
+    fn the_same_node_on_two_ports_keeps_only_the_newest_link() {
+        let StdInterfaceSeam {
+            mut worker_context, ..
+        } = seam();
+        let mut disc = Discoverer::new();
+        let old = MockWire::new();
+        let new = MockWire::new();
+        let (o, n) = (old.port(), new.port());
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(o));
+        disc.note_present(port("/dev/ttyACM1"), move |_| Ok(n));
+
+        // One node identity answers on both ports.
+        old.device_sends(Message::HelloAck(NodeTag([9; 8])));
+        new.device_sends(Message::HelloAck(NodeTag([9; 8])));
+        disc.pump(&mut worker_context);
+
+        assert_eq!(disc.devices.len(), 1);
+        assert_eq!(disc.devices[0].id, port("/dev/ttyACM1"));
+    }
+
+    #[test]
+    fn a_scan_probes_new_ports_and_drops_vanished_ones() {
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+
+        // A USB port shows up in the scan → probed with a Hello.
+        disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
+        assert_eq!(disc.devices.len(), 1);
+        assert!(first_frame_is(&wire.host_wrote(), |m| matches!(
+            m,
+            Message::Hello
+        )));
+
+        // Same port still present next scan → idempotent, still one link.
+        disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
+        assert_eq!(disc.devices.len(), 1);
+
+        // Gone from the scan → dropped.
+        disc.reconcile_present(&[], |_| Ok(wire.port()));
+        assert!(disc.devices.is_empty());
+    }
+
+    #[test]
+    fn a_port_that_never_answers_is_rejected_then_left_alone() {
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let present = [port("/dev/ttyACM0")];
+
+        // First scan probes it.
+        disc.reconcile_present(&present, |_| Ok(wire.port()));
+        assert_eq!(disc.devices.len(), 1);
+
+        // It never answers; run scans until the probe budget is spent.
+        for _ in 0..PROBE_SCAN_BUDGET {
+            disc.reconcile_present(&present, |_| Ok(wire.port()));
+        }
+        assert!(disc.devices.is_empty(), "an unanswered probe is released");
+
+        // Still plugged but rejected → left alone, not re-probed.
+        disc.reconcile_present(&present, |_| Ok(wire.port()));
+        assert!(disc.devices.is_empty());
+
+        // Unplugged → rejection forgotten; back again → probed afresh.
+        disc.reconcile_present(&[], |_| Ok(wire.port()));
+        disc.reconcile_present(&present, |_| Ok(wire.port()));
+        assert_eq!(disc.devices.len(), 1, "a replugged port is probed again");
+    }
+
+    #[test]
+    fn an_unplugged_port_is_dropped_and_the_interface_goes_degraded() {
         let StdInterfaceSeam {
             mut worker_context,
             mut runtime_handle,
         } = seam();
         let mut disc = Discoverer::new();
         let wire = MockWire::new();
-        let p = wire.port();
-        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+        disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
         wire.device_sends(Message::HelloAck(NodeTag([3; 8])));
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report(); // consume the Connected report
 
-        disc.note_absent(&port("/dev/ttyACM0"));
+        // Unplugged: absent from the next scan.
+        disc.reconcile_present(&[], |_| Ok(wire.port()));
         disc.pump(&mut worker_context);
 
         assert!(disc.devices.is_empty());
         assert!(matches!(
             runtime_handle.next_report(),
-            Some(ControlReport::ConnectionState(
-                ConnectionState::Disconnected
-            ))
+            Some(ControlReport::ConnectionState(ConnectionState::Degraded))
         ));
     }
 
@@ -449,9 +664,7 @@ mod tests {
         assert!(disc.devices.is_empty());
         assert!(matches!(
             runtime_handle.next_report(),
-            Some(ControlReport::ConnectionState(
-                ConnectionState::Disconnected
-            ))
+            Some(ControlReport::ConnectionState(ConnectionState::Degraded))
         ));
     }
 }

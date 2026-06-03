@@ -28,6 +28,11 @@ embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-asyn
 # pure-no_std and no-std-esp-build gates never see it. An embedded host turns it on
 # to get the radio worker shells (e.g. the AutoInterface). No alloc.
 embassy-host = ["embassy-contract", "dep:embassy-net", "dep:lora-phy", "dep:log"]
+# The plug-and-play USB-auto host interface: the std worker machinery plus
+# serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
+# libudev / IOKit / SetupAPI internally). Opt-in, so std hosts that don't want it
+# (e.g. the rvt sim, which pulls std-host by default) never link serialport.
+usb-auto = ["std-host", "dep:serialport"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -59,6 +64,12 @@ getrandom = { version = "0.2", optional = true }
 # freed on drop. The std-native replacement for a leaked `heapless::spsc` — that's
 # an embedded static-storage primitive with no business on a heap-backed host.
 rtrb = { version = "0.3", optional = true }
+
+# The USB-auto host interface's portable USB-serial layer (under `usb-auto`):
+# enumerate, open, and raw byte I/O on Linux/macOS/Windows. Default features keep
+# enumeration (libudev on Linux, IOKit/SetupAPI elsewhere — serialport cfg-gates
+# its own per-OS backends).
+serialport = { version = "4", optional = true }
 
 # Embassy stack for the `embassy-host` worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),

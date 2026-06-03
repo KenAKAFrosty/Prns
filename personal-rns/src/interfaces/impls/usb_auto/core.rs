@@ -7,6 +7,10 @@
 //! because a USB *device* has a single link and never discovers anything.
 
 use crate::interfaces::framing::rns_serial_framing;
+use crate::interfaces::{
+    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransitCapability,
+};
 use crate::wire::MTU;
 
 const PROTOCOL_VERSION_LEN: usize = 1;
@@ -152,6 +156,24 @@ fn vet_handshake(body: &[u8], expected_len: usize) -> Result<(), MalformedMessag
         return Err(MalformedMessage::UnsupportedVersion { peer_version });
     }
     Ok(())
+}
+
+/// The routing facts a USB-auto interface registers: a receiving/transmitting/
+/// forwarding direct peer with no in-medium repeat, like the serial cable. As an
+/// always-up aggregate it stays routable while its worker runs — `Degraded` with
+/// no board confirmed, `Connected` once one is — so it never blocks the engine's
+/// announce path. To the engine it is one interface, however many boards it owns.
+pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        id,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+        },
+        mode: InterfaceMode::PointToPoint,
+        medium: MediumKind::DirectPeer,
+        state: ConnectionState::Degraded,
+    }
 }
 
 #[cfg(test)]
