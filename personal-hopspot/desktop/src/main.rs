@@ -1,17 +1,16 @@
 //! The Linux debug face of the Personal Hopspot.
 //!
 //! Runs the *same* engine the S3 firmware does — an announcing
-//! `Runtime` over a USB-serial interface — and renders the *same*
+//! `Runtime` over the plug-and-play USB-auto interface — and renders the *same*
 //! Hopspot status screen the OLED shows, in an `embedded-graphics-simulator`
-//! window. Point it at a peer's serial device (`personal-hopspot-desktop
-//! /dev/ttyACM0`) and watch the cards tick as announces cross the link.
+//! window. Just run `personal-hopspot-desktop` (no arguments), plug in a Personal
+//! board, and watch the cards tick as announces cross the link.
 //!
 //! The engine runs on its own thread; the SDL2 window owns the main thread (SDL
 //! requires it) and repaints the latest runtime snapshot at ~30 fps. This is the
 //! daemon's engine wiring (mirrors `personal-rnsd`) with a face bolted on — the
 //! two will diverge, so the ~60 shared lines are duplicated rather than factored.
 
-use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -25,7 +24,7 @@ use heapless::Vec as HVec;
 use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::GrowableHeap;
-use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
+use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
@@ -41,13 +40,6 @@ const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
 const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 
-/// CDC-ACM nominal baud (USB ignores it, but `serialport` wants a value).
-const USB_BAUD: u32 = 115_200;
-/// The worker's blocking read window: short enough that a quiet link still loops
-/// back to service outbound, long enough to not busy-spin.
-const READ_POLL: Duration = Duration::from_millis(50);
-/// How long to wait before re-opening the port after an open failure or unplug.
-const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// In-flight capacity of each of the interface's data rings.
 const MAX_BUFFERED_PACKETS: usize = 64;
 
@@ -83,35 +75,26 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 }
 
 fn main() {
-    let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: personal-hopspot-desktop <serial-device>   (e.g. /dev/ttyACM0)");
-        std::process::exit(2);
-    };
-
     // The engine thread feeds each cycle's snapshot to the UI thread.
     let (snap_tx, snap_rx) = mpsc::channel::<RuntimeSnapshot>();
     std::thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(path, snap_tx))
+        .spawn(move || run_engine(snap_tx))
         .expect("spawn engine thread");
 
     // SDL2 wants the window on the main thread.
     run_window(snap_rx);
 }
 
-/// Build the announcing engine + serial interface (the rnsd wiring) and drive the
+/// Build the announcing engine + the plug-and-play USB-auto interface and drive the
 /// runtime forever, forwarding each cycle's snapshot to the UI thread.
-fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
+fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
     // The std poll-loop host owns the clock + wake.
     let host = LinuxSync::new();
 
-    let open = move || {
-        serialport::new(&path, USB_BAUD)
-            .timeout(READ_POLL)
-            .open()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-    };
-    let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
+    // Enumerates the USB bus itself and owns every Personal board plugged in —
+    // no port argument, no configuration.
+    let interface = usb_auto_interface(USB_INTERFACE_ID);
 
     // `attach` glues the interface's seam (keyed by the id the interface carries),
     // starts its worker thread, and bundles what the runtime pools.

@@ -19,17 +19,15 @@ default = []
 fixture-identity = []
 
 [dependencies]
-# The same engine + std host the daemon uses (announcing ContractRuntime over a
-# serial interface).
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["std-host"] }
+# The same engine + std host the daemon uses, plus the plug-and-play USB-auto
+# interface (announcing ContractRuntime over auto-discovered USB CDC links).
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["std-host", "usb-auto"] }
 # The shared Hopspot screen renderer — the exact draw code the S3 OLED runs.
 personal-hopspot-ui = { path = "../ui", default-features = false }
 # Render the BinaryColor screen into an SDL2 window (pin the 0.8 line that pairs
 # with embedded-graphics 0.8).
 embedded-graphics = "0.8"
 embedded-graphics-simulator = "0.8.0"
-# USB-serial transport (open by path; default-features off drops libudev).
-serialport = { version = "4", default-features = false }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 # The card vector the renderer takes.
