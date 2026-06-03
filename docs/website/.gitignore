@@ -2,3 +2,5 @@
 /dist
 /node_modules
 package-lock.json
+# dx writes an optimized copy of public/assets/tailwind.css here at serve time
+/assets

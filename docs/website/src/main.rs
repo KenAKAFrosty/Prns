@@ -9,6 +9,7 @@ use unic_langid::langid;
 
 mod components;
 mod pages;
+mod platforms;
 mod routes;
 
 use routes::Route;

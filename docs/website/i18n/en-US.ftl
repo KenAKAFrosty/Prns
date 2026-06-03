@@ -7,15 +7,21 @@ nav-api = API
 footer-tagline = Brought to you by the Personal team.
 
 # Landing
+# `landing-kicker` is the full eyebrow, used as-is by every non-English locale.
+# en-US renders an animated variant: `landing-kicker-prefix` followed by a
+# final word that rotates (developers → builders → tinkerers) and rests on
+# "people". The rotating words live in src/pages/landing.rs (English-only, since
+# the trick is word-order specific).
 landing-kicker = Unstoppable mesh networks, for the people
-landing-title = A production-grade port of Reticulum (RNS) written in Rust.
-landing-subtitle = A deterministic, no_std, alloc-free core. Covers RNS and LXMF in full. Built for the performance and battery life every Reticulum stack needs, from a five-dollar microcontroller to a cloud node.
+landing-kicker-prefix = Unstoppable mesh networks, for the
+landing-title = A production-grade port of Reticulum (RNS) written in safe Rust.
+landing-subtitle = A deterministic, no_std, alloc-free core. Built for the performance and stability every Reticulum node needs, from a five-dollar microcontroller to a cloud server.
 landing-cta-ethos = Pick a crate
 landing-cta-crates = How we build it
 
 # Pull quote
 landing-quote-label = What we're building toward
-landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, if we build it. This is our effort to bring it into the hands of more developers, to help realize that future.
+landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, if we build it. This is our effort to bring it into the hands of more builders, to help realize that future.
 
 # What you can count on (standards callout)
 standards-section-label = Our standards
@@ -23,15 +29,16 @@ standards-section-title = What you can count on
 standards-license-label = License
 standards-license-headline = MIT / Apache 2.0
 standards-license-body = Dual-licensed and permissive. No copyleft, no non-commercial restrictions.
-standards-coverage-label = Coverage
-standards-coverage-headline = Full RNS and LXMF
-standards-coverage-body = Not RNS-only. Not LXMF-on-the-side. Both, in full.
-standards-core-label = Core
-standards-core-headline = no_std, alloc-free
-standards-core-body = A deterministic core that runs where allocators can't.
-standards-verification-label = Verification
-standards-verification-headline = Diff-tested against RNS
-standards-verification-body = Every change checked against the reference; formal proofs where they matter.
+standards-safety-label = Safety
+standards-safety-headline = #![forbid(unsafe_code)]
+standards-safety-body = Our crates contain zero unsafe, enforced by the compiler. The unsafe inside dependencies is checked for UB under Miri and audited with cargo-geiger.
+standards-correctness-label = Correctness
+standards-correctness-headline = Diff-tested against RNS
+standards-correctness-body = Every change is checked against the reference, then put through property, fuzz, and mutation tests, with Kani proofs where they matter.
+standards-benchmarked-label = Performance
+standards-benchmarked-headline = Measured, not promised
+standards-benchmarked-body = Performance is tracked in the open, measured by a harness you can run yourself.
+standards-benchmarked-cta = See the benchmarks →
 
 # Where do I start? (use-case cards on landing)
 start-section-label = Routes in
@@ -74,6 +81,19 @@ start-lxmf-headline = I want to send messages over the mesh
 start-lxmf-body = LXMF on top of Reticulum — identities, addresses, delivery. The layer Sideband and Nomadnet sit on.
 start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
+
+# Platforms ("Runs on") — hero marquee label + CTA, and the dedicated page
+landing-platforms-label = Runs on
+landing-platforms-cta = See all →
+platforms-title = Where Prns runs
+platforms-lead = One engine, many homes. Some of these ship today; the rest are on the roadmap — the north star we're building toward. Solid chips run now; dashed are next.
+platforms-legend-shipping = Shipping today
+platforms-legend-roadmap = Roadmap
+
+# Benchmarks page
+benchmarks-kicker = Performance
+benchmarks-title = Benchmarked in the open
+benchmarks-lead = We treat performance as a number, not an adjective. Every figure here comes from a deterministic harness in the repo, measured on real hardware and checked against the RNS reference where the comparison is fair. The numbers are landing as the suite stabilizes; below is the methodology they hold to.
 
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.

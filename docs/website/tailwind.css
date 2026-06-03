@@ -97,3 +97,165 @@ html, body {
     border-top: 1px solid var(--color-line);
     margin: 2.5em 0;
 }
+
+/* Landing eyebrow: the final word rotates on load (developers → builders →
+   tinkerers) and comes to rest on "people". One-shot, ends on the last word.
+   The slot is sized to the text-xs line box (1rem) so it sits inline with the
+   surrounding all-caps text; steps of 1rem walk the stacked word list up. */
+.kicker-rotator {
+    display: inline-block;
+    height: 1rem;
+    line-height: 1rem;
+    /* Clip the scrolled-away words at the top and sides, but let the bottom
+       breathe ~0.35rem so the resting word's underline can sit clear of the
+       text — a hard 1rem overflow:hidden left no room below the descenders. */
+    clip-path: inset(0 0 -0.35rem 0);
+    vertical-align: bottom;
+    white-space: nowrap;
+}
+.kicker-rotator__list {
+    display: block;
+    animation: kicker-rotate 5.5s cubic-bezier(0.65, 0, 0.35, 1) 0.5s 1 forwards;
+}
+.kicker-rotator__word {
+    display: block;
+    height: 1rem;
+    line-height: 1rem;
+    /* Gap between stacked words so the bottom clip extension shows empty space
+       (not the next word) mid-rotation. The translate step includes it. */
+    margin-bottom: 0.4rem;
+}
+/* The resting word ("people") lands, then a thin underline draws in beneath it
+   left-to-right — emphasis on the punchline. Width-matched to the word (not the
+   wider slot) via fit-content, and drawn with a pseudo-element since
+   text-decoration can't animate. Timed to fire just after the rotation settles
+   (people is in place ~4.55s in: 0.5s delay + 0.81 * 5s). */
+.kicker-rotator__word--final {
+    position: relative;
+    width: fit-content;
+}
+.kicker-rotator__word--final::after {
+    content: "";
+    position: absolute;
+    /* Nudge the whole bar 2px left: "people" carries ~2.6px of trailing
+       letter-spacing (tracking) in its box, which otherwise pushes the
+       underline right of the glyphs. Same width, just shifted. */
+    left: -2px;
+    right: 2px;
+    bottom: -0.12rem;
+    height: 1px;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: left;
+    animation: kicker-underline 0.55s cubic-bezier(0.16, 1, 0.3, 1) 5.4s forwards;
+}
+@keyframes kicker-underline {
+    to { transform: scaleX(1); }
+}
+@keyframes kicker-rotate {
+    0%, 14%   { transform: translateY(0); }
+    22%, 38%  { transform: translateY(-1.4rem); }
+    46%, 62%  { transform: translateY(-2.8rem); }
+    70%, 84%  { transform: translateY(-4.2rem); }
+    88%, 100% { transform: translateY(-5.6rem); }
+}
+/* Honor reduced-motion: skip the reveal. Show the resting word with a static
+   underline, no rotation, no draw-in. */
+@media (prefers-reduced-motion: reduce) {
+    .kicker-rotator__list {
+        animation: none;
+        transform: translateY(-5.6rem);
+    }
+    .kicker-rotator__word--final::after {
+        animation: none;
+        transform: scaleX(1);
+    }
+}
+/* Visually hidden, still read by screen readers (the resting word). */
+.kicker-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* Platform marquee under the hero — a seamless horizontal ticker of run targets.
+   The track holds two identical copies of the list; translateX(-50%) advances
+   exactly one copy, so the loop never jumps. Edges fade via a mask; min-width:0
+   lets the flex item shrink so the (very wide) track clips and scrolls. */
+.platform-marquee {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+}
+.platform-marquee__track {
+    display: flex;
+    width: max-content;
+    animation: platform-scroll 42s linear infinite;
+}
+.platform-marquee:hover .platform-marquee__track {
+    animation-play-state: paused;
+}
+.platform-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: none;
+    padding: 0.45rem 0.8rem;
+    border: 1px solid rgb(108 116 128 / 0.22);
+    border-radius: 0.6rem;
+    background: rgb(22 27 36 / 0.6);
+    color: var(--color-soft);
+    font-size: 0.8rem;
+    line-height: 1;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.platform-chip:hover {
+    color: var(--color-paper);
+    border-color: rgb(110 231 183 / 0.45);
+    background: rgb(22 27 36 / 0.85);
+}
+/* Bundled Simple Icon, tinted to the chip's text color via mask (tracks the
+   theme + brightens on hover). --logo is set per chip as an inline style. */
+.platform-chip__icon {
+    flex: none;
+    width: 1.05rem;
+    height: 1.05rem;
+    background: currentColor;
+    -webkit-mask: var(--logo) center / contain no-repeat;
+    mask: var(--logo) center / contain no-repeat;
+}
+/* Marquee chips tile via margin (not gap) so two copies loop seamlessly; the
+   platforms-page grid spaces with gap instead, so scope the margin here. */
+.platform-marquee__track .platform-chip {
+    margin-right: 0.5rem;
+}
+/* Roadmap chips on the platforms page: dashed + dimmer, with a small "soon". */
+.platform-chip--soon {
+    border-style: dashed;
+    border-color: rgb(108 116 128 / 0.4);
+    color: var(--color-mid);
+}
+.platform-chip__soon {
+    margin-left: 0.45rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-mid);
+    opacity: 0.85;
+}
+@keyframes platform-scroll {
+    to { transform: translateX(-50%); }
+}
+/* Reduced-motion: hold the ticker still (the masked first run stays readable). */
+@media (prefers-reduced-motion: reduce) {
+    .platform-marquee__track { animation: none; }
+}

@@ -1,14 +1,59 @@
 use dioxus::prelude::*;
+use dioxus_i18n::prelude::*;
 use dioxus_i18n::t;
+use unic_langid::langid;
 
+use crate::components::PlatformChip;
+use crate::platforms::PLATFORMS;
 use crate::routes::Route;
+
+/// The eyebrow's final word animates. It opens on "people" (plain), rotates
+/// through developers, builders, tinkerers, then comes to rest back on "people"
+/// (underlined). The first and last entries are both "people" on purpose.
+///
+/// Coupled to the `kicker-rotate` keyframes in tailwind.css, authored for
+/// exactly this many words (one 1.4rem step each, resting on the last). If you
+/// add or remove a word, update the keyframe stops, the reduced-motion
+/// translate, and the underline delay there (and in the compiled
+/// public/assets/tailwind.css).
+const KICKER_WORDS: &[&str] = &["people", "developers", "builders", "tinkerers", "people"];
 
 #[component]
 pub fn Landing() -> Element {
+    // The rotating-last-word eyebrow only makes sense in English: other locales
+    // word the phrase differently (some lead with "for everyone"), and the
+    // rotating words themselves are English. Everyone else gets the plain kicker.
+    let i18n = i18n();
+    let rotate_kicker = i18n.language() == langid!("en-US");
+    let resting_word = KICKER_WORDS.last().copied().unwrap_or("people");
+
     rsx! {
         section { class: "pt-8 pb-20",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
-                {t!("landing-kicker")}
+                if rotate_kicker {
+                    {t!("landing-kicker-prefix")}
+                    " "
+                    span { class: "kicker-rotator", "aria-hidden": "true",
+                        span { class: "kicker-rotator__list",
+                            for (i, word) in KICKER_WORDS.iter().enumerate() {
+                                span {
+                                    key: "{i}-{word}",
+                                    class: if i + 1 == KICKER_WORDS.len() {
+                                        "kicker-rotator__word kicker-rotator__word--final"
+                                    } else {
+                                        "kicker-rotator__word"
+                                    },
+                                    "{word}"
+                                }
+                            }
+                        }
+                    }
+                    // The animation is decorative; expose the resting word to
+                    // screen readers so the phrase still reads "…for the people".
+                    span { class: "kicker-sr-only", "{resting_word}" }
+                } else {
+                    {t!("landing-kicker")}
+                }
             }
             h1 { class: "mt-4 text-4xl md:text-5xl font-semibold tracking-tight text-paper leading-[1.08]",
                 {t!("landing-title")}
@@ -29,14 +74,40 @@ pub fn Landing() -> Element {
                     {t!("landing-cta-crates")}
                 }
             }
-        }
 
-        section { class: "border-t border-line/60 pt-14 pb-2",
-            p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-mid",
-                {t!("landing-quote-label")}
-            }
-            blockquote { class: "mt-3 text-xl md:text-2xl font-serif leading-snug text-paper italic max-w-3xl",
-                {t!("landing-quote-body")}
+            // The whole strip links to the dedicated, scannable platforms page.
+            // A marquee is lovely but useless for "does it run on MY thing?".
+            Link {
+                to: Route::PlatformsPage {},
+                class: "group mt-8 flex items-center gap-4",
+                span { class: "text-[0.7rem] font-semibold tracking-[0.18em] uppercase text-mid group-hover:text-accent transition-colors",
+                    {t!("landing-platforms-label")}
+                }
+                div { class: "platform-marquee flex-1",
+                    div { class: "platform-marquee__track",
+                        for p in PLATFORMS.iter() {
+                            PlatformChip {
+                                key: "{p.name}",
+                                name: p.name.to_string(),
+                                icon: p.icon.map(str::to_string),
+                                soon: false,
+                                decorative: false,
+                            }
+                        }
+                        for p in PLATFORMS.iter() {
+                            PlatformChip {
+                                key: "{p.name}-dup",
+                                name: p.name.to_string(),
+                                icon: p.icon.map(str::to_string),
+                                soon: false,
+                                decorative: true,
+                            }
+                        }
+                    }
+                }
+                span { class: "text-xs text-mid group-hover:text-accent transition-colors",
+                    {t!("landing-platforms-cta")}
+                }
             }
         }
 
@@ -54,20 +125,42 @@ pub fn Landing() -> Element {
                     body: t!("standards-license-body"),
                 }
                 StandardsCard {
-                    label: t!("standards-coverage-label"),
-                    headline: t!("standards-coverage-headline"),
-                    body: t!("standards-coverage-body"),
+                    label: t!("standards-safety-label"),
+                    headline: t!("standards-safety-headline"),
+                    body: t!("standards-safety-body"),
                 }
                 StandardsCard {
-                    label: t!("standards-core-label"),
-                    headline: t!("standards-core-headline"),
-                    body: t!("standards-core-body"),
+                    label: t!("standards-correctness-label"),
+                    headline: t!("standards-correctness-headline"),
+                    body: t!("standards-correctness-body"),
                 }
-                StandardsCard {
-                    label: t!("standards-verification-label"),
-                    headline: t!("standards-verification-headline"),
-                    body: t!("standards-verification-body"),
+                // Performance is the one card that goes deeper: it links to the
+                // benchmarks page where the actual numbers live.
+                Link {
+                    to: Route::BenchmarksPage {},
+                    class: "group block rounded-card border border-line/60 bg-layer/40 p-5 hover:border-accent/40 hover:-translate-y-px transition-all",
+                    p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
+                        {t!("standards-benchmarked-label")}
+                    }
+                    p { class: "mt-2 text-base font-semibold text-paper tracking-tight",
+                        {t!("standards-benchmarked-headline")}
+                    }
+                    p { class: "mt-2 text-sm text-soft leading-relaxed",
+                        {t!("standards-benchmarked-body")}
+                    }
+                    p { class: "mt-3 font-mono text-xs text-mid group-hover:text-accent transition-colors",
+                        {t!("standards-benchmarked-cta")}
+                    }
                 }
+            }
+        }
+
+        section { class: "mt-16 border-t border-line/60 pt-14 pb-2",
+            p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-mid",
+                {t!("landing-quote-label")}
+            }
+            blockquote { class: "mt-3 text-xl md:text-2xl font-serif leading-snug text-paper italic max-w-3xl",
+                {t!("landing-quote-body")}
             }
         }
 

@@ -13,7 +13,7 @@ pub fn TopNav() -> Element {
                 Link {
                     to: Route::Landing {},
                     class: "font-semibold tracking-tight text-paper hover:text-accent transition-colors",
-                    "reticulum.rs"
+                    "Prns"
                 }
                 nav { class: "flex items-center gap-6 text-sm text-soft",
                     Link {
