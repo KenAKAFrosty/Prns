@@ -2,6 +2,7 @@
 name = "personal-rns"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 description = "Pure Reticulum engine and wire contract for Personal Reticulum"
 publish = false
 

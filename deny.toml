@@ -28,22 +28,38 @@ allow = [
     "Unicode-DFS-2016",
     "Zlib",
     "CC0-1.0",
+    "0BSD",
 ]
 confidence-threshold = 0.93
 # e.g. { allow = ["MPL-2.0"], crate = "some-weak-copyleft-dep" }
 exceptions = []
+
+# `unescaper` declares the malformed/deprecated SPDX expression "GPL-3.0/MIT". It is
+# genuinely dual-licensed and we take the MIT option, so pin the evaluated license to
+# MIT. This silences the SPDX parse-warning WITHOUT accepting any copyleft.
+[[licenses.clarify]]
+crate = "unescaper"
+expression = "MIT"
+license-files = []
 
 [advisories]
 version = 2
 # Fail on any dependency that has been yanked; `ignore` is for advisories we've
 # triaged and consciously accept (each entry should carry a comment + RUSTSEC id).
 yanked = "deny"
+# Unmaintained advisories fail the build only when the crate is a DIRECT workspace
+# dependency (actionable by us). Deep-transitive unmaintained crates — e.g. `paste`
+# and `bincode`, pulled in via uniffi / serialport — are noise we can't fix, so this
+# is scoped to "workspace". Real security VULNERABILITIES are always denied,
+# regardless of this setting.
+unmaintained = "workspace"
 ignore = []
 
 [bans]
 # Duplicate versions bloat embedded binaries — surface them (warn), don't block yet.
 multiple-versions = "warn"
-wildcards = "deny" # no `foo = "*"` version requirements
+wildcards = "deny"           # no `foo = "*"` version requirements from crates.io...
+allow-wildcard-paths = true # ...but intra-workspace `path = "..."` deps are fine
 allow = []
 deny = []
 
