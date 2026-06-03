@@ -12,16 +12,11 @@ use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 use announce::Announce;
 use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
-pub use defaults::{
-    DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES, DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
-    DEFAULT_HISTORY_FLOOR_PER_DESTINATION, DEFAULT_HISTORY_OVERFLOW_CAPACITY,
-    DEFAULT_MAX_TRACKED_DESTINATIONS, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-};
+pub use defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
 pub use storage::AnnounceIdHistoryView;
 use storage::{
-    AnnounceIdHistory, ColumnsFull, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
-    PackedAppDataArena, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
-    RouteColumns, RouteEntry, TieredAnnounceIdHistory,
+    AnnounceIdHistory, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
+    RetainedAppData, RouteColumns, RouteEntry,
 };
 pub use types::{
     DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
@@ -44,25 +39,6 @@ where
     announce_id_history: H,
     retained_app_data: D,
 }
-
-/// No-std stack-resident routing-table preset.
-pub type DefaultRoutingTable<
-    const MAX_TRACKED_DESTINATIONS: usize,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
-    const HISTORY_FLOOR_PER_DESTINATION: usize,
-    const HISTORY_OVERFLOW_CAPACITY: usize,
-> = RoutingTable<
-    FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
-    FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
-    TieredAnnounceIdHistory<
-        HISTORY_FLOOR_PER_DESTINATION,
-        HISTORY_OVERFLOW_CAPACITY,
-        MAX_TRACKED_DESTINATIONS,
-        MAX_ANNOUNCE_IDS_PER_DESTINATION,
-    >,
-    PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
->;
 
 impl<R, A, H, D> RoutingTable<R, A, H, D>
 where
@@ -236,9 +212,35 @@ mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
+    use crate::routing::storage::{
+        FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
+        TieredAnnounceIdHistory,
+    };
 
-    /// Test-only canonical sizing — production has no storage defaults.
-    type Rt = DefaultRoutingTable<64, 64, 4096, 4, 512>;
+    /// These tests compose their own routing table — production has no default; each
+    /// consumer (tests included) picks its sizing. Parameterized so size-specific
+    /// tests pick theirs and the capacity-agnostic ones share `Rt`.
+    type TestRoutingTable<
+        const MAX_TRACKED_DESTINATIONS: usize,
+        const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
+        const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
+        const HISTORY_FLOOR_PER_DESTINATION: usize,
+        const HISTORY_OVERFLOW_CAPACITY: usize,
+    > = RoutingTable<
+        FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
+        FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
+        TieredAnnounceIdHistory<
+            HISTORY_FLOOR_PER_DESTINATION,
+            HISTORY_OVERFLOW_CAPACITY,
+            MAX_TRACKED_DESTINATIONS,
+            MAX_ANNOUNCE_IDS_PER_DESTINATION,
+        >,
+        PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
+    >;
+    /// The capacity-agnostic tests' table (64 dests / 64 ids / 4 KB / 4 / 512).
+    type Rt = TestRoutingTable<64, 64, 4096, 4, 512>;
+    /// Per-destination announce-id history cap = `Rt`'s `MAX_ANNOUNCE_IDS_PER_DESTINATION`.
+    const RT_HISTORY_CAP: usize = 64;
     use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 
     fn dest(byte: u8) -> DestinationHash {
@@ -285,7 +287,7 @@ mod tests {
     }
 
     fn record<const D: usize, const S: usize, const A: usize, const F: usize, const O: usize>(
-        table: &mut DefaultRoutingTable<D, S, A, F, O>,
+        table: &mut TestRoutingTable<D, S, A, F, O>,
         destination: DestinationHash,
         hops: u8,
         arrival: InstantMillis,
@@ -423,7 +425,7 @@ mod tests {
     #[test]
     fn seen_set_evicts_oldest_when_full() {
         let mut table: Rt = Rt::default();
-        for n in 0..(DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION as u64 + 3) {
+        for n in 0..(RT_HISTORY_CAP as u64 + 3) {
             record(
                 &mut table,
                 dest(1),
@@ -436,19 +438,19 @@ mod tests {
         let view = table.existing_route_for(&dest(1)).unwrap();
         assert_eq!(
             view.announce_id_history.len(),
-            DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION
+            RT_HISTORY_CAP
         );
         assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
         assert!(view.announce_id_history.contains(&announce_id(
             0,
-            DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION as u64 + 2
+            RT_HISTORY_CAP as u64 + 2
         )));
     }
 
     #[test]
     fn new_destinations_past_capacity_are_dropped() {
         const MAX: usize = 8;
-        let mut table: DefaultRoutingTable<MAX, 8, 256, 4, 512> = DefaultRoutingTable::default();
+        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
         for n in 0..MAX {
             assert_eq!(
                 record(
@@ -547,7 +549,7 @@ mod tests {
 
     #[test]
     fn a_new_path_whose_payload_overflows_the_arena_is_dropped() {
-        let mut table: DefaultRoutingTable<4, 8, 8, 4, 512> = DefaultRoutingTable::default();
+        let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
         assert_eq!(
             record(
                 &mut table,
@@ -576,7 +578,7 @@ mod tests {
 
     #[test]
     fn refresh_that_cannot_retain_a_better_announce_leaves_the_table_untouched() {
-        let mut table: DefaultRoutingTable<4, 8, 8, 4, 512> = DefaultRoutingTable::default();
+        let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
         record(
             &mut table,
             dest(1),

@@ -10,13 +10,12 @@ use crate::routing::announce::{
     Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
 };
 use crate::routing::held_cache::{
-    HeldAnnounce, HeldAnnounces, HoldReason, ParkOutcome, DEFAULT_HELD_CACHE_CAPACITY,
-    HELD_APP_DATA_LIMIT,
+    HeldAnnounce, HeldAnnounces, HoldReason, ParkOutcome, HELD_APP_DATA_LIMIT,
 };
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FixedHeldAnnounces<const CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACITY> {
+pub struct FixedHeldAnnounces<const CAPACITY: usize> {
     len: usize,
     destinations: [DestinationHash; CAPACITY],
     received_hops: [u8; CAPACITY],

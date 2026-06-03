@@ -1,34 +1,12 @@
-//! Default sizing and timing knobs for the no_std routing preset.
+//! Timing knobs for the no_std routing preset (route expiry, rebroadcast jitter).
 //!
-//! These are local policy values, not wire-format constants.
+//! These are local policy values, not wire-format constants. Storage sizing has no
+//! defaults — every consumer picks its own.
 
 use crate::wire::DestinationHash;
 
 /// How long a learned route stays valid without a refresh.
 pub(crate) const DEFAULT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
-
-/// How many destinations the default table tracks.
-pub const DEFAULT_MAX_TRACKED_DESTINATIONS: usize = 64;
-
-/// Per-destination cap on remembered announce ids.
-pub const DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION: usize = 64;
-
-/// Per-destination guaranteed inline history slots.
-pub const DEFAULT_HISTORY_FLOOR_PER_DESTINATION: usize = 4;
-
-/// Average per-destination `app_data` budget used to size the default arena.
-pub const DEFAULT_AVG_APP_DATA_BYTES_PER_DESTINATION: usize = 64;
-
-/// Average per-destination history overflow budget.
-pub const DEFAULT_AVG_HISTORY_OVERFLOW_PER_DESTINATION: usize = 8;
-
-/// Total byte budget for retained announce `app_data`.
-pub const DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES: usize =
-    DEFAULT_MAX_TRACKED_DESTINATIONS * DEFAULT_AVG_APP_DATA_BYTES_PER_DESTINATION;
-
-/// Total shared overflow capacity for announce-id history.
-pub const DEFAULT_HISTORY_OVERFLOW_CAPACITY: usize =
-    DEFAULT_MAX_TRACKED_DESTINATIONS * DEFAULT_AVG_HISTORY_OVERFLOW_PER_DESTINATION;
 
 /// Width of the rebroadcast jitter window.
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;

@@ -7,11 +7,10 @@ use heapless::Vec;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::schedule::{RebroadcastQueue, ScheduledRebroadcast};
-use crate::routing::DEFAULT_MAX_TRACKED_DESTINATIONS;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct FixedRebroadcastQueue<const MAX_PENDING: usize = DEFAULT_MAX_TRACKED_DESTINATIONS> {
+pub struct FixedRebroadcastQueue<const MAX_PENDING: usize> {
     pending: Vec<ScheduledRebroadcast, MAX_PENDING>,
 }
 

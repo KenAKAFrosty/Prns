@@ -16,8 +16,6 @@ use crate::routing::announce::{
 };
 use crate::wire::{DestinationHash, HEADER_LEN, MTU};
 
-pub const DEFAULT_HELD_CACHE_CAPACITY: usize = 64;
-
 pub const HELD_APP_DATA_LIMIT: usize = MTU - HEADER_LEN - ANNOUNCE_FIXED_FIELDS_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
