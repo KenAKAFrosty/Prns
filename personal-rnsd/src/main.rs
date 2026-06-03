@@ -27,11 +27,15 @@ use personal_rns::runtime::{block_on, Prns, Recipe};
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
 
-/// The destination this daemon announces itself as. `personal.node` is the
-/// node-level aspect; the engine derives its hash via `expand_name`.
-const SELF_ANNOUNCE_APP_NAME: &str = "personal";
-const SELF_ANNOUNCE_ASPECTS: &[&str] = &["node"];
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-rnsd";
+/// The destination this daemon announces itself as: `lxmf.delivery`, the aspect LXMF
+/// apps (Sideband/Columba) message — so the daemon surfaces as a real, messageable
+/// peer. The engine derives the destination hash via `expand_name`.
+const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
+const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
+/// The `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])` =
+/// `fixarray(2)` ‖ `bin8("Personal rnsd")` ‖ `nil` — the shape LXMF 0.9.9 emits, so
+/// apps surface the display name (the `\x0d` length byte = 13 = the name's length).
+const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0dPersonal rnsd\xc0";
 
 /// CDC-ACM nominal baud (USB ignores it, but `serialport` wants a value).
 const USB_BAUD: u32 = 115_200;

@@ -56,8 +56,10 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC6; 16]);
 /// In-flight capacity of each of the interface's data rings.
 const SEAM_DEPTH: usize = 8;
 
-/// App data carried in this node's self-announce.
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-c6";
+/// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
+/// = `fixarray(2)` ‖ `bin8("Personal C6")` ‖ `nil` — the shape LXMF apps parse, so they
+/// surface the display name (the `\x0b` length byte = 11 = the name's length).
+const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0bPersonal C6\xc0";
 
 /// The worker-side seam this board's serial task runs against.
 type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SEAM_DEPTH>>;
@@ -141,8 +143,8 @@ async fn node_task(
         Recipe {
             identity_secret_key: secret_key,
             self_announce: SelfAnnounceConfig {
-                app_name: "personal",
-                aspects: &["node"],
+                app_name: "lxmf",
+                aspects: &["delivery"],
                 app_data: SELF_ANNOUNCE_APP_DATA,
                 schedule: ReannounceSchedule::default(),
             },
