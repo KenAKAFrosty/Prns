@@ -4,6 +4,8 @@ members = [
     "personal-rnsd",
     "personal-lxmf",
     "personal-rns-ffi",
+    "personal-rns-napi",
+    "personal-rns-capi",
     "personal-hopspot/ui",
 ]
 resolver = "3"

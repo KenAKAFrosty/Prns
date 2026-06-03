@@ -1,0 +1,19 @@
+[package]
+name = "personal-rns-capi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "C ABI bindings for personal-rns for C, C++, Go, Zig, and other native consumers"
+publish = false
+
+[lib]
+# `cdylib` for dynamic FFI consumers, `staticlib` for vendored/native SDK
+# packaging, and `rlib` so Rust tests can exercise the exported symbols.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+personal-rns = { path = "../personal-rns", default-features = false, features = ["std"] }
+getrandom = "0.2"
+
+[lints]
+workspace = true
