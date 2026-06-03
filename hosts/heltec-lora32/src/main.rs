@@ -26,7 +26,7 @@ use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig};
+use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
@@ -44,7 +44,9 @@ use static_cell::StaticCell;
 use core::convert::Infallible;
 use core::fmt::Write as _;
 use embassy_futures::join::join4;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use embassy_time::{Delay, Duration, Instant as EmbassyInstant, Ticker, Timer};
 use heapless::{String as HString, Vec as HVec};
 use ssd1306::prelude::*;
@@ -226,6 +228,11 @@ impl EspNowLink for S3EspNowLink<'_> {
 /// render loop subscribes and wakes only when engine state changes — no poll.
 static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 
+/// The user button's task posts short/long-press events here; the OLED loop is
+/// the single consumer, turning them into [`UiState`](display::UiState)
+/// transitions. A small queue so a quick double-tap mid-render isn't dropped.
+static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, display::InputEvent, 4> = Channel::new();
+
 /// Small engine-state preset for the S3: a desk node tracks a handful of
 /// destinations, so the default `FixedCapacity` recipe (64 dests /
 /// 64 ids-per-dest / 4 KB app-data arena, ~65 KB total) is oversized and
@@ -259,6 +266,14 @@ const VBAT_ABSENT_MV: u32 = 3000;
 /// traffic resumes. Saves the panel's draw on battery; on a busy fabric it
 /// effectively never blanks because announces keep arriving.
 const OLED_IDLE_BLANK_SECS: u64 = 30;
+
+/// Hold the user button at least this long for a long press (open/close a menu);
+/// anything shorter is a tap that advances focus. Matches the desktop face's
+/// threshold so both faces feel the same.
+const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
+/// Settle time after each press resolves, so the mechanical contact's bounce on
+/// release isn't read as a fresh press.
+const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 /// Busy-wait a few ms during setup (before the async loop runs).
 fn block_ms(ms: u64) {
@@ -302,6 +317,29 @@ async fn serial_worker_task(
     context: SerialContext,
 ) {
     serve_serial(rx, tx, context).await
+}
+
+/// The user button (PRG/BOOT, GPIO0 — the non-RST button) worker, its own task.
+/// Turns the raw active-low edges into the same [`InputEvent`](display::InputEvent)s
+/// the desktop face produces and posts them to the OLED loop: a tap (release
+/// before [`BUTTON_LONG_PRESS`]) is a `ShortPress`; crossing the hold threshold
+/// fires a `LongPress` the instant it's reached — so the menu opens without
+/// waiting for release — and the eventual release is then swallowed.
+#[embassy_executor::task]
+async fn button_task(mut button: Input<'static>) {
+    loop {
+        // Active-low: a press pulls GPIO0 to ground (falling), the pull-up holds
+        // it high on release (rising).
+        button.wait_for_falling_edge().await;
+        match select(button.wait_for_rising_edge(), Timer::after(BUTTON_LONG_PRESS)).await {
+            Either::First(()) => BUTTON_EVENTS.send(display::InputEvent::ShortPress).await,
+            Either::Second(()) => {
+                BUTTON_EVENTS.send(display::InputEvent::LongPress).await;
+                button.wait_for_rising_edge().await;
+            }
+        }
+        Timer::after(BUTTON_DEBOUNCE).await;
+    }
 }
 
 #[esp_rtos::main]
@@ -375,8 +413,8 @@ async fn main(spawner: Spawner) {
     .expect("i2c0")
     .with_sda(peripherals.GPIO17)
     .with_scl(peripherals.GPIO18);
-    // Portrait, title at the far end from the buttons (the non-RST button will
-    // scroll the card stack once there's more than one interface).
+    // Portrait, title at the far end from the buttons (the non-RST button scrolls
+    // the card stack and opens menus — see `button_task`).
     let mut display = Ssd1306::new(
         I2CDisplayInterface::new(i2c),
         DisplaySize128x64,
@@ -538,6 +576,13 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(auto_worker_task(stack, sta_mac, auto_context).expect("spawn auto worker"));
     spawner.spawn(serial_worker_task(usb_rx, usb_tx, serial_context).expect("spawn serial worker"));
+    // The user button drives the OLED's short/long-press interaction. GPIO0 is the
+    // non-RST (PRG/BOOT) button; the internal pull-up holds it high when released.
+    let user_button = Input::new(
+        peripherals.GPIO0,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    spawner.spawn(button_task(user_button).expect("spawn button worker"));
     println!("HELTEC_S3 workers spawned (node {dest_hex}); runtime running");
 
     // Keep the radio alive (dropping the controller disconnects).
@@ -661,6 +706,8 @@ async fn main(spawner: Spawner) {
         // on ADC noise.
         let mut vbat_ema_mv: u32 = 0;
         let mut battery_tick = Ticker::every(Duration::from_secs(2));
+        // Single-button focus/menu state, driven by `button_task`'s events.
+        let mut ui_state = display::UiState::new();
         loop {
             // VBAT (mV at the pin, calibrated) scaled by the ~4.9x divider. An
             // implausibly low reading means no LiPo (USB-only) → Unknown.
@@ -720,6 +767,30 @@ async fn main(spawner: Spawner) {
                     }
                 }
             }
+            // One card per interface in the latest snapshot. Mapping an interface
+            // id to its icon/label is the host's job; returning `None` hides that
+            // interface from the panel. Built every iteration (cheap) so the button
+            // handler below always has the live card count for its focus/menu math.
+            let cards: HVec<display::Card, 8> = match &snapshot {
+                Some(snap) => display::snapshot_to_cards(snap, |id| {
+                    if id == SERIAL_INTERFACE_ID {
+                        Some((display::CardKind::Usb, "USB"))
+                    } else if id == LORA_INTERFACE_ID {
+                        Some((display::CardKind::LoRa, "LoRa"))
+                    } else if id == ESPNOW_INTERFACE_ID {
+                        Some((display::CardKind::EspNow, "ESP-NOW"))
+                    } else {
+                        Some((display::CardKind::Wifi, "WiFi LAN"))
+                    }
+                }),
+                None => HVec::new(),
+            };
+            // Reconcile selection/window with the current interface count. All four
+            // cards are reachable: a short press pages focus through them, so the
+            // one that doesn't fit the panel scrolls into view.
+            let card_count = cards.len();
+            ui_state.sync_card_count(card_count);
+
             let idle = last_active.elapsed() >= Duration::from_secs(OLED_IDLE_BLANK_SECS);
             if idle && panel_on {
                 let _ = display.set_display_on(false);
@@ -730,38 +801,32 @@ async fn main(spawner: Spawner) {
             }
 
             if panel_on {
-                // One card per interface in the latest snapshot. Mapping an
-                // interface id to its icon/label is the host's job; returning
-                // `None` hides that interface from the panel.
-                let cards: HVec<display::Card, 8> = match &snapshot {
-                    Some(snap) => display::snapshot_to_cards(snap, |id| {
-                        // 4 interfaces, only 3 fit the panel: the 4th in registration
-                        // order (ESP-NOW) scrolls off the bottom until card scrolling
-                        // lands. WiFi + USB + LoRa are the visible three.
-                        if id == SERIAL_INTERFACE_ID {
-                            Some((display::CardKind::Usb, "USB"))
-                        } else if id == LORA_INTERFACE_ID {
-                            Some((display::CardKind::LoRa, "LoRa"))
-                        } else if id == ESPNOW_INTERFACE_ID {
-                            Some((display::CardKind::EspNow, "ESP-NOW"))
-                        } else {
-                            Some((display::CardKind::Wifi, "WiFi LAN"))
-                        }
-                    }),
-                    None => HVec::new(),
-                };
-                display::draw(&mut display, &cards, battery);
+                display::draw_with_state(&mut display, &cards, battery, &ui_state);
                 let _ = display.flush();
             }
 
-            // Sleep until the engine state changes or the battery cadence
-            // elapses — whichever first. A short floor coalesces an announce
-            // burst into at most one render per ~100ms.
-            match select(snapshot_rx.changed(), battery_tick.next()).await {
-                Either::First(new_snapshot) => snapshot = Some(new_snapshot),
-                Either::Second(()) => {}
+            // Sleep until the engine state changes, the battery cadence elapses,
+            // or the user presses the button — whichever first. A button press is
+            // user activity, so it also un-blanks an idle panel.
+            match select3(
+                snapshot_rx.changed(),
+                battery_tick.next(),
+                BUTTON_EVENTS.receive(),
+            )
+            .await
+            {
+                Either3::First(new_snapshot) => {
+                    snapshot = Some(new_snapshot);
+                    // A short floor coalesces an announce burst into at most one
+                    // render per ~100ms.
+                    Timer::after(Duration::from_millis(100)).await;
+                }
+                Either3::Second(()) => {}
+                Either3::Third(event) => {
+                    ui_state.handle_input(event, card_count);
+                    last_active = EmbassyInstant::now();
+                }
             }
-            Timer::after(Duration::from_millis(100)).await;
         }
     };
 

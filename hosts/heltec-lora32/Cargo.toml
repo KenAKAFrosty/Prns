@@ -45,6 +45,9 @@ embassy-executor = { version = "0.10", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 # `select` two futures (inbound datagram vs beacon tick) in one discovery loop.
 embassy-futures = { version = "0.1", default-features = false }
+# A `Channel` carrying the user button's short/long-press events from its task to
+# the OLED loop (the single consumer that turns them into `UiState` transitions).
+embassy-sync = { version = "0.8", default-features = false }
 # `slaac` makes embassy-net auto-assign the IPv6 link-local from the MAC
 # (EUI-64) — exactly what RNS AutoInterface's link-local multicast needs.
 embassy-net = { version = "0.9.1", features = ["udp", "proto-ipv6", "medium-ethernet", "multicast", "slaac"] }
