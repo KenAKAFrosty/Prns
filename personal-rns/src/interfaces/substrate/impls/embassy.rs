@@ -21,9 +21,9 @@ use embassy_time::Instant as EmbassyInstant;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{
-    ControlCommand, ControlEndpoint, ControlReport, InboundPacket, InboundSink, InterfaceHandle,
-    InterfaceId, InterfaceWorkerContext, OutboundDrain, OutboundPacket, QueueFull, SendError,
-    Substrate,
+    ControlCommand, ControlEndpoint, ControlReport, InboundPacket, InboundSink, Interface,
+    InterfaceHandle, InterfaceId, InterfaceWorkerContext, OutboundDrain, OutboundPacket, QueueFull,
+    SendError, StartedInterface, Substrate,
 };
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
@@ -260,6 +260,24 @@ impl<const MTU: usize, const DEPTH: usize> EmbassyInterfaceSeam<MTU, DEPTH> {
                 commands: channels.command.sender(),
                 reports: channels.report.receiver(),
             },
+        }
+    }
+
+    /// Start `interface` onto this seam: hand it the worker context, keep its runtime
+    /// handle, and bundle the [`StartedInterface`] the runtime pools.
+    pub fn start_interface<I>(
+        self,
+        interface: I,
+    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, DEPTH>, I::Worker>
+    where
+        I: Interface<EmbassyHostSubstrate<MTU, DEPTH>>,
+    {
+        let descriptor = interface.descriptor();
+        let drive = interface.start(self.worker_context);
+        StartedInterface {
+            descriptor,
+            handle: self.runtime_handle,
+            drive,
         }
     }
 }

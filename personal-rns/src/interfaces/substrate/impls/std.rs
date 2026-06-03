@@ -10,9 +10,9 @@ use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{
-    ControlCommand, ControlEndpoint, ControlReport, InboundPacket, InboundSink, InterfaceHandle,
-    InterfaceId, InterfaceWorkerContext, OutboundDrain, OutboundPacket, QueueFull, SendError,
-    Substrate,
+    ControlCommand, ControlEndpoint, ControlReport, InboundPacket, InboundSink, Interface,
+    InterfaceHandle, InterfaceId, InterfaceWorkerContext, OutboundDrain, OutboundPacket, QueueFull,
+    SendError, StartedInterface, Substrate,
 };
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
@@ -205,6 +205,24 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
                 commands: cmd_producer,
                 reports: report_consumer,
             },
+        }
+    }
+
+    /// Start `interface` onto this seam: hand it the worker context, keep its runtime
+    /// handle, and bundle the [`StartedInterface`] the runtime pools.
+    pub fn start_interface<I>(
+        self,
+        interface: I,
+    ) -> StartedInterface<StdInterfaceHandle<MTU>, I::Worker>
+    where
+        I: Interface<StdHostSubstrate<MTU>>,
+    {
+        let descriptor = interface.descriptor();
+        let drive = interface.start(self.worker_context);
+        StartedInterface {
+            descriptor,
+            handle: self.runtime_handle,
+            drive,
         }
     }
 }

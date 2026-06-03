@@ -27,8 +27,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
-use personal_rns::interfaces::substrate::StdInterfaceSeam;
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, run_contract, ContractRuntime, RuntimeSnapshot};
 
@@ -126,10 +125,7 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     // The std poll-loop host owns the clock + wake; glue the interface's seam from
     // it (worker holds the context, runtime keeps the handle).
     let host = LinuxSync::new();
-    let StdInterfaceSeam {
-        worker_context,
-        runtime_handle,
-    } = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
+    let seam = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
 
     let open = move || {
         serialport::new(&path, USB_BAUD)
@@ -138,13 +134,7 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
-    let descriptor = interface.descriptor();
-    let drive = interface.start(worker_context);
-    let started = StartedInterface {
-        descriptor,
-        handle: runtime_handle,
-        drive,
-    };
+    let started = seam.start_interface(interface);
 
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(started);

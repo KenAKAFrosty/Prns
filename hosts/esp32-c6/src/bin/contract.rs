@@ -41,11 +41,9 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{
-    Interface, InterfaceId, InterfaceWorkerContext, SelfDrivenInterface, StartedInterface,
-};
+use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
 use personal_rns::interfaces::substrate::{
-    EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceSeam, WakeSignal,
+    EmbassyHostSubstrate, EmbassyInterfaceChannels, WakeSignal,
 };
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{run_contract, ContractRuntime};
@@ -140,10 +138,7 @@ async fn node_task(
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
     });
-    let EmbassyInterfaceSeam {
-        worker_context,
-        runtime_handle,
-    } = host.glue_seam(USB_INTERFACE_ID, &CHANNELS);
+    let seam = host.glue_seam(USB_INTERFACE_ID, &CHANNELS);
 
     // The interface launches itself by spawning the board's concrete serial `#[task]`
     // (the device halves are captured here, beside the macro); `start` fires it.
@@ -153,13 +148,7 @@ async fn node_task(
             spawner.spawn(serial_task(usb_rx, usb_tx, context).expect("serial task fits the pool"));
         },
     );
-    let descriptor = interface.descriptor();
-    let drive = interface.start(worker_context);
-    let started = StartedInterface {
-        descriptor,
-        handle: runtime_handle,
-        drive,
-    };
+    let started = seam.start_interface(interface);
 
     let mut interfaces = FixedInterfaceSet::<_, 1>::new();
     let _ = interfaces.push(started);

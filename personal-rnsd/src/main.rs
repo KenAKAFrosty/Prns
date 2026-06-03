@@ -20,8 +20,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
-use personal_rns::interfaces::substrate::StdInterfaceSeam;
+use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, run_contract, ContractRuntime};
 
@@ -104,13 +103,10 @@ fn main() {
     // interface's seam from it: the worker thread holds the worker context; the
     // runtime keeps the handle.
     let host = LinuxSync::new();
-    let StdInterfaceSeam {
-        worker_context,
-        runtime_handle,
-    } = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
+    let seam = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
 
     // The interface owns its device lifecycle: `open` hands it a fresh CDC stream
-    // (re-opened on unplug); `start` spawns the thread and returns its drive mode.
+    // (re-opened on unplug); `start_interface` spawns its thread and bundles the seam.
     let open = move || {
         serialport::new(&path, USB_BAUD)
             .timeout(READ_POLL)
@@ -118,13 +114,7 @@ fn main() {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
-    let descriptor = interface.descriptor();
-    let drive = interface.start(worker_context);
-    let started = StartedInterface {
-        descriptor,
-        handle: runtime_handle,
-        drive,
-    };
+    let started = seam.start_interface(interface);
 
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(started);
