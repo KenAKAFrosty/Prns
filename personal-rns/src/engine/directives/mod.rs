@@ -26,12 +26,12 @@ pub enum EngineDirective {
 pub trait EngineDirectives {
     fn clear(&mut self);
     fn push(&mut self, directive: EngineDirective);
-    fn as_slice(&self) -> &[EngineDirective];
+    fn iter(&self) -> core::slice::Iter<'_, EngineDirective>;
 
     fn len(&self) -> usize {
-        self.as_slice().len()
+        self.iter().len()
     }
     fn is_empty(&self) -> bool {
-        self.as_slice().is_empty()
+        self.iter().len() == 0
     }
 }

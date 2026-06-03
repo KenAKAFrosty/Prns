@@ -12,11 +12,11 @@ use super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
-    NextScheduledEngineWork, OutboundPacket, MAX_REGISTERED_INTERFACES,
+    NextScheduledEngineWork, MAX_REGISTERED_INTERFACES,
 };
 use crate::interfaces::{
-    ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId, SendError,
-    StartedInterface,
+    ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId, OutboundPacket,
+    SendError, StartedInterface,
 };
 use crate::routing::storage::Storage;
 use crate::wire::MTU;
@@ -74,7 +74,7 @@ where
             HeaplessVec::new();
         for interface in started {
             engine
-                .register_routable_descriptor(&interface.descriptor)
+                .register_routable_interface_descriptor(&interface.descriptor)
                 .expect("interface descriptor is connected and transmits");
             if set.push(interface).is_err() {
                 panic!("more interfaces than MAX_REGISTERED_INTERFACES");
@@ -321,11 +321,12 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
 
-    use crate::engine::{FixedCapacityEngineState, InboundPacket, ENGINE_CYCLE_ENTROPY_LEN};
+    use crate::engine::ENGINE_CYCLE_ENTROPY_LEN;
     use crate::interfaces::{
-        ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+        ConnectionState, EgressCapability, InboundPacket, IngressCapability, InterfaceCapabilities,
         InterfaceDescriptor, InterfaceMode, MediumKind, TransitCapability,
     };
+    use crate::routing::storage::FixedCapacity;
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{PacketType, WirePacketHeader};
 
@@ -461,7 +462,7 @@ mod tests {
         let peer = iface(0xB2);
         let arrival = InstantMillis(1_000);
 
-        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let engine = EngineState::<FixedCapacity>::default();
         // A unit host (`()`): the cycle/snapshot seam needs no real substrate.
         let mut runtime = ContractRuntime::new(
             engine,
@@ -523,13 +524,13 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[test]
     fn growable_heap_engine_drives_a_full_cycle() {
-        use crate::engine::GrowableHeapEngineState;
+        use crate::routing::storage::GrowableHeap;
         let raw = hx(RAW_ANNOUNCE);
         let source = iface(0xA1);
         let peer = iface(0xB2);
         let arrival = InstantMillis(1_000);
 
-        let engine = GrowableHeapEngineState::default();
+        let engine = EngineState::<GrowableHeap>::default();
         let mut runtime = ContractRuntime::new(
             engine,
             [
@@ -554,7 +555,7 @@ mod tests {
     #[test]
     fn snapshot_reflects_reported_connection_state() {
         let id = iface(0xC3);
-        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let engine = EngineState::<FixedCapacity>::default();
         let mut runtime = ContractRuntime::new(
             engine,
             [started_with_reports(
@@ -579,7 +580,7 @@ mod tests {
     #[test]
     fn stopped_reports_disconnect_the_snapshot() {
         let id = iface(0xD4);
-        let engine: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let engine = EngineState::<FixedCapacity>::default();
         let mut runtime = ContractRuntime::new(
             engine,
             [started_with_reports(id, [ControlReport::Stopped])],

@@ -8,11 +8,10 @@
 //! UI-agnostic by design (pure logic, no rendering deps), so the same core
 //! drives a desktop window today and a zero-install web build later.
 
-use personal_rns::engine::{
-    ingest_packets, tick, FixedCapacityEngineState, InboundPacket, InstantMillis,
-};
-use personal_rns::interfaces::InterfaceId;
+use personal_rns::engine::{ingest_packets, tick, EngineState, InstantMillis};
+use personal_rns::interfaces::{InboundPacket, InterfaceId};
 use personal_rns::routing::defaults::JitterSeed;
+use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::wire::TRUNCATED_HASH_BYTE_LEN;
 
 const VIRTUAL_WIRE_INTERFACE: InterfaceId = InterfaceId::new([0x52; TRUNCATED_HASH_BYTE_LEN]);
@@ -21,7 +20,7 @@ const VIRTUAL_WIRE_INTERFACE: InterfaceId = InterfaceId::new([0x52; TRUNCATED_HA
 /// delivered to it but not yet ingested.
 pub struct SimNode {
     pub label: String,
-    pub state: FixedCapacityEngineState,
+    pub state: EngineState<FixedCapacity>,
     inbound: Vec<(InstantMillis, Vec<u8>)>,
 }
 
@@ -29,7 +28,7 @@ impl SimNode {
     fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            state: FixedCapacityEngineState::default(),
+            state: EngineState::<FixedCapacity>::default(),
             inbound: Vec::new(),
         }
     }

@@ -60,10 +60,11 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
 use personal_rns::engine::{
-    EngineCycleEntropySeed, FixedCapacityEngineState, InboundPacket, OutboundPacket,
-    ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
+    EngineCycleEntropySeed, EngineState, ReannounceSchedule, SelfAnnounceConfig,
+    ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::esp_now::core::descriptor as espnow_descriptor;
 use personal_rns::interfaces::impls::esp_now::embassy::{serve as serve_esp_now, EspNowLink};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::core::HARDWARE_MTU;
@@ -80,8 +81,8 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
 };
 use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
-    ControlReport, DriverMode, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
-    StartedInterface,
+    ConnectionState, ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId,
+    InterfaceWorkerContext, OutboundPacket, SendError, StartedInterface,
 };
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::channels::embassy_seam::{
@@ -168,7 +169,7 @@ impl InterfaceHandle for HeltecHandle {
         }
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> bool {
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
         match self {
             HeltecHandle::Auto(h) => h.send(packet),
             HeltecHandle::Serial(h) => h.send(packet),
@@ -230,7 +231,7 @@ static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 /// doesn't fit comfortably alongside WiFi + the worker — this preset is ~12 KB.
 /// The params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
 /// history_overflow, held_cache>`.
-type S3EngineState = FixedCapacityEngineState<24, 32, 1024, 4, 128, 4>;
+type S3EngineState = EngineState<FixedCapacity<24, 32, 1024, 4, 128, 4>>;
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";
@@ -706,12 +707,16 @@ async fn main(spawner: Spawner) {
                         } else {
                             "WiFi"
                         };
+                        let online = matches!(
+                            view.connection_state,
+                            ConnectionState::Connected | ConnectionState::Degraded
+                        );
                         log::info!(
                             "HELTEC_S3 IFACE {label} online={} dest={} rx={} tx={}",
-                            view.online,
+                            online,
                             view.tracked_destinations,
-                            view.reticulum_rx_bytes,
-                            view.reticulum_tx_bytes,
+                            view.reticulum_rx_byte_count,
+                            view.reticulum_tx_byte_count,
                         );
                     }
                 }

@@ -19,10 +19,11 @@ use embassy_sync::channel::{Channel, Receiver, Sender};
 use embassy_sync::signal::Signal;
 use embassy_time::Instant as EmbassyInstant;
 
-use crate::engine::{InboundPacket, InstantMillis, OutboundPacket};
+use crate::engine::InstantMillis;
 use crate::interfaces::{
-    ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceHandle, InterfaceId,
-    InterfaceWorkerContext, OutboundDrain, QueueFull, SendError, Substrate,
+    ControlCommand, ControlEndpoint, ControlReport, InboundPacket, InboundSink, InterfaceHandle,
+    InterfaceId, InterfaceWorkerContext, OutboundDrain, OutboundPacket, QueueFull, SendError,
+    Substrate,
 };
 
 /// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.

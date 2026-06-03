@@ -10,8 +10,7 @@
 //! holds the other ends as an
 //! [`InterfaceHandle`](crate::interfaces::InterfaceHandle).
 
-use crate::engine::OutboundPacket;
-use crate::interfaces::{ConnectionState, QueueFull};
+use crate::interfaces::{ConnectionState, OutboundPacket, QueueFull};
 
 /// The producer end of an interface's inbox: the interface fills a slot in place
 /// with a decoded Reticulum packet, and the sink publishes it (stamping arrival

@@ -10,8 +10,8 @@
 //! discriminants documenting packet types the engine recognizes but does not yet
 //! handle.
 
-use crate::engine::{InboundPacket, InstantMillis};
-use crate::interfaces::InterfaceId;
+use crate::engine::InstantMillis;
+use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::wire::{DestinationType, PacketType, WirePacketHeader, MTU};
 

@@ -10,6 +10,7 @@ pub mod mode;
 mod descriptor;
 mod framing;
 pub mod impls;
+mod packet;
 mod worker;
 
 pub use capabilities::{
@@ -23,6 +24,7 @@ pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 
 pub use descriptor::InterfaceDescriptor;
+pub use packet::{InboundPacket, OutboundPacket};
 pub use worker::{
     ControlCommand, ControlEndpoint, ControlReport, DriverMode, InboundSink, Interface,
     InterfaceHandle, InterfaceWorkerContext, OutboundDrain, QueueFull, SelfDrivenInterface,

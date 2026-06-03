@@ -17,28 +17,23 @@ use crate::engine::egress::write_announce_wire_packet;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, SelfAnnounceEntropy,
 };
 use crate::routing::defaults::{jitter_offset_for, JitterSeed};
-use crate::routing::held_cache::{HeldAnnounces, DEFAULT_HELD_CACHE_CAPACITY};
+use crate::routing::held_cache::HeldAnnounces;
 use crate::routing::schedule::RebroadcastQueue;
-#[cfg(feature = "alloc")]
-use crate::routing::storage::GrowableHeap;
-use crate::routing::storage::{FixedCapacity, Storage};
+use crate::routing::storage::Storage;
 use crate::routing::{
-    DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-    DEFAULT_HISTORY_OVERFLOW_CAPACITY, DEFAULT_MAX_TRACKED_DESTINATIONS,
-    DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+    DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
 use crate::wire::DestinationHash;
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
-/// Cap on registered interfaces.
+/// Cap on registered interfaces. REVIEW this is s sizing concern, needs to live with fixed in its impl, not here at the root
 pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -46,7 +41,6 @@ pub struct InstantMillis(pub u64);
 
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
-/// Raw entropy needed for one engine cycle.
 pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
 /// Raw CSPRNG bytes for one engine cycle.
@@ -62,7 +56,6 @@ impl EngineCycleEntropySeed {
     }
 }
 
-/// One cycle's entropy, split by consumer.
 pub struct EngineCycleEntropy {
     /// Seed used to spread rebroadcast timing.
     pub jitter: JitterSeed,
@@ -86,35 +79,12 @@ impl EngineCycleEntropy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InboundPacket<'a> {
-    pub arrived_at: InstantMillis,
-    pub source_interface: InterfaceId,
-    pub bytes: &'a [u8],
-}
-
-/// One serialized Reticulum wire packet on its way out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutboundPacket<'a> {
-    pub bytes: &'a [u8],
-}
-
-impl<'a> OutboundPacket<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextScheduledEngineWork {
-    /// Work is ready now.
     Immediate,
-    /// No work is ready before this timestamp.
     At(InstantMillis),
-    /// The engine has no scheduled work.
     Idle,
 }
 
-/// Retained engine state, generic over a [`Storage`] recipe.
 pub struct EngineState<S: Storage> {
     tick_count: u64,
     ingested_packet_count: u64,
@@ -176,31 +146,7 @@ pub enum RegisterInterfaceError {
     NotRoutable { state: ConnectionState },
 }
 
-/// No-std stack-resident engine-state preset.
-pub type FixedCapacityEngineState<
-    const MAX_TRACKED_DESTINATIONS: usize = DEFAULT_MAX_TRACKED_DESTINATIONS,
-    const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize = DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION,
-    const ANNOUNCE_APP_DATA_ARENA_BYTES: usize = DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
-    const HISTORY_FLOOR_PER_DESTINATION: usize = DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
-    const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
-    const HELD_CACHE_CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACITY,
-> = EngineState<
-    FixedCapacity<
-        MAX_TRACKED_DESTINATIONS,
-        MAX_ANNOUNCE_IDS_PER_DESTINATION,
-        ANNOUNCE_APP_DATA_ARENA_BYTES,
-        HISTORY_FLOOR_PER_DESTINATION,
-        HISTORY_OVERFLOW_CAPACITY,
-        HELD_CACHE_CAPACITY,
-    >,
->;
-
-/// Growable, heap-backed engine state for std hosts.
-#[cfg(feature = "alloc")]
-pub type GrowableHeapEngineState = EngineState<GrowableHeap>;
-
 impl<S: Storage> EngineState<S> {
-    /// Build an engine with an in-memory identity but no self-announce.
     pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         Self {
             identity: Some(InMemoryNodeIdentity::from_secret_key_bytes(
@@ -210,7 +156,7 @@ impl<S: Storage> EngineState<S> {
         }
     }
 
-    /// Like [`new`](Self::new), plus self-announce configuration.
+    /// TEMPORARY AND WILL BE REMOVED
     pub fn announcing(
         identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         self_announce: SelfAnnounceConfig<'_>,
@@ -246,8 +192,7 @@ impl<S: Storage> EngineState<S> {
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// Register an interface for engine fanout.
-    pub fn register_routable_descriptor(
+    pub fn register_routable_interface_descriptor(
         &mut self,
         descriptor: &InterfaceDescriptor,
     ) -> Result<(), RegisterInterfaceError> {
@@ -279,7 +224,6 @@ impl<S: Storage> EngineState<S> {
         &self.interfaces
     }
 
-    /// Destination this engine self-announces as, if any.
     pub fn self_announced_destination(&self) -> Option<DestinationHash> {
         let identity = self.identity.as_ref()?;
         let self_announce = self.self_announce.as_ref()?;
@@ -289,7 +233,6 @@ impl<S: Storage> EngineState<S> {
         ))
     }
 
-    /// When the host must next drive the engine.
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
         if self.held_announce_count() > 0 {
             return NextScheduledEngineWork::Immediate;
@@ -374,7 +317,6 @@ impl IngestOutput {
     }
 }
 
-/// Output of one [`tick`] call.
 #[must_use]
 pub struct TickOutput<'a, S: Storage> {
     state: &'a mut EngineState<S>,
@@ -391,25 +333,20 @@ impl<'a, S: Storage> TickOutput<'a, S> {
         self.recovered_from_held_count
     }
 
-    /// Iterate every directive due this tick.
     pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
         let state = &*self.state;
-        state
-            .directives
-            .as_slice()
-            .iter()
-            .filter_map(move |directive| {
-                let EngineDirective::ReemitAnnounce {
-                    destination,
-                    fire_on,
-                } = directive;
-                let retained = state.routing_table.retained_announce_for(destination)?;
-                Some(EgressDirective::ReemitAnnounce {
-                    announce: retained.announce,
-                    emit_hops: retained.hops,
-                    fire_on: fire_on.as_slice(),
-                })
+        state.directives.iter().filter_map(move |directive| {
+            let EngineDirective::ReemitAnnounce {
+                destination,
+                fire_on,
+            } = directive;
+            let retained = state.routing_table.retained_announce_for(destination)?;
+            Some(EgressDirective::ReemitAnnounce {
+                announce: retained.announce,
+                emit_hops: retained.hops,
+                fire_on: fire_on.as_slice(),
             })
+        })
     }
 
     pub fn commit(mut self) {
@@ -427,7 +364,6 @@ impl<S: Storage> Drop for TickOutput<'_, S> {
     }
 }
 
-/// Process a batch of inbound packets.
 #[must_use]
 pub fn ingest_packets<'p, I, S: Storage>(
     state: &mut EngineState<S>,
@@ -543,7 +479,6 @@ fn ingest_announce<S: Storage>(
     }
 }
 
-/// Advance scheduled engine work to `now`.
 pub fn tick<S: Storage>(
     state: &mut EngineState<S>,
     now: InstantMillis,
@@ -636,6 +571,7 @@ mod tests {
         EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, MediumKind,
         TransitCapability,
     };
+    use crate::routing::storage::FixedCapacity;
     use crate::wire::{
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
     };
@@ -683,8 +619,8 @@ mod tests {
 
     #[test]
     fn tick_advances_count_deterministically() {
-        let mut left: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let mut right: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut left: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
+        let mut right: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
         let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000));
         let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000));
@@ -699,7 +635,7 @@ mod tests {
 
     #[test]
     fn ingest_counts_the_batch_without_a_clock() {
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let batch = [
             InboundPacket {
                 arrived_at: InstantMillis(10),
@@ -733,7 +669,7 @@ mod tests {
         Zeroizing::new(bytes)
     }
 
-    fn personal_node_announcer() -> FixedCapacityEngineState {
+    fn personal_node_announcer() -> EngineState<FixedCapacity> {
         EngineState::announcing(
             &fixed_secret_key(),
             SelfAnnounceConfig {
@@ -796,7 +732,7 @@ mod tests {
 
     #[test]
     fn a_relay_default_state_never_originates() {
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
@@ -806,7 +742,7 @@ mod tests {
 
     #[test]
     fn an_identity_only_node_never_originates() {
-        let mut state: FixedCapacityEngineState = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<FixedCapacity> = EngineState::new(&fixed_secret_key());
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
@@ -822,15 +758,15 @@ mod tests {
                 hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
             )),
         );
-        let relay: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let relay: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         assert_eq!(relay.self_announced_destination(), None);
-        let identity_only: FixedCapacityEngineState = EngineState::new(&fixed_secret_key());
+        let identity_only: EngineState<FixedCapacity> = EngineState::new(&fixed_secret_key());
         assert_eq!(identity_only.self_announced_destination(), None);
     }
 
     #[test]
     fn next_wakeup_is_idle_for_a_relay_with_no_scheduled_work() {
-        let state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         assert_eq!(
             state.next_wakeup(InstantMillis(1_000)),
             NextScheduledEngineWork::Idle
@@ -864,7 +800,7 @@ mod tests {
     #[test]
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let _ = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -917,19 +853,19 @@ mod tests {
         }
     }
 
-    fn register_test_interface(state: &mut FixedCapacityEngineState, id: InterfaceId) {
+    fn register_test_interface(state: &mut EngineState<FixedCapacity>, id: InterfaceId) {
         state
-            .register_routable_descriptor(&routable_descriptor(id))
+            .register_routable_interface_descriptor(&routable_descriptor(id))
             .unwrap();
     }
 
     #[test]
     fn register_routable_descriptor_accepts_a_connected_transmitting_interface() {
         let id = InterfaceId::new([0xAB; 16]);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
         assert_eq!(
-            state.register_routable_descriptor(&routable_descriptor(id)),
+            state.register_routable_interface_descriptor(&routable_descriptor(id)),
             Ok(())
         );
         assert_eq!(state.registered_interfaces(), &[id]);
@@ -942,9 +878,12 @@ mod tests {
             state: ConnectionState::Degraded,
             ..routable_descriptor(id)
         };
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
-        assert_eq!(state.register_routable_descriptor(&descriptor), Ok(()));
+        assert_eq!(
+            state.register_routable_interface_descriptor(&descriptor),
+            Ok(())
+        );
         assert_eq!(state.registered_interfaces(), &[id]);
     }
 
@@ -952,10 +891,10 @@ mod tests {
     fn register_routable_descriptor_rejects_non_transmitting_interfaces() {
         let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
         descriptor.capabilities.egress = EgressCapability::Disabled;
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
         assert_eq!(
-            state.register_routable_descriptor(&descriptor),
+            state.register_routable_interface_descriptor(&descriptor),
             Err(RegisterInterfaceError::NotTransmitting)
         );
         assert!(state.registered_interfaces().is_empty());
@@ -976,10 +915,10 @@ mod tests {
                 state: connection_state,
                 ..routable_descriptor(InterfaceId::new([idx as u8; 16]))
             };
-            let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+            let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
             assert_eq!(
-                state.register_routable_descriptor(&descriptor),
+                state.register_routable_interface_descriptor(&descriptor),
                 Err(RegisterInterfaceError::NotRoutable {
                     state: connection_state
                 })
@@ -991,7 +930,7 @@ mod tests {
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
         let first = ingest_packets(
             &mut state,
@@ -1023,7 +962,7 @@ mod tests {
     fn received_hops_are_incremented_so_the_reach_boundary_matches_pathfinder_m() {
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let out = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1037,7 +976,7 @@ mod tests {
 
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let out = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1058,7 +997,7 @@ mod tests {
         let destination =
             DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
 
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let out = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1082,7 +1021,7 @@ mod tests {
 
     #[test]
     fn ingest_processes_but_does_not_accept_non_announce_bytes() {
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
             source_interface: InterfaceId::new([0u8; 16]),
@@ -1097,7 +1036,7 @@ mod tests {
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8>>::default();
 
         let out = ingest_packets(
             &mut state,
@@ -1118,7 +1057,7 @@ mod tests {
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8>>::default();
         let _ = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1141,7 +1080,7 @@ mod tests {
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = FixedCapacityEngineState::<4, 64, 8>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8>>::default();
 
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
@@ -1194,7 +1133,7 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = FixedCapacityEngineState::<64, 128>::default();
+        let mut state = EngineState::<FixedCapacity<64, 128>>::default();
         let out = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1211,7 +1150,7 @@ mod tests {
     #[test]
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
@@ -1251,7 +1190,7 @@ mod tests {
     #[test]
     fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
         let arrival = InstantMillis(1_000);
         let _ = ingest_packets(
             &mut state,
@@ -1276,8 +1215,8 @@ mod tests {
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
 
-        let mut left: FixedCapacityEngineState = FixedCapacityEngineState::default();
-        let mut right: FixedCapacityEngineState = FixedCapacityEngineState::default();
+        let mut left: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
+        let mut right: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::default();
 
         for state in [&mut left, &mut right] {
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
@@ -1303,7 +1242,7 @@ mod tests {
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = FixedCapacityEngineState::<4, 64, 8, 4, 16, 4>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4>>::default();
         let _ = ingest_packets(
             &mut state,
             [InboundPacket {

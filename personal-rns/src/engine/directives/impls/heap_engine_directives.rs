@@ -13,8 +13,8 @@ impl EngineDirectives for HeapEngineDirectives {
     fn push(&mut self, directive: EngineDirective) {
         self.directives.push(directive);
     }
-    fn as_slice(&self) -> &[EngineDirective] {
-        &self.directives
+    fn iter(&self) -> core::slice::Iter<'_, EngineDirective> {
+        self.directives.iter()
     }
 }
 

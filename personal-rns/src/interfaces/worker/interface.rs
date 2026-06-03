@@ -16,9 +16,10 @@
 //! cannot exist without a runtime handle, and a `SelfDriven` value can never mean
 //! "the runtime has no way to reach it."
 
-use crate::engine::{InboundPacket, InstantMillis, NextScheduledEngineWork, OutboundPacket};
+use crate::engine::{InstantMillis, NextScheduledEngineWork};
 use crate::interfaces::{
-    ControlReport, InterfaceDescriptor, InterfaceWorkerContext, SendError, Substrate,
+    ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext, OutboundPacket,
+    SendError, Substrate,
 };
 
 /// Which side runs an interface's loop — the runtime's *scheduling* decision,

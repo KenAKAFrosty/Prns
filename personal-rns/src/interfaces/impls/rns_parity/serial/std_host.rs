@@ -149,9 +149,9 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Instant;
 
-    use crate::engine::OutboundPacket;
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use crate::interfaces::InterfaceHandle;
+    use crate::interfaces::OutboundPacket;
     use crate::runtime::channels::std_host::StdInterfaceSeam;
 
     /// In-memory byte pipe: serves preloaded `rx` bytes, then errors so a
