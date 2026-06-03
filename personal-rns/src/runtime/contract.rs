@@ -18,9 +18,7 @@ use crate::interfaces::{
     ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId, SendError,
     StartedInterface,
 };
-use crate::routing::storage::{
-    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
-};
+use crate::routing::storage::Storage;
 use crate::wire::MTU;
 
 /// Summary of one pooled drive cycle.
@@ -48,33 +46,27 @@ enum FanoutClass {
 /// single concrete type: no `dyn`, no alloc. `Ho` is unbounded on the struct so
 /// the cycle can be tested with a unit host; [`run_contract`] is what requires
 /// [`Host`].
-pub struct ContractRuntime<Ho, IH, W, R, A, H, D, const MAX_HELD: usize>
+pub struct ContractRuntime<Ho, IH, W, S>
 where
     IH: InterfaceHandle,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
+    S: Storage,
 {
-    engine: EngineState<R, A, H, D, MAX_HELD>,
+    engine: EngineState<S>,
     interfaces: HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
     traffic: TrafficLedger,
     host: Ho,
 }
 
-impl<Ho, IH, W, R, A, H, D, const MAX_HELD: usize> ContractRuntime<Ho, IH, W, R, A, H, D, MAX_HELD>
+impl<Ho, IH, W, S> ContractRuntime<Ho, IH, W, S>
 where
     IH: InterfaceHandle,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
+    S: Storage,
 {
     /// Build a runtime and register each started interface with the engine.
     /// Panics if the host supplies a non-routable interface or more than
     /// [`MAX_REGISTERED_INTERFACES`] interfaces.
     pub fn new(
-        mut engine: EngineState<R, A, H, D, MAX_HELD>,
+        mut engine: EngineState<S>,
         started: impl IntoIterator<Item = StartedInterface<IH, W>>,
         host: Ho,
     ) -> Self {
@@ -129,7 +121,7 @@ where
         &self.interfaces
     }
 
-    pub fn engine(&self) -> &EngineState<R, A, H, D, MAX_HELD> {
+    pub fn engine(&self) -> &EngineState<S> {
         &self.engine
     }
 }
@@ -137,18 +129,15 @@ where
 /// Drive `runtime` forever. The host supplies the clock and entropy at each wake;
 /// the loop then pools interfaces, emits a snapshot, and computes the next engine
 /// or interface deadline.
-pub async fn run_contract<Ho, Observe, IH, W, R, A, H, D, const MAX_HELD: usize>(
-    runtime: ContractRuntime<Ho, IH, W, R, A, H, D, MAX_HELD>,
+pub async fn run_contract<Ho, Observe, IH, W, S>(
+    runtime: ContractRuntime<Ho, IH, W, S>,
     mut observe: Observe,
 ) -> !
 where
     Ho: Host,
     Observe: FnMut(&RuntimeSnapshot),
     IH: InterfaceHandle,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
+    S: Storage,
 {
     let ContractRuntime {
         mut engine,
@@ -168,8 +157,8 @@ where
 /// The pooled cycle over borrowed parts (so [`run_contract`] can drive it while
 /// the host is borrowed separately). Both [`ContractRuntime::cycle_once`] and
 /// [`run_contract`] route through here.
-fn cycle_pooled<IH, W, R, A, H, D, const MAX_HELD: usize>(
-    engine: &mut EngineState<R, A, H, D, MAX_HELD>,
+fn cycle_pooled<IH, W, S>(
+    engine: &mut EngineState<S>,
     interfaces: &mut HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
     traffic: &mut TrafficLedger,
     now: InstantMillis,
@@ -177,10 +166,7 @@ fn cycle_pooled<IH, W, R, A, H, D, const MAX_HELD: usize>(
 ) -> ContractStepOutput
 where
     IH: InterfaceHandle,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
+    S: Storage,
 {
     let entropy = EngineCycleEntropy::from_seed(entropy_seed);
 
@@ -294,17 +280,14 @@ fn fan_to_handles<IH: InterfaceHandle, W>(
 }
 
 /// The app-facing [`RuntimeSnapshot`], over borrowed parts.
-fn snapshot_pooled<IH, W, R, A, H, D, const MAX_HELD: usize>(
-    engine: &EngineState<R, A, H, D, MAX_HELD>,
+fn snapshot_pooled<IH, W, S>(
+    engine: &EngineState<S>,
     interfaces: &HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
     traffic: &TrafficLedger,
 ) -> RuntimeSnapshot
 where
     IH: InterfaceHandle,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
+    S: Storage,
 {
     let mut views = HeaplessVec::new();
     for started in interfaces {
@@ -535,6 +518,37 @@ mod tests {
             submitted.len() as u64
         );
         assert_eq!(snapshot.interfaces[1].tracked_destinations, 0);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn growable_heap_engine_drives_a_full_cycle() {
+        use crate::engine::GrowableHeapEngineState;
+        let raw = hx(RAW_ANNOUNCE);
+        let source = iface(0xA1);
+        let peer = iface(0xB2);
+        let arrival = InstantMillis(1_000);
+
+        let engine = GrowableHeapEngineState::default();
+        let mut runtime = ContractRuntime::new(
+            engine,
+            [
+                started(source, std::vec![(arrival, raw.clone())]),
+                started(peer, std::vec::Vec::new()),
+            ],
+            (),
+        );
+
+        let out = runtime.cycle_once(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+        );
+
+        // Same behavior as the fixed engine, on knob-free heap storage.
+        assert_eq!(out.accepted_announce_count, 1);
+        assert_eq!(out.egress_directive_count, 1);
+        assert!(runtime.interfaces()[0].handle.sent.is_empty());
+        assert_eq!(runtime.interfaces()[1].handle.sent.len(), 1);
     }
 
     #[test]

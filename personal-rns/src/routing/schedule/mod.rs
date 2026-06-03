@@ -33,4 +33,5 @@ pub trait RebroadcastQueue {
     );
     fn drain_due(&mut self, now: InstantMillis) -> usize;
     fn earliest_due_at(&self) -> Option<InstantMillis>;
+    fn as_slice(&self) -> &[ScheduledRebroadcast];
 }

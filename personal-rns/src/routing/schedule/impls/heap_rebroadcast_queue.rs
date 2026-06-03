@@ -46,6 +46,9 @@ impl RebroadcastQueue for HeapRebroadcastQueue {
     fn earliest_due_at(&self) -> Option<InstantMillis> {
         self.pending.iter().map(|entry| entry.due_at).min()
     }
+    fn as_slice(&self) -> &[ScheduledRebroadcast] {
+        &self.pending
+    }
 }
 
 #[cfg(test)]

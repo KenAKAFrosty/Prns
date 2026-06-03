@@ -12,6 +12,7 @@ pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::Ingress;
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
+use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
@@ -22,13 +23,11 @@ use crate::routing::announce::{
     AnnounceId, SelfAnnounceEntropy,
 };
 use crate::routing::defaults::{jitter_offset_for, JitterSeed};
-use crate::routing::held_cache::{FixedHeldAnnounces, DEFAULT_HELD_CACHE_CAPACITY};
-use crate::routing::schedule::FixedRebroadcastQueue;
-use crate::routing::storage::{
-    AnnounceIdHistory, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
-    PackedAppDataArena, RetainedAnnounceColumns, RetainedAppData, RouteColumns,
-    TieredAnnounceIdHistory,
-};
+use crate::routing::held_cache::{HeldAnnounces, DEFAULT_HELD_CACHE_CAPACITY};
+use crate::routing::schedule::RebroadcastQueue;
+#[cfg(feature = "alloc")]
+use crate::routing::storage::GrowableHeap;
+use crate::routing::storage::{FixedCapacity, Storage};
 use crate::routing::{
     DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_ANNOUNCE_APP_DATA_ARENA_BYTES,
     DEFAULT_ANNOUNCE_ID_HISTORY_CAP_PER_DESTINATION, DEFAULT_HISTORY_FLOOR_PER_DESTINATION,
@@ -115,32 +114,43 @@ pub enum NextScheduledEngineWork {
     Idle,
 }
 
-/// Retained engine state, generic over routing-storage backends.
-#[derive(Default)]
-pub struct EngineState<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
-where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
+/// Retained engine state, generic over a [`Storage`] recipe.
+pub struct EngineState<S: Storage> {
     tick_count: u64,
     ingested_packet_count: u64,
-    routing_table: RoutingTable<R, A, H, D>,
-    held_announces_cache: FixedHeldAnnounces<MAX_HELD_ANNOUNCES>,
-    pending_rebroadcasts: FixedRebroadcastQueue<MAX_HELD_ANNOUNCES>,
+    routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
+    held_announces_cache: S::Held,
+    pending_rebroadcasts: S::Pending,
+    directives: S::Directives,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
     identity: Option<InMemoryNodeIdentity>,
     self_announce: Option<SelfAnnounceSettings>,
 }
 
-impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> core::fmt::Debug
-    for EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>
+impl<S: Storage> Default for EngineState<S> {
+    fn default() -> Self {
+        Self {
+            tick_count: 0,
+            ingested_packet_count: 0,
+            routing_table: Default::default(),
+            held_announces_cache: Default::default(),
+            pending_rebroadcasts: Default::default(),
+            directives: Default::default(),
+            interfaces: HeaplessVec::new(),
+            identity: None,
+            self_announce: None,
+        }
+    }
+}
+
+impl<S: Storage> core::fmt::Debug for EngineState<S>
 where
-    R: RouteColumns + core::fmt::Debug,
-    A: RetainedAnnounceColumns + core::fmt::Debug,
-    H: AnnounceIdHistory + core::fmt::Debug,
-    D: RetainedAppData + core::fmt::Debug,
+    S::Routes: core::fmt::Debug,
+    S::Announces: core::fmt::Debug,
+    S::History: core::fmt::Debug,
+    S::AppData: core::fmt::Debug,
+    S::Held: core::fmt::Debug,
+    S::Pending: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("EngineState")
@@ -175,33 +185,23 @@ pub type FixedCapacityEngineState<
     const HISTORY_OVERFLOW_CAPACITY: usize = DEFAULT_HISTORY_OVERFLOW_CAPACITY,
     const HELD_CACHE_CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACITY,
 > = EngineState<
-    FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>,
-    FixedArrayRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS>,
-    TieredAnnounceIdHistory<
-        HISTORY_FLOOR_PER_DESTINATION,
-        HISTORY_OVERFLOW_CAPACITY,
+    FixedCapacity<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
+        ANNOUNCE_APP_DATA_ARENA_BYTES,
+        HISTORY_FLOOR_PER_DESTINATION,
+        HISTORY_OVERFLOW_CAPACITY,
+        HELD_CACHE_CAPACITY,
     >,
-    PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
-    HELD_CACHE_CAPACITY,
 >;
 
-impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>
-where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
+/// Growable, heap-backed engine state for std hosts.
+#[cfg(feature = "alloc")]
+pub type GrowableHeapEngineState = EngineState<GrowableHeap>;
+
+impl<S: Storage> EngineState<S> {
     /// Build an engine with an in-memory identity but no self-announce.
-    pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self
-    where
-        R: Default,
-        A: Default,
-        H: Default,
-        D: Default,
-    {
+    pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         Self {
             identity: Some(InMemoryNodeIdentity::from_secret_key_bytes(
                 identity_secret_key,
@@ -214,13 +214,7 @@ where
     pub fn announcing(
         identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         self_announce: SelfAnnounceConfig<'_>,
-    ) -> Result<Self, SelfAnnounceConfigError>
-    where
-        R: Default,
-        A: Default,
-        H: Default,
-        D: Default,
-    {
+    ) -> Result<Self, SelfAnnounceConfigError> {
         let self_announce = SelfAnnounceSettings::from_config(self_announce)?;
         Ok(Self {
             self_announce: Some(self_announce),
@@ -380,36 +374,17 @@ impl IngestOutput {
     }
 }
 
-#[derive(Debug, Clone)]
-struct DirectiveFanout {
-    destination: DestinationHash,
-    fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
-}
-
 /// Output of one [`tick`] call.
 #[must_use]
-pub struct TickOutput<'a, R, A, H, D, const MAX_HELD_ANNOUNCES: usize>
-where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
-    state: &'a mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
+pub struct TickOutput<'a, S: Storage> {
+    state: &'a mut EngineState<S>,
     now: InstantMillis,
     recovered_from_held_count: usize,
-    fanouts: HeaplessVec<DirectiveFanout, MAX_HELD_ANNOUNCES>,
 }
 
-impl<'a, R, A, H, D, const MAX_HELD_ANNOUNCES: usize> TickOutput<'a, R, A, H, D, MAX_HELD_ANNOUNCES>
-where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
+impl<'a, S: Storage> TickOutput<'a, S> {
     pub fn egress_directive_count(&self) -> usize {
-        self.fanouts.len()
+        self.state.directives.len()
     }
 
     pub const fn recovered_from_held_count(&self) -> usize {
@@ -419,16 +394,22 @@ where
     /// Iterate every directive due this tick.
     pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
         let state = &*self.state;
-        self.fanouts.iter().filter_map(move |fanout| {
-            let retained = state
-                .routing_table
-                .retained_announce_for(&fanout.destination)?;
-            Some(EgressDirective::ReemitAnnounce {
-                announce: retained.announce,
-                emit_hops: retained.hops,
-                fire_on: fanout.fire_on.as_slice(),
+        state
+            .directives
+            .as_slice()
+            .iter()
+            .filter_map(move |directive| {
+                let EngineDirective::ReemitAnnounce {
+                    destination,
+                    fire_on,
+                } = directive;
+                let retained = state.routing_table.retained_announce_for(destination)?;
+                Some(EgressDirective::ReemitAnnounce {
+                    announce: retained.announce,
+                    emit_hops: retained.hops,
+                    fire_on: fire_on.as_slice(),
+                })
             })
-        })
     }
 
     pub fn commit(mut self) {
@@ -440,14 +421,7 @@ where
     }
 }
 
-impl<R, A, H, D, const MAX_HELD_ANNOUNCES: usize> Drop
-    for TickOutput<'_, R, A, H, D, MAX_HELD_ANNOUNCES>
-where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
+impl<S: Storage> Drop for TickOutput<'_, S> {
     fn drop(&mut self) {
         self.commit_in_place();
     }
@@ -455,17 +429,13 @@ where
 
 /// Process a batch of inbound packets.
 #[must_use]
-pub fn ingest_packets<'p, I, R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
-    state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
+pub fn ingest_packets<'p, I, S: Storage>(
+    state: &mut EngineState<S>,
     packets: impl IntoIterator<Item = I>,
     jitter: JitterSeed,
 ) -> IngestOutput
 where
     I: core::borrow::Borrow<InboundPacket<'p>>,
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
 {
     let mut counters = IngestCounters::default();
     let mut processed: usize = 0;
@@ -511,20 +481,15 @@ struct IngestCounters {
     scheduled: usize,
 }
 
-fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
-    state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
+fn ingest_announce<S: Storage>(
+    state: &mut EngineState<S>,
     announce: Announce<'_>,
     received_hops: u8,
     source_interface: InterfaceId,
     arrived_at: InstantMillis,
     jitter: JitterSeed,
     counters: &mut IngestCounters,
-) where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
+) {
     let decision = AnnounceAcceptanceInput {
         packet_hops: received_hops,
         announce_id: announce.announce_id,
@@ -579,17 +544,11 @@ fn ingest_announce<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
 }
 
 /// Advance scheduled engine work to `now`.
-pub fn tick<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
-    state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
+pub fn tick<S: Storage>(
+    state: &mut EngineState<S>,
     now: InstantMillis,
     jitter: JitterSeed,
-) -> TickOutput<'_, R, A, H, D, MAX_HELD_ANNOUNCES>
-where
-    R: RouteColumns,
-    A: RetainedAnnounceColumns,
-    H: AnnounceIdHistory,
-    D: RetainedAppData,
-{
+) -> TickOutput<'_, S> {
     state.tick_count = state.tick_count.saturating_add(1);
 
     let mut recovered_from_held_count = 0;
@@ -639,12 +598,15 @@ where
         }
     }
 
-    let mut fanouts: HeaplessVec<DirectiveFanout, MAX_HELD_ANNOUNCES> = HeaplessVec::new();
-    for scheduled in state
-        .pending_rebroadcasts
-        .iter()
-        .filter(|sr| sr.due_at <= now)
-    {
+    // Materialize this tick's directives from the due rebroadcasts. Indexed (not
+    // iterated) so the read of `pending_rebroadcasts` doesn't overlap the write to
+    // `directives` — both are fields of `state`.
+    state.directives.clear();
+    for index in 0..state.pending_rebroadcasts.as_slice().len() {
+        let scheduled = state.pending_rebroadcasts.as_slice()[index];
+        if scheduled.due_at > now {
+            continue;
+        }
         let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> = HeaplessVec::new();
         for &iface in &state.interfaces {
             if iface != scheduled.source_interface {
@@ -654,7 +616,7 @@ where
         if fire_on.is_empty() {
             continue;
         }
-        let _ = fanouts.push(DirectiveFanout {
+        state.directives.push(EngineDirective::ReemitAnnounce {
             destination: scheduled.destination,
             fire_on,
         });
@@ -664,7 +626,6 @@ where
         state,
         now,
         recovered_from_held_count,
-        fanouts,
     }
 }
 
@@ -689,16 +650,10 @@ mod tests {
         recovered_from_held_count: usize,
     }
 
-    fn tick_capture<R, A, H, D, const MAX_HELD_ANNOUNCES: usize>(
-        state: &mut EngineState<R, A, H, D, MAX_HELD_ANNOUNCES>,
+    fn tick_capture<S: Storage>(
+        state: &mut EngineState<S>,
         now: InstantMillis,
-    ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>)
-    where
-        R: RouteColumns,
-        A: RetainedAnnounceColumns,
-        H: AnnounceIdHistory,
-        D: RetainedAppData,
-    {
+    ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
         let tick_out = tick(state, now, TEST_ENTROPY);
         let snapshot = TickSnapshot {
             egress_directive_count: tick_out.egress_directive_count(),
@@ -713,15 +668,9 @@ mod tests {
         (snapshot, emitted)
     }
 
-    fn observable_state<R, A, H, D, const N: usize>(
-        state: &EngineState<R, A, H, D, N>,
-    ) -> (u64, u64, usize, usize, usize, std::vec::Vec<InterfaceId>)
-    where
-        R: RouteColumns,
-        A: RetainedAnnounceColumns,
-        H: AnnounceIdHistory,
-        D: RetainedAppData,
-    {
+    fn observable_state<S: Storage>(
+        state: &EngineState<S>,
+    ) -> (u64, u64, usize, usize, usize, std::vec::Vec<InterfaceId>) {
         (
             state.tick_count(),
             state.ingested_packet_count(),

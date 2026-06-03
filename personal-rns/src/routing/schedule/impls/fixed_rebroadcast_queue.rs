@@ -112,6 +112,9 @@ impl<const MAX_PENDING: usize> RebroadcastQueue for FixedRebroadcastQueue<MAX_PE
     fn earliest_due_at(&self) -> Option<InstantMillis> {
         FixedRebroadcastQueue::earliest_due_at(self)
     }
+    fn as_slice(&self) -> &[ScheduledRebroadcast] {
+        &self.pending
+    }
 }
 
 #[cfg(test)]
