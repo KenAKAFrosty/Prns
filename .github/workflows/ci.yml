@@ -60,6 +60,19 @@ jobs:
       - name: doc (intra-doc links are load-bearing navigation)
         run: cargo doc -p personal-rns --no-deps --document-private-items --quiet
 
+  msrv:
+    # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
+    # measured floor (1.88, set by the napi binding's deps); catches a feature or a
+    # dependency bump that quietly requires a newer compiler than we advertise.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace
+
   no-std-embedded:
     # The forcing-function gate: the core stays no_std + alloc-free and cross-compiles
     # to the ESP32-C6 (riscv32imac). Reuses the committed script verbatim.

@@ -10,6 +10,16 @@ members = [
 ]
 resolver = "3"
 
+# Shared identity for every member crate. Members inherit these with
+# `<field>.workspace = true` so the repository, license, edition, and MSRV
+# are declared once. Per-crate `name`, `version`, and `description` stay local.
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KenAKAFrosty/personal-reticulum-suite"
+homepage = "https://reticulum.rs"
+rust-version = "1.88"
+
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

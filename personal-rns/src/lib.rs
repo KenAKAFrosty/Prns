@@ -15,6 +15,13 @@
 // a rename can't silently rot the docs. Run `cargo doc` (the fmt-check gate's
 // doc step) to enforce.
 #![deny(rustdoc::broken_intra_doc_links)]
+// Panic-free engine. On an embedded host a panic is a device reset, not a stack
+// trace, so the core must never reach for `unwrap`/`expect`/`panic!` in shipping
+// code. Denied here (scoped to the engine, not the workspace, so the host and
+// binding crates stay free to panic at their boundaries); test code is exempt via
+// clippy.toml. These are Clippy tool lints, so a normal build is unaffected and
+// `cargo clippy` is the enforcer.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 // Make the `alloc` crate addressable as `alloc::*` for any module gated on the
 // `alloc` feature. Under std the alloc crate is reachable via `std::*` paths

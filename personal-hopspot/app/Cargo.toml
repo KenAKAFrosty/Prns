@@ -3,7 +3,7 @@ name = "personal-hopspot-app"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Your Personal Reticulum Hopspot"
+description = "Personal Hopspot: one source, two targets (the Linux debug window and the Heltec S3 OLED firmware)."
 
 [workspace]
 resolver = "2"

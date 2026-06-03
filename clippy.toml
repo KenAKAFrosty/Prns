@@ -1,0 +1,7 @@
+# Test code is exempt from the panic-free restriction lints (clippy::unwrap_used,
+# expect_used, panic) and from the workspace-wide dbg_macro deny, so tests can
+# assert and panic freely while the engine source stays panic-free.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests  = true
+allow-dbg-in-tests    = true
