@@ -73,14 +73,12 @@ fn main() {
         std::process::exit(2);
     };
 
-    // The std poll-loop host owns the clock + CSPRNG + the seam wake. Glue the
-    // interface's seam from it: the worker thread holds the worker context; the
-    // runtime keeps the handle.
+    // The std poll-loop host owns the clock + CSPRNG + the seam wake.
     let host = LinuxSync::new();
-    let seam = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
 
     // The interface owns its device lifecycle: `open` hands it a fresh CDC stream
-    // (re-opened on unplug); `start_interface` spawns its thread and bundles the seam.
+    // (re-opened on unplug). `attach` glues the interface's seam (keyed by the id the
+    // interface carries), starts its worker thread, and bundles what the runtime pools.
     let open = move || {
         serialport::new(&path, USB_BAUD)
             .timeout(READ_POLL)
@@ -90,7 +88,7 @@ fn main() {
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
 
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(seam.start_interface(interface));
+    let _ = interfaces.push(host.attach(interface, SEAM_DEPTH));
 
     // Build the announcing node from the recipe and drive it forever: it forwards
     // others' announces AND emits its own `personal.node` announce on the schedule

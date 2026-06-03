@@ -16,8 +16,8 @@ use super::super::{CycleStamp, Host};
 use crate::engine::{
     EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork, ENGINE_CYCLE_ENTROPY_LEN,
 };
-use crate::interfaces::substrate::StdInterfaceSeam;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::substrate::{StdHostSubstrate, StdInterfaceHandle, StdInterfaceSeam};
+use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 
 /// Upper bound on one blocking wait, so a far-off deadline or an idle engine still
 /// loops back periodically. A daemon host is mains-powered; the cap is free.
@@ -53,6 +53,23 @@ impl LinuxSync {
     /// context is used (the serial interface pins it to `SERIAL_MTU`).
     pub fn glue_seam<const MTU: usize>(&self, id: InterfaceId, depth: usize) -> StdInterfaceSeam<MTU> {
         StdInterfaceSeam::new(id, self.clock_base, depth, self.wake_sender.clone())
+    }
+
+    /// Attach `interface` to this host and hand back the [`StartedInterface`] the
+    /// runtime pools: glue a seam keyed by the id the interface already carries, then
+    /// start the interface onto it. The `glue_seam` + `start_interface` dance,
+    /// collapsed — reach for `glue_seam` directly only when a host splits the seam by
+    /// hand (a multi-interface board unifying heterogeneous handles).
+    pub fn attach<I, const MTU: usize>(
+        &self,
+        interface: I,
+        depth: usize,
+    ) -> StartedInterface<StdInterfaceHandle<MTU>, I::Worker>
+    where
+        I: Interface<StdHostSubstrate<MTU>>,
+    {
+        let id = interface.descriptor().id;
+        self.glue_seam(id, depth).start_interface(interface)
     }
 
     fn now(&self) -> InstantMillis {

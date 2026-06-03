@@ -17,8 +17,11 @@ use embassy_time::{Instant as EmbassyInstant, Timer};
 
 use super::super::{CycleStamp, Host};
 use crate::engine::{EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork};
-use crate::interfaces::substrate::{EmbassyInterfaceChannels, EmbassyInterfaceSeam, WakeSignal};
-use crate::interfaces::InterfaceId;
+use crate::interfaces::substrate::{
+    EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle, EmbassyInterfaceSeam,
+    WakeSignal,
+};
+use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 
 /// The embassy contract host: the shared wake the interface seams poke, an injected
 /// CSPRNG draw, and the embassy-time clock + sleep. Hand it to
@@ -52,6 +55,24 @@ where
         channels: &'static EmbassyInterfaceChannels<MTU, DEPTH>,
     ) -> EmbassyInterfaceSeam<MTU, DEPTH> {
         EmbassyInterfaceSeam::split(id, channels, self.wake)
+    }
+
+    /// Attach `interface` to this host and hand back the [`StartedInterface`] the
+    /// runtime pools: glue a seam (from the board's `'static` channels) keyed by the id
+    /// the interface already carries, then start the interface onto it. The `glue_seam`
+    /// + `start_interface` dance, collapsed — reach for `glue_seam` directly only when a
+    /// host splits the seam by hand (a multi-interface board unifying heterogeneous
+    /// handles).
+    pub fn attach<I, const MTU: usize, const DEPTH: usize>(
+        &self,
+        interface: I,
+        channels: &'static EmbassyInterfaceChannels<MTU, DEPTH>,
+    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, DEPTH>, I::Worker>
+    where
+        I: Interface<EmbassyHostSubstrate<MTU, DEPTH>>,
+    {
+        let id = interface.descriptor().id;
+        self.glue_seam(id, channels).start_interface(interface)
     }
 }
 

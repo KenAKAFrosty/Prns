@@ -100,10 +100,8 @@ fn main() {
 /// Build the announcing engine + serial interface (the rnsd wiring) and drive the
 /// runtime forever, forwarding each cycle's snapshot to the UI thread.
 fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
-    // The std poll-loop host owns the clock + wake; glue the interface's seam from
-    // it (worker holds the context, runtime keeps the handle).
+    // The std poll-loop host owns the clock + wake.
     let host = LinuxSync::new();
-    let seam = host.glue_seam(USB_INTERFACE_ID, SEAM_DEPTH);
 
     let open = move || {
         serialport::new(&path, USB_BAUD)
@@ -113,8 +111,10 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
 
+    // `attach` glues the interface's seam (keyed by the id the interface carries),
+    // starts its worker thread, and bundles what the runtime pools.
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(seam.start_interface(interface));
+    let _ = interfaces.push(host.attach(interface, SEAM_DEPTH));
 
     block_on(Prns::<FixedCapacity>::run(
         Recipe {

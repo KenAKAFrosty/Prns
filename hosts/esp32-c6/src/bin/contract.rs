@@ -111,15 +111,12 @@ async fn node_task(
     Rng::new().read(&mut secret_key[..]);
 
     // The embassy contract host owns the shared wake and draws each cycle's jitter
-    // entropy from the TRNG. Glue the serial seam from it (the serial task holds the
-    // worker context, the runtime keeps the handle). The board owns the `static`
-    // CHANNELS — no heap.
+    // entropy from the TRNG. The board owns the `static` CHANNELS — no heap.
     let host = EmbassyContractHost::new(&WAKE, || {
         let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
     });
-    let seam = host.glue_seam(USB_INTERFACE_ID, &CHANNELS);
 
     // The interface launches itself by spawning the board's concrete serial `#[task]`
     // (the device halves are captured here, beside the macro); `start` fires it.
@@ -130,8 +127,11 @@ async fn node_task(
         },
     );
 
+    // `attach` glues the serial seam from the board's `static` channels (keyed by the
+    // id the interface carries), then starts it: the worker task holds the context, the
+    // runtime keeps the handle.
     let mut interfaces = FixedInterfaceSet::<_, 1>::new();
-    let _ = interfaces.push(seam.start_interface(interface));
+    let _ = interfaces.push(host.attach(interface, &CHANNELS));
 
     // Build the announcing node from the recipe and drive it forever (mirrors rnsd);
     // log when the routing table grows — the proof the cable carried a real announce
