@@ -10,9 +10,7 @@
 
 mod impls;
 
-pub use impls::FixedRebroadcastQueue;
-#[cfg(feature = "alloc")]
-pub use impls::HeapRebroadcastQueue;
+pub use impls::*;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
