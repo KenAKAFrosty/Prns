@@ -27,12 +27,11 @@ use esp_hal::rng::{Rng, TrngSource};
 use esp_hal::timer::systimer::SystemTimer;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
-use esp_println::{print, println};
+use esp_println::println;
 use static_cell::StaticCell;
 
 use personal_rns::engine::{
-    EngineCycleEntropySeed, EngineState, ReannounceSchedule, SelfAnnounceConfig,
-    ENGINE_CYCLE_ENTROPY_LEN,
+    EngineCycleEntropySeed, ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -46,7 +45,7 @@ use personal_rns::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, WakeSignal,
 };
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{run_contract, ContractRuntime};
+use personal_rns::runtime::{Prns, Recipe};
 
 esp_app_desc!();
 
@@ -97,9 +96,10 @@ fn main() -> ! {
     });
 }
 
-/// The node: assemble the announcing engine + the serial interface + the contract
-/// runtime, then drive it forever. Lives in one task so the (unnameable) runtime type
-/// stays a local — `run_contract` is `.await`ed here rather than in a typed `#[task]`.
+/// The node: glue the serial interface's seam, then hand the recipe to `Prns::run`,
+/// which builds the announcing engine + contract runtime and drives it forever. Lives
+/// in one task so the (unnameable) runtime future stays a local — `Prns::run` is
+/// `.await`ed here rather than in a typed `#[task]`.
 #[embassy_executor::task]
 async fn node_task(
     spawner: Spawner,
@@ -109,25 +109,6 @@ async fn node_task(
     // An announcing identity drawn fresh from the TRNG (a genuine stranger each boot).
     let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
     Rng::new().read(&mut secret_key[..]);
-    let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::announcing(
-        &secret_key,
-        SelfAnnounceConfig {
-            app_name: "personal",
-            aspects: &["node"],
-            app_data: SELF_ANNOUNCE_APP_DATA,
-            schedule: ReannounceSchedule::default(),
-        },
-    )
-    .expect("static self-announce config is valid");
-    drop(secret_key);
-
-    if let Some(dest) = state.self_announced_destination() {
-        print!("ESP32C6_CONTRACT_SELF_ANNOUNCE_DEST ");
-        for byte in dest.as_bytes() {
-            print!("{byte:02x}");
-        }
-        println!(" name=personal.node");
-    }
 
     // The embassy contract host owns the shared wake and draws each cycle's jitter
     // entropy from the TRNG. Glue the serial seam from it (the serial task holds the
@@ -148,27 +129,39 @@ async fn node_task(
             spawner.spawn(serial_task(usb_rx, usb_tx, context).expect("serial task fits the pool"));
         },
     );
-    let started = seam.start_interface(interface);
 
     let mut interfaces = FixedInterfaceSet::<_, 1>::new();
-    let _ = interfaces.push(started);
-    let runtime = ContractRuntime::new(state, interfaces, host);
+    let _ = interfaces.push(seam.start_interface(interface));
 
-    // Drive forever; log when the routing table grows — the proof the cable carried a
-    // real announce into the engine.
+    // Build the announcing node from the recipe and drive it forever (mirrors rnsd);
+    // log when the routing table grows — the proof the cable carried a real announce
+    // into the engine.
     let mut announced_routes = 0u32;
-    run_contract(runtime, |snapshot| {
-        let routes = snapshot
-            .interfaces
-            .iter()
-            .map(|view| view.tracked_destinations)
-            .max()
-            .unwrap_or(0);
-        if routes > announced_routes {
-            announced_routes = routes;
-            println!("ESP32C6_CONTRACT_RX_ANNOUNCE routes={routes}");
-        }
-    })
+    Prns::<FixedCapacity>::run(
+        Recipe {
+            identity_secret_key: secret_key,
+            self_announce: SelfAnnounceConfig {
+                app_name: "personal",
+                aspects: &["node"],
+                app_data: SELF_ANNOUNCE_APP_DATA,
+                schedule: ReannounceSchedule::default(),
+            },
+            interfaces,
+            host,
+        },
+        |snapshot| {
+            let routes = snapshot
+                .interfaces
+                .iter()
+                .map(|view| view.tracked_destinations)
+                .max()
+                .unwrap_or(0);
+            if routes > announced_routes {
+                announced_routes = routes;
+                println!("ESP32C6_CONTRACT_RX_ANNOUNCE routes={routes}");
+            }
+        },
+    )
     .await
 }
 

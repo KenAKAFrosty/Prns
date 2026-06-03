@@ -15,14 +15,14 @@
 use std::io;
 use std::time::Duration;
 
-use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, run_contract, ContractRuntime};
+use personal_rns::runtime::{block_on, Prns, Recipe};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -73,32 +73,6 @@ fn main() {
         std::process::exit(2);
     };
 
-    // Build an announcing node: forwards others' announces AND emits its own
-    // `personal.node` announce on the schedule (default 6h), the first as soon as
-    // the interface is registered in the runtime below.
-    let identity_secret_key = load_identity_secret_key();
-    let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::announcing(
-        &identity_secret_key,
-        SelfAnnounceConfig {
-            app_name: SELF_ANNOUNCE_APP_NAME,
-            aspects: SELF_ANNOUNCE_ASPECTS,
-            app_data: SELF_ANNOUNCE_APP_DATA,
-            schedule: ReannounceSchedule::default(),
-        },
-    )
-    .expect("static self-announce config is valid");
-    // The engine now owns the keys; wipe our copy promptly.
-    drop(identity_secret_key);
-
-    if let Some(destination) = state.self_announced_destination() {
-        let hex: String = destination
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        println!("RNSD_SELF_ANNOUNCE_DEST {hex} name=personal.node");
-    }
-
     // The std poll-loop host owns the clock + CSPRNG + the seam wake. Glue the
     // interface's seam from it: the worker thread holds the worker context; the
     // runtime keeps the handle.
@@ -114,25 +88,38 @@ fn main() {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
-    let started = seam.start_interface(interface);
 
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(started);
-    let runtime = ContractRuntime::new(state, interfaces, host);
+    let _ = interfaces.push(seam.start_interface(interface));
 
-    // Drive the runtime forever; log when the routing table grows — the proof the
-    // cable carried a real announce into the engine.
+    // Build the announcing node from the recipe and drive it forever: it forwards
+    // others' announces AND emits its own `personal.node` announce on the schedule
+    // (default 6h), the first as soon as the interface registers. Log when the routing
+    // table grows — the proof the cable carried a real announce into the engine.
     let mut announced_routes = 0u32;
-    block_on(run_contract(runtime, |snapshot| {
-        let routes = snapshot
-            .interfaces
-            .iter()
-            .map(|view| view.tracked_destinations)
-            .max()
-            .unwrap_or(0);
-        if routes > announced_routes {
-            announced_routes = routes;
-            println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
-        }
-    }));
+    block_on(Prns::<FixedCapacity>::run(
+        Recipe {
+            identity_secret_key: load_identity_secret_key(),
+            self_announce: SelfAnnounceConfig {
+                app_name: SELF_ANNOUNCE_APP_NAME,
+                aspects: SELF_ANNOUNCE_ASPECTS,
+                app_data: SELF_ANNOUNCE_APP_DATA,
+                schedule: ReannounceSchedule::default(),
+            },
+            interfaces,
+            host,
+        },
+        |snapshot| {
+            let routes = snapshot
+                .interfaces
+                .iter()
+                .map(|view| view.tracked_destinations)
+                .max()
+                .unwrap_or(0);
+            if routes > announced_routes {
+                announced_routes = routes;
+                println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
+            }
+        },
+    ));
 }

@@ -22,14 +22,14 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 
-use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, run_contract, ContractRuntime, RuntimeSnapshot};
+use personal_rns::runtime::{block_on, Prns, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind};
 
@@ -100,28 +100,6 @@ fn main() {
 /// Build the announcing engine + serial interface (the rnsd wiring) and drive the
 /// runtime forever, forwarding each cycle's snapshot to the UI thread.
 fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
-    let identity_secret_key = load_identity_secret_key();
-    let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::announcing(
-        &identity_secret_key,
-        SelfAnnounceConfig {
-            app_name: SELF_ANNOUNCE_APP_NAME,
-            aspects: SELF_ANNOUNCE_ASPECTS,
-            app_data: SELF_ANNOUNCE_APP_DATA,
-            schedule: ReannounceSchedule::default(),
-        },
-    )
-    .expect("static self-announce config is valid");
-    drop(identity_secret_key);
-
-    if let Some(destination) = state.self_announced_destination() {
-        let hex: String = destination
-            .as_bytes()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        println!("HOPSPOT_SELF_ANNOUNCE_DEST {hex} name=personal.node");
-    }
-
     // The std poll-loop host owns the clock + wake; glue the interface's seam from
     // it (worker holds the context, runtime keeps the handle).
     let host = LinuxSync::new();
@@ -134,15 +112,26 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
-    let started = seam.start_interface(interface);
 
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(started);
-    let runtime = ContractRuntime::new(state, interfaces, host);
+    let _ = interfaces.push(seam.start_interface(interface));
 
-    block_on(run_contract(runtime, move |snapshot: &RuntimeSnapshot| {
-        let _ = snap_tx.send(snapshot.clone());
-    }));
+    block_on(Prns::<FixedCapacity>::run(
+        Recipe {
+            identity_secret_key: load_identity_secret_key(),
+            self_announce: SelfAnnounceConfig {
+                app_name: SELF_ANNOUNCE_APP_NAME,
+                aspects: SELF_ANNOUNCE_ASPECTS,
+                app_data: SELF_ANNOUNCE_APP_DATA,
+                schedule: ReannounceSchedule::default(),
+            },
+            interfaces,
+            host,
+        },
+        move |snapshot: &RuntimeSnapshot| {
+            let _ = snap_tx.send(snapshot.clone());
+        },
+    ));
 }
 
 /// Own the SDL2 window: repaint the latest snapshot as the Hopspot screen until
