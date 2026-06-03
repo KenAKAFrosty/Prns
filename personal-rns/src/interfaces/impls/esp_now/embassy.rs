@@ -86,13 +86,13 @@ fn submit_frame_packets(frame: &[u8], inbound: &mut impl InboundSink) {
 /// broadcast once. A packet that doesn't fit starts the next frame (held in
 /// `leftover_buf`) so nothing is lost.
 ///
-/// Generic over the seam `DEPTH` and the [`EspNowLink`] radio. Inbound packets are
+/// Generic over the seam `MAX_BUFFERED_PACKETS` and the [`EspNowLink`] radio. Inbound packets are
 /// submitted through [`InboundSink::submit`]; outbound packets are pulled with
 /// [`ready`](crate::interfaces::substrate::EmbassyOutboundDrain::ready) +
 /// `try_next_into`.
-pub async fn serve<const DEPTH: usize, L>(
+pub async fn serve<const MAX_BUFFERED_PACKETS: usize, L>(
     mut link: L,
-    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, DEPTH>>,
+    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
 ) where
     L: EspNowLink,
 {

@@ -114,12 +114,12 @@ fn submit_data_arm(
 /// runtime's outbound is pulled with `ready` + `try_next_into`, then fanned to every peer. The
 /// brain logs its live peer count each beacon.
 ///
-/// Generic over the seam `DEPTH`. `stack` must already be up (host brought up WiFi +
+/// Generic over the seam `MAX_BUFFERED_PACKETS`. `stack` must already be up (host brought up WiFi +
 /// IP). It takes no `id` — the seam tags inbound provenance.
-pub async fn serve<const DEPTH: usize>(
+pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
     stack: Stack<'static>,
     our_mac_address: MacAddress,
-    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, DEPTH>>,
+    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, MAX_BUFFERED_PACKETS>>,
 ) {
     let mut brain = AutoInterfaceProtocol::<MAX_PEERS>::new(our_mac_address);
     log::info!(

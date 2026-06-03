@@ -77,13 +77,13 @@ enum ServeStep {
 /// `submit` the whole packet) or an outbound packet (frame it, splitting RNode-style
 /// if needed → transmit, then return to RX).
 ///
-/// Generic over the seam `DEPTH` and the lora-phy radio kind / delay. Inbound
+/// Generic over the seam `MAX_BUFFERED_PACKETS` and the lora-phy radio kind / delay. Inbound
 /// packets are submitted through [`InboundSink::submit`]; outbound packets are
 /// pulled with `ready` + `try_next_into`.
-pub async fn serve<const DEPTH: usize, RK, DLY>(
+pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
     mut lora: LoRa<RK, DLY>,
     profile: LoRaModulation,
-    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, DEPTH>>,
+    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
 ) where
     RK: RadioKind,
     DLY: DelayNs,

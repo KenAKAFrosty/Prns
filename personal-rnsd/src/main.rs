@@ -45,7 +45,7 @@ const READ_POLL: Duration = Duration::from_millis(50);
 /// How long to wait before re-opening the port after an open failure or unplug.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// In-flight capacity of each of the interface's data rings.
-const SEAM_DEPTH: usize = 64;
+const MAX_BUFFERED_PACKETS: usize = 64;
 
 /// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519
 /// private keys). Handed to the engine through a [`Zeroizing`] buffer so it is
@@ -92,7 +92,7 @@ fn main() {
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
 
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(host.attach(interface, SEAM_DEPTH));
+    let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
 
     // Build the announcing node from the recipe and drive it forever: it forwards
     // others' announces AND emits its own `personal.node` announce on the schedule

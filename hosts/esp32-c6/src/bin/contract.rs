@@ -54,7 +54,7 @@ esp_app_desc!();
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC6; 16]);
 
 /// In-flight capacity of each of the interface's data rings.
-const SEAM_DEPTH: usize = 8;
+const MAX_BUFFERED_PACKETS: usize = 8;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal C6")` ‖ `nil` — the shape LXMF apps parse, so they
@@ -62,12 +62,12 @@ const SEAM_DEPTH: usize = 8;
 const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0bPersonal C6\xc0";
 
 /// The worker-side seam this board's serial task runs against.
-type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SEAM_DEPTH>>;
+type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, MAX_BUFFERED_PACKETS>>;
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 /// The interface's four channels live in one board `static` (the embassy idiom);
 /// `EmbassyInterfaceSeam::split` hands out the worker + runtime ends.
-static CHANNELS: EmbassyInterfaceChannels<SERIAL_MTU, SEAM_DEPTH> = EmbassyInterfaceChannels::new();
+static CHANNELS: EmbassyInterfaceChannels<SERIAL_MTU, MAX_BUFFERED_PACKETS> = EmbassyInterfaceChannels::new();
 /// The host's one wake — every seam end signals it; the contract host awaits it.
 static WAKE: WakeSignal = Signal::new();
 

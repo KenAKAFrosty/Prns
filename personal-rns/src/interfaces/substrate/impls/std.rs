@@ -172,9 +172,9 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
     /// Build one interface's data and control lanes. Pass the same `clock_base`
     /// to every seam so arrivals share the engine's timebase; `wake` is the
     /// host's sleep-notify channel.
-    pub fn new(id: InterfaceId, clock_base: Instant, depth: usize, wake: SyncSender<()>) -> Self {
-        let (in_producer, in_consumer) = RingBuffer::<InboundSlot<MTU>>::new(depth);
-        let (out_producer, out_consumer) = RingBuffer::<OutboundSlot<MTU>>::new(depth);
+    pub fn new(id: InterfaceId, clock_base: Instant, max_buffered_packets: usize, wake: SyncSender<()>) -> Self {
+        let (in_producer, in_consumer) = RingBuffer::<InboundSlot<MTU>>::new(max_buffered_packets);
+        let (out_producer, out_consumer) = RingBuffer::<OutboundSlot<MTU>>::new(max_buffered_packets);
         let (cmd_producer, cmd_consumer) = RingBuffer::<ControlCommand>::new(CONTROL_DEPTH);
         let (report_producer, report_consumer) = RingBuffer::<ControlReport>::new(CONTROL_DEPTH);
 
@@ -236,7 +236,7 @@ mod tests {
     use crate::interfaces::ConnectionState;
 
     const MTU: usize = 64;
-    const DEPTH: usize = 8;
+    const MAX_BUFFERED_PACKETS: usize = 8;
 
     fn id() -> InterfaceId {
         InterfaceId::new([0x11; 16])
@@ -248,7 +248,7 @@ mod tests {
         let StdInterfaceSeam {
             mut worker_context,
             mut runtime_handle,
-        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), DEPTH, wake_tx);
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
         // runtime → worker: queue an outbound packet, worker drains it in place.
         assert!(runtime_handle
@@ -304,7 +304,7 @@ mod tests {
         let StdInterfaceSeam {
             mut worker_context,
             runtime_handle: _runtime_handle,
-        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), DEPTH, wake_tx);
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
         // Nothing pushed yet → the host has no reason to wake.
         assert!(wake_rx.try_recv().is_err());
@@ -331,7 +331,7 @@ mod tests {
         let StdInterfaceSeam {
             worker_context: _worker_context,
             mut runtime_handle,
-        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), DEPTH, wake_tx);
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
         let too_large = [0xAA; MTU + 1];
         assert_eq!(
@@ -361,7 +361,7 @@ mod tests {
         let StdInterfaceSeam {
             worker_context,
             mut runtime_handle,
-        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), DEPTH, wake_tx);
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
         // The worker context moves to its own thread — proves both halves are
         // `Send`, the whole point of the SPSC seam.

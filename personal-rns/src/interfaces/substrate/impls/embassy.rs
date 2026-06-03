@@ -53,16 +53,16 @@ struct OutboundSlot<const MTU: usize> {
 }
 
 /// One interface's four channels, bundled so the board declares a single
-/// `static` per interface. `DEPTH` is the data-lane capacity; control lanes use
+/// `static` per interface. `MAX_BUFFERED_PACKETS` is the data-lane capacity; control lanes use
 /// [`CONTROL_DEPTH`].
-pub struct EmbassyInterfaceChannels<const MTU: usize, const DEPTH: usize> {
-    inbound: Channel<CriticalSectionRawMutex, InboundSlot<MTU>, DEPTH>,
-    outbound: Channel<CriticalSectionRawMutex, OutboundSlot<MTU>, DEPTH>,
+pub struct EmbassyInterfaceChannels<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
+    inbound: Channel<CriticalSectionRawMutex, InboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
+    outbound: Channel<CriticalSectionRawMutex, OutboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
     command: Channel<CriticalSectionRawMutex, ControlCommand, CONTROL_DEPTH>,
     report: Channel<CriticalSectionRawMutex, ControlReport, CONTROL_DEPTH>,
 }
 
-impl<const MTU: usize, const DEPTH: usize> EmbassyInterfaceChannels<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS> {
     /// A fresh set of empty channels — `const`, so it can back a board `static`.
     pub const fn new() -> Self {
         Self {
@@ -74,7 +74,7 @@ impl<const MTU: usize, const DEPTH: usize> EmbassyInterfaceChannels<MTU, DEPTH> 
     }
 }
 
-impl<const MTU: usize, const DEPTH: usize> Default for EmbassyInterfaceChannels<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Default for EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS> {
     fn default() -> Self {
         Self::new()
     }
@@ -82,12 +82,12 @@ impl<const MTU: usize, const DEPTH: usize> Default for EmbassyInterfaceChannels<
 
 /// Worker-held producer end of one interface's inbound channel. It stamps
 /// arrivals from the embassy-global clock and signals the host on publish.
-pub struct EmbassyInboundSink<const MTU: usize, const DEPTH: usize> {
-    producer: Sender<'static, CriticalSectionRawMutex, InboundSlot<MTU>, DEPTH>,
+pub struct EmbassyInboundSink<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
+    producer: Sender<'static, CriticalSectionRawMutex, InboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
     wake: &'static WakeSignal,
 }
 
-impl<const MTU: usize, const DEPTH: usize> InboundSink for EmbassyInboundSink<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InboundSink for EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS> {
     fn submit(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<(), QueueFull> {
         let mut slot = InboundSlot {
             arrived_at: InstantMillis(EmbassyInstant::now().as_millis()),
@@ -104,11 +104,11 @@ impl<const MTU: usize, const DEPTH: usize> InboundSink for EmbassyInboundSink<MT
 }
 
 /// The consumer end of one interface's outbound channel (held by the worker task).
-pub struct EmbassyOutboundDrain<const MTU: usize, const DEPTH: usize> {
-    consumer: Receiver<'static, CriticalSectionRawMutex, OutboundSlot<MTU>, DEPTH>,
+pub struct EmbassyOutboundDrain<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
+    consumer: Receiver<'static, CriticalSectionRawMutex, OutboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
 }
 
-impl<const MTU: usize, const DEPTH: usize> OutboundDrain for EmbassyOutboundDrain<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> OutboundDrain for EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS> {
     fn drain_each(&mut self, mut write: impl FnMut(OutboundPacket<'_>)) -> usize {
         let mut drained = 0;
         while let Ok(slot) = self.consumer.try_receive() {
@@ -119,7 +119,7 @@ impl<const MTU: usize, const DEPTH: usize> OutboundDrain for EmbassyOutboundDrai
     }
 }
 
-impl<const MTU: usize, const DEPTH: usize> EmbassyOutboundDrain<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS> {
     /// Await until at least one outbound packet is queued, without consuming it.
     pub async fn ready(&self) {
         self.consumer.ready_to_receive().await;
@@ -167,24 +167,24 @@ impl EmbassyControlEndpoint {
 }
 
 /// The embassy platform's worker-side lane-end types, bundled for [`InterfaceWorkerContext`].
-pub struct EmbassyHostSubstrate<const MTU: usize, const DEPTH: usize>;
+pub struct EmbassyHostSubstrate<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>;
 
-impl<const MTU: usize, const DEPTH: usize> Substrate for EmbassyHostSubstrate<MTU, DEPTH> {
-    type InboundSink = EmbassyInboundSink<MTU, DEPTH>;
-    type OutboundDrain = EmbassyOutboundDrain<MTU, DEPTH>;
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Substrate for EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS> {
+    type InboundSink = EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS>;
+    type OutboundDrain = EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS>;
     type Control = EmbassyControlEndpoint;
 }
 
 /// Runtime-held end of one interface's lanes.
-pub struct EmbassyInterfaceHandle<const MTU: usize, const DEPTH: usize> {
+pub struct EmbassyInterfaceHandle<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
     id: InterfaceId,
-    inbound: Receiver<'static, CriticalSectionRawMutex, InboundSlot<MTU>, DEPTH>,
-    outbound: Sender<'static, CriticalSectionRawMutex, OutboundSlot<MTU>, DEPTH>,
+    inbound: Receiver<'static, CriticalSectionRawMutex, InboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
+    outbound: Sender<'static, CriticalSectionRawMutex, OutboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
     commands: Sender<'static, CriticalSectionRawMutex, ControlCommand, CONTROL_DEPTH>,
     reports: Receiver<'static, CriticalSectionRawMutex, ControlReport, CONTROL_DEPTH>,
 }
 
-impl<const MTU: usize, const DEPTH: usize> InterfaceHandle for EmbassyInterfaceHandle<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InterfaceHandle for EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS> {
     fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
         let mut drained = 0;
         while let Ok(slot) = self.inbound.try_receive() {
@@ -223,19 +223,19 @@ impl<const MTU: usize, const DEPTH: usize> InterfaceHandle for EmbassyInterfaceH
 
 /// The two halves of a built interface seam: the [`InterfaceWorkerContext`] the
 /// interface's task is handed, and the [`EmbassyInterfaceHandle`] the runtime keeps.
-pub struct EmbassyInterfaceSeam<const MTU: usize, const DEPTH: usize> {
-    pub worker_context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, DEPTH>>,
-    pub runtime_handle: EmbassyInterfaceHandle<MTU, DEPTH>,
+pub struct EmbassyInterfaceSeam<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
+    pub worker_context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
+    pub runtime_handle: EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>,
 }
 
-impl<const MTU: usize, const DEPTH: usize> EmbassyInterfaceSeam<MTU, DEPTH> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyInterfaceSeam<MTU, MAX_BUFFERED_PACKETS> {
     /// Split a board's `'static` [`EmbassyInterfaceChannels`] into the worker-held
     /// context and the runtime-held handle for interface `id`. `wake` is the host's
     /// one shared [`WakeSignal`] — pass the same `&'static` reference to every seam
     /// so any interface's `submit` / `report` rouses the single host sleep.
     pub fn split(
         id: InterfaceId,
-        channels: &'static EmbassyInterfaceChannels<MTU, DEPTH>,
+        channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
         wake: &'static WakeSignal,
     ) -> Self {
         Self {
@@ -268,9 +268,9 @@ impl<const MTU: usize, const DEPTH: usize> EmbassyInterfaceSeam<MTU, DEPTH> {
     pub fn start_interface<I>(
         self,
         interface: I,
-    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, DEPTH>, I::Worker>
+    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>, I::Worker>
     where
-        I: Interface<EmbassyHostSubstrate<MTU, DEPTH>>,
+        I: Interface<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
     {
         let descriptor = interface.descriptor();
         let drive = interface.start(self.worker_context);

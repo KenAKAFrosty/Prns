@@ -49,7 +49,7 @@ const READ_POLL: Duration = Duration::from_millis(50);
 /// How long to wait before re-opening the port after an open failure or unplug.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// In-flight capacity of each of the interface's data rings.
-const SEAM_DEPTH: usize = 64;
+const MAX_BUFFERED_PACKETS: usize = 64;
 
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
@@ -116,7 +116,7 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     // `attach` glues the interface's seam (keyed by the id the interface carries),
     // starts its worker thread, and bundles what the runtime pools.
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(host.attach(interface, SEAM_DEPTH));
+    let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
 
     block_on(Prns::<FixedCapacity>::run(
         Recipe {

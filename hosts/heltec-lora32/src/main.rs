@@ -126,28 +126,28 @@ const LORA_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-lora62");
 /// radio to other Hopspots). Opaque to the engine; readable in `fire_on` logs.
 const ESPNOW_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltec-s3-espnow");
 
-/// In-flight ring depth per interface seam (inbound + outbound). Modest — a desk
+/// Max buffered packets per interface seam (inbound + outbound). Modest — a desk
 /// node's bursts are small; ESP-NOW gets more to give its coalescing room.
-const AUTO_DEPTH: usize = 4;
-const SERIAL_DEPTH: usize = 8;
-const LORA_DEPTH: usize = 4;
-const ESPNOW_DEPTH: usize = 8;
+const AUTO_MAX_BUFFERED_PACKETS: usize = 4;
+const SERIAL_MAX_BUFFERED_PACKETS: usize = 8;
+const LORA_MAX_BUFFERED_PACKETS: usize = 4;
+const ESPNOW_MAX_BUFFERED_PACKETS: usize = 8;
 
 /// Each interface's four channels live in one board `static` (the embassy idiom);
 /// every seam shares the one [`WakeSignal`] the contract host sleeps on. Sized to
 /// each interface's own MTU — the AutoInterface's 1196 B, the engine MTU elsewhere.
-static AUTO_CH: EmbassyInterfaceChannels<HARDWARE_MTU, AUTO_DEPTH> =
+static AUTO_CH: EmbassyInterfaceChannels<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS> =
     EmbassyInterfaceChannels::new();
-static SERIAL_CH: EmbassyInterfaceChannels<SERIAL_MTU, SERIAL_DEPTH> =
+static SERIAL_CH: EmbassyInterfaceChannels<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS> =
     EmbassyInterfaceChannels::new();
-static LORA_CH: EmbassyInterfaceChannels<MTU, LORA_DEPTH> = EmbassyInterfaceChannels::new();
-static ESPNOW_CH: EmbassyInterfaceChannels<MTU, ESPNOW_DEPTH> = EmbassyInterfaceChannels::new();
+static LORA_CH: EmbassyInterfaceChannels<MTU, LORA_MAX_BUFFERED_PACKETS> = EmbassyInterfaceChannels::new();
+static ESPNOW_CH: EmbassyInterfaceChannels<MTU, ESPNOW_MAX_BUFFERED_PACKETS> = EmbassyInterfaceChannels::new();
 static WAKE: WakeSignal = new_wake_signal();
 
 /// The worker-side seam each *spawned* interface task runs against (auto + serial;
 /// lora + espnow are joined in `main`, their context types inferred from the split).
-type AutoContext = InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, AUTO_DEPTH>>;
-type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_DEPTH>>;
+type AutoContext = InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS>>;
+type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>>;
 
 /// The runtime holds one handle type, but the S3's four interfaces have four
 /// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU, and
@@ -156,10 +156,10 @@ type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SER
 /// [`Runtime`] pools, dispatching each call to the held variant (the
 /// contract analog of the old `HostWorker` enum; explicit per the no-wildcard rule).
 enum HeltecHandle {
-    Auto(EmbassyInterfaceHandle<HARDWARE_MTU, AUTO_DEPTH>),
-    Serial(EmbassyInterfaceHandle<SERIAL_MTU, SERIAL_DEPTH>),
-    Lora(EmbassyInterfaceHandle<MTU, LORA_DEPTH>),
-    EspNow(EmbassyInterfaceHandle<MTU, ESPNOW_DEPTH>),
+    Auto(EmbassyInterfaceHandle<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS>),
+    Serial(EmbassyInterfaceHandle<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>),
+    Lora(EmbassyInterfaceHandle<MTU, LORA_MAX_BUFFERED_PACKETS>),
+    EspNow(EmbassyInterfaceHandle<MTU, ESPNOW_MAX_BUFFERED_PACKETS>),
 }
 
 impl InterfaceHandle for HeltecHandle {

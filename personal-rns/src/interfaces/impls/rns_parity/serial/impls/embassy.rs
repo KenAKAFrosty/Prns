@@ -29,16 +29,16 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 /// The loop `select`s on three wakes — inbound bytes, outbound readiness, a control
 /// command — so it parks until something genuinely needs it (no keepalive ticker, no
 /// idle spin). Generic over the byte stream (any [`embedded_io_async`] transport) and
-/// the seam `DEPTH`. Pre-frame noise — e.g. a board sharing this link between log text
+/// the seam `MAX_BUFFERED_PACKETS`. Pre-frame noise — e.g. a board sharing this link between log text
 /// and frames — is skipped by the decoder until a `FLAG`, exactly as stock RNS does.
 ///
 /// There is no `link_up` / keepalive here.
 /// Writes stay [`WRITE_TIMEOUT`]-bounded so a wire with no reader cannot wedge
 /// the loop.
-pub async fn serve<R, W, const DEPTH: usize>(
+pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
     mut rx: R,
     mut tx: W,
-    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, DEPTH>>,
+    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, MAX_BUFFERED_PACKETS>>,
 ) where
     R: Read,
     W: Write,

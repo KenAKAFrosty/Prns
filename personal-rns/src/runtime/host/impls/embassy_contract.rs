@@ -48,12 +48,12 @@ where
 
     /// Glue an interface seam bound to this host's shared wake. The board owns the
     /// `'static` channels (no heap); the host supplies the one wake every seam pokes.
-    /// `MTU`/`DEPTH` are inferred from the channels' type.
-    pub fn glue_seam<const MTU: usize, const DEPTH: usize>(
+    /// `MTU`/`MAX_BUFFERED_PACKETS` are inferred from the channels' type.
+    pub fn glue_seam<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>(
         &self,
         id: InterfaceId,
-        channels: &'static EmbassyInterfaceChannels<MTU, DEPTH>,
-    ) -> EmbassyInterfaceSeam<MTU, DEPTH> {
+        channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
+    ) -> EmbassyInterfaceSeam<MTU, MAX_BUFFERED_PACKETS> {
         EmbassyInterfaceSeam::split(id, channels, self.wake)
     }
 
@@ -63,13 +63,13 @@ where
     /// + `start_interface` dance, collapsed — reach for `glue_seam` directly only when a
     /// host splits the seam by hand (a multi-interface board unifying heterogeneous
     /// handles).
-    pub fn attach<I, const MTU: usize, const DEPTH: usize>(
+    pub fn attach<I, const MTU: usize, const MAX_BUFFERED_PACKETS: usize>(
         &self,
         interface: I,
-        channels: &'static EmbassyInterfaceChannels<MTU, DEPTH>,
-    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, DEPTH>, I::Worker>
+        channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
+    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>, I::Worker>
     where
-        I: Interface<EmbassyHostSubstrate<MTU, DEPTH>>,
+        I: Interface<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
     {
         let id = interface.descriptor().id;
         self.glue_seam(id, channels).start_interface(interface)
