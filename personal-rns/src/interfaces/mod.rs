@@ -6,6 +6,7 @@ pub mod id;
 pub mod mac;
 pub mod medium;
 pub mod mode;
+pub mod storage;
 
 mod descriptor;
 mod framing;
