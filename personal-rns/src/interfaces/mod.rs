@@ -12,7 +12,10 @@ mod framing;
 pub mod impls;
 mod worker;
 
-pub use capabilities::Capabilities;
+pub use capabilities::{
+    Capabilities, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceCapabilitiesError, TransitCapability,
+};
 pub use connection_state::ConnectionState;
 pub use id::InterfaceId;
 pub use mac::MacAddress;
@@ -23,7 +26,7 @@ pub use descriptor::InterfaceDescriptor;
 pub use worker::{
     ControlCommand, ControlEndpoint, ControlReport, DriverMode, InboundSink, Interface,
     InterfaceHandle, InterfaceWorkerContext, OutboundDrain, QueueFull, SelfDrivenInterface,
-    StartedInterface, Substrate,
+    SendError, StartedInterface, Substrate,
 };
 
 pub use framing::rns_serial_framing;

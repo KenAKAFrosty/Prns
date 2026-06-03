@@ -16,7 +16,7 @@ pub use context::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
     OutboundDrain, Substrate,
 };
-pub use core::QueueFull;
+pub use core::{QueueFull, SendError};
 pub use interface::{
     DriverMode, Interface, InterfaceHandle, SelfDrivenInterface, StartedInterface,
 };

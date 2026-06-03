@@ -1,4 +1,6 @@
-use crate::interfaces::{Capabilities, ConnectionState, InterfaceId, InterfaceMode, MediumKind};
+use crate::interfaces::{
+    ConnectionState, InterfaceCapabilities, InterfaceId, InterfaceMode, MediumKind,
+};
 
 /// The routing-relevant facts about an interface — everything the engine needs
 /// to make fanout and routing decisions, and nothing about byte I/O. An interface
@@ -8,7 +10,7 @@ use crate::interfaces::{Capabilities, ConnectionState, InterfaceId, InterfaceMod
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceDescriptor {
     pub id: InterfaceId,
-    pub capabilities: Capabilities,
+    pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
     pub medium: MediumKind,
     pub state: ConnectionState,

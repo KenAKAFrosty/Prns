@@ -3,3 +3,9 @@
 /// blocks. Returned by [`InboundSink::submit`](crate::interfaces::InboundSink::submit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueFull;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendError {
+    QueueFull,
+    PacketTooLarge,
+}

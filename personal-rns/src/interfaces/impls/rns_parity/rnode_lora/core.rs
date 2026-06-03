@@ -16,7 +16,8 @@
 use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
-    Capabilities, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind,
+    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransitCapability,
 };
 
 /// RNode's on-air link header is one byte (`HEADER_L` in the firmware).
@@ -223,13 +224,9 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
-        capabilities: Capabilities {
-            receives: true,
-            transmits: true,
-            forwards: true,
-            // Every neighbor hears every transmission, so a LoRa node rebroadcasts
-            // announces back into the same air — unlike a point-to-point cable.
-            repeats: true,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::SharedHalfDuplex,
@@ -361,7 +358,10 @@ mod tests {
         assert!(matches!(d.medium, MediumKind::SharedHalfDuplex));
         assert!(matches!(d.mode, InterfaceMode::Full));
         assert!(matches!(d.state, ConnectionState::Connected));
-        assert!(d.capabilities.repeats);
-        assert!(d.capabilities.receives && d.capabilities.transmits && d.capabilities.forwards);
+        assert_eq!(d.capabilities.ingress, IngressCapability::Enabled);
+        assert_eq!(
+            d.capabilities.egress,
+            EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat)
+        );
     }
 }

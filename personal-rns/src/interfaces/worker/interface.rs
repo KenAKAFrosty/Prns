@@ -17,7 +17,9 @@
 //! "the runtime has no way to reach it."
 
 use crate::engine::{InboundPacket, InstantMillis, NextScheduledEngineWork, OutboundPacket};
-use crate::interfaces::{ControlReport, InterfaceDescriptor, InterfaceWorkerContext, Substrate};
+use crate::interfaces::{
+    ControlReport, InterfaceDescriptor, InterfaceWorkerContext, SendError, Substrate,
+};
 
 /// Which side runs an interface's loop — the runtime's *scheduling* decision,
 /// nothing more. The runtime-side data lanes and control plane live in the
@@ -47,9 +49,8 @@ pub trait InterfaceHandle {
     /// with the interface's id and arrival stamp. Returns how many were drained.
     fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
 
-    /// Queue a packet for the interface to transmit. Returns `false` if it does
-    /// not fit or the interface queue is full.
-    fn send(&mut self, packet: OutboundPacket<'_>) -> bool;
+    /// Queue a packet for the interface to transmit.
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError>;
 
     /// Ask the interface to wind down; it reports [`ControlReport::Stopped`] when
     /// done.

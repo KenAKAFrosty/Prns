@@ -247,7 +247,7 @@ mod tests {
         } = seam();
         // Queue it via the runtime handle; empty rx → the first read errors, but
         // the outbound drain runs first.
-        assert!(runtime_handle.send(OutboundPacket::new(&packet)));
+        assert!(runtime_handle.send(OutboundPacket::new(&packet)).is_ok());
         let (port, written) = MockPort::new(Vec::new());
 
         let _ = serve_connection(port, &mut worker_context);
