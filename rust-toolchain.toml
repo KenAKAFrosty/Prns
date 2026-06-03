@@ -1,0 +1,12 @@
+# Pins the default toolchain for the root workspace so every machine and CI resolve
+# the same stable compiler, the components the gates need, and the riscv32imac no_std
+# target the embedded build gate (scripts/no-std-esp-build.sh) cross-compiles to.
+#
+# This does NOT affect the nested device workspaces under hosts/* — those carry their
+# own rust-toolchain.toml (the Xtensa "esp" channel from espup), and rustup uses the
+# nearest file. The nightly-only lanes (fuzz, kani, miri) opt in per command with
+# `+nightly`, which overrides this default for that one invocation.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-src"]
+targets = ["riscv32imac-unknown-none-elf"]

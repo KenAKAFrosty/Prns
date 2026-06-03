@@ -2,6 +2,14 @@
 // the unit tests can use std helpers (and run under any feature set) while
 // non-test builds still verify the core is no_std — see scripts/no-std-esp-build.sh.
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
+// Compiler-enforced memory safety. The pure engine contains *zero* `unsafe`, and
+// `forbid` (unlike `deny`) cannot be locally re-enabled with `#[allow]` — a future
+// `unsafe {}` anywhere in this crate is a hard compile error, not a review judgment
+// call. This is the load-bearing guarantee behind "100% safe Rust engine": it holds
+// across every feature combination (including `stream-compression`, so compression
+// can never reach for an FFI codec the way a typical port does). The only `unsafe`
+// in the suite lives at the FFI boundary (personal-rns-ffi), by design.
+#![forbid(unsafe_code)]
 #![doc = "Reticulum"]
 // Intra-doc links are load-bearing navigation; a broken one is a hard error so
 // a rename can't silently rot the docs. Run `cargo doc` (the fmt-check gate's

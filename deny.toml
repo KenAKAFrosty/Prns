@@ -1,0 +1,53 @@
+# cargo-deny — turns three of our promises into CI-enforced guarantees instead of
+# review-time discipline:
+#   1. the permissive-license claim (MIT/Apache, "no copyleft") — a GPL/AGPL/LGPL
+#      dependency anywhere in the tree fails the build;
+#   2. no known-vulnerable dependencies (RUSTSEC advisory DB);
+#   3. no surprise dependency sources or yanked crates.
+#
+# Install: `cargo install cargo-deny`.  Run: `cargo deny check`.
+
+[graph]
+# Check the whole feature surface, including the embassy/LoRa embedded features, so
+# an embedded-only dependency can't smuggle in a copyleft license unnoticed.
+all-features = true
+
+[licenses]
+version = 2
+# The allowlist *is* the policy: anything not listed (notably GPL/AGPL/LGPL and other
+# copyleft) is denied. If one dependency genuinely needs a license outside this set,
+# add a narrowly-scoped entry to `exceptions` below — never widen `allow` for one crate.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "CC0-1.0",
+]
+confidence-threshold = 0.93
+# e.g. { allow = ["MPL-2.0"], crate = "some-weak-copyleft-dep" }
+exceptions = []
+
+[advisories]
+version = 2
+# Fail on any dependency that has been yanked; `ignore` is for advisories we've
+# triaged and consciously accept (each entry should carry a comment + RUSTSEC id).
+yanked = "deny"
+ignore = []
+
+[bans]
+# Duplicate versions bloat embedded binaries — surface them (warn), don't block yet.
+multiple-versions = "warn"
+wildcards = "deny" # no `foo = "*"` version requirements
+allow = []
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

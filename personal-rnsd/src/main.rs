@@ -8,6 +8,10 @@
 //! surfaces a snapshot each cycle. The daemon both forwards others' announces and
 //! emits its own `personal.node` announce (first one as soon as the link is up).
 
+// 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The
+// daemon is std glue around the engine; syscalls go through std, so no `unsafe`.
+#![forbid(unsafe_code)]
+
 use std::convert::Infallible;
 use std::io;
 use std::sync::mpsc::sync_channel;
