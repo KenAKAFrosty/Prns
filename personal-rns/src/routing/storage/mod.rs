@@ -5,13 +5,14 @@
 mod impls;
 
 pub use impls::{
-    FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
+    FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, FixedCapacity, PackedAppDataArena,
     TieredAnnounceIdHistory,
 };
 
 #[cfg(feature = "alloc")]
 pub use impls::{
-    HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData, HeapRouteColumns,
+    GrowableHeap, HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
+    HeapRouteColumns,
 };
 
 use crate::crypto::Ed25519Signature;
@@ -164,4 +165,14 @@ pub trait RetainedAppData {
     fn get(&self, handle: AppDataHandle) -> &[u8];
     fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError>;
     fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError>;
+}
+
+/// A storage recipe: the bundle of column backends an engine runs on. One type
+/// (`FixedCapacity` for no_std, `GrowableHeap` for a std host) picks every backend
+/// at once; the `Default` bounds let the engine build an empty bundle.
+pub trait Storage {
+    type Routes: RouteColumns + Default;
+    type Announces: RetainedAnnounceColumns + Default;
+    type History: AnnounceIdHistory + Default;
+    type AppData: RetainedAppData + Default;
 }
