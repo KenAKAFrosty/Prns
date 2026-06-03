@@ -21,7 +21,7 @@ use crate::routing::announce::{
     AnnounceId, SelfAnnounceEntropy,
 };
 use crate::routing::defaults::{jitter_offset_for, JitterSeed};
-use crate::routing::held_cache::{HeldAnnouncesCache, DEFAULT_HELD_CACHE_CAPACITY};
+use crate::routing::held_cache::{FixedHeldAnnounces, DEFAULT_HELD_CACHE_CAPACITY};
 use crate::routing::schedule::FixedRebroadcastQueue;
 use crate::routing::storage::{
     AnnounceIdHistory, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns,
@@ -126,7 +126,7 @@ where
     tick_count: u64,
     ingested_packet_count: u64,
     routing_table: RoutingTable<R, A, H, D>,
-    held_announces_cache: HeldAnnouncesCache<MAX_HELD_ANNOUNCES>,
+    held_announces_cache: FixedHeldAnnounces<MAX_HELD_ANNOUNCES>,
     pending_rebroadcasts: FixedRebroadcastQueue<MAX_HELD_ANNOUNCES>,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
     identity: Option<InMemoryNodeIdentity>,
