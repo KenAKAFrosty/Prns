@@ -34,6 +34,7 @@ pub fn snapshot_to_cards<const N: usize>(
         let _ = cards.push(Card {
             kind,
             label,
+            selected: false,
             // The status dot collapses the engine's ConnectionState: an interface
             // reads as online when it is routable (Connected or Degraded), matching
             // the engine's own routability grouping.
@@ -43,6 +44,10 @@ pub fn snapshot_to_cards<const N: usize>(
             ),
             tx_bytes: view.reticulum_tx_byte_count,
             rx_bytes: view.reticulum_rx_byte_count,
+            // The runtime snapshot does not expose active-link counts yet. Keep
+            // the renderer surface ready while reporting the honest current
+            // value.
+            links: 0,
             destinations: view.tracked_destinations,
         });
     }
