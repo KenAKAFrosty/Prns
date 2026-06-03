@@ -18,8 +18,6 @@
 #[path = "../systimer_time_driver.rs"]
 mod systimer_time_driver;
 
-use core::convert::Infallible;
-
 use embassy_executor::{Executor, Spawner};
 use embassy_sync::signal::Signal;
 use esp_backtrace as _;
@@ -44,8 +42,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
 };
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{
-    DriverMode, Interface, InterfaceId, InterfaceWorkerContext, SelfDrivenInterface,
-    StartedInterface,
+    Interface, InterfaceId, InterfaceWorkerContext, SelfDrivenInterface, StartedInterface,
 };
 use personal_rns::runtime::channels::embassy_seam::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceSeam, WakeSignal,
@@ -150,10 +147,7 @@ async fn node_task(
         },
     );
     let descriptor = interface.descriptor();
-    let drive: DriverMode<Infallible> = match interface.start(worker_context) {
-        DriverMode::SelfDriven => DriverMode::SelfDriven,
-        DriverMode::RuntimeDriven { .. } => unreachable!("the serial interface is self-driven"),
-    };
+    let drive = interface.start(worker_context);
     let started = StartedInterface {
         descriptor,
         handle: runtime_handle,

@@ -16,11 +16,31 @@
 //! cannot exist without a runtime handle, and a `SelfDriven` value can never mean
 //! "the runtime has no way to reach it."
 
-use crate::engine::{InstantMillis, NextScheduledEngineWork};
+use crate::engine::InstantMillis;
 use crate::interfaces::{
     ConnectionState, ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext,
     OutboundPacket, SendError, Substrate,
 };
+
+#[derive(Debug, Clone, Copy)]
+pub enum NextScheduledInterfaceWake {
+    Immediate,
+    At(InstantMillis),
+    Idle,
+}
+
+impl NextScheduledInterfaceWake {
+    /// The sooner of two interface poll deadlines: `Immediate` wins, `Idle` loses,
+    /// two `At`s take the earlier instant.
+    pub fn sooner(self, other: Self) -> Self {
+        use NextScheduledInterfaceWake::{At, Idle, Immediate};
+        match (self, other) {
+            (Immediate, _) | (_, Immediate) => Immediate,
+            (Idle, other) | (other, Idle) => other,
+            (At(x), At(y)) => At(InstantMillis(x.0.min(y.0))),
+        }
+    }
+}
 
 /// Which side runs an interface's loop — the runtime's *scheduling* decision,
 /// nothing more. The runtime-side data lanes and control plane live in the
@@ -39,7 +59,7 @@ pub enum DriverMode<Worker> {
     /// travels with the data it acts on and needs no trait of its own.
     RuntimeDriven {
         worker: Worker,
-        poll: fn(&mut Worker, InstantMillis) -> NextScheduledEngineWork,
+        poll: fn(&mut Worker, InstantMillis) -> NextScheduledInterfaceWake,
     },
 }
 
@@ -77,8 +97,8 @@ pub trait RegisteredInterface {
     fn next_report(&mut self) -> Option<ControlReport>;
 
     /// Poll a runtime-driven interface's worker for its next deadline; a no-op
-    /// returning [`Idle`](NextScheduledEngineWork::Idle) for a self-driven one.
-    fn poll(&mut self, now: InstantMillis) -> NextScheduledEngineWork; //REVIEW after the main sweep, we need to come back and get a second version of this and rename it (notice the EngineWork suffix)
+    /// returning [`Idle`](NextScheduledInterfaceWake::Idle) for a self-driven one.
+    fn poll(&mut self, now: InstantMillis) -> NextScheduledInterfaceWake;
 
     fn drain_control_reports(&mut self) {
         while let Some(report) = self.next_report() {
@@ -111,9 +131,9 @@ impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Wor
         self.handle.next_report()
     }
 
-    fn poll(&mut self, now: InstantMillis) -> NextScheduledEngineWork {
+    fn poll(&mut self, now: InstantMillis) -> NextScheduledInterfaceWake {
         match &mut self.drive {
-            DriverMode::SelfDriven => NextScheduledEngineWork::Idle,
+            DriverMode::SelfDriven => NextScheduledInterfaceWake::Idle,
             DriverMode::RuntimeDriven { worker, poll } => poll(worker, now),
         }
     }
@@ -128,13 +148,19 @@ impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Wor
 /// reports [`Stopped`](ControlReport), and synchronous resource release is just
 /// the interface's own [`Drop`].
 pub trait Interface<S: Substrate>: Sized {
+    /// The worker the runtime polls if this interface can't run itself —
+    /// [`Infallible`](core::convert::Infallible) for a self-driven one, so its
+    /// `RuntimeDriven` branch is unconstructable and `start` hands the host a
+    /// `DriverMode<Infallible>` with no coercion.
+    type Worker;
+
     /// The routing facts the engine registers and routes on — read before `start`
     /// consumes the interface.
     fn descriptor(&self) -> InterfaceDescriptor;
 
     /// Activate: open the device, take the worker side of the seam, decide the
     /// drive mode, return the [`DriverMode`].
-    fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self>;
+    fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self::Worker>;
 }
 
 /// Ready-made [`Interface`] for the common case: one that starts its own thread
@@ -157,11 +183,13 @@ where
     S: Substrate,
     Launch: FnOnce(InterfaceWorkerContext<S>),
 {
+    type Worker = core::convert::Infallible;
+
     fn descriptor(&self) -> InterfaceDescriptor {
         self.descriptor
     }
 
-    fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self> {
+    fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self::Worker> {
         (self.launch)(context);
         DriverMode::SelfDriven
     }

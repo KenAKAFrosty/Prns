@@ -12,7 +12,6 @@
 // daemon is std glue around the engine; syscalls go through std, so no `unsafe`.
 #![forbid(unsafe_code)]
 
-use std::convert::Infallible;
 use std::io;
 use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
@@ -24,7 +23,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
     std_host::std_serial_interface, SERIAL_MTU,
 };
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{DriverMode, Interface, InterfaceId, StartedInterface};
+use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
 use personal_rns::runtime::channels::std_host::StdInterfaceSeam;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, run_contract, ContractRuntime};
@@ -127,13 +126,7 @@ fn main() {
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
     let descriptor = interface.descriptor();
-    // The serial interface is self-driven (its own thread), so `start` always
-    // returns `SelfDriven`; this daemon has no runtime-driven interfaces, hence
-    // `Infallible` for the worker type.
-    let drive: DriverMode<Infallible> = match interface.start(worker_context) {
-        DriverMode::SelfDriven => DriverMode::SelfDriven,
-        DriverMode::RuntimeDriven { .. } => unreachable!("the serial interface is self-driven"),
-    };
+    let drive = interface.start(worker_context);
     let started = StartedInterface {
         descriptor,
         handle: runtime_handle,

@@ -16,7 +16,8 @@ use crate::engine::{
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
-    ConnectionState, InterfaceId, OutboundPacket, RegisteredInterface, SendError,
+    ConnectionState, InterfaceId, NextScheduledInterfaceWake, OutboundPacket, RegisteredInterface,
+    SendError,
 };
 use crate::routing::storage::Storage;
 use crate::wire::MTU;
@@ -28,7 +29,7 @@ pub struct ContractStepOutput {
     pub accepted_announce_count: usize,
     pub scheduled_rebroadcast_count: usize,
     pub egress_directive_count: usize,
-    pub next_poll: NextScheduledEngineWork,
+    pub next_poll: NextScheduledInterfaceWake,
 }
 
 #[derive(Clone, Copy)]
@@ -135,7 +136,7 @@ where
         let CycleStamp { now, seed } = host.wait(wake).await;
         let output = cycle_pooled(&mut engine, &mut interfaces, &mut traffic, now, seed);
         observe(&snapshot_pooled(&engine, &interfaces, &traffic));
-        wake = sooner(engine.next_wakeup(now), output.next_poll);
+        wake = host_wake(engine.next_wakeup(now), output.next_poll);
     }
 }
 
@@ -158,9 +159,9 @@ where
 
     // Poll every interface; a self-driven one reports Idle, so this folds in each
     // runtime-driven worker's next deadline without the runtime knowing which is which.
-    let mut next_poll = NextScheduledEngineWork::Idle;
+    let mut next_poll = NextScheduledInterfaceWake::Idle;
     for started in interfaces.iter_mut() {
-        next_poll = sooner(next_poll, started.poll(now));
+        next_poll = next_poll.sooner(started.poll(now));
     }
 
     // Drain inbound while packets still borrow from their interface ring slots.
@@ -289,14 +290,19 @@ where
     RuntimeSnapshot { interfaces: views }
 }
 
-/// The sooner of two scheduled-work instants: `Immediate` beats everything, `Idle`
-/// loses to everything, and two `At`s take the earlier deadline.
-fn sooner(a: NextScheduledEngineWork, b: NextScheduledEngineWork) -> NextScheduledEngineWork {
-    use NextScheduledEngineWork::{At, Idle, Immediate};
-    match (a, b) {
-        (Immediate, _) | (_, Immediate) => Immediate,
-        (Idle, other) | (other, Idle) => other,
-        (At(x), At(y)) => At(InstantMillis(x.0.min(y.0))),
+fn host_wake(
+    engine: NextScheduledEngineWork,
+    interface: NextScheduledInterfaceWake,
+) -> NextScheduledEngineWork {
+    use NextScheduledEngineWork::{
+        At as EngineAt, Idle as EngineIdle, Immediate as EngineImmediate,
+    };
+    use NextScheduledInterfaceWake::{At as PollAt, Idle as PollIdle, Immediate as PollImmediate};
+    match (engine, interface) {
+        (EngineImmediate, _) | (_, PollImmediate) => EngineImmediate,
+        (EngineIdle, PollIdle) => EngineIdle,
+        (EngineAt(deadline), PollIdle) | (EngineIdle, PollAt(deadline)) => EngineAt(deadline),
+        (EngineAt(x), PollAt(y)) => EngineAt(InstantMillis(x.0.min(y.0))),
     }
 }
 
@@ -627,7 +633,10 @@ mod tests {
             FanoutClass::Transit,
         );
 
-        assert_eq!(interfaces.as_slice()[0].handle.sent, std::vec![bytes.to_vec()]);
+        assert_eq!(
+            interfaces.as_slice()[0].handle.sent,
+            std::vec![bytes.to_vec()]
+        );
         assert!(interfaces.as_slice()[1].handle.sent.is_empty());
         assert_eq!(traffic.totals_for(connected), (0, bytes.len() as u64));
         assert_eq!(traffic.totals_for(failed), (0, 0));
@@ -669,7 +678,10 @@ mod tests {
         );
 
         assert!(interfaces.as_slice()[0].handle.sent.is_empty());
-        assert_eq!(interfaces.as_slice()[1].handle.sent, std::vec![bytes.to_vec()]);
+        assert_eq!(
+            interfaces.as_slice()[1].handle.sent,
+            std::vec![bytes.to_vec()]
+        );
         assert_eq!(traffic.totals_for(local_only), (0, 0));
         assert_eq!(traffic.totals_for(transit), (0, bytes.len() as u64));
 
@@ -681,7 +693,10 @@ mod tests {
             FanoutClass::LocalOriginated,
         );
 
-        assert_eq!(interfaces.as_slice()[0].handle.sent, std::vec![bytes.to_vec()]);
+        assert_eq!(
+            interfaces.as_slice()[0].handle.sent,
+            std::vec![bytes.to_vec()]
+        );
         assert_eq!(
             interfaces.as_slice()[1].handle.sent,
             std::vec![bytes.to_vec(), bytes.to_vec()]

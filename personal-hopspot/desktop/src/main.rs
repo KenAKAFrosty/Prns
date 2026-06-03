@@ -11,7 +11,6 @@
 //! daemon's engine wiring (mirrors `personal-rnsd`) with a face bolted on — the
 //! two will diverge, so the ~60 shared lines are duplicated rather than factored.
 
-use std::convert::Infallible;
 use std::io;
 use std::sync::mpsc::{self, sync_channel, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -30,7 +29,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
     std_host::std_serial_interface, SERIAL_MTU,
 };
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{DriverMode, Interface, InterfaceId, StartedInterface};
+use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
 use personal_rns::runtime::channels::std_host::StdInterfaceSeam;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, run_contract, ContractRuntime, RuntimeSnapshot};
@@ -144,10 +143,7 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     };
     let interface = std_serial_interface(USB_INTERFACE_ID, open, RECONNECT_INTERVAL);
     let descriptor = interface.descriptor();
-    let drive: DriverMode<Infallible> = match interface.start(worker_context) {
-        DriverMode::SelfDriven => DriverMode::SelfDriven,
-        DriverMode::RuntimeDriven { .. } => unreachable!("the serial interface is self-driven"),
-    };
+    let drive = interface.start(worker_context);
     let started = StartedInterface {
         descriptor,
         handle: runtime_handle,

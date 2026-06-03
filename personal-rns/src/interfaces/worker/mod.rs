@@ -18,6 +18,6 @@ pub use context::{
 };
 pub use core::{QueueFull, SendError};
 pub use interface::{
-    DriverMode, Interface, InterfaceHandle, RegisteredInterface, SelfDrivenInterface,
-    StartedInterface,
+    DriverMode, Interface, InterfaceHandle, NextScheduledInterfaceWake, RegisteredInterface,
+    SelfDrivenInterface, StartedInterface,
 };
