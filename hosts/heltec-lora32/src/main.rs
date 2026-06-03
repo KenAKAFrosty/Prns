@@ -693,11 +693,11 @@ async fn main(spawner: Spawner) {
                             "WiFi"
                         };
                         log::info!(
-                            "HELTEC_S3 IFACE {label} online={} dest={} rx={} tx={}",
-                            view.online,
+                            "HELTEC_S3 IFACE {label} state={:?} dest={} rx={} tx={}",
+                            view.connection_state,
                             view.tracked_destinations,
-                            view.reticulum_rx_bytes,
-                            view.reticulum_tx_bytes,
+                            view.reticulum_rx_byte_count,
+                            view.reticulum_tx_byte_count,
                         );
                     }
                 }
