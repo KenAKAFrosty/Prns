@@ -24,7 +24,7 @@ use heapless::Vec as HVec;
 
 use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::routing::storage::FixedCapacity;
+use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
@@ -50,10 +50,6 @@ const READ_POLL: Duration = Duration::from_millis(50);
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// In-flight capacity of each of the interface's data rings.
 const MAX_BUFFERED_PACKETS: usize = 64;
-
-/// This debug face's engine-storage sizing (mirrors the daemon — a generous std
-/// host): 64 dests / 64 ids each / 4 KB arena / 4 floor / 512 overflow / 64 held.
-const ENGINE_STORAGE: FixedCapacity<64, 64, 4096, 4, 512, 64> = FixedCapacity;
 
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
@@ -124,7 +120,8 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
 
     block_on(Prns::run(
         Recipe {
-            engine_storage: ENGINE_STORAGE,
+            // A mains-powered std host: unbounded heap storage, no fixed cap.
+            engine_storage: GrowableHeap,
             identity_secret_key: load_identity_secret_key(),
             self_announce: SelfAnnounceConfig {
                 app_name: SELF_ANNOUNCE_APP_NAME,

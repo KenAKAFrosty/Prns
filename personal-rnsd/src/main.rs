@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::routing::storage::FixedCapacity;
+use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
@@ -46,11 +46,6 @@ const READ_POLL: Duration = Duration::from_millis(50);
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// In-flight capacity of each of the interface's data rings.
 const MAX_BUFFERED_PACKETS: usize = 64;
-
-/// This daemon's engine-storage sizing — a mains-powered std host, so generous:
-/// 64 tracked destinations, 64 announce-ids each, a 4 KB app-data arena, a 4-slot
-/// history floor, 512 shared-overflow slots, a 64-entry held cache.
-const ENGINE_STORAGE: FixedCapacity<64, 64, 4096, 4, 512, 64> = FixedCapacity;
 
 /// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519
 /// private keys). Handed to the engine through a [`Zeroizing`] buffer so it is
@@ -106,7 +101,8 @@ fn main() {
     let mut announced_routes = 0u32;
     block_on(Prns::run(
         Recipe {
-            engine_storage: ENGINE_STORAGE,
+            // A mains-powered std host: unbounded heap storage, no fixed cap.
+            engine_storage: GrowableHeap,
             identity_secret_key: load_identity_secret_key(),
             self_announce: SelfAnnounceConfig {
                 app_name: SELF_ANNOUNCE_APP_NAME,
