@@ -17,7 +17,9 @@ use crate::engine::egress::write_announce_wire_packet;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{
+    ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
+};
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, SelfAnnounceEntropy,
@@ -32,9 +34,6 @@ use crate::routing::{
 use crate::wire::DestinationHash;
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
-
-/// Cap on registered interfaces. REVIEW this is s sizing concern, needs to live with fixed in its impl, not here at the root
-pub const MAX_REGISTERED_INTERFACES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);

@@ -12,11 +12,11 @@ use super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
-    NextScheduledEngineWork, MAX_REGISTERED_INTERFACES,
+    NextScheduledEngineWork,
 };
 use crate::interfaces::{
-    ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId, OutboundPacket,
-    SendError, StartedInterface,
+    ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId,
+    MAX_REGISTERED_INTERFACES, OutboundPacket, SendError, StartedInterface,
 };
 use crate::routing::storage::Storage;
 use crate::wire::MTU;

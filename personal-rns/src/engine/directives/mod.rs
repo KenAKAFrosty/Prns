@@ -10,7 +10,7 @@ mod impls;
 
 pub use impls::*;
 
-use crate::engine::MAX_REGISTERED_INTERFACES;
+use crate::interfaces::MAX_REGISTERED_INTERFACES;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 use heapless::Vec;

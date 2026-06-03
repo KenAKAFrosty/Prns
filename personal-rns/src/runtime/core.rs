@@ -3,8 +3,7 @@
 
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::MAX_REGISTERED_INTERFACES;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceId, MAX_REGISTERED_INTERFACES};
 
 /// Cumulative Reticulum byte totals per interface, the runtime's own meter of the
 /// fabric traffic crossing its seam. Capacity is [`MAX_REGISTERED_INTERFACES`] — the

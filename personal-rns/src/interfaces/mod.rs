@@ -32,3 +32,9 @@ pub use worker::{
 };
 
 pub use framing::rns_serial_framing;
+
+/// Node-wide cap on registered interfaces — a deployment ceiling shared by the
+/// engine (its interface registry and directive fan-out) and the runtime (its
+/// live interface set, snapshot, and traffic counters), so it lives at the seam
+/// both sides cross rather than inside either one.
+pub const MAX_REGISTERED_INTERFACES: usize = 8;

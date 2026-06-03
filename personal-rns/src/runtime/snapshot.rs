@@ -2,8 +2,7 @@
 
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::MAX_REGISTERED_INTERFACES;
-use crate::interfaces::{ConnectionState, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceId, MAX_REGISTERED_INTERFACES};
 
 /// Per-interface slice of a [`RuntimeSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
