@@ -60,14 +60,15 @@ where
     I::Item: RegisteredInterface,
     S: EngineStorage,
 {
-    /// Register each interface with the engine and hold the set. The host built the
-    /// set, so its backing already decided the bound; this only registers, panicking
-    /// if the host supplied a non-routable interface.
+    /// Register each interface with the engine and hold the set. Registration is
+    /// membership only — routability is re-decided per transmit (see
+    /// [`fan_to_handles`]) — so this never rejects on connection state; an
+    /// over-capacity registry just drops the overflow interface rather than panicking.
     pub fn new(mut engine: EngineState<S>, interfaces: I, host: Ho) -> Self {
         for interface in interfaces.iter() {
-            engine
-                .register_routable_interface_descriptor(interface.descriptor())
-                .expect("interface descriptor is connected and transmits");
+            // Membership only; a full registry drops the overflow interface rather
+            // than taking the runtime down.
+            let _ = engine.register_interface_descriptor(interface.descriptor());
         }
         Self {
             engine,

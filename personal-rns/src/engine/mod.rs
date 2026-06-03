@@ -18,7 +18,7 @@ use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
-    ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
+    InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
 };
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
@@ -138,11 +138,12 @@ where
     }
 }
 
+/// Why registering an interface failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterInterfaceError {
+    /// The fixed registry
+    /// ([`MAX_REGISTERED_INTERFACES`](crate::interfaces::MAX_REGISTERED_INTERFACES)) is full.
     RegistryFull,
-    NotTransmitting,
-    NotRoutable { state: ConnectionState },
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -191,26 +192,15 @@ impl<S: EngineStorage> EngineState<S> {
         self.pending_rebroadcasts.pending_count()
     }
 
-    pub fn register_routable_interface_descriptor(
+    /// Track `descriptor`'s interface for routing. Registration is membership only:
+    /// whether a packet actually leaves an interface is re-decided per transmit
+    /// against its live connection state and capabilities (in the egress fan), so an
+    /// interface that is down now — or comes up later — is handled there, not gated
+    /// here. The sole failure is a full registry.
+    pub fn register_interface_descriptor(
         &mut self,
         descriptor: &InterfaceDescriptor,
     ) -> Result<(), RegisterInterfaceError> {
-        match descriptor.state {
-            ConnectionState::Connected | ConnectionState::Degraded => {}
-            ConnectionState::Initializing
-            | ConnectionState::Reconnecting
-            | ConnectionState::Failed
-            | ConnectionState::Disconnected => {
-                return Err(RegisterInterfaceError::NotRoutable {
-                    state: descriptor.state,
-                });
-            }
-        }
-
-        if !descriptor.capabilities.allows_transmit() {
-            return Err(RegisterInterfaceError::NotTransmitting);
-        }
-
         if self.interfaces.contains(&descriptor.id) {
             return Ok(());
         }
@@ -567,8 +557,8 @@ pub fn tick<S: EngineStorage>(
 mod tests {
     use super::*;
     use crate::interfaces::{
-        EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, MediumKind,
-        TransitCapability,
+        ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
+        MediumKind, TransitCapability,
     };
     use crate::routing::storage::FixedCapacity;
     use crate::wire::{
@@ -858,54 +848,17 @@ mod tests {
 
     fn register_test_interface(state: &mut EngineState<Cap>, id: InterfaceId) {
         state
-            .register_routable_interface_descriptor(&routable_descriptor(id))
+            .register_interface_descriptor(&routable_descriptor(id))
             .unwrap();
     }
 
     #[test]
-    fn register_routable_descriptor_accepts_a_connected_transmitting_interface() {
-        let id = InterfaceId::new([0xAB; 16]);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-
-        assert_eq!(
-            state.register_routable_interface_descriptor(&routable_descriptor(id)),
-            Ok(())
-        );
-        assert_eq!(state.registered_interfaces(), &[id]);
-    }
-
-    #[test]
-    fn register_routable_descriptor_accepts_degraded_transmitting_interfaces() {
-        let id = InterfaceId::new([0xBC; 16]);
-        let descriptor = InterfaceDescriptor {
-            state: ConnectionState::Degraded,
-            ..routable_descriptor(id)
-        };
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-
-        assert_eq!(
-            state.register_routable_interface_descriptor(&descriptor),
-            Ok(())
-        );
-        assert_eq!(state.registered_interfaces(), &[id]);
-    }
-
-    #[test]
-    fn register_routable_descriptor_rejects_non_transmitting_interfaces() {
-        let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
-        descriptor.capabilities.egress = EgressCapability::Disabled;
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-
-        assert_eq!(
-            state.register_routable_interface_descriptor(&descriptor),
-            Err(RegisterInterfaceError::NotTransmitting)
-        );
-        assert!(state.registered_interfaces().is_empty());
-    }
-
-    #[test]
-    fn register_routable_descriptor_rejects_unroutable_connection_states() {
+    fn register_interface_descriptor_tracks_an_interface_in_any_state() {
+        // Membership only: the egress fan re-checks routability per transmit, so
+        // every connection state — even down — registers fine.
         for (idx, connection_state) in [
+            ConnectionState::Connected,
+            ConnectionState::Degraded,
             ConnectionState::Initializing,
             ConnectionState::Reconnecting,
             ConnectionState::Failed,
@@ -914,20 +867,49 @@ mod tests {
         .into_iter()
         .enumerate()
         {
+            let id = InterfaceId::new([idx as u8; 16]);
             let descriptor = InterfaceDescriptor {
                 state: connection_state,
-                ..routable_descriptor(InterfaceId::new([idx as u8; 16]))
+                ..routable_descriptor(id)
             };
-            let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+            let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
 
-            assert_eq!(
-                state.register_routable_interface_descriptor(&descriptor),
-                Err(RegisterInterfaceError::NotRoutable {
-                    state: connection_state
-                })
-            );
-            assert!(state.registered_interfaces().is_empty());
+            assert_eq!(engine.register_interface_descriptor(&descriptor), Ok(()));
+            assert_eq!(engine.registered_interfaces(), &[id]);
         }
+    }
+
+    #[test]
+    fn register_interface_descriptor_tracks_a_receive_only_interface() {
+        // A receive-only interface still registers; the egress fan just never picks
+        // it to transmit on.
+        let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
+        descriptor.capabilities.egress = EgressCapability::Disabled;
+        let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
+
+        assert_eq!(engine.register_interface_descriptor(&descriptor), Ok(()));
+        assert_eq!(engine.registered_interfaces(), &[descriptor.id]);
+    }
+
+    #[test]
+    fn register_interface_descriptor_reports_a_full_registry() {
+        let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
+        for idx in 0..MAX_REGISTERED_INTERFACES {
+            let id = InterfaceId::new([idx as u8; 16]);
+            assert_eq!(
+                engine.register_interface_descriptor(&routable_descriptor(id)),
+                Ok(())
+            );
+        }
+        let overflow = InterfaceId::new([0xFF; 16]);
+        assert_eq!(
+            engine.register_interface_descriptor(&routable_descriptor(overflow)),
+            Err(RegisterInterfaceError::RegistryFull)
+        );
+        assert_eq!(
+            engine.registered_interfaces().len(),
+            MAX_REGISTERED_INTERFACES
+        );
     }
 
     #[test]
