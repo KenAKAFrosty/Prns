@@ -23,8 +23,9 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 
-use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     std_host::std_serial_interface, SERIAL_MTU,
 };
@@ -103,7 +104,7 @@ fn main() {
 /// runtime forever, forwarding each cycle's snapshot to the UI thread.
 fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     let identity_secret_key = load_identity_secret_key();
-    let state: FixedCapacityEngineState = FixedCapacityEngineState::announcing(
+    let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::announcing(
         &identity_secret_key,
         SelfAnnounceConfig {
             app_name: SELF_ANNOUNCE_APP_NAME,

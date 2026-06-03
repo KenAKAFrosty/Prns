@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Warnings fail the build for *our* crates. Cargo applies `--cap-lints allow` to
+  # registry dependencies, so this never breaks on third-party warnings.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt (root workspace)
+        run: cargo fmt --all -- --check
+      # NOTE: scripts/fmt-check.sh also fmt-checks hosts/* — those are separate
+      # workspaces on the Xtensa "esp" toolchain (espup), not installable on a stock
+      # runner, so they are checked locally / on a device runner, not here.
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - name: doc (intra-doc links are load-bearing navigation)
+        run: cargo doc -p personal-rns --no-deps --document-private-items --quiet
+
+  no-std-embedded:
+    # The forcing-function gate: the core stays no_std + alloc-free and cross-compiles
+    # to the ESP32-C6 (riscv32imac). Reuses the committed script verbatim.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv32imac-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/no-std-esp-build.sh
+
+  deny:
+    # License (no copyleft) + RUSTSEC advisories + source policy, from deny.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: EmbarkStudios/cargo-deny-action@v2

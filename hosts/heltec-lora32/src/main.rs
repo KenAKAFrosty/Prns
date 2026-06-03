@@ -81,8 +81,8 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
 };
 use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
-    ConnectionState, ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId,
-    InterfaceWorkerContext, OutboundPacket, SendError, StartedInterface,
+    ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
+    OutboundPacket, SendError, StartedInterface,
 };
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::channels::embassy_seam::{
@@ -226,7 +226,7 @@ impl EspNowLink for S3EspNowLink<'_> {
 static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 
 /// Small engine-state preset for the S3: a desk node tracks a handful of
-/// destinations, so the `FixedCapacityEngineState` default (64 dests /
+/// destinations, so the default `FixedCapacity` recipe (64 dests /
 /// 64 ids-per-dest / 4 KB app-data arena, ~65 KB total) is oversized and
 /// doesn't fit comfortably alongside WiFi + the worker — this preset is ~12 KB.
 /// The params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
@@ -707,13 +707,9 @@ async fn main(spawner: Spawner) {
                         } else {
                             "WiFi"
                         };
-                        let online = matches!(
-                            view.connection_state,
-                            ConnectionState::Connected | ConnectionState::Degraded
-                        );
                         log::info!(
-                            "HELTEC_S3 IFACE {label} online={} dest={} rx={} tx={}",
-                            online,
+                            "HELTEC_S3 IFACE {label} state={:?} dest={} rx={} tx={}",
+                            view.connection_state,
                             view.tracked_destinations,
                             view.reticulum_rx_byte_count,
                             view.reticulum_tx_byte_count,

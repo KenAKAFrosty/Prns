@@ -19,9 +19,10 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use personal_rns::engine::{
-    tick, EngineCycleEntropy, EngineCycleEntropySeed, FixedCapacityEngineState, InstantMillis,
+    tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
     ENGINE_CYCLE_ENTROPY_LEN,
 };
+use personal_rns::routing::storage::FixedCapacity;
 
 uniffi::include_scaffolding!("prns");
 
@@ -53,7 +54,7 @@ impl SdkEngineSubstrate {
 }
 
 struct RuntimeInner {
-    state: FixedCapacityEngineState,
+    state: EngineState<FixedCapacity>,
     substrate: SdkEngineSubstrate,
 }
 
@@ -68,7 +69,7 @@ impl ReticulumRuntime {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(RuntimeInner {
-                state: FixedCapacityEngineState::default(),
+                state: EngineState::<FixedCapacity>::default(),
                 substrate: SdkEngineSubstrate {
                     base: Instant::now(),
                 },

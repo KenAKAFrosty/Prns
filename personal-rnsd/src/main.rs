@@ -8,13 +8,18 @@
 //! surfaces a snapshot each cycle. The daemon both forwards others' announces and
 //! emits its own `personal.node` announce (first one as soon as the link is up).
 
+// 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The
+// daemon is std glue around the engine; syscalls go through std, so no `unsafe`.
+#![forbid(unsafe_code)]
+
 use std::convert::Infallible;
 use std::io;
 use std::sync::mpsc::sync_channel;
 use std::time::{Duration, Instant};
 
-use personal_rns::engine::{FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     std_host::std_serial_interface, SERIAL_MTU,
 };
@@ -76,7 +81,7 @@ fn main() {
     // `personal.node` announce on the schedule (default 6h), the first as soon as
     // the interface is registered in the runtime below.
     let identity_secret_key = load_identity_secret_key();
-    let state: FixedCapacityEngineState = FixedCapacityEngineState::announcing(
+    let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::announcing(
         &identity_secret_key,
         SelfAnnounceConfig {
             app_name: SELF_ANNOUNCE_APP_NAME,

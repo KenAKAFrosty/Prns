@@ -34,6 +34,9 @@ pub fn snapshot_to_cards<const N: usize>(
         let _ = cards.push(Card {
             kind,
             label,
+            // The status dot collapses the engine's ConnectionState: an interface
+            // reads as online when it is routable (Connected or Degraded), matching
+            // the engine's own routability grouping.
             online: matches!(
                 view.connection_state,
                 ConnectionState::Connected | ConnectionState::Degraded

@@ -33,9 +33,10 @@ use esp_println::{print, println};
 use static_cell::StaticCell;
 
 use personal_rns::engine::{
-    EngineCycleEntropySeed, FixedCapacityEngineState, ReannounceSchedule, SelfAnnounceConfig,
+    EngineCycleEntropySeed, EngineState, ReannounceSchedule, SelfAnnounceConfig,
     ENGINE_CYCLE_ENTROPY_LEN,
 };
+use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::embassy_contract::serve;
 use personal_rns::interfaces::impls::rns_parity::serial::{
@@ -112,7 +113,7 @@ async fn node_task(
     // An announcing identity drawn fresh from the TRNG (a genuine stranger each boot).
     let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
     Rng::new().read(&mut secret_key[..]);
-    let state: FixedCapacityEngineState = FixedCapacityEngineState::announcing(
+    let state: EngineState<FixedCapacity> = EngineState::<FixedCapacity>::announcing(
         &secret_key,
         SelfAnnounceConfig {
             app_name: "personal",
