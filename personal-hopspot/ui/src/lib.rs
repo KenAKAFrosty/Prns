@@ -4,15 +4,21 @@
 //! identical pixels land on the panel and on `embedded-graphics-simulator`.
 //!
 //! [`snapshot_to_cards`] turns a runtime snapshot into the renderable [`Card`]
-//! list. The engine snapshot is deliberately product-agnostic — it carries only
-//! each interface's opaque [`InterfaceId`] — so the host supplies the icon kind
-//! and label (its own product knowledge) through a `classify` closure.
+//! list. [`UiState`] adds the small amount of single-button interaction the
+//! renderer needs: short press advances the selected interface and keeps it
+//! visible; long press opens that interface's menu, where short press advances
+//! dummy rows and long press exits. The engine snapshot is deliberately
+//! product-agnostic — it carries only each interface's opaque [`InterfaceId`] —
+//! so the host supplies the icon kind and label (its own product knowledge)
+//! through a `classify` closure.
 
 #![no_std]
 
 pub mod screen;
 
-pub use screen::{draw, splash, BatteryState, Card, CardKind};
+pub use screen::{
+    draw, draw_with_state, splash, BatteryState, Card, CardKind, InputEvent, UiState,
+};
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::runtime::RuntimeSnapshot;

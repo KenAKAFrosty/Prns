@@ -12,8 +12,10 @@
 //! primitives, not font
 //! characters — the icon mapping is one `match`, the single place to enrich.
 //!
-//! Portrait puts the cards down toward the unit's buttons; once more than a
-//! couple of interfaces exist, the non-RST button scrolls the stack (TODO).
+//! Portrait puts the cards down toward the unit's button. [`UiState`] tracks the
+//! selected interface and keeps it visible, so cycling through cards also pages
+//! the stack once more interfaces exist than fit on screen. A long press opens a
+//! per-interface dummy menu for laying out the eventual action surface.
 
 use core::fmt::Write as _;
 
@@ -32,6 +34,36 @@ const CARD_H: i32 = 31;
 const CARD_GAP: i32 = 2;
 /// Cards that fit below the title bar on a 128px-tall portrait panel.
 const MAX_VISIBLE_CARDS: usize = 3;
+const NUMBER_GLYPH_WIDTH: i32 = 5;
+const COMPACT_DECIMAL_WIDTH: i32 = 2;
+const COMPACT_DECIMAL_Y: i32 = 6;
+const STAT_ICON_X: i32 = 34;
+const STAT_TEXT_X: i32 = STAT_ICON_X + 9;
+const NAME_BACKING_X: i32 = 2;
+const NAME_BACKING_Y: i32 = 2;
+const NAME_BACKING_H: u32 = 9;
+const NAME_ICON_X: i32 = 3;
+const NAME_TEXT_X: i32 = 14;
+const NAME_LINE_Y: i32 = 2;
+const NAME_ICON_W: i32 = 9;
+const FONT_6X10_CHAR_W: i32 = 6;
+const MENU_ITEM_COUNT: usize = 4;
+const MENU_HEADER_Y: i32 = CARD_TOP + 2;
+const MENU_SUBTITLE_Y: i32 = CARD_TOP + 13;
+const MENU_DIVIDER_Y: i32 = CARD_TOP + 23;
+const MENU_ITEM_TOP: i32 = CARD_TOP + 29;
+const MENU_ITEM_STEP: i32 = 13;
+const MENU_BACKING_X: i32 = 2;
+const MENU_BACKING_H: u32 = 10;
+const MENU_MARK_X: i32 = 4;
+const MENU_TEXT_X: i32 = 12;
+const FONT_5X8_CHAR_W: i32 = 5;
+
+const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Serial", "Restart", "Back"];
+const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Scan", "Channel", "Back"];
+const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Pair", "Advert", "Back"];
+const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Freq", "Power", "Back"];
+const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peers", "Channel", "Back"];
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in [`draw_interface_icon`]) as new interface
@@ -40,6 +72,7 @@ const MAX_VISIBLE_CARDS: usize = 3;
 pub enum CardKind {
     Wifi,
     Usb,
+    Ble,
     LoRa,
     EspNow,
 }
@@ -71,6 +104,132 @@ pub enum BatteryState {
     Unknown,
 }
 
+/// Single-button input as interpreted by the board support layer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputEvent {
+    /// Tap/click: advance focus to the next interface card.
+    ShortPress,
+    /// Hold: reserved for the selected interface's menu.
+    LongPress,
+}
+
+/// Lightweight interaction state for the Hopspot card stack.
+///
+/// The renderer stays data-driven: runtime snapshots become [`Card`]s, while
+/// this state only records which card is focused and which slice of the card
+/// stack is visible on the 64x128 panel, plus whether that card's menu is open.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiState {
+    selected_card: usize,
+    visible_start: usize,
+    mode: UiMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiMode {
+    Cards,
+    Menu { selected_item: usize },
+}
+
+impl UiState {
+    pub const fn new() -> Self {
+        Self {
+            selected_card: 0,
+            visible_start: 0,
+            mode: UiMode::Cards,
+        }
+    }
+
+    /// The selected card index, if any cards are present.
+    pub fn selected_card(&self, card_count: usize) -> Option<usize> {
+        if card_count == 0 {
+            None
+        } else {
+            Some(self.selected_card.min(card_count - 1))
+        }
+    }
+
+    /// The first card index currently visible on the panel.
+    pub fn visible_start(&self, card_count: usize) -> usize {
+        let Some(selected) = self.selected_card(card_count) else {
+            return 0;
+        };
+        visible_start_for(card_count, selected, self.visible_start)
+    }
+
+    /// The selected menu row while the selected interface's menu is open.
+    pub fn menu_selected_item(&self) -> Option<usize> {
+        match self.mode {
+            UiMode::Cards => None,
+            UiMode::Menu { selected_item } => Some(selected_item),
+        }
+    }
+
+    /// Reconcile selection/window state after the runtime's interface list
+    /// changes.
+    pub fn sync_card_count(&mut self, card_count: usize) {
+        if card_count == 0 {
+            self.selected_card = 0;
+            self.visible_start = 0;
+            self.mode = UiMode::Cards;
+            return;
+        }
+
+        self.selected_card = self.selected_card.min(card_count - 1);
+        self.visible_start = visible_start_for(card_count, self.selected_card, self.visible_start);
+        if let UiMode::Menu { selected_item } = self.mode {
+            self.mode = UiMode::Menu {
+                selected_item: selected_item.min(MENU_ITEM_COUNT - 1),
+            };
+        }
+    }
+
+    /// Apply one single-button event.
+    pub fn handle_input(&mut self, event: InputEvent, card_count: usize) {
+        self.sync_card_count(card_count);
+        match (event, self.mode) {
+            (InputEvent::ShortPress, UiMode::Cards) if card_count > 0 => {
+                self.selected_card = (self.selected_card + 1) % card_count;
+            }
+            (InputEvent::LongPress, UiMode::Cards) if card_count > 0 => {
+                self.mode = UiMode::Menu { selected_item: 0 };
+            }
+            (InputEvent::ShortPress, UiMode::Menu { selected_item }) => {
+                self.mode = UiMode::Menu {
+                    selected_item: (selected_item + 1) % MENU_ITEM_COUNT,
+                };
+            }
+            (InputEvent::LongPress, UiMode::Menu { .. }) => {
+                self.mode = UiMode::Cards;
+            }
+            (InputEvent::ShortPress | InputEvent::LongPress, UiMode::Cards) => {}
+        }
+        self.sync_card_count(card_count);
+    }
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn visible_start_for(card_count: usize, selected_card: usize, visible_start: usize) -> usize {
+    if card_count <= MAX_VISIBLE_CARDS {
+        return 0;
+    }
+
+    let max_start = card_count - MAX_VISIBLE_CARDS;
+    let visible_start = visible_start.min(max_start);
+    if selected_card < visible_start {
+        selected_card
+    } else if selected_card >= visible_start + MAX_VISIBLE_CARDS {
+        (selected_card + 1 - MAX_VISIBLE_CARDS).min(max_start)
+    } else {
+        visible_start
+    }
+}
+
 /// 3 significant figures, rolling unit B -> K -> M -> G (1000-based), max 3
 /// numeric chars: `1.0K` up to `10K` up to `100K`, then `1.0M`, and so on.
 /// Integer-only (no float), max 4 chars including the unit.
@@ -99,6 +258,92 @@ fn fmt_bytes(n: u64) -> HString<8> {
         let _ = write!(s, "{int_part}{unit}");
     }
     s
+}
+
+fn fmt_count(n: u32) -> HString<8> {
+    let mut s = HString::new();
+    if n < 1000 {
+        let _ = write!(s, "{n}");
+        return s;
+    }
+
+    let n = n as u64;
+    let (unit, unit_val) = if n < 1_000_000 {
+        ('K', 1_000u64)
+    } else if n < 1_000_000_000 {
+        ('M', 1_000_000)
+    } else {
+        ('B', 1_000_000_000)
+    };
+    let thousandths = n * 1000 / unit_val;
+    let int_part = thousandths / 1000;
+    if int_part < 10 {
+        let tenths = thousandths / 100;
+        let _ = write!(s, "{}.{}{}", tenths / 10, tenths % 10, unit);
+    } else {
+        let _ = write!(s, "{int_part}{unit}");
+    }
+    s
+}
+
+#[cfg(test)]
+fn compact_numeric_width(text: &str) -> i32 {
+    text.chars()
+        .map(|ch| {
+            if ch == '.' {
+                COMPACT_DECIMAL_WIDTH
+            } else {
+                NUMBER_GLYPH_WIDTH
+            }
+        })
+        .sum()
+}
+
+fn draw_compact_number<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    text: &str,
+    point: Point,
+    color: BinaryColor,
+) {
+    let style = MonoTextStyle::new(&FONT_5X8, color);
+    let mut x = point.x;
+    for ch in text.chars() {
+        if ch == '.' {
+            let _ = Rectangle::new(Point::new(x, point.y + COMPACT_DECIMAL_Y), Size::new(1, 1))
+                .into_styled(fill(color))
+                .draw(display);
+            x += COMPACT_DECIMAL_WIDTH;
+            continue;
+        }
+
+        let mut glyph: HString<2> = HString::new();
+        let _ = glyph.push(ch);
+        let _ =
+            Text::with_baseline(&glyph, Point::new(x, point.y), style, Baseline::Top).draw(display);
+        x += NUMBER_GLYPH_WIDTH;
+    }
+}
+
+fn selected_name_backing_width(label: &str) -> u32 {
+    let label_right = NAME_TEXT_X + label.chars().count() as i32 * FONT_6X10_CHAR_W + 1;
+    let icon_right = NAME_ICON_X + NAME_ICON_W + 1;
+    let content_right = label_right.max(icon_right).min(WIDTH - 1);
+    (content_right - NAME_BACKING_X).max(0) as u32
+}
+
+fn menu_items(kind: CardKind) -> &'static [&'static str; MENU_ITEM_COUNT] {
+    match kind {
+        CardKind::Wifi => &WIFI_MENU_ITEMS,
+        CardKind::Usb => &USB_MENU_ITEMS,
+        CardKind::Ble => &BLE_MENU_ITEMS,
+        CardKind::LoRa => &LORA_MENU_ITEMS,
+        CardKind::EspNow => &ESP_NOW_MENU_ITEMS,
+    }
+}
+
+fn menu_item_backing_width(label: &str) -> u32 {
+    let text_right = MENU_TEXT_X + label.chars().count() as i32 * FONT_5X8_CHAR_W + 1;
+    (text_right - MENU_BACKING_X).max(0) as u32
 }
 
 fn fill(color: BinaryColor) -> PrimitiveStyle<BinaryColor> {
@@ -256,8 +501,28 @@ fn draw_offline_icon<D: DrawTarget<Color = BinaryColor>>(
 ) {
     line_colored(
         display,
-        Point::new(x + 1, y + 7),
+        Point::new(x + 2, y + 6),
         Point::new(x + 8, y),
+        color,
+    );
+}
+
+fn draw_menu_cursor<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    x: i32,
+    y: i32,
+    color: BinaryColor,
+) {
+    line_colored(
+        display,
+        Point::new(x, y + 2),
+        Point::new(x + 3, y + 4),
+        color,
+    );
+    line_colored(
+        display,
+        Point::new(x, y + 6),
+        Point::new(x + 3, y + 4),
         color,
     );
 }
@@ -306,6 +571,27 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 .into_styled(stroke(color))
                 .draw(display);
         }
+        // BLE: pixel-reduced Bluetooth rune with its center spine, crossing
+        // left stroke, and the paired right-side branches.
+        CardKind::Ble => {
+            draw_pattern_colored(
+                display,
+                x,
+                y,
+                &[
+                    "    #    ",
+                    "    ##   ",
+                    "#   # #  ",
+                    " #  #  # ",
+                    "  ####   ",
+                    " #  #  # ",
+                    "#   # #  ",
+                    "    ##   ",
+                    "    #    ",
+                ],
+                color,
+            );
+        }
         // LoRa: long-range radio, rendered as a mast with symmetric RF lobes.
         CardKind::LoRa => {
             draw_pattern_colored(
@@ -353,42 +639,30 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
 /// Draw one card: an outlined box with a name line (icon + label) and, beneath
 /// it, traffic and peers. `top` is the box's top edge.
 fn draw_card<D: DrawTarget<Color = BinaryColor>>(display: &mut D, top: i32, card: &Card) {
+    draw_card_with_selection(display, top, card, card.selected);
+}
+
+fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    top: i32,
+    card: &Card,
+    selected: bool,
+) {
     let _ = Rectangle::new(Point::new(0, top), Size::new(WIDTH as u32, CARD_H as u32))
         .into_styled(stroke(BinaryColor::On))
         .draw(display);
 
-    let name_color = if card.selected {
+    let name_color = if selected {
         BinaryColor::Off
     } else {
         BinaryColor::On
     };
-    if card.selected {
-        let _ = Rectangle::new(Point::new(1, top), Size::new((WIDTH - 2) as u32, 12))
-            .into_styled(fill(BinaryColor::On))
-            .draw(display);
-        let _ = Line::new(Point::new(0, top), Point::new(WIDTH - 1, top))
-            .into_styled(stroke(BinaryColor::Off))
-            .draw(display);
-        let _ = Line::new(Point::new(0, top), Point::new(0, top + 11))
-            .into_styled(stroke(BinaryColor::Off))
-            .draw(display);
-        let _ = Line::new(Point::new(WIDTH - 1, top), Point::new(WIDTH - 1, top + 11))
-            .into_styled(stroke(BinaryColor::Off))
-            .draw(display);
-        let _ = Line::new(
-            Point::new(0, top + CARD_H - 1),
-            Point::new(WIDTH - 1, top + CARD_H - 1),
+    if selected {
+        let _ = Rectangle::new(
+            Point::new(NAME_BACKING_X, top + NAME_BACKING_Y),
+            Size::new(selected_name_backing_width(card.label), NAME_BACKING_H),
         )
-        .into_styled(stroke(BinaryColor::Off))
-        .draw(display);
-        let _ = Line::new(Point::new(0, top + 12), Point::new(0, top + CARD_H - 1))
-            .into_styled(stroke(BinaryColor::Off))
-            .draw(display);
-        let _ = Line::new(
-            Point::new(WIDTH - 1, top + 12),
-            Point::new(WIDTH - 1, top + CARD_H - 1),
-        )
-        .into_styled(stroke(BinaryColor::Off))
+        .into_styled(fill(BinaryColor::On))
         .draw(display);
     }
 
@@ -397,13 +671,19 @@ fn draw_card<D: DrawTarget<Color = BinaryColor>>(display: &mut D, top: i32, card
 
     // Name line: [icon] label.
     if card.online {
-        draw_interface_icon(display, 3, top + 2, card.kind, name_color);
+        draw_interface_icon(
+            display,
+            NAME_ICON_X,
+            top + NAME_LINE_Y,
+            card.kind,
+            name_color,
+        );
     } else {
-        draw_offline_icon(display, 3, top + 3, name_color);
+        draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     }
     let _ = Text::with_baseline(
         card.label,
-        Point::new(14, top + 2),
+        Point::new(NAME_TEXT_X, top + NAME_LINE_Y),
         label_style,
         Baseline::Top,
     )
@@ -424,38 +704,107 @@ fn draw_card<D: DrawTarget<Color = BinaryColor>>(display: &mut D, top: i32, card
     }
 
     draw_arrow(display, 2, tx_y + 1, true);
-    let _ = Text::with_baseline(
-        &fmt_bytes(card.tx_bytes),
+    let tx_bytes = fmt_bytes(card.tx_bytes);
+    draw_compact_number(
+        display,
+        tx_bytes.as_str(),
         Point::new(8, tx_y),
-        num_style,
-        Baseline::Top,
-    )
-    .draw(display);
+        BinaryColor::On,
+    );
     draw_arrow(display, 2, rx_y, false);
-    let _ = Text::with_baseline(
-        &fmt_bytes(card.rx_bytes),
+    let rx_bytes = fmt_bytes(card.rx_bytes);
+    draw_compact_number(
+        display,
+        rx_bytes.as_str(),
         Point::new(8, rx_y),
-        num_style,
+        BinaryColor::On,
+    );
+
+    // Link and destination counters sit in a compact right-side stats column.
+    draw_link(display, STAT_ICON_X, tx_y + 1);
+    let links = fmt_count(card.links);
+    draw_compact_number(
+        display,
+        links.as_str(),
+        Point::new(STAT_TEXT_X, tx_y),
+        BinaryColor::On,
+    );
+    draw_person(display, STAT_ICON_X, rx_y + 1);
+    let destinations = fmt_count(card.destinations);
+    draw_compact_number(
+        display,
+        destinations.as_str(),
+        Point::new(STAT_TEXT_X, rx_y),
+        BinaryColor::On,
+    );
+}
+
+fn draw_menu_item<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    y: i32,
+    label: &str,
+    selected: bool,
+) {
+    let color = if selected {
+        let _ = Rectangle::new(
+            Point::new(MENU_BACKING_X, y - 1),
+            Size::new(menu_item_backing_width(label), MENU_BACKING_H),
+        )
+        .into_styled(fill(BinaryColor::On))
+        .draw(display);
+        BinaryColor::Off
+    } else {
+        BinaryColor::On
+    };
+    let style = MonoTextStyle::new(&FONT_5X8, color);
+    draw_menu_cursor(display, MENU_MARK_X, y, color);
+    let _ =
+        Text::with_baseline(label, Point::new(MENU_TEXT_X, y), style, Baseline::Top).draw(display);
+}
+
+fn draw_menu<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    card: &Card,
+    selected_item: usize,
+) {
+    draw_interface_icon(
+        display,
+        NAME_ICON_X,
+        MENU_HEADER_Y,
+        card.kind,
+        BinaryColor::On,
+    );
+    let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+    let _ = Text::with_baseline(
+        card.label,
+        Point::new(NAME_TEXT_X, MENU_HEADER_Y),
+        header_style,
         Baseline::Top,
     )
     .draw(display);
 
-    // Link and destination counters sit in a compact right-side stats column.
-    draw_link(display, 43, tx_y + 1);
-    let mut links: HString<4> = HString::new();
-    let _ = write!(links, "{}", card.links.min(99));
-    let _ =
-        Text::with_baseline(&links, Point::new(53, tx_y), num_style, Baseline::Top).draw(display);
-    draw_person(display, 42, rx_y + 1);
-    let mut destinations: HString<4> = HString::new();
-    let _ = write!(destinations, "{}", card.destinations.min(99));
+    let subtitle_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     let _ = Text::with_baseline(
-        &destinations,
-        Point::new(53, rx_y),
-        num_style,
+        "Menu",
+        Point::new(NAME_TEXT_X, MENU_SUBTITLE_Y),
+        subtitle_style,
         Baseline::Top,
     )
     .draw(display);
+    line(
+        display,
+        Point::new(0, MENU_DIVIDER_Y),
+        Point::new(WIDTH - 1, MENU_DIVIDER_Y),
+    );
+
+    for (index, item) in menu_items(card.kind).iter().enumerate() {
+        draw_menu_item(
+            display,
+            MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,
+            item,
+            index == selected_item.min(MENU_ITEM_COUNT - 1),
+        );
+    }
 }
 
 /// Render the full screen: title bar + a card per interface (up to what fits).
@@ -469,6 +818,39 @@ pub fn draw<D: DrawTarget<Color = BinaryColor>>(
     draw_title_bar(display, battery);
     for (i, card) in cards.iter().take(MAX_VISIBLE_CARDS).enumerate() {
         draw_card(display, CARD_TOP + i as i32 * (CARD_H + CARD_GAP), card);
+    }
+}
+
+/// Render the full screen using [`UiState`] for selection and pagination.
+///
+/// This is the path for real interaction: [`UiState`] controls which card's
+/// name row is selected and which window of cards is visible. Plain [`draw`]
+/// remains available for static/manual selected-card rendering.
+pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cards: &[Card],
+    battery: BatteryState,
+    state: &UiState,
+) {
+    let _ = display.clear(BinaryColor::Off);
+    draw_title_bar(display, battery);
+
+    if let Some(selected_item) = state.menu_selected_item() {
+        if let Some(selected_card) = state.selected_card(cards.len()) {
+            draw_menu(display, &cards[selected_card], selected_item);
+            return;
+        }
+    }
+
+    let selected = state.selected_card(cards.len());
+    let start = state.visible_start(cards.len());
+    for (slot, card_index) in (start..cards.len()).take(MAX_VISIBLE_CARDS).enumerate() {
+        draw_card_with_selection(
+            display,
+            CARD_TOP + slot as i32 * (CARD_H + CARD_GAP),
+            &cards[card_index],
+            selected == Some(card_index),
+        );
     }
 }
 
@@ -487,6 +869,169 @@ mod tests {
 
     use super::*;
 
+    fn test_card(label: &'static str) -> Card {
+        Card {
+            kind: CardKind::Usb,
+            label,
+            selected: false,
+            online: true,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            links: 0,
+            destinations: 0,
+        }
+    }
+
+    #[test]
+    fn short_press_cycles_selection_and_pages_visible_window() {
+        let mut state = UiState::new();
+        state.sync_card_count(5);
+
+        assert_eq!(state.selected_card(5), Some(0));
+        assert_eq!(state.visible_start(5), 0);
+
+        state.handle_input(InputEvent::ShortPress, 5);
+        assert_eq!(state.selected_card(5), Some(1));
+        assert_eq!(state.visible_start(5), 0);
+
+        state.handle_input(InputEvent::ShortPress, 5);
+        assert_eq!(state.selected_card(5), Some(2));
+        assert_eq!(state.visible_start(5), 0);
+
+        state.handle_input(InputEvent::ShortPress, 5);
+        assert_eq!(state.selected_card(5), Some(3));
+        assert_eq!(state.visible_start(5), 1);
+
+        state.handle_input(InputEvent::ShortPress, 5);
+        assert_eq!(state.selected_card(5), Some(4));
+        assert_eq!(state.visible_start(5), 2);
+
+        state.handle_input(InputEvent::ShortPress, 5);
+        assert_eq!(state.selected_card(5), Some(0));
+        assert_eq!(state.visible_start(5), 0);
+    }
+
+    #[test]
+    fn long_press_opens_menu_and_short_press_cycles_menu_items() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::ShortPress, 4);
+
+        state.handle_input(InputEvent::LongPress, 4);
+
+        assert_eq!(state.selected_card(4), Some(1));
+        assert_eq!(state.visible_start(4), 0);
+        assert_eq!(state.menu_selected_item(), Some(0));
+
+        state.handle_input(InputEvent::ShortPress, 4);
+
+        assert_eq!(state.selected_card(4), Some(1));
+        assert_eq!(state.menu_selected_item(), Some(1));
+
+        state.handle_input(InputEvent::LongPress, 4);
+
+        assert_eq!(state.selected_card(4), Some(1));
+        assert_eq!(state.menu_selected_item(), None);
+    }
+
+    #[test]
+    fn draw_with_state_marks_selected_card() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+        display.set_allow_out_of_bounds_drawing(true);
+        let cards = [test_card("A"), test_card("B")];
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::ShortPress, cards.len());
+
+        draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+        let selected_top = CARD_TOP + CARD_H + CARD_GAP;
+        assert_eq!(state.selected_card(cards.len()), Some(1));
+        assert_eq!(state.visible_start(cards.len()), 0);
+        assert_eq!(
+            display.get_pixel(Point::new(NAME_BACKING_X, selected_top + NAME_BACKING_Y)),
+            Some(BinaryColor::On)
+        );
+        assert_eq!(
+            display.get_pixel(Point::new(0, selected_top)),
+            Some(BinaryColor::On)
+        );
+        assert_ne!(
+            display.get_pixel(Point::new(NAME_BACKING_X, CARD_TOP + NAME_BACKING_Y)),
+            Some(BinaryColor::On)
+        );
+    }
+
+    #[test]
+    fn draw_with_state_renders_selected_interface_menu() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+        display.set_allow_out_of_bounds_drawing(true);
+        let cards = [
+            test_card("USB"),
+            Card {
+                kind: CardKind::Ble,
+                label: "BLE",
+                selected: false,
+                online: true,
+                tx_bytes: 0,
+                rx_bytes: 0,
+                links: 0,
+                destinations: 0,
+            },
+        ];
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::ShortPress, cards.len());
+        state.handle_input(InputEvent::LongPress, cards.len());
+
+        draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+
+        assert_eq!(state.selected_card(cards.len()), Some(1));
+        assert_eq!(state.menu_selected_item(), Some(0));
+        assert_eq!(
+            display.get_pixel(Point::new(NAME_ICON_X + 4, MENU_HEADER_Y)),
+            Some(BinaryColor::On)
+        );
+        assert_eq!(
+            display.get_pixel(Point::new(MENU_BACKING_X, MENU_ITEM_TOP - 1)),
+            Some(BinaryColor::On)
+        );
+        assert_eq!(
+            display.get_pixel(Point::new(MENU_MARK_X, MENU_ITEM_TOP + 2)),
+            Some(BinaryColor::Off)
+        );
+        assert_eq!(
+            display.get_pixel(Point::new(0, MENU_DIVIDER_Y)),
+            Some(BinaryColor::On)
+        );
+        assert_eq!(
+            display.get_pixel(Point::new(0, CARD_TOP)),
+            Some(BinaryColor::Off)
+        );
+    }
+
+    #[test]
+    fn count_formatter_uses_blank_base_then_metric_suffixes() {
+        assert_eq!(fmt_count(0).as_str(), "0");
+        assert_eq!(fmt_count(999).as_str(), "999");
+        assert_eq!(fmt_count(1_000).as_str(), "1.0K");
+        assert_eq!(fmt_count(12_345).as_str(), "12K");
+        assert_eq!(fmt_count(999_999).as_str(), "999K");
+        assert_eq!(fmt_count(1_000_000).as_str(), "1.0M");
+        assert_eq!(fmt_count(1_234_567_890).as_str(), "1.2B");
+    }
+
+    #[test]
+    fn compact_number_draws_decimal_as_single_pixel() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+
+        draw_compact_number(&mut display, "1.2K", Point::new(0, 0), BinaryColor::On);
+
+        assert_eq!(compact_numeric_width("1.2K"), 17);
+        assert_eq!(display.get_pixel(Point::new(5, 6)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(6, 6)), None);
+    }
+
     #[test]
     fn usb_icon_draws_full_width_tongue() {
         let mut display = MockDisplay::new();
@@ -503,6 +1048,25 @@ mod tests {
             "#########",
             "#       #",
             "#########",
+        ]);
+    }
+
+    #[test]
+    fn ble_icon_reads_as_bluetooth_rune() {
+        let mut display = MockDisplay::new();
+
+        draw_interface_icon(&mut display, 0, 0, CardKind::Ble, BinaryColor::On);
+
+        display.assert_pattern(&[
+            "    #    ",
+            "    ##   ",
+            "#   # #  ",
+            " #  #  # ",
+            "  ####   ",
+            " #  #  # ",
+            "#   # #  ",
+            "    ##   ",
+            "    #    ",
         ]);
     }
 
@@ -640,10 +1204,32 @@ mod tests {
         assert_eq!(display.get_pixel(Point::new(4, 23)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(4, 28)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(4, 29)), None);
-        assert_eq!(display.get_pixel(Point::new(39, 14)), None);
-        assert_eq!(display.get_pixel(Point::new(43, 14)), None);
-        assert_eq!(display.get_pixel(Point::new(44, 14)), Some(BinaryColor::On));
-        assert_eq!(display.get_pixel(Point::new(45, 23)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(33, 14)), None);
+        assert_eq!(display.get_pixel(Point::new(35, 14)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(42, 14)), None);
+        assert_eq!(display.get_pixel(Point::new(37, 23)), Some(BinaryColor::On));
+    }
+
+    #[test]
+    fn large_link_and_peer_counts_fit_right_column() {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+        let card = Card {
+            kind: CardKind::Wifi,
+            label: "WiFi",
+            selected: false,
+            online: true,
+            tx_bytes: 999_999_999,
+            rx_bytes: 999_999_999,
+            links: 999_999,
+            destinations: 1_234_567_890,
+        };
+
+        draw_card(&mut display, 0, &card);
+
+        assert_eq!(compact_numeric_width("999K"), 20);
+        assert_eq!(compact_numeric_width("1.2B"), 17);
+        assert!(STAT_TEXT_X + compact_numeric_width("999K") <= WIDTH - 1);
     }
 
     #[test]
@@ -665,7 +1251,8 @@ mod tests {
 
         assert_eq!(display.get_pixel(Point::new(18, 17)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(3, 11)), None);
-        assert_eq!(display.get_pixel(Point::new(4, 10)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(4, 10)), None);
+        assert_eq!(display.get_pixel(Point::new(5, 9)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(3, 4)), None);
         assert_eq!(display.get_pixel(Point::new(4, 14)), None);
         assert_eq!(display.get_pixel(Point::new(44, 14)), None);
@@ -673,7 +1260,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_card_inverts_name_row() {
+    fn selected_card_inverts_name_content() {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
         let card = Card {
@@ -689,25 +1276,20 @@ mod tests {
 
         draw_card(&mut display, 0, &card);
 
-        assert_eq!(display.get_pixel(Point::new(0, 0)), Some(BinaryColor::Off));
-        assert_eq!(display.get_pixel(Point::new(63, 0)), Some(BinaryColor::Off));
-        assert_eq!(display.get_pixel(Point::new(0, 11)), Some(BinaryColor::Off));
-        assert_eq!(
-            display.get_pixel(Point::new(63, 11)),
-            Some(BinaryColor::Off)
-        );
-        assert_eq!(display.get_pixel(Point::new(1, 1)), Some(BinaryColor::On));
-        assert_eq!(display.get_pixel(Point::new(0, 12)), Some(BinaryColor::Off));
-        assert_eq!(display.get_pixel(Point::new(0, 30)), Some(BinaryColor::Off));
-        assert_eq!(
-            display.get_pixel(Point::new(63, 30)),
-            Some(BinaryColor::Off)
-        );
-        assert_eq!(
-            display.get_pixel(Point::new(31, 30)),
-            Some(BinaryColor::Off)
-        );
+        assert_eq!(display.get_pixel(Point::new(0, 0)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(63, 0)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(0, 11)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(63, 11)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(1, 1)), None);
+        assert_eq!(display.get_pixel(Point::new(2, 1)), None);
+        assert_eq!(display.get_pixel(Point::new(45, 1)), None);
+        assert_eq!(display.get_pixel(Point::new(0, 12)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(0, 30)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(63, 30)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(31, 30)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(2, 2)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(2, 10)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(2, 11)), None);
         assert_eq!(display.get_pixel(Point::new(5, 2)), Some(BinaryColor::Off));
     }
 }
