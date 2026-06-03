@@ -14,7 +14,7 @@ pub mod screen;
 
 pub use screen::{draw, splash, BatteryState, Card, CardKind};
 
-use personal_rns::interfaces::InterfaceId;
+use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::runtime::RuntimeSnapshot;
 
 /// Build the renderable [`Card`] list from a runtime snapshot, one card per
@@ -34,9 +34,12 @@ pub fn snapshot_to_cards<const N: usize>(
         let _ = cards.push(Card {
             kind,
             label,
-            online: view.online,
-            tx_bytes: view.reticulum_tx_bytes,
-            rx_bytes: view.reticulum_rx_bytes,
+            online: matches!(
+                view.connection_state,
+                ConnectionState::Connected | ConnectionState::Degraded
+            ),
+            tx_bytes: view.reticulum_tx_byte_count,
+            rx_bytes: view.reticulum_rx_byte_count,
             destinations: view.tracked_destinations,
         });
     }
