@@ -50,7 +50,7 @@ pub enum DriverMode<Worker> {
     /// The interface launched its own loop (a thread or an executor task), so the
     /// runtime never polls it. The runtime still reaches it through its
     /// [`InterfaceHandle`]; to wind it down it sends
-    /// [`ControlCommand::Stop`](super::ControlCommand) over that handle's control
+    /// [`ControlCommand::Stop`](crate::interfaces::ControlCommand) over that handle's control
     /// lane and watches for [`ControlReport::Stopped`].
     SelfDriven,
 
@@ -144,7 +144,7 @@ impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Wor
 /// consumes the interface into its running form and returns its [`DriverMode`].
 ///
 /// There is no teardown method. Graceful wind-down uses the control plane: the
-/// interface awaits its own cleanup on [`Stop`](super::ControlCommand), then
+/// interface awaits its own cleanup on [`Stop`](crate::interfaces::ControlCommand), then
 /// reports [`Stopped`](ControlReport), and synchronous resource release is just
 /// the interface's own [`Drop`].
 pub trait Interface<S: Substrate>: Sized {

@@ -7,6 +7,7 @@ pub mod mac;
 pub mod medium;
 pub mod mode;
 pub mod storage;
+pub mod substrate;
 
 mod descriptor;
 mod framing;
@@ -26,10 +27,13 @@ pub use mode::InterfaceMode;
 
 pub use descriptor::InterfaceDescriptor;
 pub use packet::{InboundPacket, OutboundPacket};
+pub use substrate::{
+    ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
+    OutboundDrain, Substrate,
+};
 pub use worker::{
-    ControlCommand, ControlEndpoint, ControlReport, DriverMode, InboundSink, Interface,
-    InterfaceHandle, InterfaceWorkerContext, NextScheduledInterfaceWake, OutboundDrain, QueueFull,
-    RegisteredInterface, SelfDrivenInterface, SendError, StartedInterface, Substrate,
+    DriverMode, Interface, InterfaceHandle, NextScheduledInterfaceWake, QueueFull,
+    RegisteredInterface, SelfDrivenInterface, SendError, StartedInterface,
 };
 
 pub use framing::rns_serial_framing;
