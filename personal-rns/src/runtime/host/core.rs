@@ -15,8 +15,8 @@ pub struct CycleStamp {
 /// A host: the few substrate methods a platform implements so the runtime can drive
 /// it. The host owns the real clock, the CSPRNG, the shared wake, and the sleep
 /// primitive — whatever the runtime needs from the outside world flows *up* to it. The
-/// [`ContractRuntime`](crate::runtime::ContractRuntime) asks the host for one cycle's
-/// fuel at a time via [`run_contract`](crate::runtime::run_contract); inbound flows
+/// [`Runtime`](crate::runtime::Runtime) asks the host for one cycle's
+/// fuel at a time via [`Runtime::run`](crate::runtime::Runtime::run); inbound flows
 /// through the interfaces' seams, drained by the runtime, not the host.
 ///
 /// `async` because that is the unifying substrate: an executor-backed host suspends in
@@ -34,7 +34,7 @@ pub trait Host {
 /// Drive a runtime future on a substrate with no async executor — a sync poll-loop
 /// host. Such a host's [`Host::wait`] blocks internally and never yields `Pending`, so
 /// the future runs straight through; the noop waker is never actually scheduled. An
-/// executor-backed host drives [`run_contract`](crate::runtime::run_contract) with its
+/// executor-backed host drives [`Runtime::run`](crate::runtime::Runtime::run) with its
 /// own executor and never calls this.
 pub fn block_on<F: Future>(future: F) -> F::Output {
     let mut future = pin!(future);

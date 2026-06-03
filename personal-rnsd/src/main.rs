@@ -1,9 +1,9 @@
 //! Personal Reticulum daemon: drive the engine over a USB-serial interface using
-//! the shared `Interface` contract + `ContractRuntime` — the *same* abstraction
+//! the shared `Interface` contract + `Runtime` — the *same* abstraction
 //! the embedded hosts (ESP32) will use, just on the std substrate.
 //!
 //! The serial interface owns the serial port (reopening on unplug) on its own
-//! thread, meeting the runtime through a three-lane seam; the `ContractRuntime`
+//! thread, meeting the runtime through a three-lane seam; the `Runtime`
 //! over a `LinuxSync` host pools that seam into the engine, deadline-driven, and
 //! surfaces a snapshot each cycle. The daemon both forwards others' announces and
 //! emits its own `personal.node` announce (first one as soon as the link is up).

@@ -91,7 +91,7 @@ use personal_rns::interfaces::substrate::{
     EmbassyInterfaceSeam, WakeSignal,
 };
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{run_contract, ContractRuntime, InterfaceView, RuntimeSnapshot};
+use personal_rns::runtime::{InterfaceView, Runtime, RuntimeSnapshot};
 use personal_rns::wire::MTU;
 
 use personal_hopspot_ui as display;
@@ -151,7 +151,7 @@ type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SER
 /// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU, and
 /// per-interface depths) — so their `EmbassyInterfaceHandle`s are four distinct
 /// types. This enum unifies them into the one `InterfaceHandle` the
-/// [`ContractRuntime`] pools, dispatching each call to the held variant (the
+/// [`Runtime`] pools, dispatching each call to the held variant (the
 /// contract analog of the old `HostWorker` enum; explicit per the no-wildcard rule).
 enum HeltecHandle {
     Auto(EmbassyInterfaceHandle<HARDWARE_MTU, AUTO_DEPTH>),
@@ -534,7 +534,7 @@ async fn main(spawner: Spawner) {
     for interface in started {
         let _ = interfaces.push(interface);
     }
-    let runtime = ContractRuntime::new(state, interfaces, host);
+    let runtime = Runtime::new(state, interfaces, host);
 
     spawner.spawn(auto_worker_task(stack, sta_mac, auto_context).expect("spawn auto worker"));
     spawner.spawn(serial_worker_task(usb_rx, usb_tx, serial_context).expect("spawn serial worker"));
@@ -637,7 +637,7 @@ async fn main(spawner: Spawner) {
     // (The host built above draws CSPRNG entropy from the radio-seeded RNG per
     // cycle and owns the embassy-time clock + sleep.)
     let snapshot_tx = SNAPSHOT_WATCH.sender();
-    let runtime_fut = run_contract(runtime, move |snapshot: &RuntimeSnapshot| {
+    let runtime_fut = runtime.run(move |snapshot: &RuntimeSnapshot| {
         snapshot_tx.send(snapshot.clone());
     });
 

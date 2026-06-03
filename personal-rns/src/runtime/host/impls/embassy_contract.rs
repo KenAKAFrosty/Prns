@@ -1,12 +1,12 @@
-//! `EmbassyContractHost` — the embassy-executor [`Host`] for the contract runtime.
+//! `EmbassyContractHost` — the embassy-executor [`Host`] for the runtime.
 //!
 //! The embassy twin of [`LinuxSync`](super::LinuxSync): it owns the embassy-time
 //! clock, an injected CSPRNG draw, and the shared [`WakeSignal`] every interface
 //! seam pokes. [`wait`](EmbassyContractHost::wait) genuinely suspends on
 //! `select(wake.wait(), Timer::at(deadline))`, so an embassy executor drives the
-//! generic [`run_contract`](crate::runtime::run_contract) loop. Inbound flows
+//! generic [`Runtime::run`](crate::runtime::Runtime::run) loop. Inbound flows
 //! through the interfaces' handles, drained by the
-//! [`ContractRuntime`](crate::runtime::ContractRuntime) — not the host.
+//! [`Runtime`](crate::runtime::Runtime) — not the host.
 //!
 //! There is no `clock_base`: the embassy clock is global, and the interface seams
 //! stamp `arrived_at` off the same `Instant::now()`, so arrival and the cycle clock
@@ -22,8 +22,8 @@ use crate::interfaces::InterfaceId;
 
 /// The embassy contract host: the shared wake the interface seams poke, an injected
 /// CSPRNG draw, and the embassy-time clock + sleep. Hand it to
-/// `ContractRuntime::new(state, started, host)`, then drive it from an embassy task
-/// with `run_contract(runtime, observe).await`. `E` is the host's per-cycle CSPRNG
+/// `Runtime::new(state, started, host)`, then drive it from an embassy task
+/// with `runtime.run(on_snapshot).await`. `E` is the host's per-cycle CSPRNG
 /// draw (the one substrate piece `personal-rns` can't name itself, e.g. the ESP
 /// hardware RNG).
 pub struct EmbassyContractHost<E> {

@@ -1,7 +1,7 @@
 //! The Linux debug face of the Personal Hopspot.
 //!
 //! Runs the *same* engine the S3 firmware does — an announcing
-//! [`ContractRuntime`] over a USB-serial interface — and renders the *same*
+//! `Runtime` over a USB-serial interface — and renders the *same*
 //! Hopspot status screen the OLED shows, in an `embedded-graphics-simulator`
 //! window. Point it at a peer's serial device (`personal-hopspot-desktop
 //! /dev/ttyACM0`) and watch the cards tick as announces cross the link.

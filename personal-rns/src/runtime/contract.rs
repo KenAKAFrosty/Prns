@@ -24,7 +24,7 @@ use crate::wire::MTU;
 
 /// Summary of one pooled drive cycle.
 #[derive(Debug)]
-pub struct ContractStepOutput {
+pub struct RuntimeStepOutput {
     pub ingested_packet_count: usize,
     pub accepted_announce_count: usize,
     pub scheduled_rebroadcast_count: usize,
@@ -42,7 +42,7 @@ enum FanoutClass {
 /// them. Generic over the engine-state storage `S`, the interface set `I` (fixed or
 /// growable), and the host `Ho`. Each interface is reached only through
 /// [`RegisteredInterface`], so no concrete handle or worker type surfaces here.
-pub struct ContractRuntime<Ho, I, S>
+pub struct Runtime<Ho, I, S>
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
@@ -54,7 +54,7 @@ where
     host: Ho,
 }
 
-impl<Ho, I, S> ContractRuntime<Ho, I, S>
+impl<Ho, I, S> Runtime<Ho, I, S>
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
@@ -84,7 +84,7 @@ where
         &mut self,
         now: InstantMillis,
         entropy_seed: EngineCycleEntropySeed,
-    ) -> ContractStepOutput {
+    ) -> RuntimeStepOutput {
         cycle_pooled(
             &mut self.engine,
             &mut self.interfaces,
@@ -109,47 +109,42 @@ where
     pub fn engine(&self) -> &EngineState<S> {
         &self.engine
     }
-}
 
-/// Drive `runtime` forever. The host supplies the clock and entropy at each wake;
-/// the loop then pools interfaces, emits a snapshot, and computes the next engine
-/// or interface deadline.
-pub async fn run_contract<Ho, Observe, I, S>(
-    runtime: ContractRuntime<Ho, I, S>,
-    mut observe: Observe,
-) -> !
-where
-    Ho: Host,
-    Observe: FnMut(&RuntimeSnapshot),
-    I: InterfaceSet,
-    I::Item: RegisteredInterface,
-    S: Storage,
-{
-    let ContractRuntime {
-        mut engine,
-        mut interfaces,
-        mut traffic,
-        mut host,
-    } = runtime;
-    let mut wake = NextScheduledEngineWork::Immediate;
-    loop {
-        let CycleStamp { now, seed } = host.wait(wake).await;
-        let output = cycle_pooled(&mut engine, &mut interfaces, &mut traffic, now, seed);
-        observe(&snapshot_pooled(&engine, &interfaces, &traffic));
-        wake = host_wake(engine.next_wakeup(now), output.next_poll);
+    /// Drive this runtime forever: at each wake the host supplies the clock and
+    /// entropy, then the loop pools interfaces, hands the cycle's snapshot to
+    /// `on_snapshot`, and computes the next engine or interface deadline. The only
+    /// `.await` is the host's wake — a sync host blocks there, an async host suspends.
+    pub async fn run<OnSnapshot>(self, mut on_snapshot: OnSnapshot) -> !
+    where
+        Ho: Host,
+        OnSnapshot: FnMut(&RuntimeSnapshot),
+    {
+        let Self {
+            mut engine,
+            mut interfaces,
+            mut traffic,
+            mut host,
+        } = self;
+        let mut wake = NextScheduledEngineWork::Immediate;
+        loop {
+            let CycleStamp { now, seed } = host.wait(wake).await;
+            let output = cycle_pooled(&mut engine, &mut interfaces, &mut traffic, now, seed);
+            on_snapshot(&snapshot_pooled(&engine, &interfaces, &traffic));
+            wake = host_wake(engine.next_wakeup(now), output.next_poll);
+        }
     }
 }
 
-/// The pooled cycle over borrowed parts (so [`run_contract`] can drive it while
-/// the host is borrowed separately). Both [`ContractRuntime::cycle_once`] and
-/// [`run_contract`] route through here.
+/// The pooled cycle over borrowed parts (so [`Runtime::run`] can drive it while
+/// the host is borrowed separately). Both [`Runtime::cycle_once`] and
+/// [`Runtime::run`] route through here.
 fn cycle_pooled<I, S>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
     now: InstantMillis,
     entropy_seed: EngineCycleEntropySeed,
-) -> ContractStepOutput
+) -> RuntimeStepOutput
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
@@ -217,7 +212,7 @@ where
         started.drain_control_reports();
     }
 
-    ContractStepOutput {
+    RuntimeStepOutput {
         ingested_packet_count,
         accepted_announce_count,
         scheduled_rebroadcast_count,
@@ -469,7 +464,7 @@ mod tests {
 
         let engine = EngineState::<FixedCapacity>::default();
         // A unit host (`()`): the cycle/snapshot seam needs no real substrate.
-        let mut runtime = ContractRuntime::new(
+        let mut runtime = Runtime::new(
             engine,
             interface_set([
                 started(source, std::vec![(arrival, raw.clone())]),
@@ -536,7 +531,7 @@ mod tests {
         let arrival = InstantMillis(1_000);
 
         let engine = EngineState::<GrowableHeap>::default();
-        let mut runtime = ContractRuntime::new(
+        let mut runtime = Runtime::new(
             engine,
             interface_set([
                 started(source, std::vec![(arrival, raw.clone())]),
@@ -561,7 +556,7 @@ mod tests {
     fn snapshot_reflects_reported_connection_state() {
         let id = iface(0xC3);
         let engine = EngineState::<FixedCapacity>::default();
-        let mut runtime = ContractRuntime::new(
+        let mut runtime = Runtime::new(
             engine,
             interface_set([started_with_reports(
                 id,
@@ -586,7 +581,7 @@ mod tests {
     fn stopped_reports_disconnect_the_snapshot() {
         let id = iface(0xD4);
         let engine = EngineState::<FixedCapacity>::default();
-        let mut runtime = ContractRuntime::new(
+        let mut runtime = Runtime::new(
             engine,
             interface_set([started_with_reports(id, [ControlReport::Stopped])]),
             (),

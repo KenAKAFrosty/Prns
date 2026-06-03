@@ -1,15 +1,15 @@
-//! ESP32-C6 on the Personal Reticulum **contract runtime** — the same
-//! `Interface`/`ContractRuntime` stack rnsd runs on std, here on embassy/bare metal.
+//! ESP32-C6 on the Personal Reticulum **runtime** — the same
+//! `Interface`/`Runtime` stack rnsd runs on std, here on embassy/bare metal.
 //!
 //! One USB-serial interface, announcing node (mirrors rnsd): it emits its own
 //! `personal.node` announce on a cadence and forwards/ingests others' announces over
 //! the cable. The interface's [`serve`] loop runs as its own task (the board owns the
 //! concrete `#[embassy_executor::task]`, which is why the `SelfDrivenInterface`'s
 //! launch closure spawns it); [`EmbassyContractHost`] sleeps the executor on the
-//! shared [`WakeSignal`] + the engine's next deadline; [`run_contract`] pools the
+//! shared [`WakeSignal`] + the engine's next deadline; `Prns::run` pools the
 //! interface's seam into the engine each cycle.
 //!
-//! The engine-bolt is the real `ContractRuntime`; sync-vs-async is settled per-platform
+//! The engine-bolt is the real `Runtime`; sync-vs-async is settled per-platform
 //! by the `Host` (`LinuxSync` sync, `EmbassyContractHost` async).
 
 #![no_std]
@@ -88,7 +88,7 @@ fn main() -> ! {
         .into_async()
         .split();
 
-    println!("ESP32C6_CONTRACT: boot (ContractRuntime + EmbassyContractHost)");
+    println!("ESP32C6_CONTRACT: boot (Runtime + EmbassyContractHost)");
 
     let executor = EXECUTOR.init(Executor::new());
     executor.run(|spawner| {
@@ -97,7 +97,7 @@ fn main() -> ! {
 }
 
 /// The node: glue the serial interface's seam, then hand the recipe to `Prns::run`,
-/// which builds the announcing engine + contract runtime and drives it forever. Lives
+/// which builds the announcing engine + runtime and drives it forever. Lives
 /// in one task so the (unnameable) runtime future stays a local — `Prns::run` is
 /// `.await`ed here rather than in a typed `#[task]`.
 #[embassy_executor::task]

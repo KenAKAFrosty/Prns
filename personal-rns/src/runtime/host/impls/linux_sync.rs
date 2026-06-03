@@ -1,13 +1,13 @@
-//! `LinuxSync` — the std poll-loop [`Host`] for the contract runtime.
+//! `LinuxSync` — the std poll-loop [`Host`] for the runtime.
 //!
 //! Owns the std substrate a daemon-style host needs: the OS monotonic clock, the
 //! OS CSPRNG, and the wake the interface worker threads poke through their seams.
 //! [`wait`](LinuxSync::wait) blocks the thread on `recv_timeout` until the engine's
 //! next deadline or an interface signals it has something — the sync-host shape: it
 //! never `.await`s, so [`block_on`](super::super::block_on) drives the generic
-//! [`run_contract`](crate::runtime::run_contract) loop straight through with no
+//! [`Runtime::run`](crate::runtime::Runtime::run) loop straight through with no
 //! executor. Inbound does not flow through the host: the
-//! [`ContractRuntime`](crate::runtime::ContractRuntime) drains each interface's handle.
+//! [`Runtime`](crate::runtime::Runtime) drains each interface's handle.
 
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
@@ -26,8 +26,8 @@ const MAX_WAIT: Duration = Duration::from_secs(1);
 /// The std poll-loop host: an OS clock + CSPRNG + the one wake the interface seams
 /// poke. It owns both the clock and the wake; glue each interface's seam from it
 /// with [`glue_seam`](LinuxSync::glue_seam), then hand it to
-/// `ContractRuntime::new(state, started, host)` and drive with
-/// `block_on(run_contract(runtime, observe))`.
+/// `Runtime::new(state, started, host)` and drive with
+/// `block_on(runtime.run(on_snapshot))`.
 pub struct LinuxSync {
     wake: Receiver<()>,
     wake_sender: SyncSender<()>,

@@ -1,5 +1,5 @@
 //! The runtime's per-interface traffic meter, shared by the
-//! [`ContractRuntime`](super::ContractRuntime).
+//! [`Runtime`](super::Runtime).
 
 use heapless::Vec as HeaplessVec;
 
@@ -8,7 +8,7 @@ use crate::interfaces::{InterfaceId, MAX_REGISTERED_INTERFACES};
 /// Cumulative Reticulum byte totals per interface, the runtime's own meter of the
 /// fabric traffic crossing its seam. Capacity is [`MAX_REGISTERED_INTERFACES`] — the
 /// same cap the engine's fanout uses — so an id from any registered interface always
-/// has a slot. `pub(crate)` so the [`ContractRuntime`](super::ContractRuntime) meters
+/// has a slot. `pub(crate)` so the [`Runtime`](super::Runtime) meters
 /// through it without duplicating the ledger.
 pub(crate) struct TrafficLedger {
     entries: HeaplessVec<InterfaceTraffic, MAX_REGISTERED_INTERFACES>,
