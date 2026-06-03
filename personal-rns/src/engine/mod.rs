@@ -3,6 +3,7 @@
 //! [`ingest_packets`] handles inbound traffic and [`tick`] advances scheduled
 //! work without touching clocks, sockets, or storage directly.
 
+pub mod directives;
 pub mod egress;
 pub mod ingress;
 pub mod self_announce;

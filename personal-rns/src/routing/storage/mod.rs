@@ -7,9 +7,12 @@ mod impls;
 pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
+use crate::engine::directives::EngineDirectives;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
+use crate::routing::held_cache::HeldAnnounces;
+use crate::routing::schedule::RebroadcastQueue;
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 
@@ -166,4 +169,7 @@ pub trait Storage {
     type Announces: RetainedAnnounceColumns + Default;
     type History: AnnounceIdHistory + Default;
     type AppData: RetainedAppData + Default;
+    type Pending: RebroadcastQueue + Default;
+    type Held: HeldAnnounces + Default;
+    type Directives: EngineDirectives + Default;
 }
