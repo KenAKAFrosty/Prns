@@ -80,7 +80,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
 };
 use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
-    ControlReport, DriverMode, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
+    ControlReport, DriverMode, InterfaceHandle, InterfaceId, InterfaceWorkerContext, SendError,
     StartedInterface,
 };
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
@@ -168,7 +168,7 @@ impl InterfaceHandle for HeltecHandle {
         }
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> bool {
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
         match self {
             HeltecHandle::Auto(h) => h.send(packet),
             HeltecHandle::Serial(h) => h.send(packet),
