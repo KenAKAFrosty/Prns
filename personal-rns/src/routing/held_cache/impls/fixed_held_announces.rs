@@ -6,7 +6,9 @@ use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::{Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
+use crate::routing::announce::{
+    Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
+};
 use crate::routing::held_cache::{
     HeldAnnounce, HeldAnnounces, HoldReason, ParkOutcome, DEFAULT_HELD_CACHE_CAPACITY,
     HELD_APP_DATA_LIMIT,
@@ -85,7 +87,14 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
 
         for i in 0..self.len {
             if self.destinations[i] == announce.destination {
-                self.write_at(i, announce, arrived_at, received_hops, reason, source_interface);
+                self.write_at(
+                    i,
+                    announce,
+                    arrived_at,
+                    received_hops,
+                    reason,
+                    source_interface,
+                );
                 return ParkOutcome::Overwrote;
             }
         }
@@ -94,7 +103,14 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
             return ParkOutcome::CacheFull;
         }
         let i = self.len;
-        self.write_at(i, announce, arrived_at, received_hops, reason, source_interface);
+        self.write_at(
+            i,
+            announce,
+            arrived_at,
+            received_hops,
+            reason,
+            source_interface,
+        );
         self.len += 1;
         ParkOutcome::Parked
     }
@@ -193,7 +209,14 @@ impl<const CAPACITY: usize> HeldAnnounces for FixedHeldAnnounces<CAPACITY> {
         reason: HoldReason,
         source_interface: InterfaceId,
     ) -> ParkOutcome {
-        FixedHeldAnnounces::park(self, announce, arrived_at, received_hops, reason, source_interface)
+        FixedHeldAnnounces::park(
+            self,
+            announce,
+            arrived_at,
+            received_hops,
+            reason,
+            source_interface,
+        )
     }
     fn take_next(&mut self) -> Option<HeldAnnounce> {
         FixedHeldAnnounces::take_next(self)
@@ -204,7 +227,9 @@ impl<const CAPACITY: usize> HeldAnnounces for FixedHeldAnnounces<CAPACITY> {
 mod tests {
     use super::*;
     use crate::routing::announce::ANNOUNCE_ID_WIRE_LEN;
-    use crate::wire::{ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, HEADER_LEN, MTU, SIGNATURE_LEN};
+    use crate::wire::{
+        ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, HEADER_LEN, MTU, SIGNATURE_LEN,
+    };
 
     fn ts(n: u64) -> InstantMillis {
         InstantMillis(n)
@@ -267,11 +292,23 @@ mod tests {
         let second_source = InterfaceId::new([0x02; 16]);
 
         assert_eq!(
-            cache.park(&first, ts(100), 5, HoldReason::RoutingArenaPressure, first_source),
+            cache.park(
+                &first,
+                ts(100),
+                5,
+                HoldReason::RoutingArenaPressure,
+                first_source
+            ),
             ParkOutcome::Parked
         );
         assert_eq!(
-            cache.park(&second, ts(200), 2, HoldReason::RoutingArenaPressure, second_source),
+            cache.park(
+                &second,
+                ts(200),
+                2,
+                HoldReason::RoutingArenaPressure,
+                second_source
+            ),
             ParkOutcome::Overwrote
         );
         assert_eq!(cache.len(), 1);
@@ -288,15 +325,33 @@ mod tests {
         let mut cache: FixedHeldAnnounces<2> = FixedHeldAnnounces::new();
         let any = InterfaceId::new([0u8; 16]);
         assert_eq!(
-            cache.park(&announce_for(dest(1), b"a"), ts(100), 3, HoldReason::RoutingArenaPressure, any),
+            cache.park(
+                &announce_for(dest(1), b"a"),
+                ts(100),
+                3,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
             ParkOutcome::Parked
         );
         assert_eq!(
-            cache.park(&announce_for(dest(2), b"b"), ts(200), 3, HoldReason::RoutingArenaPressure, any),
+            cache.park(
+                &announce_for(dest(2), b"b"),
+                ts(200),
+                3,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
             ParkOutcome::Parked
         );
         assert_eq!(
-            cache.park(&announce_for(dest(3), b"c"), ts(300), 3, HoldReason::RoutingArenaPressure, any),
+            cache.park(
+                &announce_for(dest(3), b"c"),
+                ts(300),
+                3,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
             ParkOutcome::CacheFull
         );
         assert_eq!(cache.len(), 2);
@@ -306,9 +361,27 @@ mod tests {
     fn take_next_picks_the_lowest_received_hops() {
         let mut cache: FixedHeldAnnounces<4> = FixedHeldAnnounces::new();
         let any = InterfaceId::new([0u8; 16]);
-        cache.park(&announce_for(dest(1), b"far"), ts(100), 10, HoldReason::RoutingArenaPressure, any);
-        cache.park(&announce_for(dest(2), b"near"), ts(200), 2, HoldReason::RoutingArenaPressure, any);
-        cache.park(&announce_for(dest(3), b"medium"), ts(300), 5, HoldReason::RoutingArenaPressure, any);
+        cache.park(
+            &announce_for(dest(1), b"far"),
+            ts(100),
+            10,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(2), b"near"),
+            ts(200),
+            2,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(3), b"medium"),
+            ts(300),
+            5,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
 
         let held = cache.take_next().unwrap();
         assert_eq!(held.received_hops(), 2);
@@ -325,9 +398,27 @@ mod tests {
     fn ties_on_hops_are_broken_by_oldest_arrived_at() {
         let mut cache: FixedHeldAnnounces<4> = FixedHeldAnnounces::new();
         let any = InterfaceId::new([0u8; 16]);
-        cache.park(&announce_for(dest(1), b"a"), ts(300), 3, HoldReason::RoutingArenaPressure, any);
-        cache.park(&announce_for(dest(2), b"b"), ts(100), 3, HoldReason::RoutingArenaPressure, any);
-        cache.park(&announce_for(dest(3), b"c"), ts(200), 3, HoldReason::RoutingArenaPressure, any);
+        cache.park(
+            &announce_for(dest(1), b"a"),
+            ts(300),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(2), b"b"),
+            ts(100),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(3), b"c"),
+            ts(200),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
 
         let held = cache.take_next().unwrap();
         assert_eq!(held.arrived_at(), ts(100));

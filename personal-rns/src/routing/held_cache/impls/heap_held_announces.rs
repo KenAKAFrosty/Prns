@@ -69,8 +69,14 @@ impl HeldAnnounces for HeapHeldAnnounces {
         // Lowest received_hops wins; ties break to the oldest arrival.
         let mut best = 0;
         for i in 1..self.entries.len() {
-            let cur = (self.entries[i].received_hops(), self.entries[i].arrived_at().0);
-            let best_key = (self.entries[best].received_hops(), self.entries[best].arrived_at().0);
+            let cur = (
+                self.entries[i].received_hops(),
+                self.entries[i].arrived_at().0,
+            );
+            let best_key = (
+                self.entries[best].received_hops(),
+                self.entries[best].arrived_at().0,
+            );
             if cur < best_key {
                 best = i;
             }
