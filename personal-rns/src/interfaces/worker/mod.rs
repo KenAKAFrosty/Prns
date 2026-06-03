@@ -18,5 +18,6 @@ pub use context::{
 };
 pub use core::{QueueFull, SendError};
 pub use interface::{
-    DriverMode, Interface, InterfaceHandle, SelfDrivenInterface, StartedInterface,
+    DriverMode, Interface, InterfaceHandle, RegisteredInterface, SelfDrivenInterface,
+    StartedInterface,
 };

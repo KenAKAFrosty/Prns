@@ -18,8 +18,8 @@
 
 use crate::engine::{InstantMillis, NextScheduledEngineWork};
 use crate::interfaces::{
-    ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext, OutboundPacket,
-    SendError, Substrate,
+    ConnectionState, ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext,
+    OutboundPacket, SendError, Substrate,
 };
 
 /// Which side runs an interface's loop — the runtime's *scheduling* decision,
@@ -49,8 +49,6 @@ pub trait InterfaceHandle {
     /// Lend each inbound packet the interface has stamped to `f`, in order, tagged
     /// with the interface's id and arrival stamp. Returns how many were drained.
     fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
-
-    /// Queue a packet for the interface to transmit.
     fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError>;
 
     /// Ask the interface to wind down; it reports [`ControlReport::Stopped`] when
@@ -61,14 +59,64 @@ pub trait InterfaceHandle {
     fn next_report(&mut self) -> Option<ControlReport>;
 }
 
-/// A started interface, as the runtime holds it: the routing facts it registered,
-/// the [`InterfaceHandle`] it reaches the running interface through, and the
-/// [`DriverMode`] saying whether it must also be polled. Coupling the three is
-/// what makes "started but unreachable" unrepresentable.
 pub struct StartedInterface<H: InterfaceHandle, Worker> {
     pub descriptor: InterfaceDescriptor,
     pub handle: H,
     pub drive: DriverMode<Worker>,
+}
+
+pub trait RegisteredInterface {
+    fn descriptor(&self) -> &InterfaceDescriptor;
+
+    fn set_connection_state(&mut self, state: ConnectionState);
+
+    fn drain_inbound(&mut self, on_packet: impl FnMut(InboundPacket<'_>)) -> usize;
+
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError>;
+
+    fn next_report(&mut self) -> Option<ControlReport>;
+
+    /// Poll a runtime-driven interface's worker for its next deadline; a no-op
+    /// returning [`Idle`](NextScheduledEngineWork::Idle) for a self-driven one.
+    fn poll(&mut self, now: InstantMillis) -> NextScheduledEngineWork; //REVIEW after the main sweep, we need to come back and get a second version of this and rename it (notice the EngineWork suffix)
+
+    fn drain_control_reports(&mut self) {
+        while let Some(report) = self.next_report() {
+            match report {
+                ControlReport::ConnectionState(state) => self.set_connection_state(state),
+                ControlReport::Stopped => self.set_connection_state(ConnectionState::Disconnected),
+            }
+        }
+    }
+}
+
+impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Worker> {
+    fn descriptor(&self) -> &InterfaceDescriptor {
+        &self.descriptor
+    }
+
+    fn set_connection_state(&mut self, state: ConnectionState) {
+        self.descriptor.state = state;
+    }
+
+    fn drain_inbound(&mut self, on_packet: impl FnMut(InboundPacket<'_>)) -> usize {
+        self.handle.drain_inbound(on_packet)
+    }
+
+    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
+        self.handle.send(packet)
+    }
+
+    fn next_report(&mut self) -> Option<ControlReport> {
+        self.handle.next_report()
+    }
+
+    fn poll(&mut self, now: InstantMillis) -> NextScheduledEngineWork {
+        match &mut self.drive {
+            DriverMode::SelfDriven => NextScheduledEngineWork::Idle,
+            DriverMode::RuntimeDriven { worker, poll } => poll(worker, now),
+        }
+    }
 }
 
 /// An autonomous interface, parameterized by the [`Substrate`] it runs on so the
