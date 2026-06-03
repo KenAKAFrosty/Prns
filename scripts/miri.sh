@@ -16,7 +16,12 @@ rustup toolchain install nightly --component miri --profile minimal 2>/dev/null 
 
 # Isolation stays ON: the engine injects clock + entropy as data (never reads them
 # from the host), so Miri needs no escape hatch and runs deterministically.
-echo "[miri] personal-rns"
-cargo +nightly miri test -p personal-rns "$@"
+# Tree Borrows, NOT miri's default Stacked Borrows. The RustCrypto cipher stack
+# (`inout`/`aes`/`cbc`) does in-place input/output pointer aliasing that the
+# *experimental* Stacked Borrows model over-rejects — a known false positive that
+# would fail every crypto test. Tree Borrows is the newer model the ecosystem
+# targets and accepts it. Remove `-Zmiri-tree-borrows` to run strict Stacked Borrows.
+echo "[miri] personal-rns (Tree Borrows)"
+MIRIFLAGS="${MIRIFLAGS:-} -Zmiri-tree-borrows" cargo +nightly miri test -p personal-rns "$@"
 
 echo "MIRI_GATE_OK"

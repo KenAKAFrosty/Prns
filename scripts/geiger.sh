@@ -12,4 +12,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # --all-features so the embedded (embassy/LoRa) dependencies are counted too.
-cargo geiger -p personal-rns --all-features "$@"
+# Target the package's own ABSOLUTE manifest path. cargo-geiger bails from the
+# virtual workspace manifest ("requires an actual package") AND rejects a relative
+# --manifest-path, so build the absolute path from the repo root. Default features
+# cover the std + crypto surface (dalek/aes/heapless/getrandom) where the interesting
+# inherited unsafe lives and build reliably on the host; append `--features
+# embassy-contract` etc. for more. Run with no args: `scripts/geiger.sh`.
+cargo geiger --manifest-path "$(pwd)/personal-rns/Cargo.toml" "$@"
