@@ -19,7 +19,7 @@ use embassy_time::{Duration, Instant as EmbassyInstant, Timer};
 
 use super::core::{decode_frame, EspNowFrameWriter, ESP_NOW_MAX_FRAME_PAYLOAD};
 use crate::interfaces::{InboundSink, InterfaceWorkerContext};
-use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
+use crate::interfaces::substrate::EmbassyHostSubstrate;
 use crate::wire::MTU;
 
 /// How long to keep packing a frame after its first packet before transmitting.
@@ -88,7 +88,7 @@ fn submit_frame_packets(frame: &[u8], inbound: &mut impl InboundSink) {
 ///
 /// Generic over the seam `DEPTH` and the [`EspNowLink`] radio. Inbound packets are
 /// submitted through [`InboundSink::submit`]; outbound packets are pulled with
-/// [`ready`](crate::runtime::channels::embassy_seam::EmbassyOutboundDrain::ready) +
+/// [`ready`](crate::interfaces::substrate::EmbassyOutboundDrain::ready) +
 /// `try_next_into`.
 pub async fn serve<const DEPTH: usize, L>(
     mut link: L,

@@ -14,7 +14,7 @@ use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
 };
-use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
+use crate::interfaces::substrate::EmbassyHostSubstrate;
 
 /// Upper bound on one frame's write. If nothing is draining the link (no host
 /// attached, or no peer reading), an unbounded write would wedge the loop.

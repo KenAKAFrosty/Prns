@@ -15,7 +15,7 @@ use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceId,
     InterfaceWorkerContext, OutboundDrain, SelfDrivenInterface,
 };
-use crate::runtime::channels::std_host::StdHostSubstrate;
+use crate::interfaces::substrate::StdHostSubstrate;
 
 type SerialContext = InterfaceWorkerContext<StdHostSubstrate<SERIAL_MTU>>;
 
@@ -152,7 +152,7 @@ mod tests {
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use crate::interfaces::InterfaceHandle;
     use crate::interfaces::OutboundPacket;
-    use crate::runtime::channels::std_host::StdInterfaceSeam;
+    use crate::interfaces::substrate::StdInterfaceSeam;
 
     /// In-memory byte pipe: serves preloaded `rx` bytes, then errors so a
     /// connection loop returns (a simulated unplug / end of stream); captures all

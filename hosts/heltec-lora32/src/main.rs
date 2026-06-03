@@ -86,7 +86,7 @@ use personal_rns::interfaces::{
     OutboundPacket, SendError, StartedInterface,
 };
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
-use personal_rns::runtime::channels::embassy_seam::{
+use personal_rns::interfaces::substrate::{
     new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle,
     EmbassyInterfaceSeam, WakeSignal,
 };

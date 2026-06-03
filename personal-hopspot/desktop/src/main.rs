@@ -28,7 +28,7 @@ use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::{std_serial_interface, SERIAL_MTU};
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
-use personal_rns::runtime::channels::std_host::StdInterfaceSeam;
+use personal_rns::interfaces::substrate::StdInterfaceSeam;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, run_contract, ContractRuntime, RuntimeSnapshot};
 

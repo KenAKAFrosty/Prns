@@ -22,7 +22,7 @@ use super::core::{
     LORA_SINGLE_FRAME_MAX,
 };
 use crate::interfaces::{InboundSink, InterfaceWorkerContext};
-use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
+use crate::interfaces::substrate::EmbassyHostSubstrate;
 use crate::wire::MTU;
 
 /// SX1262 output power for the transmit ramp, in dBm. Low for a desk/bench gap:

@@ -22,7 +22,7 @@ use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceWorkerContext, MacAddress,
     MediumKind, TransitCapability,
 };
-use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
+use crate::interfaces::substrate::EmbassyHostSubstrate;
 
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL_MS: u64 = 1600;

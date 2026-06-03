@@ -17,7 +17,7 @@ use embassy_time::{Instant as EmbassyInstant, Timer};
 
 use super::super::{CycleStamp, Host};
 use crate::engine::{EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork};
-use crate::runtime::channels::embassy_seam::WakeSignal;
+use crate::interfaces::substrate::WakeSignal;
 
 /// The embassy contract host: the shared wake the interface seams poke, an injected
 /// CSPRNG draw, and the embassy-time clock + sleep. Hand it to

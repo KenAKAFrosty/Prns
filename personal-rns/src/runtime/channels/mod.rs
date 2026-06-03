@@ -1,11 +1,5 @@
-//! Per-platform seam and snapshot-channel types.
+//! Per-platform runtime snapshot-delivery channel. (The per-interface seam lanes
+//! moved to [`interfaces::substrate`](crate::interfaces::substrate).)
 
 #[cfg(feature = "embassy-host")]
 pub mod embassy;
-
-/// Contract seam for embassy platforms.
-#[cfg(feature = "embassy-seam")]
-pub mod embassy_seam;
-
-#[cfg(feature = "std-host")]
-pub mod std_host;

@@ -44,7 +44,7 @@ use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{
     Interface, InterfaceId, InterfaceWorkerContext, SelfDrivenInterface, StartedInterface,
 };
-use personal_rns::runtime::channels::embassy_seam::{
+use personal_rns::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceSeam, WakeSignal,
 };
 use personal_rns::runtime::host::impls::EmbassyContractHost;
