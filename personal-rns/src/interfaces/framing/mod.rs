@@ -2,7 +2,7 @@
 //! themselves.
 //!
 //! [`rns_serial_framing`] is the RNS reference-compatible byte-stuffed framing
-//! used by serial-style transports (USB CDC, RS-232, etc.) to mark frame
+//! used by serial-style transports (RS-232, UARTs, etc.) to mark frame
 //! boundaries in a raw byte stream. A concrete interface over such a medium
 //! composes this codec; the codec itself knows nothing about routing or the
 //! engine.

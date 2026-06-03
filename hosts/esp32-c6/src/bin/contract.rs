@@ -36,7 +36,7 @@ use personal_rns::engine::{
 };
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::impls::rns_parity::serial::embassy_contract::serve;
+use personal_rns::interfaces::impls::rns_parity::serial::serve;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };

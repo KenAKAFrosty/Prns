@@ -9,7 +9,7 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use super::core::{descriptor, SERIAL_MTU};
+use super::super::core::{descriptor, SERIAL_MTU};
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceId,
@@ -79,7 +79,7 @@ enum ConnectionEnd {
 ///
 /// `port` must have a short read timeout (the host's `open` sets it) so a quiet
 /// link still loops back to service outbound and check for a stop. Pre-frame noise
-/// — e.g. a board sharing this CDC between log text and frames — is skipped by the
+/// — e.g. a board sharing this link between log text and frames — is skipped by the
 /// decoder until a `FLAG`, exactly as stock RNS does.
 fn serve_connection<Port: Read + Write>(
     mut port: Port,

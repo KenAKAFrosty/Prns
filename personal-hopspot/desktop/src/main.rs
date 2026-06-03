@@ -25,9 +25,7 @@ use heapless::Vec as HVec;
 use personal_rns::engine::{EngineState, ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::routing::storage::FixedCapacity;
-use personal_rns::interfaces::impls::rns_parity::serial::{
-    std_host::std_serial_interface, SERIAL_MTU,
-};
+use personal_rns::interfaces::impls::rns_parity::serial::{std_serial_interface, SERIAL_MTU};
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{Interface, InterfaceId, StartedInterface};
 use personal_rns::runtime::channels::std_host::StdInterfaceSeam;

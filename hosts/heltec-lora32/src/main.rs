@@ -75,7 +75,7 @@ use personal_rns::interfaces::impls::rns_parity::rnode_lora::core::{
     descriptor as lora_descriptor, DEFAULT_915_LORA_PROFILE,
 };
 use personal_rns::interfaces::impls::rns_parity::rnode_lora::embassy::serve as serve_lora;
-use personal_rns::interfaces::impls::rns_parity::serial::embassy_contract::serve as serve_serial;
+use personal_rns::interfaces::impls::rns_parity::serial::serve as serve_serial;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };

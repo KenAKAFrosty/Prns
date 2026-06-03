@@ -1,22 +1,22 @@
 //! The embassy serial worker on the contract seam. Runs the RNS `SerialInterface`
-//! over any async byte stream (the ESP32 usb-serial-jtag halves, a UART, a test
-//! pipe), meeting the runtime through the three-lane seam.
+//! over any async byte stream (a UART, a test pipe), meeting the runtime through
+//! the three-lane seam.
 //!
 //! Gated on the lighter `embassy-contract` feature — no `embassy-net`/LoRa — so a
-//! USB-only board (ESP32-C6) pulls none of the radio stack.
+//! serial-only board (ESP32-C6) pulls none of the radio stack.
 
 use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration};
 use embedded_io_async::{Read, Write};
 
-use super::core::SERIAL_MTU;
+use super::super::core::SERIAL_MTU;
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
 };
 use crate::runtime::channels::embassy_seam::EmbassyHostSubstrate;
 
-/// Upper bound on one frame's write. If nothing is draining the CDC (no USB host
+/// Upper bound on one frame's write. If nothing is draining the link (no host
 /// attached, or no peer reading), an unbounded write would wedge the loop.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
@@ -29,7 +29,7 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 /// The loop `select`s on three wakes — inbound bytes, outbound readiness, a control
 /// command — so it parks until something genuinely needs it (no keepalive ticker, no
 /// idle spin). Generic over the byte stream (any [`embedded_io_async`] transport) and
-/// the seam `DEPTH`. Pre-frame noise — e.g. a board sharing this CDC between log text
+/// the seam `DEPTH`. Pre-frame noise — e.g. a board sharing this link between log text
 /// and frames — is skipped by the decoder until a `FLAG`, exactly as stock RNS does.
 ///
 /// There is no `link_up` / keepalive here.
