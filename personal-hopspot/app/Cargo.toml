@@ -1,0 +1,37 @@
+[package]
+name = "personal-hopspot-app"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Personal Hopspot — one source, two targets: the Linux debug window and the Heltec S3 OLED firmware."
+
+[workspace]
+
+[[bin]]
+name = "personal-hopspot-app"
+path = "src/main.rs"
+
+[dependencies]
+personal-hopspot-ui = { path = "../ui", default-features = false }
+embedded-graphics = "0.8"
+heapless = { version = "0.8", default-features = false }
+
+
+[target.'cfg(not(target_arch = "xtensa"))'.dependencies]
+embedded-graphics-simulator = "0.8.0"
+
+[target.'cfg(target_arch = "xtensa")'.dependencies]
+esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial"] }
+esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
+ssd1306 = "0.9"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = false

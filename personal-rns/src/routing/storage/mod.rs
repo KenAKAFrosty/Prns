@@ -4,10 +4,7 @@
 
 mod impls;
 
-pub use impls::{
-    FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
-    TieredAnnounceIdHistory,
-};
+pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::InstantMillis;
@@ -22,7 +19,6 @@ pub struct RouteEntry {
     pub hops: u8,
     pub expires: InstantMillis,
     pub responsiveness: RouteResponsiveness,
-    /// Interface the accepted announce arrived on.
     pub receiving_interface: InterfaceId,
 }
 
@@ -37,7 +33,6 @@ pub struct RetainedAnnounceEntry {
     pub maybe_app_data_handle: Option<AppDataHandle>,
 }
 
-/// Raised when a columns backend cannot accept another row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnsFull;
 
@@ -49,7 +44,6 @@ pub enum RememberOutcome {
     StoredEvictingOldest,
 }
 
-/// Opaque reference to retained `app_data`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppDataHandle(usize);
 
@@ -63,7 +57,6 @@ impl AppDataHandle {
     }
 }
 
-/// Why a [`RetainedAppData`] mutation could not complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetainedAppDataError {
     ArenaFull,
@@ -83,8 +76,6 @@ pub trait RouteColumns {
     fn hops(&self) -> &[u8];
     fn expires(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
-
-    /// The interface each route was learned on.
     fn receiving_interfaces(&self) -> &[InterfaceId];
 
     /// Row-coherent overwrite of slot `i`.
@@ -118,13 +109,11 @@ pub trait RetainedAnnounceColumns {
     fn push(&mut self, row: RetainedAnnounceEntry) -> Result<usize, ColumnsFull>;
 }
 
-/// Per-destination accumulated history of heard announce ids.
 pub trait AnnounceIdHistory {
     fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_>;
     fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome;
 }
 
-/// Borrowed announce-id history view.
 #[derive(Debug, Clone, Copy)]
 pub struct AnnounceIdHistoryView<'a> {
     floor: &'a [AnnounceId],
@@ -167,4 +156,14 @@ pub trait RetainedAppData {
     fn get(&self, handle: AppDataHandle) -> &[u8];
     fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError>;
     fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError>;
+}
+
+/// A storage recipe: the bundle of column backends an engine runs on. One type
+/// (`FixedCapacity` for no_std, `GrowableHeap` for a std host) picks every backend
+/// at once; the `Default` bounds let the engine build an empty bundle.
+pub trait Storage {
+    type Routes: RouteColumns + Default;
+    type Announces: RetainedAnnounceColumns + Default;
+    type History: AnnounceIdHistory + Default;
+    type AppData: RetainedAppData + Default;
 }

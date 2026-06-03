@@ -1,0 +1,62 @@
+//! Heap-backed, growable retained-announce `app_data` store (the typical std/alloc
+//! backend).
+//!
+//! One owned `Vec<u8>` per entry, addressed by an opaque [`AppDataHandle`] index
+//! that never reorders. No packed arena, no byte budget, no entry cap — so the
+//! packing/offset-fixup dance of the fixed twin disappears, and `insert`/`replace`
+//! can't fail (the `ArenaFull`/`TooManyEntries` arms are unreachable here).
+
+use alloc::vec::Vec;
+
+use crate::routing::storage::{AppDataHandle, RetainedAppData, RetainedAppDataError};
+
+#[derive(Debug, Default)]
+pub struct HeapRetainedAppData {
+    entries: Vec<Vec<u8>>,
+}
+
+impl RetainedAppData for HeapRetainedAppData {
+    fn get(&self, handle: AppDataHandle) -> &[u8] {
+        &self.entries[handle.slot()]
+    }
+
+    fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
+        let slot = self.entries.len();
+        self.entries.push(bytes.to_vec());
+        Ok(AppDataHandle::new(slot))
+    }
+
+    fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
+        self.entries[handle.slot()] = bytes.to_vec();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inserts_replaces_and_grows_without_a_budget() {
+        let mut store = HeapRetainedAppData::default();
+        let a = store.insert(&[0xAA; 3]).unwrap();
+        let b = store.insert(&[0xBB; 5]).unwrap();
+        assert_eq!(store.get(a), &[0xAA; 3]);
+        assert_eq!(store.get(b), &[0xBB; 5]);
+
+        // Replace to a different size: entries are independent, so the neighbor and
+        // the handle both stay valid (no packing to disturb).
+        store.replace(a, &[0x11; 9]).unwrap();
+        assert_eq!(store.get(a), &[0x11; 9]);
+        assert_eq!(store.get(b), &[0xBB; 5]);
+        // Replace to empty clears the payload; the handle still resolves.
+        store.replace(b, &[]).unwrap();
+        assert_eq!(store.get(b), &[] as &[u8]);
+
+        // Grows past any fixed entry cap / byte budget — insert never fails.
+        for n in 0..500u32 {
+            assert!(store.insert(&[n as u8; 200]).is_ok());
+        }
+        assert_eq!(store.get(a), &[0x11; 9]); // earliest handle still valid
+    }
+}

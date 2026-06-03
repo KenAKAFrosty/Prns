@@ -1,0 +1,15 @@
+# The `esp` toolchain ships host std + rust-src, so it builds both faces. build-std
+# stays target-scoped (not global) so the host build isn't dragged into core/alloc.
+#
+#   cargo desktop    run the Linux window
+#   cargo s3         build the S3 firmware
+#   cargo s3-flash   build + flash + monitor (board on USB)
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --after watchdog-reset"
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
+
+[alias]
+desktop = "run --target x86_64-unknown-linux-gnu"
+s3 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+s3-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"

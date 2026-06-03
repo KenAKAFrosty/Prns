@@ -1,0 +1,5 @@
+# The S3 face is Xtensa; xtensa-esp32s3-none-elf only exists in the `esp` Rust
+# fork (installed via espup). The desktop face builds fine under the same fork —
+# it ships the x86_64-unknown-linux-gnu host std — so one toolchain covers both.
+[toolchain]
+channel = "esp"
