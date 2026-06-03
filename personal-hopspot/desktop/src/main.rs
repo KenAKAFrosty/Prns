@@ -13,7 +13,7 @@
 
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
@@ -31,7 +31,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, Prns, Recipe, RuntimeSnapshot};
 
-use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind};
+use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEvent, UiState};
 
 /// Stable id for this node's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -56,6 +56,8 @@ const PANEL: Size = Size::new(64, 128);
 /// UI repaint cadence. The engine pushes snapshots event-driven; this just keeps
 /// the window responsive and repaints between snapshots.
 const FRAME: Duration = Duration::from_millis(33);
+/// Presses at or above this duration enter the long-press path.
+const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519
 /// private keys). Handed to the engine through a [`Zeroizing`] buffer so it is
@@ -134,6 +136,229 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     ));
 }
 
+fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
+    // Desktop-only stand-ins so the single-button selection and pagination path
+    // can be exercised before the runtime grows multiple real interfaces.
+    let _ = cards.push(Card {
+        kind: CardKind::Wifi,
+        label: "WiFi",
+        selected: false,
+        online: true,
+        tx_bytes: 1_830,
+        rx_bytes: 0,
+        links: 1_234,
+        destinations: 56_789,
+        rate_bytes_per_sec: 12_400,
+        last_activity_secs: Some(3),
+    });
+    let _ = cards.push(Card {
+        kind: CardKind::EspNow,
+        label: "ESP-NOW",
+        selected: false,
+        online: true,
+        tx_bytes: 0,
+        rx_bytes: 0,
+        links: 999_999,
+        destinations: 1_234_567,
+        rate_bytes_per_sec: 987_000,
+        last_activity_secs: Some(0),
+    });
+    let _ = cards.push(Card {
+        kind: CardKind::Ble,
+        label: "BLE",
+        selected: false,
+        online: true,
+        tx_bytes: 42,
+        rx_bytes: 12_340,
+        links: 7,
+        destinations: 12,
+        rate_bytes_per_sec: 1_200,
+        last_activity_secs: Some(42),
+    });
+    let _ = cards.push(Card {
+        kind: CardKind::LoRa,
+        label: "LoRa",
+        selected: false,
+        online: false,
+        tx_bytes: 0,
+        rx_bytes: 0,
+        links: 0,
+        destinations: 0,
+        rate_bytes_per_sec: 0,
+        last_activity_secs: None,
+    });
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PressSource {
+    Key,
+    Mouse,
+}
+
+#[derive(Clone, Copy)]
+struct PressStart {
+    source: PressSource,
+    started_at: Instant,
+    long_press_sent: bool,
+}
+
+fn press_start(source: PressSource) -> PressStart {
+    PressStart {
+        source,
+        started_at: Instant::now(),
+        long_press_sent: false,
+    }
+}
+
+fn dispatch_long_press_if_ready(
+    active_press: &mut Option<PressStart>,
+    now: Instant,
+    card_count: usize,
+    ui_state: &mut UiState,
+) {
+    let Some(press) = active_press.as_mut() else {
+        return;
+    };
+    if card_count == 0
+        || press.long_press_sent
+        || now.duration_since(press.started_at) < LONG_PRESS_THRESHOLD
+    {
+        return;
+    }
+
+    ui_state.handle_input(InputEvent::LongPress, card_count);
+    press.long_press_sent = true;
+}
+
+fn finish_press(
+    active_press: &mut Option<PressStart>,
+    source: PressSource,
+    released_at: Instant,
+    card_count: usize,
+    ui_state: &mut UiState,
+) {
+    let Some(press) = active_press.take() else {
+        return;
+    };
+    if press.source != source {
+        *active_press = Some(press);
+        return;
+    }
+
+    if press.long_press_sent {
+        return;
+    }
+
+    let event = if released_at.duration_since(press.started_at) >= LONG_PRESS_THRESHOLD {
+        InputEvent::LongPress
+    } else {
+        InputEvent::ShortPress
+    };
+    ui_state.handle_input(event, card_count);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_before_threshold_is_short_press() {
+        let started_at = Instant::now();
+        let mut active_press = Some(PressStart {
+            source: PressSource::Key,
+            started_at,
+            long_press_sent: false,
+        });
+        let mut ui_state = UiState::new();
+
+        finish_press(
+            &mut active_press,
+            PressSource::Key,
+            started_at + LONG_PRESS_THRESHOLD - Duration::from_millis(1),
+            4,
+            &mut ui_state,
+        );
+
+        assert!(active_press.is_none());
+        assert_eq!(ui_state.selected_card(4), Some(0));
+        assert_eq!(ui_state.menu_selected_item(), None);
+    }
+
+    #[test]
+    fn hold_dispatches_long_press_at_threshold() {
+        let started_at = Instant::now();
+        let mut active_press = Some(PressStart {
+            source: PressSource::Mouse,
+            started_at,
+            long_press_sent: false,
+        });
+        let mut ui_state = UiState::new();
+
+        dispatch_long_press_if_ready(
+            &mut active_press,
+            started_at + LONG_PRESS_THRESHOLD,
+            4,
+            &mut ui_state,
+        );
+
+        assert_eq!(ui_state.selected_card(4), None);
+        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
+        assert!(active_press.expect("press remains active").long_press_sent);
+    }
+
+    #[test]
+    fn release_after_dispatched_long_press_is_noop() {
+        let started_at = Instant::now();
+        let mut active_press = Some(PressStart {
+            source: PressSource::Key,
+            started_at,
+            long_press_sent: false,
+        });
+        let mut ui_state = UiState::new();
+
+        dispatch_long_press_if_ready(
+            &mut active_press,
+            started_at + LONG_PRESS_THRESHOLD,
+            4,
+            &mut ui_state,
+        );
+        finish_press(
+            &mut active_press,
+            PressSource::Key,
+            started_at + LONG_PRESS_THRESHOLD + Duration::from_millis(1),
+            4,
+            &mut ui_state,
+        );
+
+        assert!(active_press.is_none());
+        assert_eq!(ui_state.selected_card(4), None);
+        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
+    }
+
+    #[test]
+    fn release_at_threshold_is_long_press_fallback() {
+        let started_at = Instant::now();
+        let mut active_press = Some(PressStart {
+            source: PressSource::Key,
+            started_at,
+            long_press_sent: false,
+        });
+        let mut ui_state = UiState::new();
+
+        finish_press(
+            &mut active_press,
+            PressSource::Key,
+            started_at + LONG_PRESS_THRESHOLD,
+            4,
+            &mut ui_state,
+        );
+
+        assert!(active_press.is_none());
+        assert_eq!(ui_state.selected_card(4), None);
+        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
+    }
+}
+
 /// Own the SDL2 window: repaint the latest snapshot as the Hopspot screen until
 /// the window is closed.
 fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
@@ -145,6 +370,8 @@ fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
 
     let mut snapshot: Option<RuntimeSnapshot> = None;
+    let mut ui_state = UiState::new();
+    let mut active_press: Option<PressStart> = None;
     loop {
         // Coalesce to the most recent snapshot the engine has produced.
         let mut latest = None;
@@ -155,19 +382,63 @@ fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
             snapshot = latest;
         }
 
-        match &snapshot {
+        let card_count = match &snapshot {
             // This node has exactly one interface (the serial link), so one card.
             Some(snap) => {
-                let cards: HVec<Card, 8> =
+                let mut cards: HVec<Card, 8> =
                     screen::snapshot_to_cards(snap, |_id| Some((CardKind::Usb, "USB")));
-                screen::draw(&mut display, &cards, BatteryState::Unknown);
+                append_desktop_dummy_cards(&mut cards);
+                let card_count = cards.len();
+                ui_state.sync_card_count(card_count);
+                dispatch_long_press_if_ready(
+                    &mut active_press,
+                    Instant::now(),
+                    card_count,
+                    &mut ui_state,
+                );
+                screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
+                card_count
             }
-            None => screen::splash(&mut display, "connecting"),
-        }
+            None => {
+                ui_state.sync_card_count(0);
+                dispatch_long_press_if_ready(&mut active_press, Instant::now(), 0, &mut ui_state);
+                screen::splash(&mut display, "connecting");
+                0
+            }
+        };
 
         window.update(&display);
-        if window.events().any(|event| event == SimulatorEvent::Quit) {
-            return;
+        for event in window.events() {
+            match event {
+                SimulatorEvent::Quit => return,
+                SimulatorEvent::KeyDown { repeat: false, .. } => {
+                    active_press.get_or_insert(press_start(PressSource::Key));
+                }
+                SimulatorEvent::KeyUp { .. } => {
+                    finish_press(
+                        &mut active_press,
+                        PressSource::Key,
+                        Instant::now(),
+                        card_count,
+                        &mut ui_state,
+                    );
+                }
+                SimulatorEvent::MouseButtonDown { .. } => {
+                    active_press.get_or_insert(press_start(PressSource::Mouse));
+                }
+                SimulatorEvent::MouseButtonUp { .. } => {
+                    finish_press(
+                        &mut active_press,
+                        PressSource::Mouse,
+                        Instant::now(),
+                        card_count,
+                        &mut ui_state,
+                    );
+                }
+                SimulatorEvent::KeyDown { repeat: true, .. }
+                | SimulatorEvent::MouseWheel { .. }
+                | SimulatorEvent::MouseMove { .. } => {}
+            }
         }
         std::thread::sleep(FRAME);
     }
