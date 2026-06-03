@@ -29,6 +29,7 @@ use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     std_host::std_serial_interface, SERIAL_MTU,
 };
+use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{DriverMode, Interface, InterfaceId, StartedInterface};
 use personal_rns::runtime::channels::std_host::StdInterfaceSeam;
 use personal_rns::runtime::host::impls::LinuxSync;
@@ -154,7 +155,9 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     };
 
     let host = LinuxSync::new(wake_rx, clock_base);
-    let runtime = ContractRuntime::new(state, [started], host);
+    let mut interfaces = GrowableInterfaceSet::new();
+    let _ = interfaces.push(started);
+    let runtime = ContractRuntime::new(state, interfaces, host);
 
     block_on(run_contract(runtime, move |snapshot: &RuntimeSnapshot| {
         let _ = snap_tx.send(snapshot.clone());

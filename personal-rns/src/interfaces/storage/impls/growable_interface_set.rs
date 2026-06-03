@@ -49,6 +49,10 @@ impl<H> InterfaceSet for GrowableInterfaceSet<H> {
     fn iter_mut(&mut self) -> core::slice::IterMut<'_, H> {
         self.interfaces.iter_mut()
     }
+
+    fn as_slice(&self) -> &[H] {
+        &self.interfaces
+    }
 }
 
 #[cfg(test)]

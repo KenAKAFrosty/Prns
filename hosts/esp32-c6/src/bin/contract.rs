@@ -42,6 +42,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::embassy_contract::serve
 use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };
+use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{
     DriverMode, Interface, InterfaceId, InterfaceWorkerContext, SelfDrivenInterface,
     StartedInterface,
@@ -166,7 +167,9 @@ async fn node_task(
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
     });
-    let runtime = ContractRuntime::new(state, [started], host);
+    let mut interfaces = FixedInterfaceSet::<_, 1>::new();
+    let _ = interfaces.push(started);
+    let runtime = ContractRuntime::new(state, interfaces, host);
 
     // Drive forever; log when the routing table grows — the proof the cable carried a
     // real announce into the engine.

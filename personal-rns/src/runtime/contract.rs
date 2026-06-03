@@ -14,9 +14,9 @@ use crate::engine::{
     ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
     NextScheduledEngineWork,
 };
+use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
-    ConnectionState, ControlReport, DriverMode, InterfaceHandle, InterfaceId,
-    MAX_REGISTERED_INTERFACES, OutboundPacket, SendError, StartedInterface,
+    ConnectionState, InterfaceId, OutboundPacket, RegisteredInterface, SendError,
 };
 use crate::routing::storage::Storage;
 use crate::wire::MTU;
@@ -37,61 +37,48 @@ enum FanoutClass {
     Transit,
 }
 
-/// The engine, started interfaces, traffic meter, and [`Host`] that drives them.
-///
-/// Generic over the engine-state storage (a constrained host picks a small preset)
-/// and over the handle type `IH` + the runtime-driven worker type `W` — a host
-/// composes both as its own concrete types (or [`core::convert::Infallible`] for
-/// `W` when every interface is self-driven, as rnsd's are) so the set stays a
-/// single concrete type: no `dyn`, no alloc. `Ho` is unbounded on the struct so
-/// the cycle can be tested with a unit host; [`run_contract`] is what requires
-/// [`Host`].
-pub struct ContractRuntime<Ho, IH, W, S>
+/// The engine, its registered interfaces, traffic meter, and [`Host`] that drives
+/// them. Generic over the engine-state storage `S`, the interface set `I` (fixed or
+/// growable), and the host `Ho`. Each interface is reached only through
+/// [`RegisteredInterface`], so no concrete handle or worker type surfaces here.
+pub struct ContractRuntime<Ho, I, S>
 where
-    IH: InterfaceHandle,
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
     S: Storage,
 {
     engine: EngineState<S>,
-    interfaces: HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
+    interfaces: I,
     traffic: TrafficLedger,
     host: Ho,
 }
 
-impl<Ho, IH, W, S> ContractRuntime<Ho, IH, W, S>
+impl<Ho, I, S> ContractRuntime<Ho, I, S>
 where
-    IH: InterfaceHandle,
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
     S: Storage,
 {
-    /// Build a runtime and register each started interface with the engine.
-    /// Panics if the host supplies a non-routable interface or more than
-    /// [`MAX_REGISTERED_INTERFACES`] interfaces.
-    pub fn new(
-        mut engine: EngineState<S>,
-        started: impl IntoIterator<Item = StartedInterface<IH, W>>,
-        host: Ho,
-    ) -> Self {
-        let mut set: HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES> =
-            HeaplessVec::new();
-        for interface in started {
+    /// Register each interface with the engine and hold the set. The host built the
+    /// set, so its backing already decided the bound; this only registers, panicking
+    /// if the host supplied a non-routable interface.
+    pub fn new(mut engine: EngineState<S>, interfaces: I, host: Ho) -> Self {
+        for interface in interfaces.iter() {
             engine
-                .register_routable_interface_descriptor(&interface.descriptor)
+                .register_routable_interface_descriptor(interface.descriptor())
                 .expect("interface descriptor is connected and transmits");
-            if set.push(interface).is_err() {
-                panic!("more interfaces than MAX_REGISTERED_INTERFACES");
-            }
         }
         Self {
             engine,
-            interfaces: set,
+            interfaces,
             traffic: TrafficLedger::new(),
             host,
         }
     }
 
-    /// One pooled drive cycle over the runtime's own engine + interfaces + meter:
-    /// poll the runtime-driven interfaces, drain every handle's inbound into the
-    /// engine, tick, fan the due egress, and originate a due self-announce. The
-    /// host's substrate (clock, entropy) is supplied by the caller.
+    /// One pooled drive cycle: poll interfaces, drain inbound into the engine, tick,
+    /// fan the due egress, originate a due self-announce. The host supplies the
+    /// clock and entropy.
     pub fn cycle_once(
         &mut self,
         now: InstantMillis,
@@ -106,19 +93,16 @@ where
         )
     }
 
-    /// The app-facing [`RuntimeSnapshot`] for this cycle.
     pub fn snapshot(&self) -> RuntimeSnapshot {
         snapshot_pooled(&self.engine, &self.interfaces, &self.traffic)
     }
 
-    /// When the engine next needs a cycle — mins with each cycle's `next_poll` in
-    /// [`run_contract`] to size the sleep.
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
         self.engine.next_wakeup(now)
     }
 
-    pub fn interfaces(&self) -> &[StartedInterface<IH, W>] {
-        &self.interfaces
+    pub fn interfaces(&self) -> &[I::Item] {
+        self.interfaces.as_slice()
     }
 
     pub fn engine(&self) -> &EngineState<S> {
@@ -129,14 +113,15 @@ where
 /// Drive `runtime` forever. The host supplies the clock and entropy at each wake;
 /// the loop then pools interfaces, emits a snapshot, and computes the next engine
 /// or interface deadline.
-pub async fn run_contract<Ho, Observe, IH, W, S>(
-    runtime: ContractRuntime<Ho, IH, W, S>,
+pub async fn run_contract<Ho, Observe, I, S>(
+    runtime: ContractRuntime<Ho, I, S>,
     mut observe: Observe,
 ) -> !
 where
     Ho: Host,
     Observe: FnMut(&RuntimeSnapshot),
-    IH: InterfaceHandle,
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
     S: Storage,
 {
     let ContractRuntime {
@@ -157,25 +142,25 @@ where
 /// The pooled cycle over borrowed parts (so [`run_contract`] can drive it while
 /// the host is borrowed separately). Both [`ContractRuntime::cycle_once`] and
 /// [`run_contract`] route through here.
-fn cycle_pooled<IH, W, S>(
+fn cycle_pooled<I, S>(
     engine: &mut EngineState<S>,
-    interfaces: &mut HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
+    interfaces: &mut I,
     traffic: &mut TrafficLedger,
     now: InstantMillis,
     entropy_seed: EngineCycleEntropySeed,
 ) -> ContractStepOutput
 where
-    IH: InterfaceHandle,
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
     S: Storage,
 {
     let entropy = EngineCycleEntropy::from_seed(entropy_seed);
 
-    // Poll runtime-driven interfaces and fold their next deadlines into sleep.
+    // Poll every interface; a self-driven one reports Idle, so this folds in each
+    // runtime-driven worker's next deadline without the runtime knowing which is which.
     let mut next_poll = NextScheduledEngineWork::Idle;
     for started in interfaces.iter_mut() {
-        if let DriverMode::RuntimeDriven { worker, poll } = &mut started.drive {
-            next_poll = sooner(next_poll, poll(worker, now));
-        }
+        next_poll = sooner(next_poll, started.poll(now));
     }
 
     // Drain inbound while packets still borrow from their interface ring slots.
@@ -183,8 +168,8 @@ where
     let mut accepted_announce_count = 0;
     let mut scheduled_rebroadcast_count = 0;
     for started in interfaces.iter_mut() {
-        let id = started.descriptor.id;
-        started.handle.drain_inbound(|packet| {
+        let id = started.descriptor().id;
+        started.drain_inbound(|packet| {
             traffic.add_rx(id, packet.bytes.len() as u64);
             let out = ingest_packets(engine, core::iter::once(packet), entropy.jitter);
             ingested_packet_count += out.processed_packet_count();
@@ -226,18 +211,9 @@ where
         }
     }
 
-    // Drain control reports.
+    // Apply each interface's pending control reports to its connection state.
     for started in interfaces.iter_mut() {
-        while let Some(report) = started.handle.next_report() {
-            match report {
-                ControlReport::ConnectionState(connection_state) => {
-                    started.descriptor.state = connection_state;
-                }
-                ControlReport::Stopped => {
-                    started.descriptor.state = ConnectionState::Disconnected;
-                }
-            }
-        }
+        started.drain_control_reports();
     }
 
     ContractStepOutput {
@@ -251,28 +227,33 @@ where
 
 /// Fan one outgoing packet to the interfaces the engine named in `fire_on`,
 /// metering its bytes to each target.
-fn fan_to_handles<IH: InterfaceHandle, W>(
-    interfaces: &mut HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
+fn fan_to_handles<I>(
+    interfaces: &mut I,
     traffic: &mut TrafficLedger,
     bytes: &[u8],
     fire_on: &[InterfaceId],
     fanout_class: FanoutClass,
-) {
+) where
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
+{
     for started in interfaces.iter_mut() {
-        if fire_on.contains(&started.descriptor.id)
+        // Decide eligibility off the descriptor first, so its borrow ends before
+        // the mutable `send`.
+        let descriptor = started.descriptor();
+        let id = descriptor.id;
+        let eligible = fire_on.contains(&id)
             && matches!(
-                started.descriptor.state,
+                descriptor.state,
                 ConnectionState::Connected | ConnectionState::Degraded
             )
             && match fanout_class {
-                FanoutClass::LocalOriginated => {
-                    started.descriptor.capabilities.allows_local_egress()
-                }
-                FanoutClass::Transit => started.descriptor.capabilities.allows_transit(),
-            }
-        {
-            match started.handle.send(OutboundPacket::new(bytes)) {
-                Ok(()) => traffic.add_tx(started.descriptor.id, bytes.len() as u64),
+                FanoutClass::LocalOriginated => descriptor.capabilities.allows_local_egress(),
+                FanoutClass::Transit => descriptor.capabilities.allows_transit(),
+            };
+        if eligible {
+            match started.send(OutboundPacket::new(bytes)) {
+                Ok(()) => traffic.add_tx(id, bytes.len() as u64),
                 Err(SendError::QueueFull | SendError::PacketTooLarge) => {}
             }
         }
@@ -280,23 +261,26 @@ fn fan_to_handles<IH: InterfaceHandle, W>(
 }
 
 /// The app-facing [`RuntimeSnapshot`], over borrowed parts.
-fn snapshot_pooled<IH, W, S>(
+fn snapshot_pooled<I, S>(
     engine: &EngineState<S>,
-    interfaces: &HeaplessVec<StartedInterface<IH, W>, MAX_REGISTERED_INTERFACES>,
+    interfaces: &I,
     traffic: &TrafficLedger,
 ) -> RuntimeSnapshot
 where
-    IH: InterfaceHandle,
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
     S: Storage,
 {
     let mut views = HeaplessVec::new();
-    for started in interfaces {
-        let id = started.descriptor.id;
+    for started in interfaces.iter() {
+        let descriptor = started.descriptor();
+        let id = descriptor.id;
         let (reticulum_rx_byte_count, reticulum_tx_byte_count) = traffic.totals_for(id);
-        // `push` can't overflow: interfaces.len() <= MAX_REGISTERED_INTERFACES.
+        // Truncates silently past MAX_REGISTERED_INTERFACES — the snapshot view buffer
+        // is still fixed; a growable interface set outgrowing it wants snapshot storage.
         let _ = views.push(InterfaceView {
             id,
-            connection_state: started.descriptor.state,
+            connection_state: descriptor.state,
             reticulum_rx_byte_count,
             reticulum_tx_byte_count,
             tracked_destinations: engine.route_count_via(id) as u32,
@@ -322,9 +306,11 @@ mod tests {
     use std::collections::VecDeque;
 
     use crate::engine::ENGINE_CYCLE_ENTROPY_LEN;
+    use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
-        ConnectionState, EgressCapability, InboundPacket, IngressCapability, InterfaceCapabilities,
-        InterfaceDescriptor, InterfaceMode, MediumKind, TransitCapability,
+        ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
+        IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+        InterfaceMode, MediumKind, StartedInterface, TransitCapability,
     };
     use crate::routing::storage::FixedCapacity;
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
@@ -455,6 +441,19 @@ mod tests {
         }
     }
 
+    type TestInterface = StartedInterface<TestHandle, core::convert::Infallible>;
+
+    /// Collect started interfaces into a fixed set the runtime can own.
+    fn interface_set(
+        started: impl IntoIterator<Item = TestInterface>,
+    ) -> FixedInterfaceSet<TestInterface, 4> {
+        let mut set = FixedInterfaceSet::new();
+        for interface in started {
+            let _ = set.push(interface);
+        }
+        set
+    }
+
     #[test]
     fn pools_inbound_into_the_engine_and_fans_the_rebroadcast_to_the_peer() {
         let raw = hx(RAW_ANNOUNCE);
@@ -466,10 +465,10 @@ mod tests {
         // A unit host (`()`): the cycle/snapshot seam needs no real substrate.
         let mut runtime = ContractRuntime::new(
             engine,
-            [
+            interface_set([
                 started(source, std::vec![(arrival, raw.clone())]),
                 started(peer, std::vec::Vec::new()),
-            ],
+            ]),
             (),
         );
 
@@ -533,10 +532,10 @@ mod tests {
         let engine = EngineState::<GrowableHeap>::default();
         let mut runtime = ContractRuntime::new(
             engine,
-            [
+            interface_set([
                 started(source, std::vec![(arrival, raw.clone())]),
                 started(peer, std::vec::Vec::new()),
-            ],
+            ]),
             (),
         );
 
@@ -558,10 +557,10 @@ mod tests {
         let engine = EngineState::<FixedCapacity>::default();
         let mut runtime = ContractRuntime::new(
             engine,
-            [started_with_reports(
+            interface_set([started_with_reports(
                 id,
                 [ControlReport::ConnectionState(ConnectionState::Degraded)],
-            )],
+            )]),
             (),
         );
 
@@ -583,7 +582,7 @@ mod tests {
         let engine = EngineState::<FixedCapacity>::default();
         let mut runtime = ContractRuntime::new(
             engine,
-            [started_with_reports(id, [ControlReport::Stopped])],
+            interface_set([started_with_reports(id, [ControlReport::Stopped])]),
             (),
         );
 
@@ -603,19 +602,20 @@ mod tests {
     fn fanout_skips_interfaces_that_are_not_connected() {
         let connected = iface(0xE5);
         let failed = iface(0xF6);
-        let mut interfaces = HeaplessVec::new();
-        let _ = interfaces.push(started_with_state_and_reports(
-            connected,
-            ConnectionState::Connected,
-            std::vec::Vec::new(),
-            [],
-        ));
-        let _ = interfaces.push(started_with_state_and_reports(
-            failed,
-            ConnectionState::Failed,
-            std::vec::Vec::new(),
-            [],
-        ));
+        let mut interfaces = interface_set([
+            started_with_state_and_reports(
+                connected,
+                ConnectionState::Connected,
+                std::vec::Vec::new(),
+                [],
+            ),
+            started_with_state_and_reports(
+                failed,
+                ConnectionState::Failed,
+                std::vec::Vec::new(),
+                [],
+            ),
+        ]);
         let mut traffic = TrafficLedger::new();
         let bytes = [0xAA, 0xBB, 0xCC];
 
@@ -627,8 +627,8 @@ mod tests {
             FanoutClass::Transit,
         );
 
-        assert_eq!(interfaces[0].handle.sent, std::vec![bytes.to_vec()]);
-        assert!(interfaces[1].handle.sent.is_empty());
+        assert_eq!(interfaces.as_slice()[0].handle.sent, std::vec![bytes.to_vec()]);
+        assert!(interfaces.as_slice()[1].handle.sent.is_empty());
         assert_eq!(traffic.totals_for(connected), (0, bytes.len() as u64));
         assert_eq!(traffic.totals_for(failed), (0, 0));
     }
@@ -637,25 +637,26 @@ mod tests {
     fn fanout_distinguishes_local_only_from_transit_interfaces() {
         let local_only = iface(0x11);
         let transit = iface(0x22);
-        let mut interfaces = HeaplessVec::new();
-        let _ = interfaces.push(started_with_descriptor_and_reports(
-            descriptor_with_capabilities(
-                local_only,
-                ConnectionState::Connected,
-                EgressCapability::Enabled(TransitCapability::NoTransit),
+        let mut interfaces = interface_set([
+            started_with_descriptor_and_reports(
+                descriptor_with_capabilities(
+                    local_only,
+                    ConnectionState::Connected,
+                    EgressCapability::Enabled(TransitCapability::NoTransit),
+                ),
+                std::vec::Vec::new(),
+                [],
             ),
-            std::vec::Vec::new(),
-            [],
-        ));
-        let _ = interfaces.push(started_with_descriptor_and_reports(
-            descriptor_with_capabilities(
-                transit,
-                ConnectionState::Connected,
-                EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+            started_with_descriptor_and_reports(
+                descriptor_with_capabilities(
+                    transit,
+                    ConnectionState::Connected,
+                    EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+                ),
+                std::vec::Vec::new(),
+                [],
             ),
-            std::vec::Vec::new(),
-            [],
-        ));
+        ]);
         let mut traffic = TrafficLedger::new();
         let bytes = [0xAA, 0xBB, 0xCC];
 
@@ -667,8 +668,8 @@ mod tests {
             FanoutClass::Transit,
         );
 
-        assert!(interfaces[0].handle.sent.is_empty());
-        assert_eq!(interfaces[1].handle.sent, std::vec![bytes.to_vec()]);
+        assert!(interfaces.as_slice()[0].handle.sent.is_empty());
+        assert_eq!(interfaces.as_slice()[1].handle.sent, std::vec![bytes.to_vec()]);
         assert_eq!(traffic.totals_for(local_only), (0, 0));
         assert_eq!(traffic.totals_for(transit), (0, bytes.len() as u64));
 
@@ -680,9 +681,9 @@ mod tests {
             FanoutClass::LocalOriginated,
         );
 
-        assert_eq!(interfaces[0].handle.sent, std::vec![bytes.to_vec()]);
+        assert_eq!(interfaces.as_slice()[0].handle.sent, std::vec![bytes.to_vec()]);
         assert_eq!(
-            interfaces[1].handle.sent,
+            interfaces.as_slice()[1].handle.sent,
             std::vec![bytes.to_vec(), bytes.to_vec()]
         );
         assert_eq!(traffic.totals_for(local_only), (0, bytes.len() as u64));

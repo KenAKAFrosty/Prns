@@ -80,6 +80,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };
 use personal_rns::interfaces::MacAddress;
+use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::{
     ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
     OutboundPacket, SendError, StartedInterface,
@@ -531,7 +532,11 @@ async fn main(spawner: Spawner) {
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
     });
-    let runtime = ContractRuntime::new(state, started, host);
+    let mut interfaces = FixedInterfaceSet::<_, 4>::new();
+    for interface in started {
+        let _ = interfaces.push(interface);
+    }
+    let runtime = ContractRuntime::new(state, interfaces, host);
 
     spawner.spawn(auto_worker_task(stack, sta_mac, auto_context).expect("spawn auto worker"));
     spawner.spawn(serial_worker_task(usb_rx, usb_tx, serial_context).expect("spawn serial worker"));

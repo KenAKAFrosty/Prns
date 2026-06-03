@@ -28,4 +28,5 @@ pub trait InterfaceSet {
 
     fn iter(&self) -> core::slice::Iter<'_, Self::Item>;
     fn iter_mut(&mut self) -> core::slice::IterMut<'_, Self::Item>;
+    fn as_slice(&self) -> &[Self::Item];
 }
