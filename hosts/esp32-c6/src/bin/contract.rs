@@ -139,8 +139,9 @@ async fn node_task(
     // log when the routing table grows — the proof the cable carried a real announce
     // into the engine.
     let mut announced_routes = 0u32;
-    Prns::<FixedCapacity>::run(
+    Prns::run(
         Recipe {
+            engine_storage: FixedCapacity::DEFAULT,
             identity_secret_key: secret_key,
             self_announce: SelfAnnounceConfig {
                 app_name: "lxmf",

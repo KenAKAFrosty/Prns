@@ -1,4 +1,4 @@
-//! Storage traits and implementations behind the routing table.
+//! EngineStorage traits and implementations behind the routing table.
 //!
 //! Each routing concern has its own backend, joined by slot index.
 
@@ -164,7 +164,7 @@ pub trait RetainedAppData {
 /// A storage recipe: the bundle of column backends an engine runs on. One type
 /// (`FixedCapacity` for no_std, `GrowableHeap` for a std host) picks every backend
 /// at once; the `Default` bounds let the engine build an empty bundle.
-pub trait Storage {
+pub trait EngineStorage {
     type Routes: RouteColumns + Default;
     type Announces: RetainedAnnounceColumns + Default;
     type History: AnnounceIdHistory + Default;

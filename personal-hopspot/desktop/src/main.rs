@@ -118,8 +118,9 @@ fn run_engine(path: String, snap_tx: Sender<RuntimeSnapshot>) {
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
 
-    block_on(Prns::<FixedCapacity>::run(
+    block_on(Prns::run(
         Recipe {
+            engine_storage: FixedCapacity::DEFAULT,
             identity_secret_key: load_identity_secret_key(),
             self_announce: SelfAnnounceConfig {
                 app_name: SELF_ANNOUNCE_APP_NAME,

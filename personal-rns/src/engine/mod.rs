@@ -27,7 +27,7 @@ use crate::routing::announce::{
 use crate::routing::defaults::{jitter_offset_for, JitterSeed};
 use crate::routing::held_cache::HeldAnnounces;
 use crate::routing::schedule::RebroadcastQueue;
-use crate::routing::storage::Storage;
+use crate::routing::storage::EngineStorage;
 use crate::routing::{
     DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -84,7 +84,7 @@ pub enum NextScheduledEngineWork {
     Idle,
 }
 
-pub struct EngineState<S: Storage> {
+pub struct EngineState<S: EngineStorage> {
     tick_count: u64,
     ingested_packet_count: u64,
     routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
@@ -96,7 +96,7 @@ pub struct EngineState<S: Storage> {
     self_announce: Option<SelfAnnounceSettings>,
 }
 
-impl<S: Storage> Default for EngineState<S> {
+impl<S: EngineStorage> Default for EngineState<S> {
     fn default() -> Self {
         Self {
             tick_count: 0,
@@ -112,7 +112,7 @@ impl<S: Storage> Default for EngineState<S> {
     }
 }
 
-impl<S: Storage> core::fmt::Debug for EngineState<S>
+impl<S: EngineStorage> core::fmt::Debug for EngineState<S>
 where
     S::Routes: core::fmt::Debug,
     S::Announces: core::fmt::Debug,
@@ -145,7 +145,7 @@ pub enum RegisterInterfaceError {
     NotRoutable { state: ConnectionState },
 }
 
-impl<S: Storage> EngineState<S> {
+impl<S: EngineStorage> EngineState<S> {
     pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         Self {
             identity: Some(InMemoryNodeIdentity::from_secret_key_bytes(
@@ -317,13 +317,13 @@ impl IngestOutput {
 }
 
 #[must_use]
-pub struct TickOutput<'a, S: Storage> {
+pub struct TickOutput<'a, S: EngineStorage> {
     state: &'a mut EngineState<S>,
     now: InstantMillis,
     recovered_from_held_count: usize,
 }
 
-impl<'a, S: Storage> TickOutput<'a, S> {
+impl<'a, S: EngineStorage> TickOutput<'a, S> {
     pub fn egress_directive_count(&self) -> usize {
         self.state.directives.len()
     }
@@ -357,14 +357,14 @@ impl<'a, S: Storage> TickOutput<'a, S> {
     }
 }
 
-impl<S: Storage> Drop for TickOutput<'_, S> {
+impl<S: EngineStorage> Drop for TickOutput<'_, S> {
     fn drop(&mut self) {
         self.commit_in_place();
     }
 }
 
 #[must_use]
-pub fn ingest_packets<'p, I, S: Storage>(
+pub fn ingest_packets<'p, I, S: EngineStorage>(
     state: &mut EngineState<S>,
     packets: impl IntoIterator<Item = I>,
     jitter: JitterSeed,
@@ -416,7 +416,7 @@ struct IngestCounters {
     scheduled: usize,
 }
 
-fn ingest_announce<S: Storage>(
+fn ingest_announce<S: EngineStorage>(
     state: &mut EngineState<S>,
     announce: Announce<'_>,
     received_hops: u8,
@@ -478,7 +478,7 @@ fn ingest_announce<S: Storage>(
     }
 }
 
-pub fn tick<S: Storage>(
+pub fn tick<S: EngineStorage>(
     state: &mut EngineState<S>,
     now: InstantMillis,
     jitter: JitterSeed,
@@ -585,7 +585,7 @@ mod tests {
         recovered_from_held_count: usize,
     }
 
-    fn tick_capture<S: Storage>(
+    fn tick_capture<S: EngineStorage>(
         state: &mut EngineState<S>,
         now: InstantMillis,
     ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
@@ -603,7 +603,7 @@ mod tests {
         (snapshot, emitted)
     }
 
-    fn observable_state<S: Storage>(
+    fn observable_state<S: EngineStorage>(
         state: &EngineState<S>,
     ) -> (u64, u64, usize, usize, usize, std::vec::Vec<InterfaceId>) {
         (

@@ -10,7 +10,7 @@ use crate::routing::defaults::{
 use crate::routing::held_cache::{FixedHeldAnnounces, DEFAULT_HELD_CACHE_CAPACITY};
 use crate::routing::schedule::FixedRebroadcastQueue;
 use crate::routing::storage::{
-    FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena, Storage,
+    FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena, EngineStorage,
     TieredAnnounceIdHistory,
 };
 
@@ -23,6 +23,15 @@ pub struct FixedCapacity<
     const HELD_CACHE_CAPACITY: usize = DEFAULT_HELD_CACHE_CAPACITY,
 >;
 
+impl FixedCapacity {
+    /// The default-capacity recipe as a *value*, for a [`Recipe`]'s `engine_storage`
+    /// field — so the common node spells no const generics and `Prns::run` needs no
+    /// turbofish. Equivalent to the bare `FixedCapacity` type (its six defaults).
+    ///
+    /// [`Recipe`]: crate::runtime::Recipe
+    pub const DEFAULT: Self = FixedCapacity;
+}
+
 impl<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
@@ -30,7 +39,7 @@ impl<
         const HISTORY_FLOOR_PER_DESTINATION: usize,
         const HISTORY_OVERFLOW_CAPACITY: usize,
         const HELD_CACHE_CAPACITY: usize,
-    > Storage
+    > EngineStorage
     for FixedCapacity<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -65,13 +74,13 @@ mod tests {
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
         type S = FixedCapacity<8, 16, 256, 2, 8, 4>;
-        let routes = <S as Storage>::Routes::default();
-        let announces = <S as Storage>::Announces::default();
-        let _history = <S as Storage>::History::default();
-        let _app_data = <S as Storage>::AppData::default();
-        let _pending = <S as Storage>::Pending::default();
-        let _held = <S as Storage>::Held::default();
-        let _directives = <S as Storage>::Directives::default();
+        let routes = <S as EngineStorage>::Routes::default();
+        let announces = <S as EngineStorage>::Announces::default();
+        let _history = <S as EngineStorage>::History::default();
+        let _app_data = <S as EngineStorage>::AppData::default();
+        let _pending = <S as EngineStorage>::Pending::default();
+        let _held = <S as EngineStorage>::Held::default();
+        let _directives = <S as EngineStorage>::Directives::default();
         // MAX_TRACKED_DESTINATIONS (8) flows into the slot-keyed columns.
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);

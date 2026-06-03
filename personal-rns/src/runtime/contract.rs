@@ -19,7 +19,7 @@ use crate::interfaces::{
     ConnectionState, InterfaceId, NextScheduledInterfaceWake, OutboundPacket, RegisteredInterface,
     SendError,
 };
-use crate::routing::storage::Storage;
+use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
 /// Summary of one pooled drive cycle.
@@ -46,7 +46,7 @@ pub struct Runtime<Ho, I, S>
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
-    S: Storage,
+    S: EngineStorage,
 {
     engine: EngineState<S>,
     interfaces: I,
@@ -58,7 +58,7 @@ impl<Ho, I, S> Runtime<Ho, I, S>
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
-    S: Storage,
+    S: EngineStorage,
 {
     /// Register each interface with the engine and hold the set. The host built the
     /// set, so its backing already decided the bound; this only registers, panicking
@@ -148,7 +148,7 @@ fn cycle_pooled<I, S>(
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
-    S: Storage,
+    S: EngineStorage,
 {
     let entropy = EngineCycleEntropy::from_seed(entropy_seed);
 
@@ -265,7 +265,7 @@ fn snapshot_pooled<I, S>(
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
-    S: Storage,
+    S: EngineStorage,
 {
     let mut views = HeaplessVec::new();
     for started in interfaces.iter() {

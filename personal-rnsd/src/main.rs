@@ -99,8 +99,9 @@ fn main() {
     // (default 6h), the first as soon as the interface registers. Log when the routing
     // table grows — the proof the cable carried a real announce into the engine.
     let mut announced_routes = 0u32;
-    block_on(Prns::<FixedCapacity>::run(
+    block_on(Prns::run(
         Recipe {
+            engine_storage: FixedCapacity::DEFAULT,
             identity_secret_key: load_identity_secret_key(),
             self_announce: SelfAnnounceConfig {
                 app_name: SELF_ANNOUNCE_APP_NAME,

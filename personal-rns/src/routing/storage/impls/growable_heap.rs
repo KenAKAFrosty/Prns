@@ -6,12 +6,12 @@ use crate::routing::held_cache::HeapHeldAnnounces;
 use crate::routing::schedule::HeapRebroadcastQueue;
 use crate::routing::storage::{
     HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData, HeapRouteColumns,
-    Storage,
+    EngineStorage,
 };
 
 pub struct GrowableHeap;
 
-impl Storage for GrowableHeap {
+impl EngineStorage for GrowableHeap {
     type Routes = HeapRouteColumns;
     type Announces = HeapRetainedAnnounceColumns;
     type History = HeapAnnounceIdHistory;
@@ -28,13 +28,13 @@ mod tests {
 
     #[test]
     fn bundles_unbounded_heap_backends() {
-        let routes = <GrowableHeap as Storage>::Routes::default();
-        let announces = <GrowableHeap as Storage>::Announces::default();
-        let _history = <GrowableHeap as Storage>::History::default();
-        let _app_data = <GrowableHeap as Storage>::AppData::default();
-        let _pending = <GrowableHeap as Storage>::Pending::default();
-        let _held = <GrowableHeap as Storage>::Held::default();
-        let _directives = <GrowableHeap as Storage>::Directives::default();
+        let routes = <GrowableHeap as EngineStorage>::Routes::default();
+        let announces = <GrowableHeap as EngineStorage>::Announces::default();
+        let _history = <GrowableHeap as EngineStorage>::History::default();
+        let _app_data = <GrowableHeap as EngineStorage>::AppData::default();
+        let _pending = <GrowableHeap as EngineStorage>::Pending::default();
+        let _held = <GrowableHeap as EngineStorage>::Held::default();
+        let _directives = <GrowableHeap as EngineStorage>::Directives::default();
         assert_eq!(routes.capacity(), usize::MAX);
         assert_eq!(announces.capacity(), usize::MAX);
     }
