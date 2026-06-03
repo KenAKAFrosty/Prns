@@ -5,8 +5,9 @@
 //!
 //! [`snapshot_to_cards`] turns a runtime snapshot into the renderable [`Card`]
 //! list. [`UiState`] adds the small amount of single-button interaction the
-//! renderer needs: short press advances the selected interface and keeps it
-//! visible; long press opens that interface's menu, where short press advances
+//! renderer needs: short press advances from the global row through the
+//! interface cards and keeps the focused item visible; long press opens either
+//! the global menu or the focused interface's menu, where short press advances
 //! dummy rows and long press exits. The engine snapshot is deliberately
 //! product-agnostic — it carries only each interface's opaque [`InterfaceId`] —
 //! so the host supplies the icon kind and label (its own product knowledge)
@@ -55,6 +56,10 @@ pub fn snapshot_to_cards<const N: usize>(
             // value.
             links: 0,
             destinations: view.tracked_destinations,
+            // The runtime snapshot does not expose rate or last-activity age yet.
+            // Keep the renderer surface ready while reporting neutral values.
+            rate_bytes_per_sec: 0,
+            last_activity_secs: None,
         });
     }
     cards

@@ -174,6 +174,8 @@ fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
         rx_bytes: 0,
         links: 1_234,
         destinations: 56_789,
+        rate_bytes_per_sec: 12_400,
+        last_activity_secs: Some(3),
     });
     let _ = cards.push(Card {
         kind: CardKind::EspNow,
@@ -184,6 +186,8 @@ fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
         rx_bytes: 0,
         links: 999_999,
         destinations: 1_234_567,
+        rate_bytes_per_sec: 987_000,
+        last_activity_secs: Some(0),
     });
     let _ = cards.push(Card {
         kind: CardKind::Ble,
@@ -194,6 +198,8 @@ fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
         rx_bytes: 12_340,
         links: 7,
         destinations: 12,
+        rate_bytes_per_sec: 1_200,
+        last_activity_secs: Some(42),
     });
     let _ = cards.push(Card {
         kind: CardKind::LoRa,
@@ -204,6 +210,8 @@ fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
         rx_bytes: 0,
         links: 0,
         destinations: 0,
+        rate_bytes_per_sec: 0,
+        last_activity_secs: None,
     });
 }
 
@@ -298,7 +306,7 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.selected_card(4), Some(1));
+        assert_eq!(ui_state.selected_card(4), Some(0));
         assert_eq!(ui_state.menu_selected_item(), None);
     }
 
@@ -319,8 +327,8 @@ mod tests {
             &mut ui_state,
         );
 
-        assert_eq!(ui_state.selected_card(4), Some(0));
-        assert_eq!(ui_state.menu_selected_item(), Some(0));
+        assert_eq!(ui_state.selected_card(4), None);
+        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
         assert!(active_press.expect("press remains active").long_press_sent);
     }
 
@@ -349,8 +357,8 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.selected_card(4), Some(0));
-        assert_eq!(ui_state.menu_selected_item(), Some(0));
+        assert_eq!(ui_state.selected_card(4), None);
+        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
     }
 
     #[test]
@@ -372,8 +380,8 @@ mod tests {
         );
 
         assert!(active_press.is_none());
-        assert_eq!(ui_state.selected_card(4), Some(0));
-        assert_eq!(ui_state.menu_selected_item(), Some(0));
+        assert_eq!(ui_state.selected_card(4), None);
+        assert_eq!(ui_state.global_menu_selected_item(), Some(0));
     }
 }
 
