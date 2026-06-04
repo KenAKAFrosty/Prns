@@ -4,8 +4,7 @@ use super::core::TrafficLedger;
 use super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
-    ingest_packets, tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
-    NextScheduledEngineWork,
+    EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis, NextScheduledEngineWork,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -139,14 +138,14 @@ where
         let id = started.descriptor().id;
         started.drain_inbound(|packet| {
             traffic.add_rx(id, packet.bytes.len() as u64);
-            let out = ingest_packets(engine, core::iter::once(packet), entropy.jitter);
+            let out = engine.ingest_packets(core::iter::once(packet), entropy.jitter);
             ingested_packet_count += out.processed_packet_count();
             accepted_announce_count += out.accepted_announce_count();
             scheduled_rebroadcast_count += out.scheduled_rebroadcast_count();
         });
     }
 
-    let tick_output = tick(engine, now, entropy.jitter);
+    let tick_output = engine.tick(now, entropy.jitter);
     let egress_directive_count = tick_output.egress_directive_count();
     let mut emit_buffer = [0u8; MTU];
     for directive in tick_output.egress_directives() {
