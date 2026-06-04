@@ -2,6 +2,7 @@ use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::local_destinations::FixedLocalDestinationColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
+use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::storage::{
     EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
     TieredAnnounceIdHistory,
@@ -15,6 +16,7 @@ pub struct FixedCapacity<
     const HISTORY_OVERFLOW_CAPACITY: usize,
     const HELD_CACHE_CAPACITY: usize,
     const MAX_LOCAL_DESTINATIONS: usize,
+    const PACKET_HASH_GENERATION_CAPACITY: usize,
 >;
 
 impl<
@@ -25,6 +27,7 @@ impl<
         const HISTORY_OVERFLOW_CAPACITY: usize,
         const HELD_CACHE_CAPACITY: usize,
         const MAX_LOCAL_DESTINATIONS: usize,
+        const PACKET_HASH_GENERATION_CAPACITY: usize,
     > EngineStorage
     for FixedCapacity<
         MAX_TRACKED_DESTINATIONS,
@@ -34,6 +37,7 @@ impl<
         HISTORY_OVERFLOW_CAPACITY,
         HELD_CACHE_CAPACITY,
         MAX_LOCAL_DESTINATIONS,
+        PACKET_HASH_GENERATION_CAPACITY,
     >
 {
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
@@ -52,17 +56,19 @@ impl<
     // One directive per tracked destination at most, so sized by the routing table.
     type Directives = FixedEngineDirectives<MAX_TRACKED_DESTINATIONS>;
     type LocalDestinations = FixedLocalDestinationColumns<MAX_LOCAL_DESTINATIONS>;
+    type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::local_destinations::LocalDestinationColumns;
+    use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedCapacity<8, 16, 256, 2, 8, 4, 2>;
+        type S = FixedCapacity<8, 16, 256, 2, 8, 4, 2, 4>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
@@ -71,8 +77,10 @@ mod tests {
         let _held = <S as EngineStorage>::Held::default();
         let _directives = <S as EngineStorage>::Directives::default();
         let local_destinations = <S as EngineStorage>::LocalDestinations::default();
+        let packet_hashes = <S as EngineStorage>::PacketHashes::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
         assert_eq!(local_destinations.capacity(), 2);
+        assert_eq!(packet_hashes.generation_capacity(), 4);
     }
 }

@@ -243,7 +243,7 @@ static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, display::InputEvent, 4> =
 /// doesn't fit comfortably alongside WiFi + the worker — this preset is ~12 KB.
 /// The params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
 /// history_overflow, held_cache>`.
-type S3EngineState = EngineState<FixedCapacity<24, 32, 1024, 4, 128, 4, 4>>;
+type S3EngineState = EngineState<FixedCapacity<24, 32, 1024, 4, 128, 4, 4, 32>>;
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";

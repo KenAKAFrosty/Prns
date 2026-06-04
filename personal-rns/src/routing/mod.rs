@@ -1,4 +1,5 @@
 pub mod announce;
+pub mod dedup;
 pub mod delivery;
 pub mod storage;
 pub mod types;

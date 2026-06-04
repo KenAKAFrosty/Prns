@@ -313,7 +313,7 @@ mod tests {
     use crate::routing::storage::FixedCapacity;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
-    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8>;
+    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8, 128>;
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
