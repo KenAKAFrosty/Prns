@@ -141,8 +141,7 @@ where
 /// Why registering an interface failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterInterfaceError {
-    /// The fixed registry
-    /// ([`MAX_REGISTERED_INTERFACES`](crate::interfaces::MAX_REGISTERED_INTERFACES)) is full.
+    /// The fixed registry ([`MAX_REGISTERED_INTERFACES`]) is full.
     RegistryFull,
 }
 

@@ -1,6 +1,7 @@
 //! Runtime for pooling started interfaces into the pure engine.
 //!
-//! Each cycle drains inbound packets from every [`InterfaceHandle`], ticks the
+//! Each cycle drains inbound packets from every
+//! [`InterfaceHandle`](crate::interfaces::InterfaceHandle), ticks the
 //! engine, and fans resulting egress back through the handles. Interface workers
 //! wake the host when their queues need service; the runtime sleeps until an
 //! interface wakes it or the engine has scheduled work due.
@@ -62,7 +63,7 @@ where
 {
     /// Register each interface with the engine and hold the set. Registration is
     /// membership only — routability is re-decided per transmit (see
-    /// [`fan_to_handles`]) — so this never rejects on connection state; an
+    /// `fan_to_handles`) — so this never rejects on connection state; an
     /// over-capacity registry just drops the overflow interface rather than panicking.
     pub fn new(mut engine: EngineState<S>, interfaces: I, host: Ho) -> Self {
         for interface in interfaces.iter() {
