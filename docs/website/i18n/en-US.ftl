@@ -28,7 +28,7 @@ standards-section-label = Our standards
 standards-section-title = What you can count on
 standards-license-label = License
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = Dual-licensed and permissive. No copyleft, no non-commercial restrictions.
+standards-license-body = Dual-licensed and permissive. No copyleft or commercial restrictions.
 standards-safety-label = Safety
 standards-safety-headline = #![forbid(unsafe_code)]
 standards-safety-body = Our crates contain zero unsafe, enforced by the compiler. The unsafe inside dependencies is checked for UB under Miri and audited with cargo-geiger.
@@ -36,7 +36,7 @@ standards-correctness-label = Correctness
 standards-correctness-headline = Diff-tested against RNS
 standards-correctness-body = Every change is checked against the reference, then put through property, fuzz, and mutation tests, with Kani proofs where they matter.
 standards-benchmarked-label = Performance
-standards-benchmarked-headline = Measured, not promised
+standards-benchmarked-headline = Measured, not just claimed
 standards-benchmarked-body = Performance is tracked in the open, measured by a harness you can run yourself.
 standards-benchmarked-cta = See the benchmarks →
 
