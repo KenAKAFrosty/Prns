@@ -34,7 +34,7 @@ embassy-host = ["embassy-contract", "dep:embassy-net", "dep:lora-phy", "dep:log"
 # The plug-and-play USB-auto host interface: the std worker machinery plus
 # serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
 # libudev / IOKit / SetupAPI internally). Opt-in, so std hosts that don't want it
-# (e.g. the rvt sim, which pulls std-host by default) never link serialport.
+# never link serialport.
 usb-auto = ["std-host", "dep:serialport"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]

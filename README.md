@@ -31,7 +31,7 @@ The core engine is `no_std` and allocation-free, so the same wire contract runs 
 | [`personal-rns-napi`](personal-rns-napi) | Node-API bindings, published as the `@personal/rns` TypeScript package. |
 | [`personal-rns-capi`](personal-rns-capi) | C ABI for C, C++, Go, Zig, and other native consumers. |
 
-Also in the repository: [`rvt`](rvt) (Reticulum Visual Toolkit, multi-node simulation and dev tooling), [`personal-hopspot`](personal-hopspot) (embedded status-screen host), [`fuzz`](fuzz) (fuzz targets), and the device host workspaces under [`hosts/`](hosts).
+Also in the repository: [`personal-hopspot`](personal-hopspot) (embedded status-screen host), [`fuzz`](fuzz) (fuzz targets), and the device host workspaces under [`hosts/`](hosts).
 
 ## Status
 

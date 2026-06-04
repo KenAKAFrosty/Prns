@@ -6,7 +6,7 @@ publish = false
 description = "Public-facing docs site for the Personal Reticulum Suite, served at reticulum.rs."
 
 # Own workspace: keeps the (heavy) web/UI dep tree out of the core suite's
-# build and off the no_std gate. Mirrors the rvt pattern.
+# build and off the no_std gate.
 [workspace]
 
 [[bin]]

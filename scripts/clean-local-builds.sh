@@ -17,9 +17,6 @@ target
 fuzz/target
 fuzz/artifacts
 fuzz/coverage
-rvt/target
-rvt/dist
-rvt/.dx
 docs/website/target
 docs/website/dist
 docs/website/node_modules

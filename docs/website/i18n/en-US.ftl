@@ -120,8 +120,6 @@ crate-lxmf-role = Messaging
 crate-lxmf-blurb = LXMF on top of Reticulum — the layer Sideband and Nomadnet sit on. Identities, addresses, message delivery.
 crate-ffi-role = Mobile + Python bindings
 crate-ffi-blurb = One uniffi interface generates Kotlin (.aar), Swift (.xcframework), and Python (.whl). Use Reticulum from Android, iOS, or a Jupyter notebook — same shape, same engine.
-crate-rvt-role = Visual debugger
-crate-rvt-blurb = Watch packets move across simulated nodes on a virtual clock. Deterministic — same scenario, same trace, every time.
 crate-esp32c6-role = ESP32-C6 firmware
 crate-esp32c6-blurb = Bare-metal host adapter for the ESP32-C6. No OS, no allocator — proof the engine runs on a five-dollar RISC-V chip with built-in radios.
 
