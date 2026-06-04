@@ -21,11 +21,21 @@ heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
+# The owned Reticulum engine + the USB-auto device responder (the board end of the
+# plug-and-play link). `embassy-contract` is the light seam — no embassy-net/LoRa.
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
+# Xtensa has no bare embassy executor on this esp-hal 1.1 generation (esp-hal-embassy's
+# internal feature is unreachable), so the executor + embassy-time driver come from
+# esp-rtos — the same runtime the heltec S3 host proves. No WiFi here, so no esp-radio.
+esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy"] }
+esp-alloc = "0.10.0"
+embassy-executor = { version = "0.10", default-features = false }
+embassy-time = { version = "0.5", default-features = false }
 
 [profile.release]
 codegen-units = 1
