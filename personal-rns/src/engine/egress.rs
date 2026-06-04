@@ -1,8 +1,8 @@
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::wire::{
-    WireContext, ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WirePacketHeader,
-    HEADER_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
+    WirePacketHeader, HEADER_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

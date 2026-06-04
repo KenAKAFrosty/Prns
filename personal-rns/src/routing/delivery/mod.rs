@@ -14,6 +14,6 @@ pub struct PlainDelivery<'p> {
 }
 
 /// RNS 1.3.1 `Transport.packet_filter`: a plain data packet is only heard from
-/// a direct neighbor — anything beyond one hop was relayed against protocol and
+/// a direct neighbor. Anything beyond one hop was relayed against protocol and
 /// is dropped.
-const PLAIN_DATA_MAX_RECEIVED_HOPS: u8 = 1;
+pub const PLAIN_DATA_MAX_RECEIVED_HOPS: u8 = 1;

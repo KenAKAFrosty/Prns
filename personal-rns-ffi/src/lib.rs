@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use personal_rns::engine::{
-    tick, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
+    EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis,
     ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::routing::storage::FixedCapacity;
@@ -89,7 +89,7 @@ impl ReticulumRuntime {
         let RuntimeInner { state, substrate } = &mut *inner;
         let now = substrate.now_millis();
         let entropy = substrate.cycle_entropy();
-        let output = tick(state, now, entropy.jitter);
+        let output = state.tick(now, entropy.jitter);
         output.egress_directive_count() as u64
     }
 

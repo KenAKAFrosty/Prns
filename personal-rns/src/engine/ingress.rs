@@ -2,7 +2,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::wire::{
-    WireContext, DestinationHash, DestinationType, PacketType, TransportId, WirePacketHeader, MTU,
+    DestinationHash, DestinationType, PacketType, TransportId, WireContext, WirePacketHeader, MTU,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +102,7 @@ impl<'a> Ingress<'a> {
 mod tests {
     use super::*;
     use crate::wire::{
-        WireContext, ContextFlag, DestinationHash, IfacFlag, PropagationType, TransportId,
+        ContextFlag, DestinationHash, IfacFlag, PropagationType, TransportId, WireContext,
         WirePacketHeader, HEADER_LEN,
     };
 
