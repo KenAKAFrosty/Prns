@@ -6,7 +6,10 @@
 //! same bytes saved and reloaded (the RNS on-disk layout); a fixed array gives a
 //! deterministic test/spike identity. Persistence is a later, separate concern.
 
-use crate::crypto::{sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+use crate::crypto::{
+    hkdf_sha256, sha256, token_seal, x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey,
+    Ed25519Signature, TokenKey, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+};
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
 pub use zeroize::Zeroizing;
@@ -99,14 +102,109 @@ fn derive_identity_hash(
     IdentityHash(truncated)
 }
 
+/// RNS 1.3.1 `Identity.DERIVED_KEY_LENGTH`: packet keys are 64 bytes, selecting
+/// the token's AES-256 mode.
+const DERIVED_PACKET_KEY_LEN: usize = 64;
+
+pub const ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN: usize = 32;
+
+pub const ENCRYPTION_IV_LEN: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncryptError {
+    BufferTooShort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecryptError {
+    TokenTooShort,
+    InvalidToken,
+    BufferTooShort,
+}
+
+struct DerivedPacketKey(Zeroizing<[u8; DERIVED_PACKET_KEY_LEN]>);
+
+impl DerivedPacketKey {
+    fn derive(shared: &X25519SharedSecret, recipient_identity_hash: &IdentityHash) -> Self {
+        Self(Zeroizing::new(hkdf_sha256::<DERIVED_PACKET_KEY_LEN>(
+            shared.as_bytes(),
+            recipient_identity_hash.as_bytes(),
+            &[],
+        )))
+    }
+
+    #[allow(clippy::expect_used)]
+    fn token_key(&self) -> TokenKey<'_> {
+        TokenKey::from_derived(self.0.as_slice())
+            .expect("a 64-byte derived key is always a valid token key")
+    }
+}
+
+/// A peer identity learned from the network (an announce): its public keys and
+/// derived hash, with no private material. The encrypting side of RNS 1.3.1
+/// `Identity.encrypt` — packets are sealed *for* a remote identity; only
+/// [`in_memory::InMemoryNodeIdentity::decrypt`] can open them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteIdentity {
+    encryption_public: IdentityEncryptionPublicKey,
+    hash: IdentityHash,
+}
+
+impl RemoteIdentity {
+    pub fn from_public_keys(
+        encryption_public: IdentityEncryptionPublicKey,
+        signing_public: IdentitySigningPublicKey,
+    ) -> Self {
+        Self {
+            encryption_public,
+            hash: derive_identity_hash(&encryption_public, &signing_public),
+        }
+    }
+
+    pub const fn encryption_public_key(&self) -> IdentityEncryptionPublicKey {
+        self.encryption_public
+    }
+
+    pub const fn identity_hash(&self) -> IdentityHash {
+        self.hash
+    }
+
+    pub fn encrypt(
+        &self,
+        ephemeral_secret: &X25519SecretKey,
+        iv: &[u8; ENCRYPTION_IV_LEN],
+        plaintext: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, EncryptError> {
+        if out.len() < ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+            return Err(EncryptError::BufferTooShort);
+        }
+        let ephemeral_public = x25519_public_key(ephemeral_secret);
+        let shared = x25519_diffie_hellman(ephemeral_secret, self.encryption_public.as_x25519());
+        let key = DerivedPacketKey::derive(&shared, &self.hash);
+
+        out[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN].copy_from_slice(&ephemeral_public.0);
+        let sealed = token_seal(
+            &key.token_key(),
+            iv,
+            plaintext,
+            &mut out[ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN..],
+        )
+        .map_err(|_| EncryptError::BufferTooShort)?;
+        Ok(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + sealed)
+    }
+}
+
 pub mod in_memory {
     use super::{
-        derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
-        IdentitySigningPublicKey, IDENTITY_SECRET_KEY_LEN,
+        derive_identity_hash, DecryptError, DerivedPacketKey, IdentityEncryptionPublicKey,
+        IdentityHash, IdentitySigner, IdentitySigningPublicKey,
+        ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, IDENTITY_SECRET_KEY_LEN,
     };
     use crate::crypto::{
-        ed25519_public_key, ed25519_sign, x25519_diffie_hellman, x25519_public_key,
-        Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+        ed25519_public_key, ed25519_sign, token_open, x25519_diffie_hellman, x25519_public_key,
+        CryptoError, Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
+        X25519SharedSecret,
     };
 
     pub struct InMemoryNodeIdentity {
@@ -142,6 +240,37 @@ pub mod in_memory {
 
         pub fn agree(&self, peer_encryption_public: &X25519PublicKey) -> X25519SharedSecret {
             x25519_diffie_hellman(&self.encryption_secret, peer_encryption_public)
+        }
+
+        pub fn decrypt(
+            &self,
+            ciphertext_token: &[u8],
+            out: &mut [u8],
+        ) -> Result<usize, DecryptError> {
+            if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+                return Err(DecryptError::TokenTooShort);
+            }
+            let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+            ephemeral_public_bytes
+                .copy_from_slice(&ciphertext_token[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN]);
+            let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
+
+            let shared = self.agree(&ephemeral_public);
+            let key = DerivedPacketKey::derive(&shared, &self.hash);
+
+            token_open(
+                &key.token_key(),
+                &ciphertext_token[ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN..],
+                out,
+            )
+            .map_err(|error| match error {
+                CryptoError::BufferTooShort => DecryptError::BufferTooShort,
+                CryptoError::InvalidSignature
+                | CryptoError::InvalidMac
+                | CryptoError::InvalidPadding
+                | CryptoError::MalformedToken
+                | CryptoError::BadKeyLength => DecryptError::InvalidToken,
+            })
         }
     }
 
@@ -180,6 +309,139 @@ pub mod in_memory {
                 *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex");
             }
             out
+        }
+
+        const RNS_SEALED_TOKEN: &str =
+            "81359acd4801e770d203b5b8f8500cd30830045a31616ff3167cac747c3c9072\
+             93c11f98685deef2b25d3f6514d10a3c17c1bb903f6531e5499ef38dd7536fad\
+             65701dad8b651b60ed993be65e1433a7f49cdb641b314b1ebeac3930058deea3";
+
+        const RUST_SEALED_TOKEN: &str =
+            "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14\
+             44444444444444444444444444444444f3fc0f35b7a182440fd9efc1ed35ae58\
+             99108742c09abbdf0d496ff0e0461e0b9959bc4e968a39f8934dc9b071066050";
+
+        fn token_hex(s: &str) -> std::vec::Vec<u8> {
+            let cleaned: std::string::String = s.split_whitespace().collect();
+            (0..cleaned.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&cleaned[i..i + 2], 16).expect("valid hex"))
+                .collect()
+        }
+
+        fn remote_for(identity: &InMemoryNodeIdentity) -> super::super::RemoteIdentity {
+            super::super::RemoteIdentity::from_public_keys(
+                identity.encryption_public_key(),
+                identity.signing_public_key(),
+            )
+        }
+
+        #[test]
+        fn decrypt_opens_a_token_sealed_by_rns_1_3_1() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let token = token_hex(RNS_SEALED_TOKEN);
+            let mut out = [0u8; 64];
+            let n = identity.decrypt(&token, &mut out).unwrap();
+            assert_eq!(&out[..n], b"hello-single");
+        }
+
+        #[test]
+        fn encrypt_seals_the_token_rns_1_3_1_opens() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let mut out = [0u8; 128];
+            let n = remote_for(&identity)
+                .encrypt(
+                    &X25519SecretKey::new([0x33; 32]),
+                    &[0x44; 16],
+                    b"hello-single",
+                    &mut out,
+                )
+                .unwrap();
+            assert_eq!(out[..n].to_vec(), token_hex(RUST_SEALED_TOKEN));
+        }
+
+        #[test]
+        fn encrypt_round_trips_through_decrypt() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let plaintext = [0xC7; 211];
+            let mut sealed = [0u8; 512];
+            let n = remote_for(&identity)
+                .encrypt(
+                    &X25519SecretKey::new([0x55; 32]),
+                    &[0x66; 16],
+                    &plaintext,
+                    &mut sealed,
+                )
+                .unwrap();
+
+            let mut opened = [0u8; 512];
+            let opened_len = identity.decrypt(&sealed[..n], &mut opened).unwrap();
+            assert_eq!(&opened[..opened_len], &plaintext);
+        }
+
+        #[test]
+        fn a_tampered_token_is_rejected() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let mut out = [0u8; 64];
+
+            let mut tampered_ciphertext = token_hex(RNS_SEALED_TOKEN);
+            tampered_ciphertext[50] ^= 0x01;
+            assert_eq!(
+                identity.decrypt(&tampered_ciphertext, &mut out),
+                Err(DecryptError::InvalidToken),
+            );
+
+            let mut tampered_mac = token_hex(RNS_SEALED_TOKEN);
+            let last = tampered_mac.len() - 1;
+            tampered_mac[last] ^= 0x01;
+            assert_eq!(
+                identity.decrypt(&tampered_mac, &mut out),
+                Err(DecryptError::InvalidToken),
+            );
+        }
+
+        #[test]
+        fn a_token_no_longer_than_the_ephemeral_key_is_rejected() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let mut out = [0u8; 64];
+            assert_eq!(
+                identity.decrypt(&[0xAA; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN], &mut out),
+                Err(DecryptError::TokenTooShort),
+            );
+        }
+
+        #[test]
+        fn another_identity_cannot_open_the_token() {
+            let other =
+                InMemoryNodeIdentity::from_secret_key_bytes(&[0x05; IDENTITY_SECRET_KEY_LEN]);
+            let token = token_hex(RNS_SEALED_TOKEN);
+            let mut out = [0u8; 64];
+            assert_eq!(
+                other.decrypt(&token, &mut out),
+                Err(DecryptError::InvalidToken),
+            );
+        }
+
+        #[test]
+        fn undersized_buffers_are_reported_not_panicked() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let token = token_hex(RNS_SEALED_TOKEN);
+            let mut tiny = [0u8; 4];
+            assert_eq!(
+                identity.decrypt(&token, &mut tiny),
+                Err(DecryptError::BufferTooShort),
+            );
+
+            let mut tiny_out = [0u8; 16];
+            assert_eq!(
+                remote_for(&identity).encrypt(
+                    &X25519SecretKey::new([0x33; 32]),
+                    &[0x44; 16],
+                    b"hello-single",
+                    &mut tiny_out,
+                ),
+                Err(super::super::EncryptError::BufferTooShort),
+            );
         }
 
         #[test]
