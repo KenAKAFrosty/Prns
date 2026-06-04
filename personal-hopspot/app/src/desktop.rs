@@ -71,8 +71,7 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-/// Spawn the engine on its own thread, then own the SDL2 window on this (the main)
-/// thread — SDL requires it.
+/// Spawn the engine on its own thread, then own the SDL2 window on this (the main) thread: SDL requires it.
 pub fn run() {
     // The engine thread feeds each cycle's snapshot to the UI thread.
     let (snap_tx, snap_rx) = mpsc::channel::<RuntimeSnapshot>();
@@ -84,31 +83,21 @@ pub fn run() {
     run_window(snap_rx);
 }
 
-/// Build the announcing engine + the plug-and-play USB-auto interface and drive the
-/// runtime forever, forwarding each cycle's snapshot to the UI thread.
 fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
-    // The std poll-loop host owns the clock + wake.
     let host = LinuxSync::new();
-
-    // Enumerates the USB bus itself and owns every Personal board plugged in —
-    // no port argument, no configuration.
     let interface = usb_auto_interface(USB_INTERFACE_ID);
-
-    // `attach` glues the interface's seam (keyed by the id the interface carries),
-    // starts its worker thread, and bundles what the runtime pools.
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
 
     block_on(Prns::run(
         Recipe {
-            // A mains-powered std host: unbounded heap storage, no fixed cap.
             engine_storage: GrowableHeap,
             identity_secret_key: load_identity_secret_key(),
             self_announce: SelfAnnounceConfig {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
                 app_data: SELF_ANNOUNCE_APP_DATA,
-                schedule: ReannounceSchedule::default(),
+                schedule: ReannounceSchedule::every(10_000),
             },
             interfaces,
             host,

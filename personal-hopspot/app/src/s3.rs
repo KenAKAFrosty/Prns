@@ -1,17 +1,3 @@
-//! The Heltec S3 face of the Personal Hopspot: the *same* announcing `Runtime` the
-//! desktop runs, here on bare metal, reachable over the plug-and-play USB-auto link —
-//! with the full Hopspot screen (interface cards, battery, single-button focus/menu),
-//! mirroring the desktop face and the heltec host.
-//!
-//! It is a pure consumer of the crate's API: build the embassy [`Host`], pop the
-//! USB-auto **device responder** in with [`attach`](EmbassyContractHost::attach), and
-//! hand a [`Recipe`] to [`Prns::run`]. The responder loop (the "mini-main") lives in
-//! the crate ([`serve`]); the board supplies the concrete `#[embassy_executor::task]`
-//! wrappers embassy's static task model forces up here, plus platform bring-up.
-//!
-//! Steady-state status goes to the OLED, never the shared usb-serial-jtag: a log byte
-//! injected mid-frame would corrupt the link the desktop is decoding.
-
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
@@ -56,17 +42,8 @@ use personal_hopspot_ui as screen;
 
 esp_app_desc!();
 
-/// Engine-facing id for this board's USB-auto link (opaque to the engine; the bytes
-/// are just log-legible).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
-
-/// In-flight capacity of each of the interface's data rings.
-const MAX_BUFFERED_PACKETS: usize = 8;
-
-/// This board's engine-storage sizing. The whole engine is built on the esp-rtos main
-/// task's stack (the embassy executor polls every task there), so it stays at the
-/// heltec's proven footprint — a desk node tracks few peers — not the desktop's heap
-/// preset (24 dests / 32 ids each / 1 KB arena / 4 floor / 128 overflow / 4 held).
+const PER_INTERFACE_MAX_BUFFERED_PACKETS: usize = 8;
 const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4> = FixedCapacity;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
@@ -78,6 +55,10 @@ const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
 /// VBAT(mV) = pin(mV) * 49 / 10.
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
+
+//REVIEW okayyyyyy we have a LOT of cleanup to do here
+
+
 /// LiPo range for the bar fill (datasheet: 3.3 V empty … 4.2 V full).
 const VBAT_EMPTY_MV: u32 = 3300;
 const VBAT_FULL_MV: u32 = 4200;
@@ -97,11 +78,11 @@ const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 /// The worker-side seam this board's responder task runs against.
 type UsbAutoContext =
-    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, MAX_BUFFERED_PACKETS>>;
+    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>>;
 
 /// The interface's four channels live in one board `static` (the embassy idiom);
 /// `attach` splits the worker + runtime ends out of it — no heap.
-static CHANNELS: EmbassyInterfaceChannels<MAX_DATA_BYTES, MAX_BUFFERED_PACKETS> =
+static CHANNELS: EmbassyInterfaceChannels<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS> =
     EmbassyInterfaceChannels::new();
 /// The host's one wake — the seam ends signal it, the contract host awaits it.
 static WAKE: WakeSignal = new_wake_signal();
@@ -334,7 +315,7 @@ async fn node_task(
                 aspects: &["delivery"],
                 app_data: SELF_ANNOUNCE_APP_DATA,
                 // Fast re-announce so the desktop catches us promptly during bring-up.
-                schedule: ReannounceSchedule::every(15_000),
+                schedule: ReannounceSchedule::every(10_000),
             },
             interfaces,
             host,

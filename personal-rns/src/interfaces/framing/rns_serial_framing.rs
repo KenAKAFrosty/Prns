@@ -103,9 +103,13 @@ pub enum DecodeError {
 /// accept. Serial-style RNS interfaces should size this at least at
 /// the engine MTU; sizing larger costs only stack bytes.
 ///
-/// Bytes received before the first `FLAG` are silently ignored — that
-/// matches RNS's reference behavior so the decoder can be plugged into
-/// an already-running byte stream without manual resync.
+/// The decoder can be plugged into an already-running byte stream: bytes
+/// that arrive with no frame open are taken as the body of a frame whose
+/// opening `FLAG` was missed, so they close at the next `FLAG` as one
+/// (typically undecodable, discarded) frame and the decoder realigns from
+/// there. This self-heal matters because RNS's `FLAG data FLAG FLAG data
+/// FLAG` layout would otherwise let a mid-frame join lock the decoder a
+/// half-frame out of phase permanently.
 ///
 /// [`feed`]: RnsSerialDecoder::feed
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,11 +164,20 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
             return Ok(None);
         }
 
+        //REVIEW oh shit! does doing all of this make us NOT RNS-faithful anymore? If so we need to forget that and just pick a custom framing of our own choosing. Perhaps one that makes more sense for us and our needs too?
         if !self.in_frame {
-            // Pre-frame noise (anything before the first FLAG). RNS
-            // ignores these; we do the same so a decoder can plug into
-            // an already-running stream.
-            return Ok(None);
+            // A payload byte with no frame open means we joined the stream
+            // mid-frame: a reconnect landing in another frame's body, or a
+            // half-frame an interrupted write left in the FIFO. Dropping these —
+            // the obvious thing — is a trap against RNS's periodic
+            // `FLAG data FLAG FLAG data FLAG` layout: it can lock the decoder a
+            // half-frame out of phase *permanently*, with every real payload then
+            // falling into the dropped gap. Instead, open a frame implicitly and
+            // accumulate. Those bytes close at the next FLAG as one frame that
+            // fails to decode and is discarded, and from there we are realigned.
+            self.buffer.clear();
+            self.in_frame = true;
+            self.saw_escape = false;
         }
 
         if byte == ESC {
@@ -294,10 +307,36 @@ mod tests {
     }
 
     #[test]
-    fn decoder_ignores_bytes_before_the_first_flag() {
+    fn a_mid_frame_join_surfaces_one_discardable_frame_then_realigns() {
+        // Joining the stream inside a frame's body (0xAA, 0xBB with no opening
+        // FLAG): those bytes close as one frame at the next FLAG — higher layers
+        // fail to decode it and drop it — and the decoder is realigned for the
+        // genuine frame that follows.
         let bytes = [0xAA, 0xBB, FLAG, 0x01, FLAG];
         let frames = decode_all(&bytes);
-        assert_eq!(frames, std::vec![std::vec![0x01]]);
+        assert_eq!(frames, std::vec![std::vec![0xAA, 0xBB], std::vec![0x01]]);
+    }
+
+    #[test]
+    fn a_half_frame_does_not_permanently_desync_the_following_frames() {
+        // The USB-auto reconnect failure: an interrupted write left a half-frame
+        // (an opening FLAG and a truncated body, never closed) in the FIFO, then a
+        // clean frame follows. A strict HDLC toggle reads the clean frame's
+        // opening FLAG as the half-frame's close, drops the clean body as
+        // "between frames", and stays locked a half-frame out of phase forever.
+        // The self-healing decoder realigns and recovers the real announce.
+        let announce = hx(RAW_ANNOUNCE_HEX);
+        let mut clean = std::vec![0u8; max_encoded_len(announce.len())];
+        let n = encode(&announce, &mut clean).unwrap();
+
+        let mut stream = std::vec![FLAG, 0x03, 0xAA, 0xBB]; // half-frame, no closing FLAG
+        stream.extend_from_slice(&clean[..n]);
+
+        let frames = decode_all(&stream);
+        assert!(
+            frames.contains(&announce),
+            "decoder failed to realign onto the clean frame after a half-frame"
+        );
     }
 
     #[test]

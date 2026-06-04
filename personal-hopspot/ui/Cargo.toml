@@ -4,15 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Shared Personal Hopspot status-screen renderer — one DrawTarget-generic draw path for the S3 OLED and the Linux debug window."
+description = "Shared UI functionlity for the Personal Hopspot"
 
 [dependencies]
-# Snapshot types only (RuntimeSnapshot / InterfaceView / InterfaceId). These are
-# ungated, so the renderer stays pure no_std with no runtime feature pulled in.
 personal-rns = { path = "../../personal-rns", default-features = false }
-# The drawing primitives; pinned to the same 0.8 the S3's ssd1306 stack uses.
-embedded-graphics = "0.8"
-# No-alloc line formatting + the card vector.
+embedded-graphics = "0.8" # pinned to the same 0.8 the S3's ssd1306 stack uses.
 heapless = { version = "0.8", default-features = false }
 
 [lints]

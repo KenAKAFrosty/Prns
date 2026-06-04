@@ -34,12 +34,8 @@ struct PortId(String);
 const PROBE_SCAN_BUDGET: u8 = 7;
 
 enum LinkState {
-    /// Probed, awaiting a HelloAck; rejected once `scans_left` hits zero.
-    Probing {
-        scans_left: u8,
-    },
+    Probing { scans_left: u8 },
     Confirmed(NodeTag),
-    /// The port errored this pass and is pruned once servicing finishes.
     Lost,
 }
 
@@ -52,8 +48,6 @@ struct Device<Port> {
 
 struct Discoverer<Port> {
     devices: Vec<Device<Port>>,
-    /// Ports that were probed but never answered: skipped until they drop out of a
-    /// scan, so we neither re-probe a stranger nor keep its port open.
     rejected: Vec<PortId>,
     reported_state: ConnectionState,
 }
@@ -104,11 +98,11 @@ impl<Port: Read + Write> Discoverer<Port> {
                 *scans_left = scans_left.saturating_sub(1);
             }
         }
-        // Re-offer the handshake to every still-probing link each scan. Opening a
-        // USB-CDC port can reset the board — the DTR/RTS toggle that drops an ESP32
-        // into its download stub — dropping the Hello sent on open; re-sending until
-        // the budget runs out rides over that reboot, and any otherwise-lost first
-        // Hello, without widening the budget.
+        // Re-offer the handshake to every still-probing link each scan. The Hello
+        // sent on open can be missed (a board still booting when first probed, or
+        // one rebooted by something other than us) so re-sending until the budget
+        // runs out rides over that, without widening the budget. (`open_cdc_port`
+        // keeps our own open from resetting the board in the first place.)
         let mut hello = [0u8; MAX_FRAMED_BYTES];
         if let Ok(n) = Message::Hello.write_framed(&mut hello) {
             for device in &mut self.devices {
@@ -117,8 +111,7 @@ impl<Port: Read + Write> Discoverer<Port> {
                 }
             }
         }
-        // A probe that ran out is rejected: remember the id so we don't immediately
-        // re-probe it, then drop the link below (releasing its port).
+
         for device in &self.devices {
             if matches!(device.state, LinkState::Probing { scans_left: 0 }) {
                 self.rejected.push(device.id.clone());
@@ -246,6 +239,8 @@ fn would_block(e: &io::Error) -> bool {
     )
 }
 
+//REVIEW i still can't quite wrap around why we split this up into a different module here? it being gated behind "usb-auto" when the *entire* impl is usb-auto makes no sense to me. It feels like a smell.
+
 /// The production driver: polls serialport a few times a second for the USB CDC
 /// ports present, reconciles them into the Discoverer's links, and runs the
 /// servicing loop. Cross-platform — serialport cfg-gates its own per-OS backends;
@@ -330,12 +325,14 @@ mod driver {
             .open()
             .map_err(io::Error::other)?;
         // An ESP32's native USB-serial-jtag maps the modem lines to its boot/reset
-        // pins (RTS→EN, DTR→GPIO0), so a host asserting them pulses the board into
-        // reset — or its download stub — mid-handshake. Hold both deasserted so the
-        // board keeps running across an open. (A board behind a USB-UART bridge
-        // ignores these, so it is harmless there.)
-        let _ = port.write_data_terminal_ready(false);
+        // pins (RTS→EN, DTR→GPIO0); it reads the single combination DTR=0, RTS=1 as
+        // a chip reset. Linux cdc-acm opens the port at DTR=1, RTS=1 (a safe combo),
+        // so we must lower RTS *before* DTR — `(1,1)→(1,0)→(0,0)` — to settle the
+        // lines without ever passing through the reset combination. Dropping DTR
+        // first would momentarily sit at `(0,1)` and reboot the board on every open.
+        // (A board behind a USB-UART bridge ignores these, so it is harmless there.)
         let _ = port.write_request_to_send(false);
+        let _ = port.write_data_terminal_ready(false);
         Ok(CdcPort(port))
     }
 }

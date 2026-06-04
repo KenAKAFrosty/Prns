@@ -3,17 +3,13 @@ name = "personal-hopspot-app"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Personal Hopspot — one source, two targets: the Linux debug window and the Heltec S3 OLED firmware."
+description = "Your Personal Reticulum Hopspot"
 
 [workspace]
-# Two mutually-exclusive targets (xtensa firmware vs. host desktop) pull `personal-rns`
-# with different features, so per-target feature isolation is required.
 resolver = "2"
 
 [features]
 default = []
-# Deterministic bring-up identity (the pinned oracle keypair) for the desktop face —
-# mirrors rnsd. Without it the desktop draws a random identity from the OS CSPRNG.
 fixture-identity = []
 
 [[bin]]
@@ -28,33 +24,22 @@ heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(not(target_arch = "xtensa"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
-# The desktop face runs the *real* announcing Runtime — the same engine + std host the
-# daemon uses, plus the plug-and-play USB-auto interface (auto-discovered USB CDC).
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["std-host", "usb-auto"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-# The owned Reticulum engine + the USB-auto device responder (the board end of the
-# plug-and-play link). `embassy-contract` is the light seam — no embassy-net/LoRa.
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract"] }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }
 esp-println = { version = "0.17", default-features = false, features = ["esp32s3", "jtag-serial"] }
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
-# Xtensa has no bare embassy executor on this esp-hal 1.1 generation (esp-hal-embassy's
-# internal feature is unreachable), so the executor + embassy-time driver come from
-# esp-rtos — the same runtime the heltec S3 host proves. No WiFi here, so no esp-radio.
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy"] }
 esp-alloc = "0.10.0"
 embassy-executor = { version = "0.10", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
-# The `Watch` backing the runtime->OLED snapshot channel (the engine fires each
-# cycle's snapshot out on it; the render loop subscribes). Matches the seam's 0.8.
 embassy-sync = { version = "0.8", default-features = false }
-# `select3` the render loop on three wakes (snapshot / battery tick / button), and
-# `select` the button task on press-vs-hold.
 embassy-futures = { version = "0.1", default-features = false }
 
 [profile.release]

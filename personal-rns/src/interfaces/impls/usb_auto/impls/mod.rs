@@ -1,11 +1,9 @@
-//! Per-substrate USB-auto workers. The std discoverer owns a host's whole USB
-//! bus — many links behind one seam; the embassy device responder (later) answers
-//! a single host on its one link.
-
 #[cfg(feature = "std-host")]
 mod std;
 #[cfg(feature = "usb-auto")]
 pub use std::usb_auto_interface;
+
+//REVIEW i'm also not sure why we have like 3 different embasy terms. isn't there an emebassy-host and another one as well?
 
 #[cfg(feature = "embassy-contract")]
 mod embassy;
