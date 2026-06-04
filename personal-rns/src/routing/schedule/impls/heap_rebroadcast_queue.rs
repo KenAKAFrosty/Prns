@@ -1,6 +1,3 @@
-//! Growable (std/alloc) rebroadcast queue — the unbounded [`RebroadcastQueue`],
-//! still one entry per destination.
-
 use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
@@ -65,14 +62,12 @@ mod tests {
     #[test]
     fn grows_past_a_fixed_cap_upserts_and_drains() {
         let mut pending = HeapRebroadcastQueue::default();
-        // 200 distinct destinations — well past any fixed MAX_PENDING.
         for n in 0..200u8 {
             pending.schedule(dest(n), InstantMillis(100 + n as u64), iface(0xAA));
         }
         assert_eq!(pending.pending_count(), 200);
         assert_eq!(pending.earliest_due_at(), Some(InstantMillis(100)));
 
-        // Re-scheduling a destination upserts (no duplicate) and moves its time.
         pending.schedule(dest(0), InstantMillis(50), iface(0xBB));
         assert_eq!(pending.pending_count(), 200);
         assert_eq!(pending.earliest_due_at(), Some(InstantMillis(50)));

@@ -1,11 +1,3 @@
-//! Engine directives — a tick's outcomes as data.
-//!
-//! A [`tick`](crate::engine::tick) produces [`EngineDirective`]s: what to do, and
-//! (the engine's decision, its predicates already applied) which interfaces to do
-//! it on. The runtime reads them through the `TickOutput` window and delivers each
-//! to its live interfaces — the engine is the brain that decides, the runtime the
-//! muscle that delivers.
-
 mod impls;
 
 pub use impls::*;

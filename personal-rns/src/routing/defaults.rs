@@ -5,17 +5,14 @@
 
 use crate::wire::DestinationHash;
 
-/// How long a learned route stays valid without a refresh.
 pub(crate) const DEFAULT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
 
-/// Width of the rebroadcast jitter window.
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;
 
-/// Seed for deterministic rebroadcast spreading.
 #[derive(Debug, Clone, Copy)]
 pub struct JitterSeed(pub u64);
 
-/// Deterministically spread a destination into the rebroadcast window.
+#[allow(clippy::expect_used)]
 pub(crate) fn jitter_offset_for(
     seed: JitterSeed,
     destination: &DestinationHash,

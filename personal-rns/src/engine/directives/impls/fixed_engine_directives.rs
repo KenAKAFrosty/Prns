@@ -10,7 +10,6 @@ impl<const MAX_DIRECTIVES: usize> EngineDirectives for FixedEngineDirectives<MAX
         self.directives.clear();
     }
     fn push(&mut self, directive: EngineDirective) {
-        // Sized to the routing table, so due directives never exceed capacity.
         let _ = self.directives.push(directive);
     }
     fn iter(&self) -> core::slice::Iter<'_, EngineDirective> {

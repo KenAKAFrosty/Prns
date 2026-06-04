@@ -1,11 +1,3 @@
-//! The shared wire protocol both ends of a USB-auto link speak: a one-byte
-//! message kind carried inside a [`rns_serial_framing`] frame.
-//!
-//! This is the *only* part of the interface the host and the device hold in
-//! common. Everything else (enumerating ports, the device table, fanning one
-//! outbound packet to many links) belongs to the host and lives in its worker,
-//! because a USB *device* has a single link and never discovers anything.
-
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::{
     ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -70,7 +62,6 @@ pub enum MalformedMessage {
 }
 
 impl Message<'_> {
-    /// Serialize to the unframed `kind + body`; returns the byte count.
     pub fn write_payload(&self, out: &mut [u8]) -> Result<usize, WriteError> {
         match self {
             Message::Hello => {
@@ -158,22 +149,13 @@ fn vet_handshake(body: &[u8], expected_len: usize) -> Result<(), MalformedMessag
     Ok(())
 }
 
-/// What the *device* end does with one decoded inbound frame. Pure policy — the
-/// embassy responder ([`impls::serve`](super::impls)) is the I/O shell that acts
-/// on it. Present only where that responder is built, plus under `test`.
 #[cfg(any(test, feature = "embassy-contract"))]
 pub enum InboundReaction<'a> {
-    /// A host probe — answer it with our [`Message::HelloAck`].
     AnswerHandshake,
-    /// A Reticulum packet bound for the engine — submit it on the inbound lane.
     Deliver(&'a [u8]),
-    /// Nothing to act on: a stray `HelloAck` (a device never probes, so it never
-    /// asked for one) or a frame that failed to decode.
     Ignore,
 }
 
-/// Map one decoded inbound message to the device's reaction. A device only ever
-/// answers probes and delivers data; everything else it lets lie.
 #[cfg(any(test, feature = "embassy-contract"))]
 pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReaction<'_> {
     match message {
@@ -183,12 +165,6 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
     }
 }
 
-/// The routing facts the *host* end of a USB-auto link registers: a receiving/
-/// transmitting/forwarding direct peer with no in-medium repeat, like the serial
-/// cable. As an always-up aggregate it stays routable while its worker runs —
-/// `Degraded` with no board confirmed, `Connected` once one is — so it never
-/// blocks the engine's announce path. To the engine it is one interface, however
-/// many boards it owns.
 pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
@@ -202,10 +178,6 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     }
 }
 
-/// The routing facts the *device* end registers. Same direct-peer shape as the
-/// host, but a board has exactly one link — the host that enumerated it — not an
-/// aggregate, so it reports `Connected` outright, matching the serial cable's
-/// "up once the wire is there" convention.
 pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
@@ -378,7 +350,6 @@ mod tests {
         assert_eq!(decoded, Some(true));
     }
 
-    // Bytes the framing layer must escape, so write_framed → decode exercises stuffing.
     const FLAG_LIKE: u8 = 0x7E;
     const ESC_LIKE: u8 = 0x7D;
 

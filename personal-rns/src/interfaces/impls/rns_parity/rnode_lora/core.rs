@@ -27,8 +27,6 @@ pub const LORA_HEADER_LEN: usize = 1;
 /// frame at 255 bytes (RNode `SINGLE_MTU`).
 pub const LORA_SINGLE_FRAME_MAX: usize = 255;
 
-/// The most payload one on-air frame carries: the frame cap minus the header.
-/// A payload above this is split across frames.
 pub const LORA_SINGLE_FRAME_PAYLOAD_MAX: usize = LORA_SINGLE_FRAME_MAX - LORA_HEADER_LEN;
 
 /// The most payload we carry across a single packet's frames — RNode's `MTU`
@@ -58,15 +56,10 @@ pub struct LoRaModulation {
     pub frequency_hz: u32,
     pub bandwidth_hz: u32,
     pub spreading_factor: u8,
-    /// Denominator of the 4/n coding rate (`5..=8` → 4/5 .. 4/8).
     pub coding_rate_denominator: u8,
     pub preamble_symbols: u16,
 }
 
-/// A standard 915 MHz (US ISM) Reticulum LoRa profile: BW 125 kHz, SF8, CR 4:5,
-/// RNode's default 18-symbol preamble. Both the Hopspot and the peer RNode must
-/// be configured to these exact values to hear each other; change them in one
-/// place here if we retune.
 pub const DEFAULT_915_LORA_PROFILE: LoRaModulation = LoRaModulation {
     frequency_hz: 915_000_000,
     bandwidth_hz: 125_000,
@@ -75,33 +68,19 @@ pub const DEFAULT_915_LORA_PROFILE: LoRaModulation = LoRaModulation {
     preamble_symbols: 18,
 };
 
-/// A parsed inbound on-air frame: the sequence tag and split flag read from
-/// RNode's header byte, and the bytes that followed it. One [`LoRaReassembler`]
-/// turns a sequence of these back into whole Reticulum packets.
 #[derive(Debug, PartialEq, Eq)]
 pub struct AirFrame<'a> {
-    /// The header's sequence value (high nibble, e.g. `0x30`). Ties the frames
-    /// of a split packet together; for a whole-in-one-frame packet it's an opaque tag.
     pub sequence: u8,
-    /// RNode's split flag: this frame is one part of a packet that spanned more
-    /// than one LoRa frame. Both parts carry it; a whole-in-one-frame packet doesn't.
     pub is_split_fragment: bool,
-    /// The frame's slice of the Reticulum packet, after the header.
     pub payload: &'a [u8],
 }
 
-/// Why an outbound packet couldn't be framed for the air.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AirFrameError {
-    /// The packet exceeds what two LoRa frames carry ([`LORA_MAX_PAYLOAD`]).
-    /// Reticulum's MTU is below this, so this only guards a misuse.
     PayloadExceedsMax,
-    /// The supplied output buffer can't hold the header byte plus the frame's payload.
     OutputBufferTooSmall,
 }
 
-/// How many on-air frames `payload_len` is sent as: one if it fits a single
-/// frame, otherwise two (RNode splits at [`LORA_SINGLE_FRAME_PAYLOAD_MAX`]).
 pub const fn air_frame_count(payload_len: usize) -> usize {
     if payload_len <= LORA_SINGLE_FRAME_PAYLOAD_MAX {
         1
@@ -110,11 +89,6 @@ pub const fn air_frame_count(payload_len: usize) -> usize {
     }
 }
 
-/// Frame the `index`-th on-air frame of `payload` into `out`, RNode-style: a
-/// one-byte header (sequence from `sequence_entropy`'s high nibble; split flag
-/// set on **every** frame iff the whole payload spans more than one frame)
-/// followed by this frame's slice of the payload. Returns the framed length.
-///
 /// The caller transmits frames `0..air_frame_count(payload.len())`, all with the
 /// same `sequence_entropy` so the receiver reassembles them — mirroring RNode,
 /// which picks one `random(256) & 0xF0` per packet and reuses it on each frame.
@@ -142,8 +116,6 @@ pub fn encode_air_frame_part(
     Ok(LORA_HEADER_LEN + chunk.len())
 }
 
-/// Parse a received on-air frame: split RNode's header byte from the payload.
-/// Returns `None` for an empty frame (no header byte to read).
 pub fn decode_air_frame(frame: &[u8]) -> Option<AirFrame<'_>> {
     let (&header, payload) = frame.split_first()?;
     Some(AirFrame {
@@ -175,9 +147,6 @@ impl<const CAP: usize> LoRaReassembler<CAP> {
         }
     }
 
-    /// Feed one received on-air frame. Returns the whole packet when this frame
-    /// completes one (a single frame, or the second part of a split), else
-    /// `None` while a split is still in progress. An empty frame yields `None`.
     pub fn feed(&mut self, frame: &[u8]) -> Option<&[u8]> {
         let parsed = decode_air_frame(frame)?;
         let sequence = parsed.sequence;
@@ -185,19 +154,17 @@ impl<const CAP: usize> LoRaReassembler<CAP> {
         if parsed.is_split_fragment {
             let continuing = self.in_progress_sequence == Some(sequence);
             if !continuing {
-                // First part of a (new) split — drop any stale partial.
                 self.buffer.clear();
             }
             let _ = self.buffer.extend_from_slice(parsed.payload);
             if continuing {
                 self.in_progress_sequence = None;
-                complete = true; // second part, matching sequence → done
+                complete = true;
             } else {
                 self.in_progress_sequence = Some(sequence);
                 complete = false;
             }
         } else {
-            // A whole packet in one frame; drop any partial split first.
             self.buffer.clear();
             let _ = self.buffer.extend_from_slice(parsed.payload);
             self.in_progress_sequence = None;
@@ -217,10 +184,6 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
     }
 }
 
-/// The routing facts a LoRa interface registers: a shared half-duplex broadcast
-/// medium where every neighbor hears every transmission and the node repeats
-/// into it, participating fully in transport. Reported `Connected` once the
-/// radio is initialized; a broadcast medium has no per-peer link state.
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
@@ -244,7 +207,6 @@ mod tests {
         assert_eq!(air_frame_count(payload.len()), 1);
         let mut out = [0u8; 16];
         let n = encode_air_frame_part(&payload, 0xA7, 0, &mut out).unwrap();
-        // header = high nibble of 0xA7 = 0xA0, split flag clear.
         assert_eq!(out[0], 0xA0);
         let parsed = decode_air_frame(&out[..n]).unwrap();
         assert_eq!(parsed.sequence, 0xA0);
@@ -260,10 +222,8 @@ mod tests {
         let mut f1 = [0u8; LORA_SINGLE_FRAME_MAX];
         let n0 = encode_air_frame_part(&payload, 0x30, 0, &mut f0).unwrap();
         let n1 = encode_air_frame_part(&payload, 0x30, 1, &mut f1).unwrap();
-        // First frame fills a whole LoRa frame; second carries the remainder.
         assert_eq!(n0, LORA_SINGLE_FRAME_MAX);
         assert_eq!(n1, LORA_HEADER_LEN + (300 - LORA_SINGLE_FRAME_PAYLOAD_MAX));
-        // Both frames carry the same sequence nibble + the split flag.
         assert_eq!(f0[0], 0x30 | HEADER_FLAG_SPLIT);
         assert_eq!(f1[0], 0x30 | HEADER_FLAG_SPLIT);
         let p0 = decode_air_frame(&f0[..n0]).unwrap();
@@ -289,9 +249,7 @@ mod tests {
         let n0 = encode_air_frame_part(&payload, 0x70, 0, &mut f0).unwrap();
         let n1 = encode_air_frame_part(&payload, 0x70, 1, &mut f1).unwrap();
         let mut r = LoRaReassembler::<512>::new();
-        // First frame: not complete yet.
         assert_eq!(r.feed(&f0[..n0]), None);
-        // Second frame: the whole packet comes back, byte-for-byte.
         assert_eq!(r.feed(&f1[..n1]), Some(&payload[..]));
     }
 
@@ -304,8 +262,7 @@ mod tests {
         let wn = encode_air_frame_part(&[0xEE; 4], 0x90, 0, &mut whole).unwrap();
 
         let mut r = LoRaReassembler::<512>::new();
-        assert_eq!(r.feed(&f0[..n0]), None); // partial split parked
-                                             // A whole-in-one-frame packet arrives mid-split → deliver it, drop the partial.
+        assert_eq!(r.feed(&f0[..n0]), None);
         assert_eq!(r.feed(&whole[..wn]), Some(&[0xEE; 4][..]));
     }
 
@@ -321,9 +278,9 @@ mod tests {
         let bn1 = encode_air_frame_part(&b, 0x80, 1, &mut b1).unwrap();
 
         let mut r = LoRaReassembler::<512>::new();
-        assert_eq!(r.feed(&a0[..an0]), None); // start sequence 0x40
-        assert_eq!(r.feed(&b0[..bn0]), None); // different sequence → restart on 0x80
-        assert_eq!(r.feed(&b1[..bn1]), Some(&b[..])); // completes 0x80, not 0x40
+        assert_eq!(r.feed(&a0[..an0]), None);
+        assert_eq!(r.feed(&b0[..bn0]), None);
+        assert_eq!(r.feed(&b1[..bn1]), Some(&b[..]));
     }
 
     #[test]
@@ -339,7 +296,7 @@ mod tests {
     #[test]
     fn rejects_output_buffer_too_small() {
         let payload = [1u8, 2, 3];
-        let mut out = [0u8; 3]; // needs 4 (header + 3)
+        let mut out = [0u8; 3];
         assert_eq!(
             encode_air_frame_part(&payload, 0, 0, &mut out),
             Err(AirFrameError::OutputBufferTooSmall)

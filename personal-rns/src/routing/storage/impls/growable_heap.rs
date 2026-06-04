@@ -1,6 +1,3 @@
-//! `GrowableHeap` — the std/alloc storage recipe: every backend is a heap-backed,
-//! growable structure with no capacity knobs.
-
 use crate::engine::directives::HeapEngineDirectives;
 use crate::routing::held_cache::HeapHeldAnnounces;
 use crate::routing::schedule::HeapRebroadcastQueue;

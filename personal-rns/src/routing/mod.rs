@@ -1,5 +1,3 @@
-//! Routing table, rebroadcast schedule, and their storage backends.
-
 pub mod announce;
 pub mod defaults;
 pub mod held_cache;
@@ -22,8 +20,6 @@ pub use types::{
     DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
 };
 
-/// Routing table composed from four storage backends.
-///
 /// `PartialEq` compares backend representation byte-for-byte because the
 /// determinism tests rely on that.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -51,7 +47,6 @@ where
         self.routes.len()
     }
 
-    /// How many tracked destinations were learned on `interface`.
     pub fn route_count_via(&self, interface: InterfaceId) -> usize {
         self.routes
             .receiving_interfaces()
@@ -81,7 +76,6 @@ where
         })
     }
 
-    /// Record an accepted route atomically across the backing stores.
     pub fn upsert_route(
         &mut self,
         hops: u8,
@@ -217,9 +211,6 @@ mod tests {
         TieredAnnounceIdHistory,
     };
 
-    /// These tests compose their own routing table — production has no default; each
-    /// consumer (tests included) picks its sizing. Parameterized so size-specific
-    /// tests pick theirs and the capacity-agnostic ones share `Rt`.
     type TestRoutingTable<
         const MAX_TRACKED_DESTINATIONS: usize,
         const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
@@ -237,9 +228,7 @@ mod tests {
         >,
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>,
     >;
-    /// The capacity-agnostic tests' table (64 dests / 64 ids / 4 KB / 4 / 512).
     type Rt = TestRoutingTable<64, 64, 4096, 4, 512>;
-    /// Per-destination announce-id history cap = `Rt`'s `MAX_ANNOUNCE_IDS_PER_DESTINATION`.
     const RT_HISTORY_CAP: usize = 64;
     use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 
@@ -385,8 +374,8 @@ mod tests {
             announce_id(0xBB, 2),
             &app_data(0xBB),
         );
-        assert_eq!(table.route_count(), 1); // same destination, not a second row
-        assert_eq!(table.hop_count_to(&dest(1)), Some(2)); // hops refreshed
+        assert_eq!(table.route_count(), 1);
+        assert_eq!(table.hop_count_to(&dest(1)), Some(2));
 
         let view = table.existing_route_for(&dest(1)).unwrap();
         assert_eq!(view.announce_id_history.len(), 2);

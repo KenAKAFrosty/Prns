@@ -20,7 +20,6 @@ use heapless::{String as HString, Vec as HVec};
 use crate::crypto::sha256;
 use crate::interfaces::MacAddress;
 
-/// RNS's default group id
 pub const GROUP_ID: &[u8] = b"reticulum";
 /// Discovery multicast group for the default "reticulum" group id:
 /// `ff12:0:d70b:fb1c:16e4:5e39:485e:31e1`.
@@ -135,9 +134,6 @@ pub struct Peer {
     pub last_heard_ms: u64,
 }
 
-/// Fixed-capacity table of discovered peers, keyed by link-local address.
-/// Capacity is small by design — a desk LAN carries a handful of nodes, and a
-/// constrained node keeps no allocator headroom for an unbounded map.
 pub struct PeerTable<const N: usize> {
     peers: HVec<Peer, N>,
 }
@@ -161,7 +157,6 @@ impl<const N: usize> PeerTable<N> {
         }
     }
 
-    /// returns how many were pruned
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         let before = self.peers.len();
         let mut i = 0;
@@ -240,7 +235,6 @@ impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
         verdict
     }
 
-    /// returns how many were pruned
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         self.peers.prune_stale_peers(now_ms)
     }

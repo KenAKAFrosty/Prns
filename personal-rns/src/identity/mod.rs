@@ -1,14 +1,3 @@
-//! A node's identity. [`IdentitySigner`] is the capability the rest of the crate
-//! signs and addresses through: the two public keys (which name the node on the
-//! wire), the derived [`IdentityHash`], and the Ed25519 signing operation —
-//! deliberately the *operation* surface, never the secret keys. The concrete
-//! secret-holding implementation lives in [`in_memory`] and is built transiently
-//! from key material, so reach for [`IdentitySigner`] as the canonical surface and
-//! treat [`in_memory::InMemoryNodeIdentity`] as one implementation of it. This
-//! module currently holds only *our own* identity (we hold the secrets);
-//! recall/remember and the storage of *other* nodes' identities will land here
-//! too as that work arrives — mirroring RNS's `Identity` module.
-//!
 //! **Sans-storage, by construction.** Per `crypto/`'s invariant, nothing here
 //! generates randomness — [`in_memory::InMemoryNodeIdentity::from_secret_key_bytes`]
 //! takes the secret keys *themselves* as input: the 64 bytes ARE the two private
@@ -20,9 +9,6 @@
 use crate::crypto::{sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
-/// Re-exported so callers handing secret key bytes to the engine's
-/// identity-bearing constructors can build the expected zeroizing buffer
-/// without taking their own (version-coupled) `zeroize` dependency.
 pub use zeroize::Zeroizing;
 
 /// Length of an identity's secret key material: a 32-byte X25519 (encryption)
@@ -31,10 +17,6 @@ pub use zeroize::Zeroizing;
 /// These bytes *are* the keys; persist them to persist the identity.
 pub const IDENTITY_SECRET_KEY_LEN: usize = 64;
 
-/// The truncated SHA-256 of an identity's two public keys
-/// (`sha256(encryption_pub ‖ signing_pub)[..16]`) — how the network names a
-/// node. Distinct from a [`DestinationHash`](crate::wire::DestinationHash),
-/// which names a *destination* (an identity bound to an app name / app aspect).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityHash([u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -48,10 +30,6 @@ impl IdentityHash {
     }
 }
 
-/// An identity's static X25519 public key, in its *encryption* role. A bare
-/// [`X25519PublicKey`] is used for other roles too — notably a forward-secrecy
-/// ratchet key — so wrapping it keeps the compiler from letting one stand in for
-/// the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityEncryptionPublicKey(X25519PublicKey);
 
@@ -69,8 +47,6 @@ impl IdentityEncryptionPublicKey {
     }
 }
 
-/// An identity's Ed25519 public key, in its *signing* role — distinct from any
-/// other Ed25519 key the type system might otherwise let through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentitySigningPublicKey(Ed25519PublicKey);
 
@@ -102,14 +78,10 @@ pub trait IdentitySigner {
     fn encryption_public_key(&self) -> IdentityEncryptionPublicKey;
     fn signing_public_key(&self) -> IdentitySigningPublicKey;
 
-    /// `sha256(encryption_pub ‖ signing_pub)[..16]`. Defaulted from the two
-    /// public keys, so an implementor's hash is always consistent with the keys
-    /// it reports; an implementor holding a precomputed hash may override.
     fn identity_hash(&self) -> IdentityHash {
         derive_identity_hash(&self.encryption_public_key(), &self.signing_public_key())
     }
 
-    /// Sign `message` with the node's Ed25519 secret (deterministic, RFC 8032).
     fn sign(&self, message: &[u8]) -> Ed25519Signature;
 }
 
@@ -128,13 +100,6 @@ fn derive_identity_hash(
 }
 
 pub mod in_memory {
-    //! The in-memory implementation of [`IdentitySigner`]: the
-    //! one that actually holds the secret keys. Built transiently from key
-    //! material (host-custodied bytes, or a fixed seed for tests/spikes), it signs
-    //! and agrees with the secrets in RAM. Reach for the
-    //! [`IdentitySigner`] capability everywhere else; this is
-    //! just where the secret lives when *we* are the signer, not "the" identity.
-
     use super::{
         derive_identity_hash, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
         IdentitySigningPublicKey, IDENTITY_SECRET_KEY_LEN,
@@ -144,10 +109,6 @@ pub mod in_memory {
         Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
     };
 
-    /// A node identity whose secret keys live in memory: the X25519 (encryption)
-    /// and Ed25519 (signing) keypairs, the derived public keys, and the identity
-    /// hash. Holds the secret keys, so it is neither `Clone` nor `Copy` and never
-    /// logged.
     pub struct InMemoryNodeIdentity {
         encryption_secret: X25519SecretKey,
         signing_secret: Ed25519SecretKey,
@@ -157,12 +118,6 @@ pub mod in_memory {
     }
 
     impl InMemoryNodeIdentity {
-        /// Build an identity from its [`IDENTITY_SECRET_KEY_LEN`]
-        /// bytes of secret key material: the first 32 *are* the X25519 (encryption)
-        /// private key, the next 32 *are* the Ed25519 (signing) private key — used
-        /// verbatim, not stretched, so the bytes' quality is the keys' quality.
-        /// CSPRNG bytes give a fresh identity; the same bytes reloaded from storage
-        /// give the persisted one; a fixed array gives a deterministic test/spike.
         pub fn from_secret_key_bytes(bytes: &[u8; IDENTITY_SECRET_KEY_LEN]) -> Self {
             let mut encryption_secret_bytes = [0u8; 32];
             encryption_secret_bytes.copy_from_slice(&bytes[..32]);
@@ -185,8 +140,6 @@ pub mod in_memory {
             }
         }
 
-        /// The X25519 shared secret between this identity's encryption secret and
-        /// a peer's encryption public key (RFC 7748 clamping).
         pub fn agree(&self, peer_encryption_public: &X25519PublicKey) -> X25519SharedSecret {
             x25519_diffie_hellman(&self.encryption_secret, peer_encryption_public)
         }
@@ -214,9 +167,6 @@ pub mod in_memory {
     mod tests {
         use super::*;
 
-        /// Fixed key material matching the seeds the `crypto` vectors already pin
-        /// (X25519 secret `[0x22; 32]`, Ed25519 secret `[0x11; 32]`), so the
-        /// derived public keys and identity hash can be checked against RNS 1.3.1.
         fn fixed_secret_key_bytes() -> [u8; IDENTITY_SECRET_KEY_LEN] {
             let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
             bytes[..32].fill(0x22);
@@ -236,7 +186,6 @@ pub mod in_memory {
         fn from_secret_key_bytes_derives_rns_public_keys_and_hash() {
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
 
-            // Public keys match the RNS 1.3.1 vectors (same seeds as crypto tests).
             assert_eq!(
                 identity.encryption_public_key().as_bytes(),
                 &hx::<32>("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"),
@@ -246,7 +195,6 @@ pub mod in_memory {
                 &hx::<32>("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
             );
 
-            // Identity hash = sha256(enc_pub ‖ sig_pub)[..16], oracle-confirmed.
             assert_eq!(
                 identity.identity_hash(),
                 IdentityHash::new(hx::<16>("4cd0cc45a7405dbd5cf9b5be1ef92f10")),
@@ -284,9 +232,6 @@ pub mod in_memory {
 
         #[test]
         fn key_agreement_matches_the_rns_shared_secret() {
-            // Same X25519 vector the crypto tests pin: our encryption secret
-            // `[0x22; 32]` agreed with the peer public below yields this shared
-            // secret per RNS 1.3.1.
             let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
             let peer = X25519PublicKey(hx::<32>(
                 "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",

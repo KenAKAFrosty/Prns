@@ -1,9 +1,3 @@
-//! The embassy-net worker for the RNS AutoInterface on the ESP32 family
-//! (S3, C6) and any embassy-net host.
-//!
-//! The host supplies the WiFi/IP stack, channels (`'static`), interface id, and
-//! entropy source; this worker owns the AutoInterface sockets and protocol loop.
-
 use core::net::Ipv6Addr;
 
 use embassy_futures::select::{select, select4, Either, Either4};
@@ -39,9 +33,6 @@ fn ipv6_src(meta: &UdpMetadata) -> Option<Ipv6Addr> {
     }
 }
 
-/// Handle one discovery-beacon recv: count it, peer on the source, and log a
-/// newly discovered peer. The multicast and unicast arms differ only in their
-/// socket, buffer, counter, and `via` label, so they share this.
 fn ingest_discovery_arm(
     brain: &mut AutoInterfaceProtocol<MAX_PEERS>,
     rx_count: &mut u32,
@@ -67,8 +58,6 @@ fn ingest_discovery_arm(
     }
 }
 
-/// The routing facts the engine registers for an AutoInterface on `id` — the contract
-/// path reads this to build its `SelfDrivenInterface`.
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
@@ -82,9 +71,6 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     }
 }
 
-/// Handle one inbound data-packet recv: [`submit`](InboundSink::submit) it into the
-/// interface's inbound ring (the seam stamps arrival + tags the source). The
-/// contract-seam twin of [`ingest_data_arm`] — no `id`, since the seam tags it.
 fn submit_data_arm(
     rx_count: &mut u32,
     recv: Result<(usize, UdpMetadata), RecvError>,
@@ -109,13 +95,7 @@ fn submit_data_arm(
     }
 }
 
-/// The AutoInterface worker over the contract seam: three UDP sockets + discovery brain
-/// + beacon. Inbound data packets are submitted through [`InboundSink::submit`]; the
-/// runtime's outbound is pulled with `ready` + `try_next_into`, then fanned to every peer. The
-/// brain logs its live peer count each beacon.
-///
-/// Generic over the seam `MAX_BUFFERED_PACKETS`. `stack` must already be up (host brought up WiFi +
-/// IP). It takes no `id` — the seam tags inbound provenance.
+#[allow(clippy::expect_used)]
 pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
     stack: Stack<'static>,
     our_mac_address: MacAddress,
@@ -182,7 +162,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
     let mut discovery_read_buf = [0u8; 64];
     let mut unicast_discovery_read_buf = [0u8; 64];
     let mut data_read_buf = [0u8; HARDWARE_MTU];
-    // Scratch for one packet pulled off the outbound ring, then fanned to peers.
     let mut out_buf = [0u8; HARDWARE_MTU];
     let mut beacon = Ticker::every(Duration::from_millis(BEACON_INTERVAL_MS));
     let mut cycle: u32 = 0;
@@ -203,7 +182,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
         )
         .await
         {
-            // Multicast discovery beacon (29716).
             Either::First(Either4::First(recv)) => {
                 ingest_discovery_arm(
                     &mut brain,
@@ -214,7 +192,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                 );
             }
 
-            // Unicast reverse-peering beacon (29717).
             Either::First(Either4::Second(recv)) => {
                 ingest_discovery_arm(
                     &mut brain,
@@ -225,7 +202,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                 );
             }
 
-            // Inbound data packet (42671) → submit into the interface's inbound ring.
             Either::First(Either4::Third(recv)) => {
                 submit_data_arm(
                     &mut data_rx_count,
@@ -235,7 +211,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                 );
             }
 
-            // Beacon tick: multicast our token, reverse-peer, age out peers.
             Either::First(Either4::Fourth(_)) => {
                 cycle = cycle.wrapping_add(1);
                 let now = now_millis().0;
@@ -248,7 +223,7 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                 {
                     log::warn!("RNS_AUTO beacon send err: {e:?}");
                 }
-                if cycle % 3 == 0 {
+                if cycle.is_multiple_of(3) {
                     let mut targets: HVec<Ipv6Addr, MAX_PEERS> = HVec::new();
                     for addr in brain.known_peer_addresses() {
                         let _ = targets.push(addr);
@@ -272,8 +247,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                     brain.auth_failures(),
                 );
             }
-            // Outbound from the runtime: drain the ring, fanning each packet to every
-            // peer's data port.
             Either::Second(()) => {
                 while let Some(len) = context.outbound.try_next_into(&mut out_buf) {
                     let mut targets: HVec<Ipv6Addr, MAX_PEERS> = HVec::new();

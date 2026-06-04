@@ -1,19 +1,3 @@
-//! Typed egress directives.
-//!
-//! `EgressDirective` is the engine's typed view of what it wants
-//! emitted. `tick` produces directives; the host's runtime loop
-//! pattern-matches and dispatches. Each variant carries the typed
-//! values it operates on AND provides a `to_wire` method that handles
-//! the serialization — the engine owns wire-protocol knowledge; the
-//! host doesn't need to know how any packet kind frames onto the wire.
-//!
-//! Every directive carries an explicit positive `fire_on:
-//! &[InterfaceId]` list — the engine has already filtered down to the
-//! interfaces this packet should actually go out on (today: registered
-//! interfaces minus source for `ReemitAnnounce`). The host is a pure
-//! tx/rx pump: write the bytes to each id in `fire_on`, no exclusion
-//! logic.
-
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::wire::{
@@ -88,9 +72,6 @@ impl<'a> EgressDirective<'a> {
         }
     }
 
-    /// The engine-computed set of interfaces this directive should be
-    /// emitted on. Never empty: the engine elides empty-fanout
-    /// directives before they reach the host.
     pub fn fire_on(&self) -> &[InterfaceId] {
         match self {
             Self::ReemitAnnounce { fire_on, .. } => fire_on,
@@ -102,8 +83,6 @@ impl<'a> EgressDirective<'a> {
 mod tests {
     use super::*;
 
-    /// A genuine RNS 1.3.1 announce; same vector the other engine
-    /// tests use.
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
                                 0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
@@ -123,9 +102,6 @@ mod tests {
 
     #[test]
     fn reemit_announce_to_wire_produces_a_well_formed_wire_packet() {
-        // The classic round-trip: take a real RNS announce, build a
-        // ReemitAnnounce out of it with hop count incremented, serialize,
-        // and verify the bytes parse back to the expected shape.
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
@@ -146,12 +122,8 @@ mod tests {
         assert_eq!(parsed_header.destination_type, DestinationType::Single);
         assert_eq!(parsed_header.propagation, PropagationType::Broadcast);
         assert_eq!(parsed_header.transport_id, None);
-        // Hops use the emit_hops we provided.
         assert_eq!(parsed_header.hops, orig_header.hops + 1);
-        // Destination preserved.
         assert_eq!(parsed_header.destination, orig_header.destination);
-        // Announce body bytes preserved — this is what keeps the
-        // original Ed25519 signature valid on any peer.
         assert_eq!(parsed_payload, orig_payload);
     }
 
@@ -217,9 +189,6 @@ mod tests {
 
     #[test]
     fn to_wire_output_round_trips_to_an_equivalent_announce() {
-        // Stronger property: serialize, re-parse, re-construct the
-        // Announce — equality holds. Means we can chain emissions
-        // through the directive type without semantic drift.
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let orig_announce = Announce::from_wire(&orig_header, orig_payload).unwrap();

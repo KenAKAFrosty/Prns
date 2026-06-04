@@ -1,9 +1,3 @@
-//! Wire contract boundary.
-//!
-//! Packet byte layouts belong here. Internal engine state should use typed
-//! values and cross this boundary exactly once when decoding or encoding wire
-//! bytes.
-
 pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
 
 /// RNS's `RNS.Transport.PATHFINDER_M` — packets beyond this hop count are
@@ -15,24 +9,14 @@ pub const MAX_HOP_COUNT: u8 = 128;
 /// per-packet scratch (announce reassembly, payload buffers) bounds against it.
 pub const MTU: usize = 500;
 
-/// 32 B X25519 encryption key + 32 B Ed25519 signing key, concatenated on the
-/// wire as one 64-byte field.
 pub const ANNOUNCE_PUBLIC_KEY_LEN: usize = 64;
 
-/// Wire width of the dotted app/aspect name hash that prefixes destination
-/// binding.
 pub const DOTTED_NAME_HASH_LEN: usize = 10;
 
-/// Wire width of the X25519 forward-secrecy ratchet public key carried by
-/// announces that opt into ratcheting.
 pub const RATCHET_LEN: usize = 32;
 
-/// Wire width of an Ed25519 signature.
 pub const SIGNATURE_LEN: usize = 64;
 
-/// Total bytes of the Reticulum packet header that prefixes every wire
-/// packet: 1 byte flags + 1 byte hops + 16-byte destination hash + 1 byte
-/// context = 19 bytes. The packet payload starts at this offset.
 pub const HEADER_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,9 +24,6 @@ pub enum WireError {
     BufferTooShort,
 }
 
-/// Interface access-code flag (flags bit 7). Set by an interface that prepends
-/// an IFAC authentication code; an engine sees `Open` once the interface has
-/// stripped it. Carried for byte-faithful round-trips, not acted on here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IfacFlag {
@@ -59,8 +40,6 @@ impl IfacFlag {
     }
 }
 
-/// Context-flag bit (flags bit 5). Its meaning is packet-type specific — for an
-/// announce, `Set` signals that a ratchet public key is present in the payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ContextFlag {
@@ -77,7 +56,6 @@ impl ContextFlag {
     }
 }
 
-/// How a packet propagates (flags bit 4). RNS names this `transport_type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PropagationType {
@@ -94,7 +72,6 @@ impl PropagationType {
     }
 }
 
-/// The kind of destination addressed (flags bits 2–3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum DestinationType {
@@ -115,7 +92,6 @@ impl DestinationType {
     }
 }
 
-/// What a packet is for (flags bits 0–1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PacketType {
@@ -223,9 +199,6 @@ impl Context {
     }
 }
 
-/// Where a packet is delivered: a destination's truncated hash. Distinct from
-/// [`TransportId`] — same width, different role: a destination names *where to
-/// deliver*, never *who relays*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DestinationHash([u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -234,7 +207,6 @@ impl DestinationHash {
         Self(bytes)
     }
 
-    /// Returns None if length is incorrect
     pub fn from_slice(bytes: &[u8]) -> Option<Self> {
         bytes.try_into().ok().map(Self)
     }
@@ -244,9 +216,6 @@ impl DestinationHash {
     }
 }
 
-/// The transport node a Type-2 (in-transport) packet is relayed via: its
-/// truncated hash. Distinct from [`DestinationHash`] — names *who relays*, and
-/// occupies the transport-id slot of a Type-2 header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransportId([u8; TRUNCATED_HASH_BYTE_LEN]);
 
@@ -333,8 +302,6 @@ impl WirePacketHeader {
         Ok((header, &bytes[offset..]))
     }
 
-    /// Encode the header into `buf`, returning the number of bytes written (the
-    /// payload, if any, is the caller's to append).
     pub fn write(&self, buf: &mut [u8]) -> Result<usize, WireError> {
         let transport_len = if self.transport_id.is_some() {
             TRUNCATED_HASH_BYTE_LEN
@@ -458,10 +425,6 @@ mod tests {
         );
     }
 
-    /// Byte-exact decode of a genuine RNS 1.3.1 announce. Generated offline:
-    /// `RNS.Destination(Identity(), IN, SINGLE, "personal", "wire_test")
-    ///  .announce(app_data=b"hello-personal", send=False)` then `pack()`.
-    /// One captured packet (the identity is random per generation).
     #[test]
     fn decodes_a_real_rns_announce() {
         let raw = bytes_from_hex(
@@ -490,7 +453,6 @@ mod tests {
         );
         assert_eq!(payload.len(), 162);
 
-        // And the header re-encodes to the exact same 19 leading bytes.
         let mut buf = [0u8; 64];
         let written = header.write(&mut buf).unwrap();
         assert_eq!(written, 19);
@@ -499,8 +461,6 @@ mod tests {
 
     #[test]
     fn every_flags_byte_round_trips_with_unknown_context_and_payload() {
-        // The wire boundary should preserve every flag bit and unknown context
-        // values exactly; parsed payload bytes stay outside header encoding.
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
         for meta in 0u8..=u8::MAX {
             let is_type_2 = meta & 0b0100_0000 != 0;
@@ -542,14 +502,10 @@ mod tests {
             WirePacketHeader::parse(&[0x01]),
             Err(WireError::BufferTooShort)
         );
-        // A Type-1 header needs 19 bytes; one short must fail.
         assert_eq!(
             WirePacketHeader::parse(&[0u8; 18]),
             Err(WireError::BufferTooShort)
         );
-        // A Type-2 header needs the transport-id + destination + context byte;
-        // a buffer holding only flags + hops + transport-id + destination is one
-        // byte short of the context.
         let mut type_2 = [0u8; 2 + 2 * TRUNCATED_HASH_BYTE_LEN];
         type_2[0] = 0b0100_0000;
         assert_eq!(

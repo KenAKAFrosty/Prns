@@ -1,21 +1,9 @@
-//! Fixed-capacity, inline-array routing-table columns — the no_std default.
-//!
-//! Each column is a `[T; MAX_TRACKED_DESTINATIONS]` stored inline in the
-//! struct (and therefore inline in whatever `RoutingTable` it lives in).
-//! No allocator, no heap, no growth: footprint is known at compile time and
-//! sized by the const generic. Capacity overflow surfaces as
-//! [`ColumnsFull`] at the `push` call site.
-
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{ColumnsFull, RouteColumns, RouteEntry};
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 
-/// SoA routing-table columns backed by inline fixed-size arrays. The
-/// capacity is the const generic; reaching it returns `ColumnsFull` from
-/// `push`.
-///
 /// `PartialEq` is structural — every slot compares, including unused tail
 /// past `len`. Determinism tests rely on this exactly as `RoutingTable`
 /// already does; it is not "same set of destinations."
@@ -186,7 +174,6 @@ mod tests {
                 RouteResponsiveness::Responsive
             ]
         );
-        // set_row rewrites the receiving interface alongside the other fields.
         assert_eq!(columns.receiving_interfaces(), &[iface(0xE9), iface(0xE2)]);
     }
 

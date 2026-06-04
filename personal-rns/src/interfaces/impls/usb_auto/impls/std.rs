@@ -1,6 +1,3 @@
-//! The std USB-auto serialport driver: it polls for USB CDC ports, reconciles
-//! them into the Discoverer's links, and runs the servicing loop.
-
 use std::io::{self, Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -18,8 +15,6 @@ const READ_TIMEOUT: Duration = Duration::from_millis(5);
 const SERVICE_INTERVAL: Duration = Duration::from_millis(10);
 const SCAN_INTERVAL: Duration = Duration::from_millis(300);
 
-/// Build the plug-and-play USB-auto interface on `id`: a self-driven worker that
-/// discovers and owns the host's USB CDC links — no port argument, no config.
 pub fn usb_auto_interface(id: InterfaceId) -> SelfDrivenInterface<impl FnOnce(UsbAutoContext)> {
     SelfDrivenInterface::new(host_descriptor(id), move |ctx| {
         thread::spawn(move || serve(ctx));
@@ -43,9 +38,6 @@ fn serve(mut ctx: UsbAutoContext) {
     ctx.control.report(ControlReport::Stopped);
 }
 
-/// Every USB serial port present right now. serialport classifies the medium
-/// per platform, so the USB filter excludes built-in / PCI serial without
-/// naming any OS-specific device path.
 fn scan_cdc_ports() -> Vec<PortId> {
     serialport::available_ports()
         .unwrap_or_default()
@@ -55,7 +47,6 @@ fn scan_cdc_ports() -> Vec<PortId> {
         .collect()
 }
 
-/// A serialport CDC link as a plain `Read + Write` stream for the Discoverer.
 struct CdcPort(Box<dyn serialport::SerialPort>);
 
 impl Read for CdcPort {

@@ -1,7 +1,3 @@
-//! Fixed-capacity held-announce store — the alloc-free [`HeldAnnounces`], a
-//! 12-column SoA of inline arrays sized by the const generic. Reaching capacity
-//! drops the new announce (`CacheFull`).
-
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::engine::InstantMillis;
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
@@ -71,7 +67,6 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         CAPACITY
     }
 
-    /// Park an announce by destination, overwriting an existing entry if present.
     pub fn park(
         &mut self,
         announce: &Announce<'_>,
@@ -114,7 +109,6 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         ParkOutcome::Parked
     }
 
-    /// Remove and return the best retry candidate, if any.
     pub fn take_next(&mut self) -> Option<HeldAnnounce> {
         if self.len == 0 {
             return None;
@@ -167,7 +161,6 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         self.signature[i] = announce.signature;
         let len = announce.app_data.len();
         self.app_data_buf[i][..len].copy_from_slice(announce.app_data);
-        // Keep the unused tail stable for deterministic equality.
         for byte in self.app_data_buf[i][len..].iter_mut() {
             *byte = 0;
         }

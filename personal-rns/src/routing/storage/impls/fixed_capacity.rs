@@ -1,7 +1,3 @@
-//! `FixedCapacity` — the no_std storage recipe: every backend is a fixed-size,
-//! alloc-free structure sized by these six const generics. There are no defaults;
-//! every node spells the sizing it wants (a preset type can wrap a common choice).
-
 use crate::engine::directives::FixedEngineDirectives;
 use crate::routing::held_cache::FixedHeldAnnounces;
 use crate::routing::schedule::FixedRebroadcastQueue;
@@ -68,7 +64,6 @@ mod tests {
         let _pending = <S as EngineStorage>::Pending::default();
         let _held = <S as EngineStorage>::Held::default();
         let _directives = <S as EngineStorage>::Directives::default();
-        // MAX_TRACKED_DESTINATIONS (8) flows into the slot-keyed columns.
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
     }

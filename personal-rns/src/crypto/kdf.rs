@@ -4,6 +4,7 @@ use sha2::Sha256;
 /// HKDF-SHA256 (RFC 5869), deriving `N` bytes. `salt` and `info` map to RNS's
 /// `salt` and `context`. `N` is always far below HKDF's 255*32 ceiling for our
 /// uses, so derivation cannot fail.
+#[allow(clippy::expect_used)]
 pub fn hkdf_sha256<const N: usize>(ikm: &[u8], salt: &[u8], info: &[u8]) -> [u8; N] {
     let mut out = [0u8; N];
     Hkdf::<Sha256>::new(Some(salt), ikm)

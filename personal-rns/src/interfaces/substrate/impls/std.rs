@@ -1,8 +1,3 @@
-//! Std implementation of the per-interface runtime lanes. Inbound and outbound
-//! use lock-free [`rtrb`] SPSC rings; control uses separate command/report rings.
-//! The interface loop holds the [`InterfaceWorkerContext`], and the runtime holds
-//! the [`StdInterfaceHandle`].
-
 use std::sync::mpsc::SyncSender;
 use std::time::Instant;
 
@@ -15,19 +10,14 @@ use crate::interfaces::{
     SendError, StartedInterface, Substrate,
 };
 
-/// Control-lane depth. Lifecycle signals are rare, so a few slots is ample.
 const CONTROL_DEPTH: usize = 4;
 
-/// One inbound slot: the worker fills `bytes[..len]` in place and the sink stamps
-/// `arrived_at`. Rides the ring by value — an MTU-bounded `memcpy`, never a heap
-/// allocation.
 struct InboundSlot<const MTU: usize> {
     arrived_at: InstantMillis,
     len: u16,
     bytes: [u8; MTU],
 }
 
-/// One outbound slot: the runtime fills `bytes[..len]`, the worker drains it.
 struct OutboundSlot<const MTU: usize> {
     len: u16,
     bytes: [u8; MTU],
@@ -42,7 +32,6 @@ struct WakingProducer<T> {
 }
 
 impl<T> WakingProducer<T> {
-    /// Publish `value`, returning whether it fit, and wake the host either way.
     fn push(&mut self, value: T) -> bool {
         let pushed = self.ring.push(value).is_ok();
         let _ = self.wake.try_send(());
@@ -50,8 +39,6 @@ impl<T> WakingProducer<T> {
     }
 }
 
-/// The worker-held producer end of one interface's inbound ring. It stamps
-/// arrival times from the host's shared monotonic origin.
 pub struct StdInboundSink<const MTU: usize> {
     producer: WakingProducer<InboundSlot<MTU>>,
     clock_base: Instant,
@@ -73,7 +60,6 @@ impl<const MTU: usize> InboundSink for StdInboundSink<MTU> {
     }
 }
 
-/// The consumer end of one interface's outbound ring (held by the worker loop).
 pub struct StdOutboundDrain<const MTU: usize> {
     consumer: Consumer<OutboundSlot<MTU>>,
 }
@@ -89,8 +75,6 @@ impl<const MTU: usize> OutboundDrain for StdOutboundDrain<MTU> {
     }
 }
 
-/// The worker's end of the control lane: pulls commands the runtime issued, pushes
-/// reports back. Tiny copy enums over their own SPSC lanes.
 pub struct StdControlEndpoint {
     commands: Consumer<ControlCommand>,
     reports: WakingProducer<ControlReport>,
@@ -108,7 +92,6 @@ impl ControlEndpoint for StdControlEndpoint {
     }
 }
 
-/// The std platform's worker-side lane-end types, bundled for [`InterfaceWorkerContext`].
 pub struct StdHostSubstrate<const MTU: usize>;
 
 impl<const MTU: usize> Substrate for StdHostSubstrate<MTU> {
@@ -117,7 +100,6 @@ impl<const MTU: usize> Substrate for StdHostSubstrate<MTU> {
     type Control = StdControlEndpoint;
 }
 
-/// The runtime-held end of one interface's lanes.
 pub struct StdInterfaceHandle<const MTU: usize> {
     id: InterfaceId,
     inbound: Consumer<InboundSlot<MTU>>,
@@ -161,17 +143,12 @@ impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
     }
 }
 
-/// The two halves of a freshly built interface seam: the [`InterfaceWorkerContext`]
-/// the interface's loop is handed, and the [`StdInterfaceHandle`] the runtime keeps.
 pub struct StdInterfaceSeam<const MTU: usize> {
     pub worker_context: InterfaceWorkerContext<StdHostSubstrate<MTU>>,
     pub runtime_handle: StdInterfaceHandle<MTU>,
 }
 
 impl<const MTU: usize> StdInterfaceSeam<MTU> {
-    /// Build one interface's data and control lanes. Pass the same `clock_base`
-    /// to every seam so arrivals share the engine's timebase; `wake` is the
-    /// host's sleep-notify channel.
     pub fn new(
         id: InterfaceId,
         clock_base: Instant,
@@ -214,8 +191,6 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
         }
     }
 
-    /// Start `interface` onto this seam: hand it the worker context, keep its runtime
-    /// handle, and bundle the [`StartedInterface`] the runtime pools.
     pub fn start_interface<I>(
         self,
         interface: I,
@@ -256,7 +231,6 @@ mod tests {
             mut runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
-        // runtime → worker: queue an outbound packet, worker drains it in place.
         assert!(runtime_handle
             .send(OutboundPacket::new(&[0xAA, 0xBB, 0xCC]))
             .is_ok());
@@ -267,7 +241,6 @@ mod tests {
         assert_eq!(drained, 1);
         assert_eq!(transmitted, std::vec![std::vec![0xAA, 0xBB, 0xCC]]);
 
-        // worker → runtime: stamp an inbound packet, runtime drains it tagged.
         worker_context
             .inbound
             .submit(|buf| {
@@ -283,7 +256,6 @@ mod tests {
         assert_eq!(drained, 1);
         assert_eq!(received, std::vec![std::vec![0xDE, 0xAD]]);
 
-        // control: runtime asks to stop, worker sees it and reports back.
         assert!(worker_context.control.next_command().is_none());
         runtime_handle.request_stop();
         assert!(matches!(
@@ -312,11 +284,8 @@ mod tests {
             runtime_handle: _runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
-        // Nothing pushed yet → the host has no reason to wake.
         assert!(wake_rx.try_recv().is_err());
 
-        // An inbound submit rouses the host automatically — the wake is baked into
-        // the producer, so the worker never touches a separate signal.
         worker_context
             .inbound
             .submit(|buf| {
@@ -326,7 +295,6 @@ mod tests {
             .unwrap();
         assert!(wake_rx.try_recv().is_ok());
 
-        // So does a control report (the report producer wakes the host too).
         worker_context.control.report(ControlReport::Stopped);
         assert!(wake_rx.try_recv().is_ok());
     }
@@ -369,8 +337,6 @@ mod tests {
             mut runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
-        // The worker context moves to its own thread — proves both halves are
-        // `Send`, the whole point of the SPSC seam.
         let worker = std::thread::spawn(move || {
             let mut worker_context = worker_context;
             worker_context

@@ -1,6 +1,3 @@
-//! The typed bytes crossing an interface: inbound (stamped with where and when
-//! it arrived) and outbound (what the engine hands back to be transmitted).
-
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 

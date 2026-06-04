@@ -74,10 +74,6 @@ impl core::fmt::Debug for MonotonicTimebase {
     }
 }
 
-/// RNS's `random_blob` / `random_hash`. The per-emission announce identifier: `nonce ‖ timebase`, 10 contiguous
-/// bytes. The same value travels with a path-response rebroadcast of a cached
-/// announce, so peers recognise "this is the same announce I already saw". This is
-/// identity in the strict sense, which the name reflects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnnounceId {
     pub nonce: AnnounceNonce,

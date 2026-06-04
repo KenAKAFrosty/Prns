@@ -102,7 +102,6 @@ mod tests {
         assert_eq!(columns.len(), 1_000);
         assert_eq!(columns.signature().len(), 1_000);
 
-        // set_row overwrites a slot's announce fields, leaving len intact.
         columns.set_row(0, entry(0xEE));
         assert_eq!(columns.signature()[0], Ed25519Signature([0xEE; 64]));
         assert_eq!(columns.retained_announce_id().len(), 1_000);

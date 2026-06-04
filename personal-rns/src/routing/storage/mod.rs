@@ -1,7 +1,3 @@
-//! EngineStorage traits and implementations behind the routing table.
-//!
-//! Each routing concern has its own backend, joined by slot index.
-
 mod impls;
 
 pub use impls::*;
@@ -16,7 +12,6 @@ use crate::routing::schedule::RebroadcastQueue;
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 
-/// Routing-coherent row written to [`RouteColumns`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteEntry {
     pub hops: u8,
@@ -25,7 +20,6 @@ pub struct RouteEntry {
     pub receiving_interface: InterfaceId,
 }
 
-/// Announce-coherent row written to [`RetainedAnnounceColumns`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetainedAnnounceEntry {
     pub public_keys: IdentityPublicKeys,
@@ -39,7 +33,6 @@ pub struct RetainedAnnounceEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColumnsFull;
 
-/// Result of recording one announce id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RememberOutcome {
     AlreadyKnown,
@@ -66,7 +59,6 @@ pub enum RetainedAppDataError {
     TooManyEntries,
 }
 
-/// SoA columns for the routing table, keyed by destination.
 pub trait RouteColumns {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -81,15 +73,12 @@ pub trait RouteColumns {
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
 
-    /// Row-coherent overwrite of slot `i`.
     fn set_row(&mut self, i: usize, row: RouteEntry);
 
-    /// Append a new row.
     fn push(&mut self, destination: DestinationHash, row: RouteEntry)
         -> Result<usize, ColumnsFull>;
 }
 
-/// SoA columns for retained announces, slot-indexed to [`RouteColumns`].
 pub trait RetainedAnnounceColumns {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -105,10 +94,8 @@ pub trait RetainedAnnounceColumns {
     fn signature(&self) -> &[Ed25519Signature];
     fn app_data_handle(&self) -> &[Option<AppDataHandle>];
 
-    /// Row-coherent overwrite of slot `i`.
     fn set_row(&mut self, i: usize, row: RetainedAnnounceEntry);
 
-    /// Append a new row.
     fn push(&mut self, row: RetainedAnnounceEntry) -> Result<usize, ColumnsFull>;
 }
 
@@ -129,7 +116,6 @@ impl<'a> AnnounceIdHistoryView<'a> {
         overflow: &[],
     };
 
-    /// Build a view directly from two slices.
     pub fn from_slices(floor: &'a [AnnounceId], overflow: &'a [AnnounceId]) -> Self {
         Self { floor, overflow }
     }
@@ -154,7 +140,6 @@ impl<'a> AnnounceIdHistoryView<'a> {
     }
 }
 
-/// Variable-length retained-announce `app_data` storage behind opaque handles.
 pub trait RetainedAppData {
     fn get(&self, handle: AppDataHandle) -> &[u8];
     fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError>;

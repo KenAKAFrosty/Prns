@@ -1,10 +1,3 @@
-//! The RNS-reference-compatible AutoInterface: a WiFi/IP LAN interface that
-//! discovers peers by link-local multicast beacon and exchanges data as unicast
-//! to each peer. Wire-exact against Python RNS 1.3.1.
-//!
-//! - [`core`] is the platform-agnostic brain (token, peer table, discovery).
-//! - Per-platform workers own the sockets and drive the brain.
-
 pub mod core;
 pub use core::{
     classify_beacon, link_local_from_mac, peering_token, AutoInterfaceProtocol, BeaconVerdict,

@@ -32,7 +32,6 @@ pub enum AcceptReason {
     FailoverFromUnresponsiveIncumbent,
 }
 
-/// Why an announce is rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
     ExceedsMaxHops,
@@ -89,7 +88,6 @@ impl AnnounceAcceptanceInput<'_> {
             route_max_emitted = route_max_emitted.max(stored.timebase);
         }
 
-        // EQUAL OR SHORTER HOPS — id was unheard (a hit would have early-exited).
         if !is_longer_hops {
             return if announce_emitted_at > route_max_emitted {
                 Accept(KnownRouteFreshEvidence)
@@ -98,14 +96,10 @@ impl AnnounceAcceptanceInput<'_> {
             };
         }
 
-        // LONGER HOPS + EXPIRED — id was unheard (a hit would have early-exited).
         if route_is_expired {
             return Accept(ExpiredRouteSucceededByLongerAlternative);
         }
 
-        // LONGER HOPS + FRESH PATH. The seen-status matters only when the
-        // emission is the more recent one; the equal and older arms decide
-        // independently of it.
         match announce_emitted_at.cmp(&route_max_emitted) {
             Ordering::Less => Reject(StaleEvidence),
             Ordering::Equal => match existing.responsiveness {
@@ -419,10 +413,6 @@ mod tests {
 
     #[test]
     fn replay_of_an_id_only_in_overflow_is_recognized_as_known() {
-        // The predicate iterates the view's floor and overflow back-to-back;
-        // a replay of an id that lives exclusively in the overflow tier must
-        // still hit the KnownRouteReplay branch. (Pre-fix, an iterator that
-        // skipped overflow would have let the replay through.)
         let floor = [announce_id(0xA, 100), announce_id(0xB, 200)];
         let overflow = [announce_id(0xC, 300), announce_id(0xD, 400)];
         let replayed = overflow[0];
@@ -446,16 +436,11 @@ mod tests {
 
     #[test]
     fn max_emitted_calculation_includes_overflow_ids() {
-        // route_max_emitted is the running max across every seen id — overflow
-        // entries have to be included for the same-hops "newer evidence?" gate
-        // to compare against the right ceiling. We put the newest stored
-        // timebase in overflow and arrive with one that beats the floor but
-        // not the overflow; the predicate should reject as no-newer-evidence.
         let floor = [announce_id(0xA, 100)];
-        let overflow = [announce_id(0xB, 500)]; // newer than floor's 100
+        let overflow = [announce_id(0xB, 500)];
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
-            announce_id: announce_id(0xC, 300), // newer than floor, older than overflow
+            announce_id: announce_id(0xC, 300),
             destination_is_local: false,
             existing_route: Some(ExistingRoute {
                 hops: 3,

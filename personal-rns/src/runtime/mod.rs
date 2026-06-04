@@ -1,5 +1,3 @@
-//! Runtime layer that owns an engine plus its started interfaces.
-
 pub mod channels;
 mod contract;
 mod core;

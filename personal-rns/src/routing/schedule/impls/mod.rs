@@ -1,5 +1,3 @@
-//! Concrete [`RebroadcastQueue`](super::RebroadcastQueue) backends — one file per impl.
-
 mod fixed_rebroadcast_queue;
 pub use fixed_rebroadcast_queue::FixedRebroadcastQueue;
 

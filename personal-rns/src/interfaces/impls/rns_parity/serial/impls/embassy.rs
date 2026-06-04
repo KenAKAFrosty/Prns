@@ -1,10 +1,3 @@
-//! The embassy serial worker on the contract seam. Runs the RNS `SerialInterface`
-//! over any async byte stream (a UART, a test pipe), meeting the runtime through
-//! the three-lane seam.
-//!
-//! Gated on the lighter `embassy-contract` feature — no `embassy-net`/LoRa — so a
-//! serial-only board (ESP32-C6) pulls none of the radio stack.
-
 use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration};
 use embedded_io_async::{Read, Write};
@@ -20,21 +13,6 @@ use crate::interfaces::{
 /// attached, or no peer reading), an unbounded write would wedge the loop.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Drive the serial link over the contract seam. De-frame inbound bytes off `rx` and
-/// [`submit`](InboundSink::submit) each Reticulum packet into the interface's inbound
-/// ring; drain the outbound the runtime queued, frame each, and write it to `tx`;
-/// wind down on [`Stop`](ControlCommand::Stop), reporting
-/// [`Stopped`](ControlReport::Stopped).
-///
-/// The loop `select`s on three wakes — inbound bytes, outbound readiness, a control
-/// command — so it parks until something genuinely needs it (no keepalive ticker, no
-/// idle spin). Generic over the byte stream (any [`embedded_io_async`] transport) and
-/// the seam `MAX_BUFFERED_PACKETS`. Pre-frame noise — e.g. a board sharing this link between log text
-/// and frames — is skipped by the decoder until a `FLAG`, exactly as stock RNS does.
-///
-/// There is no `link_up` / keepalive here.
-/// Writes stay [`WRITE_TIMEOUT`]-bounded so a wire with no reader cannot wedge
-/// the loop.
 pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
     mut rx: R,
     mut tx: W,
@@ -56,7 +34,6 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
         )
         .await
         {
-            // Inbound bytes: submit each closed non-empty frame.
             Either3::First(result) => {
                 let n = result.unwrap_or(0);
                 for &byte in &read_buf[..n] {
@@ -70,14 +47,10 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
                     }
                 }
             }
-            // Outbound queued — fall through to the drain below.
             Either3::Second(()) => {}
-            // Wind down on stop.
             Either3::Third(ControlCommand::Stop) => break,
         }
 
-        // Drain whatever the runtime queued; `try_next_into` copies out so the
-        // write can cross an `.await`.
         while let Some(len) = context.outbound.try_next_into(&mut packet_buf) {
             if let Ok(m) = rns_serial_framing::encode(&packet_buf[..len], &mut frame_buf) {
                 let _ = with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m])).await;

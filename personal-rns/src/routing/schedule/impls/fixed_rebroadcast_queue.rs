@@ -1,7 +1,3 @@
-//! Fixed-capacity rebroadcast queue — the alloc-free [`RebroadcastQueue`] backed by
-//! an inline `heapless::Vec`, at most one entry per destination. Capacity matches
-//! the routing table, since there is never more than one pending per tracked route.
-
 use heapless::Vec;
 
 use crate::engine::InstantMillis;
@@ -36,13 +32,9 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
             .iter_mut()
             .find(|entry| entry.destination == destination)
         {
-            // A fresher announce supersedes the queued one — both timing AND the
-            // source override (the freshest accept wins for "don't gossip back" too).
             existing.due_at = due_at;
             existing.source_interface = source_interface;
         } else {
-            // One entry per destination, capacity == the routing table's, so a newly
-            // accepted destination always has room.
             let _ = self.pending.push(ScheduledRebroadcast {
                 destination,
                 due_at,
@@ -51,8 +43,6 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         }
     }
 
-    /// Remove and return one rebroadcast whose time has come (`due_at <= now`), or
-    /// `None`. The order entries come out in is unspecified.
     pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledRebroadcast> {
         let due = self.pending.iter().position(|entry| entry.due_at <= now)?;
         Some(self.pending.swap_remove(due))
@@ -62,14 +52,10 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         self.pending.iter()
     }
 
-    /// The earliest `due_at` across all queued rebroadcasts, or `None` if empty —
-    /// the queue's contribution to "when must the engine next wake?", kept beside
-    /// `schedule`/`take_due` so the deadline and the due-check can't drift apart.
     pub fn earliest_due_at(&self) -> Option<InstantMillis> {
         self.pending.iter().map(|entry| entry.due_at).min()
     }
 
-    /// Remove every entry whose `due_at <= now`; returns how many were removed.
     pub fn drain_due(&mut self, now: InstantMillis) -> usize {
         let mut removed = 0;
         let mut i = 0;
@@ -84,7 +70,6 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         removed
     }
 
-    /// Count entries whose `due_at <= now` without removing them.
     pub fn count_due(&self, now: InstantMillis) -> usize {
         self.pending
             .iter()
