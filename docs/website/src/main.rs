@@ -73,12 +73,9 @@ fn App() -> Element {
     });
 
     rsx! {
-        document::Meta { name: "viewport", content: "width=device-width, initial-scale=1" }
-        document::Meta {
-            name: "description",
-            content: "A production-grade Rust port of Reticulum (RNS). Deterministic no_std core, a Linux daemon host, and embedded host work built around the same engine.",
-        }
-        document::Link { rel: "icon", r#type: "image/svg+xml", href: "/assets/favicon.svg" }
+        // Head metadata (charset, title, description, favicon, Open Graph,
+        // Twitter) lives in the static index.html so social crawlers, which do
+        // not run wasm, can read it. See docs/website/index.html.
         Router::<Route> {}
     }
 }
