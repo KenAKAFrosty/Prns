@@ -143,4 +143,89 @@ mod tests {
         assert_eq!(held.received_hops(), 0);
         assert_eq!(held.announce().destination, dest(0));
     }
+
+    #[test]
+    fn app_data_at_the_held_limit_is_accepted_but_one_byte_past_is_rejected() {
+        let mut cache = HeapHeldAnnounces::default();
+        let any = InterfaceId::new([0u8; 16]);
+        let exact = std::vec![0xA5; HELD_APP_DATA_LIMIT];
+        let too_large = std::vec![0x5A; HELD_APP_DATA_LIMIT + 1];
+
+        assert_eq!(
+            cache.park(
+                &announce_for(dest(1), &exact),
+                ts(100),
+                1,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
+            ParkOutcome::Parked
+        );
+        assert_eq!(
+            cache.park(
+                &announce_for(dest(2), &too_large),
+                ts(200),
+                1,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
+            ParkOutcome::AppDataTooLarge
+        );
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn take_next_selects_the_lowest_priority_even_when_not_first() {
+        let mut cache = HeapHeldAnnounces::default();
+        let any = InterfaceId::new([0u8; 16]);
+
+        cache.park(
+            &announce_for(dest(1), b"later"),
+            ts(300),
+            4,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(2), b"earliest"),
+            ts(100),
+            4,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(3), b"nearest"),
+            ts(200),
+            2,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+
+        let held = cache.take_next().unwrap();
+        assert_eq!(held.received_hops(), 2);
+        assert_eq!(held.announce().destination, dest(3));
+    }
+
+    #[test]
+    fn take_next_keeps_first_inserted_when_priority_is_identical() {
+        let mut cache = HeapHeldAnnounces::default();
+        let any = InterfaceId::new([0u8; 16]);
+
+        cache.park(
+            &announce_for(dest(1), b"first"),
+            ts(100),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(2), b"second"),
+            ts(100),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+
+        assert_eq!(cache.take_next().unwrap().announce().destination, dest(1));
+    }
 }

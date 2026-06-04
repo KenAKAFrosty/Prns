@@ -127,4 +127,10 @@ mod tests {
         let hi = MonotonicTimebase::from_wire([0, 0, 0, 1, 0]);
         assert!(hi > lo);
     }
+
+    #[test]
+    fn timebase_debug_prints_the_numeric_count() {
+        let timebase = MonotonicTimebase::from_wire([0, 0, 0, 1, 0]);
+        assert_eq!(format!("{timebase:?}"), "MonotonicTimebase(256)");
+    }
 }

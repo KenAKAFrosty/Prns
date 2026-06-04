@@ -41,6 +41,11 @@ mod tests {
     }
 
     #[test]
+    fn default_route_expiry_is_seven_days() {
+        assert_eq!(DEFAULT_ROUTE_EXPIRY_MILLIS, 604_800_000);
+    }
+
+    #[test]
     fn jitter_is_deterministic_and_inside_the_window() {
         let window = 500;
         let a = jitter_offset_for(JitterSeed(0xCAFE_F00D), &dest(0x11), window);
@@ -58,6 +63,12 @@ mod tests {
             .collect();
         let unique: std::collections::BTreeSet<_> = offsets.iter().collect();
         assert!(unique.len() >= 7, "expected ~all distinct, got {offsets:?}");
+    }
+
+    #[test]
+    fn jitter_vector_pins_the_destination_word_mix() {
+        let offset = jitter_offset_for(JitterSeed(0xCAFE_F00D), &dest(0x11), 500);
+        assert_eq!(offset, 347);
     }
 
     #[test]

@@ -75,4 +75,16 @@ mod tests {
         assert_eq!(pending.drain_due(InstantMillis(10_000)), 200);
         assert_eq!(pending.pending_count(), 0);
     }
+
+    #[test]
+    fn drain_due_uses_the_due_boundary_and_reports_removed_count() {
+        let mut pending = HeapRebroadcastQueue::default();
+        pending.schedule(dest(1), InstantMillis(99), iface(0xAA));
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(3), InstantMillis(101), iface(0xAA));
+
+        assert_eq!(pending.drain_due(InstantMillis(100)), 2);
+        assert_eq!(pending.as_slice().len(), 1);
+        assert_eq!(pending.as_slice()[0].destination, dest(3));
+    }
 }
