@@ -164,7 +164,6 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
             return Ok(None);
         }
 
-        //REVIEW oh shit! does doing all of this make us NOT RNS-faithful anymore? If so we need to forget that and just pick a custom framing of our own choosing. Perhaps one that makes more sense for us and our needs too?
         if !self.in_frame {
             // A payload byte with no frame open means we joined the stream
             // mid-frame: a reconnect landing in another frame's body, or a

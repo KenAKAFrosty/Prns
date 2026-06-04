@@ -239,8 +239,6 @@ fn would_block(e: &io::Error) -> bool {
     )
 }
 
-//REVIEW i still can't quite wrap around why we split this up into a different module here? it being gated behind "usb-auto" when the *entire* impl is usb-auto makes no sense to me. It feels like a smell.
-
 /// The production driver: polls serialport a few times a second for the USB CDC
 /// ports present, reconciles them into the Discoverer's links, and runs the
 /// servicing loop. Cross-platform — serialport cfg-gates its own per-OS backends;

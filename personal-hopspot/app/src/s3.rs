@@ -56,9 +56,6 @@ const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
 
-//REVIEW okayyyyyy we have a LOT of cleanup to do here
-
-
 /// LiPo range for the bar fill (datasheet: 3.3 V empty … 4.2 V full).
 const VBAT_EMPTY_MV: u32 = 3300;
 const VBAT_FULL_MV: u32 = 4200;
