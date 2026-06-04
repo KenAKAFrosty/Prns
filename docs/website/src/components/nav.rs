@@ -36,7 +36,7 @@ pub fn TopNav() -> Element {
                         {t!("nav-api")}
                     }
                     a {
-                        href: "https://github.com/KenAKAFrosty/personal-reticulum-suite",
+                        href: "https://github.com/KenAKAFrosty/Prns",
                         target: "_blank",
                         rel: "noopener",
                         class: "hover:text-accent transition-colors",

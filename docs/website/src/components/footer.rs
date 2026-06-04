@@ -11,7 +11,7 @@ pub fn Footer() -> Element {
                     span { class: "text-soft", {t!("footer-license")} }
                     " · "
                     a {
-                        href: "https://github.com/KenAKAFrosty/personal-reticulum-suite",
+                        href: "https://github.com/KenAKAFrosty/Prns",
                         target: "_blank",
                         rel: "noopener",
                         class: "hover:text-accent",
