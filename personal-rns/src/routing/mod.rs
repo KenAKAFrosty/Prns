@@ -1,5 +1,6 @@
 pub mod announce;
 pub mod defaults;
+pub mod delivery;
 pub mod held_cache;
 pub mod schedule;
 pub mod storage;

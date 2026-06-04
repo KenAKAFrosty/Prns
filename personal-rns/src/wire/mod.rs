@@ -118,7 +118,7 @@ impl PacketType {
 /// ever yields `Unknown` for bytes outside the named set, so a parsed value is
 /// always canonical.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Context {
+pub enum WireContext {
     None,
     Resource,
     ResourceAdvertisement,
@@ -143,7 +143,7 @@ pub enum Context {
     Unknown(u8),
 }
 
-impl Context {
+impl WireContext {
     const fn from_byte(byte: u8) -> Self {
         match byte {
             0x00 => Self::None,
@@ -251,7 +251,7 @@ pub struct WirePacketHeader {
     pub hops: u8,
     pub transport_id: Option<TransportId>,
     pub destination: DestinationHash,
-    pub context: Context,
+    pub context: WireContext,
 }
 
 impl WirePacketHeader {
@@ -285,7 +285,7 @@ impl WirePacketHeader {
         let destination =
             DestinationHash::from_slice(dest_slot).ok_or(WireError::BufferTooShort)?;
 
-        let context = Context::from_byte(*bytes.get(offset).ok_or(WireError::BufferTooShort)?);
+        let context = WireContext::from_byte(*bytes.get(offset).ok_or(WireError::BufferTooShort)?);
         offset += 1;
 
         let header = WirePacketHeader {
@@ -359,7 +359,7 @@ mod tests {
             hops: 3,
             transport_id: None,
             destination: DestinationHash::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
-            context: Context::None,
+            context: WireContext::None,
         };
 
         let mut buf = [0u8; 64];
@@ -382,7 +382,7 @@ mod tests {
             hops: 7,
             transport_id: Some(TransportId::new([0x11; TRUNCATED_HASH_BYTE_LEN])),
             destination: DestinationHash::new([0x22; TRUNCATED_HASH_BYTE_LEN]),
-            context: Context::PathResponse,
+            context: WireContext::PathResponse,
         };
 
         let mut buf = [0u8; 64];
@@ -405,7 +405,7 @@ mod tests {
             hops: 3,
             transport_id: None,
             destination: DestinationHash::new([0xAB; TRUNCATED_HASH_BYTE_LEN]),
-            context: Context::None,
+            context: WireContext::None,
         };
         let mut type1_short = [0u8; 2 + TRUNCATED_HASH_BYTE_LEN];
         assert_eq!(
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(header.propagation, PropagationType::Broadcast);
         assert_eq!(header.ifac_flag, IfacFlag::Open);
         assert_eq!(header.context_flag, ContextFlag::Unset);
-        assert_eq!(header.context, Context::None);
+        assert_eq!(header.context, WireContext::None);
         assert_eq!(header.hops, 0);
         assert_eq!(header.transport_id, None);
         assert_eq!(
@@ -482,7 +482,7 @@ mod tests {
             raw[offset..].copy_from_slice(&payload);
 
             let (header, parsed_payload) = WirePacketHeader::parse(&raw).unwrap();
-            assert_eq!(header.context, Context::Unknown(0xA5));
+            assert_eq!(header.context, WireContext::Unknown(0xA5));
             assert_eq!(parsed_payload, payload);
 
             let mut encoded = [0u8; 64];
@@ -547,8 +547,8 @@ mod tests {
         ]
     }
 
-    fn contexts() -> impl Strategy<Value = Context> {
-        any::<u8>().prop_map(Context::from_byte)
+    fn contexts() -> impl Strategy<Value = WireContext> {
+        any::<u8>().prop_map(WireContext::from_byte)
     }
 
     fn headers() -> impl Strategy<Value = WirePacketHeader> {

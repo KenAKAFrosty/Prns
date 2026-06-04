@@ -2,14 +2,14 @@ use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::wire::{
-    Context, DestinationHash, DestinationType, PacketType, TransportId, WirePacketHeader, MTU,
+    WireContext, DestinationHash, DestinationType, PacketType, TransportId, WirePacketHeader, MTU,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DataPacket<'a> {
     pub destination_type: DestinationType,
     pub destination: DestinationHash,
-    pub context: Context,
+    pub context: WireContext,
     pub transport_id: Option<TransportId>,
     pub payload: &'a [u8],
 }
@@ -102,7 +102,7 @@ impl<'a> Ingress<'a> {
 mod tests {
     use super::*;
     use crate::wire::{
-        Context, ContextFlag, DestinationHash, IfacFlag, PropagationType, TransportId,
+        WireContext, ContextFlag, DestinationHash, IfacFlag, PropagationType, TransportId,
         WirePacketHeader, HEADER_LEN,
     };
 
@@ -133,7 +133,7 @@ mod tests {
             hops: 0,
             transport_id: None,
             destination: DestinationHash::new([0xA5; 16]),
-            context: Context::None,
+            context: WireContext::None,
         };
         let mut bytes = [0u8; HEADER_LEN];
         assert_eq!(header.write(&mut bytes).unwrap(), HEADER_LEN);
@@ -182,7 +182,7 @@ mod tests {
             hops: 5,
             transport_id: Some(TransportId::new([0x11; 16])),
             destination: DestinationHash::new([0xA5; 16]),
-            context: Context::Resource,
+            context: WireContext::Resource,
         };
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
         let mut bytes = [0u8; MTU];
@@ -209,7 +209,7 @@ mod tests {
             DataPacket {
                 destination_type: DestinationType::Plain,
                 destination: DestinationHash::new([0xA5; 16]),
-                context: Context::Resource,
+                context: WireContext::Resource,
                 transport_id: Some(TransportId::new([0x11; 16])),
                 payload: &payload,
             }
@@ -236,7 +236,7 @@ mod tests {
                 hops: 0,
                 transport_id: None,
                 destination: DestinationHash::new([0xA5; 16]),
-                context: Context::None,
+                context: WireContext::None,
             };
             let mut bytes = [0u8; HEADER_LEN];
             assert_eq!(header.write(&mut bytes).unwrap(), HEADER_LEN);
