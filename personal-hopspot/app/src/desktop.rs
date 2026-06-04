@@ -102,9 +102,17 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
             interfaces,
             host,
         },
-        move |event: PrnsEvent<'_>| {
-            let PrnsEvent::SnapshotUpdated(snapshot) = event;
-            let _ = snap_tx.send(snapshot.clone());
+        move |event: PrnsEvent<'_>| match event {
+            PrnsEvent::SnapshotUpdated(snapshot) => {
+                let _ = snap_tx.send(snapshot.clone());
+            }
+            PrnsEvent::Delivered(delivery) => {
+                println!(
+                    "HOPSPOT_USB_RX_DELIVERY destination={:02x?} bytes={}",
+                    delivery.destination.as_bytes(),
+                    delivery.payload.len(),
+                );
+            }
         },
     ));
 }

@@ -318,9 +318,9 @@ async fn node_task(
             interfaces,
             host,
         },
-        move |event: PrnsEvent<'_>| {
-            let PrnsEvent::SnapshotUpdated(snapshot) = event;
-            snapshot_tx.send(snapshot.clone());
+        move |event: PrnsEvent<'_>| match event {
+            PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
+            PrnsEvent::Delivered(_) => {}
         },
     )
     .await

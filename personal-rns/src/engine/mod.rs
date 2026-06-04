@@ -25,13 +25,14 @@ use crate::routing::announce::{
     AnnounceId, SelfAnnounceEntropy,
 };
 use crate::routing::defaults::{jitter_offset_for, JitterSeed};
+use crate::routing::delivery::{PlainDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS};
 use crate::routing::held_cache::HeldAnnounces;
 use crate::routing::schedule::RebroadcastQueue;
 use crate::routing::storage::EngineStorage;
 use crate::routing::{
     DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, DestinationType};
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
@@ -361,18 +362,19 @@ pub enum AnnounceIngest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IngestPacketOutcome {
+pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
+    Delivery(PlainDelivery<'p>),
     Ignored,
 }
 
 impl<S: EngineStorage> EngineState<S> {
     #[must_use]
-    pub fn ingest_packet(
+    pub fn ingest_packet<'p>(
         &mut self,
-        packet: &InboundPacket<'_>,
+        packet: &InboundPacket<'p>,
         jitter: JitterSeed,
-    ) -> IngestPacketOutcome {
+    ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
         match Ingress::classify(packet) {
@@ -389,10 +391,55 @@ impl<S: EngineStorage> EngineState<S> {
                 jitter,
             )),
 
-            Ingress::Data { .. } | Ingress::LinkRequest | Ingress::Proof => {
-                IngestPacketOutcome::Ignored
+            Ingress::Data {
+                data,
+                received_hops,
+                source_interface,
+                arrived_at,
+            } => {
+                match self.local_delivery_for(&data, received_hops, source_interface, arrived_at) {
+                    Some(delivery) => IngestPacketOutcome::Delivery(delivery),
+                    None => IngestPacketOutcome::Ignored,
+                }
             }
+
+            Ingress::LinkRequest | Ingress::Proof => IngestPacketOutcome::Ignored,
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
+        }
+    }
+
+    fn local_delivery_for<'p>(
+        &self,
+        data: &DataPacket<'p>,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> Option<PlainDelivery<'p>> {
+        if let Some(transport_id) = data.transport_id {
+            let ours = self.identity.as_ref().is_some_and(|identity| {
+                identity.identity_hash().as_bytes() == transport_id.as_bytes()
+            });
+            if !ours {
+                return None;
+            }
+        }
+
+        match data.destination_type {
+            DestinationType::Plain => {
+                if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
+                    return None;
+                }
+                self.local_destinations
+                    .lookup(&data.destination, DestinationType::Plain)?;
+                Some(PlainDelivery {
+                    destination: data.destination,
+                    context: data.context,
+                    payload: data.payload,
+                    arrived_at,
+                    source_interface,
+                })
+            }
+            DestinationType::Single | DestinationType::Group | DestinationType::Link => None,
         }
     }
 
@@ -545,7 +592,8 @@ mod tests {
     };
     use crate::routing::storage::FixedCapacity;
     use crate::wire::{
-        DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
+        ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+        WireContext, WirePacketHeader, MTU,
     };
 
     type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8>;
@@ -756,6 +804,140 @@ mod tests {
             .register_plain_destination("personal", &["node"])
             .is_ok());
         assert_eq!(state.local_destinations().count(), 1);
+    }
+
+    const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
+
+    fn plain_data_packet(bytes: &[u8]) -> InboundPacket<'_> {
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: InterfaceId::new([0x07; 16]),
+            bytes,
+        }
+    }
+
+    #[test]
+    fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_1_payload() {
+        let raw = hx(RAW_PLAIN_DATA);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let destination = state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(PlainDelivery {
+                destination,
+                context: WireContext::None,
+                payload: b"hello-plain",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            }),
+        );
+    }
+
+    #[test]
+    fn relayed_plain_data_is_dropped_at_the_packet_filter() {
+        let mut raw = hx(RAW_PLAIN_DATA);
+        raw[1] = 1;
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn plain_data_for_an_unregistered_destination_is_not_delivered() {
+        let raw = hx(RAW_PLAIN_DATA);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        state
+            .register_plain_destination("personal", &["other"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn plain_addressed_data_never_reaches_a_single_destination_with_that_hash() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let single = state
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Plain,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination: single,
+            context: WireContext::None,
+        };
+        let mut raw = [0u8; MTU];
+        let header_len = header.write(&mut raw).unwrap();
+        raw[header_len] = 0xFF;
+
+        assert_eq!(
+            state.ingest_packet(&plain_data_packet(&raw[..header_len + 1]), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn in_transport_data_delivers_only_when_we_are_the_named_transport_instance() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        let raw_for_us = hx(&format!(
+            "4800{}{}00{}",
+            "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
+        ));
+        let raw_for_other = hx(&format!(
+            "4800{}{}00{}",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "12f815e3e65add6ceb2fda0e7be33868", "ee"
+        ));
+
+        let IngestPacketOutcome::Delivery(delivered) =
+            state.ingest_packet(&plain_data_packet(&raw_for_us), TEST_ENTROPY)
+        else {
+            panic!("in-transport data named to us must deliver");
+        };
+        assert_eq!(delivered.payload, &[0xEE]);
+
+        assert_eq!(
+            state.ingest_packet(&plain_data_packet(&raw_for_other), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn an_identity_less_relay_never_accepts_in_transport_data() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        let raw = hx(&format!(
+            "4800{}{}00{}",
+            "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
+        ));
+
+        assert_eq!(
+            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
     }
 
     #[test]

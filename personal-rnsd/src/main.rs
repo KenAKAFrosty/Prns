@@ -113,17 +113,25 @@ fn main() {
             interfaces,
             host,
         },
-        |event| {
-            let PrnsEvent::SnapshotUpdated(snapshot) = event;
-            let routes = snapshot
-                .interfaces
-                .iter()
-                .map(|view| view.tracked_destinations)
-                .max()
-                .unwrap_or(0);
-            if routes > announced_routes {
-                announced_routes = routes;
-                println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
+        |event| match event {
+            PrnsEvent::Delivered(delivery) => {
+                println!(
+                    "RNSD_USB_RX_DELIVERY destination={:02x?} bytes={}",
+                    delivery.destination.as_bytes(),
+                    delivery.payload.len(),
+                );
+            }
+            PrnsEvent::SnapshotUpdated(snapshot) => {
+                let routes = snapshot
+                    .interfaces
+                    .iter()
+                    .map(|view| view.tracked_destinations)
+                    .max()
+                    .unwrap_or(0);
+                if routes > announced_routes {
+                    announced_routes = routes;
+                    println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
+                }
             }
         },
     ));
