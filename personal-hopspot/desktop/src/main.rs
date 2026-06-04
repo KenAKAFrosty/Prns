@@ -121,9 +121,11 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
     ));
 }
 
+/// Desktop-only stand-ins so the single-button selection and pagination path can
+/// be exercised before the runtime grows multiple real interfaces. Parked while we
+/// drive real boards — re-add the call in `run_window` to bring them back.
+#[allow(dead_code)]
 fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
-    // Desktop-only stand-ins so the single-button selection and pagination path
-    // can be exercised before the runtime grows multiple real interfaces.
     let _ = cards.push(Card {
         kind: CardKind::Wifi,
         label: "WiFi",
@@ -370,9 +372,10 @@ fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
         let card_count = match &snapshot {
             // This node has exactly one interface (the serial link), so one card.
             Some(snap) => {
-                let mut cards: HVec<Card, 8> =
+                // Only the real interfaces from the runtime snapshot — the dummy
+                // stand-ins (`append_desktop_dummy_cards`) stay parked for now.
+                let cards: HVec<Card, 8> =
                     screen::snapshot_to_cards(snap, |_id| Some((CardKind::Usb, "USB")));
-                append_desktop_dummy_cards(&mut cards);
                 let card_count = cards.len();
                 ui_state.sync_card_count(card_count);
                 dispatch_long_press_if_ready(
