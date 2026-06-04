@@ -66,7 +66,6 @@ use personal_rns::engine::{
     ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::interfaces::impls::esp_now::core::descriptor as espnow_descriptor;
 use personal_rns::interfaces::impls::esp_now::embassy::{serve as serve_esp_now, EspNowLink};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::core::HARDWARE_MTU;
@@ -81,17 +80,18 @@ use personal_rns::interfaces::impls::rns_parity::serial::serve as serve_serial;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };
-use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{
-    ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
-    OutboundPacket, SendError, StartedInterface,
-};
-use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::interfaces::substrate::{
     new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle,
     EmbassyInterfaceSeam, WakeSignal,
 };
+use personal_rns::interfaces::MacAddress;
+use personal_rns::interfaces::{
+    ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
+    OutboundPacket, SendError, StartedInterface,
+};
+use personal_rns::routing::storage::FixedCapacity;
+use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{InterfaceView, Runtime, RuntimeSnapshot};
 use personal_rns::wire::MTU;
@@ -140,14 +140,18 @@ static AUTO_CH: EmbassyInterfaceChannels<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS
     EmbassyInterfaceChannels::new();
 static SERIAL_CH: EmbassyInterfaceChannels<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS> =
     EmbassyInterfaceChannels::new();
-static LORA_CH: EmbassyInterfaceChannels<MTU, LORA_MAX_BUFFERED_PACKETS> = EmbassyInterfaceChannels::new();
-static ESPNOW_CH: EmbassyInterfaceChannels<MTU, ESPNOW_MAX_BUFFERED_PACKETS> = EmbassyInterfaceChannels::new();
+static LORA_CH: EmbassyInterfaceChannels<MTU, LORA_MAX_BUFFERED_PACKETS> =
+    EmbassyInterfaceChannels::new();
+static ESPNOW_CH: EmbassyInterfaceChannels<MTU, ESPNOW_MAX_BUFFERED_PACKETS> =
+    EmbassyInterfaceChannels::new();
 static WAKE: WakeSignal = new_wake_signal();
 
 /// The worker-side seam each *spawned* interface task runs against (auto + serial;
 /// lora + espnow are joined in `main`, their context types inferred from the split).
-type AutoContext = InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS>>;
-type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>>;
+type AutoContext =
+    InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS>>;
+type SerialContext =
+    InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>>;
 
 /// The runtime holds one handle type, but the S3's four interfaces have four
 /// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU, and
@@ -331,7 +335,12 @@ async fn button_task(mut button: Input<'static>) {
         // Active-low: a press pulls GPIO0 to ground (falling), the pull-up holds
         // it high on release (rising).
         button.wait_for_falling_edge().await;
-        match select(button.wait_for_rising_edge(), Timer::after(BUTTON_LONG_PRESS)).await {
+        match select(
+            button.wait_for_rising_edge(),
+            Timer::after(BUTTON_LONG_PRESS),
+        )
+        .await
+        {
             Either::First(()) => BUTTON_EVENTS.send(display::InputEvent::ShortPress).await,
             Either::Second(()) => {
                 BUTTON_EVENTS.send(display::InputEvent::LongPress).await;

@@ -51,8 +51,17 @@ impl LinuxSync {
     /// Glue an interface seam bound to this host's clock + wake: the worker takes the
     /// context, the runtime keeps the handle. `MTU` is inferred from how the worker
     /// context is used (the serial interface pins it to `SERIAL_MTU`).
-    pub fn glue_seam<const MTU: usize>(&self, id: InterfaceId, max_buffered_packets: usize) -> StdInterfaceSeam<MTU> {
-        StdInterfaceSeam::new(id, self.clock_base, max_buffered_packets, self.wake_sender.clone())
+    pub fn glue_seam<const MTU: usize>(
+        &self,
+        id: InterfaceId,
+        max_buffered_packets: usize,
+    ) -> StdInterfaceSeam<MTU> {
+        StdInterfaceSeam::new(
+            id,
+            self.clock_base,
+            max_buffered_packets,
+            self.wake_sender.clone(),
+        )
     }
 
     /// Attach `interface` to this host and hand back the [`StartedInterface`] the
@@ -69,7 +78,8 @@ impl LinuxSync {
         I: Interface<StdHostSubstrate<MTU>>,
     {
         let id = interface.descriptor().id;
-        self.glue_seam(id, max_buffered_packets).start_interface(interface)
+        self.glue_seam(id, max_buffered_packets)
+            .start_interface(interface)
     }
 
     fn now(&self) -> InstantMillis {

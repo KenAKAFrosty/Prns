@@ -62,7 +62,9 @@ pub struct EmbassyInterfaceChannels<const MTU: usize, const MAX_BUFFERED_PACKETS
     report: Channel<CriticalSectionRawMutex, ControlReport, CONTROL_DEPTH>,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
+    EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>
+{
     /// A fresh set of empty channels — `const`, so it can back a board `static`.
     pub const fn new() -> Self {
         Self {
@@ -74,7 +76,9 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyInterfaceChanne
     }
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Default for EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Default
+    for EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>
+{
     fn default() -> Self {
         Self::new()
     }
@@ -87,7 +91,9 @@ pub struct EmbassyInboundSink<const MTU: usize, const MAX_BUFFERED_PACKETS: usiz
     wake: &'static WakeSignal,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InboundSink for EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InboundSink
+    for EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS>
+{
     fn submit(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<(), QueueFull> {
         let mut slot = InboundSlot {
             arrived_at: InstantMillis(EmbassyInstant::now().as_millis()),
@@ -108,7 +114,9 @@ pub struct EmbassyOutboundDrain<const MTU: usize, const MAX_BUFFERED_PACKETS: us
     consumer: Receiver<'static, CriticalSectionRawMutex, OutboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> OutboundDrain for EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> OutboundDrain
+    for EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS>
+{
     fn drain_each(&mut self, mut write: impl FnMut(OutboundPacket<'_>)) -> usize {
         let mut drained = 0;
         while let Ok(slot) = self.consumer.try_receive() {
@@ -119,7 +127,9 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> OutboundDrain for Emba
     }
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
+    EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS>
+{
     /// Await until at least one outbound packet is queued, without consuming it.
     pub async fn ready(&self) {
         self.consumer.ready_to_receive().await;
@@ -169,7 +179,9 @@ impl EmbassyControlEndpoint {
 /// The embassy platform's worker-side lane-end types, bundled for [`InterfaceWorkerContext`].
 pub struct EmbassyHostSubstrate<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>;
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Substrate for EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Substrate
+    for EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>
+{
     type InboundSink = EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS>;
     type OutboundDrain = EmbassyOutboundDrain<MTU, MAX_BUFFERED_PACKETS>;
     type Control = EmbassyControlEndpoint;
@@ -184,7 +196,9 @@ pub struct EmbassyInterfaceHandle<const MTU: usize, const MAX_BUFFERED_PACKETS: 
     reports: Receiver<'static, CriticalSectionRawMutex, ControlReport, CONTROL_DEPTH>,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InterfaceHandle for EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InterfaceHandle
+    for EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>
+{
     fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
         let mut drained = 0;
         while let Ok(slot) = self.inbound.try_receive() {
@@ -228,7 +242,9 @@ pub struct EmbassyInterfaceSeam<const MTU: usize, const MAX_BUFFERED_PACKETS: us
     pub runtime_handle: EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> EmbassyInterfaceSeam<MTU, MAX_BUFFERED_PACKETS> {
+impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
+    EmbassyInterfaceSeam<MTU, MAX_BUFFERED_PACKETS>
+{
     /// Split a board's `'static` [`EmbassyInterfaceChannels`] into the worker-held
     /// context and the runtime-held handle for interface `id`. `wake` is the host's
     /// one shared [`WakeSignal`] — pass the same `&'static` reference to every seam

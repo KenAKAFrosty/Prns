@@ -17,10 +17,10 @@ use std::time::Duration;
 
 use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, Prns, Recipe};
 

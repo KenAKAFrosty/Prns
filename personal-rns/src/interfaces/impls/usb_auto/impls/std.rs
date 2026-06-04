@@ -35,7 +35,9 @@ const PROBE_SCAN_BUDGET: u8 = 7;
 
 enum LinkState {
     /// Probed, awaiting a HelloAck; rejected once `scans_left` hits zero.
-    Probing { scans_left: u8 },
+    Probing {
+        scans_left: u8,
+    },
     Confirmed(NodeTag),
     /// The port errored this pass and is pruned once servicing finishes.
     Lost,

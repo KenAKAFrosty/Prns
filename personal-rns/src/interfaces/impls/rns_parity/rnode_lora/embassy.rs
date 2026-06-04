@@ -21,8 +21,8 @@ use super::core::{
     air_frame_count, encode_air_frame_part, LoRaModulation, LoRaReassembler, LORA_MAX_PAYLOAD,
     LORA_SINGLE_FRAME_MAX,
 };
-use crate::interfaces::{InboundSink, InterfaceWorkerContext};
 use crate::interfaces::substrate::EmbassyHostSubstrate;
+use crate::interfaces::{InboundSink, InterfaceWorkerContext};
 use crate::wire::MTU;
 
 /// SX1262 output power for the transmit ramp, in dBm. Low for a desk/bench gap:

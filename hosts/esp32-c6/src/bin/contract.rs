@@ -33,17 +33,17 @@ use static_cell::StaticCell;
 use personal_rns::engine::{
     EngineCycleEntropySeed, ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
 };
-use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::serve;
 use personal_rns::interfaces::impls::rns_parity::serial::{
     descriptor as serial_descriptor, SERIAL_MTU,
 };
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
 use personal_rns::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, WakeSignal,
 };
+use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
+use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{Prns, Recipe};
 
@@ -72,7 +72,8 @@ type SerialContext = InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, MAX
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 /// The interface's four channels live in one board `static` (the embassy idiom);
 /// `EmbassyInterfaceSeam::split` hands out the worker + runtime ends.
-static CHANNELS: EmbassyInterfaceChannels<SERIAL_MTU, MAX_BUFFERED_PACKETS> = EmbassyInterfaceChannels::new();
+static CHANNELS: EmbassyInterfaceChannels<SERIAL_MTU, MAX_BUFFERED_PACKETS> =
+    EmbassyInterfaceChannels::new();
 /// The host's one wake — every seam end signals it; the contract host awaits it.
 static WAKE: WakeSignal = Signal::new();
 

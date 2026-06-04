@@ -5,8 +5,8 @@ use crate::engine::directives::HeapEngineDirectives;
 use crate::routing::held_cache::HeapHeldAnnounces;
 use crate::routing::schedule::HeapRebroadcastQueue;
 use crate::routing::storage::{
-    HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData, HeapRouteColumns,
-    EngineStorage,
+    EngineStorage, HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
+    HeapRouteColumns,
 };
 
 pub struct GrowableHeap;

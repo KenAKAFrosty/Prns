@@ -11,8 +11,8 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 use announce::Announce;
-use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 pub use defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 pub use storage::AnnounceIdHistoryView;
 use storage::{
     AnnounceIdHistory, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
@@ -436,15 +436,11 @@ mod tests {
             );
         }
         let view = table.existing_route_for(&dest(1)).unwrap();
-        assert_eq!(
-            view.announce_id_history.len(),
-            RT_HISTORY_CAP
-        );
+        assert_eq!(view.announce_id_history.len(), RT_HISTORY_CAP);
         assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
-        assert!(view.announce_id_history.contains(&announce_id(
-            0,
-            RT_HISTORY_CAP as u64 + 2
-        )));
+        assert!(view
+            .announce_id_history
+            .contains(&announce_id(0, RT_HISTORY_CAP as u64 + 2)));
     }
 
     #[test]

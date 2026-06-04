@@ -17,12 +17,12 @@ use super::core::{
     HARDWARE_MTU, UNICAST_DISCOVERY_PORT,
 };
 use crate::engine::InstantMillis;
+use crate::interfaces::substrate::EmbassyHostSubstrate;
 use crate::interfaces::{
     ConnectionState, EgressCapability, InboundSink, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceWorkerContext, MacAddress,
     MediumKind, TransitCapability,
 };
-use crate::interfaces::substrate::EmbassyHostSubstrate;
 
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL_MS: u64 = 1600;

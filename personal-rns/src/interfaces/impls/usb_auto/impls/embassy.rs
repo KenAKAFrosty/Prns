@@ -85,9 +85,10 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
                     match react_to(decode_message(frame)) {
                         InboundReaction::AnswerHandshake => {
                             host_link = HostLink::Linked;
-                            if let Ok(m) = Message::HelloAck(node_tag).write_framed(&mut frame_buf) {
-                                let _ =
-                                    with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m])).await;
+                            if let Ok(m) = Message::HelloAck(node_tag).write_framed(&mut frame_buf)
+                            {
+                                let _ = with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m]))
+                                    .await;
                             }
                         }
                         InboundReaction::Deliver(packet) => {

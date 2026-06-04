@@ -18,8 +18,8 @@ use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant as EmbassyInstant, Timer};
 
 use super::core::{decode_frame, EspNowFrameWriter, ESP_NOW_MAX_FRAME_PAYLOAD};
-use crate::interfaces::{InboundSink, InterfaceWorkerContext};
 use crate::interfaces::substrate::EmbassyHostSubstrate;
+use crate::interfaces::{InboundSink, InterfaceWorkerContext};
 use crate::wire::MTU;
 
 /// How long to keep packing a frame after its first packet before transmitting.

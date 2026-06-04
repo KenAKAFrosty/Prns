@@ -21,8 +21,8 @@ impl EngineDirectives for HeapEngineDirectives {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::MAX_REGISTERED_INTERFACES;
     use crate::interfaces::InterfaceId;
+    use crate::interfaces::MAX_REGISTERED_INTERFACES;
     use crate::wire::DestinationHash;
     use heapless::Vec as HeaplessVec;
 
