@@ -22,9 +22,6 @@ use crate::interfaces::{
     InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransitCapability,
 };
 
-/// The one-byte tag at the front of every frame. Bumped if the coalescing frame
-/// format ever changes, so a peer can reject a frame it can't parse instead of
-/// mis-reading it. There is no back-compat to preserve — every node is ours.
 pub const ESP_NOW_FRAME_VERSION: u8 = 1;
 
 /// The largest payload one ESP-NOW frame carries: ESP-NOW v2's
@@ -32,17 +29,10 @@ pub const ESP_NOW_FRAME_VERSION: u8 = 1;
 /// which is what makes coalescing — rather than fragmentation — the design.
 pub const ESP_NOW_MAX_FRAME_PAYLOAD: usize = 1470;
 
-/// The one-byte version tag that opens a frame.
 pub const ESP_NOW_FRAME_HEADER_LEN: usize = 1;
 
-/// Each coalesced packet is prefixed with its length as a big-endian `u16`.
 pub const ESP_NOW_LENGTH_PREFIX_LEN: usize = 2;
 
-/// Packs Reticulum packets into one ESP-NOW frame, length-delimited under the
-/// version tag, until the frame is full. The worker drives it: open a frame,
-/// [`try_push`](Self::try_push) queued packets while they fit, then transmit
-/// [`frame`](Self::frame) once. A packet that does not fit is held by the caller
-/// for the next frame, so a burst of small packets uses far fewer transmissions.
 pub struct EspNowFrameWriter<'a> {
     buf: &'a mut [u8],
     len: usize,
@@ -50,9 +40,6 @@ pub struct EspNowFrameWriter<'a> {
 }
 
 impl<'a> EspNowFrameWriter<'a> {
-    /// Begin a frame in `buf`, writing the version tag. `buf` must be non-empty
-    /// (it always holds the header); a real frame buffer is sized to
-    /// [`ESP_NOW_MAX_FRAME_PAYLOAD`].
     pub fn new(buf: &'a mut [u8]) -> Self {
         buf[0] = ESP_NOW_FRAME_VERSION;
         Self {
@@ -62,10 +49,6 @@ impl<'a> EspNowFrameWriter<'a> {
         }
     }
 
-    /// Append one packet as `[u16 len][packet]` if the frame's remaining space
-    /// holds it. Returns `true` if it was packed, `false` if it did not fit (the
-    /// frame is full, or the packet is larger than a length prefix can express) —
-    /// the caller keeps the packet for the next frame.
     pub fn try_push(&mut self, packet: &[u8]) -> bool {
         if packet.len() > u16::MAX as usize {
             return false;
@@ -83,37 +66,25 @@ impl<'a> EspNowFrameWriter<'a> {
         true
     }
 
-    /// How many packets have been coalesced into this frame so far.
     pub fn packet_count(&self) -> usize {
         self.packet_count
     }
 
-    /// Whether no packet has been packed yet (only the version tag is present).
     pub fn is_empty(&self) -> bool {
         self.packet_count == 0
     }
 
-    /// The framed bytes to transmit: the version tag plus every packed packet.
     pub fn frame(&self) -> &[u8] {
         &self.buf[..self.len]
     }
 }
 
-/// Why a received frame couldn't be opened for reading.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FrameDecodeError {
-    /// The frame had no version tag (it was empty).
     Empty,
-    /// The version tag didn't match [`ESP_NOW_FRAME_VERSION`] — a frame from an
-    /// incompatible format; the carried byte is returned for diagnostics.
     UnknownVersion(u8),
 }
 
-/// Validate a received frame's version tag and return an iterator over the
-/// packets coalesced into it. A trailing truncated record — a length prefix or
-/// packet body running past the frame's end — ends iteration cleanly: a corrupt
-/// broadcast frame yields the packets that parsed and then stops, since the
-/// engine validates each packet downstream regardless.
 pub fn decode_frame(frame: &[u8]) -> Result<EspNowFrameReader<'_>, FrameDecodeError> {
     let (&version, rest) = frame.split_first().ok_or(FrameDecodeError::Empty)?;
     if version != ESP_NOW_FRAME_VERSION {
@@ -122,9 +93,6 @@ pub fn decode_frame(frame: &[u8]) -> Result<EspNowFrameReader<'_>, FrameDecodeEr
     Ok(EspNowFrameReader { rest })
 }
 
-/// Iterator over the packets a received frame coalesced — each yielded item is
-/// one whole Reticulum packet, in the order it was packed. Built by
-/// [`decode_frame`].
 pub struct EspNowFrameReader<'a> {
     rest: &'a [u8],
 }
@@ -149,11 +117,6 @@ impl<'a> Iterator for EspNowFrameReader<'a> {
     }
 }
 
-/// The routing facts an ESP-NOW interface registers: a shared half-duplex
-/// broadcast medium where every neighbor hears every transmission and the node
-/// repeats into it, participating fully in transport — the same medium shape as
-/// LoRa, on a different radio. Reported `Connected` once the radio is up; a
-/// broadcast medium has no per-peer link state.
 pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
@@ -208,28 +171,22 @@ mod tests {
 
     #[test]
     fn the_fat_v2_frame_coalesces_at_least_two_full_mtu_packets() {
-        // The whole point of v2: a 500-byte MTU packet is small next to a 1470 B
-        // frame, so a burst of full packets still fits in one transmission.
         let mtu_packet = [0x5Au8; crate::wire::MTU];
         let mut buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
         let mut w = EspNowFrameWriter::new(&mut buf);
         assert!(w.try_push(&mtu_packet));
         assert!(w.try_push(&mtu_packet));
         assert_eq!(w.packet_count(), 2);
-        // Two MTU packets + framing fit; the frame stays within one ESP-NOW frame.
         assert!(w.frame().len() <= ESP_NOW_MAX_FRAME_PAYLOAD);
     }
 
     #[test]
     fn try_push_refuses_a_packet_that_does_not_fit_and_leaves_a_valid_frame() {
-        // A tiny frame buffer: header (1) + one record of 2 (one byte) fits, the
-        // next does not.
         let mut buf = [0u8; ESP_NOW_FRAME_HEADER_LEN + ESP_NOW_LENGTH_PREFIX_LEN + 1];
         let mut w = EspNowFrameWriter::new(&mut buf);
         assert!(w.try_push(&[0x11]));
-        assert!(!w.try_push(&[0x22])); // no room left
+        assert!(!w.try_push(&[0x22]));
         assert_eq!(w.packet_count(), 1);
-        // The frame written so far is still well-formed.
         let mut reader = decode_frame(w.frame()).unwrap();
         assert_eq!(reader.next(), Some(&[0x11][..]));
         assert_eq!(reader.next(), None);
@@ -249,7 +206,6 @@ mod tests {
 
     #[test]
     fn a_truncated_trailing_record_ends_iteration_after_the_clean_packets() {
-        // version | len=2, [0xAA,0xBB] | len=9 but only 1 byte follows.
         let frame = [
             ESP_NOW_FRAME_VERSION,
             0x00,
@@ -262,7 +218,7 @@ mod tests {
         ];
         let mut reader = decode_frame(&frame).unwrap();
         assert_eq!(reader.next(), Some(&[0xAA, 0xBB][..]));
-        assert_eq!(reader.next(), None); // truncated second record dropped
+        assert_eq!(reader.next(), None);
     }
 
     #[test]

@@ -1,32 +1,7 @@
-//! Canonical RNS serial byte framing.
-//!
-//! This module intentionally uses Reticulum's reference
-//! `SerialInterface` framing rather than inventing a local transport
-//! wrapper. That keeps RS-232, UART, and similar byte-stream
-//! hosts wire-compatible with a stock RNS daemon.
-//!
 //! The reference implementation calls this HDLC framing, but the
 //! behavior here is specifically HDLC-like octet-stuffed framing: frame
 //! delimiters and escapes live at the byte level. It is not KISS
 //! framing, and it is not bit-synchronous HDLC.
-//!
-//! - [`FLAG`] (`0x7E`) is the frame delimiter — one before each frame
-//!   and one after.
-//! - [`ESC`] (`0x7D`) is the escape byte. Any `FLAG` or `ESC` byte that
-//!   would appear in the payload is replaced by `ESC` followed by the
-//!   raw byte XOR-ed with [`ESC_MASK`] (`0x20`).
-//!
-//! That gives `FLAG <escaped bytes> FLAG` on the wire. Empty frames
-//! (`FLAG FLAG` with nothing between them) are valid keepalives and the
-//! streaming decoder yields them; callers that don't care filter them
-//! out.
-//!
-//! Worst-case framed length is `2 + 2 * payload.len()` (every byte
-//! escaped) and best case is `2 + payload.len()`.
-//!
-//! This module owns the octet-stuffed frame format only. Concrete
-//! interfaces own read-loop policy such as idle timeout, frame cap, and
-//! oversize recovery.
 //!
 //! Reference RNS serial framing:
 //! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L38-L48>
@@ -36,7 +11,6 @@
 
 use heapless::Vec;
 
-/// RNS serial frame delimiter.
 pub const FLAG: u8 = 0x7E;
 pub const ESC: u8 = 0x7D;
 /// XOR mask applied after [`ESC`] to recover the original byte (and
@@ -50,16 +24,10 @@ pub enum EncodeError {
     OutputTooSmall,
 }
 
-/// Largest possible framed output size for an input of `payload_len`
-/// bytes: the two delimiters plus an escape per byte in the worst
-/// case (every byte is `FLAG` or `ESC`).
 pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
-/// Encode `input` as a single RNS serial frame into `output`. Returns the
-/// number of bytes written, including the leading and trailing
-/// delimiters.
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
     let mut written = 0usize;
     let mut put = |byte: u8, written: &mut usize| -> Result<(), EncodeError> {
@@ -94,15 +62,6 @@ pub enum DecodeError {
     FrameTooBig,
 }
 
-/// Streaming RNS serial framing decoder. Feed bytes one at a time as
-/// they arrive from the byte transport; on each [`FLAG`] that closes a
-/// frame, [`feed`] returns the decoded payload, borrowing from the
-/// decoder's internal buffer.
-///
-/// `FRAME_CAP` is the largest in-progress frame the decoder will
-/// accept. Serial-style RNS interfaces should size this at least at
-/// the engine MTU; sizing larger costs only stack bytes.
-///
 /// The decoder can be plugged into an already-running byte stream: bytes
 /// that arrive with no frame open are taken as the body of a frame whose
 /// opening `FLAG` was missed, so they close at the next `FLAG` as one
@@ -110,8 +69,6 @@ pub enum DecodeError {
 /// there. This self-heal matters because RNS's `FLAG data FLAG FLAG data
 /// FLAG` layout would otherwise let a mid-frame join lock the decoder a
 /// half-frame out of phase permanently.
-///
-/// [`feed`]: RnsSerialDecoder::feed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RnsSerialDecoder<const FRAME_CAP: usize> {
     buffer: Vec<u8, FRAME_CAP>,
@@ -140,17 +97,6 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
         self.saw_escape = false;
     }
 
-    /// Feed one byte into the decoder.
-    ///
-    /// - `Ok(None)` — keep feeding; no frame boundary yet.
-    /// - `Ok(Some(frame))` — a frame just closed; the slice borrows
-    ///   from `self` and stays valid until the next call to
-    ///   [`feed`](Self::feed) or [`reset`](Self::reset). Empty frames
-    ///   (`FLAG FLAG`) are valid keepalives and surface here as
-    ///   `Some(&[])`.
-    /// - `Err(FrameTooBig)` — the in-progress frame exceeded
-    ///   `FRAME_CAP`; the decoder auto-resets and the next `FLAG`
-    ///   starts a fresh frame.
     pub fn feed(&mut self, byte: u8) -> Result<Option<&[u8]>, DecodeError> {
         if byte == FLAG {
             if self.in_frame {
@@ -208,9 +154,6 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    /// Default decoder cap for the tests — comfortably larger than any
-    /// Reticulum packet so the FrameTooBig branch is exercised on a
-    /// dedicated tighter-cap decoder rather than accidentally here.
     const TEST_FRAME_CAP: usize = 1024;
 
     fn decode_all(bytes: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
@@ -282,9 +225,6 @@ mod tests {
 
     #[test]
     fn decoder_yields_empty_frames_as_keepalives() {
-        // FLAG FLAG → empty frame. Two empty frames back to back: FLAG
-        // FLAG FLAG → open, close (empty), open. The third FLAG isn't
-        // a frame yet, but the middle one yields Some(&[]).
         let bytes = [FLAG, FLAG, FLAG];
         let frames = decode_all(&bytes);
         assert_eq!(frames, std::vec![std::vec::Vec::<u8>::new()]);
@@ -307,10 +247,6 @@ mod tests {
 
     #[test]
     fn a_mid_frame_join_surfaces_one_discardable_frame_then_realigns() {
-        // Joining the stream inside a frame's body (0xAA, 0xBB with no opening
-        // FLAG): those bytes close as one frame at the next FLAG — higher layers
-        // fail to decode it and drop it — and the decoder is realigned for the
-        // genuine frame that follows.
         let bytes = [0xAA, 0xBB, FLAG, 0x01, FLAG];
         let frames = decode_all(&bytes);
         assert_eq!(frames, std::vec![std::vec![0xAA, 0xBB], std::vec![0x01]]);
@@ -318,17 +254,11 @@ mod tests {
 
     #[test]
     fn a_half_frame_does_not_permanently_desync_the_following_frames() {
-        // The USB-auto reconnect failure: an interrupted write left a half-frame
-        // (an opening FLAG and a truncated body, never closed) in the FIFO, then a
-        // clean frame follows. A strict HDLC toggle reads the clean frame's
-        // opening FLAG as the half-frame's close, drops the clean body as
-        // "between frames", and stays locked a half-frame out of phase forever.
-        // The self-healing decoder realigns and recovers the real announce.
         let announce = hx(RAW_ANNOUNCE_HEX);
         let mut clean = std::vec![0u8; max_encoded_len(announce.len())];
         let n = encode(&announce, &mut clean).unwrap();
 
-        let mut stream = std::vec![FLAG, 0x03, 0xAA, 0xBB]; // half-frame, no closing FLAG
+        let mut stream = std::vec![FLAG, 0x03, 0xAA, 0xBB];
         stream.extend_from_slice(&clean[..n]);
 
         let frames = decode_all(&stream);
@@ -340,10 +270,6 @@ mod tests {
 
     #[test]
     fn decoder_yields_two_back_to_back_frames_with_the_rns_double_flag_layout() {
-        // RNS wraps each frame as `FLAG <data> FLAG`, so two frames
-        // back to back put TWO FLAGs between them. The closing FLAG of
-        // frame 1 exits the in-frame state; the opening FLAG of frame
-        // 2 re-enters it.
         let bytes = [FLAG, 0x01, FLAG, FLAG, 0x02, FLAG];
         let frames = decode_all(&bytes);
         assert_eq!(frames, std::vec![std::vec![0x01], std::vec![0x02]]);
@@ -352,22 +278,17 @@ mod tests {
     #[test]
     fn frame_exceeding_cap_returns_frame_too_big_and_auto_resets() {
         let mut decoder: RnsSerialDecoder<2> = RnsSerialDecoder::new();
-        // Open a frame and push past the cap.
         assert_eq!(decoder.feed(FLAG).unwrap(), None);
         assert_eq!(decoder.feed(0x01).unwrap(), None);
         assert_eq!(decoder.feed(0x02).unwrap(), None);
         assert_eq!(decoder.feed(0x03), Err(DecodeError::FrameTooBig));
 
-        // Auto-reset: the next FLAG opens a fresh frame.
         assert_eq!(decoder.feed(FLAG).unwrap(), None);
         assert_eq!(decoder.feed(0xAB).unwrap(), None);
         let frame = decoder.feed(FLAG).unwrap().unwrap();
         assert_eq!(frame, &[0xAB]);
     }
 
-    /// A genuine RNS 1.3.1 announce — the same vector the engine
-    /// module uses. Round-tripping it through encode → decode proves
-    /// the framing layer is byte-transparent for the real workload.
     const RAW_ANNOUNCE_HEX: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                     59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
                                     0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
@@ -389,11 +310,9 @@ mod tests {
         let n = encode(&raw, &mut framed).unwrap();
         let framed = &framed[..n];
 
-        // Sanity: opens + closes with FLAG.
         assert_eq!(framed[0], FLAG);
         assert_eq!(framed[framed.len() - 1], FLAG);
 
-        // And the decoder reconstructs the original byte-for-byte.
         let frames = decode_all(framed);
         assert_eq!(frames, std::vec![raw]);
     }
@@ -414,10 +333,6 @@ mod tests {
             payload in prop::collection::vec(any::<u8>(), 0..256),
             chunk_size in 1usize..16,
         ) {
-            // Encode once, then feed the resulting byte stream in
-            // chunks of `chunk_size` to mirror how a real serial read
-            // would deliver bytes — frame boundaries do not align with
-            // read calls.
             let mut framed = std::vec![0u8; max_encoded_len(payload.len())];
             let n = encode(&payload, &mut framed).unwrap();
             let framed = &framed[..n];

@@ -1,5 +1,3 @@
-//! The validated announce, only constructible once its signature and destination binding both check out.
-
 pub mod acceptance;
 mod id;
 
@@ -23,14 +21,12 @@ use heapless::Vec as HeaplessVec;
 pub const ANNOUNCE_FIXED_FIELDS_LEN: usize =
     ANNOUNCE_PUBLIC_KEY_LEN + DOTTED_NAME_HASH_LEN + ANNOUNCE_ID_WIRE_LEN + SIGNATURE_LEN;
 
-/// The 64-byte announced public key, split by role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityPublicKeys {
     pub encryption: IdentityEncryptionPublicKey,
     pub signing: IdentitySigningPublicKey,
 }
 
-/// Hash of the destination's dotted app/aspect name (`app.aspect…`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DottedNameHash([u8; DOTTED_NAME_HASH_LEN]);
 
@@ -44,21 +40,11 @@ impl DottedNameHash {
     }
 }
 
-/// Maximum byte length of a destination's expanded dotted name (`app.aspect…`)
-/// we will hash. RNS app names and aspects are short identifiers, so 128 bytes
-/// is generous headroom; a name past this is rejected rather than truncated, so
-/// the name hash can never silently collide with a longer name's prefix.
 pub const MAX_DOTTED_NAME_LEN: usize = 128;
 
-/// Why deriving a [`DottedNameHash`] from an app name and aspects failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpandNameError {
-    /// A component contained a `.`. RNS forbids this identically, because a dot
-    /// is the structural separator between app name and aspects — allowing one
-    /// inside a component would let two distinct (app, aspects) inputs expand to
-    /// the same dotted name.
     DotInComponent,
-    /// The expanded `app.aspect…` name exceeded [`MAX_DOTTED_NAME_LEN`].
     NameTooLong,
 }
 
@@ -113,8 +99,6 @@ pub fn derive_destination_hash(
     DestinationHash::new(truncated)
 }
 
-/// An X25519 forward-secrecy ratchet public key (distinct role from the
-/// identity's static X25519 encryption key, despite using the same primitive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RatchetKey([u8; RATCHET_LEN]);
 
@@ -128,10 +112,6 @@ impl RatchetKey {
     }
 }
 
-/// A validated announce. Holds the full announce content — every field needed to
-/// reproduce the exact wire payload via [`Announce::to_wire`], so the same value
-/// drives both retention (for re-emission) and origination (for our own
-/// announces). Routing (hops, transport id) stays on the [`WirePacketHeader`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Announce<'a> {
     pub destination: DestinationHash,
@@ -150,7 +130,6 @@ pub enum AnnounceValidationError {
     PayloadTooSmall,
     PayloadTooBig,
     InvalidSignature,
-    /// The destination hash does not match the announced identity + name hash.
     DestinationMismatch,
 }
 
@@ -177,7 +156,6 @@ impl<'a> Announce<'a> {
             return Err(AnnounceValidationError::PayloadTooSmall);
         }
 
-        // Slice the payload ( pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖ sig ‖ app_data )
         let mut offset = 0;
         let public_key = &payload[offset..offset + ANNOUNCE_PUBLIC_KEY_LEN];
         offset += ANNOUNCE_PUBLIC_KEY_LEN;
@@ -196,8 +174,6 @@ impl<'a> Announce<'a> {
         offset += SIGNATURE_LEN;
         let app_data = &payload[offset..];
 
-        // Build the typed announce fields up front; the signature check, the
-        // destination binding, and the validated `Announce` all read from them.
         let mut encryption = [0u8; 32];
         encryption.copy_from_slice(&public_key[..32]);
         let mut signing = [0u8; 32];
@@ -221,9 +197,6 @@ impl<'a> Announce<'a> {
         sig.copy_from_slice(signature);
         let signature = Ed25519Signature(sig);
 
-        // Assemble the announce, then prove the claimed signature and the
-        // destination binding before handing it back — and only then. The struct
-        // is just data; nothing trusts it until both checks below pass.
         let announce = Announce {
             destination: header.destination,
             public_keys,
@@ -234,7 +207,6 @@ impl<'a> Announce<'a> {
             app_data,
         };
 
-        // Verify the claimed signature over the announce's own signed material.
         // The scratch buffer (16 + MTU) always fits, since `payload.len() <= MTU`.
         let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + MTU];
         let signed_len = announce
@@ -247,8 +219,6 @@ impl<'a> Announce<'a> {
         )
         .map_err(|_| AnnounceValidationError::InvalidSignature)?;
 
-        // Destination binding: the header's destination must be the one this
-        // announced identity + name hash derive to (see `derive_destination_hash`).
         let mut identity_hash_bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
         identity_hash_bytes.copy_from_slice(&sha256(public_key)[..TRUNCATED_HASH_BYTE_LEN]);
         let identity_hash = IdentityHash::new(identity_hash_bytes);
@@ -294,7 +264,6 @@ impl<'a> Announce<'a> {
         Ok(announce)
     }
 
-    /// Lightweight check of the wire length the announce will produce when serialized (without serializing)
     pub fn wire_len(&self) -> usize {
         let ratchet_len = if self.maybe_ratchet.is_some() {
             RATCHET_LEN
@@ -309,10 +278,6 @@ impl<'a> Announce<'a> {
             + self.app_data.len()
     }
 
-    /// Write the fields the wire payload and the signed material share —
-    /// `encryption_pub ‖ signing_pub ‖ name_hash ‖ announce_id ‖ [ratchet]` —
-    /// into `buf` starting at `offset`, returning the offset just past them. The
-    /// caller has already ensured `buf` is large enough.
     fn write_keys_name_and_id(&self, buf: &mut [u8], mut offset: usize) -> usize {
         buf[offset..offset + 32].copy_from_slice(self.public_keys.encryption.as_bytes());
         offset += 32;
@@ -331,7 +296,6 @@ impl<'a> Announce<'a> {
         offset
     }
 
-    /// Returns the number of bytes written.
     /// Mirrors RNS `Destination.announce`'s `signed_data`.
     fn write_signed_material(&self, buf: &mut [u8]) -> Result<usize, AnnounceSerializeError> {
         let total = TRUNCATED_HASH_BYTE_LEN + self.wire_len() - SIGNATURE_LEN;
@@ -347,11 +311,6 @@ impl<'a> Announce<'a> {
         Ok(offset)
     }
 
-    /// Serialize the announce back to a matching RNS layout
-    /// ( `pubkey ‖ name_hash ‖ announce_id ‖ [ratchet] ‖ signature ‖ app_data`)
-    ///
-    /// Returns the number of bytes written. Used both for
-    /// re-emitting a retained announce and for emitting our own.
     pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, AnnounceSerializeError> {
         let total = self.wire_len();
         if buf.len() < total {
@@ -366,10 +325,8 @@ impl<'a> Announce<'a> {
     }
 }
 
-/// Why serializing an announce into a caller-provided buffer failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceSerializeError {
-    /// The provided buffer is smaller than the announce's serialized length.
     BufferTooShort,
 }
 
@@ -383,8 +340,6 @@ mod tests {
     use super::*;
     use crate::crypto::{ed25519_public_key, ed25519_sign, sha256, Ed25519SecretKey};
 
-    // A genuine RNS 1.3.1 announce (SINGLE dest, app_data b"hello-personal",
-    // no ratchet), generated offline; RNS confirms it validates + binds.
     const RAW: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                        59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
                        0a2331f515512f667009618ccc8f5ebce0600845468d9b829006a172e839fc07deb9b065b91\
@@ -437,8 +392,6 @@ mod tests {
 
     #[test]
     fn to_wire_reproduces_the_real_payload_exactly() {
-        // The serializer is byte-identical with the parsed input — the round-trip
-        // that lets us re-emit a retained announce with its signature intact.
         let raw = hx(RAW);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
@@ -453,7 +406,7 @@ mod tests {
     #[test]
     fn rejects_tampered_signature() {
         let mut raw = hx(RAW);
-        raw[103] ^= 1; // first signature byte: header(19) + payload sig offset(84)
+        raw[103] ^= 1;
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
             Announce::from_wire(&header, payload),
@@ -464,7 +417,7 @@ mod tests {
     #[test]
     fn rejects_non_single_destination() {
         let mut raw = hx(RAW);
-        raw[0] |= 0b0000_0100; // flip destination_type Single -> Group
+        raw[0] |= 0b0000_0100;
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
             Announce::from_wire(&header, payload),
@@ -486,14 +439,13 @@ mod tests {
     fn rejects_oversized_payload() {
         let raw = hx(RAW);
         let (header, _) = WirePacketHeader::parse(&raw).unwrap();
-        let oversized = [0u8; 600]; // beyond the announce MTU bound
+        let oversized = [0u8; 600];
         assert_eq!(
             Announce::from_wire(&header, &oversized),
             Err(AnnounceValidationError::PayloadTooBig),
         );
     }
 
-    // Build an announce with our own crypto, signed over `signed_destination`.
     fn synthetic_announce(
         signed_destination: [u8; 16],
         maybe_ratchet: Option<[u8; RATCHET_LEN]>,
@@ -528,12 +480,10 @@ mod tests {
         payload.extend_from_slice(&sig);
         payload.extend_from_slice(app_data);
 
-        // Type-1 announce with context_flag set when a ratchet is present
-        // (0x21 = 0x01 announce|single|type1 | 0x20 context_flag).
         let flags = if maybe_ratchet.is_some() { 0x21 } else { 0x01 };
         let mut raw = vec![flags, 0x00];
-        raw.extend_from_slice(&signed_destination); // header destination
-        raw.push(0x00); // context
+        raw.extend_from_slice(&signed_destination);
+        raw.push(0x00);
         raw.extend_from_slice(&payload);
         raw
     }
@@ -580,8 +530,6 @@ mod tests {
 
     #[test]
     fn rejects_destination_mismatch() {
-        // Signature is valid (signed over this dest), but the dest doesn't match
-        // the pubkey+name binding, so it must still be rejected.
         let raw = synthetic_announce([0x99u8; 16], None, b"app");
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         assert_eq!(
@@ -592,9 +540,6 @@ mod tests {
 
     #[test]
     fn derive_destination_hash_matches_rns_1_3_1() {
-        // RNS 1.3.1 `Destination.hash(<identity hash>, "personal", "announce")`:
-        // the identity hash is the one the identity/crypto vectors pin, and the
-        // name `personal.announce` hashes (full_hash[..10]) to the name hash below.
         let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let dotted_name_hash = DottedNameHash::new(a("8794b70072dbf251144b"));
         assert_eq!(
@@ -602,9 +547,6 @@ mod tests {
             DestinationHash::new(a("33d610d1d6a7f4f809ebfe62c0ce7d43")),
         );
 
-        // The real announce vector binds the same way: deriving from its identity
-        // hash (sha256 of its 64-byte public key, truncated) and name hash yields
-        // exactly the destination RNS placed on the wire.
         let real_pubkey = a::<64>(
             "02281f6d21232cbba9d12e516183197f08e59b7afba27e99e4fe39f01b0d4d25\
              83a5920220253970a16861e82e52e955a05ee39e2b6d20a2331f515512f66700",
@@ -622,18 +564,14 @@ mod tests {
 
     #[test]
     fn expand_name_matches_rns_1_3_1() {
-        // `personal.announce` — the exact name the derive_destination_hash
-        // vector above pins, so expand_name must reproduce that name hash.
         assert_eq!(
             expand_name("personal", &["announce"]).unwrap(),
             DottedNameHash::new(a("8794b70072dbf251144b")),
         );
-        // `personal.node` — the default destination our self-announce emits.
         assert_eq!(
             expand_name("personal", &["node"]).unwrap(),
             DottedNameHash::new(a("ab49baa826f122c1437f")),
         );
-        // App name with no aspects is just the app name hashed.
         assert_eq!(
             expand_name("personal", &[]).unwrap(),
             DottedNameHash::new(a("4a0a339b0c6d05538977")),
@@ -664,7 +602,6 @@ mod tests {
     #[test]
     fn build_signed_matches_rns_1_3_1() {
         use crate::identity::in_memory::InMemoryNodeIdentity;
-        // Same fixed secret keys the identity/crypto vectors pin (x25519_prv 0x22, ed25519_prv 0x11).
         let mut secret_key_bytes = [0u8; 64];
         secret_key_bytes[..32].fill(0x22);
         secret_key_bytes[32..].fill(0x11);
@@ -672,15 +609,13 @@ mod tests {
 
         let announce = Announce::build_signed(
             &identity,
-            DottedNameHash::new(a("8794b70072dbf251144b")), // "personal.announce"
-            AnnounceId::from_wire([0x44; ANNOUNCE_ID_WIRE_LEN]), // fixed random_hash
+            DottedNameHash::new(a("8794b70072dbf251144b")),
+            AnnounceId::from_wire([0x44; ANNOUNCE_ID_WIRE_LEN]),
             None,
             b"hello-personal",
         )
         .unwrap();
 
-        // Destination is the 1b-i vector; the full wire payload (signature included)
-        // is byte-identical to RNS 1.3.1 Destination.announce — Ed25519 is deterministic.
         assert_eq!(
             announce.destination,
             DestinationHash::new(a("33d610d1d6a7f4f809ebfe62c0ce7d43")),
@@ -719,14 +654,11 @@ mod tests {
         )
         .unwrap();
 
-        // Frame it as a type-1 announce packet (context_flag set => ratchet present)
-        // and re-parse: the validator accepts the signature + binding and recovers an
-        // equal announce — origination and validation agree by construction.
         let mut payload = [0u8; MTU];
         let n = built.to_wire(&mut payload).unwrap();
-        let mut raw = vec![0x21u8, 0x00]; // announce | single | type-1 | context_flag set
+        let mut raw = vec![0x21u8, 0x00];
         raw.extend_from_slice(built.destination.as_bytes());
-        raw.push(0x00); // context
+        raw.push(0x00);
         raw.extend_from_slice(&payload[..n]);
 
         let (header, parsed_payload) = WirePacketHeader::parse(&raw).unwrap();

@@ -1,15 +1,3 @@
-//! Typed classification of inbound packets.
-//!
-//! `Ingress` is the engine's typed view of what's on the wire. Bytes
-//! arrive at the engine boundary as `InboundPacket`; the engine's
-//! first move is `Ingress::classify` to turn them into a typed
-//! variant. Decision sites then pattern-match, providing exhaustive
-//! compile-time checks and no unnecessary re-parsing.
-//!
-//! Today only `Announce` carries fields; the other wire-kind variants are bare
-//! discriminants documenting packet types the engine recognizes but does not yet
-//! handle.
-
 use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::announce::Announce;
@@ -25,24 +13,16 @@ pub enum Ingress<'a> {
         arrived_at: InstantMillis,
     },
 
-    /// Wire packet type `Data`. The engine doesn't yet distinguish
-    /// sub-contexts (path requests, app data) or act on any of them.
     Data,
 
-    /// Wire packet type `LinkRequest`. Engine recognizes, doesn't yet act.
     LinkRequest,
 
-    /// Wire packet type `Proof`. Engine recognizes, doesn't yet act.
     Proof,
 
-    /// Bytes didn't decode (truncated header, malformed wire layout,
-    /// announce-signature failure, destination-binding failure, etc.).
     Unparseable,
 }
 
 impl<'a> Ingress<'a> {
-    /// Classify one inbound packet. Cheap parse → typed variant; no
-    /// engine state touched, no allocator.
     pub fn classify(packet: &InboundPacket<'a>) -> Self {
         let Ok((header, payload)) = WirePacketHeader::parse(packet.bytes) else {
             return Self::Unparseable;

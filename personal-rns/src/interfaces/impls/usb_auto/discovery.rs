@@ -1,11 +1,3 @@
-//! The std USB-auto discoverer: it owns the host's plugged CDC devices behind the
-//! one interface seam. It probes each on arrival, merging their inbound into the
-//! seam, and fanning each outbound packet across every confirmed link.
-//!
-
-// The serialport driver is the Discoverer's only non-test caller and exists only
-// under `usb-auto`; without that feature the device logic compiles but goes
-// unused.
 #![cfg_attr(not(feature = "usb-auto"), allow(dead_code))]
 
 use std::io::{self, Read, Write};
@@ -73,8 +65,6 @@ impl<Port: Read + Write> Discoverer<Port> {
         }
     }
 
-    /// A port is present. If new, open it, send a [`Hello`](Message::Hello), and
-    /// track it as probing. Idempotent for a port already known.
     fn note_present(&mut self, id: PortId, open: impl FnOnce(&PortId) -> io::Result<Port>) {
         if self.devices.iter().any(|d| d.id == id) {
             return;
@@ -96,15 +86,11 @@ impl<Port: Read + Write> Discoverer<Port> {
         }
     }
 
-    /// Reconcile tracked links against the ports present right now: spend probe
-    /// budgets, reject the probes that ran out, drop links that vanished, and probe
-    /// newly-appeared ports. `open` acquires a port for I/O.
     pub(in crate::interfaces::impls::usb_auto) fn reconcile_present(
         &mut self,
         present: &[PortId],
         open: impl Fn(&PortId) -> io::Result<Port>,
     ) {
-        // Spend one scan of each probing link's budget.
         for device in &mut self.devices {
             if let LinkState::Probing { scans_left } = &mut device.state {
                 *scans_left = scans_left.saturating_sub(1);
@@ -129,8 +115,6 @@ impl<Port: Read + Write> Discoverer<Port> {
                 self.rejected.push(device.id.clone());
             }
         }
-        // Keep only present, un-rejected links; forget a rejection once its port is
-        // gone, so a replug there is probed afresh.
         self.devices
             .retain(|d| present.contains(&d.id) && !self.rejected.contains(&d.id));
         self.rejected.retain(|id| present.contains(id));
@@ -214,7 +198,6 @@ impl<Port: Read + Write> Discoverer<Port> {
         {
             ConnectionState::Connected
         } else {
-            // Up but peerless: still routable, just nothing to fan to yet.
             ConnectionState::Degraded
         };
         if state != self.reported_state {
@@ -331,7 +314,6 @@ mod tests {
         buf[..n].to_vec()
     }
 
-    /// Every `Data` packet (deframed + decoded) in a host-written byte stream.
     fn data_frames(bytes: &[u8]) -> Vec<Vec<u8>> {
         let mut decoder = RnsSerialDecoder::<MAX_MESSAGE_BYTES>::new();
         let mut out = Vec::new();
@@ -445,7 +427,6 @@ mod tests {
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
-        // Data arrives while still probing — no HelloAck yet.
         wire.device_sends(Message::Data(&[0x01, 0x02]));
         disc.pump(&mut worker_context);
 
@@ -466,7 +447,6 @@ mod tests {
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(c));
         disc.note_present(port("/dev/ttyACM1"), move |_| Ok(q));
 
-        // Only the first answers the handshake.
         confirmed.device_sends(Message::HelloAck(NodeTag([2; 8])));
         disc.pump(&mut worker_context);
 
@@ -493,7 +473,6 @@ mod tests {
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(o));
         disc.note_present(port("/dev/ttyACM1"), move |_| Ok(n));
 
-        // One node identity answers on both ports.
         old.device_sends(Message::HelloAck(NodeTag([9; 8])));
         new.device_sends(Message::HelloAck(NodeTag([9; 8])));
         disc.pump(&mut worker_context);
@@ -507,7 +486,6 @@ mod tests {
         let mut disc = Discoverer::new();
         let wire = MockWire::new();
 
-        // A USB port shows up in the scan → probed with a Hello.
         disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
         assert_eq!(disc.devices.len(), 1);
         assert!(first_frame_is(&wire.host_wrote(), |m| matches!(
@@ -515,11 +493,9 @@ mod tests {
             Message::Hello
         )));
 
-        // Same port still present next scan → idempotent, still one link.
         disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
         assert_eq!(disc.devices.len(), 1);
 
-        // Gone from the scan → dropped.
         disc.reconcile_present(&[], |_| Ok(wire.port()));
         assert!(disc.devices.is_empty());
     }
@@ -530,21 +506,17 @@ mod tests {
         let wire = MockWire::new();
         let present = [port("/dev/ttyACM0")];
 
-        // First scan probes it.
         disc.reconcile_present(&present, |_| Ok(wire.port()));
         assert_eq!(disc.devices.len(), 1);
 
-        // It never answers; run scans until the probe budget is spent.
         for _ in 0..PROBE_SCAN_BUDGET {
             disc.reconcile_present(&present, |_| Ok(wire.port()));
         }
         assert!(disc.devices.is_empty(), "an unanswered probe is released");
 
-        // Still plugged but rejected → left alone, not re-probed.
         disc.reconcile_present(&present, |_| Ok(wire.port()));
         assert!(disc.devices.is_empty());
 
-        // Unplugged → rejection forgotten; back again → probed afresh.
         disc.reconcile_present(&[], |_| Ok(wire.port()));
         disc.reconcile_present(&present, |_| Ok(wire.port()));
         assert_eq!(disc.devices.len(), 1, "a replugged port is probed again");
@@ -561,9 +533,8 @@ mod tests {
         disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
         wire.device_sends(Message::HelloAck(NodeTag([3; 8])));
         disc.pump(&mut worker_context);
-        let _ = runtime_handle.next_report(); // consume the Connected report
+        let _ = runtime_handle.next_report();
 
-        // Unplugged: absent from the next scan.
         disc.reconcile_present(&[], |_| Ok(wire.port()));
         disc.pump(&mut worker_context);
 

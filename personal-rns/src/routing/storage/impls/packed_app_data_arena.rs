@@ -23,8 +23,6 @@
 use crate::routing::storage::{AppDataHandle, RetainedAppData, RetainedAppDataError};
 use heapless::Vec;
 
-/// Where one payload sits in the arena. Spans are held in offset order with no
-/// gaps between them, mirroring the packed arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Span {
     offset: usize,
@@ -57,15 +55,11 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         }
     }
 
-    /// A handle obtained from this store is always
-    /// valid (there is no removal yet), so this never fails; a cleared payload
-    /// reads back as an empty slice.
     pub fn get(&self, handle: AppDataHandle) -> &[u8] {
         let span = self.spans[handle.slot()];
         &self.arena[span.offset..span.offset + span.len]
     }
 
-    /// Copy `bytes` into the arena and return a handle to them.
     pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
         if self.spans.is_full() {
             return Err(RetainedAppDataError::TooManyEntries);
@@ -77,7 +71,6 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         let offset = self.used;
         self.arena[offset..offset + bytes.len()].copy_from_slice(bytes);
         self.used += bytes.len();
-        // Cannot fail: capacity was checked above.
         let _ = self.spans.push(Span {
             offset,
             len: bytes.len(),
@@ -85,11 +78,6 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         Ok(AppDataHandle::new(self.spans.len() - 1))
     }
 
-    /// Replace the payload behind `handle`, which may change its size. On a size
-    /// change the trailing payloads shift to keep the arena packed and their
-    /// offsets are fixed up. Replacing with an empty slice clears the payload and
-    /// reclaims its bytes (the handle stays valid and reads back empty). On
-    /// `ArenaFull` the store is left exactly as it was.
     pub fn replace(
         &mut self,
         handle: AppDataHandle,
@@ -152,8 +140,6 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> RetainedAppData
 mod tests {
     use super::*;
 
-    /// The store's core invariant: live payloads pack a contiguous prefix with
-    /// no gaps, and `used` equals the sum of their lengths.
     fn assert_packed<const A: usize, const M: usize>(store: &PackedAppDataArena<A, M>) {
         let mut expected_offset = 0;
         let mut total = 0;
@@ -208,7 +194,7 @@ mod tests {
         store.replace(b, &[0x22; 9]).unwrap();
         assert_eq!(store.get(a), &[0xAA; 4]);
         assert_eq!(store.get(b), &[0x22; 9]);
-        assert_eq!(store.get(c), &[0xCC; 4]); // shifted up, still intact
+        assert_eq!(store.get(c), &[0xCC; 4]);
         assert_eq!(store.used, 17);
         assert_packed(&store);
     }
@@ -222,7 +208,7 @@ mod tests {
         store.replace(b, &[0x33; 2]).unwrap();
         assert_eq!(store.get(a), &[0xAA; 4]);
         assert_eq!(store.get(b), &[0x33; 2]);
-        assert_eq!(store.get(c), &[0xCC; 4]); // shifted down, still intact
+        assert_eq!(store.get(c), &[0xCC; 4]);
         assert_eq!(store.used, 10);
         assert_packed(&store);
     }
@@ -234,9 +220,9 @@ mod tests {
         let b = store.insert(&[0xBB; 6]).unwrap();
         let c = store.insert(&[0xCC; 4]).unwrap();
         store.replace(b, &[]).unwrap();
-        assert_eq!(store.get(b), &[] as &[u8]); // still resolves, now empty
+        assert_eq!(store.get(b), &[] as &[u8]);
         assert_eq!(store.get(a), &[0xAA; 4]);
-        assert_eq!(store.get(c), &[0xCC; 4]); // reclaimed b's 6 bytes
+        assert_eq!(store.get(c), &[0xCC; 4]);
         assert_eq!(store.used, 8);
         assert_packed(&store);
     }
@@ -250,7 +236,7 @@ mod tests {
             store.insert(&[0xBB; 4]),
             Err(RetainedAppDataError::ArenaFull)
         );
-        assert_eq!(store, before); // error path mutated nothing
+        assert_eq!(store, before);
         assert_eq!(store.get(a), &[0xAA; 6]);
         assert_packed(&store);
     }
@@ -261,7 +247,6 @@ mod tests {
         let a = store.insert(&[0xAA; 3]).unwrap();
         let b = store.insert(&[0xBB; 3]).unwrap();
         let before = store.clone();
-        // Replacing b (3) with 7 needs used = 6-3+7 = 10 > 8.
         assert_eq!(
             store.replace(b, &[0xBB; 7]),
             Err(RetainedAppDataError::ArenaFull)

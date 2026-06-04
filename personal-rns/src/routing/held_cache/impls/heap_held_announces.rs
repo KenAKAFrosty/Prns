@@ -1,7 +1,3 @@
-//! Growable (std/alloc) held-announce cache — the unbounded [`HeldAnnounces`].
-//! Array-of-structs (one `Vec<HeldAnnounce>`) since there's no const-array layout
-//! to keep; never returns `CacheFull`.
-
 use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
@@ -66,7 +62,6 @@ impl HeldAnnounces for HeapHeldAnnounces {
         if self.entries.is_empty() {
             return None;
         }
-        // Lowest received_hops wins; ties break to the oldest arrival.
         let mut best = 0;
         for i in 1..self.entries.len() {
             let cur = (
@@ -118,7 +113,6 @@ mod tests {
     fn grows_past_a_fixed_cap_overwrites_and_orders_by_hops() {
         let mut cache = HeapHeldAnnounces::default();
         let any = InterfaceId::new([0u8; 16]);
-        // 200 distinct destinations — well past any fixed CAPACITY; never CacheFull.
         for n in 0..200u8 {
             assert_eq!(
                 cache.park(
@@ -133,7 +127,6 @@ mod tests {
         }
         assert_eq!(cache.len(), 200);
 
-        // Re-park an existing destination → overwrite, not grow.
         assert_eq!(
             cache.park(
                 &announce_for(dest(0), b"y"),
@@ -146,7 +139,6 @@ mod tests {
         );
         assert_eq!(cache.len(), 200);
 
-        // take_next returns the lowest received_hops first — dest(0), hops 0.
         let held = cache.take_next().unwrap();
         assert_eq!(held.received_hops(), 0);
         assert_eq!(held.announce().destination, dest(0));

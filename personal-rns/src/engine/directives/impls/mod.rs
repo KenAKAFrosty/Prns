@@ -1,5 +1,3 @@
-//! Concrete [`EngineDirectives`](super::EngineDirectives) backends — one per impl.
-
 mod fixed_engine_directives;
 pub use fixed_engine_directives::FixedEngineDirectives;
 

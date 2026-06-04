@@ -103,7 +103,6 @@ mod tests {
         assert_eq!(columns.len(), 1_000);
         assert_eq!(columns.destinations().len(), 1_000);
 
-        // set_row overwrites the route fields of a slot, leaving destination + len.
         columns.set_row(0, row(9, 99, iface(0xEE)));
         assert_eq!(columns.hops()[0], 9);
         assert_eq!(columns.receiving_interfaces()[0], iface(0xEE));

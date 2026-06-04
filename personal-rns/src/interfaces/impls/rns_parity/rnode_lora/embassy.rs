@@ -1,16 +1,3 @@
-//! The embassy LoRa worker runs the RNode-compatible LoRa interface over
-//! a `lora-phy` radio. The host builds the `LoRa<RK, DLY>` (the SX1262, its board
-//! `InterfaceVariant`, and the front-end GPIOs) and hands it here, so this stays
-//! HAL-agnostic: it names `lora-phy`, never an esp-hal or a specific board.
-//!
-//! Like the serial worker, the outbound queue lives here; the inbound mailbox it
-//! stamps into belongs to the runtime (`runtime::channels::embassy`). LoRa is a
-//! half-duplex broadcast medium,
-//! so the loop sits in continuous RX and, when the runtime hands it a packet,
-//! breaks off to transmit (one or two frames, RNode-split) and returns to RX —
-//! never both at once. Received frames feed a [`LoRaReassembler`] that rebuilds
-//! split packets before they reach the engine.
-
 use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Timer};
 use lora_phy::mod_params::{Bandwidth, CodingRate, RxMode, SpreadingFactor};
@@ -72,14 +59,6 @@ enum ServeStep {
     OutboundReady,
 }
 
-/// Drive the LoRa link forever over the contract seam. A half-duplex loop: arm
-/// continuous RX and wait for either a received frame (reassemble RNode's split →
-/// `submit` the whole packet) or an outbound packet (frame it, splitting RNode-style
-/// if needed → transmit, then return to RX).
-///
-/// Generic over the seam `MAX_BUFFERED_PACKETS` and the lora-phy radio kind / delay. Inbound
-/// packets are submitted through [`InboundSink::submit`]; outbound packets are
-/// pulled with `ready` + `try_next_into`.
 pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
     mut lora: LoRa<RK, DLY>,
     profile: LoRaModulation,
@@ -101,10 +80,10 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
     };
     let rx_pkt = match lora.create_rx_packet_params(
         profile.preamble_symbols,
-        false, // explicit header
+        false,
         LORA_SINGLE_FRAME_MAX as u8,
-        true,  // CRC on
-        false, // IQ not inverted
+        true,
+        false,
         &modulation,
     ) {
         Ok(p) => p,
@@ -129,12 +108,8 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
 
     let mut rx_buf = [0u8; LORA_SINGLE_FRAME_MAX];
     let mut tx_frame = [0u8; LORA_SINGLE_FRAME_MAX];
-    // Scratch for one packet pulled off the outbound ring; async transmit needs
-    // an owned packet buffer.
     let mut out_pkt = [0u8; MTU];
     let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
-    // RNode's header sequence nibble; one value per packet (both frames of a split
-    // share it), bumped after each send.
     let mut seq: u8 = 0;
 
     loop {
@@ -164,8 +139,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
         match step {
             ServeStep::ReceiveFailed => {}
             ServeStep::Received(len) => {
-                // A whole packet (single frame, or the second part of a split) comes
-                // back ready to submit.
                 if let Some(packet) = reassembler.feed(&rx_buf[..len]) {
                     if !packet.is_empty() && packet.len() <= MTU {
                         if context
@@ -185,7 +158,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
                 let Some(plen) = context.outbound.try_next_into(&mut out_pkt) else {
                     continue;
                 };
-                // One frame, or two RNode-split frames sharing this packet's seq.
                 for index in 0..air_frame_count(plen) {
                     match encode_air_frame_part(&out_pkt[..plen], seq, index, &mut tx_frame) {
                         Ok(n) => {

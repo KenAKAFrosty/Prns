@@ -48,21 +48,17 @@ mod tests {
     #[test]
     fn grows_per_slot_without_eviction_and_dedups() {
         let mut history = HeapAnnounceIdHistory::default();
-        assert!(history.history(3).is_empty()); // unused slot
+        assert!(history.history(3).is_empty());
 
-        // 200 distinct ids on one slot — well past any fixed per-destination cap;
-        // a growable history keeps them all (no eviction).
         for n in 0..200u8 {
             assert_eq!(history.remember(0, aid(n)), RememberOutcome::StoredFresh);
         }
         assert_eq!(history.history(0).len(), 200);
-        assert!(history.history(0).contains(&aid(0))); // oldest still present
+        assert!(history.history(0).contains(&aid(0)));
 
-        // Re-hearing a known id is a no-op.
         assert_eq!(history.remember(0, aid(7)), RememberOutcome::AlreadyKnown);
         assert_eq!(history.history(0).len(), 200);
 
-        // A later slot grows on demand, independent of slot 0.
         assert_eq!(history.remember(2, aid(99)), RememberOutcome::StoredFresh);
         assert_eq!(history.history(2).len(), 1);
         assert!(history.history(1).is_empty());

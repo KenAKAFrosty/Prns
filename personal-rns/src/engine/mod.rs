@@ -1,8 +1,3 @@
-//! Pure protocol engine boundary.
-//!
-//! [`ingest_packets`] handles inbound traffic and [`tick`] advances scheduled
-//! work without touching clocks, sockets, or storage directly.
-
 pub mod directives;
 pub mod egress;
 pub mod ingress;
@@ -42,7 +37,6 @@ const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
 pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
 
-/// Raw CSPRNG bytes for one engine cycle.
 pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
 
 impl EngineCycleEntropySeed {
@@ -56,14 +50,11 @@ impl EngineCycleEntropySeed {
 }
 
 pub struct EngineCycleEntropy {
-    /// Seed used to spread rebroadcast timing.
     pub jitter: JitterSeed,
-    /// Nonce material consumed only when a self-announce is due.
     pub self_announce: SelfAnnounceEntropy,
 }
 
 impl EngineCycleEntropy {
-    /// Split the raw seed into jitter and self-announce entropy.
     pub fn from_seed(seed: EngineCycleEntropySeed) -> Self {
         let bytes = seed.as_bytes();
         let mut jitter = [0u8; JITTER_SEED_LEN];
@@ -138,10 +129,8 @@ where
     }
 }
 
-/// Why registering an interface failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterInterfaceError {
-    /// The fixed registry ([`MAX_REGISTERED_INTERFACES`]) is full.
     RegistryFull,
 }
 
@@ -155,7 +144,8 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    /// TEMPORARY AND WILL BE REMOVED
+    /// Temporary stopgap constructor, slated for removal — don't add new call sites.
+    /// (Not `#[deprecated]`: CI runs `-D warnings` and the Heltec host still calls it.)
     pub fn announcing(
         identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         self_announce: SelfAnnounceConfig<'_>,
@@ -250,7 +240,7 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    /// Write a due self-announce into `buf`, if one is due at `now`.
+    #[allow(clippy::expect_used)]
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
@@ -564,8 +554,6 @@ mod tests {
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
     };
 
-    /// Test-only canonical sizing so capacity-agnostic tests don't each spell six
-    /// consts — production has no storage defaults (every host picks its own).
     type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64>;
 
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
@@ -853,8 +841,6 @@ mod tests {
 
     #[test]
     fn register_interface_descriptor_tracks_an_interface_in_any_state() {
-        // Membership only: the egress fan re-checks routability per transmit, so
-        // every connection state — even down — registers fine.
         for (idx, connection_state) in [
             ConnectionState::Connected,
             ConnectionState::Degraded,
@@ -880,8 +866,6 @@ mod tests {
 
     #[test]
     fn register_interface_descriptor_tracks_a_receive_only_interface() {
-        // A receive-only interface still registers; the egress fan just never picks
-        // it to transmit on.
         let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
         descriptor.capabilities.egress = EgressCapability::Disabled;
         let mut engine: EngineState<Cap> = EngineState::<Cap>::default();

@@ -1,13 +1,3 @@
-//! The device end of a USB-auto link: an embassy worker that answers one host on
-//! its single CDC link. Where the std side ([`super::std`]) enumerates a whole bus
-//! and probes every port, a board has exactly one link and never discovers
-//! anything — it just listens, answers the host's [`Message::Hello`] with a
-//! [`Message::HelloAck`], and shuttles [`Message::Data`] across the seam.
-//!
-//! Gated on the lighter `embassy-contract` feature — no `embassy-net`/LoRa — so a
-//! serial-only board pulls none of the radio stack. The decode→react decision is
-//! the I/O-free [`react_to`](super::super::core::react_to); this is its shell.
-
 use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration};
 use embedded_io_async::{Read, Write};
@@ -22,7 +12,6 @@ use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
 };
 
-/// The seam carries Reticulum packets, so it sizes to the per-`Data` MTU.
 const USB_AUTO_MTU: usize = MAX_DATA_BYTES;
 
 /// Whether a host has completed the handshake on this single link. The device holds
@@ -41,17 +30,6 @@ enum HostLink {
 /// next probe (or re-announce) can retry.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
-/// Answer one host over the contract seam. De-frame inbound bytes off `rx`, and per
-/// [`react_to`] either reply [`HelloAck`](Message::HelloAck) (the device's own
-/// `node_tag`), submit a Reticulum packet inbound, or let it lie; drain the runtime's
-/// outbound, wrap each as [`Data`](Message::Data), frame it, and write it to `tx`;
-/// wind down on [`Stop`](ControlCommand::Stop).
-///
-/// `select`s on three wakes — inbound bytes, outbound readiness, a control command —
-/// so it parks until something needs it. Generic over the byte stream (any
-/// [`embedded_io_async`] transport) and the seam `MAX_BUFFERED_PACKETS`. Pre-frame
-/// noise (a board sharing this link between log text and frames) is skipped by the
-/// decoder until a `FLAG`, exactly as stock RNS does.
 pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
     mut rx: R,
     mut tx: W,
@@ -75,7 +53,6 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
         )
         .await
         {
-            // Inbound bytes: react to each closed frame.
             Either3::First(result) => {
                 let n = result.unwrap_or(0);
                 for &byte in &read_buf[..n] {
@@ -103,9 +80,7 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
                     }
                 }
             }
-            // Outbound queued — fall through to the drain below.
             Either3::Second(()) => {}
-            // Wind down on stop.
             Either3::Third(ControlCommand::Stop) => break,
         }
 

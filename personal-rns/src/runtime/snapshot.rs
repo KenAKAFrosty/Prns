@@ -1,10 +1,7 @@
-//! App-facing runtime state published once per drive cycle.
-
 use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{ConnectionState, InterfaceId, MAX_REGISTERED_INTERFACES};
 
-/// Per-interface slice of a [`RuntimeSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceView {
     pub id: InterfaceId,
@@ -14,7 +11,6 @@ pub struct InterfaceView {
     pub tracked_destinations: u32,
 }
 
-/// Snapshot of every registered interface after one drive cycle.
 #[derive(Debug, Clone)]
 pub struct RuntimeSnapshot {
     pub interfaces: HeaplessVec<InterfaceView, MAX_REGISTERED_INTERFACES>,

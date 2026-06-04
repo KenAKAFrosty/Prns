@@ -1,7 +1,3 @@
-//! Fixed-capacity, inline-array retained-announces columns — the no_std
-//! default for the announce-coherent storage that pairs with
-//! [`FixedArrayRouteColumns`](super::FixedArrayRouteColumns).
-//!
 //! Slot-indexed: the slot at index `i` here corresponds to the
 //! same-`i` route in the routing-table columns, sharing the destination
 //! key from that table.
@@ -13,10 +9,6 @@ use crate::routing::storage::{
     AppDataHandle, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
 };
 
-/// SoA retained-announce columns backed by inline fixed-size arrays. The
-/// capacity is the const generic; reaching it returns `ColumnsFull` from
-/// `push`. The engine pushes here in lockstep with [`FixedArrayRouteColumns`](super::FixedArrayRouteColumns)
-/// so the slot indices stay synchronized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixedArrayRetainedAnnounceColumns<const MAX_TRACKED_DESTINATIONS: usize> {
     len: usize,

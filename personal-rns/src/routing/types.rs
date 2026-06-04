@@ -1,5 +1,3 @@
-//! Small data shapes the routing table hands the engine and the predicate.
-
 use crate::engine::InstantMillis;
 use crate::routing::announce::Announce;
 use crate::routing::storage::AnnounceIdHistoryView;
@@ -13,9 +11,6 @@ pub enum RouteResponsiveness {
     Unresponsive,
 }
 
-/// The fields of an existing route used only for the acceptance predicate,
-/// gathered from the table's columns on a lookup hit. The history is a
-/// borrowed two-slice view ([`AnnounceIdHistoryView`]), so the predicate reads it in place.
 #[derive(Debug, Clone, Copy)]
 pub struct ExistingRoute<'a> {
     pub hops: u8,
@@ -24,16 +19,6 @@ pub struct ExistingRoute<'a> {
     pub responsiveness: RouteResponsiveness,
 }
 
-/// What rebroadcasting a known destination's retained announce needs,
-/// gathered from the routing table on a hit: the hop count to emit plus the
-/// structured announce itself. Re-emission serializes it back to wire via
-/// [`Announce::to_wire`], reproducing the original payload byte-identically
-/// so the retained signature still validates.
-///
-/// `transport_id` (the upstream we got the announce from) lands here too once
-/// the first interface arrives — RNS's `announce_table` carries `received_from`
-/// for the same reason: emission needs to know which neighbour NOT to gossip
-/// back to.
 #[derive(Debug, Clone)]
 pub struct RetainedAnnounce<'a> {
     pub hops: u8,

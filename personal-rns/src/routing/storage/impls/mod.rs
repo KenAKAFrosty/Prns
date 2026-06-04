@@ -1,6 +1,3 @@
-//! Concrete storage backends. Each file is one impl of one trait from the
-//! parent [`storage`](crate::routing::storage) module.
-
 mod fixed_array_retained_announce_columns;
 mod fixed_array_route_columns;
 mod fixed_capacity;

@@ -1,11 +1,3 @@
-//! The std serial worker runs the RNS `SerialInterface` over any blocking
-//! [`std::io`] byte stream (a `serialport`, a UART, a TCP stream, a test pipe).
-//!
-//! [`std_serial_interface`] builds a [`SelfDrivenInterface`] whose launch closure
-//! spawns a thread that owns the device lifecycle — open, run a connection,
-//! reconnect on unplug — running the read→deframe→submit / drain→frame→write loop
-//! against the worker context it is handed.
-
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
@@ -19,13 +11,6 @@ use crate::interfaces::{
 
 type SerialContext = InterfaceWorkerContext<StdHostSubstrate<SERIAL_MTU>>;
 
-/// Build a self-driven serial [`Interface`](crate::interfaces::Interface) on
-/// interface `id`. The returned [`SelfDrivenInterface`]'s launch closure spawns a
-/// thread that owns the device lifecycle — open, `serve_connection`, reconnect on
-/// unplug — running the loop against the worker side of the seam. `open` is called
-/// to (re)acquire the byte stream (a caller closes `serialport` or any HAL inside
-/// it, so this worker never names one); `reconnect` is the backoff before re-opening
-/// after an unplug or open failure.
 pub fn std_serial_interface<Open, Port>(
     id: InterfaceId,
     open: Open,
@@ -40,10 +25,6 @@ where
     })
 }
 
-/// Own one serial link for the life of the interface: (re)open via `open`, serve the
-/// connection until it drops or a stop arrives, back off, repeat — reporting
-/// [`Stopped`](ControlReport::Stopped) once a [`Stop`](ControlCommand::Stop) ends the
-/// loop. Runs on the thread the launch closure spawned.
 fn serve_until_stopped<Open, Port>(mut open: Open, reconnect: Duration, mut context: SerialContext)
 where
     Open: FnMut() -> io::Result<Port>,
@@ -56,8 +37,6 @@ where
                 ConnectionEnd::Disconnected => {}
             }
         }
-        // Honor a stop issued while we were between connections; otherwise
-        // back off after a disconnect or failed open.
         if matches!(context.control.next_command(), Some(ControlCommand::Stop)) {
             break;
         }
@@ -66,17 +45,11 @@ where
     context.control.report(ControlReport::Stopped);
 }
 
-/// Why one connection ended: the runtime asked us to stop, or the transport died
-/// (an unplug) and the caller should reconnect.
 enum ConnectionEnd {
     Stopped,
     Disconnected,
 }
 
-/// Run one connection until the byte stream errors (an unplug) or a stop is
-/// requested. Each pass: check for a stop, drain the outbound seam (frame + write
-/// each packet), then read a chunk and de-frame it into the inbound seam.
-///
 /// `port` must have a short read timeout (the host's `open` sets it) so a quiet
 /// link still loops back to service outbound and check for a stop. Pre-frame noise
 /// — e.g. a board sharing this link between log text and frames — is skipped by the
@@ -94,8 +67,6 @@ fn serve_connection<Port: Read + Write>(
             return ConnectionEnd::Stopped;
         }
 
-        // Drain outbound first: frame each packet and write the whole frame. A
-        // failed write means the link is gone → reconnect.
         let mut transport_failed = false;
         context.outbound.drain_each(|packet| {
             if transport_failed {
@@ -111,8 +82,6 @@ fn serve_connection<Port: Read + Write>(
             return ConnectionEnd::Disconnected;
         }
 
-        // Read a chunk and feed the decoder; each closed non-empty frame is a
-        // Reticulum packet → submit it. `submit` stamps arrival and wakes the host.
         match port.read(&mut read_buf) {
             Ok(0) => {}
             Ok(n) => {
@@ -127,7 +96,6 @@ fn serve_connection<Port: Read + Write>(
                     }
                 }
             }
-            // Idle read window (timeout) — loop back to service outbound.
             Err(e)
                 if matches!(
                     e.kind(),
@@ -135,7 +103,6 @@ fn serve_connection<Port: Read + Write>(
                         | io::ErrorKind::WouldBlock
                         | io::ErrorKind::Interrupted
                 ) => {}
-            // Anything else is a real transport error (unplug) → reconnect.
             Err(_) => return ConnectionEnd::Disconnected,
         }
     }
@@ -154,9 +121,6 @@ mod tests {
     use crate::interfaces::InterfaceHandle;
     use crate::interfaces::OutboundPacket;
 
-    /// In-memory byte pipe: serves preloaded `rx` bytes, then errors so a
-    /// connection loop returns (a simulated unplug / end of stream); captures all
-    /// writes into a handle the test keeps after the loop consumes the port.
     struct MockPort {
         rx: Vec<u8>,
         pos: usize,
@@ -180,7 +144,6 @@ mod tests {
     impl io::Read for MockPort {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if self.pos >= self.rx.len() {
-                // Stream exhausted → error so the connection loop returns.
                 return Err(io::Error::from(io::ErrorKind::BrokenPipe));
             }
             let n = (self.rx.len() - self.pos).min(buf.len());
@@ -206,14 +169,11 @@ mod tests {
 
     fn seam() -> StdInterfaceSeam<SERIAL_MTU> {
         let (wake_tx, _wake_rx) = sync_channel::<()>(1);
-        // The receiver is dropped here; `submit`/`report` use `try_send`, so a poke
-        // to a gone receiver is a benign no-op for these single-connection tests.
         StdInterfaceSeam::<SERIAL_MTU>::new(test_id(), Instant::now(), 8, wake_tx)
     }
 
     #[test]
     fn deframes_inbound_bytes_and_submits_them_to_the_seam() {
-        // Payload includes FLAG and ESC so the round-trip exercises unstuffing.
         let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
         let mut framed = [0u8; 32];
         let n = rns_serial_framing::encode(&payload, &mut framed).unwrap();
@@ -224,7 +184,6 @@ mod tests {
         } = seam();
         let (port, _written) = MockPort::new(framed[..n].to_vec());
 
-        // One connection: serves the frame, then the next read errors and returns.
         let _ = serve_connection(port, &mut worker_context);
 
         let mut received: Vec<Vec<u8>> = Vec::new();
@@ -238,21 +197,17 @@ mod tests {
 
     #[test]
     fn frames_an_outbound_packet_onto_the_wire() {
-        // Packet contains a FLAG so the framing must escape it.
         let packet = [0xAAu8, FLAG, 0xBB];
 
         let StdInterfaceSeam {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        // Queue it via the runtime handle; empty rx → the first read errors, but
-        // the outbound drain runs first.
         assert!(runtime_handle.send(OutboundPacket::new(&packet)).is_ok());
         let (port, written) = MockPort::new(Vec::new());
 
         let _ = serve_connection(port, &mut worker_context);
 
-        // De-frame what was written; it must reconstruct the original packet.
         let bytes = written.lock().unwrap().clone();
         let mut decoder = RnsSerialDecoder::<SERIAL_MTU>::new();
         let mut decoded = None;

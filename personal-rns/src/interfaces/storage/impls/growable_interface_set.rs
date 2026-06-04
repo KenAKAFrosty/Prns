@@ -1,8 +1,3 @@
-//! Growable interface set — the heap-backed [`InterfaceSet`] for std / config-driven
-//! hosts: a plain `Vec`, add and remove in place, no compile-time bound. A host that
-//! loads interfaces from a config file (or hot-swaps them at runtime) pays no
-//! capacity ceiling and never has to pick a number.
-
 use alloc::vec::Vec;
 
 use crate::interfaces::storage::InterfaceSet;

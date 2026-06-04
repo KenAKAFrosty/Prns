@@ -1,5 +1,3 @@
-//! Concrete [`InterfaceSet`](super::InterfaceSet) backends — one file per impl.
-
 mod fixed_interface_set;
 pub use fixed_interface_set::FixedInterfaceSet;
 

@@ -1,11 +1,3 @@
-//! Runtime for pooling started interfaces into the pure engine.
-//!
-//! Each cycle drains inbound packets from every
-//! [`InterfaceHandle`](crate::interfaces::InterfaceHandle), ticks the
-//! engine, and fans resulting egress back through the handles. Interface workers
-//! wake the host when their queues need service; the runtime sleeps until an
-//! interface wakes it or the engine has scheduled work due.
-
 use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
@@ -23,7 +15,6 @@ use crate::interfaces::{
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
-/// Summary of one pooled drive cycle.
 #[derive(Debug)]
 pub struct RuntimeStepOutput {
     pub ingested_packet_count: usize,
@@ -39,10 +30,6 @@ enum FanoutClass {
     Transit,
 }
 
-/// The engine, its registered interfaces, traffic meter, and [`Host`] that drives
-/// them. Generic over the engine-state storage `S`, the interface set `I` (fixed or
-/// growable), and the host `Ho`. Each interface is reached only through
-/// [`RegisteredInterface`], so no concrete handle or worker type surfaces here.
 pub struct Runtime<Ho, I, S>
 where
     I: InterfaceSet,
@@ -61,14 +48,8 @@ where
     I::Item: RegisteredInterface,
     S: EngineStorage,
 {
-    /// Register each interface with the engine and hold the set. Registration is
-    /// membership only — routability is re-decided per transmit (see
-    /// `fan_to_handles`) — so this never rejects on connection state; an
-    /// over-capacity registry just drops the overflow interface rather than panicking.
     pub fn new(mut engine: EngineState<S>, interfaces: I, host: Ho) -> Self {
         for interface in interfaces.iter() {
-            // Membership only; a full registry drops the overflow interface rather
-            // than taking the runtime down.
             let _ = engine.register_interface_descriptor(interface.descriptor());
         }
         Self {
@@ -79,9 +60,6 @@ where
         }
     }
 
-    /// One pooled drive cycle: poll interfaces, drain inbound into the engine, tick,
-    /// fan the due egress, originate a due self-announce. The host supplies the
-    /// clock and entropy.
     pub fn cycle_once(
         &mut self,
         now: InstantMillis,
@@ -112,10 +90,6 @@ where
         &self.engine
     }
 
-    /// Drive this runtime forever: at each wake the host supplies the clock and
-    /// entropy, then the loop pools interfaces, hands the cycle's snapshot to
-    /// `on_snapshot`, and computes the next engine or interface deadline. The only
-    /// `.await` is the host's wake — a sync host blocks there, an async host suspends.
     pub async fn run<OnSnapshot>(self, mut on_snapshot: OnSnapshot) -> !
     where
         Ho: Host,
@@ -137,9 +111,7 @@ where
     }
 }
 
-/// The pooled cycle over borrowed parts (so [`Runtime::run`] can drive it while
-/// the host is borrowed separately). Both [`Runtime::cycle_once`] and
-/// [`Runtime::run`] route through here.
+#[allow(clippy::expect_used)]
 fn cycle_pooled<I, S>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
@@ -154,8 +126,6 @@ where
 {
     let entropy = EngineCycleEntropy::from_seed(entropy_seed);
 
-    // Poll every interface; a self-driven one reports Idle, so this folds in each
-    // runtime-driven worker's next deadline without the runtime knowing which is which.
     let mut next_poll = NextScheduledInterfaceWake::Idle;
     for started in interfaces.iter_mut() {
         next_poll = next_poll.sooner(started.poll(now));
@@ -176,7 +146,6 @@ where
         });
     }
 
-    // Tick, then fan each due egress directive to the named interfaces.
     let tick_output = tick(engine, now, entropy.jitter);
     let egress_directive_count = tick_output.egress_directive_count();
     let mut emit_buffer = [0u8; MTU];
@@ -194,7 +163,6 @@ where
     }
     tick_output.commit();
 
-    // Originate our own announce when due.
     if !engine.registered_interfaces().is_empty() {
         if let Some(n) =
             engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
@@ -209,7 +177,6 @@ where
         }
     }
 
-    // Apply each interface's pending control reports to its connection state.
     for started in interfaces.iter_mut() {
         started.drain_control_reports();
     }
@@ -223,8 +190,6 @@ where
     }
 }
 
-/// Fan one outgoing packet to the interfaces the engine named in `fire_on`,
-/// metering its bytes to each target.
 fn fan_to_handles<I>(
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
@@ -258,7 +223,6 @@ fn fan_to_handles<I>(
     }
 }
 
-/// The app-facing [`RuntimeSnapshot`], over borrowed parts.
 fn snapshot_pooled<I, S>(
     engine: &EngineState<S>,
     interfaces: &I,
@@ -274,8 +238,6 @@ where
         let descriptor = started.descriptor();
         let id = descriptor.id;
         let (reticulum_rx_byte_count, reticulum_tx_byte_count) = traffic.totals_for(id);
-        // Truncates silently past MAX_REGISTERED_INTERFACES — the snapshot view buffer
-        // is still fixed; a growable interface set outgrowing it wants snapshot storage.
         let _ = views.push(InterfaceView {
             id,
             connection_state: descriptor.state,
@@ -319,7 +281,6 @@ mod tests {
     use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{PacketType, WirePacketHeader};
 
-    /// Test-only canonical sizing — production has no storage defaults.
     type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64>;
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
@@ -328,8 +289,6 @@ mod tests {
                                 7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
                                 4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
 
-    /// A handle whose worker end is canned: it drains a preloaded inbound packet on
-    /// the first `drain_inbound`, and captures whatever the runtime sends it.
     struct TestHandle {
         id: InterfaceId,
         inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
@@ -400,8 +359,6 @@ mod tests {
         }
     }
 
-    /// `W = Infallible`: rnsd's all-self-driven shape, so `RuntimeDriven` is
-    /// unconstructable and the poll branch is dead-code-eliminated.
     fn started(
         id: InterfaceId,
         inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
@@ -449,7 +406,6 @@ mod tests {
 
     type TestInterface = StartedInterface<TestHandle, core::convert::Infallible>;
 
-    /// Collect started interfaces into a fixed set the runtime can own.
     fn interface_set(
         started: impl IntoIterator<Item = TestInterface>,
     ) -> FixedInterfaceSet<TestInterface, 4> {
@@ -468,7 +424,6 @@ mod tests {
         let arrival = InstantMillis(1_000);
 
         let engine = EngineState::<Cap>::default();
-        // A unit host (`()`): the cycle/snapshot seam needs no real substrate.
         let mut runtime = Runtime::new(
             engine,
             interface_set([
@@ -483,13 +438,11 @@ mod tests {
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
         );
 
-        // The announce was pooled in from `source` and a rebroadcast scheduled.
         assert_eq!(out.ingested_packet_count, 1);
         assert_eq!(out.accepted_announce_count, 1);
         assert_eq!(out.scheduled_rebroadcast_count, 1);
         assert_eq!(out.egress_directive_count, 1);
 
-        // The rebroadcast was fanned to the peer's handle (not back to source).
         assert!(runtime.interfaces()[0].handle.sent.is_empty());
         assert_eq!(runtime.interfaces()[1].handle.sent.len(), 1);
 
@@ -501,8 +454,6 @@ mod tests {
         assert_eq!(submitted_header.destination, original_header.destination);
         assert_eq!(submitted_payload, original_payload);
 
-        // The snapshot meters rx to `source` and tx to `peer`, and the route was
-        // learned on `source`.
         let snapshot = runtime.snapshot();
         assert_eq!(snapshot.interfaces[0].id, source);
         assert_eq!(
@@ -550,7 +501,6 @@ mod tests {
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
         );
 
-        // Same behavior as the fixed engine, on knob-free heap storage.
         assert_eq!(out.accepted_announce_count, 1);
         assert_eq!(out.egress_directive_count, 1);
         assert!(runtime.interfaces()[0].handle.sent.is_empty());

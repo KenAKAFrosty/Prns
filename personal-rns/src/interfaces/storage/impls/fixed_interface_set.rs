@@ -1,8 +1,3 @@
-//! Fixed-capacity interface set — the alloc-free [`InterfaceSet`] backed by an
-//! inline `heapless::Vec`, bounded at `CAPACITY`. The default is the node-wide
-//! [`MAX_REGISTERED_INTERFACES`]; an embedded host that wants a tighter (or wider)
-//! bound names its own. This is the only place the hard interface count lives.
-
 use heapless::Vec;
 
 use crate::interfaces::storage::InterfaceSet;
@@ -68,7 +63,6 @@ mod tests {
         assert_eq!(set.push(10), Ok(()));
         assert_eq!(set.push(20), Ok(()));
         assert_eq!(set.len(), 2);
-        // Full: the rejected interface comes back so the caller can report it.
         assert_eq!(set.push(30), Err(30));
         assert_eq!(set.len(), 2);
     }

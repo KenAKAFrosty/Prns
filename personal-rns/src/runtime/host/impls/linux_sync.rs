@@ -1,14 +1,3 @@
-//! `LinuxSync` — the std poll-loop [`Host`] for the runtime.
-//!
-//! Owns the std substrate a daemon-style host needs: the OS monotonic clock, the
-//! OS CSPRNG, and the wake the interface worker threads poke through their seams.
-//! [`wait`](LinuxSync::wait) blocks the thread on `recv_timeout` until the engine's
-//! next deadline or an interface signals it has something — the sync-host shape: it
-//! never `.await`s, so [`block_on`](super::super::block_on) drives the generic
-//! [`Runtime::run`](crate::runtime::Runtime::run) loop straight through with no
-//! executor. Inbound does not flow through the host: the
-//! [`Runtime`](crate::runtime::Runtime) drains each interface's handle.
-
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
@@ -23,11 +12,6 @@ use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 /// loops back periodically. A daemon host is mains-powered; the cap is free.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
-/// The std poll-loop host: an OS clock + CSPRNG + the one wake the interface seams
-/// poke. It owns both the clock and the wake; glue each interface's seam from it
-/// with [`glue_seam`](LinuxSync::glue_seam), then hand it to
-/// `Runtime::new(state, started, host)` and drive with
-/// `block_on(runtime.run(on_snapshot))`.
 pub struct LinuxSync {
     wake: Receiver<()>,
     wake_sender: SyncSender<()>,
@@ -35,10 +19,6 @@ pub struct LinuxSync {
 }
 
 impl LinuxSync {
-    /// Owns the monotonic clock and the one wake channel. Every seam glued from this
-    /// host shares its `clock_base` (so `arrived_at` and the cycle clock share a
-    /// timebase) and a clone of its wake sender (so any submit/report rouses a
-    /// blocked `wait`).
     pub fn new() -> Self {
         let (wake_sender, wake) = sync_channel::<()>(1);
         Self {
@@ -48,9 +28,6 @@ impl LinuxSync {
         }
     }
 
-    /// Glue an interface seam bound to this host's clock + wake: the worker takes the
-    /// context, the runtime keeps the handle. `MTU` is inferred from how the worker
-    /// context is used (the serial interface pins it to `SERIAL_MTU`).
     pub fn glue_seam<const MTU: usize>(
         &self,
         id: InterfaceId,
@@ -64,11 +41,6 @@ impl LinuxSync {
         )
     }
 
-    /// Attach `interface` to this host and hand back the [`StartedInterface`] the
-    /// runtime pools: glue a seam keyed by the id the interface already carries, then
-    /// start the interface onto it. The `glue_seam` + `start_interface` dance,
-    /// collapsed — reach for `glue_seam` directly only when a host splits the seam by
-    /// hand (a multi-interface board unifying heterogeneous handles).
     pub fn attach<I, const MTU: usize>(
         &self,
         interface: I,
@@ -93,8 +65,6 @@ impl Default for LinuxSync {
     }
 }
 
-/// How long the next wait should block: due now → don't block; a future deadline →
-/// exactly the gap (capped); idle → the cap.
 fn wait_for(next: NextScheduledEngineWork, now: InstantMillis, max: Duration) -> Duration {
     match next {
         NextScheduledEngineWork::Immediate => Duration::ZERO,
@@ -106,6 +76,7 @@ fn wait_for(next: NextScheduledEngineWork, now: InstantMillis, max: Duration) ->
 }
 
 impl Host for LinuxSync {
+    #[allow(clippy::expect_used)]
     async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp {
         // Block until the engine's next deadline or an interface pokes the wake —
         // whichever first. `recv_timeout` blocks the thread (this never `.await`s),
@@ -136,8 +107,6 @@ mod tests {
     #[test]
     fn wait_returns_promptly_when_an_interface_pokes_the_wake() {
         let mut host = LinuxSync::new();
-        // A seam glued from the host shares its wake; a submit pokes that wake, so an
-        // `Idle` wait (which would otherwise block for the cap) returns at once.
         let mut seam = host.glue_seam::<8>(InterfaceId::new([0; 16]), 1);
         seam.worker_context
             .inbound

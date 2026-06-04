@@ -30,8 +30,6 @@ pub enum CryptoError {
     InvalidSignature,
     InvalidMac,
     InvalidPadding,
-    /// A token was shorter than its fixed overhead,
-    /// or its ciphertext was not a whole number of cipher blocks.
     MalformedToken,
     BadKeyLength,
     BufferTooShort,
@@ -41,8 +39,6 @@ pub enum CryptoError {
 mod tests {
     use super::*;
 
-    /// Vectors below were generated from the RNS 1.3.1 crypto module.
-    /// Inputs are constructed directly; only the opaque expected outputs are hex.
     fn hx(s: &str) -> Vec<u8> {
         (0..s.len())
             .step_by(2)
@@ -114,7 +110,6 @@ mod tests {
         assert_eq!(ed25519_sign(&secret, b"sign-this"), sig);
         assert!(ed25519_verify(&public, b"sign-this", &sig).is_ok());
 
-        // Tampered message and tampered signature both reject.
         assert_eq!(
             ed25519_verify(&public, b"sign-thus", &sig),
             Err(CryptoError::InvalidSignature),
@@ -153,12 +148,10 @@ mod tests {
                             e861b0c85026daa336876e4b44410d32",
         );
 
-        // Decrypt RNS's token.
         let mut out = [0u8; 256];
         let n = token_open(&TokenKey::from_derived(&key).unwrap(), &rns_token, &mut out).unwrap();
         assert_eq!(&out[..n], plaintext);
 
-        // Seal with RNS's IV reproduces RNS's token byte-for-byte.
         let iv = a16("b0f6eebcf00a7c913d7ea7800390e775");
         let mut sealed = [0u8; 256];
         let m = token_seal(
@@ -194,7 +187,6 @@ mod tests {
             &mut sealed,
         )
         .unwrap();
-        // (round-trip already proven; byte-exactness proven by the aes128 case)
     }
 
     #[test]

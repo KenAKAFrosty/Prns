@@ -1,5 +1,3 @@
-//! The seam between the engine and concrete interfaces.
-
 pub mod capabilities;
 pub mod connection_state;
 pub mod id;

@@ -19,7 +19,6 @@ enum AesMode {
     Aes256,
 }
 
-/// A token key split into its signing and encryption halves, as RNS does.
 pub struct TokenKey<'a> {
     signing_key: &'a [u8],
     encryption_key: &'a [u8],
@@ -27,7 +26,6 @@ pub struct TokenKey<'a> {
 }
 
 impl<'a> TokenKey<'a> {
-    /// Split a derived key (32 → AES-128, 64 → AES-256) into its halves.
     pub fn from_derived(key: &'a [u8]) -> Result<Self, CryptoError> {
         match key.len() {
             32 => Ok(Self {
@@ -45,8 +43,6 @@ impl<'a> TokenKey<'a> {
     }
 }
 
-/// Seal `plaintext` into a token written to `out`, with the host-supplied `iv`.
-/// Returns the token length.
 pub fn token_seal(
     key: &TokenKey,
     iv: &[u8; IV_LEN],

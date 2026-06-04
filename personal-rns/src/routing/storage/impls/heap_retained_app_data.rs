@@ -44,19 +44,15 @@ mod tests {
         assert_eq!(store.get(a), &[0xAA; 3]);
         assert_eq!(store.get(b), &[0xBB; 5]);
 
-        // Replace to a different size: entries are independent, so the neighbor and
-        // the handle both stay valid (no packing to disturb).
         store.replace(a, &[0x11; 9]).unwrap();
         assert_eq!(store.get(a), &[0x11; 9]);
         assert_eq!(store.get(b), &[0xBB; 5]);
-        // Replace to empty clears the payload; the handle still resolves.
         store.replace(b, &[]).unwrap();
         assert_eq!(store.get(b), &[] as &[u8]);
 
-        // Grows past any fixed entry cap / byte budget — insert never fails.
         for n in 0..500u32 {
             assert!(store.insert(&[n as u8; 200]).is_ok());
         }
-        assert_eq!(store.get(a), &[0x11; 9]); // earliest handle still valid
+        assert_eq!(store.get(a), &[0x11; 9]);
     }
 }

@@ -1,21 +1,3 @@
-//! The interface contract: how an [`Interface`] starts, and what the runtime
-//! holds to drive it afterward.
-//!
-//! Starting an interface produces two runtime-facing pieces:
-//!
-//! - **Who drives the loop?** — [`DriverMode`]. Either the interface launched its
-//!   own loop ([`SelfDriven`](DriverMode::SelfDriven)) or it cannot run itself and
-//!   the runtime ticks its `poll` ([`RuntimeDriven`](DriverMode::RuntimeDriven)).
-//!   Purely a scheduling decision.
-//! - **How does the runtime reach it?** — [`InterfaceHandle`]. Every started
-//!   interface, self-driven or not, leaves the runtime a handle to drain its
-//!   inbound, queue its outbound, and trade control signals. The runtime's
-//!   relationship to a self-driven interface is this handle.
-//!
-//! [`StartedInterface`] bundles both with the descriptor, so a started interface
-//! cannot exist without a runtime handle, and a `SelfDriven` value can never mean
-//! "the runtime has no way to reach it."
-
 use crate::engine::InstantMillis;
 use crate::interfaces::{
     ConnectionState, ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext,
@@ -30,8 +12,6 @@ pub enum NextScheduledInterfaceWake {
 }
 
 impl NextScheduledInterfaceWake {
-    /// The sooner of two interface poll deadlines: `Immediate` wins, `Idle` loses,
-    /// two `At`s take the earlier instant.
     pub fn sooner(self, other: Self) -> Self {
         use NextScheduledInterfaceWake::{At, Idle, Immediate};
         match (self, other) {
@@ -42,16 +22,7 @@ impl NextScheduledInterfaceWake {
     }
 }
 
-/// Which side runs an interface's loop — the runtime's *scheduling* decision,
-/// nothing more. The runtime-side data lanes and control plane live in the
-/// interface's [`InterfaceHandle`], not here, so this enum stays narrowly about
-/// "do I poll this worker or not."
 pub enum DriverMode<Worker> {
-    /// The interface launched its own loop (a thread or an executor task), so the
-    /// runtime never polls it. The runtime still reaches it through its
-    /// [`InterfaceHandle`]; to wind it down it sends
-    /// [`ControlCommand::Stop`](crate::interfaces::ControlCommand) over that handle's control
-    /// lane and watches for [`ControlReport::Stopped`].
     SelfDriven,
 
     /// The interface cannot run itself (no thread, no executor). The runtime owns
@@ -63,19 +34,12 @@ pub enum DriverMode<Worker> {
     },
 }
 
-/// The runtime's end of one started interface. All methods are non-blocking; the
-/// concrete handle type decides what queues, channels, or hardware back it.
 pub trait InterfaceHandle {
-    /// Lend each inbound packet the interface has stamped to `f`, in order, tagged
-    /// with the interface's id and arrival stamp. Returns how many were drained.
     fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
     fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError>;
 
-    /// Ask the interface to wind down; it reports [`ControlReport::Stopped`] when
-    /// done.
     fn request_stop(&mut self);
 
-    /// The next report the interface has sent, if any. Never blocks.
     fn next_report(&mut self) -> Option<ControlReport>;
 }
 
@@ -96,8 +60,6 @@ pub trait RegisteredInterface {
 
     fn next_report(&mut self) -> Option<ControlReport>;
 
-    /// Poll a runtime-driven interface's worker for its next deadline; a no-op
-    /// returning [`Idle`](NextScheduledInterfaceWake::Idle) for a self-driven one.
     fn poll(&mut self, now: InstantMillis) -> NextScheduledInterfaceWake;
 
     fn drain_control_reports(&mut self) {
@@ -139,10 +101,6 @@ impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Wor
     }
 }
 
-/// An autonomous interface, parameterized by the [`Substrate`] it runs on so the
-/// generic contract never names a platform's concrete lane types. `start`
-/// consumes the interface into its running form and returns its [`DriverMode`].
-///
 /// There is no teardown method. Graceful wind-down uses the control plane: the
 /// interface awaits its own cleanup on [`Stop`](crate::interfaces::ControlCommand), then
 /// reports [`Stopped`](ControlReport), and synchronous resource release is just
@@ -154,25 +112,17 @@ pub trait Interface<S: Substrate>: Sized {
     /// `DriverMode<Infallible>` with no coercion.
     type Worker;
 
-    /// The routing facts the engine registers and routes on — read before `start`
-    /// consumes the interface.
     fn descriptor(&self) -> InterfaceDescriptor;
 
-    /// Activate: open the device, take the worker side of the seam, decide the
-    /// drive mode, return the [`DriverMode`].
     fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self::Worker>;
 }
 
-/// Ready-made [`Interface`] for the common case: one that starts its own thread
-/// or task and leaves the runtime with only its handle. The launch closure
-/// captures any device-specific state, so this wrapper stays platform-neutral.
 pub struct SelfDrivenInterface<Launch> {
     descriptor: InterfaceDescriptor,
     launch: Launch,
 }
 
 impl<Launch> SelfDrivenInterface<Launch> {
-    /// `launch` must start the interface loop and return promptly.
     pub fn new(descriptor: InterfaceDescriptor, launch: Launch) -> Self {
         Self { descriptor, launch }
     }

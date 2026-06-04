@@ -1,9 +1,3 @@
-//! Held announces awaiting retry or release.
-//!
-//! Entries are keyed by destination, returned lowest-hops-first, and fully drained
-//! on the next tick. The store is a [`HeldAnnounces`] trait so the engine runs on a
-//! fixed ([`FixedHeldAnnounces`]) or growable ([`HeapHeldAnnounces`]) backing.
-
 mod impls;
 
 pub use impls::*;
@@ -49,7 +43,6 @@ pub struct HeldAnnounce {
 }
 
 impl HeldAnnounce {
-    /// Borrow this held entry as an [`Announce`].
     pub fn announce(&self) -> Announce<'_> {
         Announce {
             destination: self.destination,
@@ -74,16 +67,11 @@ impl HeldAnnounce {
         self.reason
     }
 
-    /// Interface this announce originally arrived on.
     pub fn source_interface(&self) -> InterfaceId {
         self.source_interface
     }
 }
 
-/// The held-announce store the engine drives: park an announce, drain the best
-/// retry candidate (lowest hops, oldest first), and report its size. Lets the
-/// engine run on a fixed ([`FixedHeldAnnounces`]) or growable
-/// ([`HeapHeldAnnounces`]) backing.
 pub trait HeldAnnounces {
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {

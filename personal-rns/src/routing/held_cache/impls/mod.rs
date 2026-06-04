@@ -1,5 +1,3 @@
-//! Concrete [`HeldAnnounces`](super::HeldAnnounces) backends — one file per impl.
-
 mod fixed_held_announces;
 pub use fixed_held_announces::FixedHeldAnnounces;
 

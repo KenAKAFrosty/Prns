@@ -1,6 +1,5 @@
 use core::convert::TryFrom;
 
-/// Reference-parity declaration shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
     pub receives: bool,
