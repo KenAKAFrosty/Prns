@@ -2,7 +2,7 @@
 # Hygiene gate: the tree stays `cargo fmt`-clean and its intra-doc links resolve.
 #
 # fmt is checked across the root workspace and each standalone workspace (the
-# device hosts + the Hopspot desktop) separately — they are their own workspaces
+# device hosts + the Hopspot app) separately — they are their own workspaces
 # (own targets/toolchains), so `--all` from the root doesn't reach them. The
 # Hopspot UI crate is a root member, so the root check covers it. The doc step
 # builds personal-rns's docs with
@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 echo "[fmt] root workspace"
 cargo fmt --all -- --check
 
-for ws in hosts/esp32-c6 hosts/heltec-lora32 hosts/nrf52840 personal-hopspot/desktop; do
+for ws in hosts/esp32-c6 hosts/heltec-lora32 hosts/nrf52840 personal-hopspot/app; do
   echo "[fmt] ${ws}"
   (cd "${ws}" && cargo fmt --all -- --check)
 done

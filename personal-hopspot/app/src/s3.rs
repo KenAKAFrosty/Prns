@@ -96,7 +96,8 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 /// The worker-side seam this board's responder task runs against.
-type UsbAutoContext = InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, MAX_BUFFERED_PACKETS>>;
+type UsbAutoContext =
+    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, MAX_BUFFERED_PACKETS>>;
 
 /// The interface's four channels live in one board `static` (the embassy idiom);
 /// `attach` splits the worker + runtime ends out of it — no heap.
@@ -135,10 +136,13 @@ pub async fn run(spawner: Spawner) {
     Timer::after(Duration::from_millis(20)).await;
     rst.set_high();
     Timer::after(Duration::from_millis(20)).await;
-    let i2c = I2c::new(p.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400)))
-        .expect("i2c0")
-        .with_sda(p.GPIO17)
-        .with_scl(p.GPIO18);
+    let i2c = I2c::new(
+        p.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(400)),
+    )
+    .expect("i2c0")
+    .with_sda(p.GPIO17)
+    .with_scl(p.GPIO18);
     let mut display = Ssd1306::new(
         I2CDisplayInterface::new(i2c),
         DisplaySize128x64,
@@ -167,7 +171,8 @@ pub async fn run(spawner: Spawner) {
     let mut adc_ctrl = Output::new(p.GPIO37, Level::High, OutputConfig::default());
     adc_ctrl.set_high();
     let mut adc_cfg = AdcConfig::new();
-    let mut vbat_pin = adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
+    let mut vbat_pin =
+        adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
     let mut vbat_adc = Adc::new(p.ADC1, adc_cfg);
 
     // The Hopspot screen, event-driven: redraw when engine state moves, the battery
@@ -362,7 +367,12 @@ async fn button_task(mut button: Input<'static>) {
         // Active-low: a press pulls GPIO0 to ground (falling), the pull-up holds it high
         // on release (rising).
         button.wait_for_falling_edge().await;
-        match select(button.wait_for_rising_edge(), Timer::after(BUTTON_LONG_PRESS)).await {
+        match select(
+            button.wait_for_rising_edge(),
+            Timer::after(BUTTON_LONG_PRESS),
+        )
+        .await
+        {
             Either::First(()) => BUTTON_EVENTS.send(screen::InputEvent::ShortPress).await,
             Either::Second(()) => {
                 BUTTON_EVENTS.send(screen::InputEvent::LongPress).await;
