@@ -4,7 +4,7 @@ pub mod ingress;
 pub mod self_announce;
 
 pub use egress::{EgressDirective, EgressSerializeError};
-pub use ingress::Ingress;
+pub use ingress::{DataPacket, Ingress};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
@@ -373,7 +373,7 @@ where
                 &mut counters,
             ),
 
-            Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
+            Ingress::Data { .. } | Ingress::LinkRequest | Ingress::Proof => {}
             Ingress::Unparseable => {}
         }
     }
