@@ -44,7 +44,7 @@ esp_app_desc!();
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
 const PER_INTERFACE_MAX_BUFFERED_PACKETS: usize = 8;
-const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4> = FixedCapacity;
+const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4, 4> = FixedCapacity;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse

@@ -4,6 +4,7 @@ pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::directives::EngineDirectives;
+use crate::engine::local_destinations::LocalDestinationColumns;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
@@ -157,4 +158,5 @@ pub trait EngineStorage {
     type Pending: RebroadcastQueue + Default;
     type Held: HeldAnnounces + Default;
     type Directives: EngineDirectives + Default;
+    type LocalDestinations: LocalDestinationColumns + Default;
 }

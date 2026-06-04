@@ -1,4 +1,5 @@
 use crate::engine::directives::HeapEngineDirectives;
+use crate::engine::local_destinations::HeapLocalDestinationColumns;
 use crate::routing::held_cache::HeapHeldAnnounces;
 use crate::routing::schedule::HeapRebroadcastQueue;
 use crate::routing::storage::{
@@ -16,11 +17,13 @@ impl EngineStorage for GrowableHeap {
     type Pending = HeapRebroadcastQueue;
     type Held = HeapHeldAnnounces;
     type Directives = HeapEngineDirectives;
+    type LocalDestinations = HeapLocalDestinationColumns;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::local_destinations::LocalDestinationColumns;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
 
     #[test]
@@ -32,7 +35,9 @@ mod tests {
         let _pending = <GrowableHeap as EngineStorage>::Pending::default();
         let _held = <GrowableHeap as EngineStorage>::Held::default();
         let _directives = <GrowableHeap as EngineStorage>::Directives::default();
+        let local_destinations = <GrowableHeap as EngineStorage>::LocalDestinations::default();
         assert_eq!(routes.capacity(), usize::MAX);
         assert_eq!(announces.capacity(), usize::MAX);
+        assert_eq!(local_destinations.capacity(), usize::MAX);
     }
 }

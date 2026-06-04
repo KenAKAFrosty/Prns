@@ -99,6 +99,15 @@ pub fn derive_destination_hash(
     DestinationHash::new(truncated)
 }
 
+/// Derive a plain destination's address hash: `sha256(name_hash)[..16]`. The
+/// identity-less arm of RNS 1.3.1 `Destination.hash` — plain destinations are
+/// owned by no identity, so their address binds to the name alone.
+pub fn derive_plain_destination_hash(dotted_name_hash: &DottedNameHash) -> DestinationHash {
+    let mut truncated = [0u8; TRUNCATED_HASH_BYTE_LEN];
+    truncated.copy_from_slice(&sha256(dotted_name_hash.as_bytes())[..TRUNCATED_HASH_BYTE_LEN]);
+    DestinationHash::new(truncated)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RatchetKey([u8; RATCHET_LEN]);
 

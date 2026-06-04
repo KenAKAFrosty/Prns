@@ -17,7 +17,7 @@ use personal_rns::engine::{
 use personal_rns::routing::storage::FixedCapacity;
 
 const PRNS_ABI_VERSION: u32 = 1;
-type SdkEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+type SdkEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64, 8>;
 
 /// Successful C ABI call.
 pub const PRNS_STATUS_OK: u32 = 0;

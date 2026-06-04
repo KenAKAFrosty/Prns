@@ -1,14 +1,19 @@
 pub mod directives;
 pub mod egress;
 pub mod ingress;
+pub mod local_destinations;
 pub mod self_announce;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
+pub use local_destinations::{
+    LocalDestination, LocalDestinationColumns, LocalDestinationKind, RegisterDestinationError,
+};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
+use crate::engine::local_destinations::LocalDestinations;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
@@ -83,6 +88,7 @@ pub struct EngineState<S: EngineStorage> {
     pending_rebroadcasts: S::Pending,
     directives: S::Directives,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
+    local_destinations: LocalDestinations<S::LocalDestinations>,
     identity: Option<InMemoryNodeIdentity>,
     self_announce: Option<SelfAnnounceSettings>,
 }
@@ -97,6 +103,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             pending_rebroadcasts: Default::default(),
             directives: Default::default(),
             interfaces: HeaplessVec::new(),
+            local_destinations: LocalDestinations::default(),
             identity: None,
             self_announce: None,
         }
@@ -111,6 +118,7 @@ where
     S::AppData: core::fmt::Debug,
     S::Held: core::fmt::Debug,
     S::Pending: core::fmt::Debug,
+    S::LocalDestinations: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("EngineState")
@@ -120,6 +128,7 @@ where
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
             .field("interfaces", &self.interfaces)
+            .field("local_destinations", &self.local_destinations)
             .field(
                 "identity_hash",
                 &self.identity.as_ref().map(|id| id.identity_hash()),
@@ -200,6 +209,31 @@ impl<S: EngineStorage> EngineState<S> {
 
     pub fn registered_interfaces(&self) -> &[InterfaceId] {
         &self.interfaces
+    }
+
+    pub fn register_plain_destination(
+        &mut self,
+        app_name: &str,
+        aspects: &[&str],
+    ) -> Result<DestinationHash, RegisterDestinationError> {
+        self.local_destinations.register_plain(app_name, aspects)
+    }
+
+    pub fn register_single_destination(
+        &mut self,
+        app_name: &str,
+        aspects: &[&str],
+    ) -> Result<DestinationHash, RegisterDestinationError> {
+        let identity = self
+            .identity
+            .as_ref()
+            .ok_or(RegisterDestinationError::NoNodeIdentity)?;
+        self.local_destinations
+            .register_single(&identity.identity_hash(), app_name, aspects)
+    }
+
+    pub fn local_destinations(&self) -> impl Iterator<Item = LocalDestination> + '_ {
+        self.local_destinations.iter()
     }
 
     pub fn self_announced_destination(&self) -> Option<DestinationHash> {
@@ -554,7 +588,7 @@ mod tests {
         DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
     };
 
-    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8>;
 
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
     const TEST_NONCE: SelfAnnounceEntropy =
@@ -742,6 +776,29 @@ mod tests {
         assert_eq!(relay.self_announced_destination(), None);
         let identity_only: EngineState<Cap> = EngineState::new(&fixed_secret_key());
         assert_eq!(identity_only.self_announced_destination(), None);
+    }
+
+    #[test]
+    fn registering_our_announced_name_as_single_yields_the_announced_destination() {
+        let mut state = personal_node_announcer();
+        let registered = state
+            .register_single_destination("personal", &["node"])
+            .expect("an identity-holding node registers single destinations");
+        assert_eq!(Some(registered), state.self_announced_destination());
+        assert_eq!(state.local_destinations().count(), 1);
+    }
+
+    #[test]
+    fn a_relay_cannot_register_a_single_destination_but_can_register_plain() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        assert_eq!(
+            state.register_single_destination("personal", &["node"]),
+            Err(RegisterDestinationError::NoNodeIdentity),
+        );
+        assert!(state
+            .register_plain_destination("personal", &["node"])
+            .is_ok());
+        assert_eq!(state.local_destinations().count(), 1);
     }
 
     #[test]
@@ -1004,7 +1061,7 @@ mod tests {
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8>>::default();
 
         let out = ingest_packets(
             &mut state,
@@ -1025,7 +1082,7 @@ mod tests {
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8>>::default();
         let _ = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1048,7 +1105,7 @@ mod tests {
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8>>::default();
 
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
@@ -1101,7 +1158,7 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64>>::default();
+        let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64, 8>>::default();
         let out = ingest_packets(
             &mut state,
             [InboundPacket {
@@ -1210,7 +1267,7 @@ mod tests {
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4>>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4, 8>>::default();
         let _ = ingest_packets(
             &mut state,
             [InboundPacket {

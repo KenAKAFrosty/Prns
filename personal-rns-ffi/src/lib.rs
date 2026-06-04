@@ -27,7 +27,7 @@ use personal_rns::routing::storage::FixedCapacity;
 /// This SDK binding's engine-storage sizing (the engine has no storage defaults, so
 /// each consumer picks its own): 64 dests / 64 ids each / 4 KB arena / 4 floor / 512
 /// overflow / 64 held.
-type SdkEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+type SdkEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64, 8>;
 
 uniffi::include_scaffolding!("prns");
 
