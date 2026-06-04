@@ -8,6 +8,8 @@
 //! node. The operator plugs a cable in and it works without a port argument or configuration.
 
 pub mod core;
+#[cfg(feature = "std-host")]
+mod discovery;
 mod impls;
 #[cfg(feature = "embassy-contract")]
 pub use impls::serve;
