@@ -1,5 +1,12 @@
 # Validation Lanes
 
+## Reference Target
+
+Wire and transport parity work targets Reticulum `1.3.1` through completion,
+using upstream commit `1d7cfe7c202c5e2f3cd7a9d70fa2a6c8c6848958` as the
+stable source reference. Later Reticulum releases should not change these
+vectors or predicates unless the parity target is intentionally moved.
+
 The normal workspace tests stay the first pass:
 
 ```sh
