@@ -140,17 +140,17 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
             ServeStep::ReceiveFailed => {}
             ServeStep::Received(len) => {
                 if let Some(packet) = reassembler.feed(&rx_buf[..len]) {
-                    if !packet.is_empty() && packet.len() <= MTU {
-                        if context
+                    if !packet.is_empty()
+                        && packet.len() <= MTU
+                        && context
                             .inbound
                             .submit(|buf| {
                                 buf[..packet.len()].copy_from_slice(packet);
                                 packet.len()
                             })
                             .is_err()
-                        {
-                            log::warn!("RNS_LORA inbound ring full, dropped {}B", packet.len());
-                        }
+                    {
+                        log::warn!("RNS_LORA inbound ring full, dropped {}B", packet.len());
                     }
                 }
             }

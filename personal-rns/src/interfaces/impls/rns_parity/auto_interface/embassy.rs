@@ -223,7 +223,7 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                 {
                     log::warn!("RNS_AUTO beacon send err: {e:?}");
                 }
-                if cycle % 3 == 0 {
+                if cycle.is_multiple_of(3) {
                     let mut targets: HVec<Ipv6Addr, MAX_PEERS> = HVec::new();
                     for addr in brain.known_peer_addresses() {
                         let _ = targets.push(addr);
