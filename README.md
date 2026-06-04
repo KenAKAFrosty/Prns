@@ -13,9 +13,6 @@ The CI badge reads "no status" to anonymous viewers until the repo is public.
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-orange.svg)](#minimum-supported-rust-version)
 [![no_std](https://img.shields.io/badge/no__std-core-success.svg)](#embedded-and-no_std)
 
-> **Build directive:** Port the contract, not the implementation. Build one pure engine, and let each platform bring a thin host.
-
-The full directive is in [docs/build-ethos.md](docs/build-ethos.md).
 
 ## Overview
 
@@ -58,7 +55,6 @@ The `personal-rns` core builds `no_std` and allocation-free, and CI cross-compil
 
 ## Documentation
 
-- [docs/build-ethos.md](docs/build-ethos.md): the governing build directive.
 - [docs/validation.md](docs/validation.md): the fuzzing, property-test, and mutation-test lanes.
 
 <!-- TODO: link rendered API docs once a docs target is published. -->
