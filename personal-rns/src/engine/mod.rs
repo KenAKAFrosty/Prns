@@ -270,6 +270,134 @@ impl<S: EngineStorage> EngineState<S> {
             .mark_announced(now);
         Some(written)
     }
+
+    #[must_use]
+    pub fn ingest_packets<'p, I>(
+        &mut self,
+        packets: impl IntoIterator<Item = I>,
+        jitter: JitterSeed,
+    ) -> IngestOutput
+    where
+        I: core::borrow::Borrow<InboundPacket<'p>>,
+    {
+        let mut counters = IngestCounters::default();
+        let mut processed: usize = 0;
+
+        for packet in packets {
+            processed += 1;
+            let packet: &InboundPacket = core::borrow::Borrow::borrow(&packet);
+            match Ingress::classify(packet) {
+                Ingress::Announce {
+                    announce,
+                    received_hops,
+                    source_interface,
+                    arrived_at,
+                } => ingest_announce(
+                    self,
+                    announce,
+                    received_hops,
+                    source_interface,
+                    arrived_at,
+                    jitter,
+                    &mut counters,
+                ),
+
+                Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
+                Ingress::Unparseable => {}
+            }
+        }
+
+        self.ingested_packet_count = self.ingested_packet_count.saturating_add(processed as u64);
+
+        IngestOutput {
+            processed_packet_count: processed,
+            accepted_announce_count: counters.accepted,
+            held_for_retry_count: counters.held,
+            scheduled_rebroadcast_count: counters.scheduled,
+        }
+    }
+
+    pub fn tick(&mut self, now: InstantMillis, jitter: JitterSeed) -> TickOutput<'_, S> {
+        self.tick_count = self.tick_count.saturating_add(1);
+
+        let mut recovered_from_held_count = 0;
+        while let Some(held) = self.held_announces_cache.take_next() {
+            use crate::routing::held_cache::HoldReason;
+            match held.reason() {
+                HoldReason::RoutingArenaPressure => {
+                    let announce = held.announce();
+                    let arrival = held.arrived_at();
+                    let received_hops = held.received_hops();
+                    let source_interface = held.source_interface();
+                    let decision = AnnounceAcceptanceInput {
+                        packet_hops: received_hops,
+                        announce_id: announce.announce_id,
+                        destination_is_local: false,
+                        existing_route: self
+                            .routing_table
+                            .existing_route_for(&announce.destination),
+                        arrived_at: arrival,
+                    }
+                    .determine_acceptance();
+                    if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
+                        let outcome = self.routing_table.upsert_route(
+                            received_hops,
+                            arrival,
+                            source_interface,
+                            &announce,
+                        );
+                        if matches!(
+                            outcome,
+                            UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
+                        ) {
+                            recovered_from_held_count += 1;
+                            let offset = jitter_offset_for(
+                                jitter,
+                                &announce.destination,
+                                DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                            );
+                            self.pending_rebroadcasts.schedule(
+                                announce.destination,
+                                InstantMillis(arrival.0.saturating_add(offset)),
+                                source_interface,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Materialize this tick's directives from the due rebroadcasts. Indexed (not
+        // iterated) so the read of `pending_rebroadcasts` doesn't overlap the write to
+        // `directives` — both are fields of `self`.
+        self.directives.clear();
+        for index in 0..self.pending_rebroadcasts.as_slice().len() {
+            let scheduled = self.pending_rebroadcasts.as_slice()[index];
+            if scheduled.due_at > now {
+                continue;
+            }
+            let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> =
+                HeaplessVec::new();
+            for &iface in &self.interfaces {
+                if iface != scheduled.source_interface {
+                    let _ = fire_on.push(iface);
+                }
+            }
+            if fire_on.is_empty() {
+                continue;
+            }
+            self.directives.push(EngineDirective::ReemitAnnounce {
+                destination: scheduled.destination,
+                fire_on,
+            });
+        }
+
+        TickOutput {
+            state: self,
+            now,
+            recovered_from_held_count,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -342,52 +470,6 @@ impl<S: EngineStorage> Drop for TickOutput<'_, S> {
     }
 }
 
-#[must_use]
-pub fn ingest_packets<'p, I, S: EngineStorage>(
-    state: &mut EngineState<S>,
-    packets: impl IntoIterator<Item = I>,
-    jitter: JitterSeed,
-) -> IngestOutput
-where
-    I: core::borrow::Borrow<InboundPacket<'p>>,
-{
-    let mut counters = IngestCounters::default();
-    let mut processed: usize = 0;
-
-    for packet in packets {
-        processed += 1;
-        let packet: &InboundPacket = core::borrow::Borrow::borrow(&packet);
-        match Ingress::classify(packet) {
-            Ingress::Announce {
-                announce,
-                received_hops,
-                source_interface,
-                arrived_at,
-            } => ingest_announce(
-                state,
-                announce,
-                received_hops,
-                source_interface,
-                arrived_at,
-                jitter,
-                &mut counters,
-            ),
-
-            Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
-            Ingress::Unparseable => {}
-        }
-    }
-
-    state.ingested_packet_count = state.ingested_packet_count.saturating_add(processed as u64);
-
-    IngestOutput {
-        processed_packet_count: processed,
-        accepted_announce_count: counters.accepted,
-        held_for_retry_count: counters.held,
-        scheduled_rebroadcast_count: counters.scheduled,
-    }
-}
-
 #[derive(Default)]
 struct IngestCounters {
     accepted: usize,
@@ -457,91 +539,6 @@ fn ingest_announce<S: EngineStorage>(
     }
 }
 
-pub fn tick<S: EngineStorage>(
-    state: &mut EngineState<S>,
-    now: InstantMillis,
-    jitter: JitterSeed,
-) -> TickOutput<'_, S> {
-    state.tick_count = state.tick_count.saturating_add(1);
-
-    let mut recovered_from_held_count = 0;
-    while let Some(held) = state.held_announces_cache.take_next() {
-        use crate::routing::held_cache::HoldReason;
-        match held.reason() {
-            HoldReason::RoutingArenaPressure => {
-                let announce = held.announce();
-                let arrival = held.arrived_at();
-                let received_hops = held.received_hops();
-                let source_interface = held.source_interface();
-                let decision = AnnounceAcceptanceInput {
-                    packet_hops: received_hops,
-                    announce_id: announce.announce_id,
-                    destination_is_local: false,
-                    existing_route: state
-                        .routing_table
-                        .existing_route_for(&announce.destination),
-                    arrived_at: arrival,
-                }
-                .determine_acceptance();
-                if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-                    let outcome = state.routing_table.upsert_route(
-                        received_hops,
-                        arrival,
-                        source_interface,
-                        &announce,
-                    );
-                    if matches!(
-                        outcome,
-                        UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
-                    ) {
-                        recovered_from_held_count += 1;
-                        let offset = jitter_offset_for(
-                            jitter,
-                            &announce.destination,
-                            DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                        );
-                        state.pending_rebroadcasts.schedule(
-                            announce.destination,
-                            InstantMillis(arrival.0.saturating_add(offset)),
-                            source_interface,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    // Materialize this tick's directives from the due rebroadcasts. Indexed (not
-    // iterated) so the read of `pending_rebroadcasts` doesn't overlap the write to
-    // `directives` — both are fields of `state`.
-    state.directives.clear();
-    for index in 0..state.pending_rebroadcasts.as_slice().len() {
-        let scheduled = state.pending_rebroadcasts.as_slice()[index];
-        if scheduled.due_at > now {
-            continue;
-        }
-        let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> = HeaplessVec::new();
-        for &iface in &state.interfaces {
-            if iface != scheduled.source_interface {
-                let _ = fire_on.push(iface);
-            }
-        }
-        if fire_on.is_empty() {
-            continue;
-        }
-        state.directives.push(EngineDirective::ReemitAnnounce {
-            destination: scheduled.destination,
-            fire_on,
-        });
-    }
-
-    TickOutput {
-        state,
-        now,
-        recovered_from_held_count,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,7 +567,7 @@ mod tests {
         state: &mut EngineState<S>,
         now: InstantMillis,
     ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
-        let tick_out = tick(state, now, TEST_ENTROPY);
+        let tick_out = state.tick(now, TEST_ENTROPY);
         let snapshot = TickSnapshot {
             egress_directive_count: tick_out.egress_directive_count(),
             recovered_from_held_count: tick_out.recovered_from_held_count(),
@@ -629,15 +626,11 @@ mod tests {
             },
         ];
 
-        let out = ingest_packets(&mut state, batch, TEST_ENTROPY);
+        let out = state.ingest_packets(batch, TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 2);
         assert_eq!(state.ingested_packet_count(), 2);
 
-        let empty = ingest_packets(
-            &mut state,
-            core::iter::empty::<InboundPacket<'_>>(),
-            TEST_ENTROPY,
-        );
+        let empty = state.ingest_packets(core::iter::empty::<InboundPacket<'_>>(), TEST_ENTROPY);
         assert_eq!(empty.processed_packet_count(), 0);
         assert_eq!(state.ingested_packet_count(), 2);
     }
@@ -781,8 +774,7 @@ mod tests {
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let _ = ingest_packets(
-            &mut state,
+        let _ = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -900,8 +892,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
 
-        let first = ingest_packets(
-            &mut state,
+        let first = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -912,8 +903,7 @@ mod tests {
         assert_eq!(first.accepted_announce_count(), 1);
         assert_eq!(state.route_count(), 1);
 
-        let second = ingest_packets(
-            &mut state,
+        let second = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -931,8 +921,7 @@ mod tests {
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let out = ingest_packets(
-            &mut state,
+        let out = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -945,8 +934,7 @@ mod tests {
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let out = ingest_packets(
-            &mut state,
+        let out = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -966,8 +954,7 @@ mod tests {
             DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
 
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let out = ingest_packets(
-            &mut state,
+        let out = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -995,7 +982,7 @@ mod tests {
             source_interface: InterfaceId::new([0u8; 16]),
             bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = ingest_packets(&mut state, [junk], TEST_ENTROPY);
+        let out = state.ingest_packets([junk], TEST_ENTROPY);
         assert_eq!(out.processed_packet_count(), 1);
         assert_eq!(out.accepted_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -1006,8 +993,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
 
-        let out = ingest_packets(
-            &mut state,
+        let out = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -1026,8 +1012,7 @@ mod tests {
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
-        let _ = ingest_packets(
-            &mut state,
+        let _ = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -1064,8 +1049,7 @@ mod tests {
         let n2 = write_announce_wire_packet(&announce2, 0, &mut buf2).unwrap();
 
         let raw1 = hx(RAW_ANNOUNCE);
-        let _ = ingest_packets(
-            &mut state,
+        let _ = state.ingest_packets(
             [
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
@@ -1102,8 +1086,7 @@ mod tests {
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64>>::default();
-        let out = ingest_packets(
-            &mut state,
+        let out = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -1122,8 +1105,7 @@ mod tests {
         register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
-        let out = ingest_packets(
-            &mut state,
+        let out = state.ingest_packets(
             [InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -1160,8 +1142,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let arrival = InstantMillis(1_000);
-        let _ = ingest_packets(
-            &mut state,
+        let _ = state.ingest_packets(
             [InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
@@ -1188,8 +1169,7 @@ mod tests {
 
         for state in [&mut left, &mut right] {
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
-            let _ = ingest_packets(
-                state,
+            let _ = state.ingest_packets(
                 [InboundPacket {
                     arrived_at: arrival,
                     source_interface: InterfaceId::new([0u8; 16]),
@@ -1211,8 +1191,7 @@ mod tests {
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
         let raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4>>::default();
-        let _ = ingest_packets(
-            &mut state,
+        let _ = state.ingest_packets(
             [InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
