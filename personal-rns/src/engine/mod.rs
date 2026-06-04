@@ -20,18 +20,17 @@ use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
 };
+use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+use crate::routing::announce::defaults::{jitter_offset_for, JitterSeed};
+use crate::routing::announce::held_cache::HeldAnnounces;
+use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, SelfAnnounceEntropy,
 };
-use crate::routing::defaults::{jitter_offset_for, JitterSeed};
 use crate::routing::delivery::{PlainDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS};
-use crate::routing::held_cache::HeldAnnounces;
-use crate::routing::schedule::RebroadcastQueue;
 use crate::routing::storage::EngineStorage;
-use crate::routing::{
-    DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-};
+use crate::routing::{DropCause, RoutingTable, UpsertRouteOutcome};
 use crate::wire::{DestinationHash, DestinationType};
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
@@ -482,7 +481,7 @@ impl<S: EngineStorage> EngineState<S> {
                 AnnounceIngest::Accepted
             }
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
-                use crate::routing::held_cache::{HoldReason, ParkOutcome};
+                use crate::routing::announce::held_cache::{HoldReason, ParkOutcome};
                 match self.held_announces_cache.park(
                     &announce,
                     arrived_at,
@@ -505,7 +504,7 @@ impl<S: EngineStorage> EngineState<S> {
 
         let mut recovered_from_held_count = 0;
         while let Some(held) = self.held_announces_cache.take_next() {
-            use crate::routing::held_cache::HoldReason;
+            use crate::routing::announce::held_cache::HoldReason;
             match held.reason() {
                 HoldReason::RoutingArenaPressure => {
                     let announce = held.announce();

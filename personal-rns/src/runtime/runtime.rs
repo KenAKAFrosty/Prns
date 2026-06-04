@@ -309,8 +309,8 @@ mod tests {
         IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
         InterfaceMode, MediumKind, StartedInterface, TransitCapability,
     };
+    use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::storage::FixedCapacity;
-    use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
     type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8>;

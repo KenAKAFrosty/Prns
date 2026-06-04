@@ -1,7 +1,7 @@
 use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::local_destinations::FixedLocalDestinationColumns;
-use crate::routing::held_cache::FixedHeldAnnounces;
-use crate::routing::schedule::FixedRebroadcastQueue;
+use crate::routing::announce::held_cache::FixedHeldAnnounces;
+use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::storage::{
     EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
     TieredAnnounceIdHistory,

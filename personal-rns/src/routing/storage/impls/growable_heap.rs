@@ -1,7 +1,7 @@
 use crate::engine::directives::HeapEngineDirectives;
 use crate::engine::local_destinations::HeapLocalDestinationColumns;
-use crate::routing::held_cache::HeapHeldAnnounces;
-use crate::routing::schedule::HeapRebroadcastQueue;
+use crate::routing::announce::held_cache::HeapHeldAnnounces;
+use crate::routing::announce::schedule::HeapRebroadcastQueue;
 use crate::routing::storage::{
     EngineStorage, HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
     HeapRouteColumns,
