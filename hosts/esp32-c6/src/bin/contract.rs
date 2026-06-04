@@ -45,7 +45,7 @@ use personal_rns::interfaces::substrate::{
 use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{Prns, Recipe};
+use personal_rns::runtime::{Prns, PrnsEvent, Recipe};
 
 esp_app_desc!();
 
@@ -158,7 +158,8 @@ async fn node_task(
             interfaces,
             host,
         },
-        |snapshot| {
+        |event| {
+            let PrnsEvent::SnapshotUpdated(snapshot) = event;
             let routes = snapshot
                 .interfaces
                 .iter()

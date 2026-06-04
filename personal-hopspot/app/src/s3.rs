@@ -36,7 +36,7 @@ use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenIn
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{Prns, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui as screen;
 
@@ -74,8 +74,9 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 /// The worker-side seam this board's responder task runs against.
-type UsbAutoContext =
-    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>>;
+type UsbAutoContext = InterfaceWorkerContext<
+    EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>,
+>;
 
 /// The interface's four channels live in one board `static` (the embassy idiom);
 /// `attach` splits the worker + runtime ends out of it — no heap.
@@ -317,7 +318,10 @@ async fn node_task(
             interfaces,
             host,
         },
-        move |snapshot: &RuntimeSnapshot| snapshot_tx.send(snapshot.clone()),
+        move |event: PrnsEvent<'_>| {
+            let PrnsEvent::SnapshotUpdated(snapshot) = event;
+            snapshot_tx.send(snapshot.clone());
+        },
     )
     .await
 }

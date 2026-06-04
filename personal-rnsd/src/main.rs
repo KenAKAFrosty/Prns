@@ -22,7 +22,7 @@ use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, Prns, Recipe};
+use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -113,7 +113,8 @@ fn main() {
             interfaces,
             host,
         },
-        |snapshot| {
+        |event| {
+            let PrnsEvent::SnapshotUpdated(snapshot) = event;
             let routes = snapshot
                 .interfaces
                 .iter()

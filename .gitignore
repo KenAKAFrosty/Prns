@@ -2,3 +2,8 @@
 **/*.rs.bk
 godot-smoke/
 .vscode
+# Parked standalone crates build into their own target dirs
+personal-rns-ffi/target/
+personal-rns-napi/target/
+personal-rns-capi/target/
+personal-rnsd/target/

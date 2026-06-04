@@ -25,7 +25,7 @@ use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, Prns, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEvent, UiState};
 
@@ -102,7 +102,8 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
             interfaces,
             host,
         },
-        move |snapshot: &RuntimeSnapshot| {
+        move |event: PrnsEvent<'_>| {
+            let PrnsEvent::SnapshotUpdated(snapshot) = event;
             let _ = snap_tx.send(snapshot.clone());
         },
     ));

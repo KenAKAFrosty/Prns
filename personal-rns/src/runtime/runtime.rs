@@ -1,6 +1,7 @@
 use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
+use super::event::PrnsEvent;
 use super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
@@ -90,10 +91,10 @@ where
         &self.engine
     }
 
-    pub async fn run<OnSnapshot>(self, mut on_snapshot: OnSnapshot) -> !
+    pub async fn run<OnEvent>(self, mut on_event: OnEvent) -> !
     where
         Ho: Host,
-        OnSnapshot: FnMut(&RuntimeSnapshot),
+        OnEvent: FnMut(PrnsEvent<'_>),
     {
         let Self {
             mut engine,
@@ -105,7 +106,13 @@ where
         loop {
             let CycleStamp { now, seed } = host.wait(wake).await;
             let output = cycle_pooled(&mut engine, &mut interfaces, &mut traffic, now, seed);
-            on_snapshot(&snapshot_pooled(&engine, &interfaces, &traffic));
+
+            //Future improvement: Only fire this when actually updated (diffd for changes) instead of every cycle
+            on_event(PrnsEvent::SnapshotUpdated(&snapshot_pooled(
+                &engine,
+                &interfaces,
+                &traffic,
+            )));
             wake = host_wake(engine.next_wakeup(now), output.next_poll);
         }
     }
