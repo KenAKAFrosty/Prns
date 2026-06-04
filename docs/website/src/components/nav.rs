@@ -3,7 +3,7 @@ use dioxus_i18n::t;
 
 use crate::routes::Route;
 
-use super::LanguageSwitcher;
+use super::{LanguageSwitcher, PrnsMark};
 
 #[component]
 pub fn TopNav() -> Element {
@@ -12,8 +12,12 @@ pub fn TopNav() -> Element {
             div { class: "max-w-5xl mx-auto px-6 h-16 flex items-center gap-8",
                 Link {
                     to: Route::Landing {},
-                    class: "font-semibold tracking-tight text-paper hover:text-accent transition-colors",
-                    "Prns"
+                    class: "flex items-center gap-2 font-semibold tracking-tight text-paper hover:text-accent transition-colors",
+                    PrnsMark { size: 24 }
+                    span {
+                        span { class: "text-accent", "P" }
+                        "rns"
+                    }
                 }
                 nav { class: "flex items-center gap-6 text-sm text-soft",
                     Link {

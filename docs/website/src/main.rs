@@ -78,6 +78,7 @@ fn App() -> Element {
             name: "description",
             content: "A production-grade Rust port of Reticulum (RNS). Deterministic no_std core, a Linux daemon host, and embedded host work built around the same engine.",
         }
+        document::Link { rel: "icon", r#type: "image/svg+xml", href: "/assets/favicon.svg" }
         Router::<Route> {}
     }
 }
