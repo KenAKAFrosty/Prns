@@ -17,6 +17,7 @@ use personal_rns::engine::{
 use personal_rns::routing::storage::FixedCapacity;
 
 const PRNS_ABI_VERSION: u32 = 1;
+type SdkEngineStorage = FixedCapacity<64, 64, 4096, 4, 512, 64>;
 
 /// Successful C ABI call.
 pub const PRNS_STATUS_OK: u32 = 0;
@@ -50,7 +51,7 @@ impl SdkEngineSubstrate {
 }
 
 struct RuntimeInner {
-    state: EngineState<FixedCapacity>,
+    state: EngineState<SdkEngineStorage>,
     substrate: SdkEngineSubstrate,
 }
 
@@ -64,7 +65,7 @@ impl PrnsRuntime {
     fn new() -> Self {
         Self {
             inner: Mutex::new(RuntimeInner {
-                state: EngineState::<FixedCapacity>::default(),
+                state: EngineState::<SdkEngineStorage>::default(),
                 substrate: SdkEngineSubstrate {
                     base: Instant::now(),
                 },
