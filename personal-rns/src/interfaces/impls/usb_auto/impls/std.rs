@@ -102,6 +102,19 @@ impl<Port: Read + Write> Discoverer<Port> {
                 *scans_left = scans_left.saturating_sub(1);
             }
         }
+        // Re-offer the handshake to every still-probing link each scan. Opening a
+        // USB-CDC port can reset the board — the DTR/RTS toggle that drops an ESP32
+        // into its download stub — dropping the Hello sent on open; re-sending until
+        // the budget runs out rides over that reboot, and any otherwise-lost first
+        // Hello, without widening the budget.
+        let mut hello = [0u8; MAX_FRAMED_BYTES];
+        if let Ok(n) = Message::Hello.write_framed(&mut hello) {
+            for device in &mut self.devices {
+                if matches!(device.state, LinkState::Probing { .. }) {
+                    let _ = device.port.write_all(&hello[..n]);
+                }
+            }
+        }
         // A probe that ran out is rejected: remember the id so we don't immediately
         // re-probe it, then drop the link below (releasing its port).
         for device in &self.devices {
@@ -242,7 +255,7 @@ mod driver {
     use std::time::{Duration, Instant};
     use std::vec::Vec;
 
-    use super::super::super::core::descriptor;
+    use super::super::super::core::host_descriptor;
     use super::{Discoverer, PortId, UsbAutoContext};
     use crate::interfaces::{
         ControlCommand, ControlEndpoint, ControlReport, InterfaceId, SelfDrivenInterface,
@@ -257,7 +270,7 @@ mod driver {
     /// Build the plug-and-play USB-auto interface on `id`: a self-driven worker that
     /// discovers and owns the host's USB CDC links — no port argument, no config.
     pub fn usb_auto_interface(id: InterfaceId) -> SelfDrivenInterface<impl FnOnce(UsbAutoContext)> {
-        SelfDrivenInterface::new(descriptor(id), move |ctx| {
+        SelfDrivenInterface::new(host_descriptor(id), move |ctx| {
             thread::spawn(move || serve(ctx));
         })
     }
@@ -310,11 +323,18 @@ mod driver {
     }
 
     fn open_cdc_port(id: &PortId) -> io::Result<CdcPort> {
-        serialport::new(id.0.as_str(), CDC_BAUD)
+        let mut port = serialport::new(id.0.as_str(), CDC_BAUD)
             .timeout(READ_TIMEOUT)
             .open()
-            .map(CdcPort)
-            .map_err(io::Error::other)
+            .map_err(io::Error::other)?;
+        // An ESP32's native USB-serial-jtag maps the modem lines to its boot/reset
+        // pins (RTS→EN, DTR→GPIO0), so a host asserting them pulses the board into
+        // reset — or its download stub — mid-handshake. Hold both deasserted so the
+        // board keeps running across an open. (A board behind a USB-UART bridge
+        // ignores these, so it is harmless there.)
+        let _ = port.write_data_terminal_ready(false);
+        let _ = port.write_request_to_send(false);
+        Ok(CdcPort(port))
     }
 }
 

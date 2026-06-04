@@ -158,12 +158,38 @@ fn vet_handshake(body: &[u8], expected_len: usize) -> Result<(), MalformedMessag
     Ok(())
 }
 
-/// The routing facts a USB-auto interface registers: a receiving/transmitting/
-/// forwarding direct peer with no in-medium repeat, like the serial cable. As an
-/// always-up aggregate it stays routable while its worker runs — `Degraded` with
-/// no board confirmed, `Connected` once one is — so it never blocks the engine's
-/// announce path. To the engine it is one interface, however many boards it owns.
-pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+/// What the *device* end does with one decoded inbound frame. Pure policy — the
+/// embassy responder ([`impls::serve`](super::impls)) is the I/O shell that acts
+/// on it. Present only where that responder is built, plus under `test`.
+#[cfg(any(test, feature = "embassy-contract"))]
+pub enum InboundReaction<'a> {
+    /// A host probe — answer it with our [`Message::HelloAck`].
+    AnswerHandshake,
+    /// A Reticulum packet bound for the engine — submit it on the inbound lane.
+    Deliver(&'a [u8]),
+    /// Nothing to act on: a stray `HelloAck` (a device never probes, so it never
+    /// asked for one) or a frame that failed to decode.
+    Ignore,
+}
+
+/// Map one decoded inbound message to the device's reaction. A device only ever
+/// answers probes and delivers data; everything else it lets lie.
+#[cfg(any(test, feature = "embassy-contract"))]
+pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReaction<'_> {
+    match message {
+        Ok(Message::Hello) => InboundReaction::AnswerHandshake,
+        Ok(Message::Data(packet)) => InboundReaction::Deliver(packet),
+        Ok(Message::HelloAck(_)) | Err(_) => InboundReaction::Ignore,
+    }
+}
+
+/// The routing facts the *host* end of a USB-auto link registers: a receiving/
+/// transmitting/forwarding direct peer with no in-medium repeat, like the serial
+/// cable. As an always-up aggregate it stays routable while its worker runs —
+/// `Degraded` with no board confirmed, `Connected` once one is — so it never
+/// blocks the engine's announce path. To the engine it is one interface, however
+/// many boards it owns.
+pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
@@ -173,6 +199,23 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
         state: ConnectionState::Degraded,
+    }
+}
+
+/// The routing facts the *device* end registers. Same direct-peer shape as the
+/// host, but a board has exactly one link — the host that enumerated it — not an
+/// aggregate, so it reports `Connected` outright, matching the serial cable's
+/// "up once the wire is there" convention.
+pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        id,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+        },
+        mode: InterfaceMode::PointToPoint,
+        medium: MediumKind::DirectPeer,
+        state: ConnectionState::Connected,
     }
 }
 
@@ -271,18 +314,52 @@ mod tests {
     #[test]
     fn oversize_data_is_rejected() {
         let mut frame = std::vec![MessageKind::Data as u8];
-        frame.extend(std::iter::repeat(0u8).take(MAX_DATA_BYTES + 1));
+        frame.extend(std::iter::repeat_n(0u8, MAX_DATA_BYTES + 1));
         assert_eq!(decode_message(&frame), Err(MalformedMessage::DataTooLarge));
     }
 
     #[test]
     fn data_at_exactly_the_mtu_is_accepted() {
         let mut frame = std::vec![MessageKind::Data as u8];
-        frame.extend(std::iter::repeat(0xABu8).take(MAX_DATA_BYTES));
+        frame.extend(std::iter::repeat_n(0xABu8, MAX_DATA_BYTES));
         match decode_message(&frame).expect("decode") {
             Message::Data(body) => assert_eq!(body.len(), MAX_DATA_BYTES),
             other => panic!("expected data, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_device_answers_a_host_probe() {
+        assert!(matches!(
+            react_to(Ok(Message::Hello)),
+            InboundReaction::AnswerHandshake
+        ));
+    }
+
+    #[test]
+    fn the_device_delivers_a_data_frame_to_the_engine() {
+        let packet = [0xDE, 0xAD, 0xBE, 0xEF];
+        match react_to(Ok(Message::Data(&packet))) {
+            InboundReaction::Deliver(body) => assert_eq!(body, &packet),
+            _ => panic!("expected the data frame to be delivered"),
+        }
+    }
+
+    #[test]
+    fn the_device_ignores_a_stray_hello_ack() {
+        let tag = NodeTag([9; NODE_TAG_LEN]);
+        assert!(matches!(
+            react_to(Ok(Message::HelloAck(tag))),
+            InboundReaction::Ignore
+        ));
+    }
+
+    #[test]
+    fn the_device_ignores_a_malformed_frame() {
+        assert!(matches!(
+            react_to(Err(MalformedMessage::WrongMagic)),
+            InboundReaction::Ignore
+        ));
     }
 
     #[test]
