@@ -69,9 +69,9 @@ pub fn Landing() -> Element {
                     span { "→" }
                 }
                 Link {
-                    to: Route::EthosPage {},
+                    to: Route::ContributingPage {},
                     class: "inline-flex items-center gap-2 rounded-full border border-line/80 bg-layer/40 px-5 py-2.5 text-paper hover:border-accent/40 hover:text-accent transition-colors",
-                    {t!("landing-cta-crates")}
+                    {t!("landing-cta-contributing")}
                 }
             }
 

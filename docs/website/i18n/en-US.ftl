@@ -1,5 +1,5 @@
 # Navigation
-nav-ethos = Design
+nav-contributing = Contributing
 nav-crates = Crates
 nav-api = API
 
@@ -17,7 +17,7 @@ landing-kicker-prefix = Unstoppable mesh networks, for the
 landing-title = A production-grade port of Reticulum (RNS) written in safe Rust.
 landing-subtitle = A deterministic, no_std, alloc-free core. Built for the performance and stability every Reticulum node needs, from a five-dollar microcontroller to a cloud server.
 landing-cta-ethos = Pick a crate
-landing-cta-crates = How we build it
+landing-cta-contributing = Contributing
 
 # Pull quote
 landing-quote-label = What we're building toward
@@ -98,10 +98,10 @@ benchmarks-lead = We treat performance as a number, not an adjective. Every figu
 # License signal (footer)
 footer-license = Open source. MIT / Apache 2.0.
 
-# Ethos page
-ethos-kicker = The discipline
-ethos-title = How we build this
-ethos-lead = An engineer-to-engineer note on the discipline behind this project — pure engine, alloc-free core, every change verified against the RNS reference. Skim it before you depend on this; we want you to know what you're getting into.
+# Contributing page
+contributing-kicker = The bar
+contributing-title = Contributing
+contributing-lead = How to contribute — what we value, the conventions your code follows, and the standard every change clears. For human and automated contributors alike.
 
 # Crates index
 crates-kicker = The pieces

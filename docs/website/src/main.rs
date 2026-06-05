@@ -22,6 +22,7 @@ fn main() {
 fn App() -> Element {
     use_init_i18n(|| {
         I18nConfig::new(langid!("en-US"))
+            .with_fallback(langid!("en-US"))
             .with_locale(Locale::new_static(
                 langid!("en-US"),
                 include_str!("../i18n/en-US.ftl"),
