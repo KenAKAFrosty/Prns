@@ -1,22 +1,17 @@
 pub mod directives;
 pub mod egress;
 pub mod ingress;
-pub mod local_destinations;
 pub mod self_announce;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
-pub use local_destinations::{
-    LocalDestination, LocalDestinationColumns, LocalDestinationKind, RegisterDestinationError,
-};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
-use crate::engine::local_destinations::LocalDestinations;
-use crate::engine::self_announce::SelfAnnounceSettings;
-use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
+use crate::engine::self_announce::{AnnounceConfig, ScheduleAnnounceError, SelfAnnounces};
+use crate::identity::held::{HeldIdentities, HoldIdentityError};
+use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
 };
@@ -25,14 +20,18 @@ use crate::routing::announce::defaults::{jitter_offset_for, JitterSeed};
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{
-    derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
-    AnnounceId, SelfAnnounceEntropy,
+    Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceBuildError, AnnounceId,
+    ExpandNameError, SelfAnnounceEntropy,
 };
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::{
     Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::storage::EngineStorage;
+use crate::routing::upstream_app_destinations::{
+    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationKind,
+    UpstreamAppDestinations,
+};
 use crate::routing::{DropCause, RoutingTable, UpsertRouteOutcome};
 use crate::wire::{DestinationHash, DestinationType};
 use heapless::Vec as HeaplessVec;
@@ -91,10 +90,11 @@ pub struct EngineState<S: EngineStorage> {
     pending_rebroadcasts: S::Pending,
     directives: S::Directives,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
-    local_destinations: LocalDestinations<S::LocalDestinations>,
+    upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     packet_hash_history: S::PacketHashes,
-    identity: Option<InMemoryNodeIdentity>,
-    self_announce: Option<SelfAnnounceSettings>,
+    held_identities: HeldIdentities<S::HeldIdentities>,
+    transport_identity: Option<IdentityHash>,
+    self_announces: SelfAnnounces<S::SelfAnnounces>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -107,23 +107,25 @@ impl<S: EngineStorage> Default for EngineState<S> {
             pending_rebroadcasts: Default::default(),
             directives: Default::default(),
             interfaces: HeaplessVec::new(),
-            local_destinations: LocalDestinations::default(),
+            upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
-            identity: None,
-            self_announce: None,
+            held_identities: HeldIdentities::default(),
+            transport_identity: None,
+            self_announces: SelfAnnounces::default(),
         }
     }
 }
 
 impl<S: EngineStorage> core::fmt::Debug for EngineState<S>
 where
+    S::SelfAnnounces: core::fmt::Debug,
     S::Routes: core::fmt::Debug,
     S::Announces: core::fmt::Debug,
     S::History: core::fmt::Debug,
     S::AppData: core::fmt::Debug,
     S::Held: core::fmt::Debug,
     S::Pending: core::fmt::Debug,
-    S::LocalDestinations: core::fmt::Debug,
+    S::UpstreamAppDestinations: core::fmt::Debug,
     S::PacketHashes: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -134,13 +136,11 @@ where
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
             .field("interfaces", &self.interfaces)
-            .field("local_destinations", &self.local_destinations)
+            .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
-            .field(
-                "identity_hash",
-                &self.identity.as_ref().map(|id| id.identity_hash()),
-            )
-            .field("self_announce", &self.self_announce)
+            .field("held_identities", &self.held_identities)
+            .field("transport_identity", &self.transport_identity)
+            .field("self_announces", &self.self_announces)
             .finish()
     }
 }
@@ -150,27 +150,80 @@ pub enum RegisterInterfaceError {
     RegistryFull,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetTransportIdentityError {
+    UnknownIdentity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteSelfAnnounceError {
+    NotRegisteredAsSingle,
+    IdentityNotHeld,
+    Build(AnnounceBuildError),
+    Serialize(EgressSerializeError),
+}
+
 impl<S: EngineStorage> EngineState<S> {
+    /// NOTE: this may need to be re-worked later, but as of this comment's writing
+    /// is okay to leave in. Specifically, `new` quietly makes this node's first
+    /// identity its transport identity, skipping over the *optionality* of having a
+    /// this-node-id at all — a pure repeater may want neither, an app-only node may
+    /// want held identities but no transport role. Deliberate for now; re-assess
+    /// when Links/transit land and the transport-id story becomes real (relaying
+    /// stamps it into transport headers, and routing a Single beyond one hop may
+    /// need it too).
+    #[allow(clippy::expect_used)]
     pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
-        Self {
-            identity: Some(InMemoryNodeIdentity::from_secret_key_bytes(
-                identity_secret_key,
-            )),
-            ..Self::default()
-        }
+        let mut state = Self::default();
+        let identity = state
+            .hold_identity(identity_secret_key)
+            .expect("an empty store holds the first identity");
+        state.transport_identity = Some(identity);
+        state
     }
 
     /// Temporary stopgap constructor, slated for removal — don't add new call sites.
     /// (Not `#[deprecated]`: CI runs `-D warnings` and the Heltec host still calls it.)
+    #[allow(clippy::expect_used)]
     pub fn announcing(
         identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         self_announce: SelfAnnounceConfig<'_>,
     ) -> Result<Self, SelfAnnounceConfigError> {
-        let self_announce = SelfAnnounceSettings::from_config(self_announce)?;
-        Ok(Self {
-            self_announce: Some(self_announce),
-            ..Self::new(identity_secret_key)
-        })
+        let mut state = Self::new(identity_secret_key);
+        let identity = state
+            .transport_identity
+            .expect("new() holds the node identity");
+        let destination = state
+            .register_single_destination(&identity, self_announce.app_name, self_announce.aspects)
+            .map_err(|error| match error {
+                RegisterDestinationError::Name(ExpandNameError::DotInComponent) => {
+                    SelfAnnounceConfigError::DotInName
+                }
+                RegisterDestinationError::Name(ExpandNameError::NameTooLong) => {
+                    SelfAnnounceConfigError::NameTooLong
+                }
+                RegisterDestinationError::RegistryFull
+                | RegisterDestinationError::UnknownIdentity => {
+                    unreachable!("a fresh node registers its own first destination")
+                }
+            })?;
+        state
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: self_announce.app_data,
+                    schedule: self_announce.schedule,
+                },
+            )
+            .map_err(|error| match error {
+                ScheduleAnnounceError::AppDataTooLong => SelfAnnounceConfigError::AppDataTooLong,
+                ScheduleAnnounceError::TableFull
+                | ScheduleAnnounceError::UnknownDestination
+                | ScheduleAnnounceError::NotASingleDestination => {
+                    unreachable!("a fresh node schedules its own first announce")
+                }
+            })?;
+        Ok(state)
     }
 
     pub const fn tick_count(&self) -> u64 {
@@ -223,33 +276,80 @@ impl<S: EngineStorage> EngineState<S> {
         app_name: &str,
         aspects: &[&str],
     ) -> Result<DestinationHash, RegisterDestinationError> {
-        self.local_destinations.register_plain(app_name, aspects)
+        self.upstream_app_destinations
+            .register_plain(app_name, aspects)
     }
 
     pub fn register_single_destination(
         &mut self,
+        identity: &IdentityHash,
         app_name: &str,
         aspects: &[&str],
     ) -> Result<DestinationHash, RegisterDestinationError> {
-        let identity = self
-            .identity
-            .as_ref()
-            .ok_or(RegisterDestinationError::NoNodeIdentity)?;
-        self.local_destinations
-            .register_single(&identity.identity_hash(), app_name, aspects)
+        if !self.held_identities.contains(identity) {
+            return Err(RegisterDestinationError::UnknownIdentity);
+        }
+        self.upstream_app_destinations
+            .register_single(identity, app_name, aspects)
     }
 
-    pub fn local_destinations(&self) -> impl Iterator<Item = LocalDestination> + '_ {
-        self.local_destinations.iter()
+    pub fn hold_identity(
+        &mut self,
+        identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    ) -> Result<IdentityHash, HoldIdentityError> {
+        self.held_identities.hold(identity_secret_key)
     }
 
-    pub fn self_announced_destination(&self) -> Option<DestinationHash> {
-        let identity = self.identity.as_ref()?;
-        let self_announce = self.self_announce.as_ref()?;
-        Some(derive_destination_hash(
-            &identity.identity_hash(),
-            &self_announce.name_hash(),
-        ))
+    pub fn held_identity_hashes(&self) -> &[IdentityHash] {
+        self.held_identities.hashes()
+    }
+
+    pub fn set_transport_identity(
+        &mut self,
+        identity: &IdentityHash,
+    ) -> Result<(), SetTransportIdentityError> {
+        if !self.held_identities.contains(identity) {
+            return Err(SetTransportIdentityError::UnknownIdentity);
+        }
+        self.transport_identity = Some(*identity);
+        Ok(())
+    }
+
+    pub const fn transport_identity(&self) -> Option<IdentityHash> {
+        self.transport_identity
+    }
+
+    pub fn upstream_app_destinations(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
+        self.upstream_app_destinations.iter()
+    }
+
+    pub fn schedule_announce(
+        &mut self,
+        destination: &DestinationHash,
+        config: AnnounceConfig<'_>,
+    ) -> Result<(), ScheduleAnnounceError> {
+        if self
+            .upstream_app_destinations
+            .lookup(destination, DestinationType::Single)
+            .is_none()
+        {
+            return Err(
+                if self
+                    .upstream_app_destinations
+                    .lookup(destination, DestinationType::Plain)
+                    .is_some()
+                {
+                    ScheduleAnnounceError::NotASingleDestination
+                } else {
+                    ScheduleAnnounceError::UnknownDestination
+                },
+            );
+        }
+        self.self_announces.schedule(*destination, config)
+    }
+
+    pub fn self_announced_destinations(&self) -> &[DestinationHash] {
+        self.self_announces.destinations()
     }
 
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
@@ -259,13 +359,11 @@ impl<S: EngineStorage> EngineState<S> {
 
         let mut earliest: Option<InstantMillis> = None;
 
-        if let Some(self_announce) = &self.self_announce {
-            if self_announce.is_due(now) {
-                return NextScheduledEngineWork::Immediate;
-            }
-            if let Some(deadline) = self_announce.next_due_at() {
-                earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
-            }
+        if self.self_announces.due_announce(now).is_some() {
+            return NextScheduledEngineWork::Immediate;
+        }
+        if let Some(deadline) = self.self_announces.next_due_at() {
+            earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
         }
 
         if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
@@ -281,35 +379,54 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    #[allow(clippy::expect_used)]
+    /// `Ok(None)` means nothing was due — the common case, not a failure. An
+    /// attempt at a due announce consumes its due-ness whether or not it
+    /// succeeds: a persistently failing announce retries next interval instead
+    /// of spinning the engine's `Immediate` wakeup forever.
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
         entropy: SelfAnnounceEntropy,
         buf: &mut [u8],
-    ) -> Option<usize> {
-        let identity = self.identity.as_ref()?;
-        let self_announce = self.self_announce.as_ref()?;
-        if !self_announce.is_due(now) {
-            return None;
-        }
+    ) -> Result<Option<usize>, WriteSelfAnnounceError> {
+        let Some(due) = self.self_announces.due_announce(now) else {
+            return Ok(None);
+        };
+        let destination = due.destination;
+        let outcome = self.write_announce_for(&destination, due.app_data, now, entropy, buf);
+        self.self_announces.mark_announced(&destination, now);
+        outcome.map(Some)
+    }
+
+    fn write_announce_for(
+        &self,
+        destination: &DestinationHash,
+        app_data: &[u8],
+        now: InstantMillis,
+        entropy: SelfAnnounceEntropy,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteSelfAnnounceError> {
+        let registered = self
+            .upstream_app_destinations
+            .lookup(destination, DestinationType::Single)
+            .ok_or(WriteSelfAnnounceError::NotRegisteredAsSingle)?;
+        let UpstreamAppDestinationKind::Single { identity } = registered.kind else {
+            return Err(WriteSelfAnnounceError::NotRegisteredAsSingle);
+        };
+        let identity = self
+            .held_identities
+            .get(&identity)
+            .ok_or(WriteSelfAnnounceError::IdentityNotHeld)?;
 
         let announce = Announce::build_signed(
-            identity,
-            self_announce.name_hash(),
+            &identity,
+            registered.name_hash,
             AnnounceId::mint(entropy, now),
             None,
-            self_announce.app_data(),
+            app_data,
         )
-        .expect("bounded self-announce app data always fits an announce");
-        let written = write_announce_wire_packet(&announce, 0, buf)
-            .expect("MTU-sized buffer fits a bounded self-announce");
-
-        self.self_announce
-            .as_mut()
-            .expect("self_announce was Some above")
-            .mark_announced(now);
-        Some(written)
+        .map_err(WriteSelfAnnounceError::Build)?;
+        write_announce_wire_packet(&announce, 0, buf).map_err(WriteSelfAnnounceError::Serialize)
     }
 }
 
@@ -425,9 +542,9 @@ impl<S: EngineStorage> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> Option<Delivery<'p>> {
         if let Some(transport_id) = data.maybe_transport_id {
-            let ours = self.identity.as_ref().is_some_and(|identity| {
-                identity.identity_hash().as_bytes() == transport_id.as_bytes()
-            });
+            let ours = self
+                .transport_identity
+                .is_some_and(|ours| ours.as_bytes() == transport_id.as_bytes());
             if !ours {
                 return None;
             }
@@ -438,7 +555,7 @@ impl<S: EngineStorage> EngineState<S> {
                 if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
                     return None;
                 }
-                self.local_destinations
+                self.upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Plain)?;
                 Some(Delivery::Plain(PlainDelivery {
                     destination: data.destination,
@@ -449,9 +566,13 @@ impl<S: EngineStorage> EngineState<S> {
                 }))
             }
             DestinationType::Single => {
-                self.local_destinations
+                let registered = self
+                    .upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Single)?;
-                let identity = self.identity.as_ref()?;
+                let UpstreamAppDestinationKind::Single { identity } = registered.kind else {
+                    return None;
+                };
+                let identity = self.held_identities.get(&identity)?;
 
                 let packet_hash = PacketHash::of_data_fields(
                     DestinationType::Single,
@@ -489,7 +610,7 @@ impl<S: EngineStorage> EngineState<S> {
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: self.routing_table.existing_route_for(&announce.destination),
             arrived_at,
         }
@@ -550,7 +671,7 @@ impl<S: EngineStorage> EngineState<S> {
                     let decision = AnnounceAcceptanceInput {
                         packet_hops: received_hops,
                         announce_id: announce.announce_id,
-                        destination_is_local: false,
+                        destination_is_upstream_app: false,
                         existing_route: self
                             .routing_table
                             .existing_route_for(&announce.destination),
@@ -621,17 +742,20 @@ impl<S: EngineStorage> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::in_memory::InMemoryNodeIdentity;
+    use crate::identity::IdentitySigner;
     use crate::interfaces::{
         ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
         MediumKind, TransitCapability,
     };
-    use crate::routing::storage::FixedCapacity;
+    use crate::routing::announce::derive_destination_hash;
+    use crate::routing::storage::FixedInline;
     use crate::wire::{
         ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-        WireContext, WirePacketHeader, MTU,
+        TransportId, WireContext, WirePacketHeader, MTU,
     };
 
-    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8, 128>;
+    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
 
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
     const TEST_NONCE: SelfAnnounceEntropy =
@@ -755,6 +879,7 @@ mod tests {
         let mut buf = [0u8; MTU];
         let n = state
             .write_due_self_announce(now, nonce, &mut buf)
+            .expect("writing a due self-announce succeeds")
             .expect("a self-announce is due on the first call");
 
         let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
@@ -777,12 +902,38 @@ mod tests {
 
         assert!(state
             .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
+            .unwrap()
             .is_some());
         assert!(state
             .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
+            .unwrap()
             .is_none());
         assert!(state
             .write_due_self_announce(InstantMillis(1_000 + interval), TEST_NONCE, &mut buf)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn a_failed_announce_attempt_surfaces_the_error_and_consumes_the_due_ness() {
+        let mut state = personal_node_announcer();
+        let mut tiny = [0u8; 8];
+        assert_eq!(
+            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut tiny),
+            Err(WriteSelfAnnounceError::Serialize(
+                EgressSerializeError::BufferTooShort
+            )),
+        );
+
+        let mut buf = [0u8; MTU];
+        assert_eq!(
+            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
+            Ok(None),
+        );
+        let interval = ReannounceSchedule::default().interval_millis();
+        assert!(state
+            .write_due_self_announce(InstantMillis(1_000 + interval), TEST_NONCE, &mut buf)
+            .unwrap()
             .is_some());
     }
 
@@ -792,7 +943,7 @@ mod tests {
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
-            None,
+            Ok(None),
         );
     }
 
@@ -802,45 +953,185 @@ mod tests {
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
-            None,
+            Ok(None),
         );
     }
 
     #[test]
-    fn self_announced_destination_reports_our_address_only_when_announcing() {
+    fn self_announced_destinations_report_our_addresses_only_when_announcing() {
         assert_eq!(
-            personal_node_announcer().self_announced_destination(),
-            Some(DestinationHash::new(
+            personal_node_announcer().self_announced_destinations(),
+            &[DestinationHash::new(
                 hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
-            )),
+            )],
         );
         let relay: EngineState<Cap> = EngineState::<Cap>::default();
-        assert_eq!(relay.self_announced_destination(), None);
+        assert_eq!(relay.self_announced_destinations(), &[]);
         let identity_only: EngineState<Cap> = EngineState::new(&fixed_secret_key());
-        assert_eq!(identity_only.self_announced_destination(), None);
+        assert_eq!(identity_only.self_announced_destinations(), &[]);
     }
 
     #[test]
-    fn registering_our_announced_name_as_single_yields_the_announced_destination() {
-        let mut state = personal_node_announcer();
-        let registered = state
-            .register_single_destination("personal", &["node"])
-            .expect("an identity-holding node registers single destinations");
-        assert_eq!(Some(registered), state.self_announced_destination());
-        assert_eq!(state.local_destinations().count(), 1);
-    }
-
-    #[test]
-    fn a_relay_cannot_register_a_single_destination_but_can_register_plain() {
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+    fn announcing_rejects_dotted_names_and_overlong_app_data() {
         assert_eq!(
-            state.register_single_destination("personal", &["node"]),
-            Err(RegisterDestinationError::NoNodeIdentity),
+            EngineState::<Cap>::announcing(
+                &fixed_secret_key(),
+                SelfAnnounceConfig {
+                    app_name: "per.sonal",
+                    aspects: &[],
+                    app_data: b"",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .err(),
+            Some(SelfAnnounceConfigError::DotInName),
+        );
+
+        let too_long = [0u8; crate::engine::self_announce::MAX_SELF_ANNOUNCE_APP_DATA_LEN + 1];
+        assert_eq!(
+            EngineState::<Cap>::announcing(
+                &fixed_secret_key(),
+                SelfAnnounceConfig {
+                    app_name: "personal",
+                    aspects: &["node"],
+                    app_data: &too_long,
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .err(),
+            Some(SelfAnnounceConfigError::AppDataTooLong),
+        );
+    }
+
+    #[test]
+    fn schedule_announce_requires_a_registered_single() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let node = state.transport_identity().unwrap();
+        let config = AnnounceConfig {
+            app_data: b"",
+            schedule: ReannounceSchedule::default(),
+        };
+
+        let unknown = DestinationHash::new([0x99; 16]);
+        assert_eq!(
+            state.schedule_announce(&unknown, config),
+            Err(ScheduleAnnounceError::UnknownDestination),
+        );
+
+        let plain = state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+        let config = AnnounceConfig {
+            app_data: b"",
+            schedule: ReannounceSchedule::default(),
+        };
+        assert_eq!(
+            state.schedule_announce(&plain, config),
+            Err(ScheduleAnnounceError::NotASingleDestination),
+        );
+
+        let single = state
+            .register_single_destination(&node, "personal", &["node"])
+            .unwrap();
+        let config = AnnounceConfig {
+            app_data: b"",
+            schedule: ReannounceSchedule::default(),
+        };
+        assert_eq!(state.schedule_announce(&single, config), Ok(()));
+        assert_eq!(state.self_announced_destinations(), &[single]);
+    }
+
+    #[test]
+    fn a_single_sealed_for_the_announced_destination_is_delivered() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"hello-announced");
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
+                destination,
+                context: WireContext::None,
+                plaintext: b"hello-announced",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            })),
+        );
+    }
+
+    #[test]
+    fn each_announced_destination_signs_with_its_own_identity() {
+        let mut state = personal_node_announcer();
+        let second = state.hold_identity(&second_secret_key()).unwrap();
+        let second_destination = state
+            .register_single_destination(&second, "personal", &["second"])
+            .unwrap();
+        state
+            .schedule_announce(
+                &second_destination,
+                AnnounceConfig {
+                    app_data: b"hello-second",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .unwrap();
+
+        let now = InstantMillis(5_000);
+        let mut first_buf = [0u8; MTU];
+        let first_len = state
+            .write_due_self_announce(now, TEST_NONCE, &mut first_buf)
+            .expect("writing a due self-announce succeeds")
+            .expect("the first scheduled announce fires");
+        let mut second_buf = [0u8; MTU];
+        let second_len = state
+            .write_due_self_announce(now, TEST_NONCE, &mut second_buf)
+            .expect("writing a due self-announce succeeds")
+            .expect("the second scheduled announce fires");
+        assert_eq!(
+            state.write_due_self_announce(now, TEST_NONCE, &mut [0u8; MTU]),
+            Ok(None),
+        );
+
+        let second_identity = InMemoryNodeIdentity::from_secret_key_bytes(&second_secret_key());
+        let expected = Announce::build_signed(
+            &second_identity,
+            crate::routing::announce::expand_name("personal", &["second"]).unwrap(),
+            AnnounceId::mint(TEST_NONCE, now),
+            None,
+            b"hello-second",
+        )
+        .unwrap();
+        let mut expected_buf = [0u8; MTU];
+        let expected_len = write_announce_wire_packet(&expected, 0, &mut expected_buf).unwrap();
+
+        assert_eq!(&second_buf[..second_len], &expected_buf[..expected_len]);
+        assert_ne!(&first_buf[..first_len], &second_buf[..second_len]);
+    }
+
+    #[test]
+    fn announcing_registers_the_destination_it_announces() {
+        let mut state = personal_node_announcer();
+        let node = state.transport_identity().unwrap();
+        let registered = state
+            .register_single_destination(&node, "personal", &["node"])
+            .expect("re-registration of the announced name is idempotent");
+        assert_eq!(state.self_announced_destinations(), &[registered]);
+        assert_eq!(state.upstream_app_destinations().count(), 1);
+    }
+
+    #[test]
+    fn a_single_registration_requires_its_identity_to_be_held_but_plain_needs_none() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let unheld = IdentityHash::new([0x4c; 16]);
+        assert_eq!(
+            state.register_single_destination(&unheld, "personal", &["node"]),
+            Err(RegisterDestinationError::UnknownIdentity),
         );
         assert!(state
             .register_plain_destination("personal", &["node"])
             .is_ok());
-        assert_eq!(state.local_destinations().count(), 1);
+        assert_eq!(state.upstream_app_destinations().count(), 1);
     }
 
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
@@ -905,8 +1196,9 @@ mod tests {
     #[test]
     fn plain_addressed_data_never_reaches_a_single_destination_with_that_hash() {
         let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let node = state.transport_identity().unwrap();
         let single = state
-            .register_single_destination("personal", &["node"])
+            .register_single_destination(&node, "personal", &["node"])
             .unwrap();
 
         let header = WirePacketHeader {
@@ -982,6 +1274,15 @@ mod tests {
         destination: DestinationHash,
         plaintext: &[u8],
     ) -> std::vec::Vec<u8> {
+        sealed_single_packet_routed(identity, None, destination, plaintext)
+    }
+
+    fn sealed_single_packet_routed(
+        identity: &InMemoryNodeIdentity,
+        maybe_transport_id: Option<TransportId>,
+        destination: DestinationHash,
+        plaintext: &[u8],
+    ) -> std::vec::Vec<u8> {
         use crate::crypto::X25519SecretKey;
         use crate::identity::RemoteIdentity;
 
@@ -996,7 +1297,7 @@ mod tests {
             destination_type: DestinationType::Single,
             packet_type: PacketType::Data,
             hops: 0,
-            transport_id: None,
+            transport_id: maybe_transport_id,
             destination,
             context: WireContext::None,
         };
@@ -1016,10 +1317,10 @@ mod tests {
     #[test]
     fn single_data_decrypts_in_place_and_delivers_the_plaintext() {
         let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
-        let destination = state
-            .register_single_destination("personal", &["node"])
-            .unwrap();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let destination = state
+            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .unwrap();
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         assert_eq!(
@@ -1037,10 +1338,10 @@ mod tests {
     #[test]
     fn a_replayed_single_packet_is_ignored_by_the_dedup_history() {
         let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
-        let destination = state
-            .register_single_destination("personal", &["node"])
-            .unwrap();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let destination = state
+            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .unwrap();
         let raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         let mut first_copy = raw.clone();
@@ -1059,10 +1360,10 @@ mod tests {
     #[test]
     fn a_tampered_single_token_is_ignored_without_poisoning_the_real_packet() {
         let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
-        let destination = state
-            .register_single_destination("personal", &["node"])
-            .unwrap();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let destination = state
+            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .unwrap();
         let raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         let mut tampered = raw.clone();
@@ -1080,13 +1381,119 @@ mod tests {
         ));
     }
 
+    fn second_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+        let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
+        bytes[..32].fill(0x55);
+        bytes[32..].fill(0x66);
+        Zeroizing::new(bytes)
+    }
+
+    #[test]
+    fn each_single_destination_decrypts_only_under_its_own_held_identity() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity_a = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let identity_b = InMemoryNodeIdentity::from_secret_key_bytes(&second_secret_key());
+        let held_a = state.hold_identity(&fixed_secret_key()).unwrap();
+        let held_b = state.hold_identity(&second_secret_key()).unwrap();
+        assert_eq!(held_a, identity_a.identity_hash());
+        assert_eq!(held_b, identity_b.identity_hash());
+
+        let dest_a = state
+            .register_single_destination(&held_a, "personal", &["a"])
+            .unwrap();
+        let dest_b = state
+            .register_single_destination(&held_b, "personal", &["b"])
+            .unwrap();
+
+        let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut to_a), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
+                destination: dest_a,
+                context: WireContext::None,
+                plaintext: b"for-a",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            })),
+        );
+
+        let mut to_b = sealed_single_packet(&identity_b, dest_b, b"for-b");
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut to_b), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
+                destination: dest_b,
+                context: WireContext::None,
+                plaintext: b"for-b",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            })),
+        );
+
+        let mut crossed = sealed_single_packet(&identity_b, dest_a, b"crossed");
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut crossed), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn transport_identity_requires_a_held_identity() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let unheld = IdentityHash::new([0x4c; 16]);
+        assert_eq!(
+            state.set_transport_identity(&unheld),
+            Err(SetTransportIdentityError::UnknownIdentity),
+        );
+        assert_eq!(state.transport_identity(), None);
+
+        let held = state.hold_identity(&fixed_secret_key()).unwrap();
+        assert_eq!(state.set_transport_identity(&held), Ok(()));
+        assert_eq!(state.transport_identity(), Some(held));
+    }
+
+    #[test]
+    fn a_held_app_identity_does_not_answer_transport_addressed_data() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let held = state.hold_identity(&fixed_secret_key()).unwrap();
+        let destination = state
+            .register_single_destination(&held, "personal", &["node"])
+            .unwrap();
+
+        let raw = sealed_single_packet_routed(
+            &identity,
+            Some(TransportId::new(*held.as_bytes())),
+            destination,
+            b"hello-single",
+        );
+
+        let mut as_app_only = raw.clone();
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut as_app_only), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+
+        state.set_transport_identity(&held).unwrap();
+        let mut as_transport = raw.clone();
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut as_transport), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
+                destination,
+                context: WireContext::None,
+                plaintext: b"hello-single",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            })),
+        );
+    }
+
     #[test]
     fn single_data_for_an_unregistered_destination_is_ignored() {
         let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
-        let registered = state
-            .register_single_destination("personal", &["other"])
-            .unwrap();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let registered = state
+            .register_single_destination(&identity.identity_hash(), "personal", &["other"])
+            .unwrap();
         let unregistered = derive_destination_hash(
             &identity.identity_hash(),
             &crate::routing::announce::expand_name("personal", &["node"]).unwrap(),
@@ -1359,7 +1766,7 @@ mod tests {
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {
@@ -1381,7 +1788,7 @@ mod tests {
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128>>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1403,7 +1810,7 @@ mod tests {
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128>>::default();
 
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
@@ -1456,7 +1863,8 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64, 8, 128>>::default();
+        let mut state =
+            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128>>::default();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1560,7 +1968,7 @@ mod tests {
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 8, 128>>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

@@ -220,7 +220,7 @@ mod tests {
     use super::*;
     use crate::routing::announce::ANNOUNCE_ID_WIRE_LEN;
     use crate::wire::{
-        ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, HEADER_LEN, MTU, SIGNATURE_LEN,
+        ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, HEADER_MIN_LEN, MTU, SIGNATURE_LEN,
     };
 
     fn ts(n: u64) -> InstantMillis {
@@ -492,7 +492,7 @@ mod tests {
     fn held_app_data_limit_matches_the_wire_protocol_max() {
         assert_eq!(
             HELD_APP_DATA_LIMIT,
-            MTU - HEADER_LEN
+            MTU - HEADER_MIN_LEN
                 - ANNOUNCE_PUBLIC_KEY_LEN
                 - DOTTED_NAME_HASH_LEN
                 - ANNOUNCE_ID_WIRE_LEN

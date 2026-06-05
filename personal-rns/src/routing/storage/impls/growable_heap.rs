@@ -1,5 +1,6 @@
 use crate::engine::directives::HeapEngineDirectives;
-use crate::engine::local_destinations::HeapLocalDestinationColumns;
+use crate::engine::self_announce::HeapSelfAnnounceColumns;
+use crate::identity::held::HeapHeldIdentityColumns;
 use crate::routing::announce::held_cache::HeapHeldAnnounces;
 use crate::routing::announce::schedule::HeapRebroadcastQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
@@ -7,6 +8,7 @@ use crate::routing::storage::{
     EngineStorage, HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
     HeapRouteColumns,
 };
+use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
 
 pub struct GrowableHeap;
 
@@ -18,16 +20,18 @@ impl EngineStorage for GrowableHeap {
     type Pending = HeapRebroadcastQueue;
     type Held = HeapHeldAnnounces;
     type Directives = HeapEngineDirectives;
-    type LocalDestinations = HeapLocalDestinationColumns;
+    type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
+    type HeldIdentities = HeapHeldIdentityColumns;
+    type SelfAnnounces = HeapSelfAnnounceColumns;
     type PacketHashes = HeapPacketHashHistory;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::local_destinations::LocalDestinationColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
+    use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_unbounded_heap_backends() {
@@ -38,11 +42,12 @@ mod tests {
         let _pending = <GrowableHeap as EngineStorage>::Pending::default();
         let _held = <GrowableHeap as EngineStorage>::Held::default();
         let _directives = <GrowableHeap as EngineStorage>::Directives::default();
-        let local_destinations = <GrowableHeap as EngineStorage>::LocalDestinations::default();
+        let upstream_app_destinations =
+            <GrowableHeap as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <GrowableHeap as EngineStorage>::PacketHashes::default();
         assert_eq!(routes.capacity(), usize::MAX);
         assert_eq!(announces.capacity(), usize::MAX);
-        assert_eq!(local_destinations.capacity(), usize::MAX);
+        assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
         assert_eq!(packet_hashes.generation_capacity(), 500_000);
     }
 }

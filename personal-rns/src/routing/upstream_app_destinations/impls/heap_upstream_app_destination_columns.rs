@@ -1,18 +1,20 @@
 use alloc::vec::Vec;
 
-use crate::engine::local_destinations::{LocalDestinationColumns, LocalDestinationKind};
 use crate::routing::announce::DottedNameHash;
 use crate::routing::storage::ColumnsFull;
+use crate::routing::upstream_app_destinations::{
+    UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
+};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
-pub struct HeapLocalDestinationColumns {
+pub struct HeapUpstreamAppDestinationColumns {
     destination: Vec<DestinationHash>,
-    kind: Vec<LocalDestinationKind>,
+    kind: Vec<UpstreamAppDestinationKind>,
     name_hash: Vec<DottedNameHash>,
 }
 
-impl LocalDestinationColumns for HeapLocalDestinationColumns {
+impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
     fn capacity(&self) -> usize {
         usize::MAX
     }
@@ -23,7 +25,7 @@ impl LocalDestinationColumns for HeapLocalDestinationColumns {
     fn destinations(&self) -> &[DestinationHash] {
         &self.destination
     }
-    fn kinds(&self) -> &[LocalDestinationKind] {
+    fn kinds(&self) -> &[UpstreamAppDestinationKind] {
         &self.kind
     }
     fn name_hashes(&self) -> &[DottedNameHash] {
@@ -33,7 +35,7 @@ impl LocalDestinationColumns for HeapLocalDestinationColumns {
     fn push(
         &mut self,
         destination: DestinationHash,
-        kind: LocalDestinationKind,
+        kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
     ) -> Result<usize, ColumnsFull> {
         let i = self.destination.len();
@@ -47,17 +49,20 @@ impl LocalDestinationColumns for HeapLocalDestinationColumns {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::IdentityHash;
     use crate::wire::{DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
 
     #[test]
     fn grows_past_any_fixed_ceiling() {
-        let mut columns = HeapLocalDestinationColumns::default();
+        let mut columns = HeapUpstreamAppDestinationColumns::default();
         assert_eq!(columns.capacity(), usize::MAX);
 
         for n in 0..100u8 {
             let pushed = columns.push(
                 DestinationHash::new([n; TRUNCATED_HASH_BYTE_LEN]),
-                LocalDestinationKind::Single,
+                UpstreamAppDestinationKind::Single {
+                    identity: IdentityHash::new([n; 16]),
+                },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
             );
             assert_eq!(pushed, Ok(n as usize));

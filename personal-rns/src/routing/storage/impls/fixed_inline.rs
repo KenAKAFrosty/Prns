@@ -1,5 +1,6 @@
 use crate::engine::directives::FixedEngineDirectives;
-use crate::engine::local_destinations::FixedLocalDestinationColumns;
+use crate::engine::self_announce::FixedSelfAnnounceColumns;
+use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -7,15 +8,18 @@ use crate::routing::storage::{
     EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
     TieredAnnounceIdHistory,
 };
+use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 
-pub struct FixedCapacity<
+pub struct FixedInline<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
     const HISTORY_FLOOR_PER_DESTINATION: usize,
     const HISTORY_OVERFLOW_CAPACITY: usize,
     const HELD_CACHE_CAPACITY: usize,
-    const MAX_LOCAL_DESTINATIONS: usize,
+    const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+    const MAX_HELD_IDENTITIES: usize,
+    const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
 >;
 
@@ -26,17 +30,21 @@ impl<
         const HISTORY_FLOOR_PER_DESTINATION: usize,
         const HISTORY_OVERFLOW_CAPACITY: usize,
         const HELD_CACHE_CAPACITY: usize,
-        const MAX_LOCAL_DESTINATIONS: usize,
+        const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+        const MAX_HELD_IDENTITIES: usize,
+        const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
     > EngineStorage
-    for FixedCapacity<
+    for FixedInline<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
         HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
         HELD_CACHE_CAPACITY,
-        MAX_LOCAL_DESTINATIONS,
+        MAX_UPSTREAM_APP_DESTINATIONS,
+        MAX_HELD_IDENTITIES,
+        MAX_SELF_ANNOUNCED_DESTINATIONS,
         PACKET_HASH_GENERATION_CAPACITY,
     >
 {
@@ -55,20 +63,23 @@ impl<
     type Held = FixedHeldAnnounces<HELD_CACHE_CAPACITY>;
     // One directive per tracked destination at most, so sized by the routing table.
     type Directives = FixedEngineDirectives<MAX_TRACKED_DESTINATIONS>;
-    type LocalDestinations = FixedLocalDestinationColumns<MAX_LOCAL_DESTINATIONS>;
+    type UpstreamAppDestinations =
+        FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
+    type SelfAnnounces = FixedSelfAnnounceColumns<MAX_SELF_ANNOUNCED_DESTINATIONS>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::local_destinations::LocalDestinationColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
+    use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedCapacity<8, 16, 256, 2, 8, 4, 2, 4>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
@@ -76,11 +87,11 @@ mod tests {
         let _pending = <S as EngineStorage>::Pending::default();
         let _held = <S as EngineStorage>::Held::default();
         let _directives = <S as EngineStorage>::Directives::default();
-        let local_destinations = <S as EngineStorage>::LocalDestinations::default();
+        let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <S as EngineStorage>::PacketHashes::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
-        assert_eq!(local_destinations.capacity(), 2);
+        assert_eq!(upstream_app_destinations.capacity(), 2);
         assert_eq!(packet_hashes.generation_capacity(), 4);
     }
 }

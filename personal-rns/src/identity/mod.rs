@@ -6,9 +6,12 @@
 //! same bytes saved and reloaded (the RNS on-disk layout); a fixed array gives a
 //! deterministic test/spike identity. Persistence is a later, separate concern.
 
+pub mod held;
+
 use crate::crypto::{
-    hkdf_sha256, sha256, token_seal, x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey,
-    Ed25519Signature, TokenKey, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
+    hkdf_sha256, sha256, token_open, token_open_in_place, token_seal, x25519_diffie_hellman,
+    x25519_public_key, CryptoError, Ed25519PublicKey, Ed25519Signature, TokenKey, X25519PublicKey,
+    X25519SecretKey, X25519SharedSecret,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
@@ -140,6 +143,64 @@ impl DerivedPacketKey {
     }
 }
 
+fn decrypt_token_in_place<'t>(
+    encryption_secret: &X25519SecretKey,
+    recipient_identity_hash: &IdentityHash,
+    ciphertext_token: &'t mut [u8],
+) -> Result<&'t [u8], DecryptError> {
+    if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+        return Err(DecryptError::TokenTooShort);
+    }
+    let (ephemeral, token) = ciphertext_token.split_at_mut(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
+    let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+    ephemeral_public_bytes.copy_from_slice(ephemeral);
+    let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
+
+    let shared = x25519_diffie_hellman(encryption_secret, &ephemeral_public);
+    let key = DerivedPacketKey::derive(&shared, recipient_identity_hash);
+
+    token_open_in_place(&key.token_key(), token).map_err(|error| match error {
+        CryptoError::InvalidSignature
+        | CryptoError::InvalidMac
+        | CryptoError::InvalidPadding
+        | CryptoError::MalformedToken
+        | CryptoError::BadKeyLength
+        | CryptoError::BufferTooShort => DecryptError::InvalidToken,
+    })
+}
+
+fn decrypt_token(
+    encryption_secret: &X25519SecretKey,
+    recipient_identity_hash: &IdentityHash,
+    ciphertext_token: &[u8],
+    out: &mut [u8],
+) -> Result<usize, DecryptError> {
+    if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+        return Err(DecryptError::TokenTooShort);
+    }
+    let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+    ephemeral_public_bytes
+        .copy_from_slice(&ciphertext_token[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN]);
+    let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
+
+    let shared = x25519_diffie_hellman(encryption_secret, &ephemeral_public);
+    let key = DerivedPacketKey::derive(&shared, recipient_identity_hash);
+
+    token_open(
+        &key.token_key(),
+        &ciphertext_token[ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN..],
+        out,
+    )
+    .map_err(|error| match error {
+        CryptoError::BufferTooShort => DecryptError::BufferTooShort,
+        CryptoError::InvalidSignature
+        | CryptoError::InvalidMac
+        | CryptoError::InvalidPadding
+        | CryptoError::MalformedToken
+        | CryptoError::BadKeyLength => DecryptError::InvalidToken,
+    })
+}
+
 /// A peer identity learned from the network (an announce): its public keys and
 /// derived hash, with no private material. The encrypting side of RNS 1.3.1
 /// `Identity.encrypt` — packets are sealed *for* a remote identity; only
@@ -197,14 +258,12 @@ impl RemoteIdentity {
 
 pub mod in_memory {
     use super::{
-        derive_identity_hash, DecryptError, DerivedPacketKey, IdentityEncryptionPublicKey,
-        IdentityHash, IdentitySigner, IdentitySigningPublicKey,
-        ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, IDENTITY_SECRET_KEY_LEN,
+        derive_identity_hash, DecryptError, IdentityEncryptionPublicKey, IdentityHash,
+        IdentitySigner, IdentitySigningPublicKey, IDENTITY_SECRET_KEY_LEN,
     };
     use crate::crypto::{
-        ed25519_public_key, ed25519_sign, token_open, token_open_in_place, x25519_diffie_hellman,
-        x25519_public_key, CryptoError, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
-        X25519SecretKey, X25519SharedSecret,
+        ed25519_public_key, ed25519_sign, x25519_diffie_hellman, x25519_public_key,
+        Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
     };
 
     pub struct InMemoryNodeIdentity {
@@ -213,6 +272,14 @@ pub mod in_memory {
         encryption_public: IdentityEncryptionPublicKey,
         signing_public: IdentitySigningPublicKey,
         hash: IdentityHash,
+    }
+
+    pub struct IdentityParts {
+        pub encryption_secret: X25519SecretKey,
+        pub signing_secret: Ed25519SecretKey,
+        pub encryption_public: IdentityEncryptionPublicKey,
+        pub signing_public: IdentitySigningPublicKey,
+        pub hash: IdentityHash,
     }
 
     impl InMemoryNodeIdentity {
@@ -246,26 +313,7 @@ pub mod in_memory {
             &self,
             ciphertext_token: &'t mut [u8],
         ) -> Result<&'t [u8], DecryptError> {
-            if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
-                return Err(DecryptError::TokenTooShort);
-            }
-            let (ephemeral, token) =
-                ciphertext_token.split_at_mut(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
-            let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
-            ephemeral_public_bytes.copy_from_slice(ephemeral);
-            let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
-
-            let shared = self.agree(&ephemeral_public);
-            let key = DerivedPacketKey::derive(&shared, &self.hash);
-
-            token_open_in_place(&key.token_key(), token).map_err(|error| match error {
-                CryptoError::InvalidSignature
-                | CryptoError::InvalidMac
-                | CryptoError::InvalidPadding
-                | CryptoError::MalformedToken
-                | CryptoError::BadKeyLength
-                | CryptoError::BufferTooShort => DecryptError::InvalidToken,
-            })
+            super::decrypt_token_in_place(&self.encryption_secret, &self.hash, ciphertext_token)
         }
 
         pub fn decrypt(
@@ -273,30 +321,24 @@ pub mod in_memory {
             ciphertext_token: &[u8],
             out: &mut [u8],
         ) -> Result<usize, DecryptError> {
-            if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
-                return Err(DecryptError::TokenTooShort);
+            super::decrypt_token(&self.encryption_secret, &self.hash, ciphertext_token, out)
+        }
+
+        pub fn into_parts(self) -> IdentityParts {
+            let Self {
+                encryption_secret,
+                signing_secret,
+                encryption_public,
+                signing_public,
+                hash,
+            } = self;
+            IdentityParts {
+                encryption_secret,
+                signing_secret,
+                encryption_public,
+                signing_public,
+                hash,
             }
-            let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
-            ephemeral_public_bytes
-                .copy_from_slice(&ciphertext_token[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN]);
-            let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
-
-            let shared = self.agree(&ephemeral_public);
-            let key = DerivedPacketKey::derive(&shared, &self.hash);
-
-            token_open(
-                &key.token_key(),
-                &ciphertext_token[ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN..],
-                out,
-            )
-            .map_err(|error| match error {
-                CryptoError::BufferTooShort => DecryptError::BufferTooShort,
-                CryptoError::InvalidSignature
-                | CryptoError::InvalidMac
-                | CryptoError::InvalidPadding
-                | CryptoError::MalformedToken
-                | CryptoError::BadKeyLength => DecryptError::InvalidToken,
-            })
         }
     }
 
@@ -320,6 +362,7 @@ pub mod in_memory {
 
     #[cfg(test)]
     mod tests {
+        use super::super::ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN;
         use super::*;
 
         fn fixed_secret_key_bytes() -> [u8; IDENTITY_SECRET_KEY_LEN] {

@@ -18,7 +18,7 @@ use crate::wire::MAX_HOP_COUNT;
 pub struct AnnounceAcceptanceInput<'a> {
     pub packet_hops: u8,
     pub announce_id: AnnounceId,
-    pub destination_is_local: bool,
+    pub destination_is_upstream_app: bool,
     pub existing_route: Option<ExistingRoute<'a>>,
     pub arrived_at: InstantMillis,
 }
@@ -35,7 +35,7 @@ pub enum AcceptReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectReason {
     ExceedsMaxHops,
-    DestinationIsLocal,
+    DestinationIsUpstreamApp,
     KnownRouteReplay,
     KnownRouteNoNewerEvidence,
     DeadRouteReplay,
@@ -62,8 +62,8 @@ impl AnnounceAcceptanceInput<'_> {
         if self.packet_hops > MAX_HOP_COUNT {
             return Reject(ExceedsMaxHops);
         }
-        if self.destination_is_local {
-            return Reject(DestinationIsLocal);
+        if self.destination_is_upstream_app {
+            return Reject(DestinationIsUpstreamApp);
         }
         let Some(existing) = self.existing_route else {
             return Accept(FirstSighting);
@@ -138,7 +138,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: MAX_HOP_COUNT + 1,
             announce_id: announce_id(0x11, 5_000),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
@@ -153,7 +153,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: MAX_HOP_COUNT,
             announce_id: announce_id(0x22, 5_000),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
@@ -164,17 +164,17 @@ mod tests {
     }
 
     #[test]
-    fn local_destination_is_rejected() {
+    fn an_upstream_app_destination_is_rejected() {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 1,
             announce_id: announce_id(0x33, 5_000),
-            destination_is_local: true,
+            destination_is_upstream_app: true,
             existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
         assert_eq!(
             decision,
-            AnnounceAcceptanceDecision::Reject(RejectReason::DestinationIsLocal)
+            AnnounceAcceptanceDecision::Reject(RejectReason::DestinationIsUpstreamApp)
         );
     }
 
@@ -183,7 +183,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 2,
             announce_id: announce_id(0x44, 5_000),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: None,
             arrived_at: InstantMillis(1_000),
         });
@@ -199,7 +199,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: announce_id(0x56, 200),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
@@ -223,7 +223,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: stored,
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
@@ -247,7 +247,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: announce_id(0x56, 200),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
@@ -271,7 +271,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 5,
             announce_id: announce_id(0x67, 50),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(1_000),
@@ -297,7 +297,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 5,
             announce_id: stored,
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(1_000),
@@ -321,7 +321,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 6,
             announce_id: announce_id(0x78, 500),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
@@ -345,7 +345,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 6,
             announce_id: announce_id(0x89, 300),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
@@ -369,7 +369,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 6,
             announce_id: announce_id(0x9a, 300),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
@@ -393,7 +393,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 6,
             announce_id: announce_id(0xab, 300),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 2,
                 expires: InstantMillis(10_000),
@@ -419,7 +419,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: replayed,
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
@@ -441,7 +441,7 @@ mod tests {
         let decision = decide(AnnounceAcceptanceInput {
             packet_hops: 3,
             announce_id: announce_id(0xC, 300),
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: Some(ExistingRoute {
                 hops: 3,
                 expires: InstantMillis(10_000),
@@ -473,7 +473,7 @@ mod kani_proofs {
         let input = AnnounceAcceptanceInput {
             packet_hops,
             announce_id: arbitrary_announce_id(),
-            destination_is_local: kani::any(),
+            destination_is_upstream_app: kani::any(),
             existing_route: None,
             arrived_at: InstantMillis(kani::any()),
         };
@@ -485,20 +485,20 @@ mod kani_proofs {
     }
 
     #[kani::proof]
-    fn local_destination_rejects_when_hops_are_in_range() {
+    fn an_upstream_app_destination_rejects_when_hops_are_in_range() {
         let packet_hops: u8 = kani::any();
         kani::assume(packet_hops <= MAX_HOP_COUNT);
         let input = AnnounceAcceptanceInput {
             packet_hops,
             announce_id: arbitrary_announce_id(),
-            destination_is_local: true,
+            destination_is_upstream_app: true,
             existing_route: None,
             arrived_at: InstantMillis(kani::any()),
         };
 
         assert_eq!(
             input.determine_acceptance(),
-            AnnounceAcceptanceDecision::Reject(RejectReason::DestinationIsLocal)
+            AnnounceAcceptanceDecision::Reject(RejectReason::DestinationIsUpstreamApp)
         );
     }
 }

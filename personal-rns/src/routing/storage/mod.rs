@@ -4,13 +4,15 @@ pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::directives::EngineDirectives;
-use crate::engine::local_destinations::LocalDestinationColumns;
+use crate::engine::self_announce::SelfAnnounceColumns;
 use crate::engine::InstantMillis;
+use crate::identity::held::HeldIdentityColumns;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::dedup::PacketHashHistory;
+use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 use crate::routing::RouteResponsiveness;
 use crate::wire::DestinationHash;
 
@@ -149,7 +151,7 @@ pub trait RetainedAppData {
 }
 
 /// A storage recipe: the bundle of column backends an engine runs on. One type
-/// (`FixedCapacity` for no_std, `GrowableHeap` for a std host) picks every backend
+/// (`FixedInline` for no_std, `GrowableHeap` for a std host) picks every backend
 /// at once; the `Default` bounds let the engine build an empty bundle.
 pub trait EngineStorage {
     type Routes: RouteColumns + Default;
@@ -159,6 +161,8 @@ pub trait EngineStorage {
     type Pending: RebroadcastQueue + Default;
     type Held: HeldAnnounces + Default;
     type Directives: EngineDirectives + Default;
-    type LocalDestinations: LocalDestinationColumns + Default;
+    type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
+    type HeldIdentities: HeldIdentityColumns + Default;
+    type SelfAnnounces: SelfAnnounceColumns + Default;
     type PacketHashes: PacketHashHistory + Default;
 }

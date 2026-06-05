@@ -17,7 +17,24 @@ pub const RATCHET_LEN: usize = 32;
 
 pub const SIGNATURE_LEN: usize = 64;
 
-pub const HEADER_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
+/// The type-1 (direct, no transport id) header: flags, hops, destination,
+/// context — the smallest header a packet carries on the wire.
+pub const HEADER_MIN_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
+
+/// The type-2 (transport-routed) header: flags, hops, transport id,
+/// destination, context. Outbound payload budgets reserve this even when
+/// emitting type-1, because a relay re-emits the packet with the transport id
+/// added — RNS 1.3.1 `Reticulum.HEADER_MAXSIZE`.
+pub const HEADER_MAX_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN * 2 + 1;
+
+/// RNS 1.3.1 `Reticulum.IFAC_MIN_SIZE`: the smallest per-interface access-code
+/// overhead a packet may gain; reserved in every payload budget like the
+/// transport header.
+pub const IFAC_MIN_LEN: usize = 1;
+
+/// RNS 1.3.1 `Reticulum.MDU` — the most payload bytes one packet may carry
+/// once the worst-case header and minimum IFAC are reserved.
+pub const MDU: usize = MTU - HEADER_MAX_LEN - IFAC_MIN_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {

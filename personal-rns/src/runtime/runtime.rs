@@ -202,7 +202,7 @@ where
         // per interface would be waste — then the fan copies the staged bytes
         // into each grant.
         let mut emit_buffer = [0u8; MTU];
-        if let Some(n) =
+        if let Ok(Some(n)) =
             engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
         {
             fan_to_handles(
@@ -318,10 +318,10 @@ mod tests {
     };
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::delivery::Delivery;
-    use crate::routing::storage::FixedCapacity;
+    use crate::routing::storage::FixedInline;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
-    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8, 128>;
+    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -520,11 +520,11 @@ mod tests {
         let secret = Zeroizing::new(secret);
 
         let mut engine = EngineState::<Cap>::new(&secret);
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
         let destination = engine
-            .register_single_destination("personal", &["node"])
+            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
             .unwrap();
 
-        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
         let remote = RemoteIdentity::from_public_keys(
             identity.encryption_public_key(),
             identity.signing_public_key(),

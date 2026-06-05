@@ -1,12 +1,12 @@
 mod fixed_array_retained_announce_columns;
 mod fixed_array_route_columns;
-mod fixed_capacity;
+mod fixed_inline;
 mod packed_app_data_arena;
 mod tiered_announce_id_history;
 
 pub use fixed_array_retained_announce_columns::FixedArrayRetainedAnnounceColumns;
 pub use fixed_array_route_columns::FixedArrayRouteColumns;
-pub use fixed_capacity::FixedCapacity;
+pub use fixed_inline::FixedInline;
 pub use packed_app_data_arena::PackedAppDataArena;
 pub use tiered_announce_id_history::TieredAnnounceIdHistory;
 

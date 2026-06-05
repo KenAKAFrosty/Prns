@@ -3,6 +3,7 @@ pub mod dedup;
 pub mod delivery;
 pub mod storage;
 pub mod types;
+pub mod upstream_app_destinations;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
@@ -16,6 +17,10 @@ use storage::{
 };
 pub use types::{
     DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
+};
+pub use upstream_app_destinations::{
+    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
+    UpstreamAppDestinationKind,
 };
 
 /// `PartialEq` compares backend representation byte-for-byte because the

@@ -2,7 +2,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
-    WirePacketHeader, HEADER_LEN,
+    WirePacketHeader, HEADER_MIN_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,15 +38,15 @@ pub(crate) fn write_announce_wire_packet(
         destination: announce.destination,
         context: WireContext::None,
     };
-    let total_len = HEADER_LEN + announce.wire_len();
+    let total_len = HEADER_MIN_LEN + announce.wire_len();
     if buf.len() < total_len {
         return Err(EgressSerializeError::BufferTooShort);
     }
     header
-        .write(&mut buf[..HEADER_LEN])
+        .write(&mut buf[..HEADER_MIN_LEN])
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
     announce
-        .to_wire(&mut buf[HEADER_LEN..])
+        .to_wire(&mut buf[HEADER_MIN_LEN..])
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
     Ok(total_len)
 }
@@ -152,7 +152,7 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
-        let exact_len = HEADER_LEN + announce.wire_len();
+        let exact_len = HEADER_MIN_LEN + announce.wire_len();
         let targets = [iface(0xAC)];
 
         let directive = EgressDirective::ReemitAnnounce {
@@ -223,7 +223,7 @@ mod kani_proofs {
 
     const APP_DATA_LEN: usize = 2;
     const ANNOUNCE_WIRE_LEN: usize = ANNOUNCE_FIXED_FIELDS_LEN + APP_DATA_LEN;
-    const EXACT_REEMIT_LEN: usize = HEADER_LEN + ANNOUNCE_WIRE_LEN;
+    const EXACT_REEMIT_LEN: usize = HEADER_MIN_LEN + ANNOUNCE_WIRE_LEN;
     static APP_DATA: [u8; APP_DATA_LEN] = [0xA5, 0x5A];
 
     fn arbitrary_announce() -> Announce<'static> {

@@ -25,11 +25,11 @@ use heapless::String;
 use static_cell::StaticCell;
 
 use personal_rns::engine::EngineState;
-use personal_rns::routing::storage::FixedCapacity;
+use personal_rns::routing::storage::FixedInline;
 
 /// nRF-tuned preset: 64 tracked destinations, 16 held — ~35 KiB engine
 /// state, comfortable in the 256 KiB SRAM alongside the USB stack.
-type NrfEngineState = EngineState<FixedCapacity<64, 32, 4096, 4, 256, 16, 8, 128>>;
+type NrfEngineState = EngineState<FixedInline<64, 32, 4096, 4, 256, 16, 8, 8, 8, 128>>;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
