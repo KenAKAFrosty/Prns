@@ -1,7 +1,7 @@
 # The `esp` toolchain ships host std + rust-src, so it builds both faces. build-std
 # stays target-scoped (not global) so the host build isn't dragged into core/alloc.
 #
-#   cargo desktop    run the Linux window
+#   cargo desktop    run the desktop window (host: Mac or Linux)
 #   cargo s3         build the S3 firmware
 #   cargo s3-flash   build + flash + monitor (board on USB)
 
@@ -9,7 +9,15 @@
 runner = "espflash flash --monitor --after watchdog-reset"
 rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 
+# The desktop face dynamically links the system SDL2 (via embedded-graphics-simulator).
+# Point the linker at Homebrew's prefix so `cargo desktop` finds it with no env var;
+# the path simply doesn't exist on Linux/CI, so these are no-ops there.
+[target.aarch64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]
+[target.x86_64-apple-darwin]
+rustflags = ["-L", "/usr/local/lib"]
+
 [alias]
-desktop = "run --target x86_64-unknown-linux-gnu"
+desktop = "run"
 s3 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 s3-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
