@@ -1,5 +1,5 @@
 pub mod core;
-#[cfg(feature = "std-host")]
+#[cfg(feature = "std-sync-host")]
 mod discovery;
 mod impls;
 #[cfg(feature = "embassy-contract")]

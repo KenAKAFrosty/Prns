@@ -14,18 +14,18 @@ publish = false
 [[bin]]
 name = "personal-rnsd"
 path = "src/main.rs"
-required-features = ["std-host"]
+required-features = ["std-sync-host"]
 
 [features]
-default = ["std-host"]
+default = ["std-sync-host"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
-std-host = ["std", "dep:serialport", "personal-rns/std-host"]
+std-sync-host = ["std", "dep:serialport", "personal-rns/std-sync-host"]
 fixture-identity = []
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
-# USB-serial transport (std-host only). default-features off drops the libudev
+# USB-serial transport (std-sync-host only). default-features off drops the libudev
 # system dep — we open ports by path, never enumerate.
 serialport = { version = "4", default-features = false, optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —

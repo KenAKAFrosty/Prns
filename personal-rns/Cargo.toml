@@ -13,10 +13,10 @@ publish = false
 path = "src/lib.rs"
 
 [features]
-default = ["std", "std-host"]
+default = ["std", "std-sync-host"]
 alloc = []
 std = ["alloc"]
-std-host = ["std", "dep:getrandom", "dep:rtrb"]
+std-sync-host = ["std", "dep:getrandom", "dep:rtrb"]
 # Just the embassy primitives the contract seam needs (`embassy-sync` channels +
 # `embassy-time` clock, `static_cell` for the outbound grant ring's backing
 # buffer) — NOT `embassy-net`, so this builds on the host toolchain and the
@@ -40,12 +40,12 @@ embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
 # serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
 # libudev / IOKit / SetupAPI internally). Opt-in, so std hosts that don't want it
 # never link serialport.
-usb-auto = ["std-host", "dep:serialport"]
+usb-auto = ["std-sync-host", "dep:serialport"]
 # The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) for std hosts:
 # the std worker machinery plus socket2 (IPv6 multicast egress + address reuse) and
 # if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
 # want it never link either crate.
-wifi-lan-auto = ["std-host", "dep:socket2", "dep:if-addrs"]
+wifi-lan-auto = ["std-sync-host", "dep:socket2", "dep:if-addrs"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -68,12 +68,12 @@ zeroize = { version = "1", default-features = false, features = ["derive"] }
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
 
-# OS CSPRNG for the std host catalogue (LinuxSync, under `std-host`). The no_std
+# OS CSPRNG for the std host catalogue (LinuxSync, under `std-sync-host`). The no_std
 # core never sees an RNG — entropy is data the host supplies — so this is optional
 # and only the host layer pulls it in.
 getrandom = { version = "0.2", optional = true }
 
-# Lock-free SPSC ring backing the std worker seam (under `std-host`): owned, Send,
+# Lock-free SPSC ring backing the std worker seam (under `std-sync-host`): owned, Send,
 # freed on drop. The std-native replacement for a leaked `heapless::spsc` — that's
 # an embedded static-storage primitive with no business on a heap-backed host.
 rtrb = { version = "0.3", optional = true }

@@ -1,6 +1,6 @@
-#[cfg(feature = "std-host")]
+#[cfg(feature = "std-sync-host")]
 mod linux_sync;
-#[cfg(feature = "std-host")]
+#[cfg(feature = "std-sync-host")]
 pub use linux_sync::LinuxSync;
 
 #[cfg(feature = "embassy-contract")]

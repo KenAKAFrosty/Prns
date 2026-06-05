@@ -1,6 +1,6 @@
-#[cfg(feature = "std-host")]
+#[cfg(feature = "std-sync-host")]
 mod std;
-#[cfg(feature = "std-host")]
+#[cfg(feature = "std-sync-host")]
 pub use std::*;
 
 #[cfg(feature = "embassy-seam")]
