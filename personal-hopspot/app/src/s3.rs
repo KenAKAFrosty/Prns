@@ -40,7 +40,7 @@ use personal_rns::interfaces::substrate::{
 use personal_rns::interfaces::{
     InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface,
 };
-use personal_rns::routing::storage::FixedCapacity;
+use personal_rns::routing::storage::FixedInline;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{Prns, PrnsEvent, Recipe, RuntimeSnapshot};
@@ -74,7 +74,7 @@ macro_rules! mk_static {
         CELL.init($val)
     }};
 }
-const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4, 4, 4, 32> = FixedCapacity;
+const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32> = FixedInline;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse

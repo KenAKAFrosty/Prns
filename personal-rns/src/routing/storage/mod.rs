@@ -150,7 +150,7 @@ pub trait RetainedAppData {
 }
 
 /// A storage recipe: the bundle of column backends an engine runs on. One type
-/// (`FixedCapacity` for no_std, `GrowableHeap` for a std host) picks every backend
+/// (`FixedInline` for no_std, `GrowableHeap` for a std host) picks every backend
 /// at once; the `Default` bounds let the engine build an empty bundle.
 pub trait EngineStorage {
     type Routes: RouteColumns + Default;

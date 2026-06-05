@@ -9,7 +9,7 @@ use crate::routing::storage::{
 };
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 
-pub struct FixedCapacity<
+pub struct FixedInline<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
@@ -32,7 +32,7 @@ impl<
         const MAX_HELD_IDENTITIES: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
     > EngineStorage
-    for FixedCapacity<
+    for FixedInline<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedCapacity<8, 16, 256, 2, 8, 4, 2, 2, 4>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 4>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();

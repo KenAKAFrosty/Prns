@@ -90,7 +90,7 @@ use personal_rns::interfaces::{
     ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
     SendError, StartedInterface,
 };
-use personal_rns::routing::storage::FixedCapacity;
+use personal_rns::routing::storage::FixedInline;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{InterfaceView, PrnsEvent, Runtime, RuntimeSnapshot};
@@ -241,12 +241,12 @@ static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, display::InputEvent, 4> = Channel::new();
 
 /// Small engine-state preset for the S3: a desk node tracks a handful of
-/// destinations, so the default `FixedCapacity` recipe (64 dests /
+/// destinations, so the default `FixedInline` recipe (64 dests /
 /// 64 ids-per-dest / 4 KB app-data arena, ~65 KB total) is oversized and
 /// doesn't fit comfortably alongside WiFi + the worker — this preset is ~12 KB.
 /// The params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
 /// history_overflow, held_cache>`.
-type S3EngineState = EngineState<FixedCapacity<24, 32, 1024, 4, 128, 4, 4, 4, 32>>;
+type S3EngineState = EngineState<FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32>>;
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";

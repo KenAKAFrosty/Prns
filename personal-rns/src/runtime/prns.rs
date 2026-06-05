@@ -9,7 +9,7 @@ use crate::routing::storage::EngineStorage;
 /// runs on, the secret key it *is*, what it announces about itself, its already-started
 /// interfaces, and the [`Host`] that owns the clock, entropy, and wake.
 ///
-/// `engine_storage` is a zero-sized capacity marker (a `FixedCapacity<…>` the host
+/// `engine_storage` is a zero-sized capacity marker (a `FixedInline<…>` the host
 /// spells with its own sizing) whose *type* `S` decides the routing table's sizing —
 /// carrying it as a value is what lets `Prns::run` infer `S`, so the caller never writes
 /// a turbofish. The interface set `I` and host `Ho` are built by the platform's `main`.
