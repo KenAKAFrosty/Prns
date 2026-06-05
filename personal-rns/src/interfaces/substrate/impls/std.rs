@@ -18,45 +18,51 @@ struct InboundSlot<const MTU: usize> {
     bytes: [u8; MTU],
 }
 
+impl<const MTU: usize> Default for InboundSlot<MTU> {
+    fn default() -> Self {
+        Self {
+            arrived_at: InstantMillis(0),
+            len: 0,
+            bytes: [0u8; MTU],
+        }
+    }
+}
+
 struct OutboundSlot<const MTU: usize> {
     len: u16,
     bytes: [u8; MTU],
 }
 
-/// Producer wrapper that wakes the host after every publish attempt. The wake is
-/// coalesced by the host-side channel, and it fires even when the ring is full so
-/// backpressure wakes the runtime to drain.
-struct WakingProducer<T> {
-    ring: Producer<T>,
-    wake: SyncSender<()>,
-}
-
-impl<T> WakingProducer<T> {
-    fn push(&mut self, value: T) -> bool {
-        let pushed = self.ring.push(value).is_ok();
-        let _ = self.wake.try_send(());
-        pushed
+impl<const MTU: usize> Default for OutboundSlot<MTU> {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            bytes: [0u8; MTU],
+        }
     }
 }
 
 pub struct StdInboundSink<const MTU: usize> {
-    producer: WakingProducer<InboundSlot<MTU>>,
+    ring: Producer<InboundSlot<MTU>>,
+    wake: SyncSender<()>,
     clock_base: Instant,
 }
 
 impl<const MTU: usize> InboundSink for StdInboundSink<MTU> {
     fn submit(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<(), QueueFull> {
-        let mut slot = InboundSlot {
-            arrived_at: InstantMillis(self.clock_base.elapsed().as_millis() as u64),
-            len: 0,
-            bytes: [0u8; MTU],
+        // The wake fires on both paths — a full ring is exactly when the host
+        // should wake to drain. Coalesced by the host-side channel.
+        let Ok(mut chunk) = self.ring.write_chunk(1) else {
+            let _ = self.wake.try_send(());
+            return Err(QueueFull);
         };
+        let (granted, _) = chunk.as_mut_slices();
+        let slot = &mut granted[0];
+        slot.arrived_at = InstantMillis(self.clock_base.elapsed().as_millis() as u64);
         slot.len = fill(&mut slot.bytes) as u16;
-        if self.producer.push(slot) {
-            Ok(())
-        } else {
-            Err(QueueFull)
-        }
+        chunk.commit(1);
+        let _ = self.wake.try_send(());
+        Ok(())
     }
 }
 
@@ -77,7 +83,8 @@ impl<const MTU: usize> OutboundDrain for StdOutboundDrain<MTU> {
 
 pub struct StdControlEndpoint {
     commands: Consumer<ControlCommand>,
-    reports: WakingProducer<ControlReport>,
+    reports: Producer<ControlReport>,
+    wake: SyncSender<()>,
 }
 
 impl ControlEndpoint for StdControlEndpoint {
@@ -89,6 +96,7 @@ impl ControlEndpoint for StdControlEndpoint {
         // A full report lane means the runtime hasn't drained yet; dropping a
         // duplicate lifecycle signal is benign (the runtime re-checks each cycle).
         let _ = self.reports.push(report);
+        let _ = self.wake.try_send(());
     }
 }
 
@@ -111,27 +119,33 @@ pub struct StdInterfaceHandle<const MTU: usize> {
 impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
     fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
         let mut drained = 0;
-        while let Ok(mut slot) = self.inbound.pop() {
+        while let Ok(mut chunk) = self.inbound.read_chunk(1) {
+            let (read, _) = chunk.as_mut_slices();
+            let slot = &mut read[0];
             f(InboundPacket {
                 arrived_at: slot.arrived_at,
                 source_interface: self.id,
                 bytes: &mut slot.bytes[..slot.len as usize],
             });
+            chunk.commit(1);
             drained += 1;
         }
         drained
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
-        if packet.bytes.len() > MTU {
-            return Err(SendError::PacketTooLarge);
-        }
-        let mut slot = OutboundSlot {
-            len: packet.bytes.len() as u16,
-            bytes: [0u8; MTU],
+    fn acquire_send_grant(
+        &mut self,
+        fill: impl FnOnce(&mut [u8]) -> usize,
+    ) -> Result<usize, SendError> {
+        let Ok(mut chunk) = self.outbound.write_chunk(1) else {
+            return Err(SendError::QueueFull);
         };
-        slot.bytes[..packet.bytes.len()].copy_from_slice(packet.bytes);
-        self.outbound.push(slot).map_err(|_| SendError::QueueFull)
+        let (granted, _) = chunk.as_mut_slices();
+        let slot = &mut granted[0];
+        let written = fill(&mut slot.bytes);
+        slot.len = written as u16;
+        chunk.commit(1);
+        Ok(written)
     }
 
     fn request_stop(&mut self) {
@@ -164,10 +178,8 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
         StdInterfaceSeam {
             worker_context: InterfaceWorkerContext {
                 inbound: StdInboundSink {
-                    producer: WakingProducer {
-                        ring: in_producer,
-                        wake: wake.clone(),
-                    },
+                    ring: in_producer,
+                    wake: wake.clone(),
                     clock_base,
                 },
                 outbound: StdOutboundDrain {
@@ -175,10 +187,8 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
                 },
                 control: StdControlEndpoint {
                     commands: cmd_consumer,
-                    reports: WakingProducer {
-                        ring: report_producer,
-                        wake,
-                    },
+                    reports: report_producer,
+                    wake,
                 },
             },
             runtime_handle: StdInterfaceHandle {
@@ -231,9 +241,13 @@ mod tests {
             mut runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
-        assert!(runtime_handle
-            .send(OutboundPacket::new(&[0xAA, 0xBB, 0xCC]))
-            .is_ok());
+        assert_eq!(
+            runtime_handle.acquire_send_grant(|buf| {
+                buf[..3].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+                3
+            }),
+            Ok(3)
+        );
         let mut transmitted: Vec<Vec<u8>> = Vec::new();
         let drained = worker_context
             .outbound
@@ -300,31 +314,48 @@ mod tests {
     }
 
     #[test]
-    fn send_reports_packet_too_large() {
-        let (wake_tx, _wake_rx) = sync_channel::<()>(1);
+    fn a_full_inbound_ring_reports_queue_full_without_running_the_fill() {
+        let (wake_tx, wake_rx) = sync_channel::<()>(1);
         let StdInterfaceSeam {
-            worker_context: _worker_context,
-            mut runtime_handle,
-        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
+            mut worker_context,
+            runtime_handle: _runtime_handle,
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), 1, wake_tx);
 
-        let too_large = [0xAA; MTU + 1];
+        worker_context
+            .inbound
+            .submit(|buf| {
+                buf[0] = 0x01;
+                1
+            })
+            .unwrap();
+        let _ = wake_rx.try_recv();
         assert_eq!(
-            runtime_handle.send(OutboundPacket::new(&too_large)),
-            Err(SendError::PacketTooLarge)
+            worker_context
+                .inbound
+                .submit(|_buf| panic!("no grant was available, fill must not run")),
+            Err(QueueFull)
         );
+        assert!(wake_rx.try_recv().is_ok());
     }
 
     #[test]
-    fn send_reports_queue_full() {
+    fn a_full_queue_reports_queue_full_without_running_the_fill() {
         let (wake_tx, _wake_rx) = sync_channel::<()>(1);
         let StdInterfaceSeam {
             worker_context: _worker_context,
             mut runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), 1, wake_tx);
 
-        assert!(runtime_handle.send(OutboundPacket::new(&[0x01])).is_ok());
         assert_eq!(
-            runtime_handle.send(OutboundPacket::new(&[0x02])),
+            runtime_handle.acquire_send_grant(|buf| {
+                buf[0] = 0x01;
+                1
+            }),
+            Ok(1)
+        );
+        assert_eq!(
+            runtime_handle
+                .acquire_send_grant(|_buf| panic!("no grant was available, fill must not run")),
             Err(SendError::QueueFull)
         );
     }

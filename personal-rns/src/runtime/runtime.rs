@@ -10,8 +10,7 @@ use crate::engine::{
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
-    ConnectionState, InterfaceId, NextScheduledInterfaceWake, OutboundPacket, RegisteredInterface,
-    SendError,
+    ConnectionState, InterfaceId, NextScheduledInterfaceWake, RegisteredInterface, SendError,
 };
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
@@ -178,15 +177,20 @@ where
 
     let tick_output = engine.tick(now, entropy.jitter);
     let egress_directive_count = tick_output.egress_directive_count();
-    let mut emit_buffer = [0u8; MTU];
     for directive in tick_output.egress_directives() {
-        let n = directive
-            .to_wire(&mut emit_buffer)
-            .expect("MTU-sized buf fits any valid wire packet");
+        // Serializing per interface (instead of once into a staging buffer) is
+        // free — `to_wire` is a header write plus a copy of the retained,
+        // already-signed payload — and it lets each packet land in its queue
+        // slot grant directly. With IFAC it stops being an optimization and
+        // becomes required: each interface masks the whole packet differently.
         fan_to_handles(
             interfaces,
             traffic,
-            &emit_buffer[..n],
+            |buf| {
+                directive
+                    .to_wire(buf)
+                    .expect("MTU-sized buf fits any valid wire packet")
+            },
             directive.fire_on(),
             FanoutClass::Transit,
         );
@@ -194,13 +198,20 @@ where
     tick_output.commit();
 
     if !engine.registered_interfaces().is_empty() {
+        // The self-announce is staged once — building it signs, and signing
+        // per interface would be waste — then the fan copies the staged bytes
+        // into each grant.
+        let mut emit_buffer = [0u8; MTU];
         if let Some(n) =
             engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
         {
             fan_to_handles(
                 interfaces,
                 traffic,
-                &emit_buffer[..n],
+                |buf| {
+                    buf[..n].copy_from_slice(&emit_buffer[..n]);
+                    n
+                },
                 engine.registered_interfaces(),
                 FanoutClass::LocalOriginated,
             );
@@ -224,7 +235,7 @@ where
 fn fan_to_handles<I>(
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
-    bytes: &[u8],
+    write_packet: impl Fn(&mut [u8]) -> usize,
     fire_on: &[InterfaceId],
     fanout_class: FanoutClass,
 ) where
@@ -233,7 +244,7 @@ fn fan_to_handles<I>(
 {
     for started in interfaces.iter_mut() {
         // Decide eligibility off the descriptor first, so its borrow ends before
-        // the mutable `send`.
+        // the mutable `send_with`.
         let descriptor = started.descriptor();
         let id = descriptor.id;
         let eligible = fire_on.contains(&id)
@@ -246,9 +257,9 @@ fn fan_to_handles<I>(
                 FanoutClass::Transit => descriptor.capabilities.allows_transit(),
             };
         if eligible {
-            match started.send(OutboundPacket::new(bytes)) {
-                Ok(()) => traffic.add_tx(id, bytes.len() as u64),
-                Err(SendError::QueueFull | SendError::PacketTooLarge) => {}
+            match started.send_with(&write_packet) {
+                Ok(written) => traffic.add_tx(id, written as u64),
+                Err(SendError::QueueFull) => {}
             }
         }
     }
@@ -310,6 +321,7 @@ mod tests {
         InterfaceMode, MediumKind, StartedInterface, TransitCapability,
     };
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+    use crate::routing::delivery::Delivery;
     use crate::routing::storage::FixedCapacity;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
@@ -343,9 +355,14 @@ mod tests {
             drained
         }
 
-        fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
-            self.sent.push(packet.bytes.to_vec());
-            Ok(())
+        fn acquire_send_grant(
+            &mut self,
+            fill: impl FnOnce(&mut [u8]) -> usize,
+        ) -> Result<usize, SendError> {
+            let mut buf = [0u8; MTU];
+            let written = fill(&mut buf);
+            self.sent.push(buf[..written].to_vec());
+            Ok(written)
         }
 
         fn request_stop(&mut self) {}
@@ -471,11 +488,14 @@ mod tests {
             InstantMillis(arrival.0 + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |event| match event {
-                PrnsEvent::Delivered(delivery) => delivered.push((
+                PrnsEvent::Delivered(Delivery::Plain(delivery)) => delivered.push((
                     delivery.destination,
                     delivery.payload.to_vec(),
                     delivery.source_interface,
                 )),
+                PrnsEvent::Delivered(Delivery::Single(_)) => {
+                    panic!("a plain packet must never surface as a single delivery")
+                }
                 PrnsEvent::SnapshotUpdated(_) => {}
             },
         );
@@ -486,6 +506,84 @@ mod tests {
         assert_eq!(
             delivered,
             std::vec![(destination, b"hello-plain".to_vec(), source)],
+        );
+    }
+
+    #[test]
+    fn a_delivered_single_packet_reaches_the_event_handler_decrypted() {
+        use crate::crypto::X25519SecretKey;
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::{IdentitySigner, RemoteIdentity, Zeroizing};
+        use crate::wire::{
+            ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, MTU,
+        };
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        let secret = Zeroizing::new(secret);
+
+        let mut engine = EngineState::<Cap>::new(&secret);
+        let destination = engine
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+        let remote = RemoteIdentity::from_public_keys(
+            identity.encryption_public_key(),
+            identity.signing_public_key(),
+        );
+        let header = crate::wire::WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination,
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        let sealed = remote
+            .encrypt(
+                &X25519SecretKey::new([0x77; 32]),
+                &[0x88; 16],
+                b"hello-through-the-stack",
+                &mut wire[header_len..],
+            )
+            .unwrap();
+        let raw = wire[..header_len + sealed].to_vec();
+
+        let source = iface(0xA1);
+        let arrival = InstantMillis(1_000);
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(source, std::vec![(arrival, raw)])]),
+            (),
+        );
+
+        let mut delivered: std::vec::Vec<(DestinationHash, std::vec::Vec<u8>)> =
+            std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(arrival.0 + 1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |event| match event {
+                PrnsEvent::Delivered(Delivery::Single(delivery)) => {
+                    delivered.push((delivery.destination, delivery.plaintext.to_vec()))
+                }
+                PrnsEvent::Delivered(Delivery::Plain(_)) => {
+                    panic!("a sealed single packet must never surface as plain")
+                }
+                PrnsEvent::SnapshotUpdated(_) => {}
+            },
+        );
+
+        assert_eq!(out.delivered_count, 1);
+        assert_eq!(
+            delivered,
+            std::vec![(destination, b"hello-through-the-stack".to_vec())],
         );
     }
 
@@ -655,7 +753,10 @@ mod tests {
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
-            &bytes,
+            |buf: &mut [u8]| {
+                buf[..bytes.len()].copy_from_slice(&bytes);
+                bytes.len()
+            },
             &[connected, failed],
             FanoutClass::Transit,
         );
@@ -695,11 +796,15 @@ mod tests {
         ]);
         let mut traffic = TrafficLedger::new();
         let bytes = [0xAA, 0xBB, 0xCC];
+        let write_packet = |buf: &mut [u8]| {
+            buf[..bytes.len()].copy_from_slice(&bytes);
+            bytes.len()
+        };
 
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
-            &bytes,
+            write_packet,
             &[local_only, transit],
             FanoutClass::Transit,
         );
@@ -715,7 +820,7 @@ mod tests {
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
-            &bytes,
+            write_packet,
             &[local_only, transit],
             FanoutClass::LocalOriginated,
         );

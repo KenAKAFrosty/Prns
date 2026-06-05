@@ -88,7 +88,7 @@ use personal_rns::interfaces::substrate::{
 use personal_rns::interfaces::MacAddress;
 use personal_rns::interfaces::{
     ControlReport, DriverMode, InboundPacket, InterfaceHandle, InterfaceId, InterfaceWorkerContext,
-    OutboundPacket, SendError, StartedInterface,
+    SendError, StartedInterface,
 };
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
@@ -153,17 +153,17 @@ type AutoContext =
 type SerialContext =
     InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>>;
 
-/// The runtime holds one handle type, but the S3's four interfaces have four
-/// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU, and
-/// per-interface depths) — so their `EmbassyInterfaceHandle`s are four distinct
-/// types. This enum unifies them into the one `InterfaceHandle` the
-/// [`Runtime`] pools, dispatching each call to the held variant (the
-/// contract analog of the old `HostWorker` enum; explicit per the no-wildcard rule).
+/// The runtime holds one handle type, but the S3's interfaces have
+/// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU) — so
+/// their `EmbassyInterfaceHandle`s are distinct types. This enum unifies them
+/// into the one `InterfaceHandle` the [`Runtime`] pools, dispatching each call
+/// to the held variant (the contract analog of the old `HostWorker` enum;
+/// explicit per the no-wildcard rule).
 enum HeltecHandle {
-    Auto(EmbassyInterfaceHandle<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS>),
-    Serial(EmbassyInterfaceHandle<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>),
-    Lora(EmbassyInterfaceHandle<MTU, LORA_MAX_BUFFERED_PACKETS>),
-    EspNow(EmbassyInterfaceHandle<MTU, ESPNOW_MAX_BUFFERED_PACKETS>),
+    Auto(EmbassyInterfaceHandle<HARDWARE_MTU>),
+    Serial(EmbassyInterfaceHandle<SERIAL_MTU>),
+    Lora(EmbassyInterfaceHandle<MTU>),
+    EspNow(EmbassyInterfaceHandle<MTU>),
 }
 
 impl InterfaceHandle for HeltecHandle {
@@ -176,12 +176,15 @@ impl InterfaceHandle for HeltecHandle {
         }
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
+    fn acquire_send_grant(
+        &mut self,
+        fill: impl FnOnce(&mut [u8]) -> usize,
+    ) -> Result<usize, SendError> {
         match self {
-            HeltecHandle::Auto(h) => h.send(packet),
-            HeltecHandle::Serial(h) => h.send(packet),
-            HeltecHandle::Lora(h) => h.send(packet),
-            HeltecHandle::EspNow(h) => h.send(packet),
+            HeltecHandle::Auto(h) => h.acquire_send_grant(fill),
+            HeltecHandle::Serial(h) => h.acquire_send_grant(fill),
+            HeltecHandle::Lora(h) => h.acquire_send_grant(fill),
+            HeltecHandle::EspNow(h) => h.acquire_send_grant(fill),
         }
     }
 

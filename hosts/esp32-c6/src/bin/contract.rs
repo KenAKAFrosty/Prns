@@ -43,6 +43,7 @@ use personal_rns::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, WakeSignal,
 };
 use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
+use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{Prns, PrnsEvent, Recipe};
@@ -159,10 +160,16 @@ async fn node_task(
             host,
         },
         |event| match event {
-            PrnsEvent::Delivered(delivery) => {
+            PrnsEvent::Delivered(Delivery::Plain(delivery)) => {
                 println!(
-                    "ESP32C6_CONTRACT_RX_DELIVERY bytes={}",
+                    "ESP32C6_CONTRACT_RX_DELIVERY kind=plain bytes={}",
                     delivery.payload.len()
+                );
+            }
+            PrnsEvent::Delivered(Delivery::Single(delivery)) => {
+                println!(
+                    "ESP32C6_CONTRACT_RX_DELIVERY kind=single bytes={}",
+                    delivery.plaintext.len()
                 );
             }
             PrnsEvent::SnapshotUpdated(snapshot) => {

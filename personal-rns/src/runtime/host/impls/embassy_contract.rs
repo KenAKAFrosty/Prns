@@ -34,7 +34,7 @@ where
         &self,
         interface: I,
         channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
-    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>, I::Worker>
+    ) -> StartedInterface<EmbassyInterfaceHandle<MTU>, I::Worker>
     where
         I: Interface<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
     {

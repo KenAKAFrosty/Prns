@@ -17,3 +17,18 @@ pub struct PlainDelivery<'p> {
 /// a direct neighbor. Anything beyond one hop was relayed against protocol and
 /// is dropped.
 pub const PLAIN_DATA_MAX_RECEIVED_HOPS: u8 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SingleDelivery<'p> {
+    pub destination: DestinationHash,
+    pub context: WireContext,
+    pub plaintext: &'p [u8],
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery<'p> {
+    Plain(PlainDelivery<'p>),
+    Single(SingleDelivery<'p>),
+}

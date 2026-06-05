@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::{
     ConnectionState, ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext,
-    OutboundPacket, SendError, Substrate,
+    SendError, Substrate,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -36,7 +36,15 @@ pub enum DriverMode<Worker> {
 
 pub trait InterfaceHandle {
     fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
-    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError>;
+
+    /// The outbound mirror of [`InboundSink::submit`](crate::interfaces::InboundSink::submit):
+    /// the handle grants a queue slot first, `fill` writes the packet straight
+    /// into it, and the written length is what got queued. `fill` only runs
+    /// once a grant is in hand — a full queue costs no serialization.
+    fn acquire_send_grant(
+        &mut self,
+        fill: impl FnOnce(&mut [u8]) -> usize,
+    ) -> Result<usize, SendError>;
 
     fn request_stop(&mut self);
 
@@ -56,7 +64,7 @@ pub trait RegisteredInterface {
 
     fn drain_inbound(&mut self, on_packet: impl FnMut(InboundPacket<'_>)) -> usize;
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError>;
+    fn send_with(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<usize, SendError>;
 
     fn next_report(&mut self) -> Option<ControlReport>;
 
@@ -85,8 +93,8 @@ impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Wor
         self.handle.drain_inbound(on_packet)
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
-        self.handle.send(packet)
+    fn send_with(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<usize, SendError> {
+        self.handle.acquire_send_grant(fill)
     }
 
     fn next_report(&mut self) -> Option<ControlReport> {

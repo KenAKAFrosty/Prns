@@ -145,7 +145,10 @@ fn run(context: &mut WifiLanContext, nic: Nic, sockets: Sockets) {
             }
             let pruned = brain.prune_stale_peers(now_ms);
             if pruned > 0 {
-                eprintln!("WIFI_LAN_AUTO pruned {pruned} (peers={})", brain.peer_count());
+                eprintln!(
+                    "WIFI_LAN_AUTO pruned {pruned} (peers={})",
+                    brain.peer_count()
+                );
             }
         }
 

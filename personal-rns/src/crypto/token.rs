@@ -75,6 +75,39 @@ pub fn token_seal(
     Ok(total)
 }
 
+/// Open `token` in place: MAC-verified (constant time) then decrypted inside
+/// the buffer it arrived in. The plaintext is returned as a sub-slice of
+/// `token` — no copy is made.
+pub fn token_open_in_place<'t>(
+    key: &TokenKey,
+    token: &'t mut [u8],
+) -> Result<&'t [u8], CryptoError> {
+    if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
+        return Err(CryptoError::MalformedToken);
+    }
+    let (signed_parts, tag) = token.split_at_mut(token.len() - MAC_LEN);
+    hmac_sha256_verify(key.signing_key, signed_parts, tag)?;
+
+    let (iv, ciphertext) = signed_parts.split_at_mut(IV_LEN);
+    if ciphertext.len() % BLOCK_LEN != 0 {
+        return Err(CryptoError::MalformedToken);
+    }
+
+    let plaintext_len = match key.mode {
+        AesMode::Aes128 => Decryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
+            .map_err(|_| CryptoError::BadKeyLength)?
+            .decrypt_padded_mut::<Pkcs7>(ciphertext)
+            .map_err(|_| CryptoError::InvalidPadding)?
+            .len(),
+        AesMode::Aes256 => Decryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
+            .map_err(|_| CryptoError::BadKeyLength)?
+            .decrypt_padded_mut::<Pkcs7>(ciphertext)
+            .map_err(|_| CryptoError::InvalidPadding)?
+            .len(),
+    };
+    Ok(&ciphertext[..plaintext_len])
+}
+
 /// Open `token`, writing the plaintext to `out`. Verifies the MAC (constant
 /// time) before decrypting. Returns the plaintext length.
 pub fn token_open(key: &TokenKey, token: &[u8], out: &mut [u8]) -> Result<usize, CryptoError> {
