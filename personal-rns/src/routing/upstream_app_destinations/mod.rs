@@ -13,14 +13,14 @@ use crate::wire::{DestinationHash, DestinationType};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamAppDestinationKind {
     Plain,
-    Single,
+    Single { identity: IdentityHash },
 }
 
 impl UpstreamAppDestinationKind {
     pub const fn wire_type(self) -> DestinationType {
         match self {
             Self::Plain => DestinationType::Plain,
-            Self::Single => DestinationType::Single,
+            Self::Single { .. } => DestinationType::Single,
         }
     }
 }
@@ -83,7 +83,13 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
-        self.insert(destination, UpstreamAppDestinationKind::Single, name_hash)
+        self.insert(
+            destination,
+            UpstreamAppDestinationKind::Single {
+                identity: *identity_hash,
+            },
+            name_hash,
+        )
     }
 
     fn insert(
@@ -267,7 +273,12 @@ mod tests {
         assert_eq!(views[0].destination, plain);
         assert_eq!(views[0].kind, UpstreamAppDestinationKind::Plain);
         assert_eq!(views[1].destination, single);
-        assert_eq!(views[1].kind, UpstreamAppDestinationKind::Single);
+        assert_eq!(
+            views[1].kind,
+            UpstreamAppDestinationKind::Single {
+                identity: identity_hash
+            }
+        );
         assert_eq!(views[0].name_hash, views[1].name_hash);
     }
 }

@@ -6,32 +6,33 @@ use crate::routing::upstream_app_destinations::{
 use crate::wire::{DestinationHash, DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FixedUpstreamAppDestinationColumns<const MAX_LOCAL_DESTINATIONS: usize> {
+pub struct FixedUpstreamAppDestinationColumns<const MAX_UPSTREAM_APP_DESTINATIONS: usize> {
     len: usize,
-    destination: [DestinationHash; MAX_LOCAL_DESTINATIONS],
-    kind: [UpstreamAppDestinationKind; MAX_LOCAL_DESTINATIONS],
-    name_hash: [DottedNameHash; MAX_LOCAL_DESTINATIONS],
+    destination: [DestinationHash; MAX_UPSTREAM_APP_DESTINATIONS],
+    kind: [UpstreamAppDestinationKind; MAX_UPSTREAM_APP_DESTINATIONS],
+    name_hash: [DottedNameHash; MAX_UPSTREAM_APP_DESTINATIONS],
 }
 
-impl<const MAX_LOCAL_DESTINATIONS: usize> Default
-    for FixedUpstreamAppDestinationColumns<MAX_LOCAL_DESTINATIONS>
+impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> Default
+    for FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>
 {
     fn default() -> Self {
         Self {
             len: 0,
             destination: [DestinationHash::new([0u8; TRUNCATED_HASH_BYTE_LEN]);
-                MAX_LOCAL_DESTINATIONS],
-            kind: [UpstreamAppDestinationKind::Plain; MAX_LOCAL_DESTINATIONS],
-            name_hash: [DottedNameHash::new([0u8; DOTTED_NAME_HASH_LEN]); MAX_LOCAL_DESTINATIONS],
+                MAX_UPSTREAM_APP_DESTINATIONS],
+            kind: [UpstreamAppDestinationKind::Plain; MAX_UPSTREAM_APP_DESTINATIONS],
+            name_hash: [DottedNameHash::new([0u8; DOTTED_NAME_HASH_LEN]);
+                MAX_UPSTREAM_APP_DESTINATIONS],
         }
     }
 }
 
-impl<const MAX_LOCAL_DESTINATIONS: usize> UpstreamAppDestinationColumns
-    for FixedUpstreamAppDestinationColumns<MAX_LOCAL_DESTINATIONS>
+impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
+    for FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>
 {
     fn capacity(&self) -> usize {
-        MAX_LOCAL_DESTINATIONS
+        MAX_UPSTREAM_APP_DESTINATIONS
     }
     fn len(&self) -> usize {
         self.len
@@ -53,7 +54,7 @@ impl<const MAX_LOCAL_DESTINATIONS: usize> UpstreamAppDestinationColumns
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
     ) -> Result<usize, ColumnsFull> {
-        if self.len >= MAX_LOCAL_DESTINATIONS {
+        if self.len >= MAX_UPSTREAM_APP_DESTINATIONS {
             return Err(ColumnsFull);
         }
         let i = self.len;
@@ -68,6 +69,7 @@ impl<const MAX_LOCAL_DESTINATIONS: usize> UpstreamAppDestinationColumns
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::IdentityHash;
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; TRUNCATED_HASH_BYTE_LEN])
@@ -88,7 +90,13 @@ mod tests {
             Ok(0)
         );
         assert_eq!(
-            columns.push(dest(2), UpstreamAppDestinationKind::Single, name(2)),
+            columns.push(
+                dest(2),
+                UpstreamAppDestinationKind::Single {
+                    identity: IdentityHash::new([2; 16])
+                },
+                name(2)
+            ),
             Ok(1)
         );
         assert_eq!(
@@ -102,7 +110,9 @@ mod tests {
             columns.kinds(),
             &[
                 UpstreamAppDestinationKind::Plain,
-                UpstreamAppDestinationKind::Single
+                UpstreamAppDestinationKind::Single {
+                    identity: IdentityHash::new([2; 16])
+                }
             ]
         );
         assert_eq!(columns.name_hashes(), &[name(1), name(2)]);

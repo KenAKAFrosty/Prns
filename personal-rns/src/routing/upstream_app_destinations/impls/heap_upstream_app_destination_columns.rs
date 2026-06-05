@@ -49,6 +49,7 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::IdentityHash;
     use crate::wire::{DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
 
     #[test]
@@ -59,7 +60,9 @@ mod tests {
         for n in 0..100u8 {
             let pushed = columns.push(
                 DestinationHash::new([n; TRUNCATED_HASH_BYTE_LEN]),
-                UpstreamAppDestinationKind::Single,
+                UpstreamAppDestinationKind::Single {
+                    identity: IdentityHash::new([n; 16]),
+                },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
             );
             assert_eq!(pushed, Ok(n as usize));
