@@ -120,20 +120,19 @@ pub struct StdInterfaceHandle<const MTU: usize> {
 }
 
 impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
-    fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
-        let mut drained = 0;
-        while let Ok(mut chunk) = self.inbound.read_chunk(1) {
-            let (read, _) = chunk.as_mut_slices();
-            let slot = &mut read[0];
-            f(InboundPacket {
-                arrived_at: slot.arrived_at,
-                source_interface: self.id,
-                bytes: &mut slot.bytes[..slot.len as usize],
-            });
-            chunk.commit(1);
-            drained += 1;
-        }
-        drained
+    fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+        let Ok(mut chunk) = self.inbound.read_chunk(1) else {
+            return None;
+        };
+        let (read, _) = chunk.as_mut_slices();
+        let slot = &mut read[0];
+        let result = f(InboundPacket {
+            arrived_at: slot.arrived_at,
+            source_interface: self.id,
+            bytes: &mut slot.bytes[..slot.len as usize],
+        });
+        chunk.commit(1);
+        Some(result)
     }
 
     fn acquire_send_grant(
@@ -291,6 +290,49 @@ mod tests {
             runtime_handle.next_report(),
             Some(ControlReport::Stopped)
         ));
+    }
+
+    #[test]
+    fn a_packet_can_be_answered_on_its_interface_between_inbound_steps() {
+        let (wake_tx, _wake_rx) = sync_channel::<()>(1);
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
+
+        for byte in [0x01u8, 0x02] {
+            worker_context
+                .inbound
+                .submit(|buf| {
+                    buf[0] = byte;
+                    1
+                })
+                .unwrap();
+        }
+
+        let first = runtime_handle
+            .next_inbound(|pkt| pkt.bytes.to_vec())
+            .unwrap();
+        assert_eq!(first, std::vec![0x01]);
+        assert_eq!(
+            runtime_handle.acquire_send_grant(|buf| {
+                buf[..2].copy_from_slice(&[0xF0, first[0]]);
+                2
+            }),
+            Ok(2)
+        );
+
+        let second = runtime_handle
+            .next_inbound(|pkt| pkt.bytes.to_vec())
+            .unwrap();
+        assert_eq!(second, std::vec![0x02]);
+        assert!(runtime_handle.next_inbound(|_| ()).is_none());
+
+        let mut replies: Vec<Vec<u8>> = Vec::new();
+        worker_context
+            .outbound
+            .drain_each(|pkt| replies.push(pkt.bytes.to_vec()));
+        assert_eq!(replies, std::vec![std::vec![0xF0, 0x01]]);
     }
 
     #[test]

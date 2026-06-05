@@ -169,12 +169,12 @@ enum HeltecHandle {
 }
 
 impl InterfaceHandle for HeltecHandle {
-    fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize {
+    fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
         match self {
-            HeltecHandle::Auto(h) => h.drain_inbound(f),
-            HeltecHandle::Serial(h) => h.drain_inbound(f),
-            HeltecHandle::Lora(h) => h.drain_inbound(f),
-            HeltecHandle::EspNow(h) => h.drain_inbound(f),
+            HeltecHandle::Auto(h) => h.next_inbound(f),
+            HeltecHandle::Serial(h) => h.next_inbound(f),
+            HeltecHandle::Lora(h) => h.next_inbound(f),
+            HeltecHandle::EspNow(h) => h.next_inbound(f),
         }
     }
 

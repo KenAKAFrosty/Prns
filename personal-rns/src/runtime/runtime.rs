@@ -341,18 +341,16 @@ mod tests {
     }
 
     impl InterfaceHandle for TestHandle {
-        fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
-            let id = self.id;
-            let mut drained = 0;
-            for (arrived_at, mut bytes) in self.inbound.drain(..) {
-                f(InboundPacket {
-                    arrived_at,
-                    source_interface: id,
-                    bytes: &mut bytes,
-                });
-                drained += 1;
+        fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+            if self.inbound.is_empty() {
+                return None;
             }
-            drained
+            let (arrived_at, mut bytes) = self.inbound.remove(0);
+            Some(f(InboundPacket {
+                arrived_at,
+                source_interface: self.id,
+                bytes: &mut bytes,
+            }))
         }
 
         fn acquire_send_grant(

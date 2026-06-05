@@ -35,7 +35,20 @@ pub enum DriverMode<Worker> {
 }
 
 pub trait InterfaceHandle {
-    fn drain_inbound(&mut self, f: impl FnMut(InboundPacket<'_>)) -> usize;
+    /// Hand the next pending inbound packet to `f` and return its result, or
+    /// `None` when the lane is dry. One packet per call: between calls the
+    /// handle is borrowable again, so a caller can answer a packet on the
+    /// interface it arrived on ([`Self::acquire_send_grant`]) before stepping
+    /// to the next. Replying needs no side buffer and no batch cap.
+    fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R>;
+
+    fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
+        let mut drained = 0;
+        while self.next_inbound(&mut f).is_some() {
+            drained += 1;
+        }
+        drained
+    }
 
     /// The outbound mirror of [`InboundSink::submit`](crate::interfaces::InboundSink::submit):
     /// the handle grants a queue slot first, `fill` writes the packet straight
@@ -62,7 +75,15 @@ pub trait RegisteredInterface {
 
     fn set_connection_state(&mut self, state: ConnectionState);
 
-    fn drain_inbound(&mut self, on_packet: impl FnMut(InboundPacket<'_>)) -> usize;
+    fn next_inbound<R>(&mut self, on_packet: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R>;
+
+    fn drain_inbound(&mut self, mut on_packet: impl FnMut(InboundPacket<'_>)) -> usize {
+        let mut drained = 0;
+        while self.next_inbound(&mut on_packet).is_some() {
+            drained += 1;
+        }
+        drained
+    }
 
     fn send_with(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<usize, SendError>;
 
@@ -89,8 +110,8 @@ impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Wor
         self.descriptor.state = state;
     }
 
-    fn drain_inbound(&mut self, on_packet: impl FnMut(InboundPacket<'_>)) -> usize {
-        self.handle.drain_inbound(on_packet)
+    fn next_inbound<R>(&mut self, on_packet: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+        self.handle.next_inbound(on_packet)
     }
 
     fn send_with(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<usize, SendError> {

@@ -240,18 +240,15 @@ pub struct EmbassyInterfaceHandle<const MTU: usize> {
 }
 
 impl<const MTU: usize> InterfaceHandle for EmbassyInterfaceHandle<MTU> {
-    fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
-        let mut drained = 0;
-        while let Some(slot) = self.inbound.try_receive() {
-            f(InboundPacket {
-                arrived_at: slot.arrived_at,
-                source_interface: self.id,
-                bytes: &mut slot.bytes[..slot.len as usize],
-            });
-            self.inbound.receive_done();
-            drained += 1;
-        }
-        drained
+    fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+        let slot = self.inbound.try_receive()?;
+        let result = f(InboundPacket {
+            arrived_at: slot.arrived_at,
+            source_interface: self.id,
+            bytes: &mut slot.bytes[..slot.len as usize],
+        });
+        self.inbound.receive_done();
+        Some(result)
     }
 
     fn acquire_send_grant(
@@ -358,6 +355,51 @@ mod tests {
             })
             .unwrap();
         assert_eq!(written, len);
+    }
+
+    #[test]
+    fn a_packet_can_be_answered_on_its_interface_between_inbound_steps() {
+        static CH: EmbassyInterfaceChannels<MTU, 4> = EmbassyInterfaceChannels::new();
+        static WAKE: WakeSignal = new_wake_signal();
+        let EmbassyInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = EmbassyInterfaceSeam::split(id(), &CH, &WAKE);
+
+        for byte in [0x01u8, 0x02] {
+            worker_context
+                .inbound
+                .submit(|buf| {
+                    buf[0] = byte;
+                    1
+                })
+                .unwrap();
+        }
+
+        let first = runtime_handle
+            .next_inbound(|pkt| {
+                let mut bytes = [0u8; 4];
+                bytes[..pkt.bytes.len()].copy_from_slice(pkt.bytes);
+                (bytes, pkt.bytes.len())
+            })
+            .unwrap();
+        assert_eq!(first, ([0x01, 0, 0, 0], 1));
+        let written = runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..2].copy_from_slice(&[0xF0, first.0[0]]);
+                2
+            })
+            .unwrap();
+        assert_eq!(written, 2);
+
+        let second = runtime_handle.next_inbound(|pkt| pkt.bytes[0]).unwrap();
+        assert_eq!(second, 0x02);
+        assert!(runtime_handle.next_inbound(|_| ()).is_none());
+
+        let mut lease = worker_context.outbound.lease().unwrap();
+        assert_eq!(lease.packet(), &[0xF0, 0x01]);
+        lease.complete();
+        assert!(worker_context.outbound.lease().is_none());
     }
 
     #[test]
