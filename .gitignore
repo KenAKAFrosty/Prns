@@ -10,4 +10,6 @@ personal-rns-capi/target/
 personal-rnsd/target/
 dhat-heap.json
 benchmarks/target/
+benchmarks/reference/.venv/
+**/__pycache__/
 hosts/*/target/

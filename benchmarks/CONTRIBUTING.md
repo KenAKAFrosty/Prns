@@ -39,8 +39,13 @@ scenarios/announce-256/
   packets.hex     # one hex-encoded RNS wire packet per line — replay these exact bytes
 ```
 
-`gen_corpus` regenerates it; every backend here `load_corpus`es it. **To participate, an
-implementation writes a thin driver** that:
+The bytes are **minted by the RNS 1.3.1 reference** (`reference/gen.py` drives the real
+`RNS.Destination.announce`), not by the engine-under-test — so the corpus is impartial
+ground truth and doubles as a conformance corpus. Our engine reproduces it **byte-for-byte**
+(`cargo run --bin gen_corpus -- --check` vs `reference/gen.py --check`), which is the
+first hard proof of wire-exactness against RNS. Every backend here `load_corpus`es it.
+
+**To participate, an implementation writes a thin driver** that:
 
 1. reads `packets.hex` + `manifest.json`,
 2. feeds the packets through *its* engine per the manifest's `operations`,
@@ -57,17 +62,33 @@ implementation writes a thin driver** that:
 Our runners are the worked example. Measurement tooling stays per-language (you can't share
 dhat with Python), so **throughput, binary size, and conformance compare cleanly across
 implementations; memory and latency stay within-impl with loud caveats** — a cross-language
-RSS race between a GC and a no-alloc core would be dishonest. The RNS 1.3.1 reference is the
-first "other implementation" almost for free, since the engine is already wire-exact against it.
+RSS race between a GC and a no-alloc core would be dishonest. The RNS 1.3.1 reference is
+already the first "other implementation": it mints the corpus (`reference/gen.py`), and the
+engine reproduces it byte-for-byte.
+
+One honest parity nuance the byte-diff surfaced: RNS fills `random_hash`'s trailing 5 bytes
+with `int(time.time())` (unix **seconds**); our engine writes its `now` (**milliseconds**)
+there. The field is opaque dedup entropy to receivers, so interop is unaffected — but our
+*live* announces aren't byte-identical to RNS's in that field. The corpus pins both sides to
+the same nonce, so the conformance diff stays exact.
 
 ## Running
 
 ```sh
-cargo run --release --bin gen_corpus      # (re)generate the scenario corpus on disk
-cargo run --release --bin mem_profile     # static footprint + per-workload allocations
-cargo run --release --bin mem_soak        # long-run tick soak (memory + state stay flat?)
+cargo run --release --bin gen_corpus -- --check   # engine parity: ours == the committed corpus
+cargo run --release --bin gen_corpus              # write manifest.json (+ bootstrap packets if absent)
+cargo run --release --bin mem_profile             # static footprint + per-workload allocations
+cargo run --release --bin mem_soak                # long-run tick soak (memory + state stay flat?)
 MEM_SOAK_TICKS=50000000 MEM_SOAK_STEP_MS=100 cargo run --release --bin mem_soak
-cargo bench                               # criterion throughput/latency
+cargo bench                                       # criterion throughput/latency
+```
+
+The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv setup):
+
+```sh
+cd reference && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python gen.py --check           # reference parity: RNS == the committed corpus
+.venv/bin/python gen.py                    # regenerate packets.hex from RNS (canonical)
 ```
 
 And the binary-size axis, from the repo root (it builds the ESP32-C6 firmware):
