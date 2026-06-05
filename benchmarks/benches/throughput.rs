@@ -6,11 +6,11 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
-use benchmarks::{announce_fixtures, ingest_and_settle};
+use benchmarks::{ingest_and_settle, load_corpus, scenario_dir};
 use personal_rns::routing::storage::GrowableHeap;
 
 fn ingest(c: &mut Criterion) {
-    let announces = announce_fixtures(256);
+    let announces = load_corpus(&scenario_dir("announce-256"));
     c.bench_function("ingest_256_announces/growable-heap", |b| {
         b.iter_batched(
             || announces.clone(),

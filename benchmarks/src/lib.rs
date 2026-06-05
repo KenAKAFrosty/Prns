@@ -4,6 +4,8 @@
 //! (`src/bin`), criterion for timing (`benches`), and `esp_alloc::HEAP.stats()` on the
 //! microcontroller when that route lands. Nothing in this file measures anything.
 
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
 use personal_rns::engine::{EngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig};
@@ -102,4 +104,45 @@ pub fn tick_soak<S: EngineStorage>(
             on_sample(t, engine);
         }
     }
+}
+
+// --- Scenario corpus: the language-neutral seam ---
+// A scenario's *input* is shared data on disk (a hex-per-line wire corpus + a JSON
+// manifest), so any implementation — any language — can replay the exact same bytes.
+// `announce_fixtures` is the generator; the `gen_corpus` bin writes it out; every
+// measurement backend `load`s it. That's what keeps "run it yourself" honest.
+
+/// The on-disk home of scenario `name` (e.g. "announce-256"), relative to this crate.
+pub fn scenario_dir(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios").join(name)
+}
+
+/// Load a scenario's wire packets from `<dir>/packets.hex` (one hex-encoded packet per
+/// line) — the same bytes another implementation would replay.
+pub fn load_corpus(dir: &Path) -> Vec<Vec<u8>> {
+    let path = dir.join("packets.hex");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(from_hex)
+        .collect()
+}
+
+/// Lowercase hex encode.
+pub fn to_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// Decode a hex string into bytes.
+pub fn from_hex(s: &str) -> Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("corpus is valid hex"))
+        .collect()
 }

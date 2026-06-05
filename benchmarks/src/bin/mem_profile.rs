@@ -3,14 +3,13 @@
 //! Run: `cargo run --release --bin mem_profile`
 //! (also writes `dhat-heap.json` for the DHAT viewer).
 
-use benchmarks::{announce_fixtures, ingest_and_settle, Cap};
+use benchmarks::{ingest_and_settle, load_corpus, scenario_dir, Cap};
 use personal_rns::engine::EngineState;
 use personal_rns::routing::storage::{EngineStorage, GrowableHeap};
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-const ANNOUNCE_COUNT: usize = 256;
 const SETTLE_TICKS: usize = 64;
 
 fn measure<S: EngineStorage>(label: &str, announces: &[Vec<u8>]) {
@@ -29,7 +28,7 @@ fn measure<S: EngineStorage>(label: &str, announces: &[Vec<u8>]) {
 
 fn main() {
     let _profiler = dhat::Profiler::new_heap();
-    let announces = announce_fixtures(ANNOUNCE_COUNT);
+    let announces = load_corpus(&scenario_dir("announce-256"));
 
     println!("engine static footprint (inline, no heap):");
     println!(
@@ -42,7 +41,7 @@ fn main() {
     );
 
     println!(
-        "\nheap allocation over {ANNOUNCE_COUNT} announces + {SETTLE_TICKS} ticks (built {} valid):",
+        "\nheap allocation over {} announces + {SETTLE_TICKS} ticks:",
         announces.len()
     );
     measure::<GrowableHeap>("GrowableHeap", &announces);

@@ -7,13 +7,11 @@
 
 use std::fmt::Write as _;
 
-use benchmarks::{announce_fixtures, ingest_all, new_engine, tick_soak};
+use benchmarks::{ingest_all, load_corpus, new_engine, scenario_dir, tick_soak};
 use personal_rns::routing::storage::GrowableHeap;
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
-
-const ANNOUNCE_COUNT: usize = 256;
 
 fn env<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
@@ -36,7 +34,7 @@ fn main() {
     let samples: u64 = env("MEM_SOAK_SAMPLES", 12);
     let sample_every = (ticks / samples).max(1);
 
-    let mut announces = announce_fixtures(ANNOUNCE_COUNT);
+    let mut announces = load_corpus(&scenario_dir("announce-256"));
     let mut engine = new_engine::<GrowableHeap>();
     ingest_all(&mut engine, &mut announces);
 

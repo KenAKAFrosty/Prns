@@ -1,0 +1,8 @@
+{
+  "name": "announce-256",
+  "version": 1,
+  "description": "Ingest 256 distinct signed lxmf.delivery announces in order over one interface, then settle 64 ticks.",
+  "input": { "packets": "packets.hex", "encoding": "hex-per-line", "count": 256 },
+  "operations": { "ingest": "all-in-order", "settle_ticks": 64 },
+  "expected": { "route_count": 256 }
+}

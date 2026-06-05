@@ -38,6 +38,12 @@ name = "mem_soak"
 path = "src/bin/mem_soak.rs"
 bench = false
 
+# --- Scenario corpus tooling (regenerates the shared, language-neutral input) ---
+[[bin]]
+name = "gen_corpus"
+path = "src/bin/gen_corpus.rs"
+bench = false
+
 # --- Throughput + Latency axis (criterion) ---
 [[bench]]
 name = "throughput"
