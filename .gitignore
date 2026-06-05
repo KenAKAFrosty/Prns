@@ -2,6 +2,7 @@
 **/*.rs.bk
 godot-smoke/
 .vscode
+.wifi-env
 # Parked standalone crates build into their own target dirs
 personal-rns-ffi/target/
 personal-rns-napi/target/

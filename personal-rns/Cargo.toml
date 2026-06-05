@@ -31,11 +31,20 @@ embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-asyn
 # pure-no_std and no-std-esp-build gates never see it. An embedded host turns it on
 # to get the radio worker shells (e.g. the AutoInterface). No alloc.
 embassy-host = ["embassy-contract", "dep:embassy-net", "dep:lora-phy", "dep:log"]
+# A WiFi-only embedded host: the embassy contract seam + embassy-net (enough for the
+# AutoInterface worker shell), but WITHOUT lora-phy — so the WiFi bring-up never
+# depends on the LoRa PHY building. A Heltec that also wants LoRa uses `embassy-host`.
+embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
 # The plug-and-play USB-auto host interface: the std worker machinery plus
 # serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
 # libudev / IOKit / SetupAPI internally). Opt-in, so std hosts that don't want it
 # never link serialport.
 usb-auto = ["std-host", "dep:serialport"]
+# The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) for std hosts:
+# the std worker machinery plus socket2 (IPv6 multicast egress + address reuse) and
+# if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
+# want it never link either crate.
+wifi-lan-auto = ["std-host", "dep:socket2", "dep:if-addrs"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -73,6 +82,15 @@ rtrb = { version = "0.3", optional = true }
 # enumeration (libudev on Linux, IOKit/SetupAPI elsewhere — serialport cfg-gates
 # its own per-OS backends).
 serialport = { version = "4", optional = true }
+
+# The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
+# egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —
+# none of which `std::net::UdpSocket` exposes. Thin libc/winsock wrapper, no_std-free.
+socket2 = { version = "0.5", optional = true, features = ["all"] }
+# Interface enumeration for the WiFi/LAN auto-interface (under `wifi-lan-auto`): the
+# chosen NIC's real `fe80::` link-local and its interface index. The peering token must
+# hash over the address peers actually see as our source, so a synthesized one won't do.
+if-addrs = { version = "0.13", optional = true }
 
 # Embassy stack for the `embassy-host` worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),

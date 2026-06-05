@@ -65,4 +65,14 @@ mod tests {
         assert_eq!(set.len(), 499);
         assert_eq!(*set.iter().next().unwrap(), 1);
     }
+
+    #[test]
+    fn as_slice_exposes_the_current_order() {
+        let mut set = GrowableInterfaceSet::<u16>::new();
+        assert_eq!(set.push(10), Ok(()));
+        assert_eq!(set.push(20), Ok(()));
+        assert_eq!(set.push(30), Ok(()));
+
+        assert_eq!(set.as_slice(), &[10, 20, 30]);
+    }
 }

@@ -151,6 +151,53 @@ mod tests {
     }
 
     #[test]
+    fn predicates_reflect_the_normalized_egress_shape() {
+        let disabled = InterfaceCapabilities::try_from(Capabilities {
+            receives: false,
+            transmits: false,
+            forwards: false,
+            repeats: false,
+        })
+        .unwrap();
+        assert!(!disabled.allows_transmit());
+        assert!(!disabled.allows_local_egress());
+        assert!(!disabled.allows_transit());
+        assert!(!disabled.allows_same_interface_repeat());
+
+        let local_only = InterfaceCapabilities::try_from(Capabilities {
+            receives: true,
+            transmits: true,
+            forwards: false,
+            repeats: false,
+        })
+        .unwrap();
+        assert!(local_only.allows_transmit());
+        assert!(local_only.allows_local_egress());
+        assert!(!local_only.allows_transit());
+        assert!(!local_only.allows_same_interface_repeat());
+
+        let cross_interface = InterfaceCapabilities::try_from(Capabilities {
+            receives: true,
+            transmits: true,
+            forwards: true,
+            repeats: false,
+        })
+        .unwrap();
+        assert!(cross_interface.allows_transit());
+        assert!(!cross_interface.allows_same_interface_repeat());
+
+        let same_interface = InterfaceCapabilities::try_from(Capabilities {
+            receives: true,
+            transmits: true,
+            forwards: true,
+            repeats: true,
+        })
+        .unwrap();
+        assert!(same_interface.allows_transit());
+        assert!(same_interface.allows_same_interface_repeat());
+    }
+
+    #[test]
     fn rejects_transit_without_transmit() {
         assert_eq!(
             InterfaceCapabilities::try_from(Capabilities {

@@ -7,16 +7,13 @@ use embassy_time::{Duration, Instant as EmbassyInstant, Ticker};
 use heapless::Vec as HVec;
 
 use super::core::{
-    AutoInterfaceProtocol, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP,
-    HARDWARE_MTU, UNICAST_DISCOVERY_PORT,
+    AutoInterfaceProtocol, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP, HARDWARE_MTU,
+    UNICAST_DISCOVERY_PORT,
 };
 use crate::engine::InstantMillis;
 use crate::interfaces::substrate::EmbassyHostSubstrate;
-use crate::interfaces::{
-    ConnectionState, EgressCapability, InboundSink, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, InterfaceWorkerContext, MacAddress,
-    MediumKind, TransitCapability,
-};
+use crate::interfaces::{InboundSink, InterfaceWorkerContext, MacAddress};
+use crate::wire::MTU;
 
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL_MS: u64 = 1600;
@@ -58,19 +55,6 @@ fn ingest_discovery_arm(
     }
 }
 
-pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
-        id,
-        capabilities: InterfaceCapabilities {
-            ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
-        },
-        mode: InterfaceMode::Full,
-        medium: MediumKind::Multicast,
-        state: ConnectionState::Connected,
-    }
-}
-
 fn submit_data_arm(
     rx_count: &mut u32,
     recv: Result<(usize, UdpMetadata), RecvError>,
@@ -80,7 +64,7 @@ fn submit_data_arm(
     match recv {
         Ok((n, _meta)) => {
             *rx_count = rx_count.wrapping_add(1);
-            if n <= HARDWARE_MTU
+            if n <= MTU
                 && inbound
                     .submit(|buf| {
                         buf[..n].copy_from_slice(&read_buf[..n]);
@@ -99,7 +83,7 @@ fn submit_data_arm(
 pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
     stack: Stack<'static>,
     our_mac_address: MacAddress,
-    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<HARDWARE_MTU, MAX_BUFFERED_PACKETS>>,
+    mut context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
 ) {
     let mut brain = AutoInterfaceProtocol::<MAX_PEERS>::new(our_mac_address);
     log::info!(

@@ -2,9 +2,36 @@
 # modules until the suite has enough experience triaging survivors.
 examine_globs = [
     "personal-rns/src/wire/mod.rs",
-    "personal-rns/src/interfaces/rns_serial_framing.rs",
+    "personal-rns/src/interfaces/capabilities.rs",
+    "personal-rns/src/interfaces/framing/rns_serial_framing.rs",
+    "personal-rns/src/interfaces/storage/impls/fixed_interface_set.rs",
+    "personal-rns/src/interfaces/storage/impls/growable_interface_set.rs",
     "personal-rns/src/engine/egress.rs",
+    "personal-rns/src/engine/ingress.rs",
+    "personal-rns/src/engine/self_announce.rs",
+    "personal-rns/src/engine/directives/impls/fixed_engine_directives.rs",
+    "personal-rns/src/engine/directives/impls/heap_engine_directives.rs",
+    "personal-rns/src/routing/defaults.rs",
     "personal-rns/src/routing/announce/acceptance.rs",
+    "personal-rns/src/routing/announce/id.rs",
+    "personal-rns/src/routing/held_cache/impls/fixed_held_announces.rs",
+    "personal-rns/src/routing/held_cache/impls/heap_held_announces.rs",
+    "personal-rns/src/routing/schedule/impls/fixed_rebroadcast_queue.rs",
+    "personal-rns/src/routing/schedule/impls/heap_rebroadcast_queue.rs",
+]
+
+# These bit-pack fields occupy disjoint positions; replacing OR with XOR in
+# `WirePacketHeader::write` is equivalent for all constructible headers.
+#
+# The fixed in-place queues intentionally use manual shrinking loops. These
+# mutants remove loop progress or length reduction and are covered as hangs by
+# the tests, but excluding them keeps the mutation lane focused on actionable
+# assertion failures.
+exclude_re = [
+    'replace \| with \^ in WirePacketHeader::write',
+    'replace \+= with \*= in FixedRebroadcastQueue<MAX_PENDING>::drain_due',
+    'replace FixedHeldAnnounces<CAPACITY>::swap_remove_at with \(\)',
+    'replace - with / in FixedHeldAnnounces<CAPACITY>::swap_remove_at',
 ]
 
 additional_cargo_test_args = ["-p", "personal-rns"]

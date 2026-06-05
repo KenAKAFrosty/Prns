@@ -79,7 +79,10 @@ Current targets:
 
 `cargo-mutants` reads `.cargo/mutants.toml` from the source-tree root. The
 checked-in config narrows the first lane to contract-heavy surfaces: wire
-parsing, RNS serial framing, typed egress, and announce acceptance:
+parsing, RNS serial framing, interface capabilities and interface-set storage,
+typed ingress/egress, self-announce scheduling, engine directive buffers,
+routing defaults, announce IDs, announce acceptance, held-announce caches, and
+rebroadcast queues:
 
 ```sh
 cargo mutants --list-files

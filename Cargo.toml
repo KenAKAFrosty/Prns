@@ -39,4 +39,4 @@ undocumented_unsafe_blocks = "deny"
 significant_drop_in_scrutinee = "warn"
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(mutants)'] }

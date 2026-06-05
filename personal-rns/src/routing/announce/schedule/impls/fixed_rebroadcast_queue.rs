@@ -161,6 +161,42 @@ mod tests {
     }
 
     #[test]
+    fn iter_exposes_pending_entries() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(2), InstantMillis(300), iface(0xBB));
+
+        let destinations: std::vec::Vec<_> =
+            pending.iter().map(|entry| entry.destination).collect();
+        assert_eq!(destinations, std::vec![dest(1), dest(2)]);
+    }
+
+    #[test]
+    fn count_due_uses_the_due_boundary() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(99), iface(0xAA));
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(3), InstantMillis(101), iface(0xAA));
+
+        assert_eq!(pending.count_due(InstantMillis(100)), 2);
+    }
+
+    #[test]
+    fn drain_due_returns_removed_count_and_keeps_future_entries() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(99), iface(0xAA));
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(3), InstantMillis(101), iface(0xAA));
+
+        assert_eq!(pending.drain_due(InstantMillis(100)), 2);
+        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(
+            pending.iter().next().map(|entry| entry.destination),
+            Some(dest(3))
+        );
+    }
+
+    #[test]
     fn a_tick_drains_every_due_entry() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA));

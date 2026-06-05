@@ -254,6 +254,25 @@ mod tests {
     }
 
     #[test]
+    fn capacity_is_the_type_level_bound_and_nonempty_tracks_parked_entries() {
+        let mut cache: FixedHeldAnnounces<2> = FixedHeldAnnounces::new();
+        let any = InterfaceId::new([0u8; 16]);
+        assert_eq!(cache.capacity(), 2);
+
+        assert_eq!(
+            cache.park(
+                &announce_for(dest(1), b"x"),
+                ts(100),
+                1,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
+            ParkOutcome::Parked
+        );
+        assert!(!cache.is_empty());
+    }
+
+    #[test]
     fn park_stores_announce_fields_and_round_trips_via_announce_accessor() {
         let mut cache: FixedHeldAnnounces<4> = FixedHeldAnnounces::new();
         let app_data = b"hello-personal";
@@ -350,6 +369,36 @@ mod tests {
     }
 
     #[test]
+    fn app_data_at_the_held_limit_is_accepted_but_one_byte_past_is_rejected() {
+        let mut cache: FixedHeldAnnounces<2> = FixedHeldAnnounces::new();
+        let any = InterfaceId::new([0u8; 16]);
+        let exact = std::vec![0xA5; HELD_APP_DATA_LIMIT];
+        let too_large = std::vec![0x5A; HELD_APP_DATA_LIMIT + 1];
+
+        assert_eq!(
+            cache.park(
+                &announce_for(dest(1), &exact),
+                ts(100),
+                1,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
+            ParkOutcome::Parked
+        );
+        assert_eq!(
+            cache.park(
+                &announce_for(dest(2), &too_large),
+                ts(200),
+                1,
+                HoldReason::RoutingArenaPressure,
+                any
+            ),
+            ParkOutcome::AppDataTooLarge
+        );
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
     fn take_next_picks_the_lowest_received_hops() {
         let mut cache: FixedHeldAnnounces<4> = FixedHeldAnnounces::new();
         let any = InterfaceId::new([0u8; 16]);
@@ -415,6 +464,28 @@ mod tests {
         let held = cache.take_next().unwrap();
         assert_eq!(held.arrived_at(), ts(100));
         assert_eq!(held.announce().destination, dest(2));
+    }
+
+    #[test]
+    fn identical_priority_keeps_first_inserted() {
+        let mut cache: FixedHeldAnnounces<4> = FixedHeldAnnounces::new();
+        let any = InterfaceId::new([0u8; 16]);
+        cache.park(
+            &announce_for(dest(1), b"first"),
+            ts(100),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+        cache.park(
+            &announce_for(dest(2), b"second"),
+            ts(100),
+            3,
+            HoldReason::RoutingArenaPressure,
+            any,
+        );
+
+        assert_eq!(cache.take_next().unwrap().announce().destination, dest(1));
     }
 
     #[test]
