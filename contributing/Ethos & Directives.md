@@ -13,11 +13,7 @@ For interfaces, we want to continue to expand real functionality on multi-platfo
 Right now we're still tightening up the USB auto-interface, which is yet again a dogfooding & bootstrapping priority, like Hopspot as a whole is. That's because USB is one the simplest, cleanest ways to connect devices on the desk as we build. 
 
 Following that trend, the next few I expect will be (not necessarily in this order):
-- WiFi LAN auto-interface (parity), plus
-    - An extension to that which we build
-        - Properly uses a system to still connect even when there's a mesh AP situation (our BSSID issues from before)
-        - Allows for when the host IS the AP (mobile hotspot functionality like on phones, but desktops these days do the same)
-        - Allows for when you've connected to an AP that IS a Reticulum node host itself (the inverse of above)
+- WiFi LAN auto-interface (parity): **done** — std-host (desktop) + S3 embassy drivers are built and verified peering/announcing cross-platform. Wants a deeper review pass at some point (API/organization, reliability, perf), same as the USB one below. The remaining WiFi work is the extension layer: mesh-AP / BSSID handling (our BSSID issues from before), host-as-AP (mobile-hotspot style; desktops do it too), and connecting to an AP that *is* a Reticulum node host (the inverse).
 - FIx and refine our USB auto-interface
     - It was the first built under the more clear multi-platform re-usable model. Overall it's a great start, but probably needs some refinement, both for API/organization, but even more so for reliability and performance as an actual target interface to use in the wild.
 - Bluetooth, which is incredibly strong but has multiple things to handle:
