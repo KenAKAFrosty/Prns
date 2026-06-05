@@ -1,0 +1,50 @@
+[package]
+name = "personal-reticulum-suite-benchmarks"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Standalone, like `fuzz/`: an empty `[workspace]` detaches this from the root so
+# the engine `--workspace` gates never pull in dhat/criterion, and dev tooling can
+# move at its own pace. Builds via its own manifest.
+[workspace]
+
+[lib]
+name = "benchmarks"
+path = "src/lib.rs"
+bench = false
+
+# `cargo bench` should run only the criterion `[[bench]]` below — not the default
+# libtest harness on the lib/bins, which doesn't understand criterion's CLI flags.
+
+[dependencies]
+personal-rns = { path = "../personal-rns" }
+# Heap allocation profiler — the host route of the measurement seam (the bins set it
+# as the global allocator; the criterion benches deliberately don't).
+dhat = "0.3"
+
+[dev-dependencies]
+# Timing harness for the throughput/latency benches (lean: no plotters/rayon).
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# --- Memory axis: peak footprint + allocation count (host route = dhat) ---
+[[bin]]
+name = "mem_profile"
+path = "src/bin/mem_profile.rs"
+bench = false
+
+[[bin]]
+name = "mem_soak"
+path = "src/bin/mem_soak.rs"
+bench = false
+
+# --- Scenario corpus tooling (regenerates the shared, language-neutral input) ---
+[[bin]]
+name = "gen_corpus"
+path = "src/bin/gen_corpus.rs"
+bench = false
+
+# --- Throughput + Latency axis (criterion) ---
+[[bench]]
+name = "throughput"
+harness = false

@@ -8,3 +8,6 @@ personal-rns-ffi/target/
 personal-rns-napi/target/
 personal-rns-capi/target/
 personal-rnsd/target/
+dhat-heap.json
+benchmarks/target/
+hosts/*/target/
