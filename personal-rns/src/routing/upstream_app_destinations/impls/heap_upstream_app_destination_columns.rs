@@ -1,10 +1,10 @@
 use alloc::vec::Vec;
 
-use crate::engine::upstream_app_destinations::{
-    UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
-};
 use crate::routing::announce::DottedNameHash;
 use crate::routing::storage::ColumnsFull;
+use crate::routing::upstream_app_destinations::{
+    UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
+};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]

@@ -1,5 +1,4 @@
 use crate::engine::directives::FixedEngineDirectives;
-use crate::engine::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -7,6 +6,7 @@ use crate::routing::storage::{
     EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
     TieredAnnounceIdHistory,
 };
+use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 
 pub struct FixedCapacity<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -62,9 +62,9 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::upstream_app_destinations::UpstreamAppDestinationColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
+    use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {

@@ -2,20 +2,14 @@ pub mod directives;
 pub mod egress;
 pub mod ingress;
 pub mod self_announce;
-pub mod upstream_app_destinations;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
-pub use upstream_app_destinations::{
-    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
-    UpstreamAppDestinationKind,
-};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
 use crate::engine::self_announce::SelfAnnounceSettings;
-use crate::engine::upstream_app_destinations::UpstreamAppDestinations;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
@@ -34,6 +28,9 @@ use crate::routing::delivery::{
     Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::storage::EngineStorage;
+use crate::routing::upstream_app_destinations::{
+    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinations,
+};
 use crate::routing::{DropCause, RoutingTable, UpsertRouteOutcome};
 use crate::wire::{DestinationHash, DestinationType};
 use heapless::Vec as HeaplessVec;

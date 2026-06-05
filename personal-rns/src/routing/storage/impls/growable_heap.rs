@@ -1,5 +1,4 @@
 use crate::engine::directives::HeapEngineDirectives;
-use crate::engine::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
 use crate::routing::announce::held_cache::HeapHeldAnnounces;
 use crate::routing::announce::schedule::HeapRebroadcastQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
@@ -7,6 +6,7 @@ use crate::routing::storage::{
     EngineStorage, HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
     HeapRouteColumns,
 };
+use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
 
 pub struct GrowableHeap;
 
@@ -25,9 +25,9 @@ impl EngineStorage for GrowableHeap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::upstream_app_destinations::UpstreamAppDestinationColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
+    use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_unbounded_heap_backends() {
