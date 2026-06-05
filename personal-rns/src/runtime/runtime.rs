@@ -519,8 +519,8 @@ mod tests {
         secret[32..].fill(0x11);
         let secret = Zeroizing::new(secret);
 
-        let mut engine = EngineState::<Cap>::new(&secret);
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+        let mut engine = EngineState::<Cap>::new(secret);
         let destination = engine
             .register_single_destination(&identity.identity_hash(), "personal", &["node"])
             .unwrap();

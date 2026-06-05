@@ -30,9 +30,8 @@ use esp_hal::Async;
 use esp_println::println;
 use static_cell::StaticCell;
 
-use personal_rns::engine::{
-    EngineCycleEntropySeed, ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
-};
+use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::{EngineCycleEntropySeed, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::serve;
 use personal_rns::interfaces::impls::rns_parity::serial::{
@@ -46,7 +45,7 @@ use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenIn
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::FixedInline;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{Prns, PrnsEvent, Recipe};
+use personal_rns::runtime::{DestinationConfig, Prns, PrnsEvent, Recipe};
 
 esp_app_desc!();
 
@@ -149,13 +148,15 @@ async fn node_task(
     Prns::run(
         Recipe {
             engine_storage: ENGINE_STORAGE,
-            identity_secret_key: secret_key,
-            self_announce: SelfAnnounceConfig {
+            starting_destinations: [DestinationConfig::Single {
                 app_name: "lxmf",
                 aspects: &["delivery"],
-                app_data: SELF_ANNOUNCE_APP_DATA,
-                schedule: ReannounceSchedule::default(),
-            },
+                identity_secret_key: secret_key,
+                announce: Some(AnnounceConfig {
+                    app_data: SELF_ANNOUNCE_APP_DATA,
+                    schedule: ReannounceSchedule::default(),
+                }),
+            }],
             interfaces,
             host,
         },

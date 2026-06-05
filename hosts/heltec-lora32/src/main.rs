@@ -61,8 +61,9 @@ use esp_radio::esp_now::{EspNowError, EspNowReceiver, EspNowSender, BROADCAST_AD
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
+use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::{
-    EngineCycleEntropySeed, EngineState, ReannounceSchedule, SelfAnnounceConfig,
+    EngineCycleEntropySeed, EngineState, ReannounceSchedule,
     ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -390,19 +391,25 @@ async fn main(spawner: Spawner) {
     let _ = lxmf_app_data.extend_from_slice(DISPLAY_NAME.as_bytes());
     let _ = lxmf_app_data.push(0xc0); // msgpack: nil (no stamp cost)
 
-    let state: S3EngineState = S3EngineState::announcing(
-        &secret_key,
-        SelfAnnounceConfig {
-            app_name: "lxmf",
-            aspects: &["delivery"],
-            app_data: lxmf_app_data.as_slice(),
-            // Fast re-announce so a listening node reliably catches us during
-            // bring-up; production cadence is the 6 h `default()`.
-            schedule: ReannounceSchedule::every(15_000),
-        },
-    )
-    .expect("static self-announce config is valid");
-    drop(secret_key);
+    let mut state: S3EngineState = S3EngineState::new(secret_key);
+    let node = state
+        .transport_identity()
+        .expect("new() holds the node identity");
+    let lxmf_delivery = state
+        .register_single_destination(&node, "lxmf", &["delivery"])
+        .expect("static destination config is valid");
+    state
+        .schedule_announce(
+            &lxmf_delivery,
+            AnnounceConfig {
+                app_data: lxmf_app_data.as_slice(),
+                // Fast re-announce so a listening node reliably catches us during
+                // bring-up; production cadence is the 6 h `default()`.
+                schedule: ReannounceSchedule::every(15_000),
+            },
+        )
+        .expect("static announce config is valid");
+    let state = state;
     let mut dest_hex: HString<16> = HString::new();
     if let Some(dest) = state.self_announced_destinations().first() {
         for byte in dest.as_bytes().iter().take(4) {

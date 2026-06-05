@@ -8,6 +8,6 @@ mod snapshot;
 
 pub use event::PrnsEvent;
 pub use host::{block_on, CycleStamp, Host, NextWake};
-pub use prns::{Prns, Recipe};
+pub use prns::{DestinationConfig, Prns, Recipe};
 pub use runtime::{Runtime, RuntimeStepOutput};
 pub use snapshot::{InterfaceView, RuntimeSnapshot};

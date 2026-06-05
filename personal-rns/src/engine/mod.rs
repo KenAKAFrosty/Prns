@@ -5,7 +5,7 @@ pub mod self_announce;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
-pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
+pub use self_announce::ReannounceSchedule;
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
@@ -21,7 +21,7 @@ use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{
     Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceBuildError, AnnounceId,
-    ExpandNameError, SelfAnnounceEntropy,
+    SelfAnnounceEntropy,
 };
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::{
@@ -173,57 +173,13 @@ impl<S: EngineStorage> EngineState<S> {
     /// stamps it into transport headers, and routing a Single beyond one hop may
     /// need it too).
     #[allow(clippy::expect_used)]
-    pub fn new(identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
+    pub fn new(identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         let mut state = Self::default();
         let identity = state
             .hold_identity(identity_secret_key)
             .expect("an empty store holds the first identity");
         state.transport_identity = Some(identity);
         state
-    }
-
-    /// Temporary stopgap constructor, slated for removal — don't add new call sites.
-    /// (Not `#[deprecated]`: CI runs `-D warnings` and the Heltec host still calls it.)
-    #[allow(clippy::expect_used)]
-    pub fn announcing(
-        identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-        self_announce: SelfAnnounceConfig<'_>,
-    ) -> Result<Self, SelfAnnounceConfigError> {
-        let mut state = Self::new(identity_secret_key);
-        let identity = state
-            .transport_identity
-            .expect("new() holds the node identity");
-        let destination = state
-            .register_single_destination(&identity, self_announce.app_name, self_announce.aspects)
-            .map_err(|error| match error {
-                RegisterDestinationError::Name(ExpandNameError::DotInComponent) => {
-                    SelfAnnounceConfigError::DotInName
-                }
-                RegisterDestinationError::Name(ExpandNameError::NameTooLong) => {
-                    SelfAnnounceConfigError::NameTooLong
-                }
-                RegisterDestinationError::RegistryFull
-                | RegisterDestinationError::UnknownIdentity => {
-                    unreachable!("a fresh node registers its own first destination")
-                }
-            })?;
-        state
-            .schedule_announce(
-                &destination,
-                AnnounceConfig {
-                    app_data: self_announce.app_data,
-                    schedule: self_announce.schedule,
-                },
-            )
-            .map_err(|error| match error {
-                ScheduleAnnounceError::AppDataTooLong => SelfAnnounceConfigError::AppDataTooLong,
-                ScheduleAnnounceError::TableFull
-                | ScheduleAnnounceError::UnknownDestination
-                | ScheduleAnnounceError::NotASingleDestination => {
-                    unreachable!("a fresh node schedules its own first announce")
-                }
-            })?;
-        Ok(state)
     }
 
     pub const fn tick_count(&self) -> u64 {
@@ -295,7 +251,7 @@ impl<S: EngineStorage> EngineState<S> {
 
     pub fn hold_identity(
         &mut self,
-        identity_secret_key: &Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+        identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     ) -> Result<IdentityHash, HoldIdentityError> {
         self.held_identities.hold(identity_secret_key)
     }
@@ -850,16 +806,21 @@ mod tests {
     }
 
     fn personal_node_announcer() -> EngineState<Cap> {
-        EngineState::announcing(
-            &fixed_secret_key(),
-            SelfAnnounceConfig {
-                app_name: "personal",
-                aspects: &["node"],
-                app_data: b"hello-personal",
-                schedule: ReannounceSchedule::default(),
-            },
-        )
-        .expect("valid self-announce config")
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = state.transport_identity().unwrap();
+        let destination = state
+            .register_single_destination(&node, "personal", &["node"])
+            .unwrap();
+        state
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: b"hello-personal",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .unwrap();
+        state
     }
 
     const SELF_ANNOUNCE_RNS_ANNOUNCE_DATA: &str =
@@ -949,7 +910,7 @@ mod tests {
 
     #[test]
     fn an_identity_only_node_never_originates() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let mut buf = [0u8; MTU];
         assert_eq!(
             state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
@@ -967,45 +928,13 @@ mod tests {
         );
         let relay: EngineState<Cap> = EngineState::<Cap>::default();
         assert_eq!(relay.self_announced_destinations(), &[]);
-        let identity_only: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let identity_only: EngineState<Cap> = EngineState::new(fixed_secret_key());
         assert_eq!(identity_only.self_announced_destinations(), &[]);
     }
 
     #[test]
-    fn announcing_rejects_dotted_names_and_overlong_app_data() {
-        assert_eq!(
-            EngineState::<Cap>::announcing(
-                &fixed_secret_key(),
-                SelfAnnounceConfig {
-                    app_name: "per.sonal",
-                    aspects: &[],
-                    app_data: b"",
-                    schedule: ReannounceSchedule::default(),
-                },
-            )
-            .err(),
-            Some(SelfAnnounceConfigError::DotInName),
-        );
-
-        let too_long = [0u8; crate::engine::self_announce::MAX_SELF_ANNOUNCE_APP_DATA_LEN + 1];
-        assert_eq!(
-            EngineState::<Cap>::announcing(
-                &fixed_secret_key(),
-                SelfAnnounceConfig {
-                    app_name: "personal",
-                    aspects: &["node"],
-                    app_data: &too_long,
-                    schedule: ReannounceSchedule::default(),
-                },
-            )
-            .err(),
-            Some(SelfAnnounceConfigError::AppDataTooLong),
-        );
-    }
-
-    #[test]
     fn schedule_announce_requires_a_registered_single() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let config = AnnounceConfig {
             app_data: b"",
@@ -1063,7 +992,7 @@ mod tests {
     #[test]
     fn each_announced_destination_signs_with_its_own_identity() {
         let mut state = personal_node_announcer();
-        let second = state.hold_identity(&second_secret_key()).unwrap();
+        let second = state.hold_identity(second_secret_key()).unwrap();
         let second_destination = state
             .register_single_destination(&second, "personal", &["second"])
             .unwrap();
@@ -1110,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn announcing_registers_the_destination_it_announces() {
+    fn re_registering_the_announced_name_is_idempotent() {
         let mut state = personal_node_announcer();
         let node = state.transport_identity().unwrap();
         let registered = state
@@ -1195,7 +1124,7 @@ mod tests {
 
     #[test]
     fn plain_addressed_data_never_reaches_a_single_destination_with_that_hash() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let single = state
             .register_single_destination(&node, "personal", &["node"])
@@ -1224,7 +1153,7 @@ mod tests {
 
     #[test]
     fn in_transport_data_delivers_only_when_we_are_the_named_transport_instance() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         state
             .register_plain_destination("personal", &["node"])
             .unwrap();
@@ -1316,7 +1245,7 @@ mod tests {
 
     #[test]
     fn single_data_decrypts_in_place_and_delivers_the_plaintext() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_single_destination(&identity.identity_hash(), "personal", &["node"])
@@ -1337,7 +1266,7 @@ mod tests {
 
     #[test]
     fn a_replayed_single_packet_is_ignored_by_the_dedup_history() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_single_destination(&identity.identity_hash(), "personal", &["node"])
@@ -1359,7 +1288,7 @@ mod tests {
 
     #[test]
     fn a_tampered_single_token_is_ignored_without_poisoning_the_real_packet() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
             .register_single_destination(&identity.identity_hash(), "personal", &["node"])
@@ -1393,8 +1322,8 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let identity_a = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let identity_b = InMemoryNodeIdentity::from_secret_key_bytes(&second_secret_key());
-        let held_a = state.hold_identity(&fixed_secret_key()).unwrap();
-        let held_b = state.hold_identity(&second_secret_key()).unwrap();
+        let held_a = state.hold_identity(fixed_secret_key()).unwrap();
+        let held_b = state.hold_identity(second_secret_key()).unwrap();
         assert_eq!(held_a, identity_a.identity_hash());
         assert_eq!(held_b, identity_b.identity_hash());
 
@@ -1446,7 +1375,7 @@ mod tests {
         );
         assert_eq!(state.transport_identity(), None);
 
-        let held = state.hold_identity(&fixed_secret_key()).unwrap();
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
         assert_eq!(state.set_transport_identity(&held), Ok(()));
         assert_eq!(state.transport_identity(), Some(held));
     }
@@ -1455,7 +1384,7 @@ mod tests {
     fn a_held_app_identity_does_not_answer_transport_addressed_data() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
-        let held = state.hold_identity(&fixed_secret_key()).unwrap();
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
             .register_single_destination(&held, "personal", &["node"])
             .unwrap();
@@ -1489,7 +1418,7 @@ mod tests {
 
     #[test]
     fn single_data_for_an_unregistered_destination_is_ignored() {
-        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let registered = state
             .register_single_destination(&identity.identity_hash(), "personal", &["other"])

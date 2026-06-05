@@ -37,20 +37,6 @@ impl Default for ReannounceSchedule {
     }
 }
 
-pub struct SelfAnnounceConfig<'a> {
-    pub app_name: &'a str,
-    pub aspects: &'a [&'a str],
-    pub app_data: &'a [u8],
-    pub schedule: ReannounceSchedule,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SelfAnnounceConfigError {
-    DotInName,
-    NameTooLong,
-    AppDataTooLong,
-}
-
 pub struct AnnounceConfig<'a> {
     pub app_data: &'a [u8],
     pub schedule: ReannounceSchedule,

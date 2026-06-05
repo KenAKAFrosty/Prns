@@ -15,7 +15,8 @@
 use std::io;
 use std::time::Duration;
 
-use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::ReannounceSchedule;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
@@ -23,7 +24,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe};
+use personal_rns::runtime::{block_on, DestinationConfig, Prns, PrnsEvent, Recipe};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -104,13 +105,15 @@ fn main() {
         Recipe {
             // A mains-powered std host: unbounded heap storage, no fixed cap.
             engine_storage: GrowableHeap,
-            identity_secret_key: load_identity_secret_key(),
-            self_announce: SelfAnnounceConfig {
+            starting_destinations: [DestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
-                app_data: SELF_ANNOUNCE_APP_DATA,
-                schedule: ReannounceSchedule::default(),
-            },
+                identity_secret_key: load_identity_secret_key(),
+                announce: Some(AnnounceConfig {
+                    app_data: SELF_ANNOUNCE_APP_DATA,
+                    schedule: ReannounceSchedule::default(),
+                }),
+            }],
             interfaces,
             host,
         },

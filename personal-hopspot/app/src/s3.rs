@@ -27,8 +27,9 @@ use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::StaticCell;
 
 use personal_rns::engine::{
-    EngineCycleEntropySeed, ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
+    EngineCycleEntropySeed, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN,
 };
+use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
@@ -43,7 +44,7 @@ use personal_rns::interfaces::{
 use personal_rns::routing::storage::FixedInline;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{Prns, PrnsEvent, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{DestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui as screen;
 
@@ -395,14 +396,16 @@ async fn node_task(
     Prns::run(
         Recipe {
             engine_storage: ENGINE_STORAGE,
-            identity_secret_key: secret_key,
-            self_announce: SelfAnnounceConfig {
+            starting_destinations: [DestinationConfig::Single {
                 app_name: "lxmf",
                 aspects: &["delivery"],
-                app_data: SELF_ANNOUNCE_APP_DATA,
-                // Fast re-announce so the desktop catches us promptly during bring-up.
-                schedule: ReannounceSchedule::every(10_000),
-            },
+                identity_secret_key: secret_key,
+                announce: Some(AnnounceConfig {
+                    app_data: SELF_ANNOUNCE_APP_DATA,
+                    // Fast re-announce so the desktop catches us promptly during bring-up.
+                    schedule: ReannounceSchedule::every(10_000),
+                }),
+            }],
             interfaces,
             host,
         },

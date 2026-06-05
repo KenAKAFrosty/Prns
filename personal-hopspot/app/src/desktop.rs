@@ -18,7 +18,8 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 
-use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::ReannounceSchedule;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
@@ -27,7 +28,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{block_on, DestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEvent, UiState};
 
@@ -98,13 +99,15 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
     block_on(Prns::run(
         Recipe {
             engine_storage: GrowableHeap,
-            identity_secret_key: load_identity_secret_key(),
-            self_announce: SelfAnnounceConfig {
+            starting_destinations: [DestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
-                app_data: SELF_ANNOUNCE_APP_DATA,
-                schedule: ReannounceSchedule::every(10_000),
-            },
+                identity_secret_key: load_identity_secret_key(),
+                announce: Some(AnnounceConfig {
+                    app_data: SELF_ANNOUNCE_APP_DATA,
+                    schedule: ReannounceSchedule::every(10_000),
+                }),
+            }],
             interfaces,
             host,
         },

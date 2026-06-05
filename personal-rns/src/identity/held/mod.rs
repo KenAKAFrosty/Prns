@@ -6,7 +6,7 @@ use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature, X25519Secr
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{
     DecryptError, IdentityEncryptionPublicKey, IdentityHash, IdentitySigner,
-    IdentitySigningPublicKey, IDENTITY_SECRET_KEY_LEN,
+    IdentitySigningPublicKey, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,9 +46,9 @@ pub struct HeldIdentities<C: HeldIdentityColumns> {
 impl<C: HeldIdentityColumns> HeldIdentities<C> {
     pub fn hold(
         &mut self,
-        secret_key_bytes: &[u8; IDENTITY_SECRET_KEY_LEN],
+        secret_key_bytes: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     ) -> Result<IdentityHash, HoldIdentityError> {
-        let parts = InMemoryNodeIdentity::from_secret_key_bytes(secret_key_bytes).into_parts();
+        let parts = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key_bytes).into_parts();
         if self.columns.hashes().contains(&parts.hash) {
             return Ok(parts.hash);
         }
@@ -148,11 +148,11 @@ mod tests {
 
     type TestIdentities = HeldIdentities<FixedHeldIdentityColumns<2>>;
 
-    fn secret_key_bytes(fill: u8) -> [u8; IDENTITY_SECRET_KEY_LEN] {
+    fn secret_key_bytes(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
         let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
         bytes[..32].fill(fill);
         bytes[32..].fill(fill.wrapping_add(1));
-        bytes
+        Zeroizing::new(bytes)
     }
 
     #[test]
@@ -160,7 +160,10 @@ mod tests {
         let bytes = secret_key_bytes(0x22);
         let freestanding = InMemoryNodeIdentity::from_secret_key_bytes(&bytes);
         let mut identities = TestIdentities::default();
-        assert_eq!(identities.hold(&bytes), Ok(freestanding.identity_hash()));
+        assert_eq!(
+            identities.hold(bytes.clone()),
+            Ok(freestanding.identity_hash())
+        );
         assert_eq!(identities.len(), 1);
     }
 
@@ -168,8 +171,8 @@ mod tests {
     fn re_holding_the_same_key_is_idempotent() {
         let bytes = secret_key_bytes(0x22);
         let mut identities = TestIdentities::default();
-        let first = identities.hold(&bytes).unwrap();
-        let second = identities.hold(&bytes).unwrap();
+        let first = identities.hold(bytes.clone()).unwrap();
+        let second = identities.hold(bytes.clone()).unwrap();
         assert_eq!(first, second);
         assert_eq!(identities.len(), 1);
     }
@@ -177,10 +180,10 @@ mod tests {
     #[test]
     fn a_full_store_reports_itself() {
         let mut identities = TestIdentities::default();
-        assert!(identities.hold(&secret_key_bytes(0x11)).is_ok());
-        assert!(identities.hold(&secret_key_bytes(0x33)).is_ok());
+        assert!(identities.hold(secret_key_bytes(0x11)).is_ok());
+        assert!(identities.hold(secret_key_bytes(0x33)).is_ok());
         assert_eq!(
-            identities.hold(&secret_key_bytes(0x55)),
+            identities.hold(secret_key_bytes(0x55)),
             Err(HoldIdentityError::StoreFull),
         );
         assert_eq!(identities.len(), 2);
@@ -189,7 +192,7 @@ mod tests {
     #[test]
     fn get_misses_an_unheld_hash() {
         let mut identities = TestIdentities::default();
-        identities.hold(&secret_key_bytes(0x11)).unwrap();
+        identities.hold(secret_key_bytes(0x11)).unwrap();
         let unheld = IdentityHash::new([0x99; 16]);
         assert!(!identities.contains(&unheld));
         assert!(identities.get(&unheld).is_none());
@@ -200,7 +203,7 @@ mod tests {
         let bytes = secret_key_bytes(0x42);
         let freestanding = InMemoryNodeIdentity::from_secret_key_bytes(&bytes);
         let mut identities = TestIdentities::default();
-        let hash = identities.hold(&bytes).unwrap();
+        let hash = identities.hold(bytes.clone()).unwrap();
         let held = identities.get(&hash).unwrap();
 
         let message = b"announce body to sign";
@@ -217,7 +220,7 @@ mod tests {
     fn a_held_ref_decrypts_what_was_sealed_for_its_identity() {
         let bytes = secret_key_bytes(0x42);
         let mut identities = TestIdentities::default();
-        let hash = identities.hold(&bytes).unwrap();
+        let hash = identities.hold(bytes.clone()).unwrap();
         let held = identities.get(&hash).unwrap();
 
         let remote = RemoteIdentity::from_public_keys(
@@ -243,8 +246,8 @@ mod tests {
     #[test]
     fn the_wrong_identity_cannot_open_a_sealed_token() {
         let mut identities = TestIdentities::default();
-        let right = identities.hold(&secret_key_bytes(0x42)).unwrap();
-        let wrong = identities.hold(&secret_key_bytes(0x77)).unwrap();
+        let right = identities.hold(secret_key_bytes(0x42)).unwrap();
+        let wrong = identities.hold(secret_key_bytes(0x77)).unwrap();
 
         let sealed_for = identities.get(&right).unwrap();
         let remote = RemoteIdentity::from_public_keys(
