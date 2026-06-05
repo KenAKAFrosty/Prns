@@ -1,4 +1,5 @@
 use crate::engine::directives::FixedEngineDirectives;
+use crate::engine::self_announce::FixedSelfAnnounceColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
@@ -18,6 +19,7 @@ pub struct FixedInline<
     const HELD_CACHE_CAPACITY: usize,
     const MAX_UPSTREAM_APP_DESTINATIONS: usize,
     const MAX_HELD_IDENTITIES: usize,
+    const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
 >;
 
@@ -30,6 +32,7 @@ impl<
         const HELD_CACHE_CAPACITY: usize,
         const MAX_UPSTREAM_APP_DESTINATIONS: usize,
         const MAX_HELD_IDENTITIES: usize,
+        const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
     > EngineStorage
     for FixedInline<
@@ -41,6 +44,7 @@ impl<
         HELD_CACHE_CAPACITY,
         MAX_UPSTREAM_APP_DESTINATIONS,
         MAX_HELD_IDENTITIES,
+        MAX_SELF_ANNOUNCED_DESTINATIONS,
         PACKET_HASH_GENERATION_CAPACITY,
     >
 {
@@ -62,6 +66,7 @@ impl<
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
+    type SelfAnnounces = FixedSelfAnnounceColumns<MAX_SELF_ANNOUNCED_DESTINATIONS>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
 }
 
@@ -74,7 +79,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 4>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();

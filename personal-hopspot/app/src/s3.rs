@@ -74,7 +74,7 @@ macro_rules! mk_static {
         CELL.init($val)
     }};
 }
-const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32> = FixedInline;
+const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32> = FixedInline;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse

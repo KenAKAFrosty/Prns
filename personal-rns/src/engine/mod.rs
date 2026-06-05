@@ -671,7 +671,7 @@ mod tests {
         TransportId, WireContext, WirePacketHeader, MTU,
     };
 
-    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 128>;
+    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
 
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
     const TEST_NONCE: SelfAnnounceEntropy =
@@ -1517,7 +1517,7 @@ mod tests {
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {
@@ -1539,7 +1539,7 @@ mod tests {
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128>>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1561,7 +1561,7 @@ mod tests {
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128>>::default();
 
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
@@ -1614,7 +1614,8 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 128>>::default();
+        let mut state =
+            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128>>::default();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1718,7 +1719,7 @@ mod tests {
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 128>>::default();
+        let mut state = EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 8, 128>>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
