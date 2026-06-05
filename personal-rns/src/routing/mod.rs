@@ -19,7 +19,7 @@ pub use types::{
     DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
-    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
+    ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
     UpstreamAppDestinationKind,
 };
 

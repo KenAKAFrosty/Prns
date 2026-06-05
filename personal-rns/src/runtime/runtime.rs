@@ -319,6 +319,7 @@ mod tests {
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::delivery::Delivery;
     use crate::routing::storage::FixedInline;
+    use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
     type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
@@ -522,7 +523,12 @@ mod tests {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
         let mut engine = EngineState::<Cap>::new(secret);
         let destination = engine
-            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+            )
             .unwrap();
 
         let remote = RemoteIdentity::from_public_keys(

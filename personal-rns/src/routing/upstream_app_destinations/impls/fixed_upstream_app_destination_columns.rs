@@ -70,6 +70,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
 mod tests {
     use super::*;
     use crate::identity::IdentityHash;
+    use crate::routing::upstream_app_destinations::ProofStrategy;
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; TRUNCATED_HASH_BYTE_LEN])
@@ -93,7 +94,8 @@ mod tests {
             columns.push(
                 dest(2),
                 UpstreamAppDestinationKind::Single {
-                    identity: IdentityHash::new([2; 16])
+                    identity: IdentityHash::new([2; 16]),
+                    proof_strategy: ProofStrategy::ProveAll,
                 },
                 name(2)
             ),
@@ -111,7 +113,8 @@ mod tests {
             &[
                 UpstreamAppDestinationKind::Plain,
                 UpstreamAppDestinationKind::Single {
-                    identity: IdentityHash::new([2; 16])
+                    identity: IdentityHash::new([2; 16]),
+                    proof_strategy: ProofStrategy::ProveAll,
                 }
             ]
         );

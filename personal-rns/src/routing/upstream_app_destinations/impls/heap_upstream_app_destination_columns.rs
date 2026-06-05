@@ -50,6 +50,7 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
 mod tests {
     use super::*;
     use crate::identity::IdentityHash;
+    use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
 
     #[test]
@@ -62,6 +63,7 @@ mod tests {
                 DestinationHash::new([n; TRUNCATED_HASH_BYTE_LEN]),
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([n; 16]),
+                    proof_strategy: ProofStrategy::ProveNone,
                 },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
             );

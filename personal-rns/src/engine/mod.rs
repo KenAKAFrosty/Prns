@@ -29,7 +29,7 @@ use crate::routing::delivery::{
 };
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{
-    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationKind,
+    ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationKind,
     UpstreamAppDestinations,
 };
 use crate::routing::{DropCause, RoutingTable, UpsertRouteOutcome};
@@ -241,12 +241,13 @@ impl<S: EngineStorage> EngineState<S> {
         identity: &IdentityHash,
         app_name: &str,
         aspects: &[&str],
+        proof_strategy: ProofStrategy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         if !self.held_identities.contains(identity) {
             return Err(RegisterDestinationError::UnknownIdentity);
         }
         self.upstream_app_destinations
-            .register_single(identity, app_name, aspects)
+            .register_single(identity, app_name, aspects, proof_strategy)
     }
 
     pub fn hold_identity(
@@ -366,7 +367,7 @@ impl<S: EngineStorage> EngineState<S> {
             .upstream_app_destinations
             .lookup(destination, DestinationType::Single)
             .ok_or(WriteSelfAnnounceError::NotRegisteredAsSingle)?;
-        let UpstreamAppDestinationKind::Single { identity } = registered.kind else {
+        let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
             return Err(WriteSelfAnnounceError::NotRegisteredAsSingle);
         };
         let identity = self
@@ -525,7 +526,7 @@ impl<S: EngineStorage> EngineState<S> {
                 let registered = self
                     .upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Single)?;
-                let UpstreamAppDestinationKind::Single { identity } = registered.kind else {
+                let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
                     return None;
                 };
                 let identity = self.held_identities.get(&identity)?;
@@ -809,7 +810,7 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let destination = state
-            .register_single_destination(&node, "personal", &["node"])
+            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
             .unwrap();
         state
             .schedule_announce(
@@ -960,7 +961,7 @@ mod tests {
         );
 
         let single = state
-            .register_single_destination(&node, "personal", &["node"])
+            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
             .unwrap();
         let config = AnnounceConfig {
             app_data: b"",
@@ -994,7 +995,7 @@ mod tests {
         let mut state = personal_node_announcer();
         let second = state.hold_identity(second_secret_key()).unwrap();
         let second_destination = state
-            .register_single_destination(&second, "personal", &["second"])
+            .register_single_destination(&second, "personal", &["second"], ProofStrategy::ProveNone)
             .unwrap();
         state
             .schedule_announce(
@@ -1043,7 +1044,7 @@ mod tests {
         let mut state = personal_node_announcer();
         let node = state.transport_identity().unwrap();
         let registered = state
-            .register_single_destination(&node, "personal", &["node"])
+            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
             .expect("re-registration of the announced name is idempotent");
         assert_eq!(state.self_announced_destinations(), &[registered]);
         assert_eq!(state.upstream_app_destinations().count(), 1);
@@ -1054,7 +1055,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let unheld = IdentityHash::new([0x4c; 16]);
         assert_eq!(
-            state.register_single_destination(&unheld, "personal", &["node"]),
+            state.register_single_destination(
+                &unheld,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone
+            ),
             Err(RegisterDestinationError::UnknownIdentity),
         );
         assert!(state
@@ -1127,7 +1133,7 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let single = state
-            .register_single_destination(&node, "personal", &["node"])
+            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
             .unwrap();
 
         let header = WirePacketHeader {
@@ -1248,7 +1254,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
-            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+            )
             .unwrap();
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
 
@@ -1269,7 +1280,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
-            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+            )
             .unwrap();
         let raw = sealed_single_packet(&identity, destination, b"hello-single");
 
@@ -1291,7 +1307,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let destination = state
-            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+            )
             .unwrap();
         let raw = sealed_single_packet(&identity, destination, b"hello-single");
 
@@ -1328,10 +1349,10 @@ mod tests {
         assert_eq!(held_b, identity_b.identity_hash());
 
         let dest_a = state
-            .register_single_destination(&held_a, "personal", &["a"])
+            .register_single_destination(&held_a, "personal", &["a"], ProofStrategy::ProveNone)
             .unwrap();
         let dest_b = state
-            .register_single_destination(&held_b, "personal", &["b"])
+            .register_single_destination(&held_b, "personal", &["b"], ProofStrategy::ProveNone)
             .unwrap();
 
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
@@ -1386,7 +1407,7 @@ mod tests {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
-            .register_single_destination(&held, "personal", &["node"])
+            .register_single_destination(&held, "personal", &["node"], ProofStrategy::ProveNone)
             .unwrap();
 
         let raw = sealed_single_packet_routed(
@@ -1421,7 +1442,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let registered = state
-            .register_single_destination(&identity.identity_hash(), "personal", &["other"])
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["other"],
+                ProofStrategy::ProveNone,
+            )
             .unwrap();
         let unregistered = derive_destination_hash(
             &identity.identity_hash(),

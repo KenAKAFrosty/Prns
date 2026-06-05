@@ -10,10 +10,21 @@ use crate::routing::announce::{
 use crate::routing::storage::ColumnsFull;
 use crate::wire::{DestinationHash, DestinationType};
 
+/// RNS 1.3.1 `Destination.PROVE_NONE` / `PROVE_ALL`: whether a destination
+/// answers delivered packets with a signed proof of receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofStrategy {
+    ProveNone,
+    ProveAll,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpstreamAppDestinationKind {
     Plain,
-    Single { identity: IdentityHash },
+    Single {
+        identity: IdentityHash,
+        proof_strategy: ProofStrategy,
+    },
 }
 
 impl UpstreamAppDestinationKind {
@@ -80,6 +91,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         identity_hash: &IdentityHash,
         app_name: &str,
         aspects: &[&str],
+        proof_strategy: ProofStrategy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
@@ -87,6 +99,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
             destination,
             UpstreamAppDestinationKind::Single {
                 identity: *identity_hash,
+                proof_strategy,
             },
             name_hash,
         )
@@ -182,7 +195,12 @@ mod tests {
         let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
         assert_eq!(
-            destinations.register_single(&identity_hash, "personal", &["node"]),
+            destinations.register_single(
+                &identity_hash,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone
+            ),
             Ok(DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59"))),
         );
     }
@@ -246,7 +264,12 @@ mod tests {
         let mut destinations = TestDestinations::default();
         let plain = destinations.register_plain("personal", &["node"]).unwrap();
         let single = destinations
-            .register_single(&identity_hash, "personal", &["node"])
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+            )
             .unwrap();
 
         assert_ne!(plain, single);
@@ -265,7 +288,12 @@ mod tests {
         let mut destinations = TestDestinations::default();
         let plain = destinations.register_plain("personal", &["node"]).unwrap();
         let single = destinations
-            .register_single(&identity_hash, "personal", &["node"])
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+            )
             .unwrap();
 
         let views: heapless::Vec<UpstreamAppDestination, 8> = destinations.iter().collect();
@@ -276,9 +304,51 @@ mod tests {
         assert_eq!(
             views[1].kind,
             UpstreamAppDestinationKind::Single {
-                identity: identity_hash
+                identity: identity_hash,
+                proof_strategy: ProofStrategy::ProveAll,
             }
         );
         assert_eq!(views[0].name_hash, views[1].name_hash);
+    }
+
+    #[test]
+    fn each_registration_keeps_its_own_proof_strategy() {
+        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        let mut destinations = TestDestinations::default();
+        let proving = destinations
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["proving"],
+                ProofStrategy::ProveAll,
+            )
+            .unwrap();
+        let silent = destinations
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["silent"],
+                ProofStrategy::ProveNone,
+            )
+            .unwrap();
+
+        assert_eq!(
+            destinations
+                .lookup(&proving, DestinationType::Single)
+                .map(|found| found.kind),
+            Some(UpstreamAppDestinationKind::Single {
+                identity: identity_hash,
+                proof_strategy: ProofStrategy::ProveAll,
+            }),
+        );
+        assert_eq!(
+            destinations
+                .lookup(&silent, DestinationType::Single)
+                .map(|found| found.kind),
+            Some(UpstreamAppDestinationKind::Single {
+                identity: identity_hash,
+                proof_strategy: ProofStrategy::ProveNone,
+            }),
+        );
     }
 }

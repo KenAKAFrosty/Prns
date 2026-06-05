@@ -5,6 +5,7 @@ use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::RegisteredInterface;
 use crate::routing::storage::EngineStorage;
+use crate::routing::upstream_app_destinations::ProofStrategy;
 
 /// One destination this node serves from the moment it starts. The runtime
 /// control surface will let apps register more later; these are the ones the
@@ -18,6 +19,7 @@ pub enum StartingDestinationConfig<'a> {
         app_name: &'a str,
         aspects: &'a [&'a str],
         identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+        proof_strategy: ProofStrategy,
         announce: Option<AnnounceConfig<'a>>,
     },
 }
@@ -70,13 +72,14 @@ impl Prns {
                     app_name,
                     aspects,
                     identity_secret_key,
+                    proof_strategy,
                     announce,
                 } => {
                     let identity = engine
                         .hold_identity(identity_secret_key)
                         .expect("recipe identities fit the store");
                     let registered = engine
-                        .register_single_destination(&identity, app_name, aspects)
+                        .register_single_destination(&identity, app_name, aspects, proof_strategy)
                         .expect("recipe single destination config is valid");
                     if let Some(announce) = announce {
                         engine

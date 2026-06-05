@@ -44,6 +44,7 @@ use personal_rns::interfaces::substrate::{
 use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::FixedInline;
+use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{StartingDestinationConfig, Prns, PrnsEvent, Recipe};
 
@@ -152,6 +153,7 @@ async fn node_task(
                 app_name: "lxmf",
                 aspects: &["delivery"],
                 identity_secret_key: secret_key,
+                proof_strategy: ProofStrategy::ProveAll,
                 announce: Some(AnnounceConfig {
                     app_data: SELF_ANNOUNCE_APP_DATA,
                     schedule: ReannounceSchedule::default(),

@@ -27,6 +27,7 @@ use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
+use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, StartingDestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
@@ -103,6 +104,7 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
                 identity_secret_key: load_identity_secret_key(),
+                proof_strategy: ProofStrategy::ProveAll,
                 announce: Some(AnnounceConfig {
                     app_data: SELF_ANNOUNCE_APP_DATA,
                     schedule: ReannounceSchedule::every(10_000),
