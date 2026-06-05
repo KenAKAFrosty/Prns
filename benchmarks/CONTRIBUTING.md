@@ -22,7 +22,7 @@ and under `esp_alloc::HEAP.stats()` on the microcontroller when that route lands
 
 | Axis | Where | Status |
 |------|-------|--------|
-| **Memory** — peak footprint + allocation count (*the core makes none*) | `src/bin/mem_profile.rs`, `src/bin/mem_soak.rs` (dhat) | ✅ host route; the `FixedCapacity` path measures **0** allocations |
+| **Memory** — peak footprint + allocation count (*the core makes none*) | `src/bin/mem_profile.rs`, `src/bin/mem_soak.rs` (dhat) | ✅ host route; the `FixedInline` path measures **0** allocations |
 | **Throughput / Latency** — packets & bytes/sec, per-packet time | `benches/throughput.rs` (criterion) | 🟡 first bench landed |
 | **Binary size** — what the engine costs on a constrained target | `scripts/binary-size.sh` (`cargo bloat` on the ESP32-C6 / riscv32imac firmware) | 🟡 engine ≈ **6.8 KiB** `.text` — crypto (sha2/curve25519/aes/ed25519) is the bulk |
 | **Run on the hardware, down to the microcontroller** | the same scenarios + `esp_alloc::HEAP.stats()` in firmware | ⬜ next route |

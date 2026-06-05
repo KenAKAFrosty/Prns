@@ -45,7 +45,7 @@ fn main() {
         announces.len()
     );
     measure::<GrowableHeap>("GrowableHeap", &announces);
-    measure::<Cap>("FixedCapacity", &announces);
+    measure::<Cap>("FixedInline", &announces);
 
     let end = dhat::HeapStats::get();
     println!(

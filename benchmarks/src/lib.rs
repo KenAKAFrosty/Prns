@@ -13,10 +13,9 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InboundPacket, InterfaceId};
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::announce::SelfAnnounceEntropy;
-use personal_rns::routing::storage::{EngineStorage, FixedCapacity, GrowableHeap};
+use personal_rns::routing::storage::{EngineStorage, FixedInline, GrowableHeap};
 
-/// The inline no_std storage preset the runtime/tests use (8 capacity knobs).
-pub type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8, 128>;
+pub type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
 
 const JITTER: JitterSeed = JitterSeed(0x5151_5151_5151_5151);
 
@@ -49,7 +48,10 @@ pub fn announce_fixtures(count: usize) -> Vec<Vec<u8>> {
         let entropy =
             SelfAnnounceEntropy::new([(k as u8).wrapping_add(0x40); SelfAnnounceEntropy::LEN]);
         let mut buf = [0u8; 512];
-        if let Some(len) = sender.write_due_self_announce(InstantMillis(1_000), entropy, &mut buf) {
+        let written = sender
+            .write_due_self_announce(InstantMillis(1_000), entropy, &mut buf)
+            .expect("self-announce serializes");
+        if let Some(len) = written {
             announces.push(buf[..len].to_vec());
         }
     }
