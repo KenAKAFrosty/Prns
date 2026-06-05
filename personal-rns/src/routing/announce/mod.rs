@@ -111,6 +111,17 @@ pub fn derive_plain_destination_hash(dotted_name_hash: &DottedNameHash) -> Desti
     DestinationHash::new(truncated)
 }
 
+pub fn derive_single_destination_hash(
+    identity_hash: &IdentityHash,
+    app_name: &str,
+    aspects: &[&str],
+) -> Result<DestinationHash, ExpandNameError> {
+    Ok(derive_destination_hash(
+        identity_hash,
+        &expand_name(app_name, aspects)?,
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RatchetKey([u8; RATCHET_LEN]);
 
@@ -571,6 +582,19 @@ mod tests {
                 &DottedNameHash::new(a("9618ccc8f5ebce060084")),
             ),
             DestinationHash::new(a("16f8a6d3f7d7c5b6f106d293804d7314")),
+        );
+    }
+
+    #[test]
+    fn derive_single_destination_hash_composes_the_rns_1_3_1_address_from_name_parts() {
+        let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
+        assert_eq!(
+            derive_single_destination_hash(&identity_hash, "personal", &["node"]),
+            Ok(DestinationHash::new(a("c3cfae69b36bb6e3bbfd96a3b5867a59"))),
+        );
+        assert_eq!(
+            derive_single_destination_hash(&identity_hash, "per.sonal", &["node"]),
+            Err(ExpandNameError::DotInComponent),
         );
     }
 
