@@ -112,7 +112,7 @@ mod tests {
     use super::*;
     use crate::wire::{
         ContextFlag, DestinationHash, IfacFlag, PropagationType, TransportId, WireContext,
-        WirePacketHeader, HEADER_LEN,
+        WirePacketHeader, HEADER_MIN_LEN,
     };
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
@@ -132,7 +132,7 @@ mod tests {
         InterfaceId::new([byte; 16])
     }
 
-    fn header_bytes(packet_type: PacketType) -> [u8; HEADER_LEN] {
+    fn header_bytes(packet_type: PacketType) -> [u8; HEADER_MIN_LEN] {
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,
             context_flag: ContextFlag::Unset,
@@ -144,8 +144,8 @@ mod tests {
             destination: DestinationHash::new([0xA5; 16]),
             context: WireContext::None,
         };
-        let mut bytes = [0u8; HEADER_LEN];
-        assert_eq!(header.write(&mut bytes).unwrap(), HEADER_LEN);
+        let mut bytes = [0u8; HEADER_MIN_LEN];
+        assert_eq!(header.write(&mut bytes).unwrap(), HEADER_MIN_LEN);
         bytes
     }
 
@@ -248,8 +248,8 @@ mod tests {
                 destination: DestinationHash::new([0xA5; 16]),
                 context: WireContext::None,
             };
-            let mut bytes = [0u8; HEADER_LEN];
-            assert_eq!(header.write(&mut bytes).unwrap(), HEADER_LEN);
+            let mut bytes = [0u8; HEADER_MIN_LEN];
+            assert_eq!(header.write(&mut bytes).unwrap(), HEADER_MIN_LEN);
             let packet = InboundPacket {
                 arrived_at: InstantMillis(23),
                 source_interface: iface(0x06),

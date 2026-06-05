@@ -24,6 +24,7 @@ pub struct HeapHeldIdentityColumns {
     /// pointers; the secret bytes sit at one stable heap address for their whole
     /// life, regrowth copies pointers, and the only copy of the key material is
     /// the one whose drop zeroizes it.
+    #[allow(clippy::vec_box)]
     secrets: Vec<Box<HeldSecrets>>,
 }
 

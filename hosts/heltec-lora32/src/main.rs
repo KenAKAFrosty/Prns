@@ -404,7 +404,7 @@ async fn main(spawner: Spawner) {
     .expect("static self-announce config is valid");
     drop(secret_key);
     let mut dest_hex: HString<16> = HString::new();
-    if let Some(dest) = state.self_announced_destination() {
+    if let Some(dest) = state.self_announced_destinations().first() {
         for byte in dest.as_bytes().iter().take(4) {
             let _ = write!(dest_hex, "{byte:02x}");
         }

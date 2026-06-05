@@ -8,9 +8,9 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::{
     Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_FIXED_FIELDS_LEN,
 };
-use crate::wire::{DestinationHash, HEADER_LEN, MTU};
+use crate::wire::{DestinationHash, HEADER_MIN_LEN, MTU};
 
-pub const HELD_APP_DATA_LIMIT: usize = MTU - HEADER_LEN - ANNOUNCE_FIXED_FIELDS_LEN;
+pub const HELD_APP_DATA_LIMIT: usize = MTU - HEADER_MIN_LEN - ANNOUNCE_FIXED_FIELDS_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParkOutcome {
