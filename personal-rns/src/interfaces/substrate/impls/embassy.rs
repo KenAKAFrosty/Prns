@@ -26,6 +26,14 @@ struct InboundSlot<const MTU: usize> {
     bytes: [u8; MTU],
 }
 
+impl<const MTU: usize> InboundSlot<MTU> {
+    const EMPTY: Self = Self {
+        arrived_at: InstantMillis(0),
+        len: 0,
+        bytes: [0u8; MTU],
+    };
+}
+
 struct OutboundSlot<const MTU: usize> {
     len: u16,
     bytes: [u8; MTU],
@@ -39,7 +47,9 @@ impl<const MTU: usize> OutboundSlot<MTU> {
 }
 
 pub struct EmbassyInterfaceChannels<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
-    inbound: Channel<CriticalSectionRawMutex, InboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
+    inbound_slots: ConstStaticCell<[InboundSlot<MTU>; MAX_BUFFERED_PACKETS]>,
+    inbound:
+        StaticCell<zerocopy_channel::Channel<'static, CriticalSectionRawMutex, InboundSlot<MTU>>>,
     outbound_slots: ConstStaticCell<[OutboundSlot<MTU>; MAX_BUFFERED_PACKETS]>,
     outbound:
         StaticCell<zerocopy_channel::Channel<'static, CriticalSectionRawMutex, OutboundSlot<MTU>>>,
@@ -52,7 +62,8 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
 {
     pub const fn new() -> Self {
         Self {
-            inbound: Channel::new(),
+            inbound_slots: ConstStaticCell::new([InboundSlot::EMPTY; MAX_BUFFERED_PACKETS]),
+            inbound: StaticCell::new(),
             outbound_slots: ConstStaticCell::new([OutboundSlot::EMPTY; MAX_BUFFERED_PACKETS]),
             outbound: StaticCell::new(),
             command: Channel::new(),
@@ -69,26 +80,24 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Default
     }
 }
 
-pub struct EmbassyInboundSink<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
-    producer: Sender<'static, CriticalSectionRawMutex, InboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
+pub struct EmbassyInboundSink<const MTU: usize> {
+    producer: zerocopy_channel::Sender<'static, CriticalSectionRawMutex, InboundSlot<MTU>>,
     wake: &'static WakeSignal,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InboundSink
-    for EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS>
-{
+impl<const MTU: usize> InboundSink for EmbassyInboundSink<MTU> {
     fn submit(&mut self, fill: impl FnOnce(&mut [u8]) -> usize) -> Result<(), QueueFull> {
-        let mut slot = InboundSlot {
-            arrived_at: InstantMillis(EmbassyInstant::now().as_millis()),
-            len: 0,
-            bytes: [0u8; MTU],
-        };
-        slot.len = fill(&mut slot.bytes) as u16;
-        let queued = self.producer.try_send(slot);
-        // Wake even on a full ring — a backed-up ring is exactly when the host
+        // Wake on both paths — a backed-up ring is exactly when the host
         // should wake to drain. Coalesced: `Signal` holds one pending value.
+        let Some(slot) = self.producer.try_send() else {
+            self.wake.signal(());
+            return Err(QueueFull);
+        };
+        slot.arrived_at = InstantMillis(EmbassyInstant::now().as_millis());
+        slot.len = fill(&mut slot.bytes) as u16;
+        self.producer.send_done();
         self.wake.signal(());
-        queued.map_err(|_| QueueFull)
+        Ok(())
     }
 }
 
@@ -154,30 +163,29 @@ pub struct EmbassyHostSubstrate<const MTU: usize, const MAX_BUFFERED_PACKETS: us
 impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Substrate
     for EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>
 {
-    type InboundSink = EmbassyInboundSink<MTU, MAX_BUFFERED_PACKETS>;
+    type InboundSink = EmbassyInboundSink<MTU>;
     type OutboundDrain = EmbassyOutboundDrain<MTU>;
     type Control = EmbassyControlEndpoint;
 }
 
-pub struct EmbassyInterfaceHandle<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
+pub struct EmbassyInterfaceHandle<const MTU: usize> {
     id: InterfaceId,
-    inbound: Receiver<'static, CriticalSectionRawMutex, InboundSlot<MTU>, MAX_BUFFERED_PACKETS>,
+    inbound: zerocopy_channel::Receiver<'static, CriticalSectionRawMutex, InboundSlot<MTU>>,
     outbound: zerocopy_channel::Sender<'static, CriticalSectionRawMutex, OutboundSlot<MTU>>,
     commands: Sender<'static, CriticalSectionRawMutex, ControlCommand, CONTROL_DEPTH>,
     reports: Receiver<'static, CriticalSectionRawMutex, ControlReport, CONTROL_DEPTH>,
 }
 
-impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InterfaceHandle
-    for EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>
-{
+impl<const MTU: usize> InterfaceHandle for EmbassyInterfaceHandle<MTU> {
     fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
         let mut drained = 0;
-        while let Ok(mut slot) = self.inbound.try_receive() {
+        while let Some(slot) = self.inbound.try_receive() {
             f(InboundPacket {
                 arrived_at: slot.arrived_at,
                 source_interface: self.id,
                 bytes: &mut slot.bytes[..slot.len as usize],
             });
+            self.inbound.receive_done();
             drained += 1;
         }
         drained
@@ -207,7 +215,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InterfaceHandle
 
 pub struct EmbassyInterfaceSeam<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> {
     pub worker_context: InterfaceWorkerContext<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
-    pub runtime_handle: EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>,
+    pub runtime_handle: EmbassyInterfaceHandle<MTU>,
 }
 
 impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
@@ -218,6 +226,10 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
         channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
         wake: &'static WakeSignal,
     ) -> Self {
+        let inbound = channels.inbound.init(zerocopy_channel::Channel::new(
+            channels.inbound_slots.take(),
+        ));
+        let (inbound_sender, inbound_receiver) = inbound.split();
         let outbound = channels.outbound.init(zerocopy_channel::Channel::new(
             channels.outbound_slots.take(),
         ));
@@ -225,7 +237,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
         Self {
             worker_context: InterfaceWorkerContext {
                 inbound: EmbassyInboundSink {
-                    producer: channels.inbound.sender(),
+                    producer: inbound_sender,
                     wake,
                 },
                 outbound: EmbassyOutboundDrain {
@@ -239,7 +251,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
             },
             runtime_handle: EmbassyInterfaceHandle {
                 id,
-                inbound: channels.inbound.receiver(),
+                inbound: inbound_receiver,
                 outbound: outbound_sender,
                 commands: channels.command.sender(),
                 reports: channels.report.receiver(),
@@ -250,7 +262,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
     pub fn start_interface<I>(
         self,
         interface: I,
-    ) -> StartedInterface<EmbassyInterfaceHandle<MTU, MAX_BUFFERED_PACKETS>, I::Worker>
+    ) -> StartedInterface<EmbassyInterfaceHandle<MTU>, I::Worker>
     where
         I: Interface<EmbassyHostSubstrate<MTU, MAX_BUFFERED_PACKETS>>,
     {

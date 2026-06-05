@@ -1648,6 +1648,7 @@ dependencies = [
  "log",
  "lora-phy",
  "sha2",
+ "static_cell",
  "x25519-dalek",
  "zeroize",
 ]

@@ -153,17 +153,17 @@ type AutoContext =
 type SerialContext =
     InterfaceWorkerContext<EmbassyHostSubstrate<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>>;
 
-/// The runtime holds one handle type, but the S3's four interfaces have four
-/// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU, and
-/// per-interface depths) — so their `EmbassyInterfaceHandle`s are four distinct
-/// types. This enum unifies them into the one `InterfaceHandle` the
-/// [`Runtime`] pools, dispatching each call to the held variant (the
-/// contract analog of the old `HostWorker` enum; explicit per the no-wildcard rule).
+/// The runtime holds one handle type, but the S3's interfaces have
+/// differently-sized seams (the AutoInterface's 1196 B vs the engine MTU) — so
+/// their `EmbassyInterfaceHandle`s are distinct types. This enum unifies them
+/// into the one `InterfaceHandle` the [`Runtime`] pools, dispatching each call
+/// to the held variant (the contract analog of the old `HostWorker` enum;
+/// explicit per the no-wildcard rule).
 enum HeltecHandle {
-    Auto(EmbassyInterfaceHandle<HARDWARE_MTU, AUTO_MAX_BUFFERED_PACKETS>),
-    Serial(EmbassyInterfaceHandle<SERIAL_MTU, SERIAL_MAX_BUFFERED_PACKETS>),
-    Lora(EmbassyInterfaceHandle<MTU, LORA_MAX_BUFFERED_PACKETS>),
-    EspNow(EmbassyInterfaceHandle<MTU, ESPNOW_MAX_BUFFERED_PACKETS>),
+    Auto(EmbassyInterfaceHandle<HARDWARE_MTU>),
+    Serial(EmbassyInterfaceHandle<SERIAL_MTU>),
+    Lora(EmbassyInterfaceHandle<MTU>),
+    EspNow(EmbassyInterfaceHandle<MTU>),
 }
 
 impl InterfaceHandle for HeltecHandle {
