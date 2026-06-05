@@ -1,7 +1,12 @@
 use dioxus::prelude::*;
 use dioxus_i18n::t;
 
+use crate::components::MarkdownBody;
 use crate::routes::Route;
+
+// Generated from the result substrate by `benchmarks/render_results`; the GitHub
+// RESULTS.md and this page render the same file, so the table can't drift.
+const RESULTS_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
 
 /// Performance page. Methodology-first scaffold: it states what gets measured
 /// and how, honestly, with the actual figures to drop in as the suite settles.
@@ -51,8 +56,8 @@ pub fn BenchmarksPage() -> Element {
             }
         }
 
-        p { class: "mt-8 text-sm text-mid",
-            "Full results are landing here as the suite stabilizes."
+        section { class: "mt-10",
+            MarkdownBody { source: RESULTS_MD }
         }
     }
 }

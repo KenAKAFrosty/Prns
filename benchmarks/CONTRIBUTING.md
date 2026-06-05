@@ -23,7 +23,7 @@ and under `esp_alloc::HEAP.stats()` on the microcontroller when that route lands
 | Axis | Where | Status |
 |------|-------|--------|
 | **Memory** — peak footprint + allocation count (*the core makes none*) | `src/bin/mem_profile.rs`, `src/bin/mem_soak.rs` (dhat) | ✅ host route; the `FixedInline` path measures **0** allocations |
-| **Throughput / Latency** — packets & bytes/sec, per-packet time | `benches/throughput.rs` (criterion) | 🟡 first bench landed |
+| **Throughput / Latency** — packets & bytes/sec, per-packet time | `benches/throughput.rs` (criterion), `src/bin/bench_result.rs` | 🟡 criterion bench landed; first cross-impl row (ours vs RNS) in [`RESULTS.md`](RESULTS.md) |
 | **Binary size** — what the engine costs on a constrained target | `scripts/binary-size.sh` (`cargo bloat` on the ESP32-C6 / riscv32imac firmware) | 🟡 engine ≈ **6.8 KiB** `.text` — crypto (sha2/curve25519/aes/ed25519) is the bulk |
 | **Run on the hardware, down to the microcontroller** | the same scenarios + `esp_alloc::HEAP.stats()` in firmware | ⬜ next route |
 
@@ -55,16 +55,25 @@ first hard proof of wire-exactness against RNS. Every backend here `load_corpus`
 
    ```json
    {"scenario":"announce-256","scenario_version":1,"implementation":"personal-rns",
-    "commit":"f987130","toolchain":"rustc 1.96.0","host":"aarch64-apple-darwin",
-    "axis":"throughput","metric":"ingest_wall_ms","value":5.64,"unit":"ms"}
+    "commit":"f400e59","toolchain":"1.96.0","host":"aarch64-apple-darwin",
+    "axis":"throughput","metric":"ingest_announces_per_sec","value":47897.5,"unit":"announce/s"}
    ```
+
+Those rows are the **result substrate**: each implementation owns one file,
+`results/<scenario>/<impl>.jsonl` (so two languages never contend on a write). `render_results`
+pivots every committed row into [`RESULTS.md`](RESULTS.md) — the GitHub-facing comparison table —
+and the website **includes that same generated file**, so the numbers can't drift between the repo
+and the site. `render_results --check` is the drift gate (re-render, diff, fail if stale), the
+sibling of `gen_corpus --check`. The RNS reference is the worked second column: `reference/driver.py`
+replays the corpus through the real RNS announce path (`Packet.unpack` + `Identity.validate_announce`)
+and emits its rows.
 
 Our runners are the worked example. Measurement tooling stays per-language (you can't share
 dhat with Python), so **throughput, binary size, and conformance compare cleanly across
 implementations; memory and latency stay within-impl with loud caveats** — a cross-language
 RSS race between a GC and a no-alloc core would be dishonest. The RNS 1.3.1 reference is
-already the first "other implementation": it mints the corpus (`reference/gen.py`), and the
-engine reproduces it byte-for-byte.
+already the first "other implementation": it mints the corpus (`reference/gen.py`), the engine
+reproduces it byte-for-byte, and both resolve every route on ingest (see [`RESULTS.md`](RESULTS.md)).
 
 One honest parity nuance the byte-diff surfaced: RNS fills `random_hash`'s trailing 5 bytes
 with `int(time.time())` (unix **seconds**); our engine writes its `now` (**milliseconds**)
@@ -81,6 +90,9 @@ cargo run --release --bin mem_profile             # static footprint + per-workl
 cargo run --release --bin mem_soak                # long-run tick soak (memory + state stay flat?)
 MEM_SOAK_TICKS=50000000 MEM_SOAK_STEP_MS=100 cargo run --release --bin mem_soak
 cargo bench                                       # criterion throughput/latency
+cargo run --release --bin bench_result            # measure ours -> results/announce-256/personal-rns.jsonl
+cargo run --release --bin render_results          # rebuild RESULTS.md from results/
+cargo run --release --bin render_results -- --check  # is the table in sync with the substrate?
 ```
 
 The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv setup):
@@ -89,6 +101,7 @@ The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv 
 cd reference && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python gen.py --check           # reference parity: RNS == the committed corpus
 .venv/bin/python gen.py                    # regenerate packets.hex from RNS (canonical)
+.venv/bin/python driver.py                 # measure RNS -> results/announce-256/rns-1.3.1.jsonl
 ```
 
 And the binary-size axis, from the repo root (it builds the ESP32-C6 firmware):

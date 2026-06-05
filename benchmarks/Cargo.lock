@@ -547,6 +547,8 @@ dependencies = [
  "criterion",
  "dhat",
  "personal-rns",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
