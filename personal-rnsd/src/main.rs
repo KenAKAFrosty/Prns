@@ -24,7 +24,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::runtime::{block_on, DestinationConfig, Prns, PrnsEvent, Recipe};
+use personal_rns::runtime::{block_on, StartingDestinationConfig, Prns, PrnsEvent, Recipe};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -105,7 +105,7 @@ fn main() {
         Recipe {
             // A mains-powered std host: unbounded heap storage, no fixed cap.
             engine_storage: GrowableHeap,
-            starting_destinations: [DestinationConfig::Single {
+            starting_destinations: [StartingDestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
                 identity_secret_key: load_identity_secret_key(),

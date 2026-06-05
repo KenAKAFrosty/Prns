@@ -28,7 +28,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, DestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{block_on, StartingDestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEvent, UiState};
 
@@ -99,7 +99,7 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
     block_on(Prns::run(
         Recipe {
             engine_storage: GrowableHeap,
-            starting_destinations: [DestinationConfig::Single {
+            starting_destinations: [StartingDestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
                 identity_secret_key: load_identity_secret_key(),

@@ -44,7 +44,7 @@ use personal_rns::interfaces::{
 use personal_rns::routing::storage::FixedInline;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{DestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{StartingDestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui as screen;
 
@@ -396,7 +396,7 @@ async fn node_task(
     Prns::run(
         Recipe {
             engine_storage: ENGINE_STORAGE,
-            starting_destinations: [DestinationConfig::Single {
+            starting_destinations: [StartingDestinationConfig::Single {
                 app_name: "lxmf",
                 aspects: &["delivery"],
                 identity_secret_key: secret_key,

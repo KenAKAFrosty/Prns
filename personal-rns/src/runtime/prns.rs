@@ -9,7 +9,7 @@ use crate::routing::storage::EngineStorage;
 /// One destination this node serves from the moment it starts. The runtime
 /// control surface will let apps register more later; these are the ones the
 /// Recipe stands up before the first packet is ingested.
-pub enum DestinationConfig<'a> {
+pub enum StartingDestinationConfig<'a> {
     Plain {
         app_name: &'a str,
         aspects: &'a [&'a str],
@@ -48,7 +48,7 @@ impl Prns {
         Ho: Host,
         I: InterfaceSet,
         I::Item: RegisteredInterface,
-        D: IntoIterator<Item = DestinationConfig<'a>>,
+        D: IntoIterator<Item = StartingDestinationConfig<'a>>,
         OnEvent: FnMut(PrnsEvent<'_>),
     {
         let Recipe {
@@ -61,12 +61,12 @@ impl Prns {
         let mut engine = EngineState::<S>::default();
         for destination in starting_destinations {
             match destination {
-                DestinationConfig::Plain { app_name, aspects } => {
+                StartingDestinationConfig::Plain { app_name, aspects } => {
                     engine
                         .register_plain_destination(app_name, aspects)
                         .expect("recipe plain destination config is valid");
                 }
-                DestinationConfig::Single {
+                StartingDestinationConfig::Single {
                     app_name,
                     aspects,
                     identity_secret_key,

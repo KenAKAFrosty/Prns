@@ -45,7 +45,7 @@ use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenIn
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::FixedInline;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{DestinationConfig, Prns, PrnsEvent, Recipe};
+use personal_rns::runtime::{StartingDestinationConfig, Prns, PrnsEvent, Recipe};
 
 esp_app_desc!();
 
@@ -148,7 +148,7 @@ async fn node_task(
     Prns::run(
         Recipe {
             engine_storage: ENGINE_STORAGE,
-            starting_destinations: [DestinationConfig::Single {
+            starting_destinations: [StartingDestinationConfig::Single {
                 app_name: "lxmf",
                 aspects: &["delivery"],
                 identity_secret_key: secret_key,
