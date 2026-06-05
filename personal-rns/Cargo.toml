@@ -118,6 +118,12 @@ log = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
 proptest = "1"
+# Host-side execution of the embassy seam + worker tests (`--features
+# embassy-host`): a critical-section impl for the seam's mutex, and the std
+# time driver so worker deadlines (e.g. esp-now's coalesce linger) actually
+# fire under `block_on`. Dev-only; cross-builds never see these.
+critical-section = { version = "1", features = ["std"] }
+embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 
 [lints]
 workspace = true

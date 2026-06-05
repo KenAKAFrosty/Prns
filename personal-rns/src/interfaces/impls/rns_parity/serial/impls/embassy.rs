@@ -24,7 +24,6 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
     let mut decoder: RnsSerialDecoder<SERIAL_MTU> = RnsSerialDecoder::new();
     let mut read_buf = [0u8; 64];
     let mut frame_buf = [0u8; rns_serial_framing::max_encoded_len(SERIAL_MTU)];
-    let mut packet_buf = [0u8; SERIAL_MTU];
 
     loop {
         match select3(
@@ -51,10 +50,11 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
             Either3::Third(ControlCommand::Stop) => break,
         }
 
-        while let Some(len) = context.outbound.try_next_into(&mut packet_buf) {
-            if let Ok(m) = rns_serial_framing::encode(&packet_buf[..len], &mut frame_buf) {
+        while let Some(mut lease) = context.outbound.lease() {
+            if let Ok(m) = rns_serial_framing::encode(lease.packet(), &mut frame_buf) {
                 let _ = with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m])).await;
             }
+            lease.complete();
         }
     }
     context.control.report(ControlReport::Stopped);

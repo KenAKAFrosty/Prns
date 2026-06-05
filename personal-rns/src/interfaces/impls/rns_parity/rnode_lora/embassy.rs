@@ -108,7 +108,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
 
     let mut rx_buf = [0u8; LORA_SINGLE_FRAME_MAX];
     let mut tx_frame = [0u8; LORA_SINGLE_FRAME_MAX];
-    let mut out_pkt = [0u8; MTU];
     let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
     let mut seq: u8 = 0;
 
@@ -155,11 +154,11 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
                 }
             }
             ServeStep::OutboundReady => {
-                let Some(plen) = context.outbound.try_next_into(&mut out_pkt) else {
+                let Some(mut lease) = context.outbound.lease() else {
                     continue;
                 };
-                for index in 0..air_frame_count(plen) {
-                    match encode_air_frame_part(&out_pkt[..plen], seq, index, &mut tx_frame) {
+                for index in 0..air_frame_count(lease.packet().len()) {
+                    match encode_air_frame_part(lease.packet(), seq, index, &mut tx_frame) {
                         Ok(n) => {
                             if let Err(e) = lora
                                 .prepare_for_tx(
@@ -184,6 +183,7 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize, RK, DLY>(
                         }
                     }
                 }
+                lease.complete();
                 seq = seq.wrapping_add(0x10);
             }
         }

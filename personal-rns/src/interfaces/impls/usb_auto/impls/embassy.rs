@@ -42,7 +42,6 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
     let mut decoder: RnsSerialDecoder<MAX_MESSAGE_BYTES> = RnsSerialDecoder::new();
     let mut read_buf = [0u8; 64];
     let mut frame_buf = [0u8; MAX_FRAMED_BYTES];
-    let mut packet_buf = [0u8; USB_AUTO_MTU];
     let mut host_link = HostLink::AwaitingHello;
 
     loop {
@@ -87,14 +86,14 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
         // Always drain whatever the runtime queued — keeping the ring clear so the
         // engine never blocks — but only put it on the wire once a host is linked.
         // Before that, the announces are dropped (there is no peer to hear them), not
-        // streamed into a void. `try_next_into` copies out so the write can cross an
-        // `.await`.
-        while let Some(len) = context.outbound.try_next_into(&mut packet_buf) {
+        // streamed into a void.
+        while let Some(mut lease) = context.outbound.lease() {
             if matches!(host_link, HostLink::Linked) {
-                if let Ok(m) = Message::Data(&packet_buf[..len]).write_framed(&mut frame_buf) {
+                if let Ok(m) = Message::Data(lease.packet()).write_framed(&mut frame_buf) {
                     let _ = with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m])).await;
                 }
             }
+            lease.complete();
         }
     }
     context.control.report(ControlReport::Stopped);

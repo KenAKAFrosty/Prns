@@ -146,7 +146,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
     let mut discovery_read_buf = [0u8; 64];
     let mut unicast_discovery_read_buf = [0u8; 64];
     let mut data_read_buf = [0u8; HARDWARE_MTU];
-    let mut out_buf = [0u8; HARDWARE_MTU];
     let mut beacon = Ticker::every(Duration::from_millis(BEACON_INTERVAL_MS));
     let mut cycle: u32 = 0;
 
@@ -232,18 +231,21 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                 );
             }
             Either::Second(()) => {
-                while let Some(len) = context.outbound.try_next_into(&mut out_buf) {
+                while let Some(mut lease) = context.outbound.lease() {
                     let mut targets: HVec<Ipv6Addr, MAX_PEERS> = HVec::new();
                     for addr in brain.known_peer_addresses() {
                         let _ = targets.push(addr);
                     }
                     if targets.is_empty() {
-                        log::info!("RNS_AUTO TX {len}B dropped — no peers yet");
+                        log::info!(
+                            "RNS_AUTO TX {}B dropped — no peers yet",
+                            lease.packet().len()
+                        );
                     } else {
                         for addr in &targets {
                             if let Err(e) = data_socket
                                 .send_to(
-                                    &out_buf[..len],
+                                    lease.packet(),
                                     (IpAddress::Ipv6(*addr), DEFAULT_DATA_PORT),
                                 )
                                 .await
@@ -251,8 +253,13 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
                                 log::warn!("RNS_AUTO TX err to {addr}: {e:?}");
                             }
                         }
-                        log::info!("RNS_AUTO TX {len}B to {} peer(s)", targets.len());
+                        log::info!(
+                            "RNS_AUTO TX {}B to {} peer(s)",
+                            lease.packet().len(),
+                            targets.len()
+                        );
                     }
+                    lease.complete();
                 }
             }
         }
