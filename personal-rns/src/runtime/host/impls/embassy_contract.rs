@@ -1,8 +1,8 @@
 use embassy_futures::select::select;
 use embassy_time::{Instant as EmbassyInstant, Timer};
 
-use super::super::{CycleStamp, Host};
-use crate::engine::{EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork};
+use super::super::{CycleStamp, Host, NextWake};
+use crate::engine::{EngineCycleEntropySeed, InstantMillis};
 use crate::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle, EmbassyInterfaceSeam,
     WakeSignal,
@@ -47,19 +47,19 @@ impl<E> Host for EmbassyContractHost<E>
 where
     E: FnMut() -> EngineCycleEntropySeed,
 {
-    async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp {
+    async fn wait(&mut self, wake: NextWake) -> CycleStamp {
         // Suspend until the engine's next deadline or an interface pokes the wake —
         // whichever first. This is the genuine `.await`: the executor sleeps the core
         // here. The signal is coalesced (a pending poke makes the next wait return at
         // once) and the runtime drains every interface's ring each cycle, so a missed
         // poke only costs the next deadline, never a packet.
         match wake {
-            NextScheduledEngineWork::Immediate => {}
-            NextScheduledEngineWork::At(deadline) => {
+            NextWake::Immediate => {}
+            NextWake::At(deadline) => {
                 let at = EmbassyInstant::from_millis(deadline.0);
                 let _ = select(self.wake.wait(), Timer::at(at)).await;
             }
-            NextScheduledEngineWork::Idle => {
+            NextWake::Idle => {
                 self.wake.wait().await;
             }
         }

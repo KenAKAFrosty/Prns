@@ -1,10 +1,8 @@
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
-use super::super::{CycleStamp, Host};
-use crate::engine::{
-    EngineCycleEntropySeed, InstantMillis, NextScheduledEngineWork, ENGINE_CYCLE_ENTROPY_LEN,
-};
+use super::super::{CycleStamp, Host, NextWake};
+use crate::engine::{EngineCycleEntropySeed, InstantMillis, ENGINE_CYCLE_ENTROPY_LEN};
 use crate::interfaces::substrate::{StdHostSubstrate, StdInterfaceHandle, StdInterfaceSeam};
 use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 
@@ -65,19 +63,17 @@ impl Default for LinuxSync {
     }
 }
 
-fn wait_for(next: NextScheduledEngineWork, now: InstantMillis, max: Duration) -> Duration {
+fn wait_for(next: NextWake, now: InstantMillis, max: Duration) -> Duration {
     match next {
-        NextScheduledEngineWork::Immediate => Duration::ZERO,
-        NextScheduledEngineWork::Idle => max,
-        NextScheduledEngineWork::At(deadline) => {
-            Duration::from_millis(deadline.0.saturating_sub(now.0)).min(max)
-        }
+        NextWake::Immediate => Duration::ZERO,
+        NextWake::Idle => max,
+        NextWake::At(deadline) => Duration::from_millis(deadline.0.saturating_sub(now.0)).min(max),
     }
 }
 
 impl Host for LinuxSync {
     #[allow(clippy::expect_used)]
-    async fn wait(&mut self, wake: NextScheduledEngineWork) -> CycleStamp {
+    async fn wait(&mut self, wake: NextWake) -> CycleStamp {
         // Block until the engine's next deadline or an interface pokes the wake —
         // whichever first. `recv_timeout` blocks the thread (this never `.await`s),
         // so `block_on` carries the loop straight through with no executor. The
@@ -115,6 +111,6 @@ mod tests {
                 1
             })
             .unwrap();
-        let _stamp = block_on(host.wait(NextScheduledEngineWork::Idle));
+        let _stamp = block_on(host.wait(NextWake::Idle));
     }
 }

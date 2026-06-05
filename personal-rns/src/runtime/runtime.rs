@@ -2,7 +2,7 @@ use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
 use super::event::PrnsEvent;
-use super::host::{CycleStamp, Host};
+use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
     AnnounceIngest, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome,
@@ -104,7 +104,7 @@ where
             mut traffic,
             mut host,
         } = self;
-        let mut wake = NextScheduledEngineWork::Immediate;
+        let mut wake = NextWake::Immediate;
         loop {
             let CycleStamp { now, seed } = host.wait(wake).await;
             let output = cycle_pooled(
@@ -291,20 +291,16 @@ where
     RuntimeSnapshot { interfaces: views }
 }
 
-// Marked as a WTF is going on here to revisit later.
-fn host_wake(
-    engine: NextScheduledEngineWork,
-    interface: NextScheduledInterfaceWake,
-) -> NextScheduledEngineWork {
+fn host_wake(engine: NextScheduledEngineWork, interface: NextScheduledInterfaceWake) -> NextWake {
     use NextScheduledEngineWork::{
         At as EngineAt, Idle as EngineIdle, Immediate as EngineImmediate,
     };
     use NextScheduledInterfaceWake::{At as PollAt, Idle as PollIdle, Immediate as PollImmediate};
     match (engine, interface) {
-        (EngineImmediate, _) | (_, PollImmediate) => EngineImmediate,
-        (EngineIdle, PollIdle) => EngineIdle,
-        (EngineAt(deadline), PollIdle) | (EngineIdle, PollAt(deadline)) => EngineAt(deadline),
-        (EngineAt(x), PollAt(y)) => EngineAt(InstantMillis(x.0.min(y.0))),
+        (EngineImmediate, _) | (_, PollImmediate) => NextWake::Immediate,
+        (EngineIdle, PollIdle) => NextWake::Idle,
+        (EngineAt(deadline), PollIdle) | (EngineIdle, PollAt(deadline)) => NextWake::At(deadline),
+        (EngineAt(x), PollAt(y)) => NextWake::At(InstantMillis(x.0.min(y.0))),
     }
 }
 
