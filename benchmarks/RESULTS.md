@@ -2,30 +2,20 @@
 
 # Benchmark results
 
-Each figure is stamped with the commit, toolchain, and host that produced it and lives as a
-row in `results/<scenario>/<impl>.jsonl` — the same schema any implementation emits. This file
-is rendered from those rows, and the website renders this same file, so the two never drift.
+The suite runs on whatever machines we have; every host is its own column of the story, so
+results are filed per host. Each figure is stamped with the commit, toolchain, and host that
+produced it and lives as a row in `results/<host>/<scenario>/<impl>.jsonl` — the same schema
+any implementation emits. These pages are rendered from those rows, and the website renders the
+same files, so the two never drift.
 
 **Comparability.** Conformance and throughput line up across implementations; memory and latency
-stay within one (a GC and a no-alloc core racing on RSS would be a dishonest column). Only
-`cross-impl` rows are a fair head-to-head.
+stay within one (a GC and a no-alloc core racing on RSS would be a dishonest column). Numbers are
+only comparable *within* a host — never race a laptop against a server.
 
-## announce-256 (v1)
+| Host | Machine | Status | Results |
+|------|---------|--------|---------|
+| `aarch64-apple-darwin` | Apple M4 | measured | [view](RESULTS-aarch64-apple-darwin.md) |
+| `x86_64-unknown-linux-gnu` | — | pending | [view](RESULTS-x86_64-unknown-linux-gnu.md) |
 
-Ingest 256 distinct signed lxmf.delivery announces in order over one interface, then settle 64 ticks.
-
-| Axis | Scope | personal-rns | RNS 1.3.1 |
-|------|-------|------|------|
-| Conformance | cross-impl | ✅ 256 / 256 | ✅ 256 / 256 |
-| Ingest throughput | cross-impl | 47.9k announce/s | 6.6k announce/s |
-
-- **personal-rns** — f400e59, 1.96.0 (ac68faa20 2026-05-25), aarch64-apple-darwin
-- **RNS 1.3.1** — rns 1.3.1, CPython 3.9.6, arm64-darwin
-
----
-
-- _Conformance_ — distinct routes the engine resolves from the corpus, against the manifest's expected count.
-- _Ingest throughput_ — best-of-N wall time to ingest the whole corpus into a fresh engine, as announces per second.
-
-Regenerate: run each implementation's driver (`bench_result`, `reference/driver.py`) to refresh
-`results/`, then `render_results` to rewrite this table.
+Pick a host above for its tables. A `pending` host has been scaffolded but not yet measured —
+run the drivers there to fill it in.

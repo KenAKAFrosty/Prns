@@ -26,6 +26,9 @@ dhat = "0.3"
 # emits them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
+# the per-host reproducibility descriptor that sits beside each host's result rows.
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 # Timing harness for the throughput/latency benches (lean: no plotters/rayon).
@@ -49,6 +52,11 @@ path = "src/bin/gen_corpus.rs"
 bench = false
 
 # --- Result substrate: our driver emits rows; the renderer turns rows into RESULTS.md ---
+[[bin]]
+name = "describe_host"
+path = "src/bin/describe_host.rs"
+bench = false
+
 [[bin]]
 name = "bench_result"
 path = "src/bin/bench_result.rs"

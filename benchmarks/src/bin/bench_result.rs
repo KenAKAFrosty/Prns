@@ -45,7 +45,7 @@ fn main() {
     let per_sec = count as f64 / best_secs;
 
     let (commit, toolchain, host) = stamp();
-    let row = |axis, metric: &str, value, unit: &str| ResultRow {
+    let row = |axis, metric: &str, value: f64, unit: &str| ResultRow {
         scenario: SCENARIO.to_string(),
         scenario_version: VERSION,
         implementation: "personal-rns".to_string(),
@@ -54,7 +54,7 @@ fn main() {
         host: host.clone(),
         axis,
         metric: metric.to_string(),
-        value,
+        value: Some(value),
         unit: unit.to_string(),
     };
 
@@ -62,7 +62,7 @@ fn main() {
         row(Axis::Conformance, "routes_resolved", routes as f64, "count"),
         row(Axis::Throughput, "ingest_announces_per_sec", per_sec, "announce/s"),
     ];
-    write_rows(SCENARIO, "personal-rns", &rows);
+    write_rows(&host, SCENARIO, "personal-rns", &rows);
 
     println!("personal-rns / {SCENARIO}: routes {routes}/{count}, ingest {per_sec:.0} announce/s");
     println!("  stamp: {commit} | {toolchain} | {host}");

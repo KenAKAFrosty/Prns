@@ -60,13 +60,21 @@ first hard proof of wire-exactness against RNS. Every backend here `load_corpus`
    ```
 
 Those rows are the **result substrate**: each implementation owns one file,
-`results/<scenario>/<impl>.jsonl` (so two languages never contend on a write). `render_results`
-pivots every committed row into [`RESULTS.md`](RESULTS.md) — the GitHub-facing comparison table —
-and the website **includes that same generated file**, so the numbers can't drift between the repo
-and the site. `render_results --check` is the drift gate (re-render, diff, fail if stale), the
-sibling of `gen_corpus --check`. The RNS reference is the worked second column: `reference/driver.py`
+`results/<host>/<scenario>/<impl>.jsonl` (so two languages never contend on a write), where
+`host` is the rustc target triple. `render_results` pivots every committed row into the
+GitHub-facing tables — an index ([`RESULTS.md`](RESULTS.md)) linking one page per host — and the
+website **includes those same generated files**, so the numbers can't drift between the repo and
+the site. `render_results --check` is the drift gate (re-render, diff, fail if stale), the sibling
+of `gen_corpus --check`. The RNS reference is the worked second column: `reference/driver.py`
 replays the corpus through the real RNS announce path (`Packet.unpack` + `Identity.validate_announce`)
 and emits its rows.
+
+**The host is a reproducibility dimension, not just a label.** A throughput number means nothing
+without the silicon it ran on — an M1 and an M4 Max are both `aarch64-apple-darwin`. So each host
+also carries a `results/<host>/host.json` descriptor (CPU model, core counts, memory, OS), written
+once per machine by `cargo run --bin describe_host`. It's machine-level, not per-figure, so it lives
+beside the rows rather than bloating each one; `render_results` renders it as the **Machine** block
+atop that host's page. Run `describe_host` before committing a new host's results.
 
 Our runners are the worked example. Measurement tooling stays per-language (you can't share
 dhat with Python), so **throughput, binary size, and conformance compare cleanly across
@@ -90,18 +98,23 @@ cargo run --release --bin mem_profile             # static footprint + per-workl
 cargo run --release --bin mem_soak                # long-run tick soak (memory + state stay flat?)
 MEM_SOAK_TICKS=50000000 MEM_SOAK_STEP_MS=100 cargo run --release --bin mem_soak
 cargo bench                                       # criterion throughput/latency
-cargo run --release --bin bench_result            # measure ours -> results/announce-256/personal-rns.jsonl
-cargo run --release --bin render_results          # rebuild RESULTS.md from results/
+cargo run --release --bin describe_host           # record this machine -> results/<host>/host.json
+cargo run --release --bin bench_result            # measure ours -> results/<host>/announce-256/personal-rns.jsonl
+cargo run --release --bin render_results          # rebuild RESULTS.md + per-host pages from results/
 cargo run --release --bin render_results -- --check  # is the table in sync with the substrate?
 ```
 
-The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv setup):
+The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv setup). Use a
+modern Python (3.12+); RNS's announce ingest is ~90% OpenSSL Ed25519 verification, so the
+interpreter version barely moves the throughput number, but the reference deserves a current
+runtime rather than a distro's EOL system Python (`brew install python@3.13`, or your platform's
+equivalent):
 
 ```sh
-cd reference && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cd reference && python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python gen.py --check           # reference parity: RNS == the committed corpus
 .venv/bin/python gen.py                    # regenerate packets.hex from RNS (canonical)
-.venv/bin/python driver.py                 # measure RNS -> results/announce-256/rns-1.3.1.jsonl
+.venv/bin/python driver.py                 # measure RNS -> results/<host>/announce-256/rns-1.3.1.jsonl
 ```
 
 And the binary-size axis, from the repo root (it builds the ESP32-C6 firmware):

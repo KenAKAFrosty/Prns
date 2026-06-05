@@ -1,0 +1,2 @@
+{"scenario":"announce-256","scenario_version":1,"implementation":"RNS 1.3.1","commit":"pending","toolchain":"pending","host":"x86_64-unknown-linux-gnu","axis":"conformance","metric":"routes_resolved","value":null,"unit":"count"}
+{"scenario":"announce-256","scenario_version":1,"implementation":"RNS 1.3.1","commit":"pending","toolchain":"pending","host":"x86_64-unknown-linux-gnu","axis":"throughput","metric":"ingest_announces_per_sec","value":null,"unit":"announce/s"}

@@ -15,6 +15,7 @@ Run:  benchmarks/reference/.venv/bin/python benchmarks/reference/driver.py
 
 import json
 import platform
+import subprocess
 import time
 from pathlib import Path
 
@@ -27,7 +28,16 @@ WARMUP = 3
 ITERS = 20
 HERE = Path(__file__).resolve().parent
 CORPUS = HERE.parent / "scenarios" / SCENARIO / "packets.hex"
-RESULTS = HERE.parent / "results" / SCENARIO / "rns-1.3.1.jsonl"
+
+
+def host_slug():
+    # The rustc target triple is the canonical host id, so this row groups under the
+    # same host dir as personal-rns' own driver (which reads `rustc -vV` too).
+    out = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=True)
+    for line in out.stdout.splitlines():
+        if line.startswith("host: "):
+            return line[len("host: ") :].strip()
+    raise RuntimeError("could not read host triple from `rustc -vV`")
 
 
 def decode_corpus():
@@ -60,11 +70,13 @@ def main():
             best = min(best, secs)
     per_sec = count / best
 
+    host = host_slug()
+    results = HERE.parent / "results" / host / SCENARIO / "rns-1.3.1.jsonl"
     stamp = {
         "implementation": "RNS 1.3.1",
         "commit": f"rns {RNS.__version__}",
         "toolchain": f"CPython {platform.python_version()}",
-        "host": f"{platform.machine()}-{platform.system().lower()}",
+        "host": host,
     }
 
     def row(axis, metric, value, unit):
@@ -82,10 +94,10 @@ def main():
         row("conformance", "routes_resolved", float(resolved), "count"),
         row("throughput", "ingest_announces_per_sec", per_sec, "announce/s"),
     ]
-    RESULTS.parent.mkdir(parents=True, exist_ok=True)
-    RESULTS.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-    print(f"RNS 1.3.1 / {SCENARIO}: routes {resolved}/{count}, ingest {per_sec:.0f} announce/s")
-    print(f"  -> {RESULTS.relative_to(HERE.parent)}")
+    results.parent.mkdir(parents=True, exist_ok=True)
+    results.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    print(f"RNS 1.3.1 / {SCENARIO} @ {host}: routes {resolved}/{count}, ingest {per_sec:.0f} announce/s")
+    print(f"  -> {results.relative_to(HERE.parent)}")
 
 
 if __name__ == "__main__":
