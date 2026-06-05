@@ -159,7 +159,7 @@ where
         interface.drain_inbound(|packet| {
             traffic.add_rx(id, packet.bytes.len() as u64);
             ingested_packet_count += 1;
-            match engine.ingest_packet(&packet, entropy.jitter) {
+            match engine.ingest_packet(packet, entropy.jitter) {
                 IngestPacketOutcome::Announce(AnnounceIngest::Accepted) => {
                     accepted_announce_count += 1;
                     scheduled_rebroadcast_count += 1;
@@ -332,11 +332,11 @@ mod tests {
         fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
             let id = self.id;
             let mut drained = 0;
-            for (arrived_at, bytes) in self.inbound.drain(..) {
+            for (arrived_at, mut bytes) in self.inbound.drain(..) {
                 f(InboundPacket {
                     arrived_at,
                     source_interface: id,
-                    bytes: &bytes,
+                    bytes: &mut bytes,
                 });
                 drained += 1;
             }

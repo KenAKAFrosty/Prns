@@ -162,11 +162,11 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> InterfaceHandle
 {
     fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
         let mut drained = 0;
-        while let Ok(slot) = self.inbound.try_receive() {
+        while let Ok(mut slot) = self.inbound.try_receive() {
             f(InboundPacket {
                 arrived_at: slot.arrived_at,
                 source_interface: self.id,
-                bytes: &slot.bytes[..slot.len as usize],
+                bytes: &mut slot.bytes[..slot.len as usize],
             });
             drained += 1;
         }

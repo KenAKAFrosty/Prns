@@ -5,13 +5,13 @@ use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WirePacketHeader, MTU,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DataPacket<'a> {
     pub destination_type: DestinationType,
     pub destination: DestinationHash,
     pub context: WireContext,
-    pub transport_id: Option<TransportId>,
-    pub payload: &'a [u8],
+    pub maybe_transport_id: Option<TransportId>,
+    pub payload: &'a mut [u8],
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -39,10 +39,17 @@ pub enum Ingress<'a> {
 }
 
 impl<'a> Ingress<'a> {
-    pub fn classify(packet: &InboundPacket<'a>) -> Self {
-        let Ok((header, payload)) = WirePacketHeader::parse(packet.bytes) else {
-            return Self::Unparseable;
+    pub fn classify(packet: InboundPacket<'a>) -> Self {
+        let InboundPacket {
+            arrived_at,
+            source_interface,
+            bytes,
+        } = packet;
+        let (header, payload_offset) = match WirePacketHeader::parse(bytes) {
+            Ok((header, payload)) => (header, bytes.len() - payload.len()),
+            Err(_) => return Self::Unparseable,
         };
+        let (_, payload) = bytes.split_at_mut(payload_offset);
 
         let received_hops = header.hops.saturating_add(1);
 
@@ -52,6 +59,8 @@ impl<'a> Ingress<'a> {
                     return Self::Unparseable;
                 }
 
+                //erase mutable since it's not needed in this arm
+                let payload: &'a [u8] = payload;
                 let Ok(announce) = Announce::from_wire(&header, payload) else {
                     return Self::Unparseable;
                 };
@@ -76,8 +85,8 @@ impl<'a> Ingress<'a> {
                 Self::Announce {
                     announce,
                     received_hops,
-                    source_interface: packet.source_interface,
-                    arrived_at: packet.arrived_at,
+                    source_interface,
+                    arrived_at,
                 }
             }
             PacketType::Data => Self::Data {
@@ -85,12 +94,12 @@ impl<'a> Ingress<'a> {
                     destination_type: header.destination_type,
                     destination: header.destination,
                     context: header.context,
-                    transport_id: header.transport_id,
+                    maybe_transport_id: header.transport_id,
                     payload,
                 },
                 received_hops,
-                source_interface: packet.source_interface,
-                arrived_at: packet.arrived_at,
+                source_interface,
+                arrived_at,
             },
             PacketType::LinkRequest => Self::LinkRequest,
             PacketType::Proof => Self::Proof,
@@ -145,23 +154,23 @@ mod tests {
         let packet = InboundPacket {
             arrived_at: InstantMillis(7),
             source_interface: iface(0x01),
-            bytes: &[0x01],
+            bytes: &mut [0x01],
         };
 
-        assert!(matches!(Ingress::classify(&packet), Ingress::Unparseable));
+        assert!(matches!(Ingress::classify(packet), Ingress::Unparseable));
     }
 
     #[test]
     fn recognized_non_announce_packets_classify_from_the_header() {
         for packet_type in [PacketType::Data, PacketType::LinkRequest, PacketType::Proof] {
-            let bytes = header_bytes(packet_type);
+            let mut bytes = header_bytes(packet_type);
             let packet = InboundPacket {
                 arrived_at: InstantMillis(9),
                 source_interface: iface(0x02),
-                bytes: &bytes,
+                bytes: &mut bytes,
             };
 
-            let classified = Ingress::classify(&packet);
+            let classified = Ingress::classify(packet);
             match packet_type {
                 PacketType::Data => assert!(matches!(classified, Ingress::Data { .. })),
                 PacketType::LinkRequest => assert!(matches!(classified, Ingress::LinkRequest)),
@@ -185,6 +194,7 @@ mod tests {
             context: WireContext::Resource,
         };
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut expected_payload = payload;
         let mut bytes = [0u8; MTU];
         let header_len = header.write(&mut bytes).unwrap();
         bytes[header_len..header_len + payload.len()].copy_from_slice(&payload);
@@ -192,7 +202,7 @@ mod tests {
         let packet = InboundPacket {
             arrived_at: InstantMillis(21),
             source_interface: iface(0x05),
-            bytes: &bytes[..header_len + payload.len()],
+            bytes: &mut bytes[..header_len + payload.len()],
         };
 
         let Ingress::Data {
@@ -200,7 +210,7 @@ mod tests {
             received_hops,
             source_interface,
             arrived_at,
-        } = Ingress::classify(&packet)
+        } = Ingress::classify(packet)
         else {
             panic!("a data packet should classify as data");
         };
@@ -210,8 +220,8 @@ mod tests {
                 destination_type: DestinationType::Plain,
                 destination: DestinationHash::new([0xA5; 16]),
                 context: WireContext::Resource,
-                transport_id: Some(TransportId::new([0x11; 16])),
-                payload: &payload,
+                maybe_transport_id: Some(TransportId::new([0x11; 16])),
+                payload: &mut expected_payload,
             }
         );
         assert_eq!(received_hops, 6);
@@ -243,10 +253,10 @@ mod tests {
             let packet = InboundPacket {
                 arrived_at: InstantMillis(23),
                 source_interface: iface(0x06),
-                bytes: &bytes,
+                bytes: &mut bytes,
             };
 
-            let Ingress::Data { data, .. } = Ingress::classify(&packet) else {
+            let Ingress::Data { data, .. } = Ingress::classify(packet) else {
                 panic!("data packets to any destination type classify as data");
             };
             assert_eq!(data.destination_type, destination_type);
@@ -261,10 +271,10 @@ mod tests {
         let packet = InboundPacket {
             arrived_at: InstantMillis(11),
             source_interface: iface(0x03),
-            bytes: &raw,
+            bytes: &mut raw,
         };
 
-        assert!(matches!(Ingress::classify(&packet), Ingress::Unparseable));
+        assert!(matches!(Ingress::classify(packet), Ingress::Unparseable));
     }
 
     #[test]
@@ -276,10 +286,10 @@ mod tests {
         let packet = InboundPacket {
             arrived_at,
             source_interface,
-            bytes: &raw,
+            bytes: &mut raw,
         };
 
-        let classified = Ingress::classify(&packet);
+        let classified = Ingress::classify(packet);
         let Ingress::Announce {
             received_hops,
             source_interface: classified_source,

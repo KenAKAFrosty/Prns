@@ -375,7 +375,7 @@ impl<S: EngineStorage> EngineState<S> {
     #[must_use]
     pub fn ingest_packet<'p>(
         &mut self,
-        packet: &InboundPacket<'p>,
+        packet: InboundPacket<'p>,
         jitter: JitterSeed,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
@@ -399,26 +399,29 @@ impl<S: EngineStorage> EngineState<S> {
                 received_hops,
                 source_interface,
                 arrived_at,
-            } => {
-                match self.local_delivery_for(&data, received_hops, source_interface, arrived_at) {
-                    Some(delivery) => IngestPacketOutcome::Delivery(delivery),
-                    None => IngestPacketOutcome::Ignored,
-                }
-            }
+            } => match self.maybe_upstream_delivery(
+                data,
+                received_hops,
+                source_interface,
+                arrived_at,
+            ) {
+                Some(delivery) => IngestPacketOutcome::Delivery(delivery),
+                None => IngestPacketOutcome::Ignored,
+            },
 
             Ingress::LinkRequest | Ingress::Proof => IngestPacketOutcome::Ignored,
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
         }
     }
 
-    fn local_delivery_for<'p>(
+    fn maybe_upstream_delivery<'p>(
         &self,
-        data: &DataPacket<'p>,
+        data: DataPacket<'p>,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> Option<PlainDelivery<'p>> {
-        if let Some(transport_id) = data.transport_id {
+        if let Some(transport_id) = data.maybe_transport_id {
             let ours = self.identity.as_ref().is_some_and(|identity| {
                 identity.identity_hash().as_bytes() == transport_id.as_bytes()
             });
@@ -662,19 +665,21 @@ mod tests {
     fn ingest_counts_each_packet_without_a_clock() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
 
+        let mut first_bytes = [1, 2, 3];
         let first = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(10),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &[1, 2, 3],
+                bytes: &mut first_bytes,
             },
             TEST_ENTROPY,
         );
+        let mut second_bytes = [4];
         let second = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(20),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &[4],
+                bytes: &mut second_bytes,
             },
             TEST_ENTROPY,
         );
@@ -811,7 +816,7 @@ mod tests {
 
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
 
-    fn plain_data_packet(bytes: &[u8]) -> InboundPacket<'_> {
+    fn plain_data_packet(bytes: &mut [u8]) -> InboundPacket<'_> {
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: InterfaceId::new([0x07; 16]),
@@ -821,14 +826,14 @@ mod tests {
 
     #[test]
     fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_1_payload() {
-        let raw = hx(RAW_PLAIN_DATA);
+        let mut raw = hx(RAW_PLAIN_DATA);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let destination = state
             .register_plain_destination("personal", &["node"])
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
             IngestPacketOutcome::Delivery(PlainDelivery {
                 destination,
                 context: WireContext::None,
@@ -849,21 +854,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
             IngestPacketOutcome::Ignored,
         );
     }
 
     #[test]
     fn plain_data_for_an_unregistered_destination_is_not_delivered() {
-        let raw = hx(RAW_PLAIN_DATA);
+        let mut raw = hx(RAW_PLAIN_DATA);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         state
             .register_plain_destination("personal", &["other"])
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -891,7 +896,7 @@ mod tests {
         raw[header_len] = 0xFF;
 
         assert_eq!(
-            state.ingest_packet(&plain_data_packet(&raw[..header_len + 1]), TEST_ENTROPY),
+            state.ingest_packet(plain_data_packet(&mut raw[..header_len + 1]), TEST_ENTROPY),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -903,24 +908,24 @@ mod tests {
             .register_plain_destination("personal", &["node"])
             .unwrap();
 
-        let raw_for_us = hx(&format!(
+        let mut raw_for_us = hx(&format!(
             "4800{}{}00{}",
             "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
-        let raw_for_other = hx(&format!(
+        let mut raw_for_other = hx(&format!(
             "4800{}{}00{}",
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
 
         let IngestPacketOutcome::Delivery(delivered) =
-            state.ingest_packet(&plain_data_packet(&raw_for_us), TEST_ENTROPY)
+            state.ingest_packet(plain_data_packet(&mut raw_for_us), TEST_ENTROPY)
         else {
             panic!("in-transport data named to us must deliver");
         };
         assert_eq!(delivered.payload, &[0xEE]);
 
         assert_eq!(
-            state.ingest_packet(&plain_data_packet(&raw_for_other), TEST_ENTROPY),
+            state.ingest_packet(plain_data_packet(&mut raw_for_other), TEST_ENTROPY),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -932,13 +937,13 @@ mod tests {
             .register_plain_destination("personal", &["node"])
             .unwrap();
 
-        let raw = hx(&format!(
+        let mut raw = hx(&format!(
             "4800{}{}00{}",
             "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
 
         assert_eq!(
-            state.ingest_packet(&plain_data_packet(&raw), TEST_ENTROPY),
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -978,13 +983,13 @@ mod tests {
 
     #[test]
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let _ = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1095,14 +1100,14 @@ mod tests {
 
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
 
         let first = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1113,10 +1118,10 @@ mod tests {
         assert_eq!(state.route_count(), 1);
 
         let second = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1133,10 +1138,10 @@ mod tests {
         at_limit[1] = 127;
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let out = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &at_limit,
+                bytes: &mut at_limit,
             },
             TEST_ENTROPY,
         );
@@ -1146,10 +1151,10 @@ mod tests {
         beyond[1] = 128;
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let out = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &beyond,
+                bytes: &mut beyond,
             },
             TEST_ENTROPY,
         );
@@ -1159,17 +1164,18 @@ mod tests {
 
     #[test]
     fn an_accepted_announce_is_retained_for_faithful_rebroadcast() {
-        let raw = hx(RAW_ANNOUNCE);
-        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let pristine = raw.clone();
+        let (header, payload) = WirePacketHeader::parse(&pristine).unwrap();
         let destination =
-            DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
+            DestinationHash::from_slice(&pristine[2..18]).expect("16-byte destination hash");
 
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let out = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1191,23 +1197,23 @@ mod tests {
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
             source_interface: InterfaceId::new([0u8; 16]),
-            bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
+            bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = state.ingest_packet(&junk, TEST_ENTROPY);
+        let out = state.ingest_packet(junk, TEST_ENTROPY);
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
 
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
 
         let out = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1222,13 +1228,13 @@ mod tests {
 
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
         let _ = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1260,20 +1266,20 @@ mod tests {
         let mut buf2 = [0u8; MTU];
         let n2 = write_announce_wire_packet(&announce2, 0, &mut buf2).unwrap();
 
-        let raw1 = hx(RAW_ANNOUNCE);
+        let mut raw1 = hx(RAW_ANNOUNCE);
         let _ = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw1,
+                bytes: &mut raw1,
             },
             TEST_ENTROPY,
         );
         let _ = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_001),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &buf2[..n2],
+                bytes: &mut buf2[..n2],
             },
             TEST_ENTROPY,
         );
@@ -1297,13 +1303,13 @@ mod tests {
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64, 8, 128>>::default();
         let out = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1313,16 +1319,16 @@ mod tests {
 
     #[test]
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
         let out = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1351,14 +1357,14 @@ mod tests {
 
     #[test]
     fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );
@@ -1372,7 +1378,7 @@ mod tests {
 
     #[test]
     fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
 
@@ -1382,10 +1388,10 @@ mod tests {
         for state in [&mut left, &mut right] {
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
             let _ = state.ingest_packet(
-                &InboundPacket {
+                InboundPacket {
                     arrived_at: arrival,
                     source_interface: InterfaceId::new([0u8; 16]),
-                    bytes: &raw,
+                    bytes: &mut raw,
                 },
                 TEST_ENTROPY,
             );
@@ -1401,13 +1407,13 @@ mod tests {
 
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4, 8, 128>>::default();
         let _ = state.ingest_packet(
-            &InboundPacket {
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
+                bytes: &mut raw,
             },
             TEST_ENTROPY,
         );

@@ -111,11 +111,11 @@ pub struct StdInterfaceHandle<const MTU: usize> {
 impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
     fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
         let mut drained = 0;
-        while let Ok(slot) = self.inbound.pop() {
+        while let Ok(mut slot) = self.inbound.pop() {
             f(InboundPacket {
                 arrived_at: slot.arrived_at,
                 source_interface: self.id,
-                bytes: &slot.bytes[..slot.len as usize],
+                bytes: &mut slot.bytes[..slot.len as usize],
             });
             drained += 1;
         }

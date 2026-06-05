@@ -93,7 +93,7 @@ use personal_rns::interfaces::{
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{InterfaceView, Runtime, RuntimeSnapshot};
+use personal_rns::runtime::{InterfaceView, PrnsEvent, Runtime, RuntimeSnapshot};
 use personal_rns::wire::MTU;
 
 use personal_hopspot_ui as display;
@@ -691,8 +691,9 @@ async fn main(spawner: Spawner) {
     // (The host built above draws CSPRNG entropy from the radio-seeded RNG per
     // cycle and owns the embassy-time clock + sleep.)
     let snapshot_tx = SNAPSHOT_WATCH.sender();
-    let runtime_fut = runtime.run(move |snapshot: &RuntimeSnapshot| {
-        snapshot_tx.send(snapshot.clone());
+    let runtime_fut = runtime.run(move |event: PrnsEvent<'_>| match event {
+        PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
+        PrnsEvent::Delivered(_) => {}
     });
 
     // Render the Hopspot screen alongside it. Event-driven: subscribe to the
