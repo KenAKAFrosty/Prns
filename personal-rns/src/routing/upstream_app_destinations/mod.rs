@@ -56,7 +56,7 @@ pub trait UpstreamAppDestinationColumns {
 pub enum RegisterDestinationError {
     Name(ExpandNameError),
     RegistryFull,
-    NoNodeIdentity,
+    UnknownIdentity,
 }
 
 #[derive(Debug, Default)]

@@ -1,4 +1,5 @@
 use super::InstantMillis;
+use crate::identity::IdentityHash;
 use crate::routing::announce::{expand_name, DottedNameHash, ExpandNameError};
 use heapless::Vec as HeaplessVec;
 
@@ -51,6 +52,7 @@ pub enum SelfAnnounceConfigError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfAnnounceSettings {
+    identity_hash: IdentityHash,
     name_hash: DottedNameHash,
     app_data: HeaplessVec<u8, MAX_SELF_ANNOUNCE_APP_DATA_LEN>,
     schedule: ReannounceSchedule,
@@ -58,7 +60,10 @@ pub struct SelfAnnounceSettings {
 }
 
 impl SelfAnnounceSettings {
-    pub fn from_config(config: SelfAnnounceConfig<'_>) -> Result<Self, SelfAnnounceConfigError> {
+    pub fn from_config(
+        config: SelfAnnounceConfig<'_>,
+        identity_hash: IdentityHash,
+    ) -> Result<Self, SelfAnnounceConfigError> {
         let name_hash = expand_name(config.app_name, config.aspects).map_err(|err| match err {
             ExpandNameError::DotInComponent => SelfAnnounceConfigError::DotInName,
             ExpandNameError::NameTooLong => SelfAnnounceConfigError::NameTooLong,
@@ -68,11 +73,16 @@ impl SelfAnnounceSettings {
             .extend_from_slice(config.app_data)
             .map_err(|_| SelfAnnounceConfigError::AppDataTooLong)?;
         Ok(Self {
+            identity_hash,
             name_hash,
             app_data,
             schedule: config.schedule,
             last_announced: None,
         })
+    }
+
+    pub fn identity_hash(&self) -> IdentityHash {
+        self.identity_hash
     }
 
     pub fn name_hash(&self) -> DottedNameHash {
@@ -104,13 +114,20 @@ impl SelfAnnounceSettings {
 mod tests {
     use super::*;
 
+    fn node_identity_hash() -> IdentityHash {
+        IdentityHash::new([0x4c; 16])
+    }
+
     fn personal_node() -> SelfAnnounceSettings {
-        SelfAnnounceSettings::from_config(SelfAnnounceConfig {
-            app_name: "personal",
-            aspects: &["node"],
-            app_data: b"hello-personal",
-            schedule: ReannounceSchedule::default(),
-        })
+        SelfAnnounceSettings::from_config(
+            SelfAnnounceConfig {
+                app_name: "personal",
+                aspects: &["node"],
+                app_data: b"hello-personal",
+                schedule: ReannounceSchedule::default(),
+            },
+            node_identity_hash(),
+        )
         .unwrap()
     }
 
@@ -129,6 +146,7 @@ mod tests {
             DottedNameHash::new([0xab, 0x49, 0xba, 0xa8, 0x26, 0xf1, 0x22, 0xc1, 0x43, 0x7f]),
         );
         assert_eq!(personal_node().app_data(), b"hello-personal");
+        assert_eq!(personal_node().identity_hash(), node_identity_hash());
     }
 
     #[test]
@@ -147,23 +165,29 @@ mod tests {
     #[test]
     fn from_config_rejects_dotted_names_and_overlong_app_data() {
         assert_eq!(
-            SelfAnnounceSettings::from_config(SelfAnnounceConfig {
-                app_name: "per.sonal",
-                aspects: &[],
-                app_data: b"",
-                schedule: ReannounceSchedule::default(),
-            }),
+            SelfAnnounceSettings::from_config(
+                SelfAnnounceConfig {
+                    app_name: "per.sonal",
+                    aspects: &[],
+                    app_data: b"",
+                    schedule: ReannounceSchedule::default(),
+                },
+                node_identity_hash(),
+            ),
             Err(SelfAnnounceConfigError::DotInName),
         );
 
         let too_long = [0u8; MAX_SELF_ANNOUNCE_APP_DATA_LEN + 1];
         assert_eq!(
-            SelfAnnounceSettings::from_config(SelfAnnounceConfig {
-                app_name: "personal",
-                aspects: &["node"],
-                app_data: &too_long,
-                schedule: ReannounceSchedule::default(),
-            }),
+            SelfAnnounceSettings::from_config(
+                SelfAnnounceConfig {
+                    app_name: "personal",
+                    aspects: &["node"],
+                    app_data: &too_long,
+                    schedule: ReannounceSchedule::default(),
+                },
+                node_identity_hash(),
+            ),
             Err(SelfAnnounceConfigError::AppDataTooLong),
         );
     }

@@ -520,11 +520,11 @@ mod tests {
         let secret = Zeroizing::new(secret);
 
         let mut engine = EngineState::<Cap>::new(&secret);
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
         let destination = engine
-            .register_single_destination("personal", &["node"])
+            .register_single_destination(&identity.identity_hash(), "personal", &["node"])
             .unwrap();
 
-        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
         let remote = RemoteIdentity::from_public_keys(
             identity.encryption_public_key(),
             identity.signing_public_key(),
