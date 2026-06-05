@@ -1,20 +1,21 @@
 pub mod directives;
 pub mod egress;
 pub mod ingress;
-pub mod local_destinations;
 pub mod self_announce;
+pub mod upstream_app_destinations;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
-pub use local_destinations::{
-    LocalDestination, LocalDestinationColumns, LocalDestinationKind, RegisterDestinationError,
-};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
+pub use upstream_app_destinations::{
+    RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
+    UpstreamAppDestinationKind,
+};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
-use crate::engine::local_destinations::LocalDestinations;
 use crate::engine::self_announce::SelfAnnounceSettings;
+use crate::engine::upstream_app_destinations::UpstreamAppDestinations;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
@@ -91,7 +92,7 @@ pub struct EngineState<S: EngineStorage> {
     pending_rebroadcasts: S::Pending,
     directives: S::Directives,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
-    local_destinations: LocalDestinations<S::LocalDestinations>,
+    upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     packet_hash_history: S::PacketHashes,
     identity: Option<InMemoryNodeIdentity>,
     self_announce: Option<SelfAnnounceSettings>,
@@ -107,7 +108,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             pending_rebroadcasts: Default::default(),
             directives: Default::default(),
             interfaces: HeaplessVec::new(),
-            local_destinations: LocalDestinations::default(),
+            upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
             identity: None,
             self_announce: None,
@@ -123,7 +124,7 @@ where
     S::AppData: core::fmt::Debug,
     S::Held: core::fmt::Debug,
     S::Pending: core::fmt::Debug,
-    S::LocalDestinations: core::fmt::Debug,
+    S::UpstreamAppDestinations: core::fmt::Debug,
     S::PacketHashes: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -134,7 +135,7 @@ where
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
             .field("interfaces", &self.interfaces)
-            .field("local_destinations", &self.local_destinations)
+            .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
             .field(
                 "identity_hash",
@@ -223,7 +224,8 @@ impl<S: EngineStorage> EngineState<S> {
         app_name: &str,
         aspects: &[&str],
     ) -> Result<DestinationHash, RegisterDestinationError> {
-        self.local_destinations.register_plain(app_name, aspects)
+        self.upstream_app_destinations
+            .register_plain(app_name, aspects)
     }
 
     pub fn register_single_destination(
@@ -235,12 +237,12 @@ impl<S: EngineStorage> EngineState<S> {
             .identity
             .as_ref()
             .ok_or(RegisterDestinationError::NoNodeIdentity)?;
-        self.local_destinations
+        self.upstream_app_destinations
             .register_single(&identity.identity_hash(), app_name, aspects)
     }
 
-    pub fn local_destinations(&self) -> impl Iterator<Item = LocalDestination> + '_ {
-        self.local_destinations.iter()
+    pub fn upstream_app_destinations(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
+        self.upstream_app_destinations.iter()
     }
 
     pub fn self_announced_destination(&self) -> Option<DestinationHash> {
@@ -438,7 +440,7 @@ impl<S: EngineStorage> EngineState<S> {
                 if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
                     return None;
                 }
-                self.local_destinations
+                self.upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Plain)?;
                 Some(Delivery::Plain(PlainDelivery {
                     destination: data.destination,
@@ -449,7 +451,7 @@ impl<S: EngineStorage> EngineState<S> {
                 }))
             }
             DestinationType::Single => {
-                self.local_destinations
+                self.upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Single)?;
                 let identity = self.identity.as_ref()?;
 
@@ -489,7 +491,7 @@ impl<S: EngineStorage> EngineState<S> {
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
-            destination_is_local: false,
+            destination_is_upstream_app: false,
             existing_route: self.routing_table.existing_route_for(&announce.destination),
             arrived_at,
         }
@@ -550,7 +552,7 @@ impl<S: EngineStorage> EngineState<S> {
                     let decision = AnnounceAcceptanceInput {
                         packet_hops: received_hops,
                         announce_id: announce.announce_id,
-                        destination_is_local: false,
+                        destination_is_upstream_app: false,
                         existing_route: self
                             .routing_table
                             .existing_route_for(&announce.destination),
@@ -827,7 +829,7 @@ mod tests {
             .register_single_destination("personal", &["node"])
             .expect("an identity-holding node registers single destinations");
         assert_eq!(Some(registered), state.self_announced_destination());
-        assert_eq!(state.local_destinations().count(), 1);
+        assert_eq!(state.upstream_app_destinations().count(), 1);
     }
 
     #[test]
@@ -840,7 +842,7 @@ mod tests {
         assert!(state
             .register_plain_destination("personal", &["node"])
             .is_ok());
-        assert_eq!(state.local_destinations().count(), 1);
+        assert_eq!(state.upstream_app_destinations().count(), 1);
     }
 
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";

@@ -1,5 +1,5 @@
 use crate::engine::directives::FixedEngineDirectives;
-use crate::engine::local_destinations::FixedLocalDestinationColumns;
+use crate::engine::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -55,14 +55,14 @@ impl<
     type Held = FixedHeldAnnounces<HELD_CACHE_CAPACITY>;
     // One directive per tracked destination at most, so sized by the routing table.
     type Directives = FixedEngineDirectives<MAX_TRACKED_DESTINATIONS>;
-    type LocalDestinations = FixedLocalDestinationColumns<MAX_LOCAL_DESTINATIONS>;
+    type UpstreamAppDestinations = FixedUpstreamAppDestinationColumns<MAX_LOCAL_DESTINATIONS>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::local_destinations::LocalDestinationColumns;
+    use crate::engine::upstream_app_destinations::UpstreamAppDestinationColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
 
@@ -76,11 +76,11 @@ mod tests {
         let _pending = <S as EngineStorage>::Pending::default();
         let _held = <S as EngineStorage>::Held::default();
         let _directives = <S as EngineStorage>::Directives::default();
-        let local_destinations = <S as EngineStorage>::LocalDestinations::default();
+        let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <S as EngineStorage>::PacketHashes::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
-        assert_eq!(local_destinations.capacity(), 2);
+        assert_eq!(upstream_app_destinations.capacity(), 2);
         assert_eq!(packet_hashes.generation_capacity(), 4);
     }
 }
