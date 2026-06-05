@@ -310,6 +310,7 @@ mod tests {
         InterfaceMode, MediumKind, StartedInterface, TransitCapability,
     };
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+    use crate::routing::delivery::Delivery;
     use crate::routing::storage::FixedCapacity;
     use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
@@ -471,11 +472,14 @@ mod tests {
             InstantMillis(arrival.0 + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |event| match event {
-                PrnsEvent::Delivered(delivery) => delivered.push((
+                PrnsEvent::Delivered(Delivery::Plain(delivery)) => delivered.push((
                     delivery.destination,
                     delivery.payload.to_vec(),
                     delivery.source_interface,
                 )),
+                PrnsEvent::Delivered(Delivery::Single(_)) => {
+                    panic!("a plain packet must never surface as a single delivery")
+                }
                 PrnsEvent::SnapshotUpdated(_) => {}
             },
         );
@@ -486,6 +490,84 @@ mod tests {
         assert_eq!(
             delivered,
             std::vec![(destination, b"hello-plain".to_vec(), source)],
+        );
+    }
+
+    #[test]
+    fn a_delivered_single_packet_reaches_the_event_handler_decrypted() {
+        use crate::crypto::X25519SecretKey;
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::{IdentitySigner, RemoteIdentity, Zeroizing};
+        use crate::wire::{
+            ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, MTU,
+        };
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        let secret = Zeroizing::new(secret);
+
+        let mut engine = EngineState::<Cap>::new(&secret);
+        let destination = engine
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+        let remote = RemoteIdentity::from_public_keys(
+            identity.encryption_public_key(),
+            identity.signing_public_key(),
+        );
+        let header = crate::wire::WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination,
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        let sealed = remote
+            .encrypt(
+                &X25519SecretKey::new([0x77; 32]),
+                &[0x88; 16],
+                b"hello-through-the-stack",
+                &mut wire[header_len..],
+            )
+            .unwrap();
+        let raw = wire[..header_len + sealed].to_vec();
+
+        let source = iface(0xA1);
+        let arrival = InstantMillis(1_000);
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(source, std::vec![(arrival, raw)])]),
+            (),
+        );
+
+        let mut delivered: std::vec::Vec<(DestinationHash, std::vec::Vec<u8>)> =
+            std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(arrival.0 + 1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |event| match event {
+                PrnsEvent::Delivered(Delivery::Single(delivery)) => {
+                    delivered.push((delivery.destination, delivery.plaintext.to_vec()))
+                }
+                PrnsEvent::Delivered(Delivery::Plain(_)) => {
+                    panic!("a sealed single packet must never surface as plain")
+                }
+                PrnsEvent::SnapshotUpdated(_) => {}
+            },
+        );
+
+        assert_eq!(out.delivered_count, 1);
+        assert_eq!(
+            delivered,
+            std::vec![(destination, b"hello-through-the-stack".to_vec())],
         );
     }
 

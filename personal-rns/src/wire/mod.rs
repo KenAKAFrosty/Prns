@@ -171,7 +171,7 @@ impl WireContext {
         }
     }
 
-    const fn to_byte(self) -> u8 {
+    pub const fn to_byte(self) -> u8 {
         match self {
             Self::None => 0x00,
             Self::Resource => 0x01,

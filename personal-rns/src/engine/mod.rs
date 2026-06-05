@@ -28,7 +28,10 @@ use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, SelfAnnounceEntropy,
 };
-use crate::routing::delivery::{PlainDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS};
+use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
+use crate::routing::delivery::{
+    Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
+};
 use crate::routing::storage::EngineStorage;
 use crate::routing::{DropCause, RoutingTable, UpsertRouteOutcome};
 use crate::wire::{DestinationHash, DestinationType};
@@ -367,7 +370,7 @@ pub enum AnnounceIngest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
-    Delivery(PlainDelivery<'p>),
+    Delivery(Delivery<'p>),
     Ignored,
 }
 
@@ -415,12 +418,12 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     fn maybe_upstream_delivery<'p>(
-        &self,
+        &mut self,
         data: DataPacket<'p>,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-    ) -> Option<PlainDelivery<'p>> {
+    ) -> Option<Delivery<'p>> {
         if let Some(transport_id) = data.maybe_transport_id {
             let ours = self.identity.as_ref().is_some_and(|identity| {
                 identity.identity_hash().as_bytes() == transport_id.as_bytes()
@@ -437,15 +440,41 @@ impl<S: EngineStorage> EngineState<S> {
                 }
                 self.local_destinations
                     .lookup(&data.destination, DestinationType::Plain)?;
-                Some(PlainDelivery {
+                Some(Delivery::Plain(PlainDelivery {
                     destination: data.destination,
                     context: data.context,
                     payload: data.payload,
                     arrived_at,
                     source_interface,
-                })
+                }))
             }
-            DestinationType::Single | DestinationType::Group | DestinationType::Link => None,
+            DestinationType::Single => {
+                self.local_destinations
+                    .lookup(&data.destination, DestinationType::Single)?;
+                let identity = self.identity.as_ref()?;
+
+                let packet_hash = PacketHash::of_data_fields(
+                    DestinationType::Single,
+                    &data.destination,
+                    data.context,
+                    data.payload,
+                );
+                match self.packet_hash_history.remember(packet_hash) {
+                    RememberPacketOutcome::AlreadyKnown => return None,
+                    RememberPacketOutcome::StoredFresh
+                    | RememberPacketOutcome::StoredAfterRotation => {}
+                }
+
+                let plaintext = identity.decrypt_in_place(data.payload).ok()?;
+                Some(Delivery::Single(SingleDelivery {
+                    destination: data.destination,
+                    context: data.context,
+                    plaintext,
+                    arrived_at,
+                    source_interface,
+                }))
+            }
+            DestinationType::Group | DestinationType::Link => None,
         }
     }
 
@@ -834,13 +863,13 @@ mod tests {
 
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(PlainDelivery {
+            IngestPacketOutcome::Delivery(Delivery::Plain(PlainDelivery {
                 destination,
                 context: WireContext::None,
                 payload: b"hello-plain",
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0x07; 16]),
-            }),
+            })),
         );
     }
 
@@ -917,10 +946,10 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
 
-        let IngestPacketOutcome::Delivery(delivered) =
+        let IngestPacketOutcome::Delivery(Delivery::Plain(delivered)) =
             state.ingest_packet(plain_data_packet(&mut raw_for_us), TEST_ENTROPY)
         else {
-            panic!("in-transport data named to us must deliver");
+            panic!("in-transport data named to us must deliver plainly");
         };
         assert_eq!(delivered.payload, &[0xEE]);
 
@@ -941,6 +970,129 @@ mod tests {
             "4800{}{}00{}",
             "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    fn sealed_single_packet(
+        identity: &InMemoryNodeIdentity,
+        destination: DestinationHash,
+        plaintext: &[u8],
+    ) -> std::vec::Vec<u8> {
+        use crate::crypto::X25519SecretKey;
+        use crate::identity::RemoteIdentity;
+
+        let remote = RemoteIdentity::from_public_keys(
+            identity.encryption_public_key(),
+            identity.signing_public_key(),
+        );
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination,
+            context: WireContext::None,
+        };
+        let mut buf = [0u8; MTU];
+        let header_len = header.write(&mut buf).unwrap();
+        let sealed = remote
+            .encrypt(
+                &X25519SecretKey::new([0x33; 32]),
+                &[0x44; 16],
+                plaintext,
+                &mut buf[header_len..],
+            )
+            .unwrap();
+        buf[..header_len + sealed].to_vec()
+    }
+
+    #[test]
+    fn single_data_decrypts_in_place_and_delivers_the_plaintext() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let destination = state
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
+                destination,
+                context: WireContext::None,
+                plaintext: b"hello-single",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            })),
+        );
+    }
+
+    #[test]
+    fn a_replayed_single_packet_is_ignored_by_the_dedup_history() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let destination = state
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let raw = sealed_single_packet(&identity, destination, b"hello-single");
+
+        let mut first_copy = raw.clone();
+        assert!(matches!(
+            state.ingest_packet(plain_data_packet(&mut first_copy), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(_)),
+        ));
+
+        let mut replayed_copy = raw.clone();
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut replayed_copy), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn a_tampered_single_token_is_ignored_without_poisoning_the_real_packet() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let destination = state
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let raw = sealed_single_packet(&identity, destination, b"hello-single");
+
+        let mut tampered = raw.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut tampered), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+
+        let mut genuine = raw.clone();
+        assert!(matches!(
+            state.ingest_packet(plain_data_packet(&mut genuine), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(Delivery::Single(_)),
+        ));
+    }
+
+    #[test]
+    fn single_data_for_an_unregistered_destination_is_ignored() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let registered = state
+            .register_single_destination("personal", &["other"])
+            .unwrap();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let unregistered = derive_destination_hash(
+            &identity.identity_hash(),
+            &crate::routing::announce::expand_name("personal", &["node"]).unwrap(),
+        );
+        assert_ne!(registered, unregistered);
+        let mut raw = sealed_single_packet(&identity, unregistered, b"hello-single");
 
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),

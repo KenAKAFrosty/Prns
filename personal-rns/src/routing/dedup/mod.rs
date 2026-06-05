@@ -3,7 +3,9 @@ mod impls;
 pub use impls::*;
 
 use crate::crypto::sha256_chunks;
-use crate::wire::{WireError, TRUNCATED_HASH_BYTE_LEN};
+use crate::wire::{
+    DestinationHash, DestinationType, PacketType, WireContext, WireError, TRUNCATED_HASH_BYTE_LEN,
+};
 
 pub const PACKET_HASH_LEN: usize = 32;
 
@@ -39,6 +41,24 @@ impl PacketHash {
             .ok_or(WireError::BufferTooShort)?;
 
         Ok(Self(sha256_chunks(&[&[flags & HASHED_FLAG_BITS], tail])))
+    }
+
+    /// The same hash as [`Self::of_wire_packet`], reconstructed from a data
+    /// packet's typed fields (what the engine holds after classification),
+    /// with the wire buffer already carved up.
+    pub fn of_data_fields(
+        destination_type: DestinationType,
+        destination: &DestinationHash,
+        context: WireContext,
+        payload: &[u8],
+    ) -> Self {
+        let hashed_flags = ((destination_type as u8) << 2) | (PacketType::Data as u8);
+        Self(sha256_chunks(&[
+            &[hashed_flags],
+            destination.as_bytes(),
+            &[context.to_byte()],
+            payload,
+        ]))
     }
 }
 
@@ -103,6 +123,37 @@ mod tests {
                 "211f3da55c2c402e74645188c5e86fa9e2caaf0bde1a132ec8fd29eb4b38aa67"
             ))),
         );
+    }
+
+    #[test]
+    fn field_wise_hashing_equals_wire_hashing() {
+        for packet in [RAW_PLAIN_DATA, RAW_TYPE_2_DATA] {
+            let bytes = raw(packet);
+            let from_wire = PacketHash::of_wire_packet(&bytes).unwrap();
+
+            let type_2 = bytes[0] & 0b0100_0000 != 0;
+            let destination_at = if type_2 { 18 } else { 2 };
+            let destination = crate::wire::DestinationHash::from_slice(
+                &bytes[destination_at..destination_at + 16],
+            )
+            .unwrap();
+            let destination_type = match (bytes[0] >> 2) & 0b11 {
+                0b00 => DestinationType::Single,
+                0b10 => DestinationType::Plain,
+                other => panic!("unexpected destination type bits {other:02b}"),
+            };
+            let payload = &bytes[destination_at + 17..];
+
+            assert_eq!(
+                PacketHash::of_data_fields(
+                    destination_type,
+                    &destination,
+                    WireContext::None,
+                    payload,
+                ),
+                from_wire,
+            );
+        }
     }
 
     #[test]

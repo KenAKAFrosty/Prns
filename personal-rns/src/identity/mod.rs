@@ -202,9 +202,9 @@ pub mod in_memory {
         ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, IDENTITY_SECRET_KEY_LEN,
     };
     use crate::crypto::{
-        ed25519_public_key, ed25519_sign, token_open, x25519_diffie_hellman, x25519_public_key,
-        CryptoError, Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
-        X25519SharedSecret,
+        ed25519_public_key, ed25519_sign, token_open, token_open_in_place, x25519_diffie_hellman,
+        x25519_public_key, CryptoError, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
+        X25519SecretKey, X25519SharedSecret,
     };
 
     pub struct InMemoryNodeIdentity {
@@ -240,6 +240,32 @@ pub mod in_memory {
 
         pub fn agree(&self, peer_encryption_public: &X25519PublicKey) -> X25519SharedSecret {
             x25519_diffie_hellman(&self.encryption_secret, peer_encryption_public)
+        }
+
+        pub fn decrypt_in_place<'t>(
+            &self,
+            ciphertext_token: &'t mut [u8],
+        ) -> Result<&'t [u8], DecryptError> {
+            if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
+                return Err(DecryptError::TokenTooShort);
+            }
+            let (ephemeral, token) =
+                ciphertext_token.split_at_mut(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
+            let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+            ephemeral_public_bytes.copy_from_slice(ephemeral);
+            let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
+
+            let shared = self.agree(&ephemeral_public);
+            let key = DerivedPacketKey::derive(&shared, &self.hash);
+
+            token_open_in_place(&key.token_key(), token).map_err(|error| match error {
+                CryptoError::InvalidSignature
+                | CryptoError::InvalidMac
+                | CryptoError::InvalidPadding
+                | CryptoError::MalformedToken
+                | CryptoError::BadKeyLength
+                | CryptoError::BufferTooShort => DecryptError::InvalidToken,
+            })
         }
 
         pub fn decrypt(
@@ -334,6 +360,32 @@ pub mod in_memory {
                 identity.encryption_public_key(),
                 identity.signing_public_key(),
             )
+        }
+
+        #[test]
+        fn decrypt_in_place_opens_the_rns_1_3_1_token_without_a_copy() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let mut token = token_hex(RNS_SEALED_TOKEN);
+            let plaintext = identity.decrypt_in_place(&mut token).unwrap();
+            assert_eq!(plaintext, b"hello-single");
+        }
+
+        #[test]
+        fn decrypt_in_place_rejects_tampering_and_short_tokens() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+
+            let mut tampered = token_hex(RNS_SEALED_TOKEN);
+            tampered[50] ^= 0x01;
+            assert_eq!(
+                identity.decrypt_in_place(&mut tampered),
+                Err(DecryptError::InvalidToken),
+            );
+
+            let mut short = [0xAA; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+            assert_eq!(
+                identity.decrypt_in_place(&mut short),
+                Err(DecryptError::TokenTooShort),
+            );
         }
 
         #[test]

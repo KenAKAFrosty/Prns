@@ -23,6 +23,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
@@ -106,11 +107,18 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
             PrnsEvent::SnapshotUpdated(snapshot) => {
                 let _ = snap_tx.send(snapshot.clone());
             }
-            PrnsEvent::Delivered(delivery) => {
+            PrnsEvent::Delivered(Delivery::Plain(delivery)) => {
                 println!(
-                    "HOPSPOT_USB_RX_DELIVERY destination={:02x?} bytes={}",
+                    "HOPSPOT_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
                     delivery.destination.as_bytes(),
                     delivery.payload.len(),
+                );
+            }
+            PrnsEvent::Delivered(Delivery::Single(delivery)) => {
+                println!(
+                    "HOPSPOT_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
+                    delivery.destination.as_bytes(),
+                    delivery.plaintext.len(),
                 );
             }
         },

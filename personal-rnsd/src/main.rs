@@ -22,6 +22,7 @@ use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
+use personal_rns::routing::delivery::Delivery;
 use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
@@ -114,11 +115,18 @@ fn main() {
             host,
         },
         |event| match event {
-            PrnsEvent::Delivered(delivery) => {
+            PrnsEvent::Delivered(Delivery::Plain(delivery)) => {
                 println!(
-                    "RNSD_USB_RX_DELIVERY destination={:02x?} bytes={}",
+                    "RNSD_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
                     delivery.destination.as_bytes(),
                     delivery.payload.len(),
+                );
+            }
+            PrnsEvent::Delivered(Delivery::Single(delivery)) => {
+                println!(
+                    "RNSD_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
+                    delivery.destination.as_bytes(),
+                    delivery.plaintext.len(),
                 );
             }
             PrnsEvent::SnapshotUpdated(snapshot) => {
