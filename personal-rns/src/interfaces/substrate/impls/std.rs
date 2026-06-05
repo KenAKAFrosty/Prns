@@ -73,8 +73,11 @@ pub struct StdOutboundDrain<const MTU: usize> {
 impl<const MTU: usize> OutboundDrain for StdOutboundDrain<MTU> {
     fn drain_each(&mut self, mut write: impl FnMut(OutboundPacket<'_>)) -> usize {
         let mut drained = 0;
-        while let Ok(slot) = self.consumer.pop() {
+        while let Ok(chunk) = self.consumer.read_chunk(1) {
+            let (read, _) = chunk.as_slices();
+            let slot = &read[0];
             write(OutboundPacket::new(&slot.bytes[..slot.len as usize]));
+            chunk.commit(1);
             drained += 1;
         }
         drained
