@@ -2,7 +2,8 @@ use dioxus::prelude::*;
 
 use crate::components::Shell;
 use crate::pages::{
-    BenchmarksPage, ContributingPage, CratesIndex, Landing, NotFound, PlatformsPage, SingleCrate,
+    BenchmarksHostPage, BenchmarksPage, ContributingPage, CratesIndex, Landing, NotFound,
+    PlatformsPage, SingleCrate,
 };
 
 #[derive(Clone, Routable, Debug, PartialEq)]
@@ -23,6 +24,9 @@ pub enum Route {
 
         #[route("/benchmarks")]
         BenchmarksPage {},
+
+        #[route("/benchmarks/:host")]
+        BenchmarksHostPage { host: String },
 
         #[route("/crates/:name")]
         SingleCrate { name: String },

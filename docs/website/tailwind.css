@@ -122,6 +122,7 @@ html, body {
 }
 .prose tbody tr:nth-child(even) { background: rgb(255 255 255 / 0.02); }
 .prose th:first-child, .prose td:first-child { color: var(--color-paper); }
+.prose td img, .prose th img { display: inline-block; vertical-align: -3px; margin-right: 0.15em; }
 
 /* Landing eyebrow: the final word rotates on load (developers → builders →
    tinkerers) and comes to rest on "people". One-shot, ends on the last word.

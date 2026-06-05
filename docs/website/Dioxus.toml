@@ -7,7 +7,9 @@ title = "Prns: A production-grade port of Reticulum (RNS) in safe Rust"
 [web.resource]
 # Inject the compiled Tailwind output into the initial HTML <head> so styling
 # is present before the wasm boots; otherwise the page flashes unstyled.
-style = ["./assets/tailwind.css"]
+# Absolute so it resolves from any route depth (e.g. /benchmarks/<host>); a relative
+# path would break one level deep.
+style = ["/assets/tailwind.css"]
 script = []
 
 [web.resource.dev]

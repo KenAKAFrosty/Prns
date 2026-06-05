@@ -5,7 +5,7 @@ mod landing;
 mod not_found;
 mod platforms;
 
-pub use benchmarks::BenchmarksPage;
+pub use benchmarks::{BenchmarksHostPage, BenchmarksPage};
 pub use contributing::ContributingPage;
 pub use crates::{CratesIndex, SingleCrate};
 pub use landing::Landing;

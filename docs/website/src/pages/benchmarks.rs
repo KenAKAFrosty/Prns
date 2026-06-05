@@ -4,13 +4,23 @@ use dioxus_i18n::t;
 use crate::components::MarkdownBody;
 use crate::routes::Route;
 
-// Generated from the result substrate by `benchmarks/render_results`; the GitHub
-// RESULTS.md and this page render the same file, so the table can't drift.
-const RESULTS_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
+// Generated from the result substrate by `benchmarks/render_results`; GitHub and this
+// page render the same files, so the tables can't drift. The index links to a per-host
+// page; add a line to HOST_PAGES when a new host's results land.
+const INDEX_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
+const HOST_PAGES: &[(&str, &str)] = &[
+    (
+        "aarch64-apple-darwin",
+        include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
+    ),
+    (
+        "x86_64-unknown-linux-gnu",
+        include_str!("../../../../benchmarks/RESULTS-x86_64-unknown-linux-gnu.md"),
+    ),
+];
 
-/// Performance page. Methodology-first scaffold: it states what gets measured
-/// and how, honestly, with the actual figures to drop in as the suite settles.
-/// Linked from the "Performance" standards card on the landing page.
+/// Performance index: the methodology, then the per-host results table linking out to
+/// each host's own page. Linked from the "Performance" standards card on the landing page.
 #[component]
 pub fn BenchmarksPage() -> Element {
     rsx! {
@@ -57,7 +67,50 @@ pub fn BenchmarksPage() -> Element {
         }
 
         section { class: "mt-10",
-            MarkdownBody { source: RESULTS_MD }
+            MarkdownBody { source: index_markup() }
         }
     }
+}
+
+/// One host's results. `host` is the route segment (a target triple).
+#[component]
+pub fn BenchmarksHostPage(host: String) -> Element {
+    let body = HOST_PAGES
+        .iter()
+        .find(|(slug, _)| *slug == host)
+        .map(|(_, md)| host_markup(md));
+    rsx! {
+        header { class: "mb-8",
+            Link {
+                to: Route::BenchmarksPage {},
+                class: "text-sm text-soft hover:text-accent transition-colors",
+                "← Benchmarks"
+            }
+        }
+        if let Some(md) = body {
+            MarkdownBody { source: md }
+        } else {
+            h1 { class: "text-2xl font-semibold text-paper", "No results for this host" }
+            p { class: "mt-3 text-soft", "Nothing recorded for \"{host}\" yet." }
+        }
+    }
+}
+
+/// Repoint the index's per-host `RESULTS-<host>.md` links (GitHub-relative) at the site routes.
+fn index_markup() -> String {
+    let mut md = INDEX_MD.to_string();
+    for (slug, _) in HOST_PAGES {
+        md = md.replace(
+            &format!("](RESULTS-{slug}.md)"),
+            &format!("](/benchmarks/{slug})"),
+        );
+    }
+    md
+}
+
+/// Repoint a host page's back-link at the site index, and make the icon `src` absolute
+/// (a relative `assets/` would resolve under `/benchmarks/<host>/` here, not `/assets/`).
+fn host_markup(md: &str) -> String {
+    md.replace("](RESULTS.md)", "](/benchmarks)")
+        .replace("src=\"assets/", "src=\"/assets/")
 }

@@ -20,6 +20,6 @@ pub fn ContributingPage() -> Element {
                 {t!("contributing-lead")}
             }
         }
-        MarkdownBody { source: CONTRIBUTING_MD }
+        MarkdownBody { source: CONTRIBUTING_MD.to_string() }
     }
 }
