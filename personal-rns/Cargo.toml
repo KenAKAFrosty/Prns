@@ -17,6 +17,12 @@ default = ["std", "std-sync-host"]
 alloc = []
 std = ["alloc"]
 std-sync-host = ["std", "dep:getrandom", "dep:rtrb"]
+# The async-std lane: the same owned rtrb rings as `std-sync-host` (drop-clean
+# for hotplug), with tokio supplying the wakers (`Notify`) and the host's
+# deadline timer. `tokio` implies std, so the name needs no std- prefix. The
+# lane most std consumers (rnsd, desktop) should sit on — async workers get
+# the lease grammar, sync workers keep `drain_each`.
+tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb"]
 # Just the embassy primitives the contract seam needs (`embassy-sync` channels +
 # `embassy-time` clock, `static_cell` for the outbound grant ring's backing
 # buffer) — NOT `embassy-net`, so this builds on the host toolchain and the
@@ -78,6 +84,11 @@ getrandom = { version = "0.2", optional = true }
 # an embedded static-storage primitive with no business on a heap-backed host.
 rtrb = { version = "0.3", optional = true }
 
+# Async runtime for the `tokio-host` seam: `sync` for the Notify wakers that
+# cross it, `time` for the host's deadline waits. Workers bring their own I/O
+# features; the seam itself needs no runtime flavor.
+tokio = { version = "1", optional = true, default-features = false, features = ["sync", "time"] }
+
 # The USB-auto host interface's portable USB-serial layer (under `usb-auto`):
 # enumerate, open, and raw byte I/O on Linux/macOS/Windows. Default features keep
 # enumeration (libudev on Linux, IOKit/SetupAPI elsewhere — serialport cfg-gates
@@ -124,6 +135,8 @@ proptest = "1"
 # fire under `block_on`. Dev-only; cross-builds never see these.
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
+# Executor + macros for the tokio seam's cross-task tests (`--features tokio-host`).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 [lints]
 workspace = true

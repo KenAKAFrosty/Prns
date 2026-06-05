@@ -7,3 +7,8 @@ pub use std::*;
 mod embassy;
 #[cfg(feature = "embassy-seam")]
 pub use embassy::*;
+
+#[cfg(feature = "tokio-host")]
+mod tokio;
+#[cfg(feature = "tokio-host")]
+pub use tokio::*;
