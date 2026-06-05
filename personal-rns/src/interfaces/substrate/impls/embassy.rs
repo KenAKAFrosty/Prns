@@ -137,6 +137,10 @@ impl<const MTU: usize> EmbassyOutboundDrain<MTU> {
 /// the queue, so an interrupted transmission retries rather than losing the
 /// packet. [`keep`](Self::keep) is the same outcome as a named act.
 ///
+/// Every example below is a `compile_fail` doctest, not sample code. The
+/// test suite asserts that the compiler *rejects* it, pinned to the expected
+/// error code, so each misuse shown is a checked guarantee.
+///
 /// Consuming is by value, so a packet can never be completed twice:
 ///
 /// ```compile_fail,E0382
