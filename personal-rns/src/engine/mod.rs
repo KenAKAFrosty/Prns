@@ -1,17 +1,19 @@
 pub mod directives;
 pub mod egress;
 pub mod ingress;
+pub mod proof;
 pub mod self_announce;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
+pub use proof::{ProofOwed, WriteProofError};
 pub use self_announce::ReannounceSchedule;
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
-use crate::engine::egress::write_announce_wire_packet;
+use crate::engine::egress::{write_announce_wire_packet, write_proof_wire_packet};
 use crate::engine::self_announce::{AnnounceConfig, ScheduleAnnounceError, SelfAnnounces};
 use crate::identity::held::{HeldIdentities, HoldIdentityError};
-use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
 };
@@ -355,6 +357,21 @@ impl<S: EngineStorage> EngineState<S> {
         outcome.map(Some)
     }
 
+    /// Sign and frame the proof a delivered packet earned ([`ProofOwed`], from
+    /// this same cycle's ingest outcome) into `buf`, returning the wire length.
+    /// Best-effort by RNS 1.3.1 parity: a proof that can't be written is simply
+    /// dropped. The sender's timeout-and-resend (fresh ciphertext, fresh
+    /// packet hash) is the designed recovery, so nothing here is retried.
+    pub fn write_proof(&self, owed: &ProofOwed, buf: &mut [u8]) -> Result<usize, WriteProofError> {
+        let identity = self
+            .held_identities
+            .get(&owed.identity)
+            .ok_or(WriteProofError::IdentityNotHeld)?;
+        let signature = identity.sign(owed.packet_hash.as_bytes());
+        write_proof_wire_packet(&owed.packet_hash, &signature, buf)
+            .map_err(WriteProofError::Serialize)
+    }
+
     fn write_announce_for(
         &self,
         destination: &DestinationHash,
@@ -444,7 +461,10 @@ pub enum AnnounceIngest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
-    Delivery(Delivery<'p>),
+    Delivery {
+        delivery: Delivery<'p>,
+        maybe_owed_proof: Option<ProofOwed>,
+    },
     Ignored,
 }
 
@@ -482,7 +502,10 @@ impl<S: EngineStorage> EngineState<S> {
                 source_interface,
                 arrived_at,
             ) {
-                Some(delivery) => IngestPacketOutcome::Delivery(delivery),
+                Some((delivery, maybe_owed_proof)) => IngestPacketOutcome::Delivery {
+                    delivery,
+                    maybe_owed_proof,
+                },
                 None => IngestPacketOutcome::Ignored,
             },
 
@@ -497,7 +520,7 @@ impl<S: EngineStorage> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-    ) -> Option<Delivery<'p>> {
+    ) -> Option<(Delivery<'p>, Option<ProofOwed>)> {
         if let Some(transport_id) = data.maybe_transport_id {
             let ours = self
                 .transport_identity
@@ -514,22 +537,29 @@ impl<S: EngineStorage> EngineState<S> {
                 }
                 self.upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Plain)?;
-                Some(Delivery::Plain(PlainDelivery {
-                    destination: data.destination,
-                    context: data.context,
-                    payload: data.payload,
-                    arrived_at,
-                    source_interface,
-                }))
+                Some((
+                    Delivery::Plain(PlainDelivery {
+                        destination: data.destination,
+                        context: data.context,
+                        payload: data.payload,
+                        arrived_at,
+                        source_interface,
+                    }),
+                    None,
+                ))
             }
             DestinationType::Single => {
                 let registered = self
                     .upstream_app_destinations
                     .lookup(&data.destination, DestinationType::Single)?;
-                let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
+                let UpstreamAppDestinationKind::Single {
+                    identity,
+                    proof_strategy,
+                } = registered.kind
+                else {
                     return None;
                 };
-                let identity = self.held_identities.get(&identity)?;
+                let held = self.held_identities.get(&identity)?;
 
                 let packet_hash = PacketHash::of_data_fields(
                     DestinationType::Single,
@@ -543,14 +573,25 @@ impl<S: EngineStorage> EngineState<S> {
                     | RememberPacketOutcome::StoredAfterRotation => {}
                 }
 
-                let plaintext = identity.decrypt_in_place(data.payload).ok()?;
-                Some(Delivery::Single(SingleDelivery {
-                    destination: data.destination,
-                    context: data.context,
-                    plaintext,
-                    arrived_at,
-                    source_interface,
-                }))
+                let plaintext = held.decrypt_in_place(data.payload).ok()?;
+                let maybe_owed_proof = match proof_strategy {
+                    ProofStrategy::ProveAll => Some(ProofOwed {
+                        packet_hash,
+                        identity,
+                        send_on: source_interface,
+                    }),
+                    ProofStrategy::ProveNone => None,
+                };
+                Some((
+                    Delivery::Single(SingleDelivery {
+                        destination: data.destination,
+                        context: data.context,
+                        plaintext,
+                        arrived_at,
+                        source_interface,
+                    }),
+                    maybe_owed_proof,
+                ))
             }
             DestinationType::Group | DestinationType::Link => None,
         }
@@ -980,13 +1021,16 @@ mod tests {
 
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
-                destination,
-                context: WireContext::None,
-                plaintext: b"hello-announced",
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0x07; 16]),
-            })),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"hello-announced",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
         );
     }
 
@@ -1089,13 +1133,16 @@ mod tests {
 
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Plain(PlainDelivery {
-                destination,
-                context: WireContext::None,
-                payload: b"hello-plain",
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0x07; 16]),
-            })),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Plain(PlainDelivery {
+                    destination,
+                    context: WireContext::None,
+                    payload: b"hello-plain",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
         );
     }
 
@@ -1173,8 +1220,10 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "12f815e3e65add6ceb2fda0e7be33868", "ee"
         ));
 
-        let IngestPacketOutcome::Delivery(Delivery::Plain(delivered)) =
-            state.ingest_packet(plain_data_packet(&mut raw_for_us), TEST_ENTROPY)
+        let IngestPacketOutcome::Delivery {
+            delivery: Delivery::Plain(delivered),
+            ..
+        } = state.ingest_packet(plain_data_packet(&mut raw_for_us), TEST_ENTROPY)
         else {
             panic!("in-transport data named to us must deliver plainly");
         };
@@ -1265,13 +1314,16 @@ mod tests {
 
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
-                destination,
-                context: WireContext::None,
-                plaintext: b"hello-single",
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0x07; 16]),
-            })),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"hello-single",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
         );
     }
 
@@ -1292,7 +1344,10 @@ mod tests {
         let mut first_copy = raw.clone();
         assert!(matches!(
             state.ingest_packet(plain_data_packet(&mut first_copy), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(_)),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(_),
+                ..
+            },
         ));
 
         let mut replayed_copy = raw.clone();
@@ -1327,7 +1382,10 @@ mod tests {
         let mut genuine = raw.clone();
         assert!(matches!(
             state.ingest_packet(plain_data_packet(&mut genuine), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(_)),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(_),
+                ..
+            },
         ));
     }
 
@@ -1358,25 +1416,31 @@ mod tests {
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut to_a), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
-                destination: dest_a,
-                context: WireContext::None,
-                plaintext: b"for-a",
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0x07; 16]),
-            })),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination: dest_a,
+                    context: WireContext::None,
+                    plaintext: b"for-a",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
         );
 
         let mut to_b = sealed_single_packet(&identity_b, dest_b, b"for-b");
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut to_b), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
-                destination: dest_b,
-                context: WireContext::None,
-                plaintext: b"for-b",
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0x07; 16]),
-            })),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination: dest_b,
+                    context: WireContext::None,
+                    plaintext: b"for-b",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
         );
 
         let mut crossed = sealed_single_packet(&identity_b, dest_a, b"crossed");
@@ -1427,13 +1491,114 @@ mod tests {
         let mut as_transport = raw.clone();
         assert_eq!(
             state.ingest_packet(plain_data_packet(&mut as_transport), TEST_ENTROPY),
-            IngestPacketOutcome::Delivery(Delivery::Single(SingleDelivery {
-                destination,
-                context: WireContext::None,
-                plaintext: b"hello-single",
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0x07; 16]),
-            })),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"hello-single",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_prove_all_delivery_carries_the_owed_proof() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
+        let destination = state
+            .register_single_destination(&held, "personal", &["node"], ProofStrategy::ProveAll)
+            .unwrap();
+        let mut raw = sealed_single_packet(&identity, destination, b"prove-me");
+        let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"prove-me",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: Some(ProofOwed {
+                    packet_hash,
+                    identity: held,
+                    send_on: InterfaceId::new([0x07; 16]),
+                }),
+            },
+        );
+    }
+
+    const RAW_SEALED_FOR_PROOF: &str =
+        "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
+         a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\
+         25ec6b58715afe16269730584f5fe3a55a6429ded73c3d4b2458f67ef9";
+
+    const RNS_1_3_1_IMPLICIT_PROOF: &str =
+        "0300a34e24b00ebdda0179b642579b71266c00f52e874f44101203b553179c107604fc01ef99e210895f95\
+         423f14aca8094a5a09938d9337aec5c6cb1bc38458d65da559450a9f8e0e78921ca690bed8430100";
+
+    #[test]
+    fn write_proof_is_byte_identical_to_the_rns_1_3_1_implicit_proof() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
+        let destination = state
+            .register_single_destination(&held, "personal", &["node"], ProofStrategy::ProveAll)
+            .unwrap();
+
+        let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
+        assert_eq!(raw, hx(RAW_SEALED_FOR_PROOF));
+
+        let outcome = state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY);
+        let IngestPacketOutcome::Delivery {
+            maybe_owed_proof: Some(owed),
+            ..
+        } = outcome
+        else {
+            panic!("a ProveAll delivery owes a proof");
+        };
+
+        let mut buf = [0u8; MTU];
+        let written = state.write_proof(&owed, &mut buf).unwrap();
+        assert_eq!(&buf[..written], hx(RNS_1_3_1_IMPLICIT_PROOF).as_slice());
+    }
+
+    #[test]
+    fn write_proof_for_an_unheld_identity_reports_it() {
+        let state: EngineState<Cap> = EngineState::<Cap>::default();
+        let owed = ProofOwed {
+            packet_hash: PacketHash::new([0xAA; 32]),
+            identity: IdentityHash::new([0x4c; 16]),
+            send_on: InterfaceId::new([0x07; 16]),
+        };
+        let mut buf = [0u8; MTU];
+        assert_eq!(
+            state.write_proof(&owed, &mut buf),
+            Err(WriteProofError::IdentityNotHeld),
+        );
+    }
+
+    #[test]
+    fn write_proof_into_a_short_buffer_reports_it() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
+        let owed = ProofOwed {
+            packet_hash: PacketHash::new([0xAA; 32]),
+            identity: held,
+            send_on: InterfaceId::new([0x07; 16]),
+        };
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            state.write_proof(&owed, &mut buf),
+            Err(WriteProofError::Serialize(
+                EgressSerializeError::BufferTooShort
+            )),
         );
     }
 

@@ -166,7 +166,10 @@ where
                 IngestPacketOutcome::Announce(
                     AnnounceIngest::HeldForRetry | AnnounceIngest::Ignored,
                 ) => {}
-                IngestPacketOutcome::Delivery(delivery) => {
+                IngestPacketOutcome::Delivery {
+                    delivery,
+                    maybe_owed_proof: _,
+                } => {
                     delivered_count += 1;
                     on_event(PrnsEvent::Delivered(delivery));
                 }
@@ -179,8 +182,8 @@ where
     let egress_directive_count = tick_output.egress_directive_count();
     for directive in tick_output.egress_directives() {
         // Serializing per interface (instead of once into a staging buffer) is
-        // free — `to_wire` is a header write plus a copy of the retained,
-        // already-signed payload — and it lets each packet land in its queue
+        // free (`to_wire` is a header write plus a copy of the retained,
+        // already-signed payload) and it lets each packet land in its queue
         // slot grant directly. With IFAC it stops being an optimization and
         // becomes required: each interface masks the whole packet differently.
         fan_to_handles(

@@ -43,6 +43,16 @@ impl PacketHash {
         Ok(Self(sha256_chunks(&[&[flags & HASHED_FLAG_BITS], tail])))
     }
 
+    /// RNS 1.3.1 `ProofDestination`: a proof of receipt is addressed to the
+    /// first [`TRUNCATED_HASH_BYTE_LEN`] bytes of the proved packet's hash.
+    /// The sender derives the same address from its own copy and matches the
+    /// proof to its receipt.
+    pub fn proof_destination(&self) -> DestinationHash {
+        let mut bytes = [0u8; TRUNCATED_HASH_BYTE_LEN];
+        bytes.copy_from_slice(&self.0[..TRUNCATED_HASH_BYTE_LEN]);
+        DestinationHash::new(bytes)
+    }
+
     /// The same hash as [`Self::of_wire_packet`], reconstructed from a data
     /// packet's typed fields (what the engine holds after classification),
     /// with the wire buffer already carved up.

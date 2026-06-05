@@ -1,8 +1,10 @@
+use crate::crypto::Ed25519Signature;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
+use crate::routing::dedup::PacketHash;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
-    WirePacketHeader, HEADER_MIN_LEN,
+    WirePacketHeader, HEADER_MIN_LEN, SIGNATURE_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +19,7 @@ pub enum EgressSerializeError {
 /// retained announce ([`EgressDirective::ReemitAnnounce`], with the incremented
 /// hop count) and originating our own (`hops` = 0) frame through here, so the
 /// two can never drift on header shape.
-pub(crate) fn write_announce_wire_packet(
+pub fn write_announce_wire_packet(
     announce: &Announce,
     hops: u8,
     buf: &mut [u8],
@@ -48,6 +50,37 @@ pub(crate) fn write_announce_wire_packet(
     announce
         .to_wire(&mut buf[HEADER_MIN_LEN..])
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    Ok(total_len)
+}
+
+/// RNS 1.3.1 `Identity.prove` in its implicit form (the reference default):
+/// a proof packet is addressed to the proved packet's truncated hash and its
+/// whole payload is the 64-byte signature over the full hash. Proofs are
+/// never encrypted (`ProofDestination.encrypt` is the identity function).
+pub fn write_proof_wire_packet(
+    packet_hash: &PacketHash,
+    signature: &Ed25519Signature,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Single,
+        packet_type: PacketType::Proof,
+        hops: 0,
+        transport_id: None,
+        destination: packet_hash.proof_destination(),
+        context: WireContext::None,
+    };
+    let total_len = HEADER_MIN_LEN + SIGNATURE_LEN;
+    if buf.len() < total_len {
+        return Err(EgressSerializeError::BufferTooShort);
+    }
+    header
+        .write(&mut buf[..HEADER_MIN_LEN])
+        .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    buf[HEADER_MIN_LEN..total_len].copy_from_slice(&signature.0);
     Ok(total_len)
 }
 
