@@ -20,6 +20,7 @@ use heapless::Vec as HVec;
 
 use personal_rns::engine::{ReannounceSchedule, SelfAnnounceConfig};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
@@ -31,6 +32,7 @@ use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEve
 
 /// Stable id for this node's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+const WIFI_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD1; 16]);
 
 /// The destination this node announces itself as (`personal.node`).
 const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
@@ -85,9 +87,12 @@ pub fn run() {
 
 fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
     let host = LinuxSync::new();
-    let interface = usb_auto_interface(USB_INTERFACE_ID);
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
+    let _ = interfaces.push(host.attach(usb_auto_interface(USB_INTERFACE_ID), MAX_BUFFERED_PACKETS));
+    let _ = interfaces.push(host.attach(
+        wifi_lan_auto_interface(WIFI_INTERFACE_ID),
+        MAX_BUFFERED_PACKETS,
+    ));
 
     block_on(Prns::run(
         Recipe {
@@ -255,12 +260,18 @@ fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
         }
 
         let card_count = match &snapshot {
-            // This node has exactly one interface (the serial link), so one card.
             Some(snap) => {
                 // Only the real interfaces from the runtime snapshot — the dummy
                 // stand-ins (`append_desktop_dummy_cards`) stay parked for now.
-                let cards: HVec<Card, 8> =
-                    screen::snapshot_to_cards(snap, |_id| Some((CardKind::Usb, "USB")));
+                let cards: HVec<Card, 8> = screen::snapshot_to_cards(snap, |id| {
+                    if id == USB_INTERFACE_ID {
+                        Some((CardKind::Usb, "USB"))
+                    } else if id == WIFI_INTERFACE_ID {
+                        Some((CardKind::Wifi, "WiFi"))
+                    } else {
+                        None
+                    }
+                });
                 let card_count = cards.len();
                 ui_state.sync_card_count(card_count);
                 dispatch_long_press_if_ready(

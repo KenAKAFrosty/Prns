@@ -18,7 +18,10 @@ use core::net::Ipv6Addr;
 use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::sha256;
-use crate::interfaces::MacAddress;
+use crate::interfaces::{
+    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, MediumKind, TransitCapability,
+};
 
 pub const GROUP_ID: &[u8] = b"reticulum";
 /// Discovery multicast group for the default "reticulum" group id:
@@ -43,6 +46,19 @@ pub const DEFAULT_DATA_PORT: u16 = 42671;
 /// ([`AutoInterface.py` L44](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L44)).
 pub const HARDWARE_MTU: usize = 1196;
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
+
+pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        id,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+        },
+        mode: InterfaceMode::Full,
+        medium: MediumKind::Multicast,
+        state: ConnectionState::Connected,
+    }
+}
 
 /// Reconstruct the IPv6 link-local address an SLAAC stack derives from `mac` via
 /// EUI-64: `fe80::` over the 64-bit interface id formed by flipping the U/L bit
@@ -199,7 +215,10 @@ pub struct AutoInterfaceProtocol<const MAX_PEER_COUNT: usize> {
 
 impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
     pub fn new(our_mac_address: MacAddress) -> Self {
-        let our_link_local = link_local_from_mac(our_mac_address);
+        Self::from_link_local(link_local_from_mac(our_mac_address))
+    }
+
+    pub fn from_link_local(our_link_local: Ipv6Addr) -> Self {
         Self {
             our_token: peering_token(&our_link_local),
             our_link_local,
@@ -249,5 +268,35 @@ impl<const MAX_PEER_COUNT: usize> AutoInterfaceProtocol<MAX_PEER_COUNT> {
 
     pub fn auth_failures(&self) -> u32 {
         self.auth_failure_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MAX_PEERS: usize = 8;
+
+    #[test]
+    fn from_link_local_token_hashes_over_the_given_address() {
+        let addr = Ipv6Addr::new(0xfe80, 0, 0, 0, 0x0211, 0x22ff, 0xfe33, 0x4455);
+        let brain = AutoInterfaceProtocol::<MAX_PEERS>::from_link_local(addr);
+        assert_eq!(brain.our_link_local(), addr);
+        assert_eq!(
+            brain.our_peering_token().as_bytes(),
+            peering_token(&addr).as_bytes(),
+        );
+    }
+
+    #[test]
+    fn mac_constructor_still_derives_link_local_via_eui64() {
+        let mac = MacAddress::new([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]);
+        let expected = link_local_from_mac(mac);
+        let brain = AutoInterfaceProtocol::<MAX_PEERS>::new(mac);
+        assert_eq!(brain.our_link_local(), expected);
+        assert_eq!(
+            brain.our_peering_token().as_bytes(),
+            peering_token(&expected).as_bytes(),
+        );
     }
 }

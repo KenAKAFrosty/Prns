@@ -15,24 +15,31 @@ use esp_println::println;
 
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, select3, Either, Either3};
+use embassy_net::{Ipv6Cidr, Runner, Stack, StackResources, StaticConfigV6};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Ticker, Timer};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{Config, Interface, WifiController};
 use heapless::Vec as HVec;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
+use static_cell::StaticCell;
 
 use personal_rns::engine::{
     EngineCycleEntropySeed, ReannounceSchedule, SelfAnnounceConfig, ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
 use personal_rns::interfaces::impls::usb_auto::serve;
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::substrate::{
     new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, WakeSignal,
 };
-use personal_rns::interfaces::{InterfaceId, InterfaceWorkerContext, SelfDrivenInterface};
+use personal_rns::interfaces::{
+    InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface,
+};
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
@@ -43,7 +50,30 @@ use personal_hopspot_ui as screen;
 esp_app_desc!();
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
+const WIFI_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-wf");
 const PER_INTERFACE_MAX_BUFFERED_PACKETS: usize = 8;
+
+/// WiFi credentials, injected at compile time and kept out of the repo. Export
+/// `HOPSPOT_WIFI_SSID` / `HOPSPOT_WIFI_PASSWORD` before building; absent ones leave
+/// the station unconfigured (the connection task just keeps retrying).
+const WIFI_SSID: &str = match option_env!("HOPSPOT_WIFI_SSID") {
+    Some(value) => value,
+    None => "",
+};
+const WIFI_PASSWORD: &str = match option_env!("HOPSPOT_WIFI_PASSWORD") {
+    Some(value) => value,
+    None => "",
+};
+
+/// Place a value in a `'static` `StaticCell` and hand back the `'static` reference —
+/// the embassy idiom for giving the radio controller and net stack 'static lifetimes
+/// without a heap allocation.
+macro_rules! mk_static {
+    ($t:ty, $val:expr) => {{
+        static CELL: StaticCell<$t> = StaticCell::new();
+        CELL.init($val)
+    }};
+}
 const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4> = FixedCapacity;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
@@ -81,6 +111,11 @@ type UsbAutoContext =
 /// `attach` splits the worker + runtime ends out of it — no heap.
 static CHANNELS: EmbassyInterfaceChannels<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS> =
     EmbassyInterfaceChannels::new();
+static WIFI_CHANNELS: EmbassyInterfaceChannels<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS> =
+    EmbassyInterfaceChannels::new();
+
+type WifiAutoContext =
+    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>>;
 /// The host's one wake — the seam ends signal it, the contract host awaits it.
 static WAKE: WakeSignal = new_wake_signal();
 /// Each cycle's runtime snapshot, fired by the engine and subscribed by the OLED
@@ -97,15 +132,45 @@ pub async fn run(spawner: Spawner) {
     let p = esp_hal::init(config);
 
     // esp-rtos needs a heap + a timer + a software interrupt to boot the scheduler and
-    // the embassy-time driver.
-    esp_alloc::heap_allocator!(size: 32 * 1024);
+    // the embassy-time driver. WiFi and the IP stack push the heap well past the
+    // USB-only footprint, so size it for the radio.
+    esp_alloc::heap_allocator!(size: 110 * 1024);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
+    esp_println::logger::init_logger_from_env();
+
     // This first banner is the only thing on the usb-serial-jtag before frames flow, so
-    // the desktop's decoder skips it as pre-frame noise. Nothing logs there afterward.
-    println!("HOPSPOT_S3 boot — USB-auto responder");
+    // the desktop's decoder skips it as pre-frame noise.
+    println!("HOPSPOT_S3 boot — USB-auto + WiFi");
+
+    // WiFi radio + IPv6 link-local stack for the LAN AutoInterface. The brain hashes its
+    // peering token over the EUI-64 link-local, so pin the stack to that exact address
+    // (from the same MAC the worker gets) — peers see it as our datagram source.
+    let wifi_mac = MacAddress::new(
+        base_mac_address()
+            .as_bytes()
+            .try_into()
+            .expect("6-byte base MAC"),
+    );
+    let (wifi_controller, wifi_interfaces) =
+        esp_radio::wifi::new(p.WIFI, Default::default()).expect("wifi new");
+    let net_config = embassy_net::Config::ipv6_static(StaticConfigV6 {
+        address: Ipv6Cidr::new(link_local_from_mac(wifi_mac), 64),
+        gateway: None,
+        dns_servers: Default::default(),
+    });
+    let wifi_rng = Rng::new();
+    let net_seed = ((wifi_rng.random() as u64) << 32) | wifi_rng.random() as u64;
+    let (wifi_stack, wifi_runner) = embassy_net::new(
+        wifi_interfaces.station,
+        net_config,
+        mk_static!(StackResources<4>, StackResources::new()),
+        net_seed,
+    );
+    spawner.spawn(wifi_connection_task(wifi_controller).expect("wifi connection task"));
+    spawner.spawn(wifi_net_task(wifi_runner).expect("wifi net task"));
 
     // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
     let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
@@ -136,7 +201,10 @@ pub async fn run(spawner: Spawner) {
     // Async USB serial, split — the responder task owns the halves.
     let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
     let node_tag = node_tag_from_mac();
-    spawner.spawn(node_task(spawner, usb_rx, usb_tx, node_tag).expect("node task fits the pool"));
+    spawner.spawn(
+        node_task(spawner, usb_rx, usb_tx, node_tag, wifi_stack, wifi_mac)
+            .expect("node task fits the pool"),
+    );
 
     // User button (GPIO0, the PRG/BOOT button; the internal pull-up holds it high on
     // release). Its task posts short/long presses the render loop turns into focus/menu.
@@ -192,9 +260,13 @@ pub async fn run(spawner: Spawner) {
         // One card per interface in the latest snapshot — the host maps each id to its
         // icon/label. Rebuilt each iteration (cheap) so the button math has the live count.
         let cards: HVec<screen::Card, 8> = match &snapshot {
-            Some(snap) => {
-                screen::snapshot_to_cards(snap, |_id| Some((screen::CardKind::Usb, "USB")))
-            }
+            Some(snap) => screen::snapshot_to_cards(snap, |id| {
+                if id == WIFI_INTERFACE_ID {
+                    Some((screen::CardKind::Wifi, "WiFi"))
+                } else {
+                    Some((screen::CardKind::Usb, "USB"))
+                }
+            }),
             None => HVec::new(),
         };
         let card_count = cards.len();
@@ -264,6 +336,8 @@ async fn node_task(
     usb_rx: UsbSerialJtagRx<'static, Async>,
     usb_tx: UsbSerialJtagTx<'static, Async>,
     node_tag: NodeTag,
+    wifi_stack: Stack<'static>,
+    wifi_mac: MacAddress,
 ) {
     // A bring-up fixture identity. The battery sense owns ADC1, so no TRNG can — and the
     // bare RNG without RF isn't trustworthy for a keypair — so the identity is fixed
@@ -294,11 +368,25 @@ async fn node_task(
         },
     );
 
+    // The WiFi AutoInterface is self-driven the same way: its launch spawns the shared
+    // embassy `serve` loop over the IP stack + this board's MAC (so the worker's token
+    // matches the stack's link-local).
+    let wifi_interface = SelfDrivenInterface::new(
+        auto_interface::descriptor(WIFI_INTERFACE_ID),
+        move |context: WifiAutoContext| {
+            spawner.spawn(
+                wifi_auto_task(wifi_stack, wifi_mac, context)
+                    .expect("wifi auto task fits the pool"),
+            );
+        },
+    );
+
     // `attach` glues the seam from the board's `static` channels (keyed by the id the
     // interface carries), then starts it: the worker task holds the context, the runtime
     // keeps the handle.
-    let mut interfaces = FixedInterfaceSet::<_, 1>::new();
+    let mut interfaces = FixedInterfaceSet::<_, 2>::new();
     let _ = interfaces.push(host.attach(interface, &CHANNELS));
+    let _ = interfaces.push(host.attach(wifi_interface, &WIFI_CHANNELS));
 
     // Each cycle's snapshot goes to the OLED render loop, never the shared
     // usb-serial-jtag (a mid-frame log byte would corrupt the link).
@@ -332,6 +420,47 @@ async fn responder_task(
     node_tag: NodeTag,
 ) {
     serve(rx, tx, context, node_tag).await
+}
+
+/// The board's concrete WiFi AutoInterface worker: the one monomorphization the launch
+/// closure spawns. Runs the shared embassy `serve` loop over the IP stack.
+#[embassy_executor::task]
+async fn wifi_auto_task(stack: Stack<'static>, mac: MacAddress, context: WifiAutoContext) {
+    auto_interface::embassy::serve(stack, mac, context).await
+}
+
+/// Drives the WiFi station: applies the credentials (which `set_config` (re)starts the
+/// controller for), connects, and reconnects whenever the link drops.
+#[embassy_executor::task]
+async fn wifi_connection_task(mut controller: WifiController<'static>) {
+    let config = Config::Station(
+        StationConfig::default()
+            .with_ssid(WIFI_SSID)
+            .with_password(WIFI_PASSWORD.into()),
+    );
+    if let Err(e) = controller.set_config(&config) {
+        log::warn!("WIFI config failed: {e:?}");
+    }
+    log::info!("WIFI joining \"{WIFI_SSID}\"");
+    loop {
+        match controller.connect_async().await {
+            Ok(_) => {
+                log::info!("WIFI connected");
+                let _ = controller.wait_for_disconnect_async().await;
+                log::warn!("WIFI disconnected, reconnecting");
+            }
+            Err(e) => {
+                log::warn!("WIFI connect failed: {e:?}");
+                Timer::after(Duration::from_millis(3_000)).await;
+            }
+        }
+    }
+}
+
+/// Runs the embassy-net stack's background poll loop.
+#[embassy_executor::task]
+async fn wifi_net_task(mut runner: Runner<'static, Interface<'static>>) {
+    runner.run().await
 }
 
 /// The user button worker: turn raw active-low edges on GPIO0 into the same

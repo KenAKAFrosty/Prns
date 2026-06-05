@@ -2,3 +2,4 @@
 **/*.rs.bk
 godot-smoke/
 .vscode
+.wifi-env
