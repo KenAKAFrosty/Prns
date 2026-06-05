@@ -1,4 +1,5 @@
 use crate::engine::directives::HeapEngineDirectives;
+use crate::identity::held::HeapHeldIdentityColumns;
 use crate::routing::announce::held_cache::HeapHeldAnnounces;
 use crate::routing::announce::schedule::HeapRebroadcastQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
@@ -19,6 +20,7 @@ impl EngineStorage for GrowableHeap {
     type Held = HeapHeldAnnounces;
     type Directives = HeapEngineDirectives;
     type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
+    type HeldIdentities = HeapHeldIdentityColumns;
     type PacketHashes = HeapPacketHashHistory;
 }
 

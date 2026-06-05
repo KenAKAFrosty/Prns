@@ -5,6 +5,7 @@ pub use impls::*;
 use crate::crypto::Ed25519Signature;
 use crate::engine::directives::EngineDirectives;
 use crate::engine::InstantMillis;
+use crate::identity::held::HeldIdentityColumns;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
@@ -160,5 +161,6 @@ pub trait EngineStorage {
     type Held: HeldAnnounces + Default;
     type Directives: EngineDirectives + Default;
     type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
+    type HeldIdentities: HeldIdentityColumns + Default;
     type PacketHashes: PacketHashHistory + Default;
 }

@@ -1,4 +1,5 @@
 use crate::engine::directives::FixedEngineDirectives;
+use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -15,7 +16,8 @@ pub struct FixedCapacity<
     const HISTORY_FLOOR_PER_DESTINATION: usize,
     const HISTORY_OVERFLOW_CAPACITY: usize,
     const HELD_CACHE_CAPACITY: usize,
-    const MAX_LOCAL_DESTINATIONS: usize,
+    const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+    const MAX_HELD_IDENTITIES: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
 >;
 
@@ -26,7 +28,8 @@ impl<
         const HISTORY_FLOOR_PER_DESTINATION: usize,
         const HISTORY_OVERFLOW_CAPACITY: usize,
         const HELD_CACHE_CAPACITY: usize,
-        const MAX_LOCAL_DESTINATIONS: usize,
+        const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+        const MAX_HELD_IDENTITIES: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
     > EngineStorage
     for FixedCapacity<
@@ -36,7 +39,8 @@ impl<
         HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
         HELD_CACHE_CAPACITY,
-        MAX_LOCAL_DESTINATIONS,
+        MAX_UPSTREAM_APP_DESTINATIONS,
+        MAX_HELD_IDENTITIES,
         PACKET_HASH_GENERATION_CAPACITY,
     >
 {
@@ -55,7 +59,9 @@ impl<
     type Held = FixedHeldAnnounces<HELD_CACHE_CAPACITY>;
     // One directive per tracked destination at most, so sized by the routing table.
     type Directives = FixedEngineDirectives<MAX_TRACKED_DESTINATIONS>;
-    type UpstreamAppDestinations = FixedUpstreamAppDestinationColumns<MAX_LOCAL_DESTINATIONS>;
+    type UpstreamAppDestinations =
+        FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
 }
 
@@ -68,7 +74,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedCapacity<8, 16, 256, 2, 8, 4, 2, 4>;
+        type S = FixedCapacity<8, 16, 256, 2, 8, 4, 2, 2, 4>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
