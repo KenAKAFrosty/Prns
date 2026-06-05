@@ -7,8 +7,8 @@ use embassy_time::{Duration, Instant as EmbassyInstant, Ticker};
 use heapless::Vec as HVec;
 
 use super::core::{
-    AutoInterfaceProtocol, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP, HARDWARE_MTU,
-    UNICAST_DISCOVERY_PORT,
+    AutoInterfaceProtocol, DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, DISCOVERY_GROUP,
+    HARDWARE_MTU, UNICAST_DISCOVERY_PORT,
 };
 use crate::engine::InstantMillis;
 use crate::interfaces::substrate::EmbassyHostSubstrate;

@@ -119,7 +119,6 @@ mod tests {
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use crate::interfaces::substrate::StdInterfaceSeam;
     use crate::interfaces::InterfaceHandle;
-    use crate::interfaces::OutboundPacket;
 
     struct MockPort {
         rx: Vec<u8>,
@@ -203,7 +202,13 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        assert!(runtime_handle.send(OutboundPacket::new(&packet)).is_ok());
+        assert_eq!(
+            runtime_handle.acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            }),
+            Ok(packet.len())
+        );
         let (port, written) = MockPort::new(Vec::new());
 
         let _ = serve_connection(port, &mut worker_context);

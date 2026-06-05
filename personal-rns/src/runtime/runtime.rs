@@ -10,8 +10,7 @@ use crate::engine::{
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
-    ConnectionState, InterfaceId, NextScheduledInterfaceWake, OutboundPacket, RegisteredInterface,
-    SendError,
+    ConnectionState, InterfaceId, NextScheduledInterfaceWake, RegisteredInterface, SendError,
 };
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
@@ -178,15 +177,20 @@ where
 
     let tick_output = engine.tick(now, entropy.jitter);
     let egress_directive_count = tick_output.egress_directive_count();
-    let mut emit_buffer = [0u8; MTU];
     for directive in tick_output.egress_directives() {
-        let n = directive
-            .to_wire(&mut emit_buffer)
-            .expect("MTU-sized buf fits any valid wire packet");
+        // Serializing per interface (instead of once into a staging buffer) is
+        // free — `to_wire` is a header write plus a copy of the retained,
+        // already-signed payload — and it lets each packet land in its queue
+        // slot grant directly. With IFAC it stops being an optimization and
+        // becomes required: each interface masks the whole packet differently.
         fan_to_handles(
             interfaces,
             traffic,
-            &emit_buffer[..n],
+            |buf| {
+                directive
+                    .to_wire(buf)
+                    .expect("MTU-sized buf fits any valid wire packet")
+            },
             directive.fire_on(),
             FanoutClass::Transit,
         );
@@ -194,13 +198,20 @@ where
     tick_output.commit();
 
     if !engine.registered_interfaces().is_empty() {
+        // The self-announce is staged once — building it signs, and signing
+        // per interface would be waste — then the fan copies the staged bytes
+        // into each grant.
+        let mut emit_buffer = [0u8; MTU];
         if let Some(n) =
             engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
         {
             fan_to_handles(
                 interfaces,
                 traffic,
-                &emit_buffer[..n],
+                |buf| {
+                    buf[..n].copy_from_slice(&emit_buffer[..n]);
+                    n
+                },
                 engine.registered_interfaces(),
                 FanoutClass::LocalOriginated,
             );
@@ -224,7 +235,7 @@ where
 fn fan_to_handles<I>(
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
-    bytes: &[u8],
+    write_packet: impl Fn(&mut [u8]) -> usize,
     fire_on: &[InterfaceId],
     fanout_class: FanoutClass,
 ) where
@@ -233,7 +244,7 @@ fn fan_to_handles<I>(
 {
     for started in interfaces.iter_mut() {
         // Decide eligibility off the descriptor first, so its borrow ends before
-        // the mutable `send`.
+        // the mutable `send_with`.
         let descriptor = started.descriptor();
         let id = descriptor.id;
         let eligible = fire_on.contains(&id)
@@ -246,9 +257,9 @@ fn fan_to_handles<I>(
                 FanoutClass::Transit => descriptor.capabilities.allows_transit(),
             };
         if eligible {
-            match started.send(OutboundPacket::new(bytes)) {
-                Ok(()) => traffic.add_tx(id, bytes.len() as u64),
-                Err(SendError::QueueFull | SendError::PacketTooLarge) => {}
+            match started.send_with(&write_packet) {
+                Ok(written) => traffic.add_tx(id, written as u64),
+                Err(SendError::QueueFull) => {}
             }
         }
     }
@@ -344,9 +355,14 @@ mod tests {
             drained
         }
 
-        fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
-            self.sent.push(packet.bytes.to_vec());
-            Ok(())
+        fn acquire_send_grant(
+            &mut self,
+            fill: impl FnOnce(&mut [u8]) -> usize,
+        ) -> Result<usize, SendError> {
+            let mut buf = [0u8; MTU];
+            let written = fill(&mut buf);
+            self.sent.push(buf[..written].to_vec());
+            Ok(written)
         }
 
         fn request_stop(&mut self) {}
@@ -737,7 +753,10 @@ mod tests {
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
-            &bytes,
+            |buf: &mut [u8]| {
+                buf[..bytes.len()].copy_from_slice(&bytes);
+                bytes.len()
+            },
             &[connected, failed],
             FanoutClass::Transit,
         );
@@ -777,11 +796,15 @@ mod tests {
         ]);
         let mut traffic = TrafficLedger::new();
         let bytes = [0xAA, 0xBB, 0xCC];
+        let write_packet = |buf: &mut [u8]| {
+            buf[..bytes.len()].copy_from_slice(&bytes);
+            bytes.len()
+        };
 
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
-            &bytes,
+            write_packet,
             &[local_only, transit],
             FanoutClass::Transit,
         );
@@ -797,7 +820,7 @@ mod tests {
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
-            &bytes,
+            write_packet,
             &[local_only, transit],
             FanoutClass::LocalOriginated,
         );

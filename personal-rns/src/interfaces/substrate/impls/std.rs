@@ -23,6 +23,15 @@ struct OutboundSlot<const MTU: usize> {
     bytes: [u8; MTU],
 }
 
+impl<const MTU: usize> Default for OutboundSlot<MTU> {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            bytes: [0u8; MTU],
+        }
+    }
+}
+
 /// Producer wrapper that wakes the host after every publish attempt. The wake is
 /// coalesced by the host-side channel, and it fires even when the ring is full so
 /// backpressure wakes the runtime to drain.
@@ -122,16 +131,19 @@ impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
         drained
     }
 
-    fn send(&mut self, packet: OutboundPacket<'_>) -> Result<(), SendError> {
-        if packet.bytes.len() > MTU {
-            return Err(SendError::PacketTooLarge);
-        }
-        let mut slot = OutboundSlot {
-            len: packet.bytes.len() as u16,
-            bytes: [0u8; MTU],
+    fn acquire_send_grant(
+        &mut self,
+        fill: impl FnOnce(&mut [u8]) -> usize,
+    ) -> Result<usize, SendError> {
+        let Ok(mut chunk) = self.outbound.write_chunk(1) else {
+            return Err(SendError::QueueFull);
         };
-        slot.bytes[..packet.bytes.len()].copy_from_slice(packet.bytes);
-        self.outbound.push(slot).map_err(|_| SendError::QueueFull)
+        let (granted, _) = chunk.as_mut_slices();
+        let slot = &mut granted[0];
+        let written = fill(&mut slot.bytes);
+        slot.len = written as u16;
+        chunk.commit(1);
+        Ok(written)
     }
 
     fn request_stop(&mut self) {
@@ -231,9 +243,13 @@ mod tests {
             mut runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
 
-        assert!(runtime_handle
-            .send(OutboundPacket::new(&[0xAA, 0xBB, 0xCC]))
-            .is_ok());
+        assert_eq!(
+            runtime_handle.acquire_send_grant(|buf| {
+                buf[..3].copy_from_slice(&[0xAA, 0xBB, 0xCC]);
+                3
+            }),
+            Ok(3)
+        );
         let mut transmitted: Vec<Vec<u8>> = Vec::new();
         let drained = worker_context
             .outbound
@@ -300,31 +316,23 @@ mod tests {
     }
 
     #[test]
-    fn send_reports_packet_too_large() {
-        let (wake_tx, _wake_rx) = sync_channel::<()>(1);
-        let StdInterfaceSeam {
-            worker_context: _worker_context,
-            mut runtime_handle,
-        } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), MAX_BUFFERED_PACKETS, wake_tx);
-
-        let too_large = [0xAA; MTU + 1];
-        assert_eq!(
-            runtime_handle.send(OutboundPacket::new(&too_large)),
-            Err(SendError::PacketTooLarge)
-        );
-    }
-
-    #[test]
-    fn send_reports_queue_full() {
+    fn a_full_queue_reports_queue_full_without_running_the_fill() {
         let (wake_tx, _wake_rx) = sync_channel::<()>(1);
         let StdInterfaceSeam {
             worker_context: _worker_context,
             mut runtime_handle,
         } = StdInterfaceSeam::<MTU>::new(id(), Instant::now(), 1, wake_tx);
 
-        assert!(runtime_handle.send(OutboundPacket::new(&[0x01])).is_ok());
         assert_eq!(
-            runtime_handle.send(OutboundPacket::new(&[0x02])),
+            runtime_handle.acquire_send_grant(|buf| {
+                buf[0] = 0x01;
+                1
+            }),
+            Ok(1)
+        );
+        assert_eq!(
+            runtime_handle
+                .acquire_send_grant(|_buf| panic!("no grant was available, fill must not run")),
             Err(SendError::QueueFull)
         );
     }

@@ -7,5 +7,4 @@ pub struct QueueFull;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendError {
     QueueFull,
-    PacketTooLarge,
 }

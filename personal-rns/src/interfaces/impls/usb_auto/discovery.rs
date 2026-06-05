@@ -238,7 +238,7 @@ fn would_block(e: &io::Error) -> bool {
 mod tests {
     use super::*;
     use crate::interfaces::substrate::StdInterfaceSeam;
-    use crate::interfaces::{InterfaceHandle, InterfaceId, OutboundPacket};
+    use crate::interfaces::{InterfaceHandle, InterfaceId};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::sync_channel;
@@ -451,7 +451,12 @@ mod tests {
         disc.pump(&mut worker_context);
 
         let packet = [0x11, 0x22, 0x33];
-        runtime_handle.send(OutboundPacket::new(&packet)).unwrap();
+        runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            })
+            .unwrap();
         disc.pump(&mut worker_context);
 
         assert_eq!(
