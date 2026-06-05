@@ -1,8 +1,8 @@
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::wire::{
-    Context, ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WirePacketHeader,
-    HEADER_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
+    WirePacketHeader, HEADER_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub(crate) fn write_announce_wire_packet(
         hops,
         transport_id: None,
         destination: announce.destination,
-        context: Context::None,
+        context: WireContext::None,
     };
     let total_len = HEADER_LEN + announce.wire_len();
     if buf.len() < total_len {

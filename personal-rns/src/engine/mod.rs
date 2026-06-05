@@ -1,32 +1,37 @@
 pub mod directives;
 pub mod egress;
 pub mod ingress;
+pub mod local_destinations;
 pub mod self_announce;
 
 pub use egress::{EgressDirective, EgressSerializeError};
-pub use ingress::Ingress;
+pub use ingress::{DataPacket, Ingress};
+pub use local_destinations::{
+    LocalDestination, LocalDestinationColumns, LocalDestinationKind, RegisterDestinationError,
+};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceConfig, SelfAnnounceConfigError};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::write_announce_wire_packet;
+use crate::engine::local_destinations::LocalDestinations;
 use crate::engine::self_announce::SelfAnnounceSettings;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     InboundPacket, InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES,
 };
+use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+use crate::routing::announce::defaults::{jitter_offset_for, JitterSeed};
+use crate::routing::announce::held_cache::HeldAnnounces;
+use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{
     derive_destination_hash, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
     AnnounceId, SelfAnnounceEntropy,
 };
-use crate::routing::defaults::{jitter_offset_for, JitterSeed};
-use crate::routing::held_cache::HeldAnnounces;
-use crate::routing::schedule::RebroadcastQueue;
+use crate::routing::delivery::{PlainDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS};
 use crate::routing::storage::EngineStorage;
-use crate::routing::{
-    DropCause, RoutingTable, UpsertRouteOutcome, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-};
-use crate::wire::DestinationHash;
+use crate::routing::{DropCause, RoutingTable, UpsertRouteOutcome};
+use crate::wire::{DestinationHash, DestinationType};
 use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
@@ -83,6 +88,8 @@ pub struct EngineState<S: EngineStorage> {
     pending_rebroadcasts: S::Pending,
     directives: S::Directives,
     interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
+    local_destinations: LocalDestinations<S::LocalDestinations>,
+    packet_hash_history: S::PacketHashes,
     identity: Option<InMemoryNodeIdentity>,
     self_announce: Option<SelfAnnounceSettings>,
 }
@@ -97,6 +104,8 @@ impl<S: EngineStorage> Default for EngineState<S> {
             pending_rebroadcasts: Default::default(),
             directives: Default::default(),
             interfaces: HeaplessVec::new(),
+            local_destinations: LocalDestinations::default(),
+            packet_hash_history: Default::default(),
             identity: None,
             self_announce: None,
         }
@@ -111,6 +120,8 @@ where
     S::AppData: core::fmt::Debug,
     S::Held: core::fmt::Debug,
     S::Pending: core::fmt::Debug,
+    S::LocalDestinations: core::fmt::Debug,
+    S::PacketHashes: core::fmt::Debug,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("EngineState")
@@ -120,6 +131,8 @@ where
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
             .field("interfaces", &self.interfaces)
+            .field("local_destinations", &self.local_destinations)
+            .field("packet_hash_history", &self.packet_hash_history)
             .field(
                 "identity_hash",
                 &self.identity.as_ref().map(|id| id.identity_hash()),
@@ -202,6 +215,31 @@ impl<S: EngineStorage> EngineState<S> {
         &self.interfaces
     }
 
+    pub fn register_plain_destination(
+        &mut self,
+        app_name: &str,
+        aspects: &[&str],
+    ) -> Result<DestinationHash, RegisterDestinationError> {
+        self.local_destinations.register_plain(app_name, aspects)
+    }
+
+    pub fn register_single_destination(
+        &mut self,
+        app_name: &str,
+        aspects: &[&str],
+    ) -> Result<DestinationHash, RegisterDestinationError> {
+        let identity = self
+            .identity
+            .as_ref()
+            .ok_or(RegisterDestinationError::NoNodeIdentity)?;
+        self.local_destinations
+            .register_single(&identity.identity_hash(), app_name, aspects)
+    }
+
+    pub fn local_destinations(&self) -> impl Iterator<Item = LocalDestination> + '_ {
+        self.local_destinations.iter()
+    }
+
     pub fn self_announced_destination(&self) -> Option<DestinationHash> {
         let identity = self.identity.as_ref()?;
         let self_announce = self.self_announce.as_ref()?;
@@ -270,50 +308,201 @@ impl<S: EngineStorage> EngineState<S> {
             .mark_announced(now);
         Some(written)
     }
+}
 
+#[must_use]
+pub struct TickOutput<'a, S: EngineStorage> {
+    state: &'a mut EngineState<S>,
+    now: InstantMillis,
+    recovered_from_held_count: usize,
+}
+
+impl<'a, S: EngineStorage> TickOutput<'a, S> {
+    pub fn egress_directive_count(&self) -> usize {
+        self.state.directives.len()
+    }
+
+    pub const fn recovered_from_held_count(&self) -> usize {
+        self.recovered_from_held_count
+    }
+
+    pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
+        let state = &*self.state;
+        state.directives.iter().filter_map(move |directive| {
+            let EngineDirective::ReemitAnnounce {
+                destination,
+                fire_on,
+            } = directive;
+            let retained = state.routing_table.retained_announce_for(destination)?;
+            Some(EgressDirective::ReemitAnnounce {
+                announce: retained.announce,
+                emit_hops: retained.hops,
+                fire_on: fire_on.as_slice(),
+            })
+        })
+    }
+
+    pub fn commit(mut self) {
+        self.commit_in_place();
+    }
+
+    fn commit_in_place(&mut self) {
+        self.state.pending_rebroadcasts.drain_due(self.now);
+    }
+}
+
+impl<S: EngineStorage> Drop for TickOutput<'_, S> {
+    fn drop(&mut self) {
+        self.commit_in_place();
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceIngest {
+    Accepted,
+    HeldForRetry,
+    Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestPacketOutcome<'p> {
+    Announce(AnnounceIngest),
+    Delivery(PlainDelivery<'p>),
+    Ignored,
+}
+
+impl<S: EngineStorage> EngineState<S> {
     #[must_use]
-    pub fn ingest_packets<'p, I>(
+    pub fn ingest_packet<'p>(
         &mut self,
-        packets: impl IntoIterator<Item = I>,
+        packet: InboundPacket<'p>,
         jitter: JitterSeed,
-    ) -> IngestOutput
-    where
-        I: core::borrow::Borrow<InboundPacket<'p>>,
-    {
-        let mut counters = IngestCounters::default();
-        let mut processed: usize = 0;
+    ) -> IngestPacketOutcome<'p> {
+        self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
-        for packet in packets {
-            processed += 1;
-            let packet: &InboundPacket = core::borrow::Borrow::borrow(&packet);
-            match Ingress::classify(packet) {
-                Ingress::Announce {
-                    announce,
-                    received_hops,
-                    source_interface,
-                    arrived_at,
-                } => ingest_announce(
-                    self,
-                    announce,
-                    received_hops,
-                    source_interface,
-                    arrived_at,
-                    jitter,
-                    &mut counters,
-                ),
+        match Ingress::classify(packet) {
+            Ingress::Announce {
+                announce,
+                received_hops,
+                source_interface,
+                arrived_at,
+            } => IngestPacketOutcome::Announce(self.ingest_announce(
+                announce,
+                received_hops,
+                source_interface,
+                arrived_at,
+                jitter,
+            )),
 
-                Ingress::Data | Ingress::LinkRequest | Ingress::Proof => {}
-                Ingress::Unparseable => {}
+            Ingress::Data {
+                data,
+                received_hops,
+                source_interface,
+                arrived_at,
+            } => match self.maybe_upstream_delivery(
+                data,
+                received_hops,
+                source_interface,
+                arrived_at,
+            ) {
+                Some(delivery) => IngestPacketOutcome::Delivery(delivery),
+                None => IngestPacketOutcome::Ignored,
+            },
+
+            Ingress::LinkRequest | Ingress::Proof => IngestPacketOutcome::Ignored,
+            Ingress::Unparseable => IngestPacketOutcome::Ignored,
+        }
+    }
+
+    fn maybe_upstream_delivery<'p>(
+        &self,
+        data: DataPacket<'p>,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> Option<PlainDelivery<'p>> {
+        if let Some(transport_id) = data.maybe_transport_id {
+            let ours = self.identity.as_ref().is_some_and(|identity| {
+                identity.identity_hash().as_bytes() == transport_id.as_bytes()
+            });
+            if !ours {
+                return None;
             }
         }
 
-        self.ingested_packet_count = self.ingested_packet_count.saturating_add(processed as u64);
+        match data.destination_type {
+            DestinationType::Plain => {
+                if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
+                    return None;
+                }
+                self.local_destinations
+                    .lookup(&data.destination, DestinationType::Plain)?;
+                Some(PlainDelivery {
+                    destination: data.destination,
+                    context: data.context,
+                    payload: data.payload,
+                    arrived_at,
+                    source_interface,
+                })
+            }
+            DestinationType::Single | DestinationType::Group | DestinationType::Link => None,
+        }
+    }
 
-        IngestOutput {
-            processed_packet_count: processed,
-            accepted_announce_count: counters.accepted,
-            held_for_retry_count: counters.held,
-            scheduled_rebroadcast_count: counters.scheduled,
+    fn ingest_announce(
+        &mut self,
+        announce: Announce<'_>,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+        jitter: JitterSeed,
+    ) -> AnnounceIngest {
+        let decision = AnnounceAcceptanceInput {
+            packet_hops: received_hops,
+            announce_id: announce.announce_id,
+            destination_is_local: false,
+            existing_route: self.routing_table.existing_route_for(&announce.destination),
+            arrived_at,
+        }
+        .determine_acceptance();
+
+        if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
+            return AnnounceIngest::Ignored;
+        }
+
+        let outcome =
+            self.routing_table
+                .upsert_route(received_hops, arrived_at, source_interface, &announce);
+        match outcome {
+            UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
+                let offset = jitter_offset_for(
+                    jitter,
+                    &announce.destination,
+                    DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                );
+                self.pending_rebroadcasts.schedule(
+                    announce.destination,
+                    InstantMillis(arrived_at.0.saturating_add(offset)),
+                    source_interface,
+                );
+                AnnounceIngest::Accepted
+            }
+            UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
+                use crate::routing::announce::held_cache::{HoldReason, ParkOutcome};
+                match self.held_announces_cache.park(
+                    &announce,
+                    arrived_at,
+                    received_hops,
+                    HoldReason::RoutingArenaPressure,
+                    source_interface,
+                ) {
+                    ParkOutcome::Parked | ParkOutcome::Overwrote => AnnounceIngest::HeldForRetry,
+                    ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {
+                        AnnounceIngest::Ignored
+                    }
+                }
+            }
+            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => AnnounceIngest::Ignored,
         }
     }
 
@@ -322,7 +511,7 @@ impl<S: EngineStorage> EngineState<S> {
 
         let mut recovered_from_held_count = 0;
         while let Some(held) = self.held_announces_cache.take_next() {
-            use crate::routing::held_cache::HoldReason;
+            use crate::routing::announce::held_cache::HoldReason;
             match held.reason() {
                 HoldReason::RoutingArenaPressure => {
                     let announce = held.announce();
@@ -400,145 +589,6 @@ impl<S: EngineStorage> EngineState<S> {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct IngestOutput {
-    processed_packet_count: usize,
-    accepted_announce_count: usize,
-    held_for_retry_count: usize,
-    scheduled_rebroadcast_count: usize,
-}
-
-impl IngestOutput {
-    pub const fn processed_packet_count(&self) -> usize {
-        self.processed_packet_count
-    }
-    pub const fn accepted_announce_count(&self) -> usize {
-        self.accepted_announce_count
-    }
-    pub const fn held_for_retry_count(&self) -> usize {
-        self.held_for_retry_count
-    }
-    pub const fn scheduled_rebroadcast_count(&self) -> usize {
-        self.scheduled_rebroadcast_count
-    }
-}
-
-#[must_use]
-pub struct TickOutput<'a, S: EngineStorage> {
-    state: &'a mut EngineState<S>,
-    now: InstantMillis,
-    recovered_from_held_count: usize,
-}
-
-impl<'a, S: EngineStorage> TickOutput<'a, S> {
-    pub fn egress_directive_count(&self) -> usize {
-        self.state.directives.len()
-    }
-
-    pub const fn recovered_from_held_count(&self) -> usize {
-        self.recovered_from_held_count
-    }
-
-    pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
-        let state = &*self.state;
-        state.directives.iter().filter_map(move |directive| {
-            let EngineDirective::ReemitAnnounce {
-                destination,
-                fire_on,
-            } = directive;
-            let retained = state.routing_table.retained_announce_for(destination)?;
-            Some(EgressDirective::ReemitAnnounce {
-                announce: retained.announce,
-                emit_hops: retained.hops,
-                fire_on: fire_on.as_slice(),
-            })
-        })
-    }
-
-    pub fn commit(mut self) {
-        self.commit_in_place();
-    }
-
-    fn commit_in_place(&mut self) {
-        self.state.pending_rebroadcasts.drain_due(self.now);
-    }
-}
-
-impl<S: EngineStorage> Drop for TickOutput<'_, S> {
-    fn drop(&mut self) {
-        self.commit_in_place();
-    }
-}
-
-#[derive(Default)]
-struct IngestCounters {
-    accepted: usize,
-    held: usize,
-    scheduled: usize,
-}
-
-fn ingest_announce<S: EngineStorage>(
-    state: &mut EngineState<S>,
-    announce: Announce<'_>,
-    received_hops: u8,
-    source_interface: InterfaceId,
-    arrived_at: InstantMillis,
-    jitter: JitterSeed,
-    counters: &mut IngestCounters,
-) {
-    let decision = AnnounceAcceptanceInput {
-        packet_hops: received_hops,
-        announce_id: announce.announce_id,
-        destination_is_local: false,
-        existing_route: state
-            .routing_table
-            .existing_route_for(&announce.destination),
-        arrived_at,
-    }
-    .determine_acceptance();
-
-    if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-        return;
-    }
-
-    let outcome =
-        state
-            .routing_table
-            .upsert_route(received_hops, arrived_at, source_interface, &announce);
-    match outcome {
-        UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
-            counters.accepted += 1;
-            let offset = jitter_offset_for(
-                jitter,
-                &announce.destination,
-                DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-            );
-            state.pending_rebroadcasts.schedule(
-                announce.destination,
-                InstantMillis(arrived_at.0.saturating_add(offset)),
-                source_interface,
-            );
-            counters.scheduled += 1;
-        }
-        UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
-            use crate::routing::held_cache::{HoldReason, ParkOutcome};
-            match state.held_announces_cache.park(
-                &announce,
-                arrived_at,
-                received_hops,
-                HoldReason::RoutingArenaPressure,
-                source_interface,
-            ) {
-                ParkOutcome::Parked | ParkOutcome::Overwrote => {
-                    counters.held += 1;
-                }
-                ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {}
-            }
-        }
-        UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,10 +598,11 @@ mod tests {
     };
     use crate::routing::storage::FixedCapacity;
     use crate::wire::{
-        DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader, MTU,
+        ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+        WireContext, WirePacketHeader, MTU,
     };
 
-    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8, 128>;
 
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
     const TEST_NONCE: SelfAnnounceEntropy =
@@ -611,27 +662,30 @@ mod tests {
     }
 
     #[test]
-    fn ingest_counts_the_batch_without_a_clock() {
+    fn ingest_counts_each_packet_without_a_clock() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let batch = [
+
+        let mut first_bytes = [1, 2, 3];
+        let first = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(10),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &[1, 2, 3],
+                bytes: &mut first_bytes,
             },
+            TEST_ENTROPY,
+        );
+        let mut second_bytes = [4];
+        let second = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(20),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &[4],
+                bytes: &mut second_bytes,
             },
-        ];
+            TEST_ENTROPY,
+        );
 
-        let out = state.ingest_packets(batch, TEST_ENTROPY);
-        assert_eq!(out.processed_packet_count(), 2);
-        assert_eq!(state.ingested_packet_count(), 2);
-
-        let empty = state.ingest_packets(core::iter::empty::<InboundPacket<'_>>(), TEST_ENTROPY);
-        assert_eq!(empty.processed_packet_count(), 0);
+        assert_eq!(first, IngestPacketOutcome::Ignored);
+        assert_eq!(second, IngestPacketOutcome::Ignored);
         assert_eq!(state.ingested_packet_count(), 2);
     }
 
@@ -738,6 +792,163 @@ mod tests {
     }
 
     #[test]
+    fn registering_our_announced_name_as_single_yields_the_announced_destination() {
+        let mut state = personal_node_announcer();
+        let registered = state
+            .register_single_destination("personal", &["node"])
+            .expect("an identity-holding node registers single destinations");
+        assert_eq!(Some(registered), state.self_announced_destination());
+        assert_eq!(state.local_destinations().count(), 1);
+    }
+
+    #[test]
+    fn a_relay_cannot_register_a_single_destination_but_can_register_plain() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        assert_eq!(
+            state.register_single_destination("personal", &["node"]),
+            Err(RegisterDestinationError::NoNodeIdentity),
+        );
+        assert!(state
+            .register_plain_destination("personal", &["node"])
+            .is_ok());
+        assert_eq!(state.local_destinations().count(), 1);
+    }
+
+    const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
+
+    fn plain_data_packet(bytes: &mut [u8]) -> InboundPacket<'_> {
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: InterfaceId::new([0x07; 16]),
+            bytes,
+        }
+    }
+
+    #[test]
+    fn neighbor_plain_data_for_a_registered_destination_delivers_the_rns_1_3_1_payload() {
+        let mut raw = hx(RAW_PLAIN_DATA);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let destination = state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery(PlainDelivery {
+                destination,
+                context: WireContext::None,
+                payload: b"hello-plain",
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0x07; 16]),
+            }),
+        );
+    }
+
+    #[test]
+    fn relayed_plain_data_is_dropped_at_the_packet_filter() {
+        let mut raw = hx(RAW_PLAIN_DATA);
+        raw[1] = 1;
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn plain_data_for_an_unregistered_destination_is_not_delivered() {
+        let mut raw = hx(RAW_PLAIN_DATA);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        state
+            .register_plain_destination("personal", &["other"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn plain_addressed_data_never_reaches_a_single_destination_with_that_hash() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        let single = state
+            .register_single_destination("personal", &["node"])
+            .unwrap();
+
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Plain,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination: single,
+            context: WireContext::None,
+        };
+        let mut raw = [0u8; MTU];
+        let header_len = header.write(&mut raw).unwrap();
+        raw[header_len] = 0xFF;
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw[..header_len + 1]), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn in_transport_data_delivers_only_when_we_are_the_named_transport_instance() {
+        let mut state: EngineState<Cap> = EngineState::new(&fixed_secret_key());
+        state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        let mut raw_for_us = hx(&format!(
+            "4800{}{}00{}",
+            "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
+        ));
+        let mut raw_for_other = hx(&format!(
+            "4800{}{}00{}",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "12f815e3e65add6ceb2fda0e7be33868", "ee"
+        ));
+
+        let IngestPacketOutcome::Delivery(delivered) =
+            state.ingest_packet(plain_data_packet(&mut raw_for_us), TEST_ENTROPY)
+        else {
+            panic!("in-transport data named to us must deliver");
+        };
+        assert_eq!(delivered.payload, &[0xEE]);
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw_for_other), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn an_identity_less_relay_never_accepts_in_transport_data() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        state
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+
+        let mut raw = hx(&format!(
+            "4800{}{}00{}",
+            "4cd0cc45a7405dbd5cf9b5be1ef92f10", "12f815e3e65add6ceb2fda0e7be33868", "ee"
+        ));
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
     fn next_wakeup_is_idle_for_a_relay_with_no_scheduled_work() {
         let state: EngineState<Cap> = EngineState::<Cap>::default();
         assert_eq!(
@@ -772,14 +983,14 @@ mod tests {
 
     #[test]
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let _ = state.ingest_packets(
-            [InboundPacket {
+        let _ = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
@@ -889,30 +1100,35 @@ mod tests {
 
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
 
-        let first = state.ingest_packets(
-            [InboundPacket {
+        let first = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(first.accepted_announce_count(), 1);
+        assert_eq!(
+            first,
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted)
+        );
         assert_eq!(state.route_count(), 1);
 
-        let second = state.ingest_packets(
-            [InboundPacket {
+        let second = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(second.processed_packet_count(), 1);
-        assert_eq!(second.accepted_announce_count(), 0);
+        assert_eq!(
+            second,
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored)
+        );
         assert_eq!(state.route_count(), 1);
     }
 
@@ -921,48 +1137,49 @@ mod tests {
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let out = state.ingest_packets(
-            [InboundPacket {
+        let out = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &at_limit,
-            }],
+                bytes: &mut at_limit,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(out.accepted_announce_count(), 1);
+        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
 
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let out = state.ingest_packets(
-            [InboundPacket {
+        let out = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &beyond,
-            }],
+                bytes: &mut beyond,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(out.accepted_announce_count(), 0);
+        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
         assert_eq!(state.route_count(), 0);
     }
 
     #[test]
     fn an_accepted_announce_is_retained_for_faithful_rebroadcast() {
-        let raw = hx(RAW_ANNOUNCE);
-        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let pristine = raw.clone();
+        let (header, payload) = WirePacketHeader::parse(&pristine).unwrap();
         let destination =
-            DestinationHash::from_slice(&raw[2..18]).expect("16-byte destination hash");
+            DestinationHash::from_slice(&pristine[2..18]).expect("16-byte destination hash");
 
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let out = state.ingest_packets(
-            [InboundPacket {
+        let out = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(out.accepted_announce_count(), 1);
+        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
 
         let retained = state
             .routing_table
@@ -980,44 +1197,45 @@ mod tests {
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
             source_interface: InterfaceId::new([0u8; 16]),
-            bytes: &[0x00, 0x00, 0x01, 0x02, 0x03],
+            bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = state.ingest_packets([junk], TEST_ENTROPY);
-        assert_eq!(out.processed_packet_count(), 1);
-        assert_eq!(out.accepted_announce_count(), 0);
+        let out = state.ingest_packet(junk, TEST_ENTROPY);
+        assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
 
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
-        let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
 
-        let out = state.ingest_packets(
-            [InboundPacket {
+        let out = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
 
-        assert_eq!(out.accepted_announce_count(), 0);
-        assert_eq!(out.held_for_retry_count(), 1);
+        assert_eq!(
+            out,
+            IngestPacketOutcome::Announce(AnnounceIngest::HeldForRetry)
+        );
         assert_eq!(state.route_count(), 0);
         assert_eq!(state.held_announce_count(), 1);
     }
 
     #[test]
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
-        let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
-        let _ = state.ingest_packets(
-            [InboundPacket {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
         assert_eq!(state.held_announce_count(), 1);
@@ -1033,7 +1251,7 @@ mod tests {
         use crate::engine::egress::write_announce_wire_packet;
         use crate::routing::announce::expand_name;
 
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64>>::default();
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 512, 64, 8, 128>>::default();
 
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
@@ -1048,20 +1266,21 @@ mod tests {
         let mut buf2 = [0u8; MTU];
         let n2 = write_announce_wire_packet(&announce2, 0, &mut buf2).unwrap();
 
-        let raw1 = hx(RAW_ANNOUNCE);
-        let _ = state.ingest_packets(
-            [
-                InboundPacket {
-                    arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0u8; 16]),
-                    bytes: &raw1,
-                },
-                InboundPacket {
-                    arrived_at: InstantMillis(1_001),
-                    source_interface: InterfaceId::new([0u8; 16]),
-                    bytes: &buf2[..n2],
-                },
-            ],
+        let mut raw1 = hx(RAW_ANNOUNCE);
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw1,
+            },
+            TEST_ENTROPY,
+        );
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_001),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut buf2[..n2],
+            },
             TEST_ENTROPY,
         );
         assert_eq!(
@@ -1084,37 +1303,36 @@ mod tests {
 
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
-        let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64>>::default();
-        let out = state.ingest_packets(
-            [InboundPacket {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = EngineState::<FixedCapacity<64, 128, 4096, 4, 512, 64, 8, 128>>::default();
+        let out = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(out.accepted_announce_count(), 1);
+        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
         assert_eq!(state.route_count(), 1);
     }
 
     #[test]
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
 
         let arrival = InstantMillis(1_000);
-        let out = state.ingest_packets(
-            [InboundPacket {
+        let out = state.ingest_packet(
+            InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
-        assert_eq!(out.accepted_announce_count(), 1);
-        assert_eq!(out.scheduled_rebroadcast_count(), 1);
+        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
         let (tick_out, emitted) = tick_capture(
@@ -1139,15 +1357,15 @@ mod tests {
 
     #[test]
     fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let arrival = InstantMillis(1_000);
-        let _ = state.ingest_packets(
-            [InboundPacket {
+        let _ = state.ingest_packet(
+            InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
@@ -1160,7 +1378,7 @@ mod tests {
 
     #[test]
     fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
-        let raw = hx(RAW_ANNOUNCE);
+        let mut raw = hx(RAW_ANNOUNCE);
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
 
@@ -1169,12 +1387,12 @@ mod tests {
 
         for state in [&mut left, &mut right] {
             register_test_interface(state, InterfaceId::new([0xFE; 16]));
-            let _ = state.ingest_packets(
-                [InboundPacket {
+            let _ = state.ingest_packet(
+                InboundPacket {
                     arrived_at: arrival,
                     source_interface: InterfaceId::new([0u8; 16]),
-                    bytes: &raw,
-                }],
+                    bytes: &mut raw,
+                },
                 TEST_ENTROPY,
             );
         }
@@ -1189,14 +1407,14 @@ mod tests {
 
     #[test]
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
-        let raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4>>::default();
-        let _ = state.ingest_packets(
-            [InboundPacket {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = EngineState::<FixedCapacity<4, 64, 8, 4, 16, 4, 8, 128>>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &raw,
-            }],
+                bytes: &mut raw,
+            },
             TEST_ENTROPY,
         );
         assert_eq!(state.held_announce_count(), 1);

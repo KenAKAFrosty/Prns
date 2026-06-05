@@ -93,7 +93,7 @@ use personal_rns::interfaces::{
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{InterfaceView, Runtime, RuntimeSnapshot};
+use personal_rns::runtime::{InterfaceView, PrnsEvent, Runtime, RuntimeSnapshot};
 use personal_rns::wire::MTU;
 
 use personal_hopspot_ui as display;
@@ -243,7 +243,7 @@ static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, display::InputEvent, 4> =
 /// doesn't fit comfortably alongside WiFi + the worker — this preset is ~12 KB.
 /// The params are `<tracked_dests, ids_per_dest, app_data_arena, history_floor,
 /// history_overflow, held_cache>`.
-type S3EngineState = EngineState<FixedCapacity<24, 32, 1024, 4, 128, 4>>;
+type S3EngineState = EngineState<FixedCapacity<24, 32, 1024, 4, 128, 4, 4, 32>>;
 
 /// LXMF display name this node announces as (so Sideband/Columba list it).
 const DISPLAY_NAME: &str = "Personal Hopspot (Heltec V4)";
@@ -691,8 +691,9 @@ async fn main(spawner: Spawner) {
     // (The host built above draws CSPRNG entropy from the radio-seeded RNG per
     // cycle and owns the embassy-time clock + sleep.)
     let snapshot_tx = SNAPSHOT_WATCH.sender();
-    let runtime_fut = runtime.run(move |snapshot: &RuntimeSnapshot| {
-        snapshot_tx.send(snapshot.clone());
+    let runtime_fut = runtime.run(move |event: PrnsEvent<'_>| match event {
+        PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
+        PrnsEvent::Delivered(_) => {}
     });
 
     // Render the Hopspot screen alongside it. Event-driven: subscribe to the

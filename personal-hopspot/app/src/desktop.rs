@@ -26,7 +26,7 @@ use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, Prns, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEvent, UiState};
 
@@ -107,8 +107,17 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
             interfaces,
             host,
         },
-        move |snapshot: &RuntimeSnapshot| {
-            let _ = snap_tx.send(snapshot.clone());
+        move |event: PrnsEvent<'_>| match event {
+            PrnsEvent::SnapshotUpdated(snapshot) => {
+                let _ = snap_tx.send(snapshot.clone());
+            }
+            PrnsEvent::Delivered(delivery) => {
+                println!(
+                    "HOPSPOT_USB_RX_DELIVERY destination={:02x?} bytes={}",
+                    delivery.destination.as_bytes(),
+                    delivery.payload.len(),
+                );
+            }
         },
     ));
 }

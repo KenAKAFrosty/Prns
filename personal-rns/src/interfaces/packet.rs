@@ -1,11 +1,11 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct InboundPacket<'a> {
     pub arrived_at: InstantMillis,
     pub source_interface: InterfaceId,
-    pub bytes: &'a [u8],
+    pub bytes: &'a mut [u8],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

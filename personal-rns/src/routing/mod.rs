@@ -1,16 +1,14 @@
 pub mod announce;
-pub mod defaults;
-pub mod held_cache;
-pub mod schedule;
+pub mod dedup;
+pub mod delivery;
 pub mod storage;
 pub mod types;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
+use announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 use announce::Announce;
-pub use defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
-use defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 pub use storage::AnnounceIdHistoryView;
 use storage::{
     AnnounceIdHistory, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,

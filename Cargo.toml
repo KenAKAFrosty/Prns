@@ -1,12 +1,19 @@
 [workspace]
 members = [
     "personal-rns",
-    "personal-rnsd",
     "personal-lxmf",
+    "personal-hopspot/ui",
+]
+# Thin consumers (binding shims + the daemon), parked while the core engine API
+# is in active motion. Not workspace members so `--workspace` gates (CI
+# clippy/test/check) don't tax every engine API step; each builds standalone via
+# its own manifest (see scripts/*-smoke.sh) and gets a catch-up pass when the
+# consumer API settles.
+exclude = [
     "personal-rns-ffi",
     "personal-rns-napi",
     "personal-rns-capi",
-    "personal-hopspot/ui",
+    "personal-rnsd",
 ]
 resolver = "3"
 

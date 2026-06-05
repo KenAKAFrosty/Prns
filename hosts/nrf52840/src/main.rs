@@ -29,7 +29,7 @@ use personal_rns::routing::storage::FixedCapacity;
 
 /// nRF-tuned preset: 64 tracked destinations, 16 held — ~35 KiB engine
 /// state, comfortable in the 256 KiB SRAM alongside the USB stack.
-type NrfEngineState = EngineState<FixedCapacity<64, 32, 4096, 4, 256, 16>>;
+type NrfEngineState = EngineState<FixedCapacity<64, 32, 4096, 4, 256, 16, 8, 128>>;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;

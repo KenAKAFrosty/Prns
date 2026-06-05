@@ -2,7 +2,7 @@ use heapless::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::schedule::{RebroadcastQueue, ScheduledRebroadcast};
+use crate::routing::announce::schedule::{RebroadcastQueue, ScheduledRebroadcast};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

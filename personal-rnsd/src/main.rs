@@ -22,7 +22,7 @@ use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, Prns, Recipe};
+use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -113,16 +113,25 @@ fn main() {
             interfaces,
             host,
         },
-        |snapshot| {
-            let routes = snapshot
-                .interfaces
-                .iter()
-                .map(|view| view.tracked_destinations)
-                .max()
-                .unwrap_or(0);
-            if routes > announced_routes {
-                announced_routes = routes;
-                println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
+        |event| match event {
+            PrnsEvent::Delivered(delivery) => {
+                println!(
+                    "RNSD_USB_RX_DELIVERY destination={:02x?} bytes={}",
+                    delivery.destination.as_bytes(),
+                    delivery.payload.len(),
+                );
+            }
+            PrnsEvent::SnapshotUpdated(snapshot) => {
+                let routes = snapshot
+                    .interfaces
+                    .iter()
+                    .map(|view| view.tracked_destinations)
+                    .max()
+                    .unwrap_or(0);
+                if routes > announced_routes {
+                    announced_routes = routes;
+                    println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
+                }
             }
         },
     ));

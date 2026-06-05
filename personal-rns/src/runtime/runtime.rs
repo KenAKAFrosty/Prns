@@ -1,10 +1,12 @@
 use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
+use super::event::PrnsEvent;
 use super::host::{CycleStamp, Host};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::{
-    EngineCycleEntropy, EngineCycleEntropySeed, EngineState, InstantMillis, NextScheduledEngineWork,
+    AnnounceIngest, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome,
+    InstantMillis, NextScheduledEngineWork,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -19,6 +21,7 @@ pub struct RuntimeStepOutput {
     pub ingested_packet_count: usize,
     pub accepted_announce_count: usize,
     pub scheduled_rebroadcast_count: usize,
+    pub delivered_count: usize,
     pub egress_directive_count: usize,
     pub next_poll: NextScheduledInterfaceWake,
 }
@@ -63,6 +66,7 @@ where
         &mut self,
         now: InstantMillis,
         entropy_seed: EngineCycleEntropySeed,
+        mut on_event: impl FnMut(PrnsEvent<'_>),
     ) -> RuntimeStepOutput {
         cycle_pooled(
             &mut self.engine,
@@ -70,6 +74,7 @@ where
             &mut self.traffic,
             now,
             entropy_seed,
+            &mut on_event,
         )
     }
 
@@ -89,10 +94,10 @@ where
         &self.engine
     }
 
-    pub async fn run<OnSnapshot>(self, mut on_snapshot: OnSnapshot) -> !
+    pub async fn run<OnEvent>(self, mut on_event: OnEvent) -> !
     where
         Ho: Host,
-        OnSnapshot: FnMut(&RuntimeSnapshot),
+        OnEvent: FnMut(PrnsEvent<'_>),
     {
         let Self {
             mut engine,
@@ -103,25 +108,40 @@ where
         let mut wake = NextScheduledEngineWork::Immediate;
         loop {
             let CycleStamp { now, seed } = host.wait(wake).await;
-            let output = cycle_pooled(&mut engine, &mut interfaces, &mut traffic, now, seed);
-            on_snapshot(&snapshot_pooled(&engine, &interfaces, &traffic));
+            let output = cycle_pooled(
+                &mut engine,
+                &mut interfaces,
+                &mut traffic,
+                now,
+                seed,
+                &mut on_event,
+            );
+
+            //Future improvement: Only fire this when actually updated (diffd for changes) instead of every cycle
+            on_event(PrnsEvent::SnapshotUpdated(&snapshot_pooled(
+                &engine,
+                &interfaces,
+                &traffic,
+            )));
             wake = host_wake(engine.next_wakeup(now), output.next_poll);
         }
     }
 }
 
 #[allow(clippy::expect_used)]
-fn cycle_pooled<I, S>(
+fn cycle_pooled<I, S, OnEvent>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
     now: InstantMillis,
     entropy_seed: EngineCycleEntropySeed,
+    on_event: &mut OnEvent,
 ) -> RuntimeStepOutput
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
     S: EngineStorage,
+    OnEvent: FnMut(PrnsEvent<'_>),
 {
     let entropy = EngineCycleEntropy::from_seed(entropy_seed);
 
@@ -130,18 +150,29 @@ where
         next_poll = next_poll.sooner(started.poll(now));
     }
 
-    // Drain inbound while packets still borrow from their interface ring slots.
     let mut ingested_packet_count = 0;
     let mut accepted_announce_count = 0;
     let mut scheduled_rebroadcast_count = 0;
-    for started in interfaces.iter_mut() {
-        let id = started.descriptor().id;
-        started.drain_inbound(|packet| {
+    let mut delivered_count = 0;
+    for interface in interfaces.iter_mut() {
+        let id = interface.descriptor().id;
+        interface.drain_inbound(|packet| {
             traffic.add_rx(id, packet.bytes.len() as u64);
-            let out = engine.ingest_packets(core::iter::once(packet), entropy.jitter);
-            ingested_packet_count += out.processed_packet_count();
-            accepted_announce_count += out.accepted_announce_count();
-            scheduled_rebroadcast_count += out.scheduled_rebroadcast_count();
+            ingested_packet_count += 1;
+            match engine.ingest_packet(packet, entropy.jitter) {
+                IngestPacketOutcome::Announce(AnnounceIngest::Accepted) => {
+                    accepted_announce_count += 1;
+                    scheduled_rebroadcast_count += 1;
+                }
+                IngestPacketOutcome::Announce(
+                    AnnounceIngest::HeldForRetry | AnnounceIngest::Ignored,
+                ) => {}
+                IngestPacketOutcome::Delivery(delivery) => {
+                    delivered_count += 1;
+                    on_event(PrnsEvent::Delivered(delivery));
+                }
+                IngestPacketOutcome::Ignored => {}
+            }
         });
     }
 
@@ -184,6 +215,7 @@ where
         ingested_packet_count,
         accepted_announce_count,
         scheduled_rebroadcast_count,
+        delivered_count,
         egress_directive_count,
         next_poll,
     }
@@ -248,6 +280,7 @@ where
     RuntimeSnapshot { interfaces: views }
 }
 
+// Marked as a WTF is going on here to revisit later.
 fn host_wake(
     engine: NextScheduledEngineWork,
     interface: NextScheduledInterfaceWake,
@@ -276,11 +309,11 @@ mod tests {
         IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
         InterfaceMode, MediumKind, StartedInterface, TransitCapability,
     };
+    use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::storage::FixedCapacity;
-    use crate::routing::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
-    use crate::wire::{PacketType, WirePacketHeader};
+    use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
-    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64>;
+    type Cap = FixedCapacity<64, 64, 4096, 4, 512, 64, 8, 128>;
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -299,11 +332,11 @@ mod tests {
         fn drain_inbound(&mut self, mut f: impl FnMut(InboundPacket<'_>)) -> usize {
             let id = self.id;
             let mut drained = 0;
-            for (arrived_at, bytes) in self.inbound.drain(..) {
+            for (arrived_at, mut bytes) in self.inbound.drain(..) {
                 f(InboundPacket {
                     arrived_at,
                     source_interface: id,
-                    bytes: &bytes,
+                    bytes: &mut bytes,
                 });
                 drained += 1;
             }
@@ -416,6 +449,47 @@ mod tests {
     }
 
     #[test]
+    fn a_delivered_plain_packet_reaches_the_event_handler_with_its_payload() {
+        const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
+        let raw = hx(RAW_PLAIN_DATA);
+        let source = iface(0xA1);
+        let arrival = InstantMillis(1_000);
+
+        let mut engine = EngineState::<Cap>::default();
+        let destination = engine
+            .register_plain_destination("personal", &["node"])
+            .unwrap();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(source, std::vec![(arrival, raw.clone())])]),
+            (),
+        );
+
+        let mut delivered: std::vec::Vec<(DestinationHash, std::vec::Vec<u8>, InterfaceId)> =
+            std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(arrival.0 + 1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |event| match event {
+                PrnsEvent::Delivered(delivery) => delivered.push((
+                    delivery.destination,
+                    delivery.payload.to_vec(),
+                    delivery.source_interface,
+                )),
+                PrnsEvent::SnapshotUpdated(_) => {}
+            },
+        );
+
+        assert_eq!(out.ingested_packet_count, 1);
+        assert_eq!(out.delivered_count, 1);
+        assert_eq!(out.accepted_announce_count, 0);
+        assert_eq!(
+            delivered,
+            std::vec![(destination, b"hello-plain".to_vec(), source)],
+        );
+    }
+
+    #[test]
     fn pools_inbound_into_the_engine_and_fans_the_rebroadcast_to_the_peer() {
         let raw = hx(RAW_ANNOUNCE);
         let source = iface(0xA1);
@@ -435,6 +509,7 @@ mod tests {
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_event| {},
         );
 
         assert_eq!(out.ingested_packet_count, 1);
@@ -498,6 +573,7 @@ mod tests {
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_event| {},
         );
 
         assert_eq!(out.accepted_announce_count, 1);
@@ -522,6 +598,7 @@ mod tests {
         let _ = runtime.cycle_once(
             InstantMillis(1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_event| {},
         );
 
         let snapshot = runtime.snapshot();
@@ -544,6 +621,7 @@ mod tests {
         let _ = runtime.cycle_once(
             InstantMillis(1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_event| {},
         );
 
         let snapshot = runtime.snapshot();

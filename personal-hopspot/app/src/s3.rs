@@ -43,7 +43,7 @@ use personal_rns::interfaces::{
 use personal_rns::routing::storage::FixedCapacity;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{Prns, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{Prns, PrnsEvent, Recipe, RuntimeSnapshot};
 
 use personal_hopspot_ui as screen;
 
@@ -74,7 +74,7 @@ macro_rules! mk_static {
         CELL.init($val)
     }};
 }
-const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4> = FixedCapacity;
+const ENGINE_STORAGE: FixedCapacity<24, 32, 1024, 4, 128, 4, 4, 32> = FixedCapacity;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse
@@ -104,8 +104,9 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 /// The worker-side seam this board's responder task runs against.
-type UsbAutoContext =
-    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>>;
+type UsbAutoContext = InterfaceWorkerContext<
+    EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>,
+>;
 
 /// The interface's four channels live in one board `static` (the embassy idiom);
 /// `attach` splits the worker + runtime ends out of it — no heap.
@@ -405,7 +406,10 @@ async fn node_task(
             interfaces,
             host,
         },
-        move |snapshot: &RuntimeSnapshot| snapshot_tx.send(snapshot.clone()),
+        move |event: PrnsEvent<'_>| match event {
+            PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
+            PrnsEvent::Delivered(_) => {}
+        },
     )
     .await
 }

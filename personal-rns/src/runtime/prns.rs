@@ -1,4 +1,4 @@
-use super::{Host, Runtime, RuntimeSnapshot};
+use super::{Host, PrnsEvent, Runtime};
 use crate::engine::{EngineState, SelfAnnounceConfig};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::storage::InterfaceSet;
@@ -25,16 +25,13 @@ pub struct Prns;
 
 impl Prns {
     #[allow(clippy::expect_used)]
-    pub async fn run<S, Ho, I, OnSnapshot>(
-        recipe: Recipe<'_, S, Ho, I>,
-        on_snapshot: OnSnapshot,
-    ) -> !
+    pub async fn run<S, Ho, I, OnEvent>(recipe: Recipe<'_, S, Ho, I>, on_event: OnEvent) -> !
     where
         S: EngineStorage,
         Ho: Host,
         I: InterfaceSet,
         I::Item: RegisteredInterface,
-        OnSnapshot: FnMut(&RuntimeSnapshot),
+        OnEvent: FnMut(PrnsEvent<'_>),
     {
         let Recipe {
             engine_storage: _,
@@ -50,6 +47,6 @@ impl Prns {
         drop(identity_secret_key);
 
         let runtime = Runtime::new(engine, interfaces, host);
-        runtime.run(on_snapshot).await
+        runtime.run(on_event).await
     }
 }
