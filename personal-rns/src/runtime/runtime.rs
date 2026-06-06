@@ -6,9 +6,9 @@ use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    AnnounceIngest, AnnounceTarget, CommandOutcome, EngineCommand, EngineCycleEntropy,
-    EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis,
-    NextScheduledEngineWork, ProofOwed, RatchetEntropy,
+    AnnounceIngest, AnnounceTarget, CommandOutcome, EngineCycleEntropy, EngineCycleEntropySeed,
+    EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand, NextScheduledEngineWork,
+    ProofOwed, RatchetEntropy,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -77,7 +77,7 @@ where
         now: InstantMillis,
         entropy_seed: EngineCycleEntropySeed,
         mut on_event: impl FnMut(PrnsEvent<'_>),
-        mut next_command: impl FnMut() -> Option<EngineCommand>,
+        mut next_command: impl FnMut() -> Option<IssuedCommand>,
     ) -> RuntimeStepOutput {
         cycle_pooled(
             &mut self.engine,
@@ -114,7 +114,7 @@ where
     where
         Ho: Host,
         OnEvent: FnMut(PrnsEvent<'_>),
-        NextCommand: FnMut() -> Option<EngineCommand>,
+        NextCommand: FnMut() -> Option<IssuedCommand>,
     {
         let Self {
             mut engine,
@@ -165,7 +165,7 @@ where
     I::Item: RegisteredInterface,
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
-    NextCommand: FnMut() -> Option<EngineCommand>,
+    NextCommand: FnMut() -> Option<IssuedCommand>,
 {
     let EngineCycleEntropy {
         jitter,
@@ -331,7 +331,7 @@ fn run_command<I, S, OnEvent>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
-    command: EngineCommand,
+    issued: IssuedCommand,
     now: InstantMillis,
     announce_entropy: (SelfAnnounceEntropy, RatchetEntropy),
     on_event: &mut OnEvent,
@@ -342,9 +342,9 @@ where
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
 {
-    let commanded = match engine.ingest_command(command) {
-        CommandOutcome::OwesAnnounce(commanded) => commanded,
-        CommandOutcome::AnnounceRejected(error) => {
+    let commanded = match engine.ingest_command(issued) {
+        CommandOutcome::OwesAnnounce { id: _, announce } => announce,
+        CommandOutcome::AnnounceRejected { id: _, error } => {
             on_event(PrnsEvent::CommandFailed(CommandFailure::AnnounceRejected(
                 error,
             )));
@@ -457,8 +457,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use crate::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceTarget, EngineCommand,
-        RatchetPolicy, ENGINE_CYCLE_ENTROPY_LEN,
+        AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceTarget, CommandId, EngineCommand,
+        IssuedCommand, RatchetPolicy, ENGINE_CYCLE_ENTROPY_LEN,
     };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
@@ -771,12 +771,15 @@ mod tests {
         (engine, destination)
     }
 
-    fn announce_now_command(destination: DestinationHash, target: AnnounceTarget) -> EngineCommand {
-        EngineCommand::AnnounceNow(AnnounceNow {
-            destination,
-            target,
-            app_data: AnnounceAppData::Scheduled,
-        })
+    fn announce_now_command(destination: DestinationHash, target: AnnounceTarget) -> IssuedCommand {
+        IssuedCommand {
+            id: CommandId(7),
+            command: EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        }
     }
 
     fn no_failures(event: PrnsEvent<'_>) {

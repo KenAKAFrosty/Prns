@@ -21,7 +21,8 @@ use heapless::Vec as HVec;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::ReannounceSchedule;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
+    RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -100,7 +101,7 @@ pub fn run() {
     // UI -> engine. The wake handle lets a button press cut the engine's sleep
     // short so its command is picked up on the next cycle.
     let (snap_tx, snap_rx) = mpsc::channel::<RuntimeSnapshot>();
-    let (command_tx, command_rx) = mpsc::channel::<EngineCommand>();
+    let (command_tx, command_rx) = mpsc::channel::<IssuedCommand>();
     let host = LinuxSync::new();
     let wake = host.wake_handle();
 
@@ -116,7 +117,7 @@ fn run_engine(
     host: LinuxSync,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     snap_tx: Sender<RuntimeSnapshot>,
-    command_rx: Receiver<EngineCommand>,
+    command_rx: Receiver<IssuedCommand>,
 ) {
     let mut interfaces = GrowableInterfaceSet::new();
     let _ =
@@ -299,7 +300,7 @@ fn finish_press(
 /// the window is closed.
 fn run_window(
     snap_rx: Receiver<RuntimeSnapshot>,
-    command_tx: Sender<EngineCommand>,
+    command_tx: Sender<IssuedCommand>,
     wake: WakeHandle,
     self_destination: DestinationHash,
 ) {
@@ -312,17 +313,24 @@ fn run_window(
 
     // Every input path funnels its UiAction here: selecting "Announce" in the
     // global menu queues the command for the engine thread and pokes its wake.
+    let mut next_command_id = 0u64;
     let mut apply_action = move |action: UiAction| match action {
         UiAction::None => {}
         UiAction::Announce => {
-            let _ = command_tx.send(EngineCommand::AnnounceNow(AnnounceNow {
-                destination: self_destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Scheduled,
-            }));
+            let id = CommandId(next_command_id);
+            next_command_id = next_command_id.wrapping_add(1);
+            let _ = command_tx.send(IssuedCommand {
+                id,
+                command: EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: self_destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Scheduled,
+                }),
+            });
             wake.poke();
             println!(
-                "HOPSPOT_TX_ANNOUNCE_NOW destination={:02x?}",
+                "HOPSPOT_TX_ANNOUNCE_NOW id={} destination={:02x?}",
+                id.0,
                 self_destination.as_bytes(),
             );
         }

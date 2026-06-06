@@ -11,6 +11,18 @@ use crate::engine::self_announce::SelfAnnounceAppData;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 
+/// Ephemeral correlation for one issued command: minted by the caller (a
+/// queued command has no return channel at submit time), echoed opaquely
+/// through every outcome, never inspected by the engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CommandId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedCommand {
+    pub id: CommandId,
+    pub command: EngineCommand,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
@@ -41,8 +53,14 @@ pub enum AnnounceAppData {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutcome {
-    OwesAnnounce(AnnounceNow),
-    AnnounceRejected(AnnounceNowError),
+    OwesAnnounce {
+        id: CommandId,
+        announce: AnnounceNow,
+    },
+    AnnounceRejected {
+        id: CommandId,
+        error: AnnounceNowError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,21 +78,23 @@ use crate::wire::DestinationType;
 
 impl<S: EngineStorage> EngineState<S> {
     #[must_use]
-    pub fn ingest_command(&mut self, command: EngineCommand) -> CommandOutcome {
+    pub fn ingest_command(&mut self, issued: IssuedCommand) -> CommandOutcome {
         self.ingested_command_count = self.ingested_command_count.saturating_add(1);
+        let IssuedCommand { id, command } = issued;
         match command {
-            EngineCommand::AnnounceNow(announce_now) => self.ingest_announce_now(announce_now),
+            EngineCommand::AnnounceNow(announce_now) => self.ingest_announce_now(id, announce_now),
         }
     }
 
-    fn ingest_announce_now(&self, announce_now: AnnounceNow) -> CommandOutcome {
+    fn ingest_announce_now(&self, id: CommandId, announce_now: AnnounceNow) -> CommandOutcome {
         if self
             .upstream_app_destinations
             .lookup(&announce_now.destination, DestinationType::Single)
             .is_none()
         {
-            return CommandOutcome::AnnounceRejected(
-                if self
+            return CommandOutcome::AnnounceRejected {
+                id,
+                error: if self
                     .upstream_app_destinations
                     .lookup(&announce_now.destination, DestinationType::Plain)
                     .is_some()
@@ -83,21 +103,30 @@ impl<S: EngineStorage> EngineState<S> {
                 } else {
                     AnnounceNowError::UnknownDestination
                 },
-            );
+            };
         }
         if let AnnounceTarget::Interface(interface) = announce_now.target {
             if !self.interfaces.contains(&interface) {
-                return CommandOutcome::AnnounceRejected(AnnounceNowError::UnknownInterface);
+                return CommandOutcome::AnnounceRejected {
+                    id,
+                    error: AnnounceNowError::UnknownInterface,
+                };
             }
         }
         if let AnnounceAppData::Data(data) = &announce_now.app_data {
             if self.self_ratchets.is_tracked(&announce_now.destination)
                 && data.len() > MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN
             {
-                return CommandOutcome::AnnounceRejected(AnnounceNowError::AppDataTooLong);
+                return CommandOutcome::AnnounceRejected {
+                    id,
+                    error: AnnounceNowError::AppDataTooLong,
+                };
             }
         }
-        CommandOutcome::OwesAnnounce(announce_now)
+        CommandOutcome::OwesAnnounce {
+            id,
+            announce: announce_now,
+        }
     }
 }
 
@@ -109,12 +138,17 @@ mod tests {
     use crate::interfaces::InterfaceId;
     use crate::wire::DestinationHash;
 
-    fn announce_now(destination: DestinationHash) -> EngineCommand {
-        EngineCommand::AnnounceNow(AnnounceNow {
-            destination,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Scheduled,
-        })
+    const TEST_COMMAND_ID: CommandId = CommandId(7);
+
+    fn announce_now(destination: DestinationHash) -> IssuedCommand {
+        IssuedCommand {
+            id: TEST_COMMAND_ID,
+            command: EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        }
     }
 
     #[test]
@@ -124,11 +158,14 @@ mod tests {
 
         assert_eq!(
             state.ingest_command(announce_now(destination)),
-            CommandOutcome::OwesAnnounce(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Scheduled,
-            }),
+            CommandOutcome::OwesAnnounce {
+                id: TEST_COMMAND_ID,
+                announce: AnnounceNow {
+                    destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Scheduled,
+                },
+            },
         );
         assert_eq!(state.ingested_command_count(), 1);
     }
@@ -139,7 +176,10 @@ mod tests {
 
         assert_eq!(
             state.ingest_command(announce_now(DestinationHash::new([0x77; 16]))),
-            CommandOutcome::AnnounceRejected(AnnounceNowError::UnknownDestination),
+            CommandOutcome::AnnounceRejected {
+                id: TEST_COMMAND_ID,
+                error: AnnounceNowError::UnknownDestination,
+            },
         );
         assert_eq!(state.ingested_command_count(), 1);
     }
@@ -153,7 +193,10 @@ mod tests {
 
         assert_eq!(
             state.ingest_command(announce_now(plain)),
-            CommandOutcome::AnnounceRejected(AnnounceNowError::NotASingleDestination),
+            CommandOutcome::AnnounceRejected {
+                id: TEST_COMMAND_ID,
+                error: AnnounceNowError::NotASingleDestination,
+            },
         );
     }
 
@@ -162,26 +205,61 @@ mod tests {
         let mut state = personal_node_announcer();
         let destination = state.self_announced_destinations()[0];
         register_test_interface(&mut state, InterfaceId::new([0xAA; 16]));
-        let on = |interface| {
-            EngineCommand::AnnounceNow(AnnounceNow {
+        let on = |interface| IssuedCommand {
+            id: TEST_COMMAND_ID,
+            command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::Interface(interface),
                 app_data: AnnounceAppData::Scheduled,
-            })
+            }),
         };
 
         assert_eq!(
             state.ingest_command(on(InterfaceId::new([0xAA; 16]))),
-            CommandOutcome::OwesAnnounce(AnnounceNow {
-                destination,
-                target: AnnounceTarget::Interface(InterfaceId::new([0xAA; 16])),
-                app_data: AnnounceAppData::Scheduled,
-            }),
+            CommandOutcome::OwesAnnounce {
+                id: TEST_COMMAND_ID,
+                announce: AnnounceNow {
+                    destination,
+                    target: AnnounceTarget::Interface(InterfaceId::new([0xAA; 16])),
+                    app_data: AnnounceAppData::Scheduled,
+                },
+            },
         );
         assert_eq!(
             state.ingest_command(on(InterfaceId::new([0xBB; 16]))),
-            CommandOutcome::AnnounceRejected(AnnounceNowError::UnknownInterface),
+            CommandOutcome::AnnounceRejected {
+                id: TEST_COMMAND_ID,
+                error: AnnounceNowError::UnknownInterface,
+            },
         );
+    }
+
+    #[test]
+    fn each_outcome_echoes_its_own_command_id() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let issued_as = |id| IssuedCommand {
+            id,
+            command: EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        };
+
+        for id in [CommandId(0), CommandId(42), CommandId(u64::MAX)] {
+            assert_eq!(
+                state.ingest_command(issued_as(id)),
+                CommandOutcome::OwesAnnounce {
+                    id,
+                    announce: AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Scheduled,
+                    },
+                },
+            );
+        }
     }
 
     #[test]
@@ -189,30 +267,37 @@ mod tests {
         let oversized =
             SelfAnnounceAppData::from_slice(&[0u8; MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN + 1])
                 .unwrap();
-        let with_data = |destination| {
-            EngineCommand::AnnounceNow(AnnounceNow {
+        let with_data = |destination| IssuedCommand {
+            id: TEST_COMMAND_ID,
+            command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
                 app_data: AnnounceAppData::Data(oversized.clone()),
-            })
+            }),
         };
 
         let mut ratcheted = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let destination = ratcheted.self_announced_destinations()[0];
         assert_eq!(
             ratcheted.ingest_command(with_data(destination)),
-            CommandOutcome::AnnounceRejected(AnnounceNowError::AppDataTooLong),
+            CommandOutcome::AnnounceRejected {
+                id: TEST_COMMAND_ID,
+                error: AnnounceNowError::AppDataTooLong,
+            },
         );
 
         let mut unratcheted = personal_node_announcer();
         let destination = unratcheted.self_announced_destinations()[0];
         assert_eq!(
             unratcheted.ingest_command(with_data(destination)),
-            CommandOutcome::OwesAnnounce(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Data(oversized),
-            }),
+            CommandOutcome::OwesAnnounce {
+                id: TEST_COMMAND_ID,
+                announce: AnnounceNow {
+                    destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Data(oversized),
+                },
+            },
         );
     }
 }

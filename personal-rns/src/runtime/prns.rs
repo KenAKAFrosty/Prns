@@ -1,7 +1,7 @@
 use super::{Host, PrnsEvent, Runtime};
 use crate::engine::self_announce::AnnounceConfig;
 use crate::engine::self_ratchets::RatchetPolicy;
-use crate::engine::{EngineCommand, EngineState};
+use crate::engine::{EngineState, IssuedCommand};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::RegisteredInterface;
@@ -58,7 +58,7 @@ impl Prns {
         I::Item: RegisteredInterface,
         D: IntoIterator<Item = StartingDestinationConfig<'a>>,
         OnEvent: FnMut(PrnsEvent<'_>),
-        NextCommand: FnMut() -> Option<EngineCommand>,
+        NextCommand: FnMut() -> Option<IssuedCommand>,
     {
         let Recipe {
             engine_storage: _,
