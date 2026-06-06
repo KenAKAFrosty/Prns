@@ -11,8 +11,8 @@ pub(crate) mod test_support;
 pub mod tick;
 
 pub use commands::{
-    AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceTarget, CommandId, CommandOutcome,
-    EngineCommand, IssuedCommand,
+    AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
+    CommandOutcome, EngineCommand, IssuedCommand, Settlement,
 };
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use identity_registration::SetTransportIdentityError;

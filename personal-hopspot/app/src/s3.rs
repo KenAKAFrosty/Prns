@@ -26,10 +26,9 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::StaticCell;
 
-use personal_rns::engine::{
-    EngineCycleEntropySeed, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN,
-};
 use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::RatchetPolicy;
+use personal_rns::engine::{EngineCycleEntropySeed, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
@@ -42,11 +41,10 @@ use personal_rns::interfaces::{
     InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface,
 };
 use personal_rns::routing::storage::FixedInline;
-use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
-use personal_rns::runtime::{StartingDestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::{Prns, PrnsEvent, Recipe, RuntimeSnapshot, StartingDestinationConfig};
 
 use personal_hopspot_ui as screen;
 
@@ -118,8 +116,9 @@ static CHANNELS: EmbassyInterfaceChannels<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFF
 static WIFI_CHANNELS: EmbassyInterfaceChannels<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS> =
     EmbassyInterfaceChannels::new();
 
-type WifiAutoContext =
-    InterfaceWorkerContext<EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>>;
+type WifiAutoContext = InterfaceWorkerContext<
+    EmbassyHostSubstrate<MAX_DATA_BYTES, PER_INTERFACE_MAX_BUFFERED_PACKETS>,
+>;
 /// The host's one wake — the seam ends signal it, the contract host awaits it.
 static WAKE: WakeSignal = new_wake_signal();
 /// Each cycle's runtime snapshot, fired by the engine and subscribed by the OLED
@@ -416,7 +415,7 @@ async fn node_task(
         move |event: PrnsEvent<'_>| match event {
             PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
             PrnsEvent::Delivered(_) => {}
-            PrnsEvent::CommandFailed(_) => {}
+            PrnsEvent::CommandSettled { .. } => {}
         },
         || None,
     )

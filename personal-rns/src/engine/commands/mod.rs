@@ -8,6 +8,7 @@
 //! re-announce schedule is the extension built ahead of it.
 
 use crate::engine::self_announce::SelfAnnounceAppData;
+use crate::engine::WriteSelfAnnounceError;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 
@@ -69,6 +70,21 @@ pub enum AnnounceNowError {
     NotASingleDestination,
     AppDataTooLong,
     UnknownInterface,
+}
+
+/// The terminal result of one issued command, paired verb-for-verb with
+/// [`EngineCommand`] so every verb's success and failure stay typed across the
+/// event lane — a data boundary erases type-level ties, so the tie is explicit
+/// here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settlement {
+    AnnounceNow(Result<(), AnnounceNowFailure>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceNowFailure {
+    Rejected(AnnounceNowError),
+    WriteFailed(WriteSelfAnnounceError),
 }
 
 use crate::engine::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;

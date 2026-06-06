@@ -713,7 +713,7 @@ async fn main(spawner: Spawner) {
         move |event: PrnsEvent<'_>| match event {
             PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
             PrnsEvent::Delivered(_) => {}
-            PrnsEvent::CommandFailed(_) => {}
+            PrnsEvent::CommandSettled { .. } => {}
         },
         || None,
     );

@@ -162,8 +162,8 @@ fn run_engine(
                     delivery.plaintext.len(),
                 );
             }
-            PrnsEvent::CommandFailed(failure) => {
-                println!("HOPSPOT_COMMAND_FAILED {failure:?}");
+            PrnsEvent::CommandSettled { id, settlement } => {
+                println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
             }
         },
         // The engine's tap into the UI's command queue: every cycle sips until

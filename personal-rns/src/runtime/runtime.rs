@@ -1,14 +1,14 @@
 use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
-use super::event::{CommandFailure, PrnsEvent};
+use super::event::PrnsEvent;
 use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    AnnounceIngest, AnnounceTarget, CommandOutcome, EngineCycleEntropy, EngineCycleEntropySeed,
-    EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand, NextScheduledEngineWork,
-    ProofOwed, RatchetEntropy,
+    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandOutcome, EngineCycleEntropy,
+    EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
+    NextScheduledEngineWork, ProofOwed, RatchetEntropy, Settlement,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -342,20 +342,26 @@ where
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
 {
-    let commanded = match engine.ingest_command(issued) {
-        CommandOutcome::OwesAnnounce { id: _, announce } => announce,
-        CommandOutcome::AnnounceRejected { id: _, error } => {
-            on_event(PrnsEvent::CommandFailed(CommandFailure::AnnounceRejected(
-                error,
-            )));
+    let (id, commanded) = match engine.ingest_command(issued) {
+        CommandOutcome::OwesAnnounce { id, announce } => (id, announce),
+        CommandOutcome::AnnounceRejected { id, error } => {
+            on_event(PrnsEvent::CommandSettled {
+                id,
+                settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
+            });
             return Some(announce_entropy);
         }
     };
 
     let (nonce, ratchet_entropy) = announce_entropy;
     let mut emit_buffer = [0u8; MTU];
-    match engine.write_commanded_announce(&commanded, now, nonce, ratchet_entropy, &mut emit_buffer)
-    {
+    let settlement = match engine.write_commanded_announce(
+        &commanded,
+        now,
+        nonce,
+        ratchet_entropy,
+        &mut emit_buffer,
+    ) {
         Ok(n) => {
             let fire_on = match &commanded.target {
                 AnnounceTarget::AllInterfaces => engine.registered_interfaces(),
@@ -371,11 +377,11 @@ where
                 fire_on,
                 FanoutClass::SelfOriginated,
             );
+            Settlement::AnnounceNow(Ok(()))
         }
-        Err(error) => on_event(PrnsEvent::CommandFailed(
-            CommandFailure::AnnounceWriteFailed(error),
-        )),
-    }
+        Err(error) => Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(error))),
+    };
+    on_event(PrnsEvent::CommandSettled { id, settlement });
     None
 }
 
@@ -457,8 +463,9 @@ mod tests {
     use std::collections::VecDeque;
 
     use crate::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceTarget, CommandId, EngineCommand,
-        IssuedCommand, RatchetPolicy, ENGINE_CYCLE_ENTROPY_LEN,
+        AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
+        CommandId, EngineCommand, IssuedCommand, RatchetPolicy, Settlement,
+        ENGINE_CYCLE_ENTROPY_LEN,
     };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
@@ -642,8 +649,8 @@ mod tests {
                     panic!("a plain packet must never surface as a single delivery")
                 }
                 PrnsEvent::SnapshotUpdated(_) => {}
-                PrnsEvent::CommandFailed(failure) => {
-                    panic!("no command was queued, yet one failed: {failure:?}")
+                PrnsEvent::CommandSettled { id, settlement } => {
+                    panic!("no command was queued, yet one settled: {id:?} {settlement:?}")
                 }
             },
             || None,
@@ -732,8 +739,8 @@ mod tests {
                     panic!("a sealed single packet must never surface as plain")
                 }
                 PrnsEvent::SnapshotUpdated(_) => {}
-                PrnsEvent::CommandFailed(failure) => {
-                    panic!("no command was queued, yet one failed: {failure:?}")
+                PrnsEvent::CommandSettled { id, settlement } => {
+                    panic!("no command was queued, yet one settled: {id:?} {settlement:?}")
                 }
             },
             || None,
@@ -782,9 +789,13 @@ mod tests {
         }
     }
 
-    fn no_failures(event: PrnsEvent<'_>) {
-        if let PrnsEvent::CommandFailed(failure) = event {
-            panic!("command failed: {failure:?}");
+    fn no_failed_settlements(event: PrnsEvent<'_>) {
+        if let PrnsEvent::CommandSettled {
+            id,
+            settlement: Settlement::AnnounceNow(Err(failure)),
+        } = event
+        {
+            panic!("command {id:?} failed: {failure:?}");
         }
     }
 
@@ -811,14 +822,23 @@ mod tests {
             destination,
             AnnounceTarget::Interface(target),
         )]);
+        let mut settled = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_000),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
-            no_failures,
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
             || queue.pop_front(),
         );
 
         assert_eq!(out.processed_command_count, 1);
+        assert_eq!(
+            settled,
+            std::vec![(CommandId(7), Settlement::AnnounceNow(Ok(())))],
+        );
         assert_eq!(runtime.interfaces()[0].handle.sent.len(), 0);
         let sent = &runtime.interfaces()[1].handle.sent;
         assert_eq!(sent.len(), 1);
@@ -844,7 +864,7 @@ mod tests {
         runtime.cycle_once(
             InstantMillis(1_000),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
-            no_failures,
+            no_failed_settlements,
             || queue.pop_front(),
         );
 
@@ -868,13 +888,13 @@ mod tests {
             DestinationHash::new([0x99; 16]),
             AnnounceTarget::AllInterfaces,
         )]);
-        let mut failures = std::vec::Vec::new();
+        let mut settled = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_000),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |event| {
-                if let PrnsEvent::CommandFailed(failure) = event {
-                    failures.push(failure);
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
                 }
             },
             || queue.pop_front(),
@@ -882,9 +902,12 @@ mod tests {
 
         assert_eq!(out.processed_command_count, 1);
         assert_eq!(
-            failures,
-            std::vec![CommandFailure::AnnounceRejected(
-                AnnounceNowError::UnknownDestination
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(
+                    AnnounceNowError::UnknownDestination
+                ))),
             )],
         );
         assert_eq!(runtime.interfaces()[0].handle.sent.len(), 0);
@@ -900,26 +923,44 @@ mod tests {
             interface_set([started(iface(0xA1), std::vec::Vec::new())]),
             (),
         );
-        let mut queue = VecDeque::from([
-            announce_now_command(destination, AnnounceTarget::AllInterfaces),
-            announce_now_command(destination, AnnounceTarget::AllInterfaces),
-        ]);
+        let issued_as = |id| IssuedCommand {
+            id,
+            command: EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        };
+        let mut queue = VecDeque::from([issued_as(CommandId(1)), issued_as(CommandId(2))]);
 
+        let mut settled = std::vec::Vec::new();
+        let mut collect = |event: PrnsEvent<'_>| {
+            if let PrnsEvent::CommandSettled { id, settlement } = event {
+                settled.push((id, settlement));
+            }
+        };
         let first = runtime.cycle_once(
             InstantMillis(1_000),
             EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
-            no_failures,
+            &mut collect,
             || queue.pop_front(),
         );
         let second = runtime.cycle_once(
             InstantMillis(2_000),
             EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
-            no_failures,
+            &mut collect,
             || queue.pop_front(),
         );
 
         assert_eq!(first.processed_command_count, 1);
         assert_eq!(second.processed_command_count, 1);
+        assert_eq!(
+            settled,
+            std::vec![
+                (CommandId(1), Settlement::AnnounceNow(Ok(()))),
+                (CommandId(2), Settlement::AnnounceNow(Ok(()))),
+            ],
+        );
         let sent = &runtime.interfaces()[0].handle.sent;
         assert_eq!(sent.len(), 2);
         let announce_id_of = |raw: &[u8]| {
@@ -967,13 +1008,13 @@ mod tests {
         runtime.cycle_once(
             InstantMillis(1_000),
             EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
-            no_failures,
+            no_failed_settlements,
             || queue.pop_front(),
         );
         runtime.cycle_once(
             InstantMillis(2_000),
             EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
-            no_failures,
+            no_failed_settlements,
             || queue.pop_front(),
         );
 

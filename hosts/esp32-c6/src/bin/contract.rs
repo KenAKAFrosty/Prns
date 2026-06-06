@@ -189,7 +189,7 @@ async fn node_task(
                     println!("ESP32C6_CONTRACT_RX_ANNOUNCE routes={routes}");
                 }
             }
-            PrnsEvent::CommandFailed(_) => {}
+            PrnsEvent::CommandSettled { .. } => {}
         },
         || None,
     )
