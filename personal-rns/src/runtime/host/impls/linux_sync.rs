@@ -26,6 +26,13 @@ impl LinuxSync {
         }
     }
 
+    /// A handle for app threads to poke the host's coalesced wake — a freshly
+    /// queued command is picked up on the next cycle instead of waiting out a
+    /// sleep.
+    pub fn wake_handle(&self) -> WakeHandle {
+        WakeHandle(self.wake_sender.clone())
+    }
+
     pub fn glue_seam<const MTU: usize>(
         &self,
         id: InterfaceId,
@@ -60,6 +67,15 @@ impl LinuxSync {
 impl Default for LinuxSync {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone)]
+pub struct WakeHandle(SyncSender<()>);
+
+impl WakeHandle {
+    pub fn poke(&self) {
+        let _ = self.0.try_send(());
     }
 }
 

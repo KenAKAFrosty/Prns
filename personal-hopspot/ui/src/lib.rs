@@ -18,7 +18,7 @@
 pub mod screen;
 
 pub use screen::{
-    draw, draw_with_state, splash, BatteryState, Card, CardKind, InputEvent, UiState,
+    draw, draw_with_state, splash, BatteryState, Card, CardKind, InputEvent, UiAction, UiState,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId};

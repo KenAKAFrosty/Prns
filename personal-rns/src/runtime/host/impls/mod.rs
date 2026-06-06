@@ -1,7 +1,7 @@
 #[cfg(feature = "std-sync-host")]
 mod linux_sync;
 #[cfg(feature = "std-sync-host")]
-pub use linux_sync::LinuxSync;
+pub use linux_sync::{LinuxSync, WakeHandle};
 
 #[cfg(feature = "embassy-contract")]
 mod embassy_contract;

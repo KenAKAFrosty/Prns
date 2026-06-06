@@ -20,19 +20,28 @@ use heapless::Vec as HVec;
 
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::ReannounceSchedule;
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
-use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{block_on, StartingDestinationConfig, Prns, PrnsEvent, Recipe, RuntimeSnapshot};
+use personal_rns::runtime::host::impls::{LinuxSync, WakeHandle};
+use personal_rns::runtime::{
+    block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot, StartingDestinationConfig,
+};
+use personal_rns::wire::DestinationHash;
 
-use personal_hopspot_ui::{self as screen, BatteryState, Card, CardKind, InputEvent, UiState};
+use personal_hopspot_ui::{
+    self as screen, BatteryState, Card, CardKind, InputEvent, UiAction, UiState,
+};
 
 /// Stable id for this node's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -79,20 +88,39 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 /// Spawn the engine on its own thread, then own the SDL2 window on this (the main) thread: SDL requires it.
 pub fn run() {
-    // The engine thread feeds each cycle's snapshot to the UI thread.
+    // Loaded once: the engine answers as this identity, and the UI derives the
+    // destination its Announce commands name from the same key.
+    let identity_secret_key = load_identity_secret_key();
+    let identity = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key);
+    let name = expand_name(SELF_ANNOUNCE_APP_NAME, SELF_ANNOUNCE_ASPECTS)
+        .expect("the self-announce name is valid");
+    let self_destination = derive_destination_hash(&identity.identity_hash(), &name);
+
+    // Two lanes between the threads: snapshots flow engine -> UI, commands flow
+    // UI -> engine. The wake handle lets a button press cut the engine's sleep
+    // short so its command is picked up on the next cycle.
     let (snap_tx, snap_rx) = mpsc::channel::<RuntimeSnapshot>();
+    let (command_tx, command_rx) = mpsc::channel::<EngineCommand>();
+    let host = LinuxSync::new();
+    let wake = host.wake_handle();
+
     std::thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(snap_tx))
+        .spawn(move || run_engine(host, identity_secret_key, snap_tx, command_rx))
         .expect("spawn engine thread");
 
-    run_window(snap_rx);
+    run_window(snap_rx, command_tx, wake, self_destination);
 }
 
-fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
-    let host = LinuxSync::new();
+fn run_engine(
+    host: LinuxSync,
+    identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    snap_tx: Sender<RuntimeSnapshot>,
+    command_rx: Receiver<EngineCommand>,
+) {
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(host.attach(usb_auto_interface(USB_INTERFACE_ID), MAX_BUFFERED_PACKETS));
+    let _ =
+        interfaces.push(host.attach(usb_auto_interface(USB_INTERFACE_ID), MAX_BUFFERED_PACKETS));
     let _ = interfaces.push(host.attach(
         wifi_lan_auto_interface(WIFI_INTERFACE_ID),
         MAX_BUFFERED_PACKETS,
@@ -104,7 +132,7 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
             starting_destinations: [StartingDestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,
-                identity_secret_key: load_identity_secret_key(),
+                identity_secret_key,
                 proof_strategy: ProofStrategy::ProveAll,
                 ratchet_policy: RatchetPolicy::Ratcheted,
                 announce: Some(AnnounceConfig {
@@ -133,9 +161,14 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
                     delivery.plaintext.len(),
                 );
             }
-            PrnsEvent::CommandFailed(_) => {}
+            PrnsEvent::CommandFailed(failure) => {
+                println!("HOPSPOT_COMMAND_FAILED {failure:?}");
+            }
         },
-        || None,
+        // The engine's tap into the UI's command queue: every cycle sips until
+        // the queue is dry that cycle (one command per cycle, then an Immediate
+        // re-wake drains any burst).
+        move || command_rx.try_recv().ok(),
     ));
 }
 
@@ -220,19 +253,19 @@ fn dispatch_long_press_if_ready(
     now: Instant,
     card_count: usize,
     ui_state: &mut UiState,
-) {
+) -> UiAction {
     let Some(press) = active_press.as_mut() else {
-        return;
+        return UiAction::None;
     };
     if card_count == 0
         || press.long_press_sent
         || now.duration_since(press.started_at) < LONG_PRESS_THRESHOLD
     {
-        return;
+        return UiAction::None;
     }
 
-    ui_state.handle_input(InputEvent::LongPress, card_count);
     press.long_press_sent = true;
+    ui_state.handle_input(InputEvent::LongPress, card_count)
 }
 
 fn finish_press(
@@ -241,17 +274,17 @@ fn finish_press(
     released_at: Instant,
     card_count: usize,
     ui_state: &mut UiState,
-) {
+) -> UiAction {
     let Some(press) = active_press.take() else {
-        return;
+        return UiAction::None;
     };
     if press.source != source {
         *active_press = Some(press);
-        return;
+        return UiAction::None;
     }
 
     if press.long_press_sent {
-        return;
+        return UiAction::None;
     }
 
     let event = if released_at.duration_since(press.started_at) >= LONG_PRESS_THRESHOLD {
@@ -259,18 +292,41 @@ fn finish_press(
     } else {
         InputEvent::ShortPress
     };
-    ui_state.handle_input(event, card_count);
+    ui_state.handle_input(event, card_count)
 }
 
 /// Own the SDL2 window: repaint the latest snapshot as the Hopspot screen until
 /// the window is closed.
-fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
+fn run_window(
+    snap_rx: Receiver<RuntimeSnapshot>,
+    command_tx: Sender<EngineCommand>,
+    wake: WakeHandle,
+    self_destination: DestinationHash,
+) {
     let output = OutputSettingsBuilder::new()
         .theme(BinaryColorTheme::OledBlue)
         .scale(4)
         .build();
     let mut window = Window::new("Personal Hopspot", &output);
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
+
+    // Every input path funnels its UiAction here: selecting "Announce" in the
+    // global menu queues the command for the engine thread and pokes its wake.
+    let mut apply_action = move |action: UiAction| match action {
+        UiAction::None => {}
+        UiAction::Announce => {
+            let _ = command_tx.send(EngineCommand::AnnounceNow(AnnounceNow {
+                destination: self_destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }));
+            wake.poke();
+            println!(
+                "HOPSPOT_TX_ANNOUNCE_NOW destination={:02x?}",
+                self_destination.as_bytes(),
+            );
+        }
+    };
 
     let mut snapshot: Option<RuntimeSnapshot> = None;
     let mut ui_state = UiState::new();
@@ -300,18 +356,23 @@ fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
                 });
                 let card_count = cards.len();
                 ui_state.sync_card_count(card_count);
-                dispatch_long_press_if_ready(
+                apply_action(dispatch_long_press_if_ready(
                     &mut active_press,
                     Instant::now(),
                     card_count,
                     &mut ui_state,
-                );
+                ));
                 screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
                 card_count
             }
             None => {
                 ui_state.sync_card_count(0);
-                dispatch_long_press_if_ready(&mut active_press, Instant::now(), 0, &mut ui_state);
+                apply_action(dispatch_long_press_if_ready(
+                    &mut active_press,
+                    Instant::now(),
+                    0,
+                    &mut ui_state,
+                ));
                 screen::splash(&mut display, "connecting");
                 0
             }
@@ -325,25 +386,25 @@ fn run_window(snap_rx: Receiver<RuntimeSnapshot>) {
                     active_press.get_or_insert(press_start(PressSource::Key));
                 }
                 SimulatorEvent::KeyUp { .. } => {
-                    finish_press(
+                    apply_action(finish_press(
                         &mut active_press,
                         PressSource::Key,
                         Instant::now(),
                         card_count,
                         &mut ui_state,
-                    );
+                    ));
                 }
                 SimulatorEvent::MouseButtonDown { .. } => {
                     active_press.get_or_insert(press_start(PressSource::Mouse));
                 }
                 SimulatorEvent::MouseButtonUp { .. } => {
-                    finish_press(
+                    apply_action(finish_press(
                         &mut active_press,
                         PressSource::Mouse,
                         Instant::now(),
                         card_count,
                         &mut ui_state,
-                    );
+                    ));
                 }
                 SimulatorEvent::KeyDown { repeat: true, .. }
                 | SimulatorEvent::MouseWheel { .. }

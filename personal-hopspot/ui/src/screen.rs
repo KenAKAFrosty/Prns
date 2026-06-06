@@ -78,6 +78,7 @@ const MENU_TEXT_X: i32 = 12;
 const FONT_5X8_CHAR_W: i32 = 5;
 
 const GLOBAL_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Announce", "Status", "Sleep", "Back"];
+const ANNOUNCE_MENU_ITEM: usize = 0;
 const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Serial", "Restart", "Back"];
 const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Scan", "Channel", "Back"];
 const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Pair", "Advert", "Back"];
@@ -134,6 +135,14 @@ pub enum InputEvent {
     ShortPress,
     /// Hold: open/close the selected global or interface menu.
     LongPress,
+}
+
+/// What an input asked the app to do. The UI owns focus and menus; anything
+/// that reaches beyond the screen surfaces here for the app to act on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiAction {
+    None,
+    Announce,
 }
 
 /// Lightweight interaction state for the Hopspot card stack.
@@ -241,39 +250,51 @@ impl UiState {
         }
     }
 
-    /// Apply one single-button event.
-    pub fn handle_input(&mut self, event: InputEvent, card_count: usize) {
+    /// Apply one single-button event, returning what the app should do about it.
+    pub fn handle_input(&mut self, event: InputEvent, card_count: usize) -> UiAction {
         self.sync_card_count(card_count);
         let item_count = focus_item_count(card_count);
-        match (event, self.mode) {
+        let action = match (event, self.mode) {
             (InputEvent::ShortPress, UiMode::Cards) => {
                 self.selected_focus = (self.selected_focus + 1) % item_count;
+                UiAction::None
             }
             (InputEvent::LongPress, UiMode::Cards) if self.selected_focus == 0 => {
                 self.mode = UiMode::GlobalMenu { selected_item: 0 };
+                UiAction::None
             }
             (InputEvent::LongPress, UiMode::Cards) if self.selected_card(card_count).is_some() => {
                 self.mode = UiMode::InterfaceMenu { selected_item: 0 };
+                UiAction::None
             }
             (InputEvent::ShortPress, UiMode::GlobalMenu { selected_item }) => {
                 self.mode = UiMode::GlobalMenu {
                     selected_item: (selected_item + 1) % MENU_ITEM_COUNT,
                 };
+                UiAction::None
             }
-            (InputEvent::LongPress, UiMode::GlobalMenu { .. }) => {
+            (InputEvent::LongPress, UiMode::GlobalMenu { selected_item }) => {
                 self.mode = UiMode::Cards;
+                if selected_item == ANNOUNCE_MENU_ITEM {
+                    UiAction::Announce
+                } else {
+                    UiAction::None
+                }
             }
             (InputEvent::ShortPress, UiMode::InterfaceMenu { selected_item }) => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: (selected_item + 1) % MENU_ITEM_COUNT,
                 };
+                UiAction::None
             }
             (InputEvent::LongPress, UiMode::InterfaceMenu { .. }) => {
                 self.mode = UiMode::Cards;
+                UiAction::None
             }
-            (InputEvent::LongPress, UiMode::Cards) => {}
-        }
+            (InputEvent::LongPress, UiMode::Cards) => UiAction::None,
+        };
         self.sync_card_count(card_count);
+        action
     }
 }
 
@@ -1284,6 +1305,31 @@ mod tests {
         state.handle_input(InputEvent::LongPress, 4);
 
         assert!(state.global_selected());
+        assert_eq!(state.menu_selected_item(), None);
+    }
+
+    #[test]
+    fn long_press_on_the_announce_item_returns_the_announce_action() {
+        let mut state = UiState::new();
+
+        assert_eq!(state.handle_input(InputEvent::LongPress, 4), UiAction::None);
+        assert_eq!(state.global_menu_selected_item(), Some(ANNOUNCE_MENU_ITEM));
+
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4),
+            UiAction::Announce,
+        );
+        assert_eq!(state.menu_selected_item(), None);
+        assert!(state.global_selected());
+    }
+
+    #[test]
+    fn long_press_on_any_other_menu_item_just_closes_the_menu() {
+        let mut state = UiState::new();
+        state.handle_input(InputEvent::LongPress, 4);
+        state.handle_input(InputEvent::ShortPress, 4);
+
+        assert_eq!(state.handle_input(InputEvent::LongPress, 4), UiAction::None);
         assert_eq!(state.menu_selected_item(), None);
     }
 
