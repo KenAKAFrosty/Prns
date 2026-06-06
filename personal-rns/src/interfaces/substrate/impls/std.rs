@@ -1,4 +1,5 @@
 use std::sync::mpsc::SyncSender;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -11,6 +12,21 @@ use crate::interfaces::{
 };
 
 const CONTROL_DEPTH: usize = 4;
+
+#[derive(Clone, Default)]
+pub struct WorkerWake(Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>);
+
+impl WorkerWake {
+    pub fn arm(&self, notify: impl Fn() + Send + Sync + 'static) {
+        let _ = self.0.set(Box::new(notify));
+    }
+
+    fn signal(&self) {
+        if let Some(notify) = self.0.get() {
+            notify();
+        }
+    }
+}
 
 struct InboundSlot<const MTU: usize> {
     arrived_at: InstantMillis,
@@ -68,6 +84,13 @@ impl<const MTU: usize> InboundSink for StdInboundSink<MTU> {
 
 pub struct StdOutboundDrain<const MTU: usize> {
     consumer: Consumer<OutboundSlot<MTU>>,
+    worker_wake: WorkerWake,
+}
+
+impl<const MTU: usize> StdOutboundDrain<MTU> {
+    pub fn arm_wake(&self, notify: impl Fn() + Send + Sync + 'static) {
+        self.worker_wake.arm(notify);
+    }
 }
 
 impl<const MTU: usize> OutboundDrain for StdOutboundDrain<MTU> {
@@ -117,6 +140,7 @@ pub struct StdInterfaceHandle<const MTU: usize> {
     outbound: Producer<OutboundSlot<MTU>>,
     commands: Producer<ControlCommand>,
     reports: Consumer<ControlReport>,
+    worker_wake: WorkerWake,
 }
 
 impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
@@ -147,11 +171,13 @@ impl<const MTU: usize> InterfaceHandle for StdInterfaceHandle<MTU> {
         let written = fill(&mut slot.bytes);
         slot.len = written as u16;
         chunk.commit(1);
+        self.worker_wake.signal();
         Ok(written)
     }
 
     fn request_stop(&mut self) {
         let _ = self.commands.push(ControlCommand::Stop);
+        self.worker_wake.signal();
     }
 
     fn next_report(&mut self) -> Option<ControlReport> {
@@ -176,6 +202,7 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
             RingBuffer::<OutboundSlot<MTU>>::new(max_buffered_packets);
         let (cmd_producer, cmd_consumer) = RingBuffer::<ControlCommand>::new(CONTROL_DEPTH);
         let (report_producer, report_consumer) = RingBuffer::<ControlReport>::new(CONTROL_DEPTH);
+        let worker_wake = WorkerWake::default();
 
         StdInterfaceSeam {
             worker_context: InterfaceWorkerContext {
@@ -186,6 +213,7 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
                 },
                 outbound: StdOutboundDrain {
                     consumer: out_consumer,
+                    worker_wake: worker_wake.clone(),
                 },
                 control: StdControlEndpoint {
                     commands: cmd_consumer,
@@ -199,6 +227,7 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
                 outbound: out_producer,
                 commands: cmd_producer,
                 reports: report_consumer,
+                worker_wake,
             },
         }
     }

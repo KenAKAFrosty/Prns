@@ -16,9 +16,12 @@ use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
 use personal_rns::interfaces::impls::usb_auto::core::{
-    decode_message, Message, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
+    decode_message, Message, MAX_DATA_BYTES, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
 };
+use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
+use personal_rns::interfaces::{InterfaceHandle, InterfaceId};
+use personal_rns::runtime::host::impls::LinuxSync;
 
 const BAUD: u32 = 115_200;
 const READ_BUF_BYTES: usize = 64 * 1024;
@@ -30,10 +33,14 @@ const LINK_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "via-interface") {
+        run_via_interface();
+        return;
+    }
     let flood = args.iter().any(|a| a == "flood");
     let path = args
         .iter()
-        .find(|a| a.as_str() != "flood")
+        .find(|a| !matches!(a.as_str(), "flood" | "via-interface"))
         .cloned()
         .unwrap_or_else(autodetect_port);
     if flood {
@@ -41,6 +48,49 @@ fn main() {
     } else {
         run_count(&path);
     }
+}
+
+fn run_via_interface() {
+    eprintln!("driving the real usb_auto_interface through LinuxSync (the mio worker auto-discovers the board)");
+    let host = LinuxSync::new();
+    let id = InterfaceId::new(*b"usb-throughput--");
+    let mut started = host.attach::<_, MAX_DATA_BYTES>(usb_auto_interface(id), 64);
+
+    let started_at = Instant::now();
+    let mut linked = false;
+    let mut bytes = 0u64;
+    let mut frames = 0u64;
+    let mut window_start = started_at;
+    loop {
+        match started.handle.next_inbound(|pkt| pkt.bytes.len()) {
+            Some(n) => {
+                if !linked {
+                    linked = true;
+                    window_start = Instant::now();
+                    eprintln!("first packet via the worker — measuring for {}s", MEASURE_WINDOW.as_secs());
+                }
+                bytes += n as u64;
+                frames += 1;
+            }
+            None => {
+                if !linked && started_at.elapsed() >= LINK_TIMEOUT {
+                    eprintln!("no inbound within {}s — is the flood bin flashed and running?", LINK_TIMEOUT.as_secs());
+                    std::process::exit(1);
+                }
+                if linked && window_start.elapsed() >= MEASURE_WINDOW {
+                    break;
+                }
+                std::thread::sleep(Duration::from_micros(50));
+            }
+        }
+    }
+    started.handle.request_stop();
+
+    let secs = window_start.elapsed().as_secs_f64();
+    let mb_s = bytes as f64 / 1e6 / secs;
+    let mbps = bytes as f64 * 8.0 / 1e6 / secs;
+    println!("S3 -> desktop via the mio worker over {secs:.2}s:");
+    println!("  {bytes} bytes in {frames} frames  =>  {mb_s:.2} MB/s  ({mbps:.1} Mbps)");
 }
 
 fn open_port(path: &str, timeout: Duration) -> Box<dyn serialport::SerialPort> {

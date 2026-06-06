@@ -1,6 +1,8 @@
 #![cfg_attr(not(feature = "usb-auto"), allow(dead_code))]
 
 use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, RawFd};
 use std::string::String;
 use std::vec::Vec;
 
@@ -19,7 +21,7 @@ pub(in crate::interfaces::impls::usb_auto) const USB_AUTO_MTU: usize = MAX_DATA_
 pub(in crate::interfaces::impls::usb_auto) type UsbAutoContext =
     InterfaceWorkerContext<StdHostSubstrate<USB_AUTO_MTU>>;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(in crate::interfaces::impls::usb_auto) struct PortId(String);
 
 impl PortId {
@@ -78,6 +80,17 @@ pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
     devices: Vec<Device<Port>>,
     rejected: Vec<PortId>,
     reported_state: ConnectionState,
+}
+
+#[cfg(unix)]
+impl<Port: AsRawFd> Discoverer<Port> {
+    pub(in crate::interfaces::impls::usb_auto) fn port_registrations(
+        &self,
+    ) -> impl Iterator<Item = (&PortId, RawFd)> + '_ {
+        self.devices
+            .iter()
+            .map(|device| (&device.id, device.port.as_raw_fd()))
+    }
 }
 
 impl<Port: Read + Write> Discoverer<Port> {
