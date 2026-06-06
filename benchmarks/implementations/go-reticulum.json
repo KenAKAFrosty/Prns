@@ -1,0 +1,10 @@
+{
+  "implementation": "go-reticulum",
+  "slug": "go-reticulum",
+  "language": "Go",
+  "crypto_backend": "Go stdlib crypto/ed25519",
+  "role": "external",
+  "repo": "https://github.com/svanichkin/go-reticulum",
+  "pinned_ref": "06621cc",
+  "license": "MIT"
+}

@@ -23,7 +23,8 @@ and under `esp_alloc::HEAP.stats()` on the microcontroller when that route lands
 | Axis | Where | Status |
 |------|-------|--------|
 | **Memory** — peak footprint + allocation count (*the core makes none*) | `src/bin/mem_profile.rs`, `src/bin/mem_soak.rs` (dhat) | ✅ host route; the `FixedInline` path measures **0** allocations |
-| **Throughput / Latency** — packets & bytes/sec, per-packet time | `benches/throughput.rs` (criterion), `src/bin/bench_result.rs` | 🟡 criterion bench landed; first cross-impl row (ours vs RNS) in [`RESULTS.md`](RESULTS.md) |
+| **Throughput / Latency** — packets & bytes/sec, per-packet time | `benches/throughput.rs` (criterion), `src/bin/sustained.rs` | ✅ sustained cross-impl throughput in [`RESULTS.md`](RESULTS.md) |
+| **Energy** — joules per announce (the cross-comparable price a node pays) | `energy/` (`build.sh` + `sudo measure.sh`, powermetrics) | ✅ eight-impl energy table in [`RESULTS.md`](RESULTS.md); macOS now, Linux via RAPL next |
 | **Binary size** — what the engine costs on a constrained target | `scripts/binary-size.sh` (`cargo bloat` on the ESP32-C6 / riscv32imac firmware) | 🟡 engine ≈ **6.8 KiB** `.text` — crypto (sha2/curve25519/aes/ed25519) is the bulk |
 | **Run on the hardware, down to the microcontroller** | the same scenarios + `esp_alloc::HEAP.stats()` in firmware | ⬜ next route |
 
@@ -34,7 +35,7 @@ reference where the comparison is fair." That only holds if the scenario is **da
 our API — so a scenario's *input* lives on disk as a versioned, language-neutral corpus:
 
 ```
-scenarios/announce-256/
+scenarios/announce-energy/
   manifest.json   # name, version, op sequence, and the expected end-state (the fairness gate)
   packets.hex     # one hex-encoded RNS wire packet per line — replay these exact bytes
 ```
@@ -42,32 +43,58 @@ scenarios/announce-256/
 The bytes are **minted by the RNS 1.3.1 reference** (`reference/gen.py` drives the real
 `RNS.Destination.announce`), not by the engine-under-test — so the corpus is impartial
 ground truth and doubles as a conformance corpus. Our engine reproduces it **byte-for-byte**
-(`cargo run --bin gen_corpus -- --check` vs `reference/gen.py --check`), which is the
-first hard proof of wire-exactness against RNS. Every backend here `load_corpus`es it.
+(`cargo run --bin gen_corpus -- --check` vs `reference/gen.py --check`), the hard proof of
+wire-exactness against RNS. Every backend here `load_corpus`es it.
 
-**To participate, an implementation writes a thin driver** that:
+**`announce-energy`** is the one scenario: 2560 distinct signed lxmf.delivery announces,
+ingested under sustained all-cores load while CPU power is sampled, reported as **joules per
+announce** — the cross-comparable price a battery/solar node actually pays, fair across
+GC/JIT/interpreter because it's the actual energy. The announce path is ~97% independent
+per-announce Ed25519 verify, so the ranking is a crypto-backend story; a port that can't make
+its route store thread-safe is measured verify-only (no store), tagged ‡ in the table.
 
-1. reads `packets.hex` + `manifest.json`,
-2. feeds the packets through *its* engine per the manifest's `operations`,
-3. checks it reaches the manifest's `expected` state — the **conformance gate**: only a
-   matching impl's numbers are comparable, and
-4. emits one result row per axis in a common schema:
+**To participate, an implementation writes a thin sustained harness** that:
+
+1. reads `packets.hex`,
+2. counts the routes it resolves / signatures it verifies in one pass — the **conformance
+   gate** (only a matching impl's numbers are comparable) — and prints `CONFORMANCE resolved=N`,
+3. then loops the corpus (replicated to a working set) across all logical cores for a fixed
+   wall-time and prints `THROUGHPUT announces_per_sec=F`.
+
+`energy/measure.sh` wraps `powermetrics` around that run and files one row per figure
+(conformance, throughput, CPU power, energy) in a common schema:
 
    ```json
-   {"scenario":"announce-256","scenario_version":1,"implementation":"personal-rns",
-    "commit":"f400e59","toolchain":"1.96.0","host":"aarch64-apple-darwin",
-    "axis":"throughput","metric":"ingest_announces_per_sec","value":47897.5,"unit":"announce/s"}
+   {"scenario":"announce-energy","scenario_version":1,"implementation":"Prns",
+    "commit":"5d132e7","toolchain":"1.96.0","host":"aarch64-apple-darwin",
+    "axis":"energy","metric":"energy_microjoules_per_announce","value":67.5,"unit":"µJ/announce"}
    ```
 
 Those rows are the **result substrate**: each implementation owns one file,
 `results/<host>/<scenario>/<impl>.jsonl` (so two languages never contend on a write), where
 `host` is the rustc target triple. `render_results` pivots every committed row into the
-GitHub-facing tables — an index ([`RESULTS.md`](RESULTS.md)) linking one page per host — and the
-website **includes those same generated files**, so the numbers can't drift between the repo and
-the site. `render_results --check` is the drift gate (re-render, diff, fail if stale), the sibling
-of `gen_corpus --check`. The RNS reference is the worked second column: `reference/driver.py`
-replays the corpus through the real RNS announce path (`Packet.unpack` + `Identity.validate_announce`)
-and emits its rows.
+GitHub-facing table — an index ([`RESULTS.md`](RESULTS.md)) linking one **cross-implementation
+comparison** per host, sorted by energy with the language, Ed25519 backend (the controlled
+variable), conformance, sustained throughput, CPU power, and energy, plus a provenance list — and
+the website **includes those same generated files**, so the numbers can't drift between the repo
+and the site. `render_results --check` is the drift gate (re-render, diff, fail if stale), the
+sibling of `gen_corpus --check`. The RNS reference is the worked second column:
+`reference/sustained.py` replays the corpus through the real RNS announce path (`Packet.unpack`
++ `Identity.validate_announce`).
+
+**The external ports' harnesses live in [`energy/contestants/`](energy/), built against pinned
+upstream clones under `external/`.** Six more Reticulum ports — Rust
+([Leviculum](https://codeberg.org/Lew_Palm/leviculum), [LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs)),
+Go ([go-reticulum](https://github.com/svanichkin/go-reticulum)), Crystal
+([rns-cr](https://github.com/jtippett/rns-cr)), C++
+([microReticulum](https://github.com/attermann/microReticulum)), and a second Python
+([RetiNet](https://codeberg.org/skyguy/retinet)). `energy/build.sh` clones each *pinned* upstream
+into a gitignored `external/<impl>/.upstream/`, builds our sustained harness against it, and
+self-tests; `sudo energy/measure.sh` samples power and files the rows. We never vendor upstream
+source — only our harness and the measured numbers (licenses vary: AGPL, MIT, Apache, EPL, …).
+What an implementation *is* — language, Ed25519 backend, repo, pinned ref, license — is
+host-independent, so it lives once per impl in `implementations/<slug>.json` (the per-impl sibling
+of `host.json`), which the table joins for its Language/backend columns and provenance.
 
 **The host is a reproducibility dimension, not just a label.** A throughput number means nothing
 without the silicon it ran on — an M1 and an M4 Max are both `aarch64-apple-darwin`. So each host
@@ -77,7 +104,7 @@ beside the rows rather than bloating each one; `render_results` renders it as th
 atop that host's page. Run `describe_host` before committing a new host's results.
 
 Our runners are the worked example. Measurement tooling stays per-language (you can't share
-dhat with Python), so **throughput, binary size, and conformance compare cleanly across
+dhat with Python), so **throughput, energy, binary size, and conformance compare cleanly across
 implementations; memory and latency stay within-impl with loud caveats** — a cross-language
 RSS race between a GC and a no-alloc core would be dishonest. The RNS 1.3.1 reference is
 already the first "other implementation": it mints the corpus (`reference/gen.py`), the engine
@@ -99,9 +126,16 @@ cargo run --release --bin mem_soak                # long-run tick soak (memory +
 MEM_SOAK_TICKS=50000000 MEM_SOAK_STEP_MS=100 cargo run --release --bin mem_soak
 cargo bench                                       # criterion throughput/latency
 cargo run --release --bin describe_host           # record this machine -> results/<host>/host.json
-cargo run --release --bin bench_result            # measure ours -> results/<host>/announce-256/personal-rns.jsonl
 cargo run --release --bin render_results          # rebuild RESULTS.md + per-host pages from results/
 cargo run --release --bin render_results -- --check  # is the table in sync with the substrate?
+```
+
+The cross-impl energy table (throughput + CPU power + joules/announce, all eight implementations)
+needs root for the power counters, so it's its own two-step flow:
+
+```sh
+energy/build.sh             # clone pinned upstreams, build + self-test all 8 sustained harnesses (no sudo)
+sudo energy/measure.sh 30   # idle baseline + a sampled run each -> results/<host>/announce-energy/*.jsonl
 ```
 
 The canonical wire corpus is minted from the RNS 1.3.1 reference (one-time venv setup). Use a
@@ -114,7 +148,6 @@ equivalent):
 cd reference && python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python gen.py --check           # reference parity: RNS == the committed corpus
 .venv/bin/python gen.py                    # regenerate packets.hex from RNS (canonical)
-.venv/bin/python driver.py                 # measure RNS -> results/<host>/announce-256/rns-1.3.1.jsonl
 ```
 
 And the binary-size axis, from the repo root (it builds the ESP32-C6 firmware):

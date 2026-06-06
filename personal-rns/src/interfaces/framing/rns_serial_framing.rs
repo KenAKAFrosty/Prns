@@ -98,16 +98,46 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
     }
 
     pub fn feed(&mut self, byte: u8) -> Result<Option<&[u8]>, DecodeError> {
+        if self.feed_one(byte)? {
+            Ok(Some(&self.buffer))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn feed_slice(&mut self, input: &[u8], mut on_frame: impl FnMut(&[u8])) {
+        let mut i = 0;
+        while i < input.len() {
+            if self.in_frame && !self.saw_escape {
+                let run_end = input[i..]
+                    .iter()
+                    .position(|&byte| byte == FLAG || byte == ESC)
+                    .map_or(input.len(), |offset| i + offset);
+                let run = &input[i..run_end];
+                if !run.is_empty() && run.len() <= self.buffer.capacity() - self.buffer.len() {
+                    let _ = self.buffer.extend_from_slice(run);
+                    i = run_end;
+                    continue;
+                }
+            }
+            if matches!(self.feed_one(input[i]), Ok(true)) {
+                on_frame(&self.buffer);
+            }
+            i += 1;
+        }
+    }
+
+    fn feed_one(&mut self, byte: u8) -> Result<bool, DecodeError> {
         if byte == FLAG {
             if self.in_frame {
                 self.in_frame = false;
                 self.saw_escape = false;
-                return Ok(Some(&self.buffer));
+                return Ok(true);
             }
             self.buffer.clear();
             self.in_frame = true;
             self.saw_escape = false;
-            return Ok(None);
+            return Ok(false);
         }
 
         if !self.in_frame {
@@ -127,7 +157,7 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
 
         if byte == ESC {
             self.saw_escape = true;
-            return Ok(None);
+            return Ok(false);
         }
 
         let payload_byte = if self.saw_escape {
@@ -145,7 +175,7 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
             self.reset();
             return Err(DecodeError::FrameTooBig);
         }
-        Ok(None)
+        Ok(false)
     }
 }
 
@@ -165,6 +195,33 @@ mod tests {
             }
         }
         frames
+    }
+
+    fn decode_all_bytewise_lenient(bytes: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
+        let mut decoder: RnsSerialDecoder<TEST_FRAME_CAP> = RnsSerialDecoder::new();
+        let mut frames = std::vec::Vec::new();
+        for &b in bytes {
+            if let Ok(Some(frame)) = decoder.feed(b) {
+                frames.push(frame.to_vec());
+            }
+        }
+        frames
+    }
+
+    fn decode_all_slice(bytes: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
+        let mut decoder: RnsSerialDecoder<TEST_FRAME_CAP> = RnsSerialDecoder::new();
+        let mut frames = std::vec::Vec::new();
+        decoder.feed_slice(bytes, |frame| frames.push(frame.to_vec()));
+        frames
+    }
+
+    proptest! {
+        #[test]
+        fn feed_slice_matches_feeding_byte_by_byte(
+            bytes in proptest::collection::vec(any::<u8>(), 0..4096)
+        ) {
+            prop_assert_eq!(decode_all_slice(&bytes), decode_all_bytewise_lenient(&bytes));
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-"""Mint the `announce-256` scenario corpus from the RNS 1.3.1 reference.
+"""Mint the `announce-energy` scenario corpus from the RNS 1.3.1 reference.
 
 The benchmark corpus is the fairness/conformance gate: every implementation replays
 these exact wire bytes. So the bytes must be *reference* ground truth, not minted by
@@ -25,11 +25,11 @@ import RNS
 import RNS.Destination
 import RNS.Transport
 
-COUNT = 256
 APP_NAME = "lxmf"
 ASPECTS = ["delivery"]
 APP_DATA = b"benchmarks"
-SCENARIO = Path(__file__).resolve().parent.parent / "scenarios" / "announce-256"
+SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+SCENARIOS = [("announce-energy", 2560)]
 
 # A live Reticulum only matters for routing/transport, never for the announce bytes.
 RNS.Transport.register_destination = staticmethod(lambda *a, **k: None)
@@ -38,7 +38,8 @@ RNS.Transport.register_destination = staticmethod(lambda *a, **k: None)
 def node_secret(index):
     seed = (index ^ 0xC300) & 0xFFFF
     lo, hi = seed & 0xFF, (seed >> 8) & 0xFF
-    return bytes((lo * 31 + hi + i + 1) & 0xFF for i in range(64))
+    block = index >> 8
+    return bytes((lo * 31 + hi + i + 1 + block * i) & 0xFF for i in range(64))
 
 
 def announce_nonce(index):
@@ -72,25 +73,40 @@ def announce_packet(index):
     return packet.raw
 
 
-def corpus_hex():
-    return [announce_packet(index).hex() for index in range(COUNT)]
+def corpus_hex(count):
+    return [announce_packet(index).hex() for index in range(count)]
+
+
+def check(name, count):
+    lines = corpus_hex(count)
+    committed = (SCENARIOS_DIR / name / "packets.hex").read_text().split()
+    ok = committed == lines
+    print(f"{name}: reference parity {'IDENTICAL' if ok else 'DIVERGES'} ({len(lines)} packets)")
+    if not ok:
+        first = next(i for i in range(min(len(committed), len(lines))) if committed[i] != lines[i])
+        print(f"  first divergence at packet {first}")
+        print(f"  committed: {committed[first][:64]}…")
+        print(f"  reference: {lines[first][:64]}…")
+    return ok
+
+
+def write(name, count):
+    lines = corpus_hex(count)
+    target = SCENARIOS_DIR / name / "packets.hex"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n")
+    print(f"wrote {len(lines)} reference packets to {target}")
 
 
 def main():
-    lines = corpus_hex()
-    target = SCENARIO / "packets.hex"
-    if "--check" in sys.argv:
-        committed = target.read_text().split()
-        ok = committed == lines
-        print(f"reference parity: {'IDENTICAL' if ok else 'DIVERGES'} ({len(lines)} packets)")
-        if not ok:
-            first = next(i for i in range(min(len(committed), len(lines))) if committed[i] != lines[i])
-            print(f"  first divergence at packet {first}")
-            print(f"  committed: {committed[first][:64]}…")
-            print(f"  reference: {lines[first][:64]}…")
-        sys.exit(0 if ok else 1)
-    target.write_text("\n".join(lines) + "\n")
-    print(f"wrote {len(lines)} reference packets to {target}")
+    checking = "--check" in sys.argv
+    ok = True
+    for name, count in SCENARIOS:
+        if checking:
+            ok &= check(name, count)
+        else:
+            write(name, count)
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

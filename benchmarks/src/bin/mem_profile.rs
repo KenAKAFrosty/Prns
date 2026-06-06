@@ -28,7 +28,7 @@ fn measure<S: EngineStorage>(label: &str, announces: &[Vec<u8>]) {
 
 fn main() {
     let _profiler = dhat::Profiler::new_heap();
-    let announces = load_corpus(&scenario_dir("announce-256"));
+    let announces = load_corpus(&scenario_dir("announce-energy"));
 
     println!("engine static footprint (inline, no heap):");
     println!(

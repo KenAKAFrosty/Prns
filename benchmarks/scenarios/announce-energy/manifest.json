@@ -1,0 +1,9 @@
+{
+  "name": "announce-energy",
+  "version": 1,
+  "description": "Sustained announce ingest on all logical cores, measuring energy per announce (the price a battery/solar node actually pays). 2560 distinct signed lxmf.delivery announces, replicated to a working set and looped; throughput here is the sustained average under continuous load.",
+  "source": "reference/gen.py (RNS 1.3.1) — canonical; engine reproduces byte-for-byte",
+  "input": { "packets": "packets.hex", "encoding": "hex-per-line", "count": 2560 },
+  "operations": { "ingest": "sustained-all-cores", "measure": "joules-per-announce" },
+  "expected": { "route_count": 2560 }
+}

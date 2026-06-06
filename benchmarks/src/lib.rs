@@ -8,17 +8,19 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
-use personal_rns::engine::{EngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::{EngineState, InstantMillis, ReannounceSchedule};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InboundPacket, InterfaceId};
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::announce::SelfAnnounceEntropy;
 use personal_rns::routing::storage::{EngineStorage, FixedInline, GrowableHeap};
+use personal_rns::routing::upstream_app_destinations::ProofStrategy;
 
 mod results;
 pub use results::{
-    load_all_rows, load_host, results_dir, write_host, write_rows, Axis, Comparability,
-    HostDescriptor, ResultRow,
+    load_all_rows, load_host, load_implementations, results_dir, write_host, write_rows, Axis,
+    Comparability, HostDescriptor, ImplementationDescriptor, ImplementationRole, ResultRow,
 };
 
 pub type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>;
@@ -38,19 +40,50 @@ pub fn node_key(seed: u16) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
+/// A throwaway sender secret that's distinct for *every* fixture index, not just the
+/// first 256. [`node_key`]'s per-byte formula collapses 16-bit seeds onto 256 values, so the
+/// announce-energy corpus's 2560 destinations need more: adding `block * i` (`block` = the
+/// index's high byte) breaks the collapse while staying a no-op for indices 0..256
+/// (`block == 0`). Mirrors `reference/gen.py`'s `node_secret`, the canonical generator.
+fn fixture_node_key(index: usize) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    let seed = (index as u16) ^ 0xC300;
+    let lo = u32::from(seed & 0xFF);
+    let hi = u32::from(seed >> 8);
+    let block = (index >> 8) as u32;
+    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+    for (i, byte) in key.iter_mut().enumerate() {
+        let i = i as u32;
+        *byte = lo
+            .wrapping_mul(31)
+            .wrapping_add(hi)
+            .wrapping_add(i)
+            .wrapping_add(1)
+            .wrapping_add(block.wrapping_mul(i)) as u8;
+    }
+    key
+}
+
 /// `count` distinct, validly-signed announces — one per throwaway sender identity.
 /// A host-side fixture builder (the senders allocate); call it before measuring.
 pub fn announce_fixtures(count: usize) -> Vec<Vec<u8>> {
     let mut announces = Vec::with_capacity(count);
     for k in 0..count {
-        let config = SelfAnnounceConfig {
-            app_name: "lxmf",
-            aspects: &["delivery"],
-            app_data: b"benchmarks",
-            schedule: ReannounceSchedule::every(10_000),
-        };
-        let mut sender = EngineState::<GrowableHeap>::announcing(&node_key(k as u16 ^ 0xC300), config)
-            .expect("valid self-announce config");
+        let mut sender = EngineState::<GrowableHeap>::new(fixture_node_key(k));
+        let node = sender
+            .transport_identity()
+            .expect("a fresh engine holds its node identity");
+        let destination = sender
+            .register_single_destination(&node, "lxmf", &["delivery"], ProofStrategy::ProveNone)
+            .expect("register lxmf.delivery destination");
+        sender
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: b"benchmarks",
+                    schedule: ReannounceSchedule::every(10_000),
+                },
+            )
+            .expect("schedule self-announce");
         let entropy =
             SelfAnnounceEntropy::new([(k as u8).wrapping_add(0x40); SelfAnnounceEntropy::LEN]);
         let mut buf = [0u8; 512];
@@ -66,7 +99,7 @@ pub fn announce_fixtures(count: usize) -> Vec<Vec<u8>> {
 
 /// A fresh receiver engine over storage `S`.
 pub fn new_engine<S: EngineStorage>() -> EngineState<S> {
-    EngineState::<S>::new(&node_key(0x11))
+    EngineState::<S>::new(node_key(0x11))
 }
 
 /// Ingest every packet into `engine` over one interface.
@@ -120,7 +153,7 @@ pub fn tick_soak<S: EngineStorage>(
 // `announce_fixtures` is the generator; the `gen_corpus` bin writes it out; every
 // measurement backend `load`s it. That's what keeps "run it yourself" honest.
 
-/// The on-disk home of scenario `name` (e.g. "announce-256"), relative to this crate.
+/// The on-disk home of scenario `name` (e.g. "announce-energy"), relative to this crate.
 pub fn scenario_dir(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios").join(name)
 }

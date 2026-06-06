@@ -1,0 +1,10 @@
+{
+  "implementation": "LXMF-rs 0.2.0",
+  "slug": "lxmf-rs",
+  "language": "Rust",
+  "crypto_backend": "ed25519-dalek 2.1",
+  "role": "external",
+  "repo": "https://github.com/FreeTAKTeam/LXMF-rs",
+  "pinned_ref": "30da190",
+  "license": "EPL-2.0"
+}

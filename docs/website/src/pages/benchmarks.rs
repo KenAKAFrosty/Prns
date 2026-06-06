@@ -8,16 +8,10 @@ use crate::routes::Route;
 // page render the same files, so the tables can't drift. The index links to a per-host
 // page; add a line to HOST_PAGES when a new host's results land.
 const INDEX_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
-const HOST_PAGES: &[(&str, &str)] = &[
-    (
-        "aarch64-apple-darwin",
-        include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
-    ),
-    (
-        "x86_64-unknown-linux-gnu",
-        include_str!("../../../../benchmarks/RESULTS-x86_64-unknown-linux-gnu.md"),
-    ),
-];
+const HOST_PAGES: &[(&str, &str)] = &[(
+    "aarch64-apple-darwin",
+    include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
+)];
 
 /// Performance index: the methodology, then the per-host results table linking out to
 /// each host's own page. Linked from the "Performance" standards card on the landing page.
@@ -47,8 +41,8 @@ pub fn BenchmarksPage() -> Element {
                     "What we measure"
                 }
                 ul { class: "mt-3 flex flex-col gap-2 text-sm text-soft leading-relaxed",
-                    li { "Throughput: packets and bytes per second through the engine." }
-                    li { "Latency: per-packet processing time, median and worst case." }
+                    li { "Throughput: announces per second through the engine." }
+                    li { "Energy: joules per announce — the price a battery/solar node pays." }
                     li { "Memory: peak footprint and allocation count (the core makes none)." }
                     li { "Binary size: what the engine costs on a constrained target." }
                 }

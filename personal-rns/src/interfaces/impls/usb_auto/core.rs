@@ -11,6 +11,7 @@ pub const NODE_TAG_LEN: usize = 8;
 pub const MAX_DATA_BYTES: usize = MTU;
 pub const MAX_MESSAGE_BYTES: usize = MESSAGE_KIND_LEN + MAX_DATA_BYTES;
 pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESSAGE_BYTES);
+pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 pub const MAGIC: [u8; 4] = *b"Prns";
 pub const PROTOCOL_VERSION: u8 = 1;
 const HANDSHAKE_ENVELOPE_LEN: usize = MAGIC.len() + PROTOCOL_VERSION_LEN;

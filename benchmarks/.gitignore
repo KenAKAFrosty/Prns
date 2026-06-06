@@ -1,0 +1,10 @@
+# Pinned upstream clones for the energy harnesses — energy/build.sh re-fetches them.
+external/*/.upstream/
+
+# Energy harness build artifacts — energy/build.sh regenerates them.
+energy/contestants/*/target/
+energy/contestants/*/Cargo.lock
+energy/contestants/go/sustained-go
+energy/contestants/rns-cr/bench_sustained
+energy/contestants/rns-cr/bench_sustained.dwarf
+energy/contestants/microreticulum/build/

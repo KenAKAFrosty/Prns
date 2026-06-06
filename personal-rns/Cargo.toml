@@ -46,7 +46,7 @@ embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
 # serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
 # libudev / IOKit / SetupAPI internally). Opt-in, so std hosts that don't want it
 # never link serialport.
-usb-auto = ["std-sync-host", "dep:serialport"]
+usb-auto = ["std-sync-host", "dep:serialport", "dep:mio", "dep:mio-serial"]
 # The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) for std hosts:
 # the std worker machinery plus socket2 (IPv6 multicast egress + address reuse) and
 # if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
@@ -94,6 +94,12 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 # enumeration (libudev on Linux, IOKit/SetupAPI elsewhere — serialport cfg-gates
 # its own per-OS backends).
 serialport = { version = "4", optional = true }
+# Readiness-driven I/O for the USB-auto host worker (under `usb-auto`): one
+# `mio::Poll` over every open serial fd plus a `Waker` the runtime pokes on egress,
+# so the worker blocks until a port is readable or the engine has a packet to send —
+# no self-clocked polling. `mio-serial` adapts `serialport` ports into `mio` sources.
+mio = { version = "1", optional = true, features = ["os-poll", "os-ext"] }
+mio-serial = { version = "5", optional = true }
 
 # The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
 # egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —
@@ -140,3 +146,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "usb_throughput_host"
+required-features = ["usb-auto"]

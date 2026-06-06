@@ -4,7 +4,7 @@ use embedded_io_async::{Read, Write};
 
 use super::super::core::{
     decode_message, react_to, InboundReaction, Message, NodeTag, MAX_DATA_BYTES, MAX_FRAMED_BYTES,
-    MAX_MESSAGE_BYTES,
+    MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
 };
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::substrate::EmbassyHostSubstrate;
@@ -40,7 +40,7 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
     W: Write,
 {
     let mut decoder: RnsSerialDecoder<MAX_MESSAGE_BYTES> = RnsSerialDecoder::new();
-    let mut read_buf = [0u8; 64];
+    let mut read_buf = [0u8; READ_CHUNK_BYTES];
     let mut frame_buf = [0u8; MAX_FRAMED_BYTES];
     let mut host_link = HostLink::AwaitingHello;
 
