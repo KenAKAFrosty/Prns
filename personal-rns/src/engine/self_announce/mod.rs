@@ -506,15 +506,6 @@ mod tests {
         assert_eq!(payload, hx(SELF_ANNOUNCE_RNS_ANNOUNCE_DATA));
     }
 
-    const RATCHETED_SELF_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\
-         0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20\
-         d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\
-         ab49baa826f122c1437f44444444444444444444\
-         38ab664bd86f77d7e66bdd9ae0792913a94fd8b33a1260027e4b46c1f4884c67\
-         91d8c21a401611ca859e9ae293e86a6860fb2babd90fe4c58cf315d7a111cc0a\
-         3e9646aa7ffdf1530150aa30d0c684aab5b6236ea71a4b8f8c72b2b02768bf02\
-         68656c6c6f2d706572736f6e616c";
-
     #[test]
     fn a_ratcheted_self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);

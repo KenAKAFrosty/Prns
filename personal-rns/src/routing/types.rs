@@ -1,4 +1,5 @@
 use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::storage::AnnounceIdHistoryView;
 
@@ -22,6 +23,7 @@ pub struct ExistingRoute<'a> {
 #[derive(Debug, Clone)]
 pub struct RetainedAnnounce<'a> {
     pub hops: u8,
+    pub receiving_interface: InterfaceId,
     pub announce: Announce<'a>,
 }
 

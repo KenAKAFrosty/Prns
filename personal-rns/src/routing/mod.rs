@@ -191,6 +191,7 @@ where
         let app_data = self.retained_app_data.get(handle);
         Some(RetainedAnnounce {
             hops: self.routes.hops()[i],
+            receiving_interface: self.routes.receiving_interfaces()[i],
             announce: Announce {
                 destination: self.routes.destinations()[i],
                 public_keys: self.retained_announces.public_keys()[i],

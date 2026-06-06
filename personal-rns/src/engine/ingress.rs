@@ -366,11 +366,6 @@ mod tests {
         );
     }
 
-    const RAW_SEALED_TO_RATCHET: &str =
-        "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
-         a0ee19a4cb8a1b1444444444444444444444444444444444f0c0d10df07782f3a9a89a271b84960bc9d252\
-         5bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
-
     #[test]
     fn a_single_sealed_to_the_announced_ratchet_is_delivered() {
         let mut state = ratcheted_personal_node_announcer();

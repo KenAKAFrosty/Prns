@@ -7,13 +7,15 @@ pub mod proof;
 pub mod receipts;
 pub mod self_announce;
 pub mod self_ratchets;
+pub mod send_single;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tick;
 
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
-    CommandOutcome, EngineCommand, IssuedCommand, Settleable, Settlement,
+    CommandOutcome, Delivered, EngineCommand, IssuedCommand, SendSingle, SendSingleError,
+    SendSingleFailure, SendSinglePayload, Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN,
 };
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use identity_registration::SetTransportIdentityError;
@@ -22,8 +24,10 @@ pub use ingress::{DataPacket, Ingress};
 pub use proof::{ProofOwed, WriteProofError};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceAppData, WriteSelfAnnounceError};
 pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
+pub use send_single::{SendSingleDispatch, SendSingleEntropy, WriteSendSingleError};
 pub use tick::TickOutput;
 
+use crate::engine::receipts::Receipts;
 use crate::engine::self_announce::SelfAnnounces;
 use crate::engine::self_ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
@@ -45,7 +49,7 @@ pub struct InstantMillis(pub u64);
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
 pub const ENGINE_CYCLE_ENTROPY_LEN: usize =
-    JITTER_SEED_LEN + SelfAnnounceEntropy::LEN + RatchetEntropy::LEN;
+    JITTER_SEED_LEN + SelfAnnounceEntropy::LEN + RatchetEntropy::LEN + SendSingleEntropy::LEN;
 
 pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
 
@@ -63,6 +67,7 @@ pub struct EngineCycleEntropy {
     pub jitter: JitterSeed,
     pub self_announce: SelfAnnounceEntropy,
     pub ratchet: RatchetEntropy,
+    pub send: SendSingleEntropy,
 }
 
 impl EngineCycleEntropy {
@@ -72,12 +77,16 @@ impl EngineCycleEntropy {
         jitter.copy_from_slice(&bytes[..JITTER_SEED_LEN]);
         let mut nonce = [0u8; SelfAnnounceEntropy::LEN];
         nonce.copy_from_slice(&bytes[JITTER_SEED_LEN..JITTER_SEED_LEN + SelfAnnounceEntropy::LEN]);
+        let ratchet_start = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
         let mut ratchet = [0u8; RatchetEntropy::LEN];
-        ratchet.copy_from_slice(&bytes[JITTER_SEED_LEN + SelfAnnounceEntropy::LEN..]);
+        ratchet.copy_from_slice(&bytes[ratchet_start..ratchet_start + RatchetEntropy::LEN]);
+        let mut send = [0u8; SendSingleEntropy::LEN];
+        send.copy_from_slice(&bytes[ratchet_start + RatchetEntropy::LEN..]);
         Self {
             jitter: JitterSeed(u64::from_le_bytes(jitter)),
             self_announce: SelfAnnounceEntropy::new(nonce),
             ratchet: RatchetEntropy::new(ratchet),
+            send: SendSingleEntropy::new(send),
         }
     }
 }
@@ -104,6 +113,7 @@ pub struct EngineState<S: EngineStorage> {
     transport_identity: Option<IdentityHash>,
     self_announces: SelfAnnounces<S::SelfAnnounces>,
     self_ratchets: SelfRatchets<S::SelfRatchets>,
+    pub(crate) receipts: Receipts<S::Receipts>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -123,6 +133,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             transport_identity: None,
             self_announces: SelfAnnounces::default(),
             self_ratchets: SelfRatchets::default(),
+            receipts: Receipts::default(),
         }
     }
 }
@@ -250,6 +261,13 @@ impl<S: EngineStorage> EngineState<S> {
                 return NextScheduledEngineWork::Immediate;
             }
             earliest = Some(earliest.map_or(due_at, |e| e.min(due_at)));
+        }
+
+        if let Some(timeout_at) = self.receipts.earliest_timeout_at() {
+            if timeout_at <= now {
+                return NextScheduledEngineWork::Immediate;
+            }
+            earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
         }
 
         match earliest {

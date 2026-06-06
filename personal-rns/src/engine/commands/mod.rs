@@ -8,9 +8,11 @@
 //! re-announce schedule is the extension built ahead of it.
 
 use crate::engine::self_announce::SelfAnnounceAppData;
+use crate::engine::send_single::WriteSendSingleError;
 use crate::engine::WriteSelfAnnounceError;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
+use heapless::Vec as HeaplessVec;
 
 /// Ephemeral correlation for one issued command: minted by the caller (a
 /// queued command has no return channel at submit time), echoed opaquely
@@ -27,6 +29,7 @@ pub struct IssuedCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
+    SendSingle(SendSingle),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -62,6 +65,37 @@ pub enum CommandOutcome {
         id: CommandId,
         error: AnnounceNowError,
     },
+    OwesSendSingle {
+        id: CommandId,
+        send: SendSingle,
+    },
+    SendSingleRejected {
+        id: CommandId,
+        error: SendSingleError,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendSingleError {
+    NoRouteToDestination,
+    NotDirectlyReachable,
+}
+
+/// RNS 1.3.1 `Packet.ENCRYPTED_MDU` (383): the most plaintext one encrypted
+/// Single data packet can carry — MDU minus the token overhead (32B ephemeral
+/// key, 16B IV, 32B MAC), floored to a whole AES block, minus one pad byte.
+pub const MAX_SEND_SINGLE_PLAINTEXT_LEN: usize = 383;
+
+pub type SendSinglePayload = HeaplessVec<u8, MAX_SEND_SINGLE_PLAINTEXT_LEN>;
+
+/// One Single data packet to a peer whose announce we hold, proof expected
+/// back — RNS 1.3.1 `Packet(destination, data).send()` with its
+/// `PacketReceipt`. Settles when the proof arrives, the timeout passes, or
+/// the receipt is culled — never in its own cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendSingle {
+    pub destination: DestinationHash,
+    pub payload: SendSinglePayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +113,21 @@ pub enum AnnounceNowError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
+    SendSingle(Result<Delivered, SendSingleFailure>),
+}
+
+/// RNS 1.3.1 `PacketReceipt.DELIVERED`, with the round trip it measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Delivered {
+    pub rtt_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendSingleFailure {
+    Rejected(SendSingleError),
+    WriteFailed(WriteSendSingleError),
+    Culled,
+    Timeout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +155,23 @@ impl Settleable for AnnounceNow {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
         match settlement {
             Settlement::AnnounceNow(result) => Some(result),
+            Settlement::SendSingle(_) => None,
+        }
+    }
+}
+
+impl Settleable for SendSingle {
+    type Success = Delivered;
+    type Failure = SendSingleFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::SendSingle(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendSingleFailure>> {
+        match settlement {
+            Settlement::SendSingle(result) => Some(result),
+            Settlement::AnnounceNow(_) => None,
         }
     }
 }
@@ -122,6 +188,7 @@ impl<S: EngineStorage> EngineState<S> {
         let IssuedCommand { id, command } = issued;
         match command {
             EngineCommand::AnnounceNow(announce_now) => self.ingest_announce_now(id, announce_now),
+            EngineCommand::SendSingle(send) => self.ingest_send_single(id, send),
         }
     }
 

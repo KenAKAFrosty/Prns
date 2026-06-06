@@ -6,9 +6,10 @@ use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandOutcome, EngineCycleEntropy,
-    EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
-    NextScheduledEngineWork, ProofOwed, RatchetEntropy, Settlement,
+    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
+    EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis,
+    IssuedCommand, NextScheduledEngineWork, ProofOwed, RatchetEntropy, SendSingle,
+    SendSingleEntropy, SendSingleFailure, Settlement,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -171,6 +172,7 @@ where
         jitter,
         self_announce,
         ratchet,
+        send,
     } = EngineCycleEntropy::from_seed(entropy_seed);
 
     let mut next_poll = NextScheduledInterfaceWake::Idle;
@@ -190,6 +192,7 @@ where
                 command,
                 now,
                 (self_announce, ratchet),
+                send,
                 on_event,
             )
         }
@@ -327,6 +330,7 @@ where
 /// the command mints an announce. Whatever is handed back unspent is the
 /// scheduled announce step's to use — entropy moves, so the cycle can never
 /// mint twice from it.
+#[allow(clippy::too_many_arguments)]
 fn run_command<I, S, OnEvent>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
@@ -334,6 +338,7 @@ fn run_command<I, S, OnEvent>(
     issued: IssuedCommand,
     now: InstantMillis,
     announce_entropy: (SelfAnnounceEntropy, RatchetEntropy),
+    send_entropy: SendSingleEntropy,
     on_event: &mut OnEvent,
 ) -> Option<(SelfAnnounceEntropy, RatchetEntropy)>
 where
@@ -348,6 +353,26 @@ where
             on_event(PrnsEvent::CommandSettled {
                 id,
                 settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
+            });
+            return Some(announce_entropy);
+        }
+        CommandOutcome::OwesSendSingle { id, send } => {
+            run_send_single(
+                engine,
+                interfaces,
+                traffic,
+                id,
+                &send,
+                now,
+                send_entropy,
+                on_event,
+            );
+            return Some(announce_entropy);
+        }
+        CommandOutcome::SendSingleRejected { id, error } => {
+            on_event(PrnsEvent::CommandSettled {
+                id,
+                settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(error))),
             });
             return Some(announce_entropy);
         }
@@ -383,6 +408,53 @@ where
     };
     on_event(PrnsEvent::CommandSettled { id, settlement });
     None
+}
+
+/// A written send fires on the interface its destination's announce arrived on and
+/// settles later by proof, timeout, or cull. The only settlements emitted
+/// here are immediate failures and the culled command a full table evicted.
+#[allow(clippy::too_many_arguments)]
+fn run_send_single<I, S, OnEvent>(
+    engine: &mut EngineState<S>,
+    interfaces: &mut I,
+    traffic: &mut TrafficLedger,
+    id: CommandId,
+    send_single: &SendSingle,
+    now: InstantMillis,
+    entropy: SendSingleEntropy,
+    on_event: &mut OnEvent,
+) where
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
+    S: EngineStorage,
+    OnEvent: FnMut(PrnsEvent<'_>),
+{
+    let mut emit_buffer = [0u8; MTU];
+    match engine.write_commanded_send_single(id, send_single, now, entropy, &mut emit_buffer) {
+        Ok(dispatch) => {
+            let n = dispatch.wire_len;
+            fan_to_handles(
+                interfaces,
+                traffic,
+                |buf| {
+                    buf[..n].copy_from_slice(&emit_buffer[..n]);
+                    n
+                },
+                core::slice::from_ref(&dispatch.fire_on),
+                FanoutClass::SelfOriginated,
+            );
+            if let Some(culled) = dispatch.culled {
+                on_event(PrnsEvent::CommandSettled {
+                    id: culled.command_id,
+                    settlement: Settlement::SendSingle(Err(SendSingleFailure::Culled)),
+                });
+            }
+        }
+        Err(error) => on_event(PrnsEvent::CommandSettled {
+            id,
+            settlement: Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(error))),
+        }),
+    }
 }
 
 fn fan_to_handles<I>(
@@ -968,6 +1040,118 @@ mod tests {
             Announce::from_wire(&header, payload).unwrap().announce_id
         };
         assert_ne!(announce_id_of(&sent[0]), announce_id_of(&sent[1]));
+    }
+
+    #[test]
+    fn a_rejected_send_settles_on_the_event_lane() {
+        use crate::engine::{SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload};
+        use crate::identity::Zeroizing;
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x55);
+        secret[32..].fill(0x66);
+        let engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(iface(0xA1), std::vec::Vec::new())]),
+            (),
+        );
+
+        let mut queue = VecDeque::from([IssuedCommand {
+            id: CommandId(7),
+            command: EngineCommand::SendSingle(SendSingle {
+                destination: DestinationHash::new([0x99; 16]),
+                payload: SendSinglePayload::from_slice(b"into-the-void").unwrap(),
+            }),
+        }]);
+        let mut settled = std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+            || queue.pop_front(),
+        );
+
+        assert_eq!(out.processed_command_count, 1);
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::SendSingle(Err(SendSingleFailure::Rejected(
+                    SendSingleError::NoRouteToDestination
+                ))),
+            )],
+        );
+        assert_eq!(runtime.interfaces()[0].handle.sent.len(), 0);
+    }
+
+    #[test]
+    fn a_written_send_fires_on_the_announce_interface_and_does_not_settle_yet() {
+        use crate::engine::test_support::{hx, RATCHETED_SELF_ANNOUNCE_RNS_WIRE};
+        use crate::engine::{SendSingle, SendSinglePayload};
+        use crate::identity::Zeroizing;
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x55);
+        secret[32..].fill(0x66);
+        let engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let source = iface(0xA1);
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(
+                source,
+                std::vec![(InstantMillis(500), hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE))],
+            )]),
+            (),
+        );
+
+        let destination =
+            DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
+        let mut queue = VecDeque::new();
+        let mut settled = std::vec::Vec::new();
+        let mut collect = |event: PrnsEvent<'_>| {
+            if let PrnsEvent::CommandSettled { id, settlement } = event {
+                settled.push((id, settlement));
+            }
+        };
+
+        let first = runtime.cycle_once(
+            InstantMillis(600),
+            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            || queue.pop_front(),
+        );
+        assert_eq!(first.accepted_announce_count, 1);
+
+        queue.push_back(IssuedCommand {
+            id: CommandId(7),
+            command: EngineCommand::SendSingle(SendSingle {
+                destination,
+                payload: SendSinglePayload::from_slice(b"over-the-wire").unwrap(),
+            }),
+        });
+        let second = runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            || queue.pop_front(),
+        );
+
+        assert_eq!(second.processed_command_count, 1);
+        assert_eq!(
+            settled,
+            std::vec![],
+            "a written send settles by proof or timeout, never in its own cycle"
+        );
+        let sent = &runtime.interfaces()[0].handle.sent;
+        assert_eq!(sent.len(), 1);
+        let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Data);
+        assert_eq!(header.destination, destination);
     }
 
     #[test]
