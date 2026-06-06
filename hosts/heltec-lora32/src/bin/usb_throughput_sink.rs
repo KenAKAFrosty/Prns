@@ -102,7 +102,8 @@ fn main() -> ! {
     let mut counted: u64 = 0;
     let mut last_render_ms = start_ms;
     loop {
-        counted += rx.drain_rx_fifo(&mut buf) as u64;
+        let Ok(n) = rx.read(&mut buf);
+        counted += n as u64;
         let now = now_ms();
         if now - last_render_ms >= RENDER_INTERVAL_MS {
             last_render_ms = now;
