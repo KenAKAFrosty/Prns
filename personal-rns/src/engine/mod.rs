@@ -614,7 +614,10 @@ impl<S: EngineStorage> EngineState<S> {
                     | RememberPacketOutcome::StoredAfterRotation => {}
                 }
 
-                let plaintext = held.decrypt_in_place(data.payload).ok()?;
+                let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
+                let plaintext = held
+                    .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
+                    .ok()?;
                 let maybe_owed_proof = match proof_strategy {
                     ProofStrategy::ProveAll => Some(ProofOwed {
                         packet_hash,
@@ -1264,6 +1267,101 @@ mod tests {
                     destination,
                     context: WireContext::None,
                     plaintext: b"hello-announced",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
+        );
+    }
+
+    fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
+        let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
+        let mut buf = [0u8; MTU];
+        state
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .expect("writing the seeding announce succeeds")
+            .expect("the seeding announce is due");
+        state
+    }
+
+    const RAW_SEALED_TO_RATCHET: &str =
+        "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
+         a0ee19a4cb8a1b1444444444444444444444444444444444f0c0d10df07782f3a9a89a271b84960bc9d252\
+         5bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
+
+    #[test]
+    fn a_single_sealed_to_the_announced_ratchet_is_delivered() {
+        let mut state = ratcheted_personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"ratchet-parity",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
+        );
+    }
+
+    #[test]
+    fn an_earlier_announced_ratchet_still_opens_after_rotation() {
+        let mut state = ratcheted_personal_node_announcer();
+        let interval = ReannounceSchedule::default().interval_millis();
+        let mut buf = [0u8; MTU];
+        state
+            .write_due_self_announce(
+                InstantMillis(1_000 + interval),
+                TEST_NONCE,
+                RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
+                &mut buf,
+            )
+            .expect("writing the rotating announce succeeds")
+            .expect("the rotating announce is due");
+
+        let destination = state.self_announced_destinations()[0];
+        let mut raw = hx(RAW_SEALED_TO_RATCHET);
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"ratchet-parity",
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0x07; 16]),
+                }),
+                maybe_owed_proof: None,
+            },
+        );
+    }
+
+    #[test]
+    fn a_ratcheted_destination_still_opens_identity_keyed_traffic() {
+        let mut state = ratcheted_personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
+
+        assert_eq!(
+            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            IngestPacketOutcome::Delivery {
+                delivery: Delivery::Single(SingleDelivery {
+                    destination,
+                    context: WireContext::None,
+                    plaintext: b"identity-keyed",
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),

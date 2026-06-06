@@ -118,6 +118,19 @@ impl HeldIdentityRef<'_> {
         super::decrypt_token_in_place(self.encryption_secret, &self.hash, ciphertext_token)
     }
 
+    pub fn decrypt_in_place_with_ratchets<'t>(
+        &self,
+        ratchet_secrets: &[X25519SecretKey],
+        ciphertext_token: &'t mut [u8],
+    ) -> Result<&'t [u8], DecryptError> {
+        super::decrypt_token_in_place_with_ratchets(
+            ratchet_secrets,
+            self.encryption_secret,
+            &self.hash,
+            ciphertext_token,
+        )
+    }
+
     pub fn decrypt(&self, ciphertext_token: &[u8], out: &mut [u8]) -> Result<usize, DecryptError> {
         super::decrypt_token(self.encryption_secret, &self.hash, ciphertext_token, out)
     }
@@ -240,6 +253,64 @@ mod tests {
         assert_eq!(
             held.decrypt_in_place(&mut in_place[..sealed_len]),
             Ok(plaintext.as_slice()),
+        );
+    }
+
+    fn seal_to_key(
+        target: &crate::crypto::X25519PublicKey,
+        salt: &IdentityHash,
+        plaintext: &[u8],
+    ) -> [u8; 96] {
+        assert!(plaintext.len() < 16, "one-block tokens keep the size fixed");
+        let ephemeral = X25519SecretKey::new([0x33; 32]);
+        let shared = crate::crypto::x25519_diffie_hellman(&ephemeral, target);
+        let key = crate::identity::DerivedPacketKey::derive(&shared, salt);
+        let mut out = [0u8; 96];
+        out[..32].copy_from_slice(&crate::crypto::x25519_public_key(&ephemeral).0);
+        let n = crate::crypto::token_seal(
+            &key.token_key(),
+            &[0x44; ENCRYPTION_IV_LEN],
+            plaintext,
+            &mut out[32..],
+        )
+        .unwrap();
+        assert_eq!(32 + n, out.len());
+        out
+    }
+
+    #[test]
+    fn ratchet_trials_pick_the_owning_key_and_fall_back_to_the_identity() {
+        let mut identities = TestIdentities::default();
+        let hash = identities.hold(secret_key_bytes(0x42)).unwrap();
+        let held = identities.get(&hash).unwrap();
+
+        let trials = [
+            X25519SecretKey::new([0x66; 32]),
+            X25519SecretKey::new([0x55; 32]),
+        ];
+        let ratchet_pub = crate::crypto::x25519_public_key(&X25519SecretKey::new([0x55; 32]));
+
+        let mut sealed_to_ratchet = seal_to_key(&ratchet_pub, &hash, b"to-the-ratchet");
+        assert_eq!(
+            held.decrypt_in_place_with_ratchets(&trials, &mut sealed_to_ratchet),
+            Ok(b"to-the-ratchet".as_slice()),
+        );
+
+        let mut sealed_to_identity = seal_to_key(
+            held.encryption_public_key().as_x25519(),
+            &hash,
+            b"to-the-identity",
+        );
+        assert_eq!(
+            held.decrypt_in_place_with_ratchets(&trials, &mut sealed_to_identity),
+            Ok(b"to-the-identity".as_slice()),
+        );
+
+        let stranger = crate::crypto::x25519_public_key(&X25519SecretKey::new([0x99; 32]));
+        let mut sealed_to_stranger = seal_to_key(&stranger, &hash, b"to-a-stranger");
+        assert_eq!(
+            held.decrypt_in_place_with_ratchets(&trials, &mut sealed_to_stranger),
+            Err(DecryptError::InvalidToken),
         );
     }
 

@@ -23,7 +23,7 @@ pub use sign::{
     ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519PublicKey, Ed25519SecretKey,
     Ed25519Signature,
 };
-pub use token::{token_open, token_open_in_place, token_seal, TokenKey};
+pub use token::{token_is_authentic, token_open, token_open_in_place, token_seal, TokenKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoError {

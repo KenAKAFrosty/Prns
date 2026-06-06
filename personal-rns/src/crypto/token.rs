@@ -75,6 +75,17 @@ pub fn token_seal(
     Ok(total)
 }
 
+/// True when `key`'s signing half authenticates `token`: the mutation-free
+/// prefix of [`token_open_in_place`], for callers choosing among candidate
+/// keys (ratchet trials) before committing to the one in-place decrypt.
+pub fn token_is_authentic(key: &TokenKey, token: &[u8]) -> bool {
+    if token.len() < IV_LEN + BLOCK_LEN + MAC_LEN {
+        return false;
+    }
+    let (signed_parts, tag) = token.split_at(token.len() - MAC_LEN);
+    hmac_sha256_verify(key.signing_key, signed_parts, tag).is_ok()
+}
+
 /// Open `token` in place: MAC-verified (constant time) then decrypted inside
 /// the buffer it arrived in. The plaintext is returned as a sub-slice of
 /// `token` — no copy is made.

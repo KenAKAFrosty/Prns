@@ -9,9 +9,9 @@
 pub mod held;
 
 use crate::crypto::{
-    hkdf_sha256, sha256, token_open, token_open_in_place, token_seal, x25519_diffie_hellman,
-    x25519_public_key, CryptoError, Ed25519PublicKey, Ed25519Signature, TokenKey, X25519PublicKey,
-    X25519SecretKey, X25519SharedSecret,
+    hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
+    x25519_diffie_hellman, x25519_public_key, CryptoError, Ed25519PublicKey, Ed25519Signature,
+    TokenKey, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
@@ -148,6 +148,26 @@ fn decrypt_token_in_place<'t>(
     recipient_identity_hash: &IdentityHash,
     ciphertext_token: &'t mut [u8],
 ) -> Result<&'t [u8], DecryptError> {
+    decrypt_token_in_place_with_ratchets(
+        &[],
+        encryption_secret,
+        recipient_identity_hash,
+        ciphertext_token,
+    )
+}
+
+/// RNS 1.3.1 `Identity.decrypt(ciphertext, ratchets=…)`: each ratchet secret
+/// is tried newest-first, falling back to the identity key.
+/// The HKDF salt stays the *identity* hash even when a ratchet did
+/// the exchange (reference `get_salt` is `self.hash` unconditionally).
+/// Candidates are probed by MAC ([`token_is_authentic`], mutation-free), so
+/// the buffer is decrypted in place exactly once, by the key that owns it.
+fn decrypt_token_in_place_with_ratchets<'t>(
+    ratchet_secrets: &[X25519SecretKey],
+    encryption_secret: &X25519SecretKey,
+    recipient_identity_hash: &IdentityHash,
+    ciphertext_token: &'t mut [u8],
+) -> Result<&'t [u8], DecryptError> {
     if ciphertext_token.len() <= ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
         return Err(DecryptError::TokenTooShort);
     }
@@ -156,8 +176,15 @@ fn decrypt_token_in_place<'t>(
     ephemeral_public_bytes.copy_from_slice(ephemeral);
     let ephemeral_public = X25519PublicKey(ephemeral_public_bytes);
 
-    let shared = x25519_diffie_hellman(encryption_secret, &ephemeral_public);
-    let key = DerivedPacketKey::derive(&shared, recipient_identity_hash);
+    let derive_for = |secret: &X25519SecretKey| {
+        let shared = x25519_diffie_hellman(secret, &ephemeral_public);
+        DerivedPacketKey::derive(&shared, recipient_identity_hash)
+    };
+    let key = ratchet_secrets
+        .iter()
+        .map(derive_for)
+        .find(|candidate| token_is_authentic(&candidate.token_key(), token))
+        .unwrap_or_else(|| derive_for(encryption_secret));
 
     token_open_in_place(&key.token_key(), token).map_err(|error| match error {
         CryptoError::InvalidSignature
