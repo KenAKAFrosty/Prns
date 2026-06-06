@@ -11,4 +11,4 @@ pub use embassy_contract::EmbassyContractHost;
 #[cfg(feature = "tokio-host")]
 mod tokio_host;
 #[cfg(feature = "tokio-host")]
-pub use tokio_host::TokioHost;
+pub use tokio_host::{TokioHost, TokioWakeHandle};

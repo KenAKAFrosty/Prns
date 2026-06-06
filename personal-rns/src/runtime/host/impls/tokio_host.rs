@@ -25,6 +25,10 @@ impl TokioHost {
         }
     }
 
+    pub fn wake_handle(&self) -> TokioWakeHandle {
+        TokioWakeHandle(self.wake.clone())
+    }
+
     pub fn glue_seam<const MTU: usize>(
         &self,
         id: InterfaceId,
@@ -54,6 +58,15 @@ impl TokioHost {
 impl Default for TokioHost {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone)]
+pub struct TokioWakeHandle(Arc<Notify>);
+
+impl TokioWakeHandle {
+    pub fn poke(&self) {
+        self.0.notify_one();
     }
 }
 
@@ -119,5 +132,142 @@ mod tests {
         let mut host = TokioHost::new();
         let stamp = host.wait(NextWake::Immediate).await;
         assert!(stamp.now.0 < 100);
+    }
+
+    #[tokio::test]
+    async fn an_awaited_announce_now_settles_through_a_live_runtime() {
+        use std::collections::HashMap;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::{Arc, Mutex};
+        use tokio::sync::oneshot;
+
+        use crate::engine::test_support::{fixed_secret_key, Cap};
+        use crate::engine::{
+            AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
+            CommandId, EngineState, IssuedCommand, RatchetPolicy, Settleable, Settlement,
+        };
+        use crate::interfaces::storage::FixedInterfaceSet;
+        use crate::interfaces::{ControlReport, InboundPacket, InterfaceHandle, SendError};
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::runtime::{PrnsEvent, Runtime};
+        use crate::wire::DestinationHash;
+
+        struct Commander {
+            next_id: AtomicU64,
+            pending: Mutex<HashMap<CommandId, oneshot::Sender<Settlement>>>,
+            command_tx: tokio::sync::mpsc::UnboundedSender<IssuedCommand>,
+            wake: TokioWakeHandle,
+        }
+
+        impl Commander {
+            async fn issue<C: Settleable>(&self, command: C) -> Result<C::Success, C::Failure> {
+                let id = CommandId(self.next_id.fetch_add(1, Ordering::Relaxed));
+                let (settle_tx, settle_rx) = oneshot::channel();
+                self.pending.lock().unwrap().insert(id, settle_tx);
+                self.command_tx
+                    .send(IssuedCommand {
+                        id,
+                        command: command.into_command(),
+                    })
+                    .expect("the runtime task holds the receiver");
+                self.wake.poke();
+                let settlement = settle_rx
+                    .await
+                    .expect("the runtime settles every issued command");
+                C::from_settlement(settlement)
+                    .expect("the settlement variant matches the issued verb")
+            }
+
+            fn settle(&self, id: CommandId, settlement: Settlement) {
+                let waiting = self.pending.lock().unwrap().remove(&id);
+                if let Some(waiting) = waiting {
+                    let _ = waiting.send(settlement);
+                }
+            }
+        }
+
+        struct NullHandle;
+        impl InterfaceHandle for NullHandle {
+            fn next_inbound<R>(&mut self, _f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+                None
+            }
+            fn acquire_send_grant(
+                &mut self,
+                _fill: impl FnOnce(&mut [u8]) -> usize,
+            ) -> Result<usize, SendError> {
+                Ok(0)
+            }
+            fn request_stop(&mut self) {}
+            fn next_report(&mut self) -> Option<ControlReport> {
+                None
+            }
+        }
+        type NullInterface =
+            crate::interfaces::StartedInterface<NullHandle, core::convert::Infallible>;
+
+        let mut engine: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = engine.transport_identity().unwrap();
+        let destination = engine
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+
+        let host = TokioHost::new();
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let commander = Arc::new(Commander {
+            next_id: AtomicU64::new(0),
+            pending: Mutex::new(HashMap::new()),
+            command_tx,
+            wake: host.wake_handle(),
+        });
+
+        let runtime = Runtime::new(engine, FixedInterfaceSet::<NullInterface, 1>::new(), host);
+        let settler = commander.clone();
+        tokio::spawn(async move {
+            runtime
+                .run(
+                    move |event| {
+                        if let PrnsEvent::CommandSettled { id, settlement } = event {
+                            settler.settle(id, settlement);
+                        }
+                    },
+                    move || command_rx.try_recv().ok(),
+                )
+                .await
+        });
+
+        let accepted = tokio::time::timeout(
+            Duration::from_secs(5),
+            commander.issue(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        )
+        .await
+        .expect("an issued announce settles well inside the timeout");
+        assert_eq!(accepted, Ok(()));
+
+        let rejected = tokio::time::timeout(
+            Duration::from_secs(5),
+            commander.issue(AnnounceNow {
+                destination: DestinationHash::new([0x99; 16]),
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        )
+        .await
+        .expect("a rejected announce settles well inside the timeout");
+        assert_eq!(
+            rejected,
+            Err(AnnounceNowFailure::Rejected(
+                AnnounceNowError::UnknownDestination
+            )),
+        );
     }
 }

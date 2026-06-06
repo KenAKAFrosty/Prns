@@ -12,7 +12,7 @@ pub mod tick;
 
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
-    CommandOutcome, EngineCommand, IssuedCommand, Settlement,
+    CommandOutcome, EngineCommand, IssuedCommand, Settleable, Settlement,
 };
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use identity_registration::SetTransportIdentityError;

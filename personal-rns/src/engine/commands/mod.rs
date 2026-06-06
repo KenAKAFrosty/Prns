@@ -87,6 +87,29 @@ pub enum AnnounceNowFailure {
     WriteFailed(WriteSelfAnnounceError),
 }
 
+pub trait Settleable {
+    type Success;
+    type Failure;
+
+    fn into_command(self) -> EngineCommand;
+    fn from_settlement(settlement: Settlement) -> Option<Result<Self::Success, Self::Failure>>;
+}
+
+impl Settleable for AnnounceNow {
+    type Success = ();
+    type Failure = AnnounceNowFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::AnnounceNow(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
+        match settlement {
+            Settlement::AnnounceNow(result) => Some(result),
+        }
+    }
+}
+
 use crate::engine::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;
 use crate::engine::EngineState;
 use crate::routing::storage::EngineStorage;
@@ -276,6 +299,32 @@ mod tests {
                 },
             );
         }
+    }
+
+    #[test]
+    fn announce_now_recovers_its_typed_settlement() {
+        let verb = AnnounceNow {
+            destination: DestinationHash::new([0x11; 16]),
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+
+        assert_eq!(
+            verb.clone().into_command(),
+            EngineCommand::AnnounceNow(verb),
+        );
+        assert_eq!(
+            AnnounceNow::from_settlement(Settlement::AnnounceNow(Ok(()))),
+            Some(Ok(())),
+        );
+        assert_eq!(
+            AnnounceNow::from_settlement(Settlement::AnnounceNow(Err(
+                AnnounceNowFailure::Rejected(AnnounceNowError::UnknownDestination)
+            ))),
+            Some(Err(AnnounceNowFailure::Rejected(
+                AnnounceNowError::UnknownDestination
+            ))),
+        );
     }
 
     #[test]
