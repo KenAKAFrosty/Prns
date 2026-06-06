@@ -852,6 +852,37 @@ mod tests {
     }
 
     #[test]
+    fn an_echo_of_our_own_announce_takes_no_route() {
+        let mut state = personal_node_announcer();
+        let mut announce_buf = [0u8; MTU];
+        let announce_len = state
+            .write_due_self_announce(
+                InstantMillis(100),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .unwrap()
+            .unwrap();
+
+        let mut relayed = announce_buf[..announce_len].to_vec();
+        relayed[1] = 1;
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0xA1; 16]),
+                    bytes: &mut relayed,
+                },
+                TEST_ENTROPY,
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
+            "a transport echoing our announce back must not become a route to ourselves",
+        );
+        assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
@@ -1167,7 +1198,10 @@ impl<S: EngineStorage> EngineState<S> {
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
-            destination_is_upstream_app: false,
+            destination_is_upstream_app: self
+                .upstream_app_destinations
+                .lookup(&announce.destination, DestinationType::Single)
+                .is_some(),
             existing_route: self.routing_table.existing_route_for(&announce.destination),
             arrived_at,
         }

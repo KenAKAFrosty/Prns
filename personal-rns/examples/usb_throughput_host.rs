@@ -44,7 +44,12 @@ fn main() {
     let flood = args.iter().any(|a| a == "flood");
     let path = args
         .iter()
-        .find(|a| !matches!(a.as_str(), "flood" | "via-interface" | "via-interface-flood"))
+        .find(|a| {
+            !matches!(
+                a.as_str(),
+                "flood" | "via-interface" | "via-interface-flood"
+            )
+        })
         .cloned()
         .unwrap_or_else(autodetect_port);
     if flood {
@@ -65,18 +70,27 @@ fn run_via_interface_flood() {
     let mut linked = false;
     while !linked {
         if started_at.elapsed() >= LINK_TIMEOUT {
-            eprintln!("no link within {}s — is the sink bin flashed and running?", LINK_TIMEOUT.as_secs());
+            eprintln!(
+                "no link within {}s — is the sink bin flashed and running?",
+                LINK_TIMEOUT.as_secs()
+            );
             std::process::exit(1);
         }
         while let Some(report) = started.handle.next_report() {
-            if matches!(report, ControlReport::ConnectionState(ConnectionState::Connected)) {
+            if matches!(
+                report,
+                ControlReport::ConnectionState(ConnectionState::Connected)
+            ) {
                 linked = true;
             }
         }
         std::thread::sleep(Duration::from_millis(20));
     }
 
-    eprintln!("linked — flooding via the worker for {}s", FLOOD_WINDOW.as_secs());
+    eprintln!(
+        "linked — flooding via the worker for {}s",
+        FLOOD_WINDOW.as_secs()
+    );
     let window_start = Instant::now();
     let mut granted = 0u64;
     while window_start.elapsed() < FLOOD_WINDOW {
@@ -116,14 +130,20 @@ fn run_via_interface() {
                 if !linked {
                     linked = true;
                     window_start = Instant::now();
-                    eprintln!("first packet via the worker — measuring for {}s", MEASURE_WINDOW.as_secs());
+                    eprintln!(
+                        "first packet via the worker — measuring for {}s",
+                        MEASURE_WINDOW.as_secs()
+                    );
                 }
                 bytes += n as u64;
                 frames += 1;
             }
             None => {
                 if !linked && started_at.elapsed() >= LINK_TIMEOUT {
-                    eprintln!("no inbound within {}s — is the flood bin flashed and running?", LINK_TIMEOUT.as_secs());
+                    eprintln!(
+                        "no inbound within {}s — is the flood bin flashed and running?",
+                        LINK_TIMEOUT.as_secs()
+                    );
                     std::process::exit(1);
                 }
                 if linked && window_start.elapsed() >= MEASURE_WINDOW {
@@ -189,7 +209,10 @@ fn run_count(path: &str) {
     loop {
         if !linked {
             if started.elapsed() >= LINK_TIMEOUT {
-                eprintln!("no HelloAck within {}s — is the flood bin flashed and running?", LINK_TIMEOUT.as_secs());
+                eprintln!(
+                    "no HelloAck within {}s — is the flood bin flashed and running?",
+                    LINK_TIMEOUT.as_secs()
+                );
                 std::process::exit(1);
             }
             if last_hello.elapsed() >= HELLO_RESEND {
@@ -262,7 +285,10 @@ fn run_flood(path: &str) {
     let mut linked = false;
     while !linked {
         if started.elapsed() >= LINK_TIMEOUT {
-            eprintln!("no HelloAck within {}s — is the sink bin flashed and running?", LINK_TIMEOUT.as_secs());
+            eprintln!(
+                "no HelloAck within {}s — is the sink bin flashed and running?",
+                LINK_TIMEOUT.as_secs()
+            );
             std::process::exit(1);
         }
         if last_hello.elapsed() >= HELLO_RESEND {
@@ -288,7 +314,10 @@ fn run_flood(path: &str) {
         }
     }
 
-    eprintln!("linked — flooding for {}s (watch the board's OLED for its RX rate)", FLOOD_WINDOW.as_secs());
+    eprintln!(
+        "linked — flooding for {}s (watch the board's OLED for its RX rate)",
+        FLOOD_WINDOW.as_secs()
+    );
     let blob = vec![0xA5u8; FLOOD_BLOB_BYTES];
     let window_start = Instant::now();
     let mut written = 0u64;

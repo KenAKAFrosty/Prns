@@ -812,8 +812,7 @@ mod tests {
     #[test]
     fn a_saturated_port_asks_for_an_immediate_repump() {
         let StdInterfaceSeam {
-            mut worker_context,
-            ..
+            mut worker_context, ..
         } = seam();
         let mut disc = Discoverer::new();
         let wire = MockWire::new();
@@ -821,17 +820,13 @@ mod tests {
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
         wire.device_floods_raw(READ_CHUNK_BYTES * MAX_READS_PER_DEVICE_PER_PUMP + 1);
-        assert!(matches!(
-            disc.pump(&mut worker_context),
-            PumpCadence::Busy
-        ));
+        assert!(matches!(disc.pump(&mut worker_context), PumpCadence::Busy));
     }
 
     #[test]
     fn a_drained_port_lets_the_worker_idle() {
         let StdInterfaceSeam {
-            mut worker_context,
-            ..
+            mut worker_context, ..
         } = seam();
         let mut disc = Discoverer::new();
         let wire = MockWire::new();
@@ -840,10 +835,7 @@ mod tests {
 
         wire.device_sends(Message::HelloAck(NodeTag([7; 8])));
         wire.device_sends(Message::Data(&[0x01, 0x02, 0x03]));
-        assert!(matches!(
-            disc.pump(&mut worker_context),
-            PumpCadence::Idle
-        ));
+        assert!(matches!(disc.pump(&mut worker_context), PumpCadence::Idle));
     }
 
     #[test]

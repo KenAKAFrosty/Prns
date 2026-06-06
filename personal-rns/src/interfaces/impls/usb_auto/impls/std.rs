@@ -54,7 +54,12 @@ fn serve(mut ctx: UsbAutoContext) {
         if last_scan.is_none_or(|t| t.elapsed() >= SCAN_INTERVAL) {
             last_scan = Some(Instant::now());
             discoverer.reconcile_present(&scan_cdc_ports(), open_cdc_port);
-            register_ports(poll.registry(), &mut discoverer, &mut registered, &mut next_token);
+            register_ports(
+                poll.registry(),
+                &mut discoverer,
+                &mut registered,
+                &mut next_token,
+            );
         }
 
         let cadence = discoverer.pump(&mut ctx);
@@ -65,7 +70,9 @@ fn serve(mut ctx: UsbAutoContext) {
             let timeout = if discoverer.has_pending_writes() {
                 PENDING_FLUSH_INTERVAL
             } else {
-                last_scan.map_or(Duration::ZERO, |t| SCAN_INTERVAL.saturating_sub(t.elapsed()))
+                last_scan.map_or(Duration::ZERO, |t| {
+                    SCAN_INTERVAL.saturating_sub(t.elapsed())
+                })
             };
             if let Err(e) = poll.poll(&mut events, Some(timeout)) {
                 if e.kind() != io::ErrorKind::Interrupted {

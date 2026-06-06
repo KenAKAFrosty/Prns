@@ -9,6 +9,7 @@ use crate::routing::announce::schedule::RebroadcastQueue as _;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::storage::EngineStorage;
 use crate::routing::UpsertRouteOutcome;
+use crate::wire::DestinationType;
 use heapless::Vec as HeaplessVec;
 
 #[must_use]
@@ -74,7 +75,10 @@ impl<S: EngineStorage> EngineState<S> {
                     let decision = AnnounceAcceptanceInput {
                         packet_hops: received_hops,
                         announce_id: announce.announce_id,
-                        destination_is_upstream_app: false,
+                        destination_is_upstream_app: self
+                            .upstream_app_destinations
+                            .lookup(&announce.destination, DestinationType::Single)
+                            .is_some(),
                         existing_route: self
                             .routing_table
                             .existing_route_for(&announce.destination),
