@@ -37,6 +37,10 @@ impl PortId {
 /// else's serial gadget) is released promptly.
 const PROBE_SCAN_BUDGET: u8 = 7;
 
+const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
+
+const MAX_READS_PER_DEVICE_PER_PUMP: usize = 8;
+
 enum LinkState {
     Probing { scans_left: u8 },
     Confirmed(NodeTag),
@@ -48,6 +52,22 @@ struct Device<Port> {
     port: Port,
     decoder: RnsSerialDecoder<MAX_MESSAGE_BYTES>,
     state: LinkState,
+}
+
+impl<Port> Device<Port> {
+    fn ingest_bytes(&mut self, bytes: &[u8], inbound: &mut impl InboundSink) {
+        for &byte in bytes {
+            let confirmed_tag = match self.decoder.feed(byte) {
+                Ok(Some(frame)) if !frame.is_empty() => {
+                    service_inbound_frame(frame, &self.state, inbound)
+                }
+                _ => None,
+            };
+            if let Some(tag) = confirmed_tag {
+                self.state = LinkState::Confirmed(tag);
+            }
+        }
+    }
 }
 
 pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
@@ -135,25 +155,23 @@ impl<Port: Read + Write> Discoverer<Port> {
     }
 
     fn read_devices(&mut self, inbound: &mut impl InboundSink) {
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; READ_CHUNK_BYTES];
         for device in &mut self.devices {
-            match device.port.read(&mut buf) {
-                Ok(0) => {}
-                Ok(n) => {
-                    for &byte in &buf[..n] {
-                        let confirmed_tag = match device.decoder.feed(byte) {
-                            Ok(Some(frame)) if !frame.is_empty() => {
-                                service_inbound_frame(frame, &device.state, inbound)
-                            }
-                            _ => None,
-                        };
-                        if let Some(tag) = confirmed_tag {
-                            device.state = LinkState::Confirmed(tag);
+            for _ in 0..MAX_READS_PER_DEVICE_PER_PUMP {
+                match device.port.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        device.ingest_bytes(&buf[..n], inbound);
+                        if n < buf.len() {
+                            break;
                         }
                     }
+                    Err(ref e) if is_transient(e) => break,
+                    Err(_) => {
+                        device.state = LinkState::Lost;
+                        break;
+                    }
                 }
-                Err(ref e) if would_block(e) => {}
-                Err(_) => device.state = LinkState::Lost,
             }
         }
     }
@@ -181,10 +199,13 @@ impl<Port: Read + Write> Discoverer<Port> {
                 return;
             };
             for device in devices.iter_mut() {
-                if matches!(device.state, LinkState::Confirmed(_))
-                    && device.port.write_all(&frame[..n]).is_err()
-                {
-                    device.state = LinkState::Lost;
+                if !matches!(device.state, LinkState::Confirmed(_)) {
+                    continue;
+                }
+                if let Err(e) = device.port.write_all(&frame[..n]) {
+                    if !is_transient(&e) {
+                        device.state = LinkState::Lost;
+                    }
                 }
             }
         });
@@ -227,7 +248,7 @@ fn service_inbound_frame(
     }
 }
 
-fn would_block(e: &io::Error) -> bool {
+fn is_transient(e: &io::Error) -> bool {
     matches!(
         e.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
@@ -250,6 +271,7 @@ mod tests {
         inbox: Arc<Mutex<VecDeque<u8>>>,
         outbox: Arc<Mutex<Vec<u8>>>,
         broken: Arc<AtomicBool>,
+        write_fault: Arc<Mutex<Option<io::ErrorKind>>>,
     }
 
     impl MockWire {
@@ -258,6 +280,7 @@ mod tests {
                 inbox: Arc::new(Mutex::new(VecDeque::new())),
                 outbox: Arc::new(Mutex::new(Vec::new())),
                 broken: Arc::new(AtomicBool::new(false)),
+                write_fault: Arc::new(Mutex::new(None)),
             }
         }
         fn device_sends(&self, msg: Message) {
@@ -268,6 +291,9 @@ mod tests {
         }
         fn unplug(&self) {
             self.broken.store(true, Ordering::SeqCst);
+        }
+        fn set_write_fault(&self, kind: io::ErrorKind) {
+            *self.write_fault.lock().unwrap() = Some(kind);
         }
         fn port(&self) -> MockPort {
             MockPort { wire: self.clone() }
@@ -299,6 +325,10 @@ mod tests {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             if self.wire.broken.load(Ordering::SeqCst) {
                 return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+            }
+            let write_fault = *self.wire.write_fault.lock().unwrap();
+            if let Some(kind) = write_fault {
+                return Err(io::Error::from(kind));
             }
             self.wire.outbox.lock().unwrap().extend_from_slice(buf);
             Ok(buf.len())
@@ -572,5 +602,99 @@ mod tests {
             runtime_handle.next_report(),
             Some(ControlReport::ConnectionState(ConnectionState::Degraded))
         ));
+    }
+
+    #[test]
+    fn a_confirmed_link_survives_a_transient_write_timeout() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+        wire.device_sends(Message::HelloAck(NodeTag([5; 8])));
+        disc.pump(&mut worker_context);
+        assert!(matches!(
+            runtime_handle.next_report(),
+            Some(ControlReport::ConnectionState(ConnectionState::Connected))
+        ));
+
+        wire.set_write_fault(io::ErrorKind::TimedOut);
+        let packet = [0xAB; 4];
+        runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            })
+            .unwrap();
+        disc.pump(&mut worker_context);
+
+        assert!(
+            matches!(disc.devices[0].state, LinkState::Confirmed(_)),
+            "a transient write timeout must not drop a healthy link"
+        );
+        assert!(
+            runtime_handle.next_report().is_none(),
+            "a transient write timeout reports no state change"
+        );
+    }
+
+    #[test]
+    fn a_hard_write_error_prunes_the_device() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+        wire.device_sends(Message::HelloAck(NodeTag([6; 8])));
+        disc.pump(&mut worker_context);
+        let _ = runtime_handle.next_report();
+
+        wire.set_write_fault(io::ErrorKind::NotConnected);
+        let packet = [0x01, 0x02, 0x03];
+        runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            })
+            .unwrap();
+        disc.pump(&mut worker_context);
+
+        assert!(disc.devices.is_empty());
+        assert!(matches!(
+            runtime_handle.next_report(),
+            Some(ControlReport::ConnectionState(ConnectionState::Degraded))
+        ));
+    }
+
+    #[test]
+    fn a_burst_larger_than_one_read_is_drained_in_a_single_pump() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_sends(Message::HelloAck(NodeTag([8; 8])));
+        let packets: Vec<[u8; 100]> = (0..5).map(|i| [i as u8; 100]).collect();
+        for packet in &packets {
+            wire.device_sends(Message::Data(packet));
+        }
+        disc.pump(&mut worker_context);
+
+        let mut got: Vec<Vec<u8>> = Vec::new();
+        runtime_handle.drain_inbound(|pkt| got.push(pkt.bytes.to_vec()));
+        assert_eq!(got.len(), packets.len());
+        for packet in &packets {
+            assert!(got.iter().any(|g| g.as_slice() == packet.as_slice()));
+        }
     }
 }
