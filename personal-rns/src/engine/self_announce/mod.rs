@@ -4,15 +4,15 @@ pub use impls::*;
 
 use super::InstantMillis;
 use crate::routing::announce::ANNOUNCE_FIXED_FIELDS_LEN;
-use crate::wire::{DestinationHash, MDU};
+use crate::wire::{DestinationHash, MDU, RATCHET_LEN};
 use heapless::Vec as HeaplessVec;
 
 /// The actual wire maximum for our own announce's app data: the packet budget
 /// ([`MDU`] — worst-case header and minimum IFAC already reserved, so a relayed
-/// copy still fits) minus the announce's fixed fields. Ratcheted announces
-/// carry [`RATCHET_LEN`](crate::wire::RATCHET_LEN) less; re-derive when the
-/// ratchet slice lands.
+/// copy still fits) minus the announce's fixed fields.
 pub const MAX_SELF_ANNOUNCE_APP_DATA_LEN: usize = MDU - ANNOUNCE_FIXED_FIELDS_LEN;
+pub const MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN: usize =
+    MAX_SELF_ANNOUNCE_APP_DATA_LEN - RATCHET_LEN;
 
 pub const DEFAULT_REANNOUNCE_INTERVAL_MS: u64 = 6 * 60 * 60 * 1000;
 

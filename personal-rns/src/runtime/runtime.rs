@@ -251,9 +251,12 @@ where
         // per interface would be waste — then the fan copies the staged bytes
         // into each grant.
         let mut emit_buffer = [0u8; MTU];
-        if let Ok(Some(n)) =
-            engine.write_due_self_announce(now, entropy.self_announce, &mut emit_buffer)
-        {
+        if let Ok(Some(n)) = engine.write_due_self_announce(
+            now,
+            entropy.self_announce,
+            entropy.ratchet,
+            &mut emit_buffer,
+        ) {
             fan_to_handles(
                 interfaces,
                 traffic,

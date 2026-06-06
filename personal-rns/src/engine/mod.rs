@@ -13,7 +13,9 @@ pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::{write_announce_wire_packet, write_implicit_proof_wire_packet};
-use crate::engine::self_announce::{AnnounceConfig, ScheduleAnnounceError, SelfAnnounces};
+use crate::engine::self_announce::{
+    AnnounceConfig, ScheduleAnnounceError, SelfAnnounces, MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN,
+};
 use crate::engine::self_ratchets::{SelfRatchets, TrackRatchetsError};
 use crate::identity::held::{HeldIdentities, HoldIdentityError};
 use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
@@ -26,7 +28,7 @@ use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{
     Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceBuildError, AnnounceId,
-    SelfAnnounceEntropy,
+    RatchetKey, SelfAnnounceEntropy,
 };
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::{
@@ -47,7 +49,8 @@ pub struct InstantMillis(pub u64);
 
 const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
 
-pub const ENGINE_CYCLE_ENTROPY_LEN: usize = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
+pub const ENGINE_CYCLE_ENTROPY_LEN: usize =
+    JITTER_SEED_LEN + SelfAnnounceEntropy::LEN + RatchetEntropy::LEN;
 
 pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
 
@@ -64,6 +67,7 @@ impl EngineCycleEntropySeed {
 pub struct EngineCycleEntropy {
     pub jitter: JitterSeed,
     pub self_announce: SelfAnnounceEntropy,
+    pub ratchet: RatchetEntropy,
 }
 
 impl EngineCycleEntropy {
@@ -72,10 +76,13 @@ impl EngineCycleEntropy {
         let mut jitter = [0u8; JITTER_SEED_LEN];
         jitter.copy_from_slice(&bytes[..JITTER_SEED_LEN]);
         let mut nonce = [0u8; SelfAnnounceEntropy::LEN];
-        nonce.copy_from_slice(&bytes[JITTER_SEED_LEN..]);
+        nonce.copy_from_slice(&bytes[JITTER_SEED_LEN..JITTER_SEED_LEN + SelfAnnounceEntropy::LEN]);
+        let mut ratchet = [0u8; RatchetEntropy::LEN];
+        ratchet.copy_from_slice(&bytes[JITTER_SEED_LEN + SelfAnnounceEntropy::LEN..]);
         Self {
             jitter: JitterSeed(u64::from_le_bytes(jitter)),
             self_announce: SelfAnnounceEntropy::new(nonce),
+            ratchet: RatchetEntropy::new(ratchet),
         }
     }
 }
@@ -323,6 +330,11 @@ impl<S: EngineStorage> EngineState<S> {
                 },
             );
         }
+        if self.self_ratchets.is_tracked(destination)
+            && config.app_data.len() > MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN
+        {
+            return Err(ScheduleAnnounceError::AppDataTooLong);
+        }
         self.self_announces.schedule(*destination, config)
     }
 
@@ -361,17 +373,26 @@ impl<S: EngineStorage> EngineState<S> {
     /// attempt at a due announce consumes its due-ness whether or not it
     /// succeeds: a persistently failing announce retries next interval instead
     /// of spinning the engine's `Immediate` wakeup forever.
+    ///
+    /// A ratcheted destination rotates here, before the announce is framed
+    /// (RNS 1.3.1 `Destination.announce` calls `rotate_ratchets` first), so
+    /// the announce always carries the newest ratchet.
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
         entropy: SelfAnnounceEntropy,
+        ratchet_entropy: RatchetEntropy,
         buf: &mut [u8],
     ) -> Result<Option<usize>, WriteSelfAnnounceError> {
         let Some(due) = self.self_announces.due_announce(now) else {
             return Ok(None);
         };
         let destination = due.destination;
-        let outcome = self.write_announce_for(&destination, due.app_data, now, entropy, buf);
+        self.self_ratchets
+            .rotate_if_due(&destination, now, ratchet_entropy);
+        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
+        let outcome =
+            self.write_announce_for(&destination, due.app_data, now, entropy, maybe_ratchet, buf);
         self.self_announces.mark_announced(&destination, now);
         outcome.map(Some)
     }
@@ -397,6 +418,7 @@ impl<S: EngineStorage> EngineState<S> {
         app_data: &[u8],
         now: InstantMillis,
         entropy: SelfAnnounceEntropy,
+        maybe_ratchet: Option<RatchetKey>,
         buf: &mut [u8],
     ) -> Result<usize, WriteSelfAnnounceError> {
         let registered = self
@@ -415,7 +437,7 @@ impl<S: EngineStorage> EngineState<S> {
             &identity,
             registered.name_hash,
             AnnounceId::mint(entropy, now),
-            None,
+            maybe_ratchet,
             app_data,
         )
         .map_err(WriteSelfAnnounceError::Build)?;
@@ -776,6 +798,7 @@ mod tests {
     const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
     const TEST_NONCE: SelfAnnounceEntropy =
         SelfAnnounceEntropy::new([0xAB; SelfAnnounceEntropy::LEN]);
+    const TEST_RATCHET_ENTROPY: RatchetEntropy = RatchetEntropy::new([0x55; RatchetEntropy::LEN]);
 
     #[derive(Debug, Default, Clone, PartialEq, Eq)]
     struct TickSnapshot {
@@ -866,6 +889,10 @@ mod tests {
     }
 
     fn personal_node_announcer() -> EngineState<Cap> {
+        personal_node_announcer_with(RatchetPolicy::NoRatchets)
+    }
+
+    fn personal_node_announcer_with(ratchet_policy: RatchetPolicy) -> EngineState<Cap> {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let destination = state
@@ -874,7 +901,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveNone,
-                RatchetPolicy::NoRatchets,
+                ratchet_policy,
             )
             .unwrap();
         state
@@ -905,7 +932,7 @@ mod tests {
 
         let mut buf = [0u8; MTU];
         let n = state
-            .write_due_self_announce(now, nonce, &mut buf)
+            .write_due_self_announce(now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
             .expect("writing a due self-announce succeeds")
             .expect("a self-announce is due on the first call");
 
@@ -921,6 +948,147 @@ mod tests {
         assert_eq!(payload, hx(SELF_ANNOUNCE_RNS_ANNOUNCE_DATA));
     }
 
+    const RATCHETED_SELF_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\
+         0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20\
+         d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\
+         ab49baa826f122c1437f44444444444444444444\
+         38ab664bd86f77d7e66bdd9ae0792913a94fd8b33a1260027e4b46c1f4884c67\
+         91d8c21a401611ca859e9ae293e86a6860fb2babd90fe4c58cf315d7a111cc0a\
+         3e9646aa7ffdf1530150aa30d0c684aab5b6236ea71a4b8f8c72b2b02768bf02\
+         68656c6c6f2d706572736f6e616c";
+
+    #[test]
+    fn a_ratcheted_self_announce_originates_the_rns_1_3_1_vector() {
+        let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
+        let now = InstantMillis(0x44_4444_4444);
+        let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
+
+        let mut buf = [0u8; MTU];
+        let n = state
+            .write_due_self_announce(now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
+            .expect("writing a due self-announce succeeds")
+            .expect("a self-announce is due on the first call");
+
+        assert_eq!(&buf[..n], hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE));
+    }
+
+    fn parsed_ratchet_of(wire: &[u8]) -> Option<RatchetKey> {
+        let (header, payload) = WirePacketHeader::parse(wire).unwrap();
+        Announce::from_wire(&header, payload).unwrap().maybe_ratchet
+    }
+
+    #[test]
+    fn an_announce_inside_the_rotation_floor_recarries_the_newest_ratchet() {
+        use crate::crypto::{x25519_public_key, X25519SecretKey};
+        use crate::engine::self_ratchets::MIN_RATCHET_ROTATION_INTERVAL_MS;
+
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = state.transport_identity().unwrap();
+        let destination = state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::Ratcheted,
+            )
+            .unwrap();
+        state
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: b"hello-personal",
+                    schedule: ReannounceSchedule::every(1_000),
+                },
+            )
+            .unwrap();
+
+        let expected_first =
+            RatchetKey::new(x25519_public_key(&X25519SecretKey::new([0x55; 32])).0);
+        let expected_rotated =
+            RatchetKey::new(x25519_public_key(&X25519SecretKey::new([0x77; 32])).0);
+
+        let mut buf = [0u8; MTU];
+        let n = state
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                RatchetEntropy::new([0x55; RatchetEntropy::LEN]),
+                &mut buf,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed_ratchet_of(&buf[..n]), Some(expected_first));
+
+        let n = state
+            .write_due_self_announce(
+                InstantMillis(2_000),
+                TEST_NONCE,
+                RatchetEntropy::new([0x66; RatchetEntropy::LEN]),
+                &mut buf,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            parsed_ratchet_of(&buf[..n]),
+            Some(expected_first),
+            "inside the floor the unused entropy is discarded, not minted",
+        );
+
+        let n = state
+            .write_due_self_announce(
+                InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
+                TEST_NONCE,
+                RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
+                &mut buf,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed_ratchet_of(&buf[..n]), Some(expected_rotated));
+    }
+
+    #[test]
+    fn a_ratcheted_destination_reserves_announce_room_for_the_ratchet() {
+        use crate::engine::self_announce::MAX_SELF_ANNOUNCE_APP_DATA_LEN;
+
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = state.transport_identity().unwrap();
+        let destination = state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::Ratcheted,
+            )
+            .unwrap();
+
+        let exactly_ratcheted_max = [0u8; MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN];
+        let one_over = [0u8; MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN + 1];
+        assert!(one_over.len() <= MAX_SELF_ANNOUNCE_APP_DATA_LEN);
+
+        assert_eq!(
+            state.schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: &one_over,
+                    schedule: ReannounceSchedule::default(),
+                },
+            ),
+            Err(ScheduleAnnounceError::AppDataTooLong),
+        );
+        assert_eq!(
+            state.schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: &exactly_ratcheted_max,
+                    schedule: ReannounceSchedule::default(),
+                },
+            ),
+            Ok(()),
+        );
+    }
+
     #[test]
     fn self_announce_is_not_due_again_until_the_interval_elapses() {
         let mut state = personal_node_announcer();
@@ -928,15 +1096,30 @@ mod tests {
         let interval = ReannounceSchedule::default().interval_millis();
 
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            )
             .unwrap()
             .is_some());
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            )
             .unwrap()
             .is_none());
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000 + interval), TEST_NONCE, &mut buf)
+            .write_due_self_announce(
+                InstantMillis(1_000 + interval),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            )
             .unwrap()
             .is_some());
     }
@@ -946,7 +1129,12 @@ mod tests {
         let mut state = personal_node_announcer();
         let mut tiny = [0u8; 8];
         assert_eq!(
-            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut tiny),
+            state.write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut tiny
+            ),
             Err(WriteSelfAnnounceError::Serialize(
                 EgressSerializeError::BufferTooShort
             )),
@@ -954,12 +1142,22 @@ mod tests {
 
         let mut buf = [0u8; MTU];
         assert_eq!(
-            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
+            state.write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            ),
             Ok(None),
         );
         let interval = ReannounceSchedule::default().interval_millis();
         assert!(state
-            .write_due_self_announce(InstantMillis(1_000 + interval), TEST_NONCE, &mut buf)
+            .write_due_self_announce(
+                InstantMillis(1_000 + interval),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            )
             .unwrap()
             .is_some());
     }
@@ -969,7 +1167,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let mut buf = [0u8; MTU];
         assert_eq!(
-            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
+            state.write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            ),
             Ok(None),
         );
     }
@@ -979,7 +1182,12 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let mut buf = [0u8; MTU];
         assert_eq!(
-            state.write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf),
+            state.write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf
+            ),
             Ok(None),
         );
     }
@@ -1090,16 +1298,16 @@ mod tests {
         let now = InstantMillis(5_000);
         let mut first_buf = [0u8; MTU];
         let first_len = state
-            .write_due_self_announce(now, TEST_NONCE, &mut first_buf)
+            .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut first_buf)
             .expect("writing a due self-announce succeeds")
             .expect("the first scheduled announce fires");
         let mut second_buf = [0u8; MTU];
         let second_len = state
-            .write_due_self_announce(now, TEST_NONCE, &mut second_buf)
+            .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut second_buf)
             .expect("writing a due self-announce succeeds")
             .expect("the second scheduled announce fires");
         assert_eq!(
-            state.write_due_self_announce(now, TEST_NONCE, &mut [0u8; MTU]),
+            state.write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut [0u8; MTU]),
             Ok(None),
         );
 
@@ -1146,7 +1354,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveNone,
-                RatchetPolicy::NoRatchets
+                RatchetPolicy::NoRatchets,
             ),
             Err(RegisterDestinationError::UnknownIdentity),
         );
@@ -1730,7 +1938,12 @@ mod tests {
         let mut state = personal_node_announcer();
         let mut buf = [0u8; MTU];
         state
-            .write_due_self_announce(InstantMillis(1_000), TEST_NONCE, &mut buf)
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
             .expect("first announce is due");
 
         let interval = ReannounceSchedule::default().interval_millis();
