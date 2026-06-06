@@ -131,6 +131,15 @@ impl<C: SelfAnnounceColumns> SelfAnnounces<C> {
         })
     }
 
+    pub fn scheduled_app_data(&self, destination: &DestinationHash) -> Option<&[u8]> {
+        let index = self
+            .columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        self.columns.app_data_at(index)
+    }
+
     pub fn mark_announced(&mut self, destination: &DestinationHash, now: InstantMillis) {
         if let Some(index) = self
             .columns

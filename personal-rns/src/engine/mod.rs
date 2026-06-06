@@ -408,6 +408,31 @@ impl<S: EngineStorage> EngineState<S> {
         outcome.map(Some)
     }
 
+    pub fn write_commanded_announce(
+        &mut self,
+        commanded: &AnnounceNow,
+        now: InstantMillis,
+        entropy: SelfAnnounceEntropy,
+        ratchet_entropy: RatchetEntropy,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteSelfAnnounceError> {
+        let destination = commanded.destination;
+        self.self_ratchets
+            .rotate_if_due(&destination, now, ratchet_entropy);
+        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
+        let app_data = match &commanded.app_data {
+            AnnounceAppData::Scheduled => self
+                .self_announces
+                .scheduled_app_data(&destination)
+                .unwrap_or(&[]),
+            AnnounceAppData::Data(data) => data,
+        };
+        let outcome =
+            self.write_announce_for(&destination, app_data, now, entropy, maybe_ratchet, buf);
+        self.self_announces.mark_announced(&destination, now);
+        outcome
+    }
+
     /// Sign and frame the proof a delivered packet earned ([`ProofOwed`], from
     /// this same cycle's ingest outcome) into `buf`, returning the wire length.
     /// Best-effort by RNS 1.3.1 parity: a proof that can't be written is simply
@@ -1527,6 +1552,123 @@ mod tests {
                 app_data: AnnounceAppData::Data(oversized),
             }),
         );
+    }
+
+    #[test]
+    fn a_commanded_announce_is_the_scheduled_announce_on_the_wire() {
+        let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
+        let destination = state.self_announced_destinations()[0];
+        let now = InstantMillis(0x44_4444_4444);
+        let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
+        let commanded = AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+
+        let mut buf = [0u8; MTU];
+        let n = state
+            .write_commanded_announce(&commanded, now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
+            .unwrap();
+
+        assert_eq!(&buf[..n], hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE));
+    }
+
+    #[test]
+    fn a_commanded_announce_resets_the_reannounce_clock() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let commanded = AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+
+        let mut buf = [0u8; MTU];
+        state
+            .write_commanded_announce(
+                &commanded,
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.write_due_self_announce(
+                InstantMillis(2_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            ),
+            Ok(None),
+        );
+    }
+
+    #[test]
+    fn a_commanded_announce_carries_explicit_data_on_the_wire() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let commanded = AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Data(
+                SelfAnnounceAppData::from_slice(b"manual-data").unwrap(),
+            ),
+        };
+
+        let mut buf = [0u8; MTU];
+        let n = state
+            .write_commanded_announce(
+                &commanded,
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .unwrap();
+
+        let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
+        let announce = Announce::from_wire(&header, payload).unwrap();
+        assert_eq!(announce.destination, destination);
+        assert_eq!(announce.app_data, b"manual-data");
+    }
+
+    #[test]
+    fn a_commanded_announce_for_an_unscheduled_destination_announces_bare() {
+        let mut state = personal_node_announcer();
+        let node = state.transport_identity().unwrap();
+        let unscheduled = state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["unscheduled"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        let commanded = AnnounceNow {
+            destination: unscheduled,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+
+        let mut buf = [0u8; MTU];
+        let n = state
+            .write_commanded_announce(
+                &commanded,
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .unwrap();
+
+        let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
+        let announce = Announce::from_wire(&header, payload).unwrap();
+        assert_eq!(announce.destination, unscheduled);
+        assert_eq!(announce.app_data, b"");
     }
 
     #[test]
