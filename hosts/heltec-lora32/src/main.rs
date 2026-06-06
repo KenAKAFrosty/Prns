@@ -92,6 +92,7 @@ use personal_rns::interfaces::{
     SendError, StartedInterface,
 };
 use personal_rns::routing::storage::FixedInline;
+use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
@@ -397,7 +398,13 @@ async fn main(spawner: Spawner) {
         .transport_identity()
         .expect("new() holds the node identity");
     let lxmf_delivery = state
-        .register_single_destination(&node, "lxmf", &["delivery"], ProofStrategy::ProveAll)
+        .register_single_destination(
+            &node,
+            "lxmf",
+            &["delivery"],
+            ProofStrategy::ProveAll,
+            RatchetPolicy::Ratcheted,
+        )
         .expect("static destination config is valid");
     state
         .schedule_announce(

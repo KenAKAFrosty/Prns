@@ -42,6 +42,7 @@ use personal_rns::interfaces::{
     InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface,
 };
 use personal_rns::routing::storage::FixedInline;
+use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
@@ -402,6 +403,7 @@ async fn node_task(
                 aspects: &["delivery"],
                 identity_secret_key: secret_key,
                 proof_strategy: ProofStrategy::ProveAll,
+                ratchet_policy: RatchetPolicy::Ratcheted,
                 announce: Some(AnnounceConfig {
                     app_data: SELF_ANNOUNCE_APP_DATA,
                     // Fast re-announce so the desktop catches us promptly during bring-up.

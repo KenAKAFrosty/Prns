@@ -359,7 +359,7 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
 
-    use crate::engine::ENGINE_CYCLE_ENTROPY_LEN;
+    use crate::engine::{RatchetPolicy, ENGINE_CYCLE_ENTROPY_LEN};
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
         ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
@@ -576,6 +576,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
 
@@ -666,6 +667,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
 

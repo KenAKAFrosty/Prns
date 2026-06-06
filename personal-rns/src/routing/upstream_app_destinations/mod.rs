@@ -68,6 +68,7 @@ pub enum RegisterDestinationError {
     Name(ExpandNameError),
     RegistryFull,
     UnknownIdentity,
+    RatchetTableFull,
 }
 
 #[derive(Debug, Default)]

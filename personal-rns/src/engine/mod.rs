@@ -14,6 +14,7 @@ pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::{write_announce_wire_packet, write_implicit_proof_wire_packet};
 use crate::engine::self_announce::{AnnounceConfig, ScheduleAnnounceError, SelfAnnounces};
+use crate::engine::self_ratchets::{SelfRatchets, TrackRatchetsError};
 use crate::identity::held::{HeldIdentities, HoldIdentityError};
 use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
@@ -99,6 +100,7 @@ pub struct EngineState<S: EngineStorage> {
     held_identities: HeldIdentities<S::HeldIdentities>,
     transport_identity: Option<IdentityHash>,
     self_announces: SelfAnnounces<S::SelfAnnounces>,
+    self_ratchets: SelfRatchets<S::SelfRatchets>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -116,6 +118,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             held_identities: HeldIdentities::default(),
             transport_identity: None,
             self_announces: SelfAnnounces::default(),
+            self_ratchets: SelfRatchets::default(),
         }
     }
 }
@@ -145,6 +148,7 @@ where
             .field("held_identities", &self.held_identities)
             .field("transport_identity", &self.transport_identity)
             .field("self_announces", &self.self_announces)
+            .field("self_ratchets", &self.self_ratchets)
             .finish()
     }
 }
@@ -246,12 +250,25 @@ impl<S: EngineStorage> EngineState<S> {
         app_name: &str,
         aspects: &[&str],
         proof_strategy: ProofStrategy,
+        ratchet_policy: RatchetPolicy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         if !self.held_identities.contains(identity) {
             return Err(RegisterDestinationError::UnknownIdentity);
         }
-        self.upstream_app_destinations
-            .register_single(identity, app_name, aspects, proof_strategy)
+        let registered = self.upstream_app_destinations.register_single(
+            identity,
+            app_name,
+            aspects,
+            proof_strategy,
+        )?;
+        if matches!(ratchet_policy, RatchetPolicy::Ratcheted) {
+            self.self_ratchets
+                .track(registered)
+                .map_err(|TrackRatchetsError::TableFull| {
+                    RegisterDestinationError::RatchetTableFull
+                })?;
+        }
+        Ok(registered)
     }
 
     pub fn hold_identity(
@@ -852,7 +869,13 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let destination = state
-            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
         state
             .schedule_announce(
@@ -1003,7 +1026,13 @@ mod tests {
         );
 
         let single = state
-            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
         let config = AnnounceConfig {
             app_data: b"",
@@ -1040,7 +1069,13 @@ mod tests {
         let mut state = personal_node_announcer();
         let second = state.hold_identity(second_secret_key()).unwrap();
         let second_destination = state
-            .register_single_destination(&second, "personal", &["second"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &second,
+                "personal",
+                &["second"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
         state
             .schedule_announce(
@@ -1089,7 +1124,13 @@ mod tests {
         let mut state = personal_node_announcer();
         let node = state.transport_identity().unwrap();
         let registered = state
-            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .expect("re-registration of the announced name is idempotent");
         assert_eq!(state.self_announced_destinations(), &[registered]);
         assert_eq!(state.upstream_app_destinations().count(), 1);
@@ -1104,7 +1145,8 @@ mod tests {
                 &unheld,
                 "personal",
                 &["node"],
-                ProofStrategy::ProveNone
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets
             ),
             Err(RegisterDestinationError::UnknownIdentity),
         );
@@ -1181,7 +1223,13 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let node = state.transport_identity().unwrap();
         let single = state
-            .register_single_destination(&node, "personal", &["node"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
 
         let header = WirePacketHeader {
@@ -1309,6 +1357,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
@@ -1338,6 +1387,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
         let raw = sealed_single_packet(&identity, destination, b"hello-single");
@@ -1368,6 +1418,7 @@ mod tests {
                 "personal",
                 &["node"],
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
         let raw = sealed_single_packet(&identity, destination, b"hello-single");
@@ -1408,10 +1459,22 @@ mod tests {
         assert_eq!(held_b, identity_b.identity_hash());
 
         let dest_a = state
-            .register_single_destination(&held_a, "personal", &["a"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &held_a,
+                "personal",
+                &["a"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
         let dest_b = state
-            .register_single_destination(&held_b, "personal", &["b"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &held_b,
+                "personal",
+                &["b"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
 
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
@@ -1472,7 +1535,13 @@ mod tests {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
-            .register_single_destination(&held, "personal", &["node"], ProofStrategy::ProveNone)
+            .register_single_destination(
+                &held,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
 
         let raw = sealed_single_packet_routed(
@@ -1511,7 +1580,13 @@ mod tests {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
-            .register_single_destination(&held, "personal", &["node"], ProofStrategy::ProveAll)
+            .register_single_destination(
+                &held,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
         let mut raw = sealed_single_packet(&identity, destination, b"prove-me");
         let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
@@ -1549,7 +1624,13 @@ mod tests {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         let destination = state
-            .register_single_destination(&held, "personal", &["node"], ProofStrategy::ProveAll)
+            .register_single_destination(
+                &held,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
             .unwrap();
 
         let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
@@ -1610,6 +1691,7 @@ mod tests {
                 "personal",
                 &["other"],
                 ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
             )
             .unwrap();
         let unregistered = derive_destination_hash(

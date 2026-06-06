@@ -22,6 +22,7 @@ use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
+use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::host::impls::LinuxSync;
 use personal_rns::routing::delivery::Delivery;
@@ -111,6 +112,7 @@ fn main() {
                 aspects: SELF_ANNOUNCE_ASPECTS,
                 identity_secret_key: load_identity_secret_key(),
                 proof_strategy: ProofStrategy::ProveAll,
+                ratchet_policy: RatchetPolicy::Ratcheted,
                 announce: Some(AnnounceConfig {
                     app_data: SELF_ANNOUNCE_APP_DATA,
                     schedule: ReannounceSchedule::default(),

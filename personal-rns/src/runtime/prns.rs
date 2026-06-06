@@ -1,5 +1,6 @@
 use super::{Host, PrnsEvent, Runtime};
 use crate::engine::self_announce::AnnounceConfig;
+use crate::engine::self_ratchets::RatchetPolicy;
 use crate::engine::EngineState;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::storage::InterfaceSet;
@@ -20,6 +21,7 @@ pub enum StartingDestinationConfig<'a> {
         aspects: &'a [&'a str],
         identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         proof_strategy: ProofStrategy,
+        ratchet_policy: RatchetPolicy,
         announce: Option<AnnounceConfig<'a>>,
     },
 }
@@ -73,13 +75,20 @@ impl Prns {
                     aspects,
                     identity_secret_key,
                     proof_strategy,
+                    ratchet_policy,
                     announce,
                 } => {
                     let identity = engine
                         .hold_identity(identity_secret_key)
                         .expect("recipe identities fit the store");
                     let registered = engine
-                        .register_single_destination(&identity, app_name, aspects, proof_strategy)
+                        .register_single_destination(
+                            &identity,
+                            app_name,
+                            aspects,
+                            proof_strategy,
+                            ratchet_policy,
+                        )
                         .expect("recipe single destination config is valid");
                     if let Some(announce) = announce {
                         engine
