@@ -3,11 +3,13 @@ pub mod egress;
 pub mod ingress;
 pub mod proof;
 pub mod self_announce;
+pub mod self_ratchets;
 
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
 pub use proof::{ProofOwed, WriteProofError};
 pub use self_announce::ReannounceSchedule;
+pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
 use crate::engine::egress::{write_announce_wire_packet, write_implicit_proof_wire_packet};

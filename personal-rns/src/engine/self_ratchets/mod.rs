@@ -1,0 +1,288 @@
+mod impls;
+
+pub use impls::*;
+
+use crate::crypto::{x25519_public_key, X25519SecretKey};
+use crate::engine::InstantMillis;
+use crate::routing::announce::RatchetKey;
+use crate::wire::DestinationHash;
+
+/// RNS 1.3.1 `Destination.RATCHET_INTERVAL`: the minimum time between minting
+/// new ratchet keys. Rotation rides the announce. An announce inside the
+/// floor re-carries the newest ratchet instead of minting another.
+pub const MIN_RATCHET_ROTATION_INTERVAL_MS: u64 = 30 * 60 * 1000;
+
+/// RNS 1.3.1 `Destination.enable_ratchets`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RatchetPolicy {
+    NoRatchets,
+    Ratcheted,
+}
+
+const RATCHET_SECRET_LEN: usize = 32;
+
+/// One rotation's worth of key material, freshly drawn each cycle: a minted
+/// ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.1
+/// `Identity._generate_ratchet`). Move-only like
+/// [`SelfAnnounceEntropy`](crate::routing::announce::SelfAnnounceEntropy), and
+/// deliberately without `Debug`: consuming it mints a private key.
+pub struct RatchetEntropy([u8; RATCHET_SECRET_LEN]);
+
+impl RatchetEntropy {
+    pub const LEN: usize = RATCHET_SECRET_LEN;
+
+    pub const fn new(bytes: [u8; RATCHET_SECRET_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    fn into_secret(self) -> X25519SecretKey {
+        X25519SecretKey::new(self.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackRatchetsError {
+    TableFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LastRotated {
+    Never,
+    At(InstantMillis),
+}
+
+impl LastRotated {
+    fn is_rotation_due(self, now: InstantMillis) -> bool {
+        match self {
+            Self::Never => true,
+            Self::At(last) => now.0.saturating_sub(last.0) >= MIN_RATCHET_ROTATION_INTERVAL_MS,
+        }
+    }
+}
+
+pub trait SelfRatchetColumns {
+    fn capacity(&self) -> usize;
+    fn retained_per_destination(&self) -> usize;
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn destinations(&self) -> &[DestinationHash];
+    fn last_rotated(&self) -> &[LastRotated];
+    fn secrets_newest_first(&self, index: usize) -> Option<&[X25519SecretKey]>;
+
+    fn set_last_rotated(&mut self, index: usize, at: InstantMillis);
+    fn insert_newest_secret(&mut self, index: usize, secret: X25519SecretKey);
+    fn push(&mut self, destination: DestinationHash) -> Result<usize, TrackRatchetsError>;
+}
+
+#[derive(Default)]
+pub struct SelfRatchets<C: SelfRatchetColumns> {
+    columns: C,
+}
+
+impl<C: SelfRatchetColumns> SelfRatchets<C> {
+    pub fn track(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
+        if self.is_tracked(&destination) {
+            return Ok(());
+        }
+        self.columns.push(destination).map(|_| ())
+    }
+
+    pub fn is_tracked(&self, destination: &DestinationHash) -> bool {
+        self.columns.destinations().contains(destination)
+    }
+
+    /// RNS 1.3.1 `Destination.rotate_ratchets`: mint a fresh newest ratchet for
+    /// `destination` if the rotation floor has elapsed (a never-rotated row is
+    /// always due). An untracked destination is a no-op.
+    pub fn rotate_if_due(
+        &mut self,
+        destination: &DestinationHash,
+        now: InstantMillis,
+        entropy: RatchetEntropy,
+    ) {
+        let Some(index) = self.index_of(destination) else {
+            return;
+        };
+        let Some(last_rotated) = self.columns.last_rotated().get(index) else {
+            return;
+        };
+        if !last_rotated.is_rotation_due(now) {
+            return;
+        }
+        self.columns
+            .insert_newest_secret(index, entropy.into_secret());
+        self.columns.set_last_rotated(index, now);
+    }
+
+    pub fn newest_ratchet_key(&self, destination: &DestinationHash) -> Option<RatchetKey> {
+        let newest = self.secrets_newest_first(destination).first()?;
+        Some(RatchetKey::new(x25519_public_key(newest).0))
+    }
+
+    pub fn secrets_newest_first(&self, destination: &DestinationHash) -> &[X25519SecretKey] {
+        self.index_of(destination)
+            .and_then(|index| self.columns.secrets_newest_first(index))
+            .unwrap_or(&[])
+    }
+
+    pub fn len(&self) -> usize {
+        self.columns.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
+    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
+        self.columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+    }
+}
+
+impl<C: SelfRatchetColumns> core::fmt::Debug for SelfRatchets<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SelfRatchets")
+            .field("destinations", &self.columns.destinations())
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type TestRatchets = SelfRatchets<FixedSelfRatchetColumns<2, 3>>;
+
+    fn dest(byte: u8) -> DestinationHash {
+        DestinationHash::new([byte; 16])
+    }
+
+    fn entropy(byte: u8) -> RatchetEntropy {
+        RatchetEntropy::new([byte; RatchetEntropy::LEN])
+    }
+
+    fn public_of(byte: u8) -> RatchetKey {
+        RatchetKey::new(x25519_public_key(&X25519SecretKey::new([byte; 32])).0)
+    }
+
+    #[test]
+    fn an_untracked_destination_has_no_ratchets_and_ignores_rotation() {
+        let mut ratchets = TestRatchets::default();
+        assert!(!ratchets.is_tracked(&dest(1)));
+        ratchets.rotate_if_due(&dest(1), InstantMillis(0), entropy(0x11));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), None);
+        assert!(ratchets.secrets_newest_first(&dest(1)).is_empty());
+        assert!(ratchets.is_empty());
+    }
+
+    #[test]
+    fn the_first_rotation_is_always_due_and_mints_from_the_entropy() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), None);
+
+        ratchets.rotate_if_due(&dest(1), InstantMillis(5_000), entropy(0x11));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
+        assert_eq!(ratchets.secrets_newest_first(&dest(1)).len(), 1);
+    }
+
+    #[test]
+    fn rotation_inside_the_floor_keeps_the_newest_ratchet() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11));
+        ratchets.rotate_if_due(
+            &dest(1),
+            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS - 1),
+            entropy(0x22),
+        );
+
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
+        assert_eq!(ratchets.secrets_newest_first(&dest(1)).len(), 1);
+    }
+
+    #[test]
+    fn rotation_past_the_floor_mints_and_keeps_the_prior_ratchet_behind_it() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11));
+        ratchets.rotate_if_due(
+            &dest(1),
+            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
+            entropy(0x22),
+        );
+
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x22)));
+        let secrets = ratchets.secrets_newest_first(&dest(1));
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(
+            x25519_public_key(&secrets[0]).0,
+            *public_of(0x22).as_bytes()
+        );
+        assert_eq!(
+            x25519_public_key(&secrets[1]).0,
+            *public_of(0x11).as_bytes()
+        );
+    }
+
+    #[test]
+    fn retention_evicts_the_oldest_ratchet_first() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        for (round, byte) in [0x11u8, 0x22, 0x33, 0x44].into_iter().enumerate() {
+            ratchets.rotate_if_due(
+                &dest(1),
+                InstantMillis(round as u64 * MIN_RATCHET_ROTATION_INTERVAL_MS),
+                entropy(byte),
+            );
+        }
+
+        let secrets = ratchets.secrets_newest_first(&dest(1));
+        assert_eq!(secrets.len(), 3);
+        assert_eq!(
+            x25519_public_key(&secrets[0]).0,
+            *public_of(0x44).as_bytes()
+        );
+        assert_eq!(
+            x25519_public_key(&secrets[1]).0,
+            *public_of(0x33).as_bytes()
+        );
+        assert_eq!(
+            x25519_public_key(&secrets[2]).0,
+            *public_of(0x22).as_bytes()
+        );
+    }
+
+    #[test]
+    fn tracking_is_idempotent_and_a_full_table_reports_itself() {
+        let mut ratchets = TestRatchets::default();
+        assert_eq!(ratchets.track(dest(1)), Ok(()));
+        assert_eq!(ratchets.track(dest(1)), Ok(()));
+        assert_eq!(ratchets.len(), 1);
+
+        assert_eq!(ratchets.track(dest(2)), Ok(()));
+        assert_eq!(ratchets.track(dest(3)), Err(TrackRatchetsError::TableFull));
+        assert_eq!(ratchets.len(), 2);
+    }
+
+    #[test]
+    fn each_destination_rotates_independently() {
+        let mut ratchets = TestRatchets::default();
+        ratchets.track(dest(1)).unwrap();
+        ratchets.track(dest(2)).unwrap();
+        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11));
+
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(2)), None);
+
+        ratchets.rotate_if_due(&dest(2), InstantMillis(1_000), entropy(0x22));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(2)), Some(public_of(0x22)));
+    }
+}
