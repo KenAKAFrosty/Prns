@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 pub enum Axis {
     Conformance,
     Throughput,
+    Power,
+    Energy,
     Memory,
     BinarySize,
     Latency,
@@ -31,7 +33,9 @@ pub enum Comparability {
 impl Axis {
     pub fn comparability(self) -> Comparability {
         match self {
-            Axis::Conformance | Axis::Throughput | Axis::BinarySize => Comparability::CrossImpl,
+            Axis::Conformance | Axis::Throughput | Axis::Power | Axis::Energy | Axis::BinarySize => {
+                Comparability::CrossImpl
+            }
             Axis::Memory | Axis::Latency => Comparability::WithinImpl,
         }
     }
@@ -41,9 +45,11 @@ impl Axis {
         match self {
             Axis::Conformance => 0,
             Axis::Throughput => 1,
-            Axis::Latency => 2,
-            Axis::Memory => 3,
-            Axis::BinarySize => 4,
+            Axis::Power => 2,
+            Axis::Energy => 3,
+            Axis::Latency => 4,
+            Axis::Memory => 5,
+            Axis::BinarySize => 6,
         }
     }
 
@@ -51,6 +57,8 @@ impl Axis {
         match self {
             Axis::Conformance => "Conformance",
             Axis::Throughput => "Ingest throughput",
+            Axis::Power => "CPU power",
+            Axis::Energy => "Energy",
             Axis::Memory => "Memory",
             Axis::BinarySize => "Binary size",
             Axis::Latency => "Latency",

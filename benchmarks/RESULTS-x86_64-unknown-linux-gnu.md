@@ -32,7 +32,9 @@ Same wire bytes through each implementation's real parse → Ed25519 verify → 
 - _Ingest throughput_ — best-of-N wall time to parse + verify + store the whole corpus into a fresh engine, as announces per second.
 - _×ref_ — throughput relative to the Python reference (`RNS`) on this host.
 - _1 thread / N threads_ — for the parallel scenario, ingest throughput single-threaded and sharded across all of this host's logical cores.
+- _CPU power / Energy_ — for the energy scenario: average active CPU power under sustained all-cores load, and energy per announce (the cross-comparable price paid).
 
 Regenerate: run each implementation's driver on this host (`bench_result`, `bench_parallel`,
 `reference/driver.py`, `reference/driver_parallel.py`, and the `external/<impl>/run.sh` + `run-mt.sh`
-one-command drivers) to refresh `results/`, then `render_results` to rewrite these tables.
+one-command drivers) to refresh `results/`, then `render_results` to rewrite these tables. The
+energy rows need root: `energy/build.sh` then `sudo energy/measure.sh`.

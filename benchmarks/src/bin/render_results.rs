@@ -163,6 +163,8 @@ struct Comparison<'a> {
     conformance_metric: Option<String>,
     throughput_single: Option<f64>,
     throughput_by_threads: BTreeMap<u32, f64>,
+    power_watts: Option<f64>,
+    energy_uj: Option<f64>,
     toolchain: String,
 }
 
@@ -176,11 +178,102 @@ fn render_scenario(
 ) {
     let manifest = Manifest::load(scenario);
     let entries = comparisons(rows, impls);
-    if entries.iter().any(|e| !e.throughput_by_threads.is_empty()) {
+    if entries.iter().any(|e| e.energy_uj.is_some()) {
+        render_energy(out, scenario, entries, &manifest);
+    } else if entries.iter().any(|e| !e.throughput_by_threads.is_empty()) {
         render_parallel(out, scenario, entries, &manifest);
     } else {
         render_standard(out, scenario, entries, &manifest, impls);
     }
+}
+
+/// The energy comparison: sustained all-cores ingest, with the Ed25519 backend (the
+/// controlled variable) and conformance alongside throughput, CPU power, and the headline —
+/// energy per announce, the price a battery/solar node pays. Sorted by energy ascending.
+fn render_energy(
+    out: &mut String,
+    scenario: &str,
+    mut entries: Vec<Comparison<'_>>,
+    manifest: &Manifest,
+) {
+    entries.sort_by(|a, b| {
+        let ka = a.energy_uj.unwrap_or(f64::INFINITY);
+        let kb = b.energy_uj.unwrap_or(f64::INFINITY);
+        ka.partial_cmp(&kb).unwrap_or(Ordering::Equal).then_with(|| a.name.cmp(&b.name))
+    });
+
+    let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
+    if !manifest.description.is_empty() {
+        let _ = writeln!(out, "{}\n", manifest.description);
+    }
+    out.push_str(
+        "Energy per announce = (active CPU power − idle baseline) ÷ throughput — it normalizes \
+         throughput and is fair across every runtime regardless of GC/JIT/interpreter, because \
+         it's the actual joules a user pays. The Ed25519 backend is the controlled variable; \
+         conformance confirms every implementation processed the same work. Measured on macOS \
+         via `powermetrics` (root), so it reproduces with `sudo`, not the one-command drivers.\n\n",
+    );
+
+    out.push_str(
+        "| Implementation | Language | Ed25519 backend | Conformance | Throughput | CPU power | Energy / announce |\n",
+    );
+    out.push_str(
+        "|----------------|----------|-----------------|-------------|-----------:|---------:|------------------:|\n",
+    );
+
+    let mut any_partial = false;
+    let mut any_verify_only = false;
+    for entry in &entries {
+        let language = entry.descriptor.map_or("—", |d| d.language.as_str());
+        let backend = entry.descriptor.map_or("—", |d| d.crypto_backend.as_str());
+        let is_reference = entry.descriptor.is_some_and(|d| d.role == ImplementationRole::Reference);
+        let partial = entry.descriptor.and_then(|d| d.maturity.as_deref()) == Some("partial");
+        let verify_only = entry.conformance_metric.as_deref() == Some("announces_verified");
+        any_partial |= partial;
+        any_verify_only |= verify_only;
+
+        let mut label = entry.name.clone();
+        if is_reference {
+            label.push_str(" _(reference)_");
+        }
+        if partial {
+            label.push_str(" †");
+        }
+        if verify_only {
+            label.push_str(" ‡");
+        }
+        let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
+        let throughput = throughput_cell(entry.throughput_single);
+        let power = entry.power_watts.map(|w| format!("{w:.1} W")).unwrap_or_else(pending);
+        let energy = entry
+            .energy_uj
+            .map(|e| format!("{e:.0} µJ"))
+            .unwrap_or_else(pending);
+        let _ = writeln!(
+            out,
+            "| {label} | {language} | {backend} | {conformance} | {throughput} | {power} | {energy} |"
+        );
+    }
+
+    if any_partial {
+        out.push_str(
+            "\n† Marked partial / not-yet-feature-complete on the upstream maturity list — \
+             included as a data point, not part of the feature-complete tier.\n",
+        );
+    }
+    if any_verify_only {
+        out.push_str(
+            "\n‡ Measured verify-only (parse + Ed25519 verify, no route store) — its store isn't \
+             thread-safe; this axis is ~97% verify, so it isolates the dominant work.\n",
+        );
+    }
+    out.push_str(
+        "\nThroughput here is the sustained average under continuous all-cores load (the energy \
+         denominator), a touch below the best-of-N peak in announce-parallel. Python runs all-core \
+         threads but is GIL-bound, so its all-cores ≈ one core.\n",
+    );
+
+    render_provenance(out, &entries);
 }
 
 /// The single-interface ingest comparison: every implementation sorted by ingest throughput,
@@ -376,6 +469,8 @@ fn comparisons<'a>(
         conformance_metric: Option<String>,
         throughput_single: Option<f64>,
         throughput_by_threads: BTreeMap<u32, f64>,
+        power_watts: Option<f64>,
+        energy_uj: Option<f64>,
         toolchain: String,
     }
     let mut figures: BTreeMap<String, Acc> = BTreeMap::new();
@@ -395,6 +490,8 @@ fn comparisons<'a>(
                     }
                 }
             },
+            Axis::Power => acc.power_watts = row.value,
+            Axis::Energy => acc.energy_uj = row.value,
             _ => {}
         }
     }
@@ -408,6 +505,8 @@ fn comparisons<'a>(
             conformance_metric: acc.conformance_metric,
             throughput_single: acc.throughput_single,
             throughput_by_threads: acc.throughput_by_threads,
+            power_watts: acc.power_watts,
+            energy_uj: acc.energy_uj,
             toolchain: acc.toolchain,
         })
         .collect()
@@ -510,8 +609,10 @@ const HOST_FOOTNOTES: &str = "
 - _Ingest throughput_ — best-of-N wall time to parse + verify + store the whole corpus into a fresh engine, as announces per second.
 - _×ref_ — throughput relative to the Python reference (`RNS`) on this host.
 - _1 thread / N threads_ — for the parallel scenario, ingest throughput single-threaded and sharded across all of this host's logical cores.
+- _CPU power / Energy_ — for the energy scenario: average active CPU power under sustained all-cores load, and energy per announce (the cross-comparable price paid).
 
 Regenerate: run each implementation's driver on this host (`bench_result`, `bench_parallel`,
 `reference/driver.py`, `reference/driver_parallel.py`, and the `external/<impl>/run.sh` + `run-mt.sh`
-one-command drivers) to refresh `results/`, then `render_results` to rewrite these tables.
+one-command drivers) to refresh `results/`, then `render_results` to rewrite these tables. The
+energy rows need root: `energy/build.sh` then `sudo energy/measure.sh`.
 ";

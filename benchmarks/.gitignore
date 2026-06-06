@@ -7,3 +7,11 @@ external/*/harness/target/
 external/*/harness/Cargo.lock
 external/*/harness-mt/target/
 external/*/harness-mt/Cargo.lock
+
+# Energy harness build artifacts — energy/build.sh regenerates them.
+energy/contestants/*/target/
+energy/contestants/*/Cargo.lock
+energy/contestants/go/sustained-go
+energy/contestants/rns-cr/bench_sustained
+energy/contestants/rns-cr/bench_sustained.dwarf
+energy/contestants/microreticulum/build/

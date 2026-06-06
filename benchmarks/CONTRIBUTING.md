@@ -45,13 +45,18 @@ ground truth and doubles as a conformance corpus. Our engine reproduces it **byt
 (`cargo run --bin gen_corpus -- --check` vs `reference/gen.py --check`), which is the
 first hard proof of wire-exactness against RNS. Every backend here `load_corpus`es it.
 
-There are two scenarios on this same corpus shape. **`announce-256`** is the single-interface
+There are three scenarios on this same corpus shape. **`announce-256`** is the single-interface
 ingest path. **`announce-parallel`** shards 2560 distinct announces evenly across worker
 threads — the announce path is ~97% independent per-announce Ed25519 verify, so it parallelizes
 cleanly — and reports throughput single-threaded vs sharded across all the host's logical cores;
 its table is the price a runtime pays for a global lock (CPython's GIL can't use the extra cores
 from threads; compiled/JIT runtimes scale with the core count). A port that can't make its route
 store thread-safe may measure that scenario verify-only (no store), tagged ‡ in the table.
+**`announce-energy`** runs that same sustained all-cores ingest while sampling CPU power, and
+reports **joules per announce** — the cross-comparable price a battery/solar node actually pays,
+fair across GC/JIT/interpreter because it's the actual energy. Unlike the other drivers it needs
+root for the power counters (`energy/build.sh` then `sudo energy/measure.sh`), so it's a
+documented privileged step, macOS-only for now (Linux via RAPL).
 
 **To participate, an implementation writes a thin driver** that:
 
