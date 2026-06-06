@@ -148,6 +148,8 @@ fn main() {
                     println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
                 }
             }
+            PrnsEvent::CommandFailed(_) => {}
         },
+        || None,
     ));
 }

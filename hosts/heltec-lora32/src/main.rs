@@ -709,10 +709,14 @@ async fn main(spawner: Spawner) {
     // (The host built above draws CSPRNG entropy from the radio-seeded RNG per
     // cycle and owns the embassy-time clock + sleep.)
     let snapshot_tx = SNAPSHOT_WATCH.sender();
-    let runtime_fut = runtime.run(move |event: PrnsEvent<'_>| match event {
-        PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
-        PrnsEvent::Delivered(_) => {}
-    });
+    let runtime_fut = runtime.run(
+        move |event: PrnsEvent<'_>| match event {
+            PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
+            PrnsEvent::Delivered(_) => {}
+            PrnsEvent::CommandFailed(_) => {}
+        },
+        || None,
+    );
 
     // Render the Hopspot screen alongside it. Event-driven: subscribe to the
     // runtime snapshot and wake only when engine state changes (no polling),

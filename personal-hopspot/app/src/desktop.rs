@@ -133,7 +133,9 @@ fn run_engine(snap_tx: Sender<RuntimeSnapshot>) {
                     delivery.plaintext.len(),
                 );
             }
+            PrnsEvent::CommandFailed(_) => {}
         },
+        || None,
     ));
 }
 

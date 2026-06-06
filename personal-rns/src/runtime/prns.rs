@@ -1,7 +1,7 @@
 use super::{Host, PrnsEvent, Runtime};
 use crate::engine::self_announce::AnnounceConfig;
 use crate::engine::self_ratchets::RatchetPolicy;
-use crate::engine::EngineState;
+use crate::engine::{EngineCommand, EngineState};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::RegisteredInterface;
@@ -46,7 +46,11 @@ pub struct Prns;
 
 impl Prns {
     #[allow(clippy::expect_used)]
-    pub async fn run<'a, S, Ho, I, D, OnEvent>(recipe: Recipe<S, Ho, I, D>, on_event: OnEvent) -> !
+    pub async fn run<'a, S, Ho, I, D, OnEvent, NextCommand>(
+        recipe: Recipe<S, Ho, I, D>,
+        on_event: OnEvent,
+        next_command: NextCommand,
+    ) -> !
     where
         S: EngineStorage,
         Ho: Host,
@@ -54,6 +58,7 @@ impl Prns {
         I::Item: RegisteredInterface,
         D: IntoIterator<Item = StartingDestinationConfig<'a>>,
         OnEvent: FnMut(PrnsEvent<'_>),
+        NextCommand: FnMut() -> Option<EngineCommand>,
     {
         let Recipe {
             engine_storage: _,
@@ -100,6 +105,6 @@ impl Prns {
         }
 
         let runtime = Runtime::new(engine, interfaces, host);
-        runtime.run(on_event).await
+        runtime.run(on_event, next_command).await
     }
 }

@@ -1,24 +1,27 @@
 use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
-use super::event::PrnsEvent;
+use super::event::{CommandFailure, PrnsEvent};
 use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    AnnounceIngest, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome,
-    InstantMillis, NextScheduledEngineWork, ProofOwed,
+    AnnounceIngest, AnnounceTarget, CommandOutcome, EngineCommand, EngineCycleEntropy,
+    EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis,
+    NextScheduledEngineWork, ProofOwed, RatchetEntropy,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
     ConnectionState, InterfaceId, NextScheduledInterfaceWake, RegisteredInterface, SendError,
 };
+use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
 #[derive(Debug)]
 pub struct RuntimeStepOutput {
     pub ingested_packet_count: usize,
+    pub processed_command_count: usize,
     pub accepted_announce_count: usize,
     pub scheduled_rebroadcast_count: usize,
     pub delivered_count: usize,
@@ -74,6 +77,7 @@ where
         now: InstantMillis,
         entropy_seed: EngineCycleEntropySeed,
         mut on_event: impl FnMut(PrnsEvent<'_>),
+        mut next_command: impl FnMut() -> Option<EngineCommand>,
     ) -> RuntimeStepOutput {
         cycle_pooled(
             &mut self.engine,
@@ -82,6 +86,7 @@ where
             now,
             entropy_seed,
             &mut on_event,
+            &mut next_command,
         )
     }
 
@@ -101,10 +106,15 @@ where
         &self.engine
     }
 
-    pub async fn run<OnEvent>(self, mut on_event: OnEvent) -> !
+    pub async fn run<OnEvent, NextCommand>(
+        self,
+        mut on_event: OnEvent,
+        mut next_command: NextCommand,
+    ) -> !
     where
         Ho: Host,
         OnEvent: FnMut(PrnsEvent<'_>),
+        NextCommand: FnMut() -> Option<EngineCommand>,
     {
         let Self {
             mut engine,
@@ -122,6 +132,7 @@ where
                 now,
                 seed,
                 &mut on_event,
+                &mut next_command,
             );
 
             //Future improvement: Only fire this when actually updated (diffd for changes) instead of every cycle
@@ -130,32 +141,59 @@ where
                 &interfaces,
                 &traffic,
             )));
-            wake = host_wake(engine.next_wakeup(now), output.next_poll);
+            wake = if output.processed_command_count > 0 {
+                NextWake::Immediate
+            } else {
+                host_wake(engine.next_wakeup(now), output.next_poll)
+            };
         }
     }
 }
 
 #[allow(clippy::expect_used)]
-fn cycle_pooled<I, S, OnEvent>(
+fn cycle_pooled<I, S, OnEvent, NextCommand>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
     now: InstantMillis,
     entropy_seed: EngineCycleEntropySeed,
     on_event: &mut OnEvent,
+    next_command: &mut NextCommand,
 ) -> RuntimeStepOutput
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
+    NextCommand: FnMut() -> Option<EngineCommand>,
 {
-    let entropy = EngineCycleEntropy::from_seed(entropy_seed);
+    let EngineCycleEntropy {
+        jitter,
+        self_announce,
+        ratchet,
+    } = EngineCycleEntropy::from_seed(entropy_seed);
 
     let mut next_poll = NextScheduledInterfaceWake::Idle;
     for started in interfaces.iter_mut() {
         next_poll = next_poll.sooner(started.poll(now));
     }
+
+    let mut processed_command_count = 0;
+    let announce_entropy = match next_command() {
+        None => Some((self_announce, ratchet)),
+        Some(command) => {
+            processed_command_count += 1;
+            run_command(
+                engine,
+                interfaces,
+                traffic,
+                command,
+                now,
+                (self_announce, ratchet),
+                on_event,
+            )
+        }
+    };
 
     let mut ingested_packet_count = 0;
     let mut accepted_announce_count = 0;
@@ -178,7 +216,7 @@ where
             let step = match interface.next_inbound(|packet| {
                 traffic.add_rx(id, packet.bytes.len() as u64);
                 ingested_packet_count += 1;
-                match engine.ingest_packet(packet, entropy.jitter) {
+                match engine.ingest_packet(packet, jitter) {
                     IngestPacketOutcome::Announce(AnnounceIngest::Accepted) => {
                         accepted_announce_count += 1;
                         scheduled_rebroadcast_count += 1;
@@ -224,7 +262,7 @@ where
         }
     }
 
-    let tick_output = engine.tick(now, entropy.jitter);
+    let tick_output = engine.tick(now, jitter);
     let egress_directive_count = tick_output.egress_directive_count();
     for directive in tick_output.egress_directives() {
         // Serializing per interface (instead of once into a staging buffer) is
@@ -247,26 +285,25 @@ where
     tick_output.commit();
 
     if !engine.registered_interfaces().is_empty() {
-        // The self-announce is staged once — building it signs, and signing
-        // per interface would be waste — then the fan copies the staged bytes
-        // into each grant.
-        let mut emit_buffer = [0u8; MTU];
-        if let Ok(Some(n)) = engine.write_due_self_announce(
-            now,
-            entropy.self_announce,
-            entropy.ratchet,
-            &mut emit_buffer,
-        ) {
-            fan_to_handles(
-                interfaces,
-                traffic,
-                |buf| {
-                    buf[..n].copy_from_slice(&emit_buffer[..n]);
-                    n
-                },
-                engine.registered_interfaces(),
-                FanoutClass::SelfOriginated,
-            );
+        if let Some((nonce, ratchet_entropy)) = announce_entropy {
+            // The self-announce is staged once — building it signs, and signing
+            // per interface would be waste — then the fan copies the staged bytes
+            // into each grant.
+            let mut emit_buffer = [0u8; MTU];
+            if let Ok(Some(n)) =
+                engine.write_due_self_announce(now, nonce, ratchet_entropy, &mut emit_buffer)
+            {
+                fan_to_handles(
+                    interfaces,
+                    traffic,
+                    |buf| {
+                        buf[..n].copy_from_slice(&emit_buffer[..n]);
+                        n
+                    },
+                    engine.registered_interfaces(),
+                    FanoutClass::SelfOriginated,
+                );
+            }
         }
     }
 
@@ -276,6 +313,7 @@ where
 
     RuntimeStepOutput {
         ingested_packet_count,
+        processed_command_count,
         accepted_announce_count,
         scheduled_rebroadcast_count,
         delivered_count,
@@ -283,6 +321,62 @@ where
         egress_directive_count,
         next_poll,
     }
+}
+
+/// Run one app command to completion, spending the cycle's announce entropy if
+/// the command mints an announce. Whatever is handed back unspent is the
+/// scheduled announce step's to use — entropy moves, so the cycle can never
+/// mint twice from it.
+fn run_command<I, S, OnEvent>(
+    engine: &mut EngineState<S>,
+    interfaces: &mut I,
+    traffic: &mut TrafficLedger,
+    command: EngineCommand,
+    now: InstantMillis,
+    announce_entropy: (SelfAnnounceEntropy, RatchetEntropy),
+    on_event: &mut OnEvent,
+) -> Option<(SelfAnnounceEntropy, RatchetEntropy)>
+where
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
+    S: EngineStorage,
+    OnEvent: FnMut(PrnsEvent<'_>),
+{
+    let commanded = match engine.ingest_command(command) {
+        CommandOutcome::OwesAnnounce(commanded) => commanded,
+        CommandOutcome::AnnounceRejected(error) => {
+            on_event(PrnsEvent::CommandFailed(CommandFailure::AnnounceRejected(
+                error,
+            )));
+            return Some(announce_entropy);
+        }
+    };
+
+    let (nonce, ratchet_entropy) = announce_entropy;
+    let mut emit_buffer = [0u8; MTU];
+    match engine.write_commanded_announce(&commanded, now, nonce, ratchet_entropy, &mut emit_buffer)
+    {
+        Ok(n) => {
+            let fire_on = match &commanded.target {
+                AnnounceTarget::AllInterfaces => engine.registered_interfaces(),
+                AnnounceTarget::Interface(interface) => core::slice::from_ref(interface),
+            };
+            fan_to_handles(
+                interfaces,
+                traffic,
+                |buf| {
+                    buf[..n].copy_from_slice(&emit_buffer[..n]);
+                    n
+                },
+                fire_on,
+                FanoutClass::SelfOriginated,
+            );
+        }
+        Err(error) => on_event(PrnsEvent::CommandFailed(
+            CommandFailure::AnnounceWriteFailed(error),
+        )),
+    }
+    None
 }
 
 fn fan_to_handles<I>(
@@ -362,7 +456,10 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
 
-    use crate::engine::{RatchetPolicy, ENGINE_CYCLE_ENTROPY_LEN};
+    use crate::engine::{
+        AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceTarget, EngineCommand,
+        RatchetPolicy, ENGINE_CYCLE_ENTROPY_LEN,
+    };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
         ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
@@ -545,7 +642,11 @@ mod tests {
                     panic!("a plain packet must never surface as a single delivery")
                 }
                 PrnsEvent::SnapshotUpdated(_) => {}
+                PrnsEvent::CommandFailed(failure) => {
+                    panic!("no command was queued, yet one failed: {failure:?}")
+                }
             },
+            || None,
         );
 
         assert_eq!(out.ingested_packet_count, 1);
@@ -631,7 +732,11 @@ mod tests {
                     panic!("a sealed single packet must never surface as plain")
                 }
                 PrnsEvent::SnapshotUpdated(_) => {}
+                PrnsEvent::CommandFailed(failure) => {
+                    panic!("no command was queued, yet one failed: {failure:?}")
+                }
             },
+            || None,
         );
 
         assert_eq!(out.delivered_count, 1);
@@ -644,6 +749,235 @@ mod tests {
             runtime.interfaces()[0].handle.sent,
             std::vec::Vec::<std::vec::Vec<u8>>::new(),
         );
+    }
+
+    fn single_destination_engine() -> (EngineState<Cap>, DestinationHash) {
+        use crate::identity::Zeroizing;
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        let mut engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let node = engine.transport_identity().unwrap();
+        let destination = engine
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        (engine, destination)
+    }
+
+    fn announce_now_command(destination: DestinationHash, target: AnnounceTarget) -> EngineCommand {
+        EngineCommand::AnnounceNow(AnnounceNow {
+            destination,
+            target,
+            app_data: AnnounceAppData::Scheduled,
+        })
+    }
+
+    fn no_failures(event: PrnsEvent<'_>) {
+        if let PrnsEvent::CommandFailed(failure) = event {
+            panic!("command failed: {failure:?}");
+        }
+    }
+
+    fn parsed_announce_destination(raw: &[u8]) -> DestinationHash {
+        let (header, _) = WirePacketHeader::parse(raw).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        header.destination
+    }
+
+    #[test]
+    fn a_commanded_announce_fans_only_to_its_targeted_interface() {
+        let (engine, destination) = single_destination_engine();
+        let target = iface(0xB2);
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([
+                started(iface(0xA1), std::vec::Vec::new()),
+                started(target, std::vec::Vec::new()),
+            ]),
+            (),
+        );
+
+        let mut queue = VecDeque::from([announce_now_command(
+            destination,
+            AnnounceTarget::Interface(target),
+        )]);
+        let out = runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            no_failures,
+            || queue.pop_front(),
+        );
+
+        assert_eq!(out.processed_command_count, 1);
+        assert_eq!(runtime.interfaces()[0].handle.sent.len(), 0);
+        let sent = &runtime.interfaces()[1].handle.sent;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(parsed_announce_destination(&sent[0]), destination);
+    }
+
+    #[test]
+    fn a_commanded_announce_to_all_interfaces_fans_everywhere() {
+        let (engine, destination) = single_destination_engine();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([
+                started(iface(0xA1), std::vec::Vec::new()),
+                started(iface(0xB2), std::vec::Vec::new()),
+            ]),
+            (),
+        );
+
+        let mut queue = VecDeque::from([announce_now_command(
+            destination,
+            AnnounceTarget::AllInterfaces,
+        )]);
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            no_failures,
+            || queue.pop_front(),
+        );
+
+        let first = &runtime.interfaces()[0].handle.sent;
+        let second = &runtime.interfaces()[1].handle.sent;
+        assert_eq!(first.len(), 1);
+        assert_eq!(first, second);
+        assert_eq!(parsed_announce_destination(&first[0]), destination);
+    }
+
+    #[test]
+    fn a_rejected_command_surfaces_on_the_event_lane() {
+        let (engine, _) = single_destination_engine();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(iface(0xA1), std::vec::Vec::new())]),
+            (),
+        );
+
+        let mut queue = VecDeque::from([announce_now_command(
+            DestinationHash::new([0x99; 16]),
+            AnnounceTarget::AllInterfaces,
+        )]);
+        let mut failures = std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |event| {
+                if let PrnsEvent::CommandFailed(failure) = event {
+                    failures.push(failure);
+                }
+            },
+            || queue.pop_front(),
+        );
+
+        assert_eq!(out.processed_command_count, 1);
+        assert_eq!(
+            failures,
+            std::vec![CommandFailure::AnnounceRejected(
+                AnnounceNowError::UnknownDestination
+            )],
+        );
+        assert_eq!(runtime.interfaces()[0].handle.sent.len(), 0);
+    }
+
+    #[test]
+    fn each_queued_command_takes_its_own_cycle_with_fresh_entropy() {
+        use crate::routing::announce::Announce;
+
+        let (engine, destination) = single_destination_engine();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(iface(0xA1), std::vec::Vec::new())]),
+            (),
+        );
+        let mut queue = VecDeque::from([
+            announce_now_command(destination, AnnounceTarget::AllInterfaces),
+            announce_now_command(destination, AnnounceTarget::AllInterfaces),
+        ]);
+
+        let first = runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            no_failures,
+            || queue.pop_front(),
+        );
+        let second = runtime.cycle_once(
+            InstantMillis(2_000),
+            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            no_failures,
+            || queue.pop_front(),
+        );
+
+        assert_eq!(first.processed_command_count, 1);
+        assert_eq!(second.processed_command_count, 1);
+        let sent = &runtime.interfaces()[0].handle.sent;
+        assert_eq!(sent.len(), 2);
+        let announce_id_of = |raw: &[u8]| {
+            let (header, payload) = WirePacketHeader::parse(raw).unwrap();
+            Announce::from_wire(&header, payload).unwrap().announce_id
+        };
+        assert_ne!(announce_id_of(&sent[0]), announce_id_of(&sent[1]));
+    }
+
+    #[test]
+    fn a_command_defers_the_due_scheduled_announce_one_cycle() {
+        use crate::engine::self_announce::AnnounceConfig;
+        use crate::engine::ReannounceSchedule;
+
+        let (mut engine, scheduled) = single_destination_engine();
+        engine
+            .schedule_announce(
+                &scheduled,
+                AnnounceConfig {
+                    app_data: b"hello-personal",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .unwrap();
+        let node = engine.transport_identity().unwrap();
+        let commanded = engine
+            .register_single_destination(
+                &node,
+                "personal",
+                &["other"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(iface(0xA1), std::vec::Vec::new())]),
+            (),
+        );
+
+        let mut queue = VecDeque::from([announce_now_command(
+            commanded,
+            AnnounceTarget::AllInterfaces,
+        )]);
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            no_failures,
+            || queue.pop_front(),
+        );
+        runtime.cycle_once(
+            InstantMillis(2_000),
+            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            no_failures,
+            || queue.pop_front(),
+        );
+
+        let sent = &runtime.interfaces()[0].handle.sent;
+        assert_eq!(sent.len(), 2);
+        assert_eq!(parsed_announce_destination(&sent[0]), commanded);
+        assert_eq!(parsed_announce_destination(&sent[1]), scheduled);
     }
 
     #[test]
@@ -714,6 +1048,7 @@ mod tests {
             InstantMillis(arrival.0 + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |_event| {},
+            || None,
         );
         assert_eq!(out.delivered_count, 1);
         assert_eq!(out.emitted_proof_count, 1);
@@ -749,6 +1084,7 @@ mod tests {
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |_event| {},
+            || None,
         );
 
         assert_eq!(out.ingested_packet_count, 1);
@@ -813,6 +1149,7 @@ mod tests {
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |_event| {},
+            || None,
         );
 
         assert_eq!(out.accepted_announce_count, 1);
@@ -838,6 +1175,7 @@ mod tests {
             InstantMillis(1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |_event| {},
+            || None,
         );
 
         let snapshot = runtime.snapshot();
@@ -861,6 +1199,7 @@ mod tests {
             InstantMillis(1),
             EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
             |_event| {},
+            || None,
         );
 
         let snapshot = runtime.snapshot();
