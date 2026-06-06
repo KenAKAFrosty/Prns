@@ -87,7 +87,7 @@ pub fn SingleCrate(name: String) -> Element {
                 }
                 p { class: "mt-3 text-soft max-w-2xl leading-relaxed", {t!(c.blurb_key)} }
             }
-            MarkdownBody { source: c.body }
+            MarkdownBody { source: c.body.to_string() }
         },
         None => rsx! {
             h1 { class: "text-3xl font-semibold", {t!("crates-not-found")} }

@@ -1,0 +1,2 @@
+{"scenario":"announce-256","scenario_version":1,"implementation":"personal-rns","commit":"5f535e3","toolchain":"1.96.0 (ac68faa20 2026-05-25)","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":256.0,"unit":"count"}
+{"scenario":"announce-256","scenario_version":1,"implementation":"personal-rns","commit":"5f535e3","toolchain":"1.96.0 (ac68faa20 2026-05-25)","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":47663.377397132754,"unit":"announce/s"}

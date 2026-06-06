@@ -3,23 +3,23 @@ use dioxus_i18n::t;
 
 use crate::components::MarkdownBody;
 
-// Single source of truth lives at docs/build-ethos.md alongside this site.
-const ETHOS_MD: &str = include_str!("../../../build-ethos.md");
+// Mirrors the repo-root CONTRIBUTING.md so the site and the repo never drift.
+const CONTRIBUTING_MD: &str = include_str!("../../../../CONTRIBUTING.md");
 
 #[component]
-pub fn EthosPage() -> Element {
+pub fn ContributingPage() -> Element {
     rsx! {
         header { class: "mb-10",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
-                {t!("ethos-kicker")}
+                {t!("contributing-kicker")}
             }
             h1 { class: "mt-3 text-3xl md:text-4xl font-semibold tracking-tight text-paper",
-                {t!("ethos-title")}
+                {t!("contributing-title")}
             }
             p { class: "mt-4 text-soft max-w-2xl leading-relaxed",
-                {t!("ethos-lead")}
+                {t!("contributing-lead")}
             }
         }
-        MarkdownBody { source: ETHOS_MD }
+        MarkdownBody { source: CONTRIBUTING_MD.to_string() }
     }
 }

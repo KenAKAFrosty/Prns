@@ -15,6 +15,12 @@ use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::announce::SelfAnnounceEntropy;
 use personal_rns::routing::storage::{EngineStorage, FixedInline, GrowableHeap};
 
+mod results;
+pub use results::{
+    load_all_rows, load_host, results_dir, write_host, write_rows, Axis, Comparability,
+    HostDescriptor, ResultRow,
+};
+
 pub type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
 
 const JITTER: JitterSeed = JitterSeed(0x5151_5151_5151_5151);

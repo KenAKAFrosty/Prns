@@ -21,9 +21,9 @@ pub fn TopNav() -> Element {
                 }
                 nav { class: "flex items-center gap-6 text-sm text-soft",
                     Link {
-                        to: Route::EthosPage {},
+                        to: Route::ContributingPage {},
                         class: "hover:text-accent transition-colors",
-                        {t!("nav-ethos")}
+                        {t!("nav-contributing")}
                     }
                     Link {
                         to: Route::CratesIndex {},
