@@ -57,17 +57,12 @@ struct Device<Port> {
 
 impl<Port> Device<Port> {
     fn ingest_bytes(&mut self, bytes: &[u8], inbound: &mut impl InboundSink) {
-        for &byte in bytes {
-            let confirmed_tag = match self.decoder.feed(byte) {
-                Ok(Some(frame)) if !frame.is_empty() => {
-                    service_inbound_frame(frame, &self.state, inbound)
-                }
-                _ => None,
-            };
-            if let Some(tag) = confirmed_tag {
-                self.state = LinkState::Confirmed(tag);
+        let state = &mut self.state;
+        self.decoder.feed_slice(bytes, |frame| {
+            if !frame.is_empty() {
+                service_inbound_frame(frame, state, inbound);
             }
-        }
+        });
     }
 }
 
@@ -267,23 +262,18 @@ impl<Port: Read + Write> Discoverer<Port> {
     }
 }
 
-fn service_inbound_frame(
-    frame: &[u8],
-    state: &LinkState,
-    inbound: &mut impl InboundSink,
-) -> Option<NodeTag> {
+fn service_inbound_frame(frame: &[u8], state: &mut LinkState, inbound: &mut impl InboundSink) {
     match decode_message(frame) {
-        Ok(Message::HelloAck(tag)) => Some(tag),
+        Ok(Message::HelloAck(tag)) => *state = LinkState::Confirmed(tag),
         Ok(Message::Data(packet)) => {
-            if matches!(state, LinkState::Confirmed(_)) {
+            if matches!(*state, LinkState::Confirmed(_)) {
                 let _ = inbound.submit(|slot| {
                     slot[..packet.len()].copy_from_slice(packet);
                     packet.len()
                 });
             }
-            None
         }
-        _ => None,
+        _ => {}
     }
 }
 
