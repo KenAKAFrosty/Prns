@@ -13,10 +13,11 @@ pub const MAX_MESSAGE_BYTES: usize = MESSAGE_KIND_LEN + MAX_DATA_BYTES;
 pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESSAGE_BYTES);
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 pub const MAGIC: [u8; 4] = *b"Prns";
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 const HANDSHAKE_ENVELOPE_LEN: usize = MAGIC.len() + PROTOCOL_VERSION_LEN;
-const HELLO_BODY_LEN: usize = HANDSHAKE_ENVELOPE_LEN;
-const HELLO_ACK_BODY_LEN: usize = HANDSHAKE_ENVELOPE_LEN + NODE_TAG_LEN;
+const CAPABILITIES_LEN: usize = 1;
+const HELLO_BODY_LEN: usize = HANDSHAKE_ENVELOPE_LEN + CAPABILITIES_LEN;
+const HELLO_ACK_BODY_LEN: usize = HANDSHAKE_ENVELOPE_LEN + CAPABILITIES_LEN + NODE_TAG_LEN;
 
 #[repr(u8)]
 enum MessageKind {
@@ -39,10 +40,54 @@ impl MessageKind {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeTag(pub [u8; NODE_TAG_LEN]);
 
+pub fn node_tag_for(id: InterfaceId) -> NodeTag {
+    let mut tag = [0u8; NODE_TAG_LEN];
+    tag.copy_from_slice(&id.as_bytes()[..NODE_TAG_LEN]);
+    NodeTag(tag)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Capabilities(u8);
+
+impl Capabilities {
+    const HOST_LANE: u8 = 0b0000_0001;
+
+    pub const fn none() -> Self {
+        Self(0)
+    }
+
+    pub const fn host() -> Self {
+        Self(Self::HOST_LANE)
+    }
+
+    pub const fn supports_host_lane(self) -> bool {
+        self.0 & Self::HOST_LANE != 0
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PeerProfile {
+    Peripheral,
+    Host,
+}
+
+impl PeerProfile {
+    pub fn negotiate(local: Capabilities, peer: Capabilities) -> Self {
+        if local.supports_host_lane() && peer.supports_host_lane() {
+            PeerProfile::Host
+        } else {
+            PeerProfile::Peripheral
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Message<'a> {
-    Hello,
-    HelloAck(NodeTag),
+    Hello(Capabilities),
+    HelloAck {
+        tag: NodeTag,
+        capabilities: Capabilities,
+    },
     Data(&'a [u8]),
 }
 
@@ -65,18 +110,21 @@ pub enum MalformedMessage {
 impl Message<'_> {
     pub fn write_payload(&self, out: &mut [u8]) -> Result<usize, WriteError> {
         match self {
-            Message::Hello => {
+            Message::Hello(capabilities) => {
                 let mut message = [0u8; MESSAGE_KIND_LEN + HELLO_BODY_LEN];
                 message[0] = MessageKind::Hello as u8;
-                write_handshake_envelope(&mut message[MESSAGE_KIND_LEN..]);
+                let body = &mut message[MESSAGE_KIND_LEN..];
+                write_handshake_envelope(body);
+                body[HANDSHAKE_ENVELOPE_LEN] = capabilities.0;
                 copy_into(&message, out)
             }
-            Message::HelloAck(node_tag) => {
+            Message::HelloAck { tag, capabilities } => {
                 let mut message = [0u8; MESSAGE_KIND_LEN + HELLO_ACK_BODY_LEN];
                 message[0] = MessageKind::HelloAck as u8;
                 let body = &mut message[MESSAGE_KIND_LEN..];
                 write_handshake_envelope(body);
-                body[HANDSHAKE_ENVELOPE_LEN..].copy_from_slice(&node_tag.0);
+                body[HANDSHAKE_ENVELOPE_LEN] = capabilities.0;
+                body[HANDSHAKE_ENVELOPE_LEN + CAPABILITIES_LEN..].copy_from_slice(&tag.0);
                 copy_into(&message, out)
             }
             Message::Data(packet) => {
@@ -119,13 +167,17 @@ pub fn decode_message(payload: &[u8]) -> Result<Message<'_>, MalformedMessage> {
     match MessageKind::from_wire(kind_byte)? {
         MessageKind::Hello => {
             vet_handshake(body, HELLO_BODY_LEN)?;
-            Ok(Message::Hello)
+            Ok(Message::Hello(Capabilities(body[HANDSHAKE_ENVELOPE_LEN])))
         }
         MessageKind::HelloAck => {
             vet_handshake(body, HELLO_ACK_BODY_LEN)?;
+            let capabilities = Capabilities(body[HANDSHAKE_ENVELOPE_LEN]);
             let mut node_tag = [0u8; NODE_TAG_LEN];
-            node_tag.copy_from_slice(&body[HANDSHAKE_ENVELOPE_LEN..]);
-            Ok(Message::HelloAck(NodeTag(node_tag)))
+            node_tag.copy_from_slice(&body[HANDSHAKE_ENVELOPE_LEN + CAPABILITIES_LEN..]);
+            Ok(Message::HelloAck {
+                tag: NodeTag(node_tag),
+                capabilities,
+            })
         }
         MessageKind::Data => {
             if body.len() > MAX_DATA_BYTES {
@@ -160,9 +212,9 @@ pub enum InboundReaction<'a> {
 #[cfg(any(test, feature = "embassy-contract"))]
 pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReaction<'_> {
     match message {
-        Ok(Message::Hello) => InboundReaction::AnswerHandshake,
+        Ok(Message::Hello(_)) => InboundReaction::AnswerHandshake,
         Ok(Message::Data(packet)) => InboundReaction::Deliver(packet),
-        Ok(Message::HelloAck(_)) | Err(_) => InboundReaction::Ignore,
+        Ok(Message::HelloAck { .. }) | Err(_) => InboundReaction::Ignore,
     }
 }
 
@@ -203,23 +255,64 @@ mod tests {
         // Re-parse from an owned copy so the returned borrow can outlive `buf`.
         let owned: std::vec::Vec<u8> = buf[..n].to_vec();
         match decode_message(&owned).expect("decode") {
-            Message::Hello => Message::Hello,
-            Message::HelloAck(tag) => Message::HelloAck(tag),
+            Message::Hello(capabilities) => Message::Hello(capabilities),
+            Message::HelloAck { tag, capabilities } => Message::HelloAck { tag, capabilities },
             Message::Data(_) => unreachable!("test helper not used for data"),
         }
     }
 
     #[test]
     fn hello_round_trips() {
-        assert_eq!(payload_roundtrip(Message::Hello), Message::Hello);
+        assert_eq!(
+            payload_roundtrip(Message::Hello(Capabilities::host())),
+            Message::Hello(Capabilities::host())
+        );
     }
 
     #[test]
-    fn hello_ack_round_trips_with_its_node_tag() {
+    fn hello_ack_round_trips_with_its_node_tag_and_capabilities() {
         let tag = NodeTag([1, 2, 3, 4, 5, 6, 7, 8]);
+        let capabilities = Capabilities::host();
         assert_eq!(
-            payload_roundtrip(Message::HelloAck(tag)),
-            Message::HelloAck(tag)
+            payload_roundtrip(Message::HelloAck { tag, capabilities }),
+            Message::HelloAck { tag, capabilities }
+        );
+    }
+
+    #[test]
+    fn an_unknown_capability_bit_is_preserved_not_rejected() {
+        let raw = Capabilities(0b1000_0000 | Capabilities::HOST_LANE);
+        let tag = NodeTag([9; NODE_TAG_LEN]);
+        assert_eq!(
+            payload_roundtrip(Message::HelloAck {
+                tag,
+                capabilities: raw
+            }),
+            Message::HelloAck {
+                tag,
+                capabilities: raw
+            }
+        );
+        assert!(raw.supports_host_lane());
+    }
+
+    #[test]
+    fn two_capable_hosts_negotiate_the_host_lane() {
+        assert_eq!(
+            PeerProfile::negotiate(Capabilities::host(), Capabilities::host()),
+            PeerProfile::Host
+        );
+    }
+
+    #[test]
+    fn a_peripheral_on_either_side_falls_to_the_peripheral_lane() {
+        assert_eq!(
+            PeerProfile::negotiate(Capabilities::host(), Capabilities::none()),
+            PeerProfile::Peripheral
+        );
+        assert_eq!(
+            PeerProfile::negotiate(Capabilities::none(), Capabilities::host()),
+            PeerProfile::Peripheral
         );
     }
 
@@ -253,6 +346,7 @@ mod tests {
             b'X',
             b'X',
             PROTOCOL_VERSION,
+            0,
         ];
         assert_eq!(decode_message(&frame), Err(MalformedMessage::WrongMagic));
     }
@@ -266,6 +360,7 @@ mod tests {
             MAGIC[2],
             MAGIC[3],
             PROTOCOL_VERSION + 9,
+            0,
         ];
         assert_eq!(
             decode_message(&frame),
@@ -304,7 +399,7 @@ mod tests {
     #[test]
     fn the_device_answers_a_host_probe() {
         assert!(matches!(
-            react_to(Ok(Message::Hello)),
+            react_to(Ok(Message::Hello(Capabilities::host()))),
             InboundReaction::AnswerHandshake
         ));
     }
@@ -322,7 +417,10 @@ mod tests {
     fn the_device_ignores_a_stray_hello_ack() {
         let tag = NodeTag([9; NODE_TAG_LEN]);
         assert!(matches!(
-            react_to(Ok(Message::HelloAck(tag))),
+            react_to(Ok(Message::HelloAck {
+                tag,
+                capabilities: Capabilities::none()
+            })),
             InboundReaction::Ignore
         ));
     }

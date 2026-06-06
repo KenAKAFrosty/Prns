@@ -9,7 +9,7 @@ use mio::{Events, Interest, Poll, Registry, Token, Waker};
 use mio_serial::SerialStream;
 use serialport::SerialPort;
 
-use super::super::core::host_descriptor;
+use super::super::core::{host_descriptor, node_tag_for, Capabilities, NodeTag};
 use super::super::discovery::{Discoverer, PortId, PumpCadence, UsbAutoContext};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InterfaceId, SelfDrivenInterface,
@@ -23,12 +23,13 @@ const WAKE_TOKEN: Token = Token(0);
 const POLL_EVENTS_CAPACITY: usize = 16;
 
 pub fn usb_auto_interface(id: InterfaceId) -> SelfDrivenInterface<impl FnOnce(UsbAutoContext)> {
+    let node_tag = node_tag_for(id);
     SelfDrivenInterface::new(host_descriptor(id), move |ctx| {
-        thread::spawn(move || serve(ctx));
+        thread::spawn(move || serve(ctx, node_tag));
     })
 }
 
-fn serve(mut ctx: UsbAutoContext) {
+fn serve(mut ctx: UsbAutoContext, node_tag: NodeTag) {
     let Ok(mut poll) = Poll::new() else {
         ctx.control.report(ControlReport::Stopped);
         return;
@@ -45,7 +46,7 @@ fn serve(mut ctx: UsbAutoContext) {
     });
 
     let mut events = Events::with_capacity(POLL_EVENTS_CAPACITY);
-    let mut discoverer: Discoverer<SerialStream> = Discoverer::new();
+    let mut discoverer: Discoverer<SerialStream> = Discoverer::new(node_tag, Capabilities::host());
     let mut registered: HashSet<PortId> = HashSet::new();
     let mut next_token = WAKE_TOKEN.0 + 1;
     let mut last_scan: Option<Instant> = None;

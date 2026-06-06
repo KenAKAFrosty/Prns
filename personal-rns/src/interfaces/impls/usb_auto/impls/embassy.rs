@@ -3,8 +3,8 @@ use embassy_time::{with_timeout, Duration};
 use embedded_io_async::{Read, Write};
 
 use super::super::core::{
-    decode_message, react_to, InboundReaction, Message, NodeTag, MAX_DATA_BYTES, MAX_FRAMED_BYTES,
-    MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
+    decode_message, react_to, Capabilities, InboundReaction, Message, NodeTag, MAX_DATA_BYTES,
+    MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
 };
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::substrate::EmbassyHostSubstrate;
@@ -61,7 +61,11 @@ pub async fn serve<R, W, const MAX_BUFFERED_PACKETS: usize>(
                     match react_to(decode_message(frame)) {
                         InboundReaction::AnswerHandshake => {
                             host_link = HostLink::Linked;
-                            if let Ok(m) = Message::HelloAck(node_tag).write_framed(&mut frame_buf)
+                            if let Ok(m) = (Message::HelloAck {
+                                tag: node_tag,
+                                capabilities: Capabilities::none(),
+                            })
+                            .write_framed(&mut frame_buf)
                             {
                                 let _ = with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..m]))
                                     .await;
