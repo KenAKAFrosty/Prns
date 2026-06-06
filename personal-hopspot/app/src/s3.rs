@@ -28,9 +28,14 @@ use static_cell::StaticCell;
 
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::RatchetPolicy;
-use personal_rns::engine::{EngineCycleEntropySeed, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN};
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand,
+    EngineCycleEntropySeed, IssuedCommand, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN,
+};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
+use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
 use personal_rns::interfaces::impls::usb_auto::serve;
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
@@ -126,6 +131,8 @@ static WAKE: WakeSignal = new_wake_signal();
 static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 /// The user button's short/long-press events, from `button_task` to the render loop.
 static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, screen::InputEvent, 4> = Channel::new();
+/// The render loop's issued commands, drained by the engine one per cycle.
+static COMMANDS: Channel<CriticalSectionRawMutex, IssuedCommand, 4> = Channel::new();
 
 /// Platform bring-up, then the Hopspot screen loop. Never returns — its frame holds the
 /// panel-power gate, the OLED, and the battery ADC alive while the spawned tasks (node,
@@ -223,6 +230,16 @@ pub async fn run(spawner: Spawner) {
     let mut vbat_pin =
         adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
     let mut vbat_adc = Adc::new(p.ADC1, adc_cfg);
+
+    // The destination the announce button names: derived from the same fixture
+    // identity the engine answers as, so the command and the registration agree.
+    let self_destination = {
+        let secret_key = fixture_identity_secret_key();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
+        let name = expand_name("lxmf", &["delivery"]).expect("the self-announce name is valid");
+        derive_destination_hash(&identity.identity_hash(), &name)
+    };
+    let mut next_command_id = 0u64;
 
     // The Hopspot screen, event-driven: redraw when engine state moves, the battery
     // cadence elapses, or the button is pressed — whichever first (so it parks between).
@@ -323,7 +340,22 @@ pub async fn run(spawner: Spawner) {
             Either3::Second(()) => {}
             Either3::Third(event) => {
                 // A button press is user activity, so it also un-blanks an idle panel.
-                ui_state.handle_input(event, card_count);
+                let action = ui_state.handle_input(event, card_count);
+                if matches!(action, screen::UiAction::Announce) {
+                    let id = CommandId(next_command_id);
+                    next_command_id = next_command_id.wrapping_add(1);
+                    let queued = COMMANDS.try_send(IssuedCommand {
+                        id,
+                        command: EngineCommand::AnnounceNow(AnnounceNow {
+                            destination: self_destination,
+                            target: AnnounceTarget::AllInterfaces,
+                            app_data: AnnounceAppData::Scheduled,
+                        }),
+                    });
+                    if queued.is_ok() {
+                        WAKE.signal(());
+                    }
+                }
                 last_active = Instant::now();
             }
         }
@@ -333,6 +365,17 @@ pub async fn run(spawner: Spawner) {
 /// The node: build the embassy host, pop the USB-auto responder in, and hand the
 /// recipe to `Prns::run` — the announcing engine + runtime, driven forever. Lives in
 /// one task so the (unnameable) runtime future stays a local.
+// A bring-up fixture identity. The battery sense owns ADC1, so no TRNG can — and the
+// bare RNG without RF isn't trustworthy for a keypair — so the identity is fixed
+// (the oracle vectors' X25519 0x22 ‖ Ed25519 0x11). NEVER ship: every fixture node
+// shares one identity. A real one needs RF-backed entropy (the WiFi pass).
+fn fixture_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+    secret_key[..32].fill(0x22);
+    secret_key[32..].fill(0x11);
+    secret_key
+}
+
 #[embassy_executor::task]
 async fn node_task(
     spawner: Spawner,
@@ -342,13 +385,7 @@ async fn node_task(
     wifi_stack: Stack<'static>,
     wifi_mac: MacAddress,
 ) {
-    // A bring-up fixture identity. The battery sense owns ADC1, so no TRNG can — and the
-    // bare RNG without RF isn't trustworthy for a keypair — so the identity is fixed
-    // (the oracle vectors' X25519 0x22 ‖ Ed25519 0x11). NEVER ship: every fixture node
-    // shares one identity. A real one needs RF-backed entropy (the WiFi pass).
-    let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    secret_key[..32].fill(0x22);
-    secret_key[32..].fill(0x11);
+    let secret_key = fixture_identity_secret_key();
 
     // The embassy contract host owns the shared wake and draws each cycle's announce
     // jitter from the RNG (timing only — its quality is non-critical). No heap: the
@@ -417,7 +454,7 @@ async fn node_task(
             PrnsEvent::AnnounceHeard { .. } => {}
             PrnsEvent::CommandSettled { .. } => {}
         },
-        || None,
+        || COMMANDS.try_receive().ok(),
     )
     .await
 }
