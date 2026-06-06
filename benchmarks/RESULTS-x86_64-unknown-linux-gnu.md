@@ -18,13 +18,13 @@ Same wire bytes through each implementation's real parse → Ed25519 verify → 
 
 | Implementation | Language | Ed25519 backend | Conformance | Ingest throughput | ×ref |
 |----------------|----------|-----------------|-------------|-------------------|------|
+| Prns | Rust | ed25519-dalek 2.2 | _pending_ | _pending_ | — |
 | RNS 1.3.1 _(reference)_ | Python | PyCA cryptography / OpenSSL | _pending_ | _pending_ | — |
-| personal-rns | Rust | ed25519-dalek 2.2 | _pending_ | _pending_ | — |
 
 **Provenance.**
 
+- **Prns** — [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns) · pending
 - **RNS 1.3.1** — [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License · pending
-- **personal-rns** — [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns) · pending
 
 ---
 

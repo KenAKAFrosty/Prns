@@ -48,7 +48,7 @@ fn main() {
     let row = |axis, metric: &str, value: f64, unit: &str| ResultRow {
         scenario: SCENARIO.to_string(),
         scenario_version: VERSION,
-        implementation: "personal-rns".to_string(),
+        implementation: "Prns".to_string(),
         commit: commit.clone(),
         toolchain: toolchain.clone(),
         host: host.clone(),

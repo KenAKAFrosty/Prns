@@ -18,7 +18,7 @@ Same wire bytes through each implementation's real parse → Ed25519 verify → 
 
 | Implementation | Language | Ed25519 backend | Conformance | Ingest throughput | ×ref |
 |----------------|----------|-----------------|-------------|-------------------|------|
-| personal-rns | Rust | ed25519-dalek 2.2 | <img src="assets/check.svg" width="14" alt="conformant" /> 256 / 256 | 47.1k announce/s | 7.0× |
+| Prns | Rust | ed25519-dalek 2.2 | <img src="assets/check.svg" width="14" alt="conformant" /> 256 / 256 | 47.1k announce/s | 7.0× |
 | Leviculum 0.6.3 | Rust | ed25519-dalek 2.2 | <img src="assets/check.svg" width="14" alt="conformant" /> 256 / 256 | 45.4k announce/s | 6.8× |
 | LXMF-rs 0.2.0 | Rust | ed25519-dalek 2.1 | <img src="assets/check.svg" width="14" alt="conformant" /> 256 / 256 | 43.7k announce/s | 6.5× |
 | go-reticulum | Go | Go stdlib crypto/ed25519 | <img src="assets/check.svg" width="14" alt="conformant" /> 256 / 256 | 35.9k announce/s | 5.3× |
@@ -31,7 +31,7 @@ Same wire bytes through each implementation's real parse → Ed25519 verify → 
 
 **Provenance.**
 
-- **personal-rns** — [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns) · 1.96.0 (ac68faa20 2026-05-25)
+- **Prns** — [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns) · 1.96.0 (ac68faa20 2026-05-25)
 - **Leviculum 0.6.3** — [https://codeberg.org/Lew_Palm/leviculum](https://codeberg.org/Lew_Palm/leviculum) @ `6f366ca` · AGPL-3.0-or-later · 1.96.0 (ac68faa20 2026-05-25)
 - **LXMF-rs 0.2.0** — [https://github.com/FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs) @ `30da190` · EPL-2.0 · 1.96.0 (ac68faa20 2026-05-25)
 - **go-reticulum** — [https://github.com/svanichkin/go-reticulum](https://github.com/svanichkin/go-reticulum) @ `06621cc` · MIT · go1.26.4
@@ -48,7 +48,7 @@ Best-of-30 min wall time; the two columns are single-threaded and the same corpu
 
 | Implementation | Language | Conformance | 1 thread | 10 threads |
 |----------------|----------|-------------|--------:|--------:|
-| personal-rns | Rust | <img src="assets/check.svg" width="14" alt="conformant" /> 2560 / 2560 | 43.8k announce/s | 194.2k announce/s |
+| Prns | Rust | <img src="assets/check.svg" width="14" alt="conformant" /> 2560 / 2560 | 43.8k announce/s | 194.2k announce/s |
 | LXMF-rs 0.2.0 | Rust | <img src="assets/check.svg" width="14" alt="conformant" /> 2560 / 2560 | 43.6k announce/s | 191.7k announce/s |
 | Leviculum 0.6.3 | Rust | <img src="assets/check.svg" width="14" alt="conformant" /> 2560 / 2560 | 43.3k announce/s | 190.0k announce/s |
 | go-reticulum | Go | <img src="assets/check.svg" width="14" alt="conformant" /> 2560 / 2560 | 34.5k announce/s | 150.8k announce/s |
@@ -63,7 +63,7 @@ Best-of-30 min wall time; the two columns are single-threaded and the same corpu
 
 **Provenance.**
 
-- **personal-rns** — [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns) · 1.96.0 (ac68faa20 2026-05-25)
+- **Prns** — [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns) · 1.96.0 (ac68faa20 2026-05-25)
 - **LXMF-rs 0.2.0** — [https://github.com/FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs) @ `30da190` · EPL-2.0 · 1.96.0 (ac68faa20 2026-05-25)
 - **Leviculum 0.6.3** — [https://codeberg.org/Lew_Palm/leviculum](https://codeberg.org/Lew_Palm/leviculum) @ `6f366ca` · AGPL-3.0-or-later · 1.96.0 (ac68faa20 2026-05-25)
 - **go-reticulum** — [https://github.com/svanichkin/go-reticulum](https://github.com/svanichkin/go-reticulum) @ `06621cc` · MIT · go1.26.4

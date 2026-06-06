@@ -1,5 +1,5 @@
 {
-  "implementation": "personal-rns",
+  "implementation": "Prns",
   "slug": "personal-rns",
   "language": "Rust",
   "crypto_backend": "ed25519-dalek 2.2",

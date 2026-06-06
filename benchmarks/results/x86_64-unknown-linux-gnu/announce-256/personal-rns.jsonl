@@ -1,2 +1,2 @@
-{"scenario":"announce-256","scenario_version":1,"implementation":"personal-rns","commit":"pending","toolchain":"pending","host":"x86_64-unknown-linux-gnu","axis":"conformance","metric":"routes_resolved","value":null,"unit":"count"}
-{"scenario":"announce-256","scenario_version":1,"implementation":"personal-rns","commit":"pending","toolchain":"pending","host":"x86_64-unknown-linux-gnu","axis":"throughput","metric":"ingest_announces_per_sec","value":null,"unit":"announce/s"}
+{"scenario":"announce-256","scenario_version":1,"implementation":"Prns","commit":"pending","toolchain":"pending","host":"x86_64-unknown-linux-gnu","axis":"conformance","metric":"routes_resolved","value":null,"unit":"count"}
+{"scenario":"announce-256","scenario_version":1,"implementation":"Prns","commit":"pending","toolchain":"pending","host":"x86_64-unknown-linux-gnu","axis":"throughput","metric":"ingest_announces_per_sec","value":null,"unit":"announce/s"}
