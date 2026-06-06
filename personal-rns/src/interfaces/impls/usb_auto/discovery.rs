@@ -70,6 +70,11 @@ impl<Port> Device<Port> {
     }
 }
 
+pub(in crate::interfaces::impls::usb_auto) enum PumpCadence {
+    Busy,
+    Idle,
+}
+
 pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
     devices: Vec<Device<Port>>,
     rejected: Vec<PortId>,
@@ -145,35 +150,57 @@ impl<Port: Read + Write> Discoverer<Port> {
         }
     }
 
-    pub(in crate::interfaces::impls::usb_auto) fn pump(&mut self, ctx: &mut UsbAutoContext) {
-        self.read_devices(&mut ctx.inbound);
+    pub(in crate::interfaces::impls::usb_auto) fn pump(
+        &mut self,
+        ctx: &mut UsbAutoContext,
+    ) -> PumpCadence {
+        let saturated = self.read_devices(&mut ctx.inbound);
         self.dedup_confirmed_links();
         self.fan_out(&mut ctx.outbound);
         self.devices
             .retain(|device| !matches!(device.state, LinkState::Lost));
         self.sync_connection_state(&mut ctx.control);
+        if saturated {
+            PumpCadence::Busy
+        } else {
+            PumpCadence::Idle
+        }
     }
 
-    fn read_devices(&mut self, inbound: &mut impl InboundSink) {
+    fn read_devices(&mut self, inbound: &mut impl InboundSink) -> bool {
         let mut buf = [0u8; READ_CHUNK_BYTES];
+        let mut any_saturated = false;
         for device in &mut self.devices {
+            let mut drained = false;
             for _ in 0..MAX_READS_PER_DEVICE_PER_PUMP {
                 match device.port.read(&mut buf) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        drained = true;
+                        break;
+                    }
                     Ok(n) => {
                         device.ingest_bytes(&buf[..n], inbound);
                         if n < buf.len() {
+                            drained = true;
                             break;
                         }
                     }
-                    Err(ref e) if is_transient(e) => break,
+                    Err(ref e) if is_transient(e) => {
+                        drained = true;
+                        break;
+                    }
                     Err(_) => {
                         device.state = LinkState::Lost;
+                        drained = true;
                         break;
                     }
                 }
             }
+            if !drained {
+                any_saturated = true;
+            }
         }
+        any_saturated
     }
 
     fn dedup_confirmed_links(&mut self) {
@@ -285,6 +312,12 @@ mod tests {
         }
         fn device_sends(&self, msg: Message) {
             self.inbox.lock().unwrap().extend(framed(msg));
+        }
+        fn device_floods_raw(&self, len: usize) {
+            self.inbox
+                .lock()
+                .unwrap()
+                .extend(std::iter::repeat_n(0u8, len));
         }
         fn host_wrote(&self) -> Vec<u8> {
             self.outbox.lock().unwrap().clone()
@@ -669,6 +702,43 @@ mod tests {
         assert!(matches!(
             runtime_handle.next_report(),
             Some(ControlReport::ConnectionState(ConnectionState::Degraded))
+        ));
+    }
+
+    #[test]
+    fn a_saturated_port_asks_for_an_immediate_repump() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            ..
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_floods_raw(READ_CHUNK_BYTES * MAX_READS_PER_DEVICE_PER_PUMP + 1);
+        assert!(matches!(
+            disc.pump(&mut worker_context),
+            PumpCadence::Busy
+        ));
+    }
+
+    #[test]
+    fn a_drained_port_lets_the_worker_idle() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            ..
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_sends(Message::HelloAck(NodeTag([7; 8])));
+        wire.device_sends(Message::Data(&[0x01, 0x02, 0x03]));
+        assert!(matches!(
+            disc.pump(&mut worker_context),
+            PumpCadence::Idle
         ));
     }
 

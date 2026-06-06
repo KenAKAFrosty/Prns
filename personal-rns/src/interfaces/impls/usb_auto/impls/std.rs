@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use super::super::core::host_descriptor;
-use super::super::discovery::{Discoverer, PortId, UsbAutoContext};
+use super::super::discovery::{Discoverer, PortId, PumpCadence, UsbAutoContext};
 use crate::interfaces::{
     ControlCommand, ControlEndpoint, ControlReport, InterfaceId, SelfDrivenInterface,
 };
@@ -12,7 +12,7 @@ use crate::interfaces::{
 /// USB CDC ignores baud, but the serialport API still wants a number.
 const CDC_BAUD: u32 = 115_200;
 const READ_TIMEOUT: Duration = Duration::from_millis(5);
-const SERVICE_INTERVAL: Duration = Duration::from_millis(10);
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SCAN_INTERVAL: Duration = Duration::from_millis(300);
 
 pub fn usb_auto_interface(id: InterfaceId) -> SelfDrivenInterface<impl FnOnce(UsbAutoContext)> {
@@ -29,11 +29,13 @@ fn serve(mut ctx: UsbAutoContext) {
             last_scan = Some(Instant::now());
             discoverer.reconcile_present(&scan_cdc_ports(), open_cdc_port);
         }
-        discoverer.pump(&mut ctx);
+        let cadence = discoverer.pump(&mut ctx);
         if matches!(ctx.control.next_command(), Some(ControlCommand::Stop)) {
             break;
         }
-        thread::sleep(SERVICE_INTERVAL);
+        if matches!(cadence, PumpCadence::Idle) {
+            thread::sleep(IDLE_POLL_INTERVAL);
+        }
     }
     ctx.control.report(ControlReport::Stopped);
 }
