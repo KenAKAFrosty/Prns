@@ -10,7 +10,7 @@ pub use proof::{ProofOwed, WriteProofError};
 pub use self_announce::ReannounceSchedule;
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
-use crate::engine::egress::{write_announce_wire_packet, write_proof_wire_packet};
+use crate::engine::egress::{write_announce_wire_packet, write_implicit_proof_wire_packet};
 use crate::engine::self_announce::{AnnounceConfig, ScheduleAnnounceError, SelfAnnounces};
 use crate::identity::held::{HeldIdentities, HoldIdentityError};
 use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
@@ -171,7 +171,7 @@ impl<S: EngineStorage> EngineState<S> {
     /// identity its transport identity, skipping over the *optionality* of having a
     /// this-node-id at all — a pure repeater may want neither, an app-only node may
     /// want held identities but no transport role. Deliberate for now; re-assess
-    /// when Links/transit land and the transport-id story becomes real (relaying
+    /// when Links/transport land and the transport-id story becomes real (relaying
     /// stamps it into transport headers, and routing a Single beyond one hop may
     /// need it too).
     #[allow(clippy::expect_used)]
@@ -368,7 +368,7 @@ impl<S: EngineStorage> EngineState<S> {
             .get(&owed.identity)
             .ok_or(WriteProofError::IdentityNotHeld)?;
         let signature = identity.sign(owed.packet_hash.as_bytes());
-        write_proof_wire_packet(&owed.packet_hash, &signature, buf)
+        write_implicit_proof_wire_packet(&owed.packet_hash, &signature, buf)
             .map_err(WriteProofError::Serialize)
     }
 
@@ -578,7 +578,6 @@ impl<S: EngineStorage> EngineState<S> {
                     ProofStrategy::ProveAll => Some(ProofOwed {
                         packet_hash,
                         identity,
-                        send_on: source_interface,
                     }),
                     ProofStrategy::ProveNone => None,
                 };
@@ -744,7 +743,7 @@ mod tests {
     use crate::identity::IdentitySigner;
     use crate::interfaces::{
         ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
-        MediumKind, TransitCapability,
+        MediumKind, TransportCapability,
     };
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::storage::FixedInline;
@@ -1528,7 +1527,6 @@ mod tests {
                 maybe_owed_proof: Some(ProofOwed {
                     packet_hash,
                     identity: held,
-                    send_on: InterfaceId::new([0x07; 16]),
                 }),
             },
         );
@@ -1575,7 +1573,6 @@ mod tests {
         let owed = ProofOwed {
             packet_hash: PacketHash::new([0xAA; 32]),
             identity: IdentityHash::new([0x4c; 16]),
-            send_on: InterfaceId::new([0x07; 16]),
         };
         let mut buf = [0u8; MTU];
         assert_eq!(
@@ -1591,7 +1588,6 @@ mod tests {
         let owed = ProofOwed {
             packet_hash: PacketHash::new([0xAA; 32]),
             identity: held,
-            send_on: InterfaceId::new([0x07; 16]),
         };
         let mut buf = [0u8; 8];
         assert_eq!(
@@ -1707,7 +1703,7 @@ mod tests {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
-                egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+                egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,

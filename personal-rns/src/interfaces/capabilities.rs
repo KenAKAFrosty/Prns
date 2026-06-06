@@ -23,20 +23,20 @@ pub enum IngressCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EgressCapability {
     Disabled,
-    Enabled(TransitCapability),
+    Enabled(TransportCapability),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransitCapability {
-    NoTransit,
+pub enum TransportCapability {
+    NoTransport,
     CrossInterfaceOnly,
     SameInterfaceRepeat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceCapabilitiesError {
-    TransitRequiresTransmit,
-    SameInterfaceRepeatRequiresTransit,
+    TransportRequiresTransmit,
+    SameInterfaceRepeatRequiresTransport,
 }
 
 impl InterfaceCapabilities {
@@ -44,15 +44,11 @@ impl InterfaceCapabilities {
         !matches!(self.egress, EgressCapability::Disabled)
     }
 
-    pub const fn allows_local_egress(self) -> bool {
-        self.allows_transmit()
-    }
-
-    pub const fn allows_transit(self) -> bool {
+    pub const fn allows_transport(self) -> bool {
         matches!(
             self.egress,
             EgressCapability::Enabled(
-                TransitCapability::CrossInterfaceOnly | TransitCapability::SameInterfaceRepeat
+                TransportCapability::CrossInterfaceOnly | TransportCapability::SameInterfaceRepeat
             )
         )
     }
@@ -60,7 +56,7 @@ impl InterfaceCapabilities {
     pub const fn allows_same_interface_repeat(self) -> bool {
         matches!(
             self.egress,
-            EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat)
+            EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         )
     }
 }
@@ -81,15 +77,19 @@ impl TryFrom<Capabilities> for InterfaceCapabilities {
             capabilities.repeats,
         ) {
             (false, false, false) => EgressCapability::Disabled,
-            (true, false, false) => EgressCapability::Enabled(TransitCapability::NoTransit),
-            (true, true, false) => EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
-            (true, true, true) => EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat),
-            (false, true, _) => return Err(InterfaceCapabilitiesError::TransitRequiresTransmit),
+            (true, false, false) => EgressCapability::Enabled(TransportCapability::NoTransport),
+            (true, true, false) => {
+                EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly)
+            }
+            (true, true, true) => {
+                EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
+            }
+            (false, true, _) => return Err(InterfaceCapabilitiesError::TransportRequiresTransmit),
             (false, false, true) => {
-                return Err(InterfaceCapabilitiesError::SameInterfaceRepeatRequiresTransit);
+                return Err(InterfaceCapabilitiesError::SameInterfaceRepeatRequiresTransport);
             }
             (true, false, true) => {
-                return Err(InterfaceCapabilitiesError::SameInterfaceRepeatRequiresTransit);
+                return Err(InterfaceCapabilitiesError::SameInterfaceRepeatRequiresTransport);
             }
         };
 
@@ -102,7 +102,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_non_transit_transmit_shape() {
+    fn normalizes_non_transport_transmit_shape() {
         let normalized = InterfaceCapabilities::try_from(Capabilities {
             receives: true,
             transmits: true,
@@ -114,12 +114,12 @@ mod tests {
         assert_eq!(normalized.ingress, IngressCapability::Enabled);
         assert_eq!(
             normalized.egress,
-            EgressCapability::Enabled(TransitCapability::NoTransit)
+            EgressCapability::Enabled(TransportCapability::NoTransport)
         );
     }
 
     #[test]
-    fn normalizes_cross_interface_transit_shape() {
+    fn normalizes_cross_interface_transport_shape() {
         let normalized = InterfaceCapabilities::try_from(Capabilities {
             receives: true,
             transmits: true,
@@ -130,7 +130,7 @@ mod tests {
 
         assert_eq!(
             normalized.egress,
-            EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly)
+            EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly)
         );
     }
 
@@ -146,7 +146,7 @@ mod tests {
 
         assert_eq!(
             normalized.egress,
-            EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat)
+            EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         );
     }
 
@@ -160,21 +160,19 @@ mod tests {
         })
         .unwrap();
         assert!(!disabled.allows_transmit());
-        assert!(!disabled.allows_local_egress());
-        assert!(!disabled.allows_transit());
+        assert!(!disabled.allows_transport());
         assert!(!disabled.allows_same_interface_repeat());
 
-        let local_only = InterfaceCapabilities::try_from(Capabilities {
+        let transmit_only = InterfaceCapabilities::try_from(Capabilities {
             receives: true,
             transmits: true,
             forwards: false,
             repeats: false,
         })
         .unwrap();
-        assert!(local_only.allows_transmit());
-        assert!(local_only.allows_local_egress());
-        assert!(!local_only.allows_transit());
-        assert!(!local_only.allows_same_interface_repeat());
+        assert!(transmit_only.allows_transmit());
+        assert!(!transmit_only.allows_transport());
+        assert!(!transmit_only.allows_same_interface_repeat());
 
         let cross_interface = InterfaceCapabilities::try_from(Capabilities {
             receives: true,
@@ -183,7 +181,7 @@ mod tests {
             repeats: false,
         })
         .unwrap();
-        assert!(cross_interface.allows_transit());
+        assert!(cross_interface.allows_transport());
         assert!(!cross_interface.allows_same_interface_repeat());
 
         let same_interface = InterfaceCapabilities::try_from(Capabilities {
@@ -193,12 +191,12 @@ mod tests {
             repeats: true,
         })
         .unwrap();
-        assert!(same_interface.allows_transit());
+        assert!(same_interface.allows_transport());
         assert!(same_interface.allows_same_interface_repeat());
     }
 
     #[test]
-    fn rejects_transit_without_transmit() {
+    fn rejects_transport_without_transmit() {
         assert_eq!(
             InterfaceCapabilities::try_from(Capabilities {
                 receives: true,
@@ -206,12 +204,12 @@ mod tests {
                 forwards: true,
                 repeats: false,
             }),
-            Err(InterfaceCapabilitiesError::TransitRequiresTransmit)
+            Err(InterfaceCapabilitiesError::TransportRequiresTransmit)
         );
     }
 
     #[test]
-    fn rejects_same_interface_repeat_without_transit() {
+    fn rejects_same_interface_repeat_without_transport() {
         assert_eq!(
             InterfaceCapabilities::try_from(Capabilities {
                 receives: true,
@@ -219,7 +217,7 @@ mod tests {
                 forwards: false,
                 repeats: true,
             }),
-            Err(InterfaceCapabilitiesError::SameInterfaceRepeatRequiresTransit)
+            Err(InterfaceCapabilitiesError::SameInterfaceRepeatRequiresTransport)
         );
     }
 }

@@ -17,7 +17,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
     ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransitCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransportCapability,
 };
 
 /// RNode's on-air link header is one byte (`HEADER_L` in the firmware).
@@ -189,7 +189,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat),
+            egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::SharedHalfDuplex,
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(d.capabilities.ingress, IngressCapability::Enabled);
         assert_eq!(
             d.capabilities.egress,
-            EgressCapability::Enabled(TransitCapability::SameInterfaceRepeat)
+            EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         );
     }
 }

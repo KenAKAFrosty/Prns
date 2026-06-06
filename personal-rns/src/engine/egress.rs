@@ -1,10 +1,11 @@
 use crate::crypto::Ed25519Signature;
+use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
-    WirePacketHeader, HEADER_MIN_LEN, SIGNATURE_LEN,
+    WirePacketHeader, HEADER_MIN_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,11 +54,15 @@ pub fn write_announce_wire_packet(
     Ok(total_len)
 }
 
-/// RNS 1.3.1 `Identity.prove` in its implicit form (the reference default):
-/// a proof packet is addressed to the proved packet's truncated hash and its
-/// whole payload is the 64-byte signature over the full hash. Proofs are
-/// never encrypted (`ProofDestination.encrypt` is the identity function).
-pub fn write_proof_wire_packet(
+/// RNS 1.3.1 `Identity.prove` in its implicit form — the reference default
+/// (`use_implicit_proof`, a node-global config that virtually every deployed
+/// node leaves on): a proof packet is addressed to the proved packet's
+/// truncated hash and its whole payload is the 64-byte signature over the
+/// full hash. The explicit form (hash ‖ signature) is a different wire shape
+/// with its own writer if that knob is ever wanted; receivers accept both.
+/// Proofs are never encrypted (`ProofDestination.encrypt` is the identity
+/// function).
+pub fn write_implicit_proof_wire_packet(
     packet_hash: &PacketHash,
     signature: &Ed25519Signature,
     buf: &mut [u8],
@@ -73,15 +78,14 @@ pub fn write_proof_wire_packet(
         destination: packet_hash.proof_destination(),
         context: WireContext::None,
     };
-    let total_len = HEADER_MIN_LEN + SIGNATURE_LEN;
-    if buf.len() < total_len {
+    if buf.len() < IMPLICIT_PROOF_WIRE_LEN {
         return Err(EgressSerializeError::BufferTooShort);
     }
     header
         .write(&mut buf[..HEADER_MIN_LEN])
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
-    buf[HEADER_MIN_LEN..total_len].copy_from_slice(&signature.0);
-    Ok(total_len)
+    buf[HEADER_MIN_LEN..IMPLICIT_PROOF_WIRE_LEN].copy_from_slice(&signature.0);
+    Ok(IMPLICIT_PROOF_WIRE_LEN)
 }
 
 #[allow(clippy::large_enum_variant)]

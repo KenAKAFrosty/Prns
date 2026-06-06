@@ -15,7 +15,7 @@ mod worker;
 
 pub use capabilities::{
     Capabilities, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceCapabilitiesError, TransitCapability,
+    InterfaceCapabilitiesError, TransportCapability,
 };
 pub use connection_state::ConnectionState;
 pub use id::InterfaceId;

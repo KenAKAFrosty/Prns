@@ -20,7 +20,7 @@ use heapless::{String as HString, Vec as HVec};
 use crate::crypto::sha256;
 use crate::interfaces::{
     ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, MediumKind, TransitCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, MediumKind, TransportCapability,
 };
 
 pub const GROUP_ID: &[u8] = b"reticulum";
@@ -52,7 +52,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::Multicast,

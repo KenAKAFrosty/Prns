@@ -17,14 +17,13 @@ pub const RATCHET_LEN: usize = 32;
 
 pub const SIGNATURE_LEN: usize = 64;
 
-/// The type-1 (direct, no transport id) header: flags, hops, destination,
-/// context — the smallest header a packet carries on the wire.
+/// The type-1 (direct, no transport id) header: flags, hops, destination, context
 pub const HEADER_MIN_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
 
 /// The type-2 (transport-routed) header: flags, hops, transport id,
 /// destination, context. Outbound payload budgets reserve this even when
 /// emitting type-1, because a relay re-emits the packet with the transport id
-/// added — RNS 1.3.1 `Reticulum.HEADER_MAXSIZE`.
+/// added. RNS 1.3.1 `Reticulum.HEADER_MAXSIZE`.
 pub const HEADER_MAX_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN * 2 + 1;
 
 /// RNS 1.3.1 `Reticulum.IFAC_MIN_SIZE`: the smallest per-interface access-code

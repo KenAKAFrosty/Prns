@@ -1,7 +1,7 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::{
     ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransitCapability,
+    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransportCapability,
 };
 use crate::wire::MTU;
 
@@ -170,7 +170,7 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
@@ -183,7 +183,7 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,

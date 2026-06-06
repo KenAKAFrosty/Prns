@@ -4,9 +4,10 @@ use super::core::TrafficLedger;
 use super::event::PrnsEvent;
 use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
+use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
     AnnounceIngest, EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome,
-    InstantMillis, NextScheduledEngineWork,
+    InstantMillis, NextScheduledEngineWork, ProofOwed,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -21,14 +22,21 @@ pub struct RuntimeStepOutput {
     pub accepted_announce_count: usize,
     pub scheduled_rebroadcast_count: usize,
     pub delivered_count: usize,
+    pub emitted_proof_count: usize,
     pub egress_directive_count: usize,
     pub next_poll: NextScheduledInterfaceWake,
 }
 
 #[derive(Clone, Copy)]
 enum FanoutClass {
-    LocalOriginated,
-    Transit,
+    SelfOriginated,
+    Transported,
+}
+
+enum InboundStep {
+    LaneDry,
+    NothingOwed,
+    OwesProof(ProofOwed),
 }
 
 pub struct Runtime<Ho, I, S>
@@ -153,29 +161,67 @@ where
     let mut accepted_announce_count = 0;
     let mut scheduled_rebroadcast_count = 0;
     let mut delivered_count = 0;
+    let mut emitted_proof_count = 0;
     for interface in interfaces.iter_mut() {
-        let id = interface.descriptor().id;
-        interface.drain_inbound(|packet| {
-            traffic.add_rx(id, packet.bytes.len() as u64);
-            ingested_packet_count += 1;
-            match engine.ingest_packet(packet, entropy.jitter) {
-                IngestPacketOutcome::Announce(AnnounceIngest::Accepted) => {
-                    accepted_announce_count += 1;
-                    scheduled_rebroadcast_count += 1;
+        let descriptor = interface.descriptor();
+        let id = descriptor.id;
+        let answers_proofs = matches!(
+            descriptor.state,
+            ConnectionState::Connected | ConnectionState::Degraded
+        ) && descriptor.capabilities.allows_transmit();
+
+        // One packet per step: between steps the interface is free again, so a
+        // delivery's owed proof is answered on the lane it arrived through
+        // before the next packet is taken. This happens per-packet, in arrival order,
+        // mirroring the reference's own receive-then-prove rhythm.
+        loop {
+            let step = match interface.next_inbound(|packet| {
+                traffic.add_rx(id, packet.bytes.len() as u64);
+                ingested_packet_count += 1;
+                match engine.ingest_packet(packet, entropy.jitter) {
+                    IngestPacketOutcome::Announce(AnnounceIngest::Accepted) => {
+                        accepted_announce_count += 1;
+                        scheduled_rebroadcast_count += 1;
+                        None
+                    }
+                    IngestPacketOutcome::Announce(
+                        AnnounceIngest::HeldForRetry | AnnounceIngest::Ignored,
+                    ) => None,
+                    IngestPacketOutcome::Delivery {
+                        delivery,
+                        maybe_owed_proof,
+                    } => {
+                        delivered_count += 1;
+                        on_event(PrnsEvent::Delivered(delivery));
+                        maybe_owed_proof
+                    }
+                    IngestPacketOutcome::Ignored => None,
                 }
-                IngestPacketOutcome::Announce(
-                    AnnounceIngest::HeldForRetry | AnnounceIngest::Ignored,
-                ) => {}
-                IngestPacketOutcome::Delivery {
-                    delivery,
-                    maybe_owed_proof: _,
-                } => {
-                    delivered_count += 1;
-                    on_event(PrnsEvent::Delivered(delivery));
+            }) {
+                None => InboundStep::LaneDry,
+                Some(None) => InboundStep::NothingOwed,
+                Some(Some(owed)) => InboundStep::OwesProof(owed),
+            };
+
+            match step {
+                InboundStep::LaneDry => break,
+                InboundStep::NothingOwed => {}
+                InboundStep::OwesProof(_) if !answers_proofs => {}
+                InboundStep::OwesProof(owed) => {
+                    let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+                    if let Ok(n) = engine.write_proof(&owed, &mut proof) {
+                        let sent = interface.send_with(|buf| {
+                            buf[..n].copy_from_slice(&proof[..n]);
+                            n
+                        });
+                        if sent.is_ok() {
+                            traffic.add_tx(id, n as u64);
+                            emitted_proof_count += 1;
+                        }
+                    }
                 }
-                IngestPacketOutcome::Ignored => {}
             }
-        });
+        }
     }
 
     let tick_output = engine.tick(now, entropy.jitter);
@@ -195,7 +241,7 @@ where
                     .expect("MTU-sized buf fits any valid wire packet")
             },
             directive.fire_on(),
-            FanoutClass::Transit,
+            FanoutClass::Transported,
         );
     }
     tick_output.commit();
@@ -216,7 +262,7 @@ where
                     n
                 },
                 engine.registered_interfaces(),
-                FanoutClass::LocalOriginated,
+                FanoutClass::SelfOriginated,
             );
         }
     }
@@ -230,6 +276,7 @@ where
         accepted_announce_count,
         scheduled_rebroadcast_count,
         delivered_count,
+        emitted_proof_count,
         egress_directive_count,
         next_poll,
     }
@@ -256,8 +303,8 @@ fn fan_to_handles<I>(
                 ConnectionState::Connected | ConnectionState::Degraded
             )
             && match fanout_class {
-                FanoutClass::LocalOriginated => descriptor.capabilities.allows_local_egress(),
-                FanoutClass::Transit => descriptor.capabilities.allows_transit(),
+                FanoutClass::SelfOriginated => descriptor.capabilities.allows_transmit(),
+                FanoutClass::Transported => descriptor.capabilities.allows_transport(),
             };
         if eligible {
             match started.send_with(&write_packet) {
@@ -317,7 +364,7 @@ mod tests {
     use crate::interfaces::{
         ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
         IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
-        InterfaceMode, MediumKind, StartedInterface, TransitCapability,
+        InterfaceMode, MediumKind, StartedInterface, TransportCapability,
     };
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::delivery::Delivery;
@@ -385,7 +432,7 @@ mod tests {
         descriptor_with_capabilities(
             id,
             state,
-            EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+            EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         )
     }
 
@@ -584,10 +631,96 @@ mod tests {
         );
 
         assert_eq!(out.delivered_count, 1);
+        assert_eq!(out.emitted_proof_count, 0);
         assert_eq!(
             delivered,
             std::vec![(destination, b"hello-through-the-stack".to_vec())],
         );
+        assert_eq!(
+            runtime.interfaces()[0].handle.sent,
+            std::vec::Vec::<std::vec::Vec<u8>>::new(),
+        );
+    }
+
+    #[test]
+    fn a_prove_all_delivery_answers_with_the_proof_on_the_arriving_interface() {
+        use crate::crypto::X25519SecretKey;
+        use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::{IdentitySigner, RemoteIdentity, Zeroizing};
+        use crate::routing::dedup::PacketHash;
+        use crate::wire::{
+            ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, MTU,
+        };
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        let secret = Zeroizing::new(secret);
+
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+        let mut engine = EngineState::<Cap>::new(secret);
+        let destination = engine
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+            )
+            .unwrap();
+
+        let remote = RemoteIdentity::from_public_keys(
+            identity.encryption_public_key(),
+            identity.signing_public_key(),
+        );
+        let header = crate::wire::WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination,
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        let sealed = remote
+            .encrypt(
+                &X25519SecretKey::new([0x77; 32]),
+                &[0x88; 16],
+                b"prove-through-the-stack",
+                &mut wire[header_len..],
+            )
+            .unwrap();
+        let raw = wire[..header_len + sealed].to_vec();
+        let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
+
+        let source = iface(0xA1);
+        let arrival = InstantMillis(1_000);
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(source, std::vec![(arrival, raw)])]),
+            (),
+        );
+
+        let out = runtime.cycle_once(
+            InstantMillis(arrival.0 + 1),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_event| {},
+        );
+        assert_eq!(out.delivered_count, 1);
+        assert_eq!(out.emitted_proof_count, 1);
+
+        let mut expected = std::vec::Vec::new();
+        expected.push(0x03);
+        expected.push(0x00);
+        expected.extend_from_slice(packet_hash.proof_destination().as_bytes());
+        expected.push(0x00);
+        expected.extend_from_slice(&identity.sign(packet_hash.as_bytes()).0);
+        assert_eq!(expected.len(), IMPLICIT_PROOF_WIRE_LEN);
+        assert_eq!(runtime.interfaces()[0].handle.sent, std::vec![expected]);
     }
 
     #[test]
@@ -761,7 +894,7 @@ mod tests {
                 bytes.len()
             },
             &[connected, failed],
-            FanoutClass::Transit,
+            FanoutClass::Transported,
         );
 
         assert_eq!(
@@ -774,24 +907,24 @@ mod tests {
     }
 
     #[test]
-    fn fanout_distinguishes_local_only_from_transit_interfaces() {
-        let local_only = iface(0x11);
-        let transit = iface(0x22);
+    fn fanout_distinguishes_transmit_only_from_transport_interfaces() {
+        let transmit_only = iface(0x11);
+        let transport = iface(0x22);
         let mut interfaces = interface_set([
             started_with_descriptor_and_reports(
                 descriptor_with_capabilities(
-                    local_only,
+                    transmit_only,
                     ConnectionState::Connected,
-                    EgressCapability::Enabled(TransitCapability::NoTransit),
+                    EgressCapability::Enabled(TransportCapability::NoTransport),
                 ),
                 std::vec::Vec::new(),
                 [],
             ),
             started_with_descriptor_and_reports(
                 descriptor_with_capabilities(
-                    transit,
+                    transport,
                     ConnectionState::Connected,
-                    EgressCapability::Enabled(TransitCapability::CrossInterfaceOnly),
+                    EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
                 ),
                 std::vec::Vec::new(),
                 [],
@@ -808,8 +941,8 @@ mod tests {
             &mut interfaces,
             &mut traffic,
             write_packet,
-            &[local_only, transit],
-            FanoutClass::Transit,
+            &[transmit_only, transport],
+            FanoutClass::Transported,
         );
 
         assert!(interfaces.as_slice()[0].handle.sent.is_empty());
@@ -817,15 +950,15 @@ mod tests {
             interfaces.as_slice()[1].handle.sent,
             std::vec![bytes.to_vec()]
         );
-        assert_eq!(traffic.totals_for(local_only), (0, 0));
-        assert_eq!(traffic.totals_for(transit), (0, bytes.len() as u64));
+        assert_eq!(traffic.totals_for(transmit_only), (0, 0));
+        assert_eq!(traffic.totals_for(transport), (0, bytes.len() as u64));
 
         fan_to_handles(
             &mut interfaces,
             &mut traffic,
             write_packet,
-            &[local_only, transit],
-            FanoutClass::LocalOriginated,
+            &[transmit_only, transport],
+            FanoutClass::SelfOriginated,
         );
 
         assert_eq!(
@@ -836,7 +969,7 @@ mod tests {
             interfaces.as_slice()[1].handle.sent,
             std::vec![bytes.to_vec(), bytes.to_vec()]
         );
-        assert_eq!(traffic.totals_for(local_only), (0, bytes.len() as u64));
-        assert_eq!(traffic.totals_for(transit), (0, 2 * bytes.len() as u64));
+        assert_eq!(traffic.totals_for(transmit_only), (0, bytes.len() as u64));
+        assert_eq!(traffic.totals_for(transport), (0, 2 * bytes.len() as u64));
     }
 }
