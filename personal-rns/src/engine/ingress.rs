@@ -864,10 +864,7 @@ mod tests {
             },
             TEST_ENTROPY,
         );
-        assert_eq!(
-            first,
-            IngestPacketOutcome::Announce(AnnounceIngest::Accepted)
-        );
+        assert_eq!(first, raw_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
 
         let second = state.ingest_packet(
@@ -898,7 +895,7 @@ mod tests {
             },
             TEST_ENTROPY,
         );
-        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
+        assert_eq!(out, raw_announce_accepted(128));
 
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
@@ -932,7 +929,7 @@ mod tests {
             },
             TEST_ENTROPY,
         );
-        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
+        assert_eq!(out, raw_announce_accepted(1));
 
         let retained = state
             .routing_table
@@ -999,9 +996,17 @@ use crate::routing::{DropCause, UpsertRouteOutcome};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceIngest {
-    Accepted,
+    Accepted(AcceptedAnnounce),
     HeldForRetry,
     Ignored,
+}
+
+/// The route an accepted announce just took — what an app needs to discover
+/// the peer behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcceptedAnnounce {
+    pub destination: DestinationHash,
+    pub hops: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1187,7 +1192,10 @@ impl<S: EngineStorage> EngineState<S> {
                     InstantMillis(arrived_at.0.saturating_add(offset)),
                     source_interface,
                 );
-                AnnounceIngest::Accepted
+                AnnounceIngest::Accepted(AcceptedAnnounce {
+                    destination: announce.destination,
+                    hops: received_hops,
+                })
             }
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
                 use crate::routing::announce::held_cache::{HoldReason, ParkOutcome};

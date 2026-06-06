@@ -220,9 +220,14 @@ where
                 traffic.add_rx(id, packet.bytes.len() as u64);
                 ingested_packet_count += 1;
                 match engine.ingest_packet(packet, jitter) {
-                    IngestPacketOutcome::Announce(AnnounceIngest::Accepted) => {
+                    IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
                         accepted_announce_count += 1;
                         scheduled_rebroadcast_count += 1;
+                        on_event(PrnsEvent::AnnounceHeard {
+                            destination: accepted.destination,
+                            hops: accepted.hops,
+                            source_interface: id,
+                        });
                         None
                     }
                     IngestPacketOutcome::Announce(
@@ -738,7 +743,7 @@ mod tests {
                 PrnsEvent::Delivered(Delivery::Single(_)) => {
                     panic!("a plain packet must never surface as a single delivery")
                 }
-                PrnsEvent::SnapshotUpdated(_) => {}
+                PrnsEvent::SnapshotUpdated(_) | PrnsEvent::AnnounceHeard { .. } => {}
                 PrnsEvent::CommandSettled { id, settlement } => {
                     panic!("no command was queued, yet one settled: {id:?} {settlement:?}")
                 }
@@ -828,7 +833,7 @@ mod tests {
                 PrnsEvent::Delivered(Delivery::Plain(_)) => {
                     panic!("a sealed single packet must never surface as plain")
                 }
-                PrnsEvent::SnapshotUpdated(_) => {}
+                PrnsEvent::SnapshotUpdated(_) | PrnsEvent::AnnounceHeard { .. } => {}
                 PrnsEvent::CommandSettled { id, settlement } => {
                     panic!("no command was queued, yet one settled: {id:?} {settlement:?}")
                 }
@@ -1484,6 +1489,49 @@ mod tests {
         expected.extend_from_slice(&identity.sign(packet_hash.as_bytes()).0);
         assert_eq!(expected.len(), IMPLICIT_PROOF_WIRE_LEN);
         assert_eq!(runtime.interfaces()[0].handle.sent, std::vec![expected]);
+    }
+
+    #[test]
+    fn an_accepted_announce_surfaces_as_announce_heard() {
+        let raw = hx(RAW_ANNOUNCE);
+        let source = iface(0xA1);
+        let engine = EngineState::<Cap>::default();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(
+                source,
+                std::vec![(InstantMillis(1_000), raw.clone())],
+            )]),
+            (),
+        );
+
+        let mut heard = std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(1_100),
+            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |event| {
+                if let PrnsEvent::AnnounceHeard {
+                    destination,
+                    hops,
+                    source_interface,
+                } = event
+                {
+                    heard.push((destination, hops, source_interface));
+                }
+            },
+            || None,
+        );
+
+        assert_eq!(out.accepted_announce_count, 1);
+        assert_eq!(
+            heard,
+            std::vec![(
+                DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()),
+                1,
+                source,
+            )],
+            "discovery: the accepted announce names its destination, hop count, and arrival lane",
+        );
     }
 
     #[test]

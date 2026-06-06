@@ -162,6 +162,17 @@ fn run_engine(
                     delivery.plaintext.len(),
                 );
             }
+            PrnsEvent::AnnounceHeard {
+                destination,
+                hops,
+                source_interface,
+            } => {
+                println!(
+                    "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
+                    destination.as_bytes(),
+                    source_interface.as_bytes(),
+                );
+            }
             PrnsEvent::CommandSettled { id, settlement } => {
                 println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
             }

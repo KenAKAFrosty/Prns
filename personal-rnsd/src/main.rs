@@ -16,17 +16,17 @@ use std::io;
 use std::time::Duration;
 
 use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::ReannounceSchedule;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::std_serial_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
-use personal_rns::engine::RatchetPolicy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::routing::delivery::Delivery;
-use personal_rns::runtime::{block_on, StartingDestinationConfig, Prns, PrnsEvent, Recipe};
+use personal_rns::runtime::{block_on, Prns, PrnsEvent, Recipe, StartingDestinationConfig};
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
@@ -147,6 +147,17 @@ fn main() {
                     announced_routes = routes;
                     println!("RNSD_USB_RX_ANNOUNCE routes={routes}");
                 }
+            }
+            PrnsEvent::AnnounceHeard {
+                destination,
+                hops,
+                source_interface,
+            } => {
+                println!(
+                    "RNSD_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
+                    destination.as_bytes(),
+                    source_interface.as_bytes(),
+                );
             }
             PrnsEvent::CommandSettled { .. } => {}
         },

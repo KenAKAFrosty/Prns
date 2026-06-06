@@ -415,6 +415,7 @@ async fn node_task(
         move |event: PrnsEvent<'_>| match event {
             PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
             PrnsEvent::Delivered(_) => {}
+            PrnsEvent::AnnounceHeard { .. } => {}
             PrnsEvent::CommandSettled { .. } => {}
         },
         || None,

@@ -32,6 +32,15 @@ pub(crate) const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d731400022
                                 7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
                                 4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
 
+pub(crate) fn raw_announce_accepted(hops: u8) -> IngestPacketOutcome<'static> {
+    IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+        destination: DestinationHash::new(
+            hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap(),
+        ),
+        hops,
+    }))
+}
+
 pub(crate) const RAW_SEALED_FOR_PROOF: &str =
     "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
      a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\

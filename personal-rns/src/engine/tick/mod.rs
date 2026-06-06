@@ -146,7 +146,6 @@ impl<S: EngineStorage> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{AnnounceIngest, IngestPacketOutcome};
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::interfaces::InboundPacket;
     use crate::routing::announce::{Announce, AnnounceId};
@@ -261,7 +260,7 @@ mod tests {
             },
             TEST_ENTROPY,
         );
-        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted));
+        assert_eq!(out, raw_announce_accepted(1));
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
         let (tick_out, emitted) = tick_capture(

@@ -195,6 +195,12 @@ mod tests {
         wire: &[u8],
         arrival: crate::interfaces::InterfaceId,
     ) {
+        let (header, _) =
+            WirePacketHeader::parse(wire).expect("the announce fixture is a parseable wire packet");
+        let announced = crate::engine::AcceptedAnnounce {
+            destination: header.destination,
+            hops: header.hops + 1,
+        };
         let mut raw = wire.to_vec();
         let outcome = state.ingest_packet(
             InboundPacket {
@@ -206,7 +212,7 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            IngestPacketOutcome::Announce(AnnounceIngest::Accepted),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(announced)),
             "the announce fixture must take a route before sending",
         );
     }
