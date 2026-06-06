@@ -1,0 +1,10 @@
+{
+  "implementation": "RetiNet 0.9.4",
+  "slug": "retinet",
+  "language": "Python",
+  "crypto_backend": "PyCA cryptography / OpenSSL",
+  "role": "external",
+  "repo": "https://codeberg.org/skyguy/retinet",
+  "pinned_ref": "6039094",
+  "license": "AGPL-3.0-or-later"
+}

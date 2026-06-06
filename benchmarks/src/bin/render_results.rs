@@ -1,20 +1,28 @@
 //! Render the benchmark tables from the result substrate (`results/<host>/<scenario>/
-//! <impl>.jsonl`). Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index
-//! that links to them (md->md links that resolve on GitHub). The website renders the same
-//! files, so the tables can't drift between GitHub and the site.
+//! <impl>.jsonl`) joined with the implementation registry (`implementations/<slug>.json`).
+//! Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index that links to
+//! them. The website renders the same files, so the tables can't drift between GitHub and
+//! the site.
+//!
+//! Per scenario, the page is a **cross-implementation comparison**: every implementation
+//! that filed a figure for this host, sorted by ingest throughput, with its language,
+//! Ed25519 backend, conformance, and speed relative to the Python reference. announce-256
+//! is ~97% Ed25519 verify, so the ranking is a crypto-backend story.
 //!
 //! `--check` re-renders every file and diffs against what's committed — the drift gate,
 //! mirroring `gen_corpus --check`. Generated, never hand-edited.
 //!
 //! Run: `cargo run --release --bin render_results [--check]`
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use benchmarks::{load_all_rows, load_host, scenario_dir, Axis, ResultRow};
-
-const PERSONAL_RNS: &str = "personal-rns";
+use benchmarks::{
+    load_all_rows, load_host, load_implementations, scenario_dir, Axis, ImplementationDescriptor,
+    ImplementationRole, ResultRow,
+};
 
 // Committed SVGs (benchmarks/assets/, mirrored to the site's public/assets/) — GitHub
 // strips inline <svg> but renders <img> to a sanitized SVG file, and the same relative
@@ -52,6 +60,7 @@ fn bench_dir() -> PathBuf {
 
 /// The index (`RESULTS.md`) plus one `RESULTS-<host>.md` per host.
 fn render_all() -> Vec<(PathBuf, String)> {
+    let impls = load_implementations();
     let mut by_host: BTreeMap<String, Vec<ResultRow>> = BTreeMap::new();
     for row in load_all_rows() {
         by_host.entry(row.host.clone()).or_default().push(row);
@@ -61,7 +70,7 @@ fn render_all() -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     let mut hosts = Vec::new();
     for (host, rows) in &by_host {
-        files.push((dir.join(format!("RESULTS-{host}.md")), render_host(host, rows)));
+        files.push((dir.join(format!("RESULTS-{host}.md")), render_host(host, rows, &impls)));
         hosts.push((host.clone(), measured(rows), machine_label(host)));
     }
     files.push((dir.join("RESULTS.md"), render_index(&hosts)));
@@ -90,7 +99,7 @@ fn render_index(hosts: &[(String, bool, String)]) -> String {
     out
 }
 
-fn render_host(host: &str, rows: &[ResultRow]) -> String {
+fn render_host(host: &str, rows: &[ResultRow], impls: &[ImplementationDescriptor]) -> String {
     let mut out = String::new();
     let _ = write!(out, "# Benchmark results — `{host}`\n\n[← All hosts](RESULTS.md)\n");
     render_machine(&mut out, host);
@@ -100,7 +109,7 @@ fn render_host(host: &str, rows: &[ResultRow]) -> String {
         by_scenario.entry(row.scenario.clone()).or_default().push(row);
     }
     for (scenario, srows) in &by_scenario {
-        render_scenario(&mut out, scenario, srows);
+        render_scenario(&mut out, scenario, srows, impls);
     }
     out.push_str(HOST_FOOTNOTES);
     out
@@ -143,85 +152,163 @@ fn gib(bytes: u64) -> String {
     format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
 }
 
-fn render_scenario(out: &mut String, scenario: &str, rows: &[&ResultRow]) {
+/// One implementation's figures for a scenario, joined with its descriptor.
+struct Comparison<'a> {
+    name: String,
+    descriptor: Option<&'a ImplementationDescriptor>,
+    conformance: Option<f64>,
+    throughput: Option<f64>,
+    toolchain: String,
+}
+
+/// The cross-implementation comparison: every implementation that filed a figure for this
+/// (host, scenario), sorted by ingest throughput, with the Python reference's throughput as
+/// the `×ref` anchor.
+fn render_scenario(
+    out: &mut String,
+    scenario: &str,
+    rows: &[&ResultRow],
+    impls: &[ImplementationDescriptor],
+) {
     let manifest = Manifest::load(scenario);
-    let impls = impl_columns(rows);
-    let axes = axes_present(rows);
+    let entries = comparisons(rows, impls);
+    let reference_throughput = impls
+        .iter()
+        .find(|d| d.role == ImplementationRole::Reference)
+        .and_then(|d| entries.iter().find(|e| e.name == d.implementation))
+        .and_then(|e| e.throughput);
 
     let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
     if !manifest.description.is_empty() {
         let _ = writeln!(out, "{}\n", manifest.description);
     }
+    out.push_str(
+        "Same wire bytes through each implementation's real parse → Ed25519 verify → store \
+         path, best-of-50 min wall time. This axis is ~97% Ed25519 verify, so the ranking is a \
+         crypto-backend story; figures are comparable only within this host.\n\n",
+    );
 
-    let _ = write!(out, "| Axis | Scope |");
-    for name in &impls {
-        let _ = write!(out, " {name} |");
-    }
-    out.push_str("\n|------|-------|");
-    for _ in &impls {
-        out.push_str("------|");
-    }
-    out.push('\n');
+    out.push_str(
+        "| Implementation | Language | Ed25519 backend | Conformance | Ingest throughput | ×ref |\n",
+    );
+    out.push_str(
+        "|----------------|----------|-----------------|-------------|-------------------|------|\n",
+    );
+    let mut any_partial = false;
+    for entry in &entries {
+        let language = entry.descriptor.map_or("—", |d| d.language.as_str());
+        let backend = entry.descriptor.map_or("—", |d| d.crypto_backend.as_str());
+        let is_reference = entry.descriptor.is_some_and(|d| d.role == ImplementationRole::Reference);
+        let partial = entry.descriptor.and_then(|d| d.maturity.as_deref()) == Some("partial");
+        any_partial |= partial;
 
-    for axis in axes {
-        let _ = write!(out, "| {} | {} |", axis.title(), axis.comparability().label());
-        for name in &impls {
-            let row = rows
-                .iter()
-                .find(|r| &r.implementation == name && r.axis == axis)
-                .copied();
-            let _ = write!(out, " {} |", cell(row, axis, manifest.expected_routes));
+        let mut label = entry.name.clone();
+        if is_reference {
+            label.push_str(" _(reference)_");
         }
-        out.push('\n');
+        if partial {
+            label.push_str(" †");
+        }
+        let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
+        let throughput = entry
+            .throughput
+            .map(|t| format!("{} announce/s", humanize(t)))
+            .unwrap_or_else(pending);
+        let relative = match (entry.throughput, reference_throughput) {
+            (Some(t), Some(r)) if r > 0.0 => format!("{:.1}×", t / r),
+            _ => "—".to_string(),
+        };
+        let _ = writeln!(
+            out,
+            "| {label} | {language} | {backend} | {conformance} | {throughput} | {relative} |"
+        );
     }
 
-    out.push('\n');
-    for name in &impls {
-        if let Some(row) = rows.iter().find(|r| &r.implementation == name) {
-            let _ = writeln!(out, "- **{name}** — {}, {}, {}", row.commit, row.toolchain, row.host);
+    if any_partial {
+        out.push_str(
+            "\n† Marked partial / not-yet-feature-complete on the upstream maturity list — \
+             included as a data point, not part of the feature-complete tier.\n",
+        );
+    }
+
+    render_provenance(out, &entries);
+}
+
+/// Collect each implementation's conformance + throughput figures and join with its
+/// descriptor, sorted by throughput descending (unmeasured last, then by name).
+fn comparisons<'a>(
+    rows: &[&ResultRow],
+    impls: &'a [ImplementationDescriptor],
+) -> Vec<Comparison<'a>> {
+    let mut figures: BTreeMap<String, (Option<f64>, Option<f64>, String)> = BTreeMap::new();
+    for row in rows {
+        let entry = figures
+            .entry(row.implementation.clone())
+            .or_insert((None, None, row.toolchain.clone()));
+        match row.axis {
+            Axis::Conformance => entry.0 = row.value,
+            Axis::Throughput => entry.1 = row.value,
+            _ => {}
         }
+    }
+
+    let mut entries: Vec<Comparison<'a>> = figures
+        .into_iter()
+        .map(|(name, (conformance, throughput, toolchain))| Comparison {
+            descriptor: impls.iter().find(|d| d.implementation == name),
+            name,
+            conformance,
+            throughput,
+            toolchain,
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        let ka = a.throughput.unwrap_or(f64::NEG_INFINITY);
+        let kb = b.throughput.unwrap_or(f64::NEG_INFINITY);
+        kb.partial_cmp(&ka)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    entries
+}
+
+/// Where each figure came from: repo, pinned ref, license, and the toolchain that produced
+/// the row — enough to reproduce or audit any column.
+fn render_provenance(out: &mut String, entries: &[Comparison<'_>]) {
+    out.push_str("\n**Provenance.**\n\n");
+    for entry in entries {
+        let mut line = format!("- **{}** — ", entry.name);
+        match entry.descriptor.and_then(|d| d.repo.as_deref()) {
+            Some(repo) => {
+                let _ = write!(line, "[{repo}]({repo})");
+                if let Some(pin) = entry.descriptor.and_then(|d| d.pinned_ref.as_deref()) {
+                    let _ = write!(line, " @ `{pin}`");
+                }
+            }
+            None => line.push('—'),
+        }
+        if let Some(license) = entry.descriptor.and_then(|d| d.license.as_deref()) {
+            let _ = write!(line, " · {license}");
+        }
+        let _ = writeln!(line, " · {}", entry.toolchain);
+        out.push_str(&line);
     }
 }
 
-fn cell(row: Option<&ResultRow>, axis: Axis, expected_routes: u64) -> String {
-    let Some(row) = row else {
-        return "—".to_string();
-    };
-    let Some(value) = row.value else {
-        return "_pending_".to_string();
-    };
-    match axis {
-        Axis::Conformance => {
-            let got = value as u64;
-            let icon = if got == expected_routes { PASS_ICON } else { FAIL_ICON };
-            format!("{icon} {got} / {expected_routes}")
+fn conformance_cell(value: Option<f64>, expected: u64) -> String {
+    match value {
+        None => pending(),
+        Some(v) => {
+            let got = v as u64;
+            let icon = if got == expected { PASS_ICON } else { FAIL_ICON };
+            format!("{icon} {got} / {expected}")
         }
-        _ => format!("{} {}", humanize(value), row.unit),
     }
 }
 
 /// True if any figure for this host has actually been measured (vs. all-`pending`).
 fn measured(rows: &[ResultRow]) -> bool {
     rows.iter().any(|r| r.value.is_some())
-}
-
-/// Implementation columns: the reference (and any other external impl) first, alphabetically,
-/// with our own `personal-rns` last — the field is anchored against the reference, not against
-/// us, so we don't implicitly seat ourselves first.
-fn impl_columns(rows: &[&ResultRow]) -> Vec<String> {
-    let mut names: Vec<String> = rows.iter().map(|r| r.implementation.clone()).collect();
-    names.sort();
-    names.dedup();
-    names.sort_by_key(|name| (name == PERSONAL_RNS, name.clone()));
-    names
-}
-
-/// Axes present in the rows, in canonical display order.
-fn axes_present(rows: &[&ResultRow]) -> Vec<Axis> {
-    let mut axes: Vec<Axis> = rows.iter().map(|r| r.axis).collect();
-    axes.sort_by_key(|a| a.order());
-    axes.dedup();
-    axes
 }
 
 fn humanize(v: f64) -> String {
@@ -279,8 +366,10 @@ const HOST_FOOTNOTES: &str = "
 ---
 
 - _Conformance_ — distinct routes the engine resolves from the corpus, against the manifest's expected count.
-- _Ingest throughput_ — best-of-N wall time to ingest the whole corpus into a fresh engine, as announces per second.
+- _Ingest throughput_ — best-of-N wall time to parse + verify + store the whole corpus into a fresh engine, as announces per second.
+- _×ref_ — throughput relative to the Python reference (`RNS`) on this host.
 
-Regenerate: run each implementation's driver (`bench_result`, `reference/driver.py`) on this host to
-refresh `results/`, then `render_results` to rewrite these tables.
+Regenerate: run each implementation's driver on this host (`bench_result`, `reference/driver.py`, and
+the `external/<impl>/run.sh` one-command drivers) to refresh `results/`, then `render_results` to
+rewrite these tables.
 ";

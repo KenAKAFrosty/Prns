@@ -1,0 +1,10 @@
+{
+  "implementation": "rns-cr 0.1.0",
+  "slug": "rns-cr",
+  "language": "Crystal",
+  "crypto_backend": "OpenSSL EVP (spider-gazelle/ed25519)",
+  "role": "external",
+  "repo": "https://github.com/jtippett/rns-cr",
+  "pinned_ref": "514c309",
+  "license": "MIT"
+}

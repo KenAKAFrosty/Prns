@@ -8,17 +8,19 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::vec::Vec;
 
-use personal_rns::engine::{EngineState, InstantMillis, ReannounceSchedule, SelfAnnounceConfig};
+use personal_rns::engine::self_announce::AnnounceConfig;
+use personal_rns::engine::{EngineState, InstantMillis, ReannounceSchedule};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InboundPacket, InterfaceId};
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::announce::SelfAnnounceEntropy;
 use personal_rns::routing::storage::{EngineStorage, FixedInline, GrowableHeap};
+use personal_rns::routing::upstream_app_destinations::ProofStrategy;
 
 mod results;
 pub use results::{
-    load_all_rows, load_host, results_dir, write_host, write_rows, Axis, Comparability,
-    HostDescriptor, ResultRow,
+    load_all_rows, load_host, load_implementations, results_dir, write_host, write_rows, Axis,
+    Comparability, HostDescriptor, ImplementationDescriptor, ImplementationRole, ResultRow,
 };
 
 pub type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>;
@@ -43,14 +45,22 @@ pub fn node_key(seed: u16) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 pub fn announce_fixtures(count: usize) -> Vec<Vec<u8>> {
     let mut announces = Vec::with_capacity(count);
     for k in 0..count {
-        let config = SelfAnnounceConfig {
-            app_name: "lxmf",
-            aspects: &["delivery"],
-            app_data: b"benchmarks",
-            schedule: ReannounceSchedule::every(10_000),
-        };
-        let mut sender = EngineState::<GrowableHeap>::announcing(&node_key(k as u16 ^ 0xC300), config)
-            .expect("valid self-announce config");
+        let mut sender = EngineState::<GrowableHeap>::new(node_key(k as u16 ^ 0xC300));
+        let node = sender
+            .transport_identity()
+            .expect("a fresh engine holds its node identity");
+        let destination = sender
+            .register_single_destination(&node, "lxmf", &["delivery"], ProofStrategy::ProveNone)
+            .expect("register lxmf.delivery destination");
+        sender
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: b"benchmarks",
+                    schedule: ReannounceSchedule::every(10_000),
+                },
+            )
+            .expect("schedule self-announce");
         let entropy =
             SelfAnnounceEntropy::new([(k as u8).wrapping_add(0x40); SelfAnnounceEntropy::LEN]);
         let mut buf = [0u8; 512];
@@ -66,7 +76,7 @@ pub fn announce_fixtures(count: usize) -> Vec<Vec<u8>> {
 
 /// A fresh receiver engine over storage `S`.
 pub fn new_engine<S: EngineStorage>() -> EngineState<S> {
-    EngineState::<S>::new(&node_key(0x11))
+    EngineState::<S>::new(node_key(0x11))
 }
 
 /// Ingest every packet into `engine` over one interface.

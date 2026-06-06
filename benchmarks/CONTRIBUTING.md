@@ -62,12 +62,27 @@ first hard proof of wire-exactness against RNS. Every backend here `load_corpus`
 Those rows are the **result substrate**: each implementation owns one file,
 `results/<host>/<scenario>/<impl>.jsonl` (so two languages never contend on a write), where
 `host` is the rustc target triple. `render_results` pivots every committed row into the
-GitHub-facing tables — an index ([`RESULTS.md`](RESULTS.md)) linking one page per host — and the
+GitHub-facing tables — an index ([`RESULTS.md`](RESULTS.md)) linking one **cross-implementation
+comparison** per host, each sorted by ingest throughput with the language, Ed25519 backend,
+conformance, and speed relative to the RNS reference (`×ref`), plus a provenance list — and the
 website **includes those same generated files**, so the numbers can't drift between the repo and
 the site. `render_results --check` is the drift gate (re-render, diff, fail if stale), the sibling
 of `gen_corpus --check`. The RNS reference is the worked second column: `reference/driver.py`
 replays the corpus through the real RNS announce path (`Packet.unpack` + `Identity.validate_announce`)
 and emits its rows.
+
+**Other implementations live in [`external/`](external/).** Six more Reticulum ports — Rust
+([Leviculum](external/leviculum), [LXMF-rs](external/lxmf-rs)), Go
+([go-reticulum](external/go-reticulum)), Crystal ([rns-cr](external/rns-cr)), C++
+([microReticulum](external/microreticulum)), and a second Python ([RetiNet](external/retinet)) —
+each get an `external/<impl>/` with our harness, a README, and a **one-command `run.sh`** that
+clones the *pinned* upstream into a gitignored `.upstream/`, builds the harness against it, and
+files rows in the schema above (`cd benchmarks && ./external/leviculum/run.sh`). We never vendor
+upstream source — only our harness and the measured numbers (licenses vary: AGPL, MIT, Apache,
+EPL, …). What an implementation *is* — language, Ed25519 backend, repo, pinned ref, license — is
+host-independent, so it lives once per impl in `implementations/<slug>.json` (the per-impl sibling
+of `host.json`), which the comparison table joins for its Language/backend columns and provenance.
+To add one, see [`external/README.md`](external/README.md).
 
 **The host is a reproducibility dimension, not just a label.** A throughput number means nothing
 without the silicon it ran on — an M1 and an M4 Max are both `aarch64-apple-darwin`. So each host

@@ -1,0 +1,10 @@
+{
+  "implementation": "Leviculum 0.6.3",
+  "slug": "leviculum",
+  "language": "Rust",
+  "crypto_backend": "ed25519-dalek 2.2",
+  "role": "external",
+  "repo": "https://codeberg.org/Lew_Palm/leviculum",
+  "pinned_ref": "6f366ca",
+  "license": "AGPL-3.0-or-later"
+}

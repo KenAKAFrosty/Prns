@@ -1,0 +1,11 @@
+{
+  "implementation": "microReticulum",
+  "slug": "microreticulum",
+  "language": "C++",
+  "crypto_backend": "rweather Crypto (portable C++)",
+  "role": "external",
+  "repo": "https://github.com/attermann/microReticulum",
+  "pinned_ref": "79b8524",
+  "license": "Apache-2.0",
+  "maturity": "partial"
+}

@@ -1,0 +1,6 @@
+# External-impl drivers: cloned upstreams and build artifacts are never committed —
+# `external/<impl>/run.sh` regenerates them. We commit only our harness + run.sh + README.
+external/*/.upstream/
+external/*/build/
+external/*/harness/target/
+external/*/harness/Cargo.lock

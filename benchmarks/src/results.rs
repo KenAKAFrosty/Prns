@@ -127,6 +127,70 @@ pub fn load_host(host: &str) -> Option<HostDescriptor> {
     serde_json::from_str(&text).ok()
 }
 
+/// Where an implementation sits in the comparison: the Python reference everything
+/// is measured against, our own engine, or one of the external ports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ImplementationRole {
+    Reference,
+    Ours,
+    External,
+}
+
+/// Host-independent facts about a participating implementation: its language, its
+/// Ed25519 backend, and where its source lives (repo + pinned ref + license). The
+/// throughput *value* is per-host (a [`ResultRow`]), but what an implementation *is*
+/// is the same on every machine — so it lives once per implementation in
+/// `implementations/<slug>.json`, never duplicated onto every row (the same call we
+/// made for [`HostDescriptor`]). Drives the comparison table's Language/backend
+/// columns and the provenance list. `maturity` is `Some("partial")` for an
+/// implementation the upstream list marks not-yet-feature-complete; `None` is the
+/// feature-complete default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImplementationDescriptor {
+    pub implementation: String,
+    pub slug: String,
+    pub language: String,
+    pub crypto_backend: String,
+    pub role: ImplementationRole,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub pinned_ref: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub maturity: Option<String>,
+}
+
+/// The implementation registry: `<crate>/implementations`.
+fn implementations_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("implementations")
+}
+
+/// Every implementation descriptor (`implementations/<slug>.json`), keyed in the
+/// returned vec by file. Missing dir or unparseable files are skipped — a row whose
+/// implementation has no descriptor still renders, just without language/backend.
+pub fn load_implementations() -> Vec<ImplementationDescriptor> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(implementations_dir()) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        if let Some(descriptor) = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+        {
+            out.push(descriptor);
+        }
+    }
+    out
+}
+
 /// Write all of one implementation's rows for one `(host, scenario)` to
 /// `results/<host>/<scenario>/<impl-slug>.jsonl`, overwriting. Each
 /// `(host, scenario, impl)` file is owned by exactly one driver run, so a plain

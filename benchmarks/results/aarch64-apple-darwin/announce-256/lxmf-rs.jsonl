@@ -1,0 +1,2 @@
+{"scenario":"announce-256","scenario_version":1,"implementation":"LXMF-rs 0.2.0","commit":"30da190","toolchain":"1.96.0 (ac68faa20 2026-05-25)","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":256,"unit":"count"}
+{"scenario":"announce-256","scenario_version":1,"implementation":"LXMF-rs 0.2.0","commit":"30da190","toolchain":"1.96.0 (ac68faa20 2026-05-25)","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":43664.584,"unit":"announce/s"}

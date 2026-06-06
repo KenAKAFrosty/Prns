@@ -1,0 +1,2 @@
+{"scenario":"announce-256","scenario_version":1,"implementation":"rns-cr 0.1.0","commit":"514c309","toolchain":"crystal 1.20.2","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":256,"unit":"count"}
+{"scenario":"announce-256","scenario_version":1,"implementation":"rns-cr 0.1.0","commit":"514c309","toolchain":"crystal 1.20.2","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":24619.823,"unit":"announce/s"}
