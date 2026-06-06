@@ -105,6 +105,46 @@ mod tests {
     use super::*;
     use crate::interfaces::InboundSink;
 
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+    use tokio::sync::oneshot;
+
+    use crate::engine::{CommandId, IssuedCommand, Settleable, Settlement};
+
+    struct Commander {
+        next_id: AtomicU64,
+        pending: Mutex<HashMap<CommandId, oneshot::Sender<Settlement>>>,
+        command_tx: tokio::sync::mpsc::UnboundedSender<IssuedCommand>,
+        wake: TokioWakeHandle,
+    }
+
+    impl Commander {
+        async fn issue<C: Settleable>(&self, command: C) -> Result<C::Success, C::Failure> {
+            let id = CommandId(self.next_id.fetch_add(1, Ordering::Relaxed));
+            let (settle_tx, settle_rx) = oneshot::channel();
+            self.pending.lock().unwrap().insert(id, settle_tx);
+            self.command_tx
+                .send(IssuedCommand {
+                    id,
+                    command: command.into_command(),
+                })
+                .expect("the runtime task holds the receiver");
+            self.wake.poke();
+            let settlement = settle_rx
+                .await
+                .expect("the runtime settles every issued command");
+            C::from_settlement(settlement).expect("the settlement variant matches the issued verb")
+        }
+
+        fn settle(&self, id: CommandId, settlement: Settlement) {
+            let waiting = self.pending.lock().unwrap().remove(&id);
+            if let Some(waiting) = waiting {
+                let _ = waiting.send(settlement);
+            }
+        }
+    }
+
     #[tokio::test]
     async fn wait_returns_promptly_when_an_interface_pokes_the_wake() {
         let mut host = TokioHost::new();
@@ -136,55 +176,16 @@ mod tests {
 
     #[tokio::test]
     async fn an_awaited_announce_now_settles_through_a_live_runtime() {
-        use std::collections::HashMap;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::sync::{Arc, Mutex};
-        use tokio::sync::oneshot;
-
         use crate::engine::test_support::{fixed_secret_key, Cap};
         use crate::engine::{
             AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
-            CommandId, EngineState, IssuedCommand, RatchetPolicy, Settleable, Settlement,
+            EngineState, RatchetPolicy,
         };
         use crate::interfaces::storage::FixedInterfaceSet;
         use crate::interfaces::{ControlReport, InboundPacket, InterfaceHandle, SendError};
         use crate::routing::upstream_app_destinations::ProofStrategy;
         use crate::runtime::{PrnsEvent, Runtime};
         use crate::wire::DestinationHash;
-
-        struct Commander {
-            next_id: AtomicU64,
-            pending: Mutex<HashMap<CommandId, oneshot::Sender<Settlement>>>,
-            command_tx: tokio::sync::mpsc::UnboundedSender<IssuedCommand>,
-            wake: TokioWakeHandle,
-        }
-
-        impl Commander {
-            async fn issue<C: Settleable>(&self, command: C) -> Result<C::Success, C::Failure> {
-                let id = CommandId(self.next_id.fetch_add(1, Ordering::Relaxed));
-                let (settle_tx, settle_rx) = oneshot::channel();
-                self.pending.lock().unwrap().insert(id, settle_tx);
-                self.command_tx
-                    .send(IssuedCommand {
-                        id,
-                        command: command.into_command(),
-                    })
-                    .expect("the runtime task holds the receiver");
-                self.wake.poke();
-                let settlement = settle_rx
-                    .await
-                    .expect("the runtime settles every issued command");
-                C::from_settlement(settlement)
-                    .expect("the settlement variant matches the issued verb")
-            }
-
-            fn settle(&self, id: CommandId, settlement: Settlement) {
-                let waiting = self.pending.lock().unwrap().remove(&id);
-                if let Some(waiting) = waiting {
-                    let _ = waiting.send(settlement);
-                }
-            }
-        }
 
         struct NullHandle;
         impl InterfaceHandle for NullHandle {
@@ -268,6 +269,181 @@ mod tests {
             Err(AnnounceNowFailure::Rejected(
                 AnnounceNowError::UnknownDestination
             )),
+        );
+    }
+
+    #[tokio::test]
+    async fn an_awaited_send_single_settles_delivered_across_two_live_runtimes() {
+        use std::sync::mpsc::{channel, Receiver, Sender};
+
+        use crate::engine::self_announce::AnnounceConfig;
+        use crate::engine::test_support::{fixed_secret_key, second_secret_key, Cap};
+        use crate::engine::{
+            Delivered, EngineState, RatchetPolicy, ReannounceSchedule, SendSingle, SendSingleError,
+            SendSingleFailure, SendSinglePayload,
+        };
+        use crate::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
+        use crate::interfaces::{
+            ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
+            IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+            InterfaceMode, MediumKind, SendError, StartedInterface, TransportCapability,
+        };
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::runtime::{PrnsEvent, Runtime};
+        use crate::wire::MTU;
+
+        struct ChannelHandle {
+            id: InterfaceId,
+            clock_base: Instant,
+            rx: Receiver<std::vec::Vec<u8>>,
+            tx: Sender<std::vec::Vec<u8>>,
+            peer_wake: TokioWakeHandle,
+        }
+
+        impl InterfaceHandle for ChannelHandle {
+            fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+                let mut bytes = self.rx.try_recv().ok()?;
+                Some(f(InboundPacket {
+                    arrived_at: InstantMillis(self.clock_base.elapsed().as_millis() as u64),
+                    source_interface: self.id,
+                    bytes: &mut bytes,
+                }))
+            }
+            fn acquire_send_grant(
+                &mut self,
+                fill: impl FnOnce(&mut [u8]) -> usize,
+            ) -> Result<usize, SendError> {
+                let mut buf = [0u8; MTU];
+                let written = fill(&mut buf);
+                let _ = self.tx.send(buf[..written].to_vec());
+                self.peer_wake.poke();
+                Ok(written)
+            }
+            fn request_stop(&mut self) {}
+            fn next_report(&mut self) -> Option<ControlReport> {
+                None
+            }
+        }
+
+        fn linked_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+            InterfaceDescriptor {
+                id,
+                capabilities: InterfaceCapabilities {
+                    ingress: IngressCapability::Enabled,
+                    egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+                },
+                mode: InterfaceMode::Full,
+                medium: MediumKind::Loopback,
+                state: ConnectionState::Connected,
+            }
+        }
+
+        type LinkedInterface = StartedInterface<ChannelHandle, core::convert::Infallible>;
+
+        let mut prover: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = prover.transport_identity().unwrap();
+        let destination = prover
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        prover
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: b"capstone",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .unwrap();
+        let sender: EngineState<Cap> = EngineState::new(second_secret_key());
+
+        let sender_host = TokioHost::new();
+        let prover_host = TokioHost::new();
+        let (to_prover_tx, to_prover_rx) = channel();
+        let (to_sender_tx, to_sender_rx) = channel();
+
+        let mut sender_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
+        let _ = sender_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xA1; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xA1; 16]),
+                clock_base: Instant::now(),
+                rx: to_sender_rx,
+                tx: to_prover_tx,
+                peer_wake: prover_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+        let mut prover_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
+        let _ = prover_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xB2; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xB2; 16]),
+                clock_base: Instant::now(),
+                rx: to_prover_rx,
+                tx: to_sender_tx,
+                peer_wake: sender_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let commander = Arc::new(Commander {
+            next_id: AtomicU64::new(0),
+            pending: Mutex::new(HashMap::new()),
+            command_tx,
+            wake: sender_host.wake_handle(),
+        });
+
+        let sender_runtime = Runtime::new(sender, sender_set, sender_host);
+        let prover_runtime = Runtime::new(prover, prover_set, prover_host);
+        let settler = commander.clone();
+        tokio::spawn(async move {
+            sender_runtime
+                .run(
+                    move |event| {
+                        if let PrnsEvent::CommandSettled { id, settlement } = event {
+                            settler.settle(id, settlement);
+                        }
+                    },
+                    move || command_rx.try_recv().ok(),
+                )
+                .await
+        });
+        tokio::spawn(async move { prover_runtime.run(|_event| {}, || None).await });
+
+        let payload = SendSinglePayload::from_slice(b"capstone-delivery").unwrap();
+        let delivered = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let settled = commander
+                    .issue(SendSingle {
+                        destination,
+                        payload: payload.clone(),
+                    })
+                    .await;
+                match settled {
+                    Err(SendSingleFailure::Rejected(SendSingleError::NoRouteToDestination)) => {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                    settled => break settled,
+                }
+            }
+        })
+        .await
+        .expect("the awaited send settles well inside the timeout");
+
+        let rtt_ms = match delivered {
+            Ok(Delivered { rtt_ms }) => rtt_ms,
+            other => panic!("the capstone send must settle Delivered, got {other:?}"),
+        };
+        assert!(
+            rtt_ms < 5_000,
+            "a live loopback proof returns fast, measured rtt_ms = {rtt_ms}",
         );
     }
 }
