@@ -1,3 +1,4 @@
+pub mod commands;
 pub mod directives;
 pub mod egress;
 pub mod ingress;
@@ -5,10 +6,13 @@ pub mod proof;
 pub mod self_announce;
 pub mod self_ratchets;
 
+pub use commands::{
+    AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceTarget, CommandOutcome, EngineCommand,
+};
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use ingress::{DataPacket, Ingress};
 pub use proof::{ProofOwed, WriteProofError};
-pub use self_announce::ReannounceSchedule;
+pub use self_announce::{ReannounceSchedule, SelfAnnounceAppData};
 pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
 
 use crate::engine::directives::{EngineDirective, EngineDirectives};
@@ -97,6 +101,7 @@ pub enum NextScheduledEngineWork {
 pub struct EngineState<S: EngineStorage> {
     tick_count: u64,
     ingested_packet_count: u64,
+    ingested_command_count: u64,
     routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
     held_announces_cache: S::Held,
     pending_rebroadcasts: S::Pending,
@@ -115,6 +120,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
         Self {
             tick_count: 0,
             ingested_packet_count: 0,
+            ingested_command_count: 0,
             routing_table: Default::default(),
             held_announces_cache: Default::default(),
             pending_rebroadcasts: Default::default(),
@@ -146,6 +152,7 @@ where
         f.debug_struct("EngineState")
             .field("tick_count", &self.tick_count)
             .field("ingested_packet_count", &self.ingested_packet_count)
+            .field("ingested_command_count", &self.ingested_command_count)
             .field("routing_table", &self.routing_table)
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
@@ -203,6 +210,10 @@ impl<S: EngineStorage> EngineState<S> {
 
     pub const fn ingested_packet_count(&self) -> u64 {
         self.ingested_packet_count
+    }
+
+    pub const fn ingested_command_count(&self) -> u64 {
+        self.ingested_command_count
     }
 
     pub fn route_count(&self) -> usize {
@@ -510,6 +521,47 @@ pub enum IngestPacketOutcome<'p> {
 }
 
 impl<S: EngineStorage> EngineState<S> {
+    #[must_use]
+    pub fn ingest_command(&mut self, command: EngineCommand) -> CommandOutcome {
+        self.ingested_command_count = self.ingested_command_count.saturating_add(1);
+        match command {
+            EngineCommand::AnnounceNow(announce_now) => self.ingest_announce_now(announce_now),
+        }
+    }
+
+    fn ingest_announce_now(&self, announce_now: AnnounceNow) -> CommandOutcome {
+        if self
+            .upstream_app_destinations
+            .lookup(&announce_now.destination, DestinationType::Single)
+            .is_none()
+        {
+            return CommandOutcome::AnnounceRejected(
+                if self
+                    .upstream_app_destinations
+                    .lookup(&announce_now.destination, DestinationType::Plain)
+                    .is_some()
+                {
+                    AnnounceNowError::NotASingleDestination
+                } else {
+                    AnnounceNowError::UnknownDestination
+                },
+            );
+        }
+        if let AnnounceTarget::Interface(interface) = announce_now.target {
+            if !self.interfaces.contains(&interface) {
+                return CommandOutcome::AnnounceRejected(AnnounceNowError::UnknownInterface);
+            }
+        }
+        if let AnnounceAppData::Data(data) = &announce_now.app_data {
+            if self.self_ratchets.is_tracked(&announce_now.destination)
+                && data.len() > MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN
+            {
+                return CommandOutcome::AnnounceRejected(AnnounceNowError::AppDataTooLong);
+            }
+        }
+        CommandOutcome::OwesAnnounce(announce_now)
+    }
+
     #[must_use]
     pub fn ingest_packet<'p>(
         &mut self,
@@ -1367,6 +1419,113 @@ mod tests {
                 }),
                 maybe_owed_proof: None,
             },
+        );
+    }
+
+    fn announce_now(destination: DestinationHash) -> EngineCommand {
+        EngineCommand::AnnounceNow(AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        })
+    }
+
+    #[test]
+    fn an_announce_now_for_a_registered_single_owes_the_announce() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+
+        assert_eq!(
+            state.ingest_command(announce_now(destination)),
+            CommandOutcome::OwesAnnounce(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        );
+        assert_eq!(state.ingested_command_count(), 1);
+    }
+
+    #[test]
+    fn an_announce_now_for_an_unknown_destination_is_rejected() {
+        let mut state = personal_node_announcer();
+
+        assert_eq!(
+            state.ingest_command(announce_now(DestinationHash::new([0x77; 16]))),
+            CommandOutcome::AnnounceRejected(AnnounceNowError::UnknownDestination),
+        );
+        assert_eq!(state.ingested_command_count(), 1);
+    }
+
+    #[test]
+    fn an_announce_now_for_a_plain_destination_is_rejected() {
+        let mut state = personal_node_announcer();
+        let plain = state
+            .register_plain_destination("personal", &["plain"])
+            .unwrap();
+
+        assert_eq!(
+            state.ingest_command(announce_now(plain)),
+            CommandOutcome::AnnounceRejected(AnnounceNowError::NotASingleDestination),
+        );
+    }
+
+    #[test]
+    fn an_announce_now_targets_only_interfaces_the_engine_knows() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        register_test_interface(&mut state, InterfaceId::new([0xAA; 16]));
+        let on = |interface| {
+            EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::Interface(interface),
+                app_data: AnnounceAppData::Scheduled,
+            })
+        };
+
+        assert_eq!(
+            state.ingest_command(on(InterfaceId::new([0xAA; 16]))),
+            CommandOutcome::OwesAnnounce(AnnounceNow {
+                destination,
+                target: AnnounceTarget::Interface(InterfaceId::new([0xAA; 16])),
+                app_data: AnnounceAppData::Scheduled,
+            }),
+        );
+        assert_eq!(
+            state.ingest_command(on(InterfaceId::new([0xBB; 16]))),
+            CommandOutcome::AnnounceRejected(AnnounceNowError::UnknownInterface),
+        );
+    }
+
+    #[test]
+    fn commanded_app_data_reserves_announce_room_for_the_ratchet() {
+        let oversized =
+            SelfAnnounceAppData::from_slice(&[0u8; MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN + 1])
+                .unwrap();
+        let with_data = |destination| {
+            EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Data(oversized.clone()),
+            })
+        };
+
+        let mut ratcheted = personal_node_announcer_with(RatchetPolicy::Ratcheted);
+        let destination = ratcheted.self_announced_destinations()[0];
+        assert_eq!(
+            ratcheted.ingest_command(with_data(destination)),
+            CommandOutcome::AnnounceRejected(AnnounceNowError::AppDataTooLong),
+        );
+
+        let mut unratcheted = personal_node_announcer();
+        let destination = unratcheted.self_announced_destinations()[0];
+        assert_eq!(
+            unratcheted.ingest_command(with_data(destination)),
+            CommandOutcome::OwesAnnounce(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Data(oversized),
+            }),
         );
     }
 
