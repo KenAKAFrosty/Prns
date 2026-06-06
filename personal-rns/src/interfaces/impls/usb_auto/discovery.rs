@@ -1,8 +1,6 @@
 #![cfg_attr(not(feature = "usb-auto"), allow(dead_code))]
 
 use std::io::{self, Read, Write};
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, RawFd};
 use std::string::String;
 use std::vec::Vec;
 
@@ -144,14 +142,13 @@ pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
     reported_state: ConnectionState,
 }
 
-#[cfg(unix)]
-impl<Port: AsRawFd> Discoverer<Port> {
-    pub(in crate::interfaces::impls::usb_auto) fn port_registrations(
-        &self,
-    ) -> impl Iterator<Item = (&PortId, RawFd)> + '_ {
+impl<Port> Discoverer<Port> {
+    pub(in crate::interfaces::impls::usb_auto) fn ports_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&PortId, &mut Port)> + '_ {
         self.devices
-            .iter()
-            .map(|device| (&device.id, device.port.as_raw_fd()))
+            .iter_mut()
+            .map(|device| (&device.id, &mut device.port))
     }
 }
 

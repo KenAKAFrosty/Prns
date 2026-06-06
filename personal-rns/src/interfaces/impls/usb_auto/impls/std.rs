@@ -1,12 +1,10 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io;
-use std::os::fd::RawFd;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use std::vec::Vec;
 
-use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Registry, Token, Waker};
 use mio_serial::SerialStream;
 use serialport::SerialPort;
@@ -48,7 +46,7 @@ fn serve(mut ctx: UsbAutoContext) {
 
     let mut events = Events::with_capacity(POLL_EVENTS_CAPACITY);
     let mut discoverer: Discoverer<SerialStream> = Discoverer::new();
-    let mut registered: HashMap<PortId, RawFd> = HashMap::new();
+    let mut registered: HashSet<PortId> = HashSet::new();
     let mut next_token = WAKE_TOKEN.0 + 1;
     let mut last_scan: Option<Instant> = None;
 
@@ -56,7 +54,7 @@ fn serve(mut ctx: UsbAutoContext) {
         if last_scan.is_none_or(|t| t.elapsed() >= SCAN_INTERVAL) {
             last_scan = Some(Instant::now());
             discoverer.reconcile_present(&scan_cdc_ports(), open_cdc_port);
-            register_ports(poll.registry(), &discoverer, &mut registered, &mut next_token);
+            register_ports(poll.registry(), &mut discoverer, &mut registered, &mut next_token);
         }
 
         let cadence = discoverer.pump(&mut ctx);
@@ -81,25 +79,22 @@ fn serve(mut ctx: UsbAutoContext) {
 
 fn register_ports(
     registry: &Registry,
-    discoverer: &Discoverer<SerialStream>,
-    registered: &mut HashMap<PortId, RawFd>,
+    discoverer: &mut Discoverer<SerialStream>,
+    registered: &mut HashSet<PortId>,
     next_token: &mut usize,
 ) {
-    let current: Vec<(PortId, RawFd)> = discoverer
-        .port_registrations()
-        .map(|(id, fd)| (id.clone(), fd))
-        .collect();
-    for (id, fd) in &current {
-        if registered.get(id) != Some(fd)
-            && registry
-                .register(&mut SourceFd(fd), Token(*next_token), Interest::READABLE)
-                .is_ok()
-        {
-            *next_token += 1;
-            registered.insert(id.clone(), *fd);
+    let mut current: Vec<PortId> = Vec::new();
+    for (id, port) in discoverer.ports_mut() {
+        current.push(id.clone());
+        if !registered.contains(id) {
+            let token = Token(*next_token);
+            if registry.register(port, token, Interest::READABLE).is_ok() {
+                *next_token += 1;
+                registered.insert(id.clone());
+            }
         }
     }
-    registered.retain(|id, _| current.iter().any(|(present, _)| present == id));
+    registered.retain(|id| current.contains(id));
 }
 
 fn scan_cdc_ports() -> Vec<PortId> {

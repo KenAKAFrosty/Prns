@@ -92,11 +92,11 @@ fn run_via_interface_flood() {
 
     let secs = window_start.elapsed().as_secs_f64();
     let mb_s = granted as f64 / 1e6 / secs;
+    let mbps = granted as f64 * 8.0 / 1e6 / secs;
     println!("desktop -> S3 via the worker over {secs:.2}s:");
-    println!("  {granted} bytes accepted into the worker's egress ({mb_s:.1} MB/s) — this is the");
-    println!("  ring-accept/shed rate when overflooding, NOT delivery. The worker buffers one");
-    println!("  frame and sheds the rest under back-pressure, never blocking the engine.");
-    println!("  The board's OLED shows the true received rate (the transport ceiling).");
+    println!("  {granted} bytes  =>  {mb_s:.2} MB/s  ({mbps:.1} Mbps)");
+    println!("  (paced by ring back-pressure to the link rate — the worker never drops a frame");
+    println!("  nor blocks the engine; the board's OLED shows the matching received rate.)");
 }
 
 fn run_via_interface() {
