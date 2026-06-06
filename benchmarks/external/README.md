@@ -1,39 +1,23 @@
-# External-implementation drivers
+# External implementations — pinned upstream clones
 
-The `announce-256` comparison includes other Reticulum implementations, measured the same
-way as ours: the same wire bytes (`../scenarios/announce-256/packets.hex`) replayed through
-each impl's real parse → Ed25519 verify → store path, best-of-50 min wall time, on the same
-host. announce-256 is ~97% Ed25519 verify, so the spread is a crypto-backend story.
+The energy comparison ([`../energy/`](../energy/)) measures six other Reticulum ports against
+ours on the same wire corpus. We never vendor their source — instead `energy/build.sh` clones
+each **pinned** upstream into a gitignored `<impl>/.upstream/` here and builds our sustained
+harness (in `energy/contestants/<impl>/`) against it:
 
-Each `<impl>/` holds **our** harness + a one-command `run.sh` + a README. We never vendor
-upstream source — `run.sh` clones the **pinned** upstream into a gitignored `.upstream/`,
-builds our harness against it, and writes rows into
-`../results/<host>/<scenario>/<impl>.jsonl` in the same schema every driver emits. So:
+| Port | Language | Upstream | Pin | License |
+|------|----------|----------|-----|---------|
+| Leviculum | Rust | https://codeberg.org/Lew_Palm/leviculum | `6f366ca` | AGPL-3.0 |
+| LXMF-rs | Rust | https://github.com/FreeTAKTeam/LXMF-rs | `30da190` | EPL-2.0 |
+| go-reticulum | Go | https://github.com/svanichkin/go-reticulum | `06621cc` | MIT |
+| rns-cr | Crystal | https://github.com/jtippett/rns-cr | `514c309` | MIT |
+| microReticulum | C++ | https://github.com/attermann/microReticulum | `79b8524` | Apache-2.0 |
+| RetiNet | Python | https://codeberg.org/skyguy/retinet | `6039094` | AGPL-3.0 |
 
-```sh
-cd benchmarks && ./external/leviculum/run.sh
-```
+`lib.sh` is the shared clone helper (`clone_pinned`). What each implementation *is* — language,
+Ed25519 backend, repo, pinned ref, license — lives once in `../implementations/<slug>.json`,
+which the rendered table joins for its Language/backend columns and provenance.
 
-reproduces that one column from a clean checkout. A sibling **`run-mt.sh`** reproduces the
-impl's `announce-parallel` row (the same corpus sharded across threads, single-thread vs all
-logical cores) the same way. Implementation metadata (language, crypto backend, repo, pinned
-ref, license) lives in `../implementations/<slug>.json`; the rendered comparison table joins
-the two. `lib.sh` holds the shared clone/emit helpers.
-
-## Adding an implementation
-
-1. Write a harness that replays the corpus through the impl's validate-announce path and
-   prints `RESULT resolved=<n> per_sec=<f>` (parse + verify + store, best-of-50).
-2. Write a `run.sh` that sources `lib.sh`, `clone_pinned`s the upstream into `.upstream/`,
-   builds + runs the harness, and calls `emit_rows`.
-3. Add `../implementations/<slug>.json` (language, crypto_backend, role, repo, pinned_ref,
-   license; `maturity: "partial"` if the upstream list marks it not-yet-complete).
-4. Run it, then `cargo run --bin render_results` to refresh the tables.
-
-For the parallel scenario, add a `run-mt.sh` + harness that sweeps `[1, cpu_count]` threads and
-prints `RESULT resolved=<n> lo=<t> lo_per_sec=<f> hi=<t> hi_per_sec=<f>`, then calls `emit_mt_rows`
-(pass `announces_verified` as its last argument if the harness is verify-only).
-
-Numbers are comparable only within a host; toolchain versions are stamped per row. Licenses
-vary (AGPL, MIT, Apache, EPL, …) — we distribute only our harness source and the measured
-numbers, never upstream code.
+To add a port: drop a sustained harness in `energy/contestants/<impl>/`, add its clone + build
+step to `energy/build.sh` and its row to `energy/measure.sh`, and an `implementations/<slug>.json`.
+See [`../energy/README.md`](../energy/README.md).

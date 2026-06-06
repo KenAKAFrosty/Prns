@@ -63,6 +63,13 @@ int main(int argc, char** argv) {
             if (!line.empty()) base.push_back(from_hex(line));
         }
     }
+    long long resolved = 0;
+    for (auto& v : base) {
+        RNS::Packet p(RNS::Bytes(v.data(), v.size()));
+        if (p.unpack() && RNS::Identity::validate_announce(p, true)) resolved++;
+    }
+    std::printf("CONFORMANCE resolved=%lld\n", resolved);
+
     std::vector<std::vector<uint8_t>> corpus;
     while (corpus.size() < ws) corpus.insert(corpus.end(), base.begin(), base.end());
     const size_t total = corpus.size();

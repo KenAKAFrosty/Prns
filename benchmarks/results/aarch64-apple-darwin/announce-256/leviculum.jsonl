@@ -1,2 +1,0 @@
-{"scenario":"announce-256","scenario_version":1,"implementation":"Leviculum 0.6.3","commit":"6f366ca","toolchain":"1.96.0 (ac68faa20 2026-05-25)","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":256,"unit":"count"}
-{"scenario":"announce-256","scenario_version":1,"implementation":"Leviculum 0.6.3","commit":"6f366ca","toolchain":"1.96.0 (ac68faa20 2026-05-25)","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":45410.200,"unit":"announce/s"}

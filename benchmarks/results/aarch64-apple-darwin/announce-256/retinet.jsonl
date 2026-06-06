@@ -1,2 +1,0 @@
-{"scenario":"announce-256","scenario_version":1,"implementation":"RetiNet 0.9.4","commit":"6039094","toolchain":"CPython 3.14.5","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":256,"unit":"count"}
-{"scenario":"announce-256","scenario_version":1,"implementation":"RetiNet 0.9.4","commit":"6039094","toolchain":"CPython 3.14.5","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":6648.631,"unit":"announce/s"}

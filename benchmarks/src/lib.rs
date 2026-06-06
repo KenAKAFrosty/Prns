@@ -41,11 +41,10 @@ pub fn node_key(seed: u16) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 }
 
 /// A throwaway sender secret that's distinct for *every* fixture index, not just the
-/// first 256. [`node_key`]'s per-byte formula collapses 16-bit seeds onto 256 values —
-/// fine for announce-256, but announce-parallel needs 2560 distinct destinations. Adding
-/// `block * i` (`block` = the index's high byte) breaks the collapse while staying a
-/// no-op for indices 0..256 (`block == 0`), so the announce-256 corpus is byte-identical.
-/// Mirrors `reference/gen.py`'s `node_secret`, the canonical generator.
+/// first 256. [`node_key`]'s per-byte formula collapses 16-bit seeds onto 256 values, so the
+/// announce-energy corpus's 2560 destinations need more: adding `block * i` (`block` = the
+/// index's high byte) breaks the collapse while staying a no-op for indices 0..256
+/// (`block == 0`). Mirrors `reference/gen.py`'s `node_secret`, the canonical generator.
 fn fixture_node_key(index: usize) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let seed = (index as u16) ^ 0xC300;
     let lo = u32::from(seed & 0xFF);
@@ -154,7 +153,7 @@ pub fn tick_soak<S: EngineStorage>(
 // `announce_fixtures` is the generator; the `gen_corpus` bin writes it out; every
 // measurement backend `load`s it. That's what keeps "run it yourself" honest.
 
-/// The on-disk home of scenario `name` (e.g. "announce-256"), relative to this crate.
+/// The on-disk home of scenario `name` (e.g. "announce-energy"), relative to this crate.
 pub fn scenario_dir(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios").join(name)
 }

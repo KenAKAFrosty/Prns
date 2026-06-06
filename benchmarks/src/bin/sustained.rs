@@ -6,7 +6,7 @@
 //!
 //! The corpus is replicated to a working set so per-loop setup (fresh engine + byte clone)
 //! amortizes to noise — verify dominates, and duplicates don't change verify cost. Throughput
-//! is the sustained *average* under load, distinct from `bench_parallel`'s best-of-N peak.
+//! is the sustained *average* under continuous load (the energy denominator), not a best-of-N peak.
 //!
 //! Run: `cargo run --release --bin sustained -- <corpus.hex> <secs> [working_set]`
 
@@ -25,6 +25,15 @@ fn main() {
 
     let text = std::fs::read_to_string(&path).expect("read corpus");
     let base: Vec<Vec<u8>> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(from_hex).collect();
+
+    let resolved = {
+        let mut engine = new_engine::<GrowableHeap>();
+        let mut once = base.clone();
+        ingest_all(&mut engine, &mut once);
+        engine.route_count()
+    };
+    println!("CONFORMANCE resolved={resolved}");
+
     let corpus: Vec<Vec<u8>> = base.iter().cloned().cycle().take(working_set.max(base.len())).collect();
     let threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let chunk = corpus.len().div_ceil(threads);

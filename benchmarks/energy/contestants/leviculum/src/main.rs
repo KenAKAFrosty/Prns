@@ -42,6 +42,16 @@ fn main() {
 
     let text = std::fs::read_to_string(&path).expect("read corpus");
     let base: Vec<Vec<u8>> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(from_hex).collect();
+
+    let resolved = {
+        let mut tr = build();
+        for raw in &base {
+            let _ = tr.process_incoming(0, raw);
+        }
+        tr.path_count()
+    };
+    println!("CONFORMANCE resolved={resolved}");
+
     let corpus: Vec<Vec<u8>> = base.iter().cloned().cycle().take(ws.max(base.len())).collect();
     let threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let chunk = corpus.len().div_ceil(threads);

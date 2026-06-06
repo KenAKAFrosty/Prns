@@ -58,6 +58,15 @@ func main() {
 	if len(os.Args) > 3 {
 		ws, _ = strconv.Atoi(os.Args[3])
 	}
+	resolved := 0
+	for _, raw := range base {
+		p := rns.NewPacket(nil, raw, 0, 0, 0, 0, nil, nil, false, 0)
+		if p.Unpack() && rns.ValidateAnnounce(p, false) {
+			resolved++
+		}
+	}
+	fmt.Printf("CONFORMANCE resolved=%d\n", resolved)
+
 	corpus := make([][]byte, 0, ws)
 	for len(corpus) < ws {
 		corpus = append(corpus, base...)

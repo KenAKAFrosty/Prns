@@ -31,6 +31,14 @@ File.each_line(path) do |line|
   line = line.strip
   base << from_hex(line) unless line.empty?
 end
+resolved = 0
+base.each do |raw|
+  pkt = RNS::Packet.new(nil, raw)
+  next unless pkt.unpack
+  resolved += 1 if RNS::Identity.validate_announce(pkt, only_validate_signature: true)
+end
+puts "CONFORMANCE resolved=#{resolved}"
+
 corpus = [] of Bytes
 while corpus.size < ws
   corpus.concat(base)

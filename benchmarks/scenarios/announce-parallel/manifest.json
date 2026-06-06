@@ -1,9 +1,0 @@
-{
-  "name": "announce-parallel",
-  "version": 1,
-  "description": "Ingest 2560 distinct signed lxmf.delivery announces, sharded evenly across worker threads; each shard runs the real parse → Ed25519 verify → store path on its own fresh engine. Swept single-thread vs all of the host's logical cores.",
-  "source": "reference/gen.py (RNS 1.3.1) — canonical; engine reproduces byte-for-byte",
-  "input": { "packets": "packets.hex", "encoding": "hex-per-line", "count": 2560 },
-  "operations": { "ingest": "sharded-across-threads", "threads": "1 vs logical-cores" },
-  "expected": { "route_count": 2560 }
-}

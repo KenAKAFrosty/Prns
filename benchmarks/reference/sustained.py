@@ -41,6 +41,16 @@ def main():
     threads = int(sys.argv[3]) if len(sys.argv) > 3 else (os.cpu_count() or 1)
 
     base = decode(corpus)
+
+    RNS.Identity.known_destinations = {}
+    resolved = 0
+    for raw in base:
+        packet = RNS.Packet(None, raw)
+        packet.unpack()
+        if RNS.Identity.validate_announce(packet):
+            resolved += 1
+    print(f"CONFORMANCE resolved={resolved}")
+
     chunk_size = (len(base) + threads - 1) // threads
     shards = [base[i : i + chunk_size] for i in range(0, len(base), chunk_size)]
 

@@ -13,7 +13,7 @@ N=$(( D * 1000 / SAMPLE_MS ))
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BENCH="$(cd "$HERE/.." && pwd)"
-CORPUS="$BENCH/scenarios/announce-parallel/packets.hex"
+CORPUS="$BENCH/scenarios/announce-energy/packets.hex"
 HOST="$(rustc -vV | awk '/^host:/{print $2}')"
 OUTDIR="$BENCH/results/$HOST/announce-energy"
 ALLCORES=$(sysctl -n hw.logicalcpu)
@@ -49,7 +49,8 @@ run_one() {
   local wpid=$!
   powermetrics --samplers cpu_power -i "$SAMPLE_MS" -n "$N" 2>/dev/null > /tmp/en_active.txt
   if ! wait "$wpid"; then echo "[$impl] FAILED:" >&2; cat /tmp/en_work.err >&2; return 0; fi
-  local tput active net energy w
+  local tput active net energy w resolved
+  resolved=$(sed -n 's/.*CONFORMANCE resolved=\([0-9]*\).*/\1/p' /tmp/en_work.out | tail -1)
   tput=$(sed -n 's/.*announces_per_sec=\([0-9.]*\).*/\1/p' /tmp/en_work.out | tail -1)
   active=$(avg_cpu_mw /tmp/en_active.txt)
   net=$(awk "BEGIN{printf \"%.1f\", $active-$IDLE}")
@@ -57,7 +58,7 @@ run_one() {
   energy=$(awk "BEGIN{printf \"%.1f\", ($net/1000)/$tput*1e6}")
   local out="$OUTDIR/$slug.jsonl"
   {
-    printf '{"scenario":"announce-energy","scenario_version":1,"implementation":"%s","commit":"%s","toolchain":"%s","host":"%s","axis":"conformance","metric":"%s","value":2560,"unit":"count"}\n' "$impl" "$commit" "$tc" "$HOST" "$metric"
+    printf '{"scenario":"announce-energy","scenario_version":1,"implementation":"%s","commit":"%s","toolchain":"%s","host":"%s","axis":"conformance","metric":"%s","value":%s,"unit":"count"}\n' "$impl" "$commit" "$tc" "$HOST" "$metric" "$resolved"
     printf '{"scenario":"announce-energy","scenario_version":1,"implementation":"%s","commit":"%s","toolchain":"%s","host":"%s","axis":"throughput","metric":"sustained_announces_per_sec","value":%s,"unit":"announce/s"}\n' "$impl" "$commit" "$tc" "$HOST" "$tput"
     printf '{"scenario":"announce-energy","scenario_version":1,"implementation":"%s","commit":"%s","toolchain":"%s","host":"%s","axis":"power","metric":"cpu_power_watts","value":%s,"unit":"W"}\n' "$impl" "$commit" "$tc" "$HOST" "$w"
     printf '{"scenario":"announce-energy","scenario_version":1,"implementation":"%s","commit":"%s","toolchain":"%s","host":"%s","axis":"energy","metric":"energy_microjoules_per_announce","value":%s,"unit":"µJ/announce"}\n' "$impl" "$commit" "$tc" "$HOST" "$energy"

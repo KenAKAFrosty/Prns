@@ -1,9 +1,0 @@
-{
-  "host": "x86_64-unknown-linux-gnu",
-  "cpu_model": null,
-  "physical_cores": null,
-  "logical_cores": null,
-  "total_memory_bytes": null,
-  "os_version": null,
-  "kernel_version": null
-}

@@ -1,4 +1,4 @@
-"""Mint the `announce-256` scenario corpus from the RNS 1.3.1 reference.
+"""Mint the `announce-energy` scenario corpus from the RNS 1.3.1 reference.
 
 The benchmark corpus is the fairness/conformance gate: every implementation replays
 these exact wire bytes. So the bytes must be *reference* ground truth, not minted by
@@ -29,7 +29,7 @@ APP_NAME = "lxmf"
 ASPECTS = ["delivery"]
 APP_DATA = b"benchmarks"
 SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "scenarios"
-SCENARIOS = [("announce-256", 256), ("announce-parallel", 2560)]
+SCENARIOS = [("announce-energy", 2560)]
 
 # A live Reticulum only matters for routing/transport, never for the announce bytes.
 RNS.Transport.register_destination = staticmethod(lambda *a, **k: None)

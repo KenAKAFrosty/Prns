@@ -1,6 +1,7 @@
 // LXMF-rs' sustained energy harness: sustained parse + stateless validate across all logical
 // cores for a fixed wall-time. usage: <corpus.hex> <secs> [working_set]
 
+use std::collections::HashSet;
 use std::hint::black_box;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -35,6 +36,20 @@ fn main() {
 
     let text = std::fs::read_to_string(&path).expect("read corpus");
     let base: Vec<Vec<u8>> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(from_hex).collect();
+
+    let resolved = {
+        let mut learned: HashSet<Vec<u8>> = HashSet::new();
+        for raw in &base {
+            if let Ok(pkt) = Packet::from_bytes(raw) {
+                if let Ok(info) = DestinationAnnounce::validate(&pkt) {
+                    learned.insert(info.destination.desc.address_hash.as_slice().to_vec());
+                }
+            }
+        }
+        learned.len()
+    };
+    println!("CONFORMANCE resolved={resolved}");
+
     let corpus: Vec<Vec<u8>> = base.iter().cloned().cycle().take(ws.max(base.len())).collect();
     let threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let chunk = corpus.len().div_ceil(threads);

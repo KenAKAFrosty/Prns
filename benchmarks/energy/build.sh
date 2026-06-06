@@ -8,7 +8,7 @@ export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BENCH="$(cd "$HERE/.." && pwd)"
 source "$BENCH/external/lib.sh"
-CORPUS="$BENCH/scenarios/announce-parallel/packets.hex"
+CORPUS="$BENCH/scenarios/announce-energy/packets.hex"
 export CRYSTAL_WORKERS="$(sysctl -n hw.logicalcpu 2>/dev/null || getconf _NPROCESSORS_ONLN)"
 
 clone_pinned "https://codeberg.org/Lew_Palm/leviculum.git"        6f366ca "$BENCH/external/leviculum/.upstream"

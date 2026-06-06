@@ -4,10 +4,10 @@
 //! them. The website renders the same files, so the tables can't drift between GitHub and
 //! the site.
 //!
-//! Per scenario, the page is a **cross-implementation comparison**: every implementation
-//! that filed a figure for this host, sorted by ingest throughput, with its language,
-//! Ed25519 backend, conformance, and speed relative to the Python reference. announce-256
-//! is ~97% Ed25519 verify, so the ranking is a crypto-backend story.
+//! The page is a **cross-implementation comparison**: every implementation that filed a
+//! figure for this host, with its language, Ed25519 backend, conformance, sustained
+//! throughput, CPU power, and energy per announce, sorted by energy. The announce path is
+//! ~97% Ed25519 verify, so the ranking is a crypto-backend story.
 //!
 //! `--check` re-renders every file and diffs against what's committed — the drift gate,
 //! mirroring `gen_corpus --check`. Generated, never hand-edited.
@@ -152,24 +152,21 @@ fn gib(bytes: u64) -> String {
     format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
 }
 
-/// One implementation's figures for a scenario, joined with its descriptor. A standard
-/// scenario fills `throughput_single`; the parallel scenario fills `throughput_by_threads`,
-/// one entry per swept thread count. `conformance_metric` distinguishes a full route-store
-/// pass (`routes_resolved`) from a verify-only port (`announces_verified`).
+/// One implementation's figures for the energy scenario, joined with its descriptor.
+/// `conformance_metric` distinguishes a full route-store pass (`routes_resolved`) from a
+/// verify-only port (`announces_verified`).
 struct Comparison<'a> {
     name: String,
     descriptor: Option<&'a ImplementationDescriptor>,
     conformance: Option<f64>,
     conformance_metric: Option<String>,
-    throughput_single: Option<f64>,
-    throughput_by_threads: BTreeMap<u32, f64>,
+    throughput: Option<f64>,
     power_watts: Option<f64>,
     energy_uj: Option<f64>,
     toolchain: String,
 }
 
-/// The cross-implementation comparison for one scenario: the standard `×ref` ingest table,
-/// or — when the scenario sweeps parallelism — the single-thread-vs-all-cores table.
+/// The cross-implementation comparison for a scenario — the energy table.
 fn render_scenario(
     out: &mut String,
     scenario: &str,
@@ -178,13 +175,7 @@ fn render_scenario(
 ) {
     let manifest = Manifest::load(scenario);
     let entries = comparisons(rows, impls);
-    if entries.iter().any(|e| e.energy_uj.is_some()) {
-        render_energy(out, scenario, entries, &manifest);
-    } else if entries.iter().any(|e| !e.throughput_by_threads.is_empty()) {
-        render_parallel(out, scenario, entries, &manifest);
-    } else {
-        render_standard(out, scenario, entries, &manifest, impls);
-    }
+    render_energy(out, scenario, entries, &manifest);
 }
 
 /// The energy comparison: sustained all-cores ingest, with the Ed25519 backend (the
@@ -243,7 +234,7 @@ fn render_energy(
             label.push_str(" ‡");
         }
         let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
-        let throughput = throughput_cell(entry.throughput_single);
+        let throughput = throughput_cell(entry.throughput);
         let power = entry.power_watts.map(|w| format!("{w:.1} W")).unwrap_or_else(pending);
         let energy = entry
             .energy_uj
@@ -269,186 +260,10 @@ fn render_energy(
     }
     out.push_str(
         "\nThroughput here is the sustained average under continuous all-cores load (the energy \
-         denominator), a touch below the best-of-N peak in announce-parallel. Python runs all-core \
-         threads but is GIL-bound, so its all-cores ≈ one core.\n",
+         denominator). Python runs all-core threads but is GIL-bound, so its all-cores ≈ one core.\n",
     );
 
     render_provenance(out, &entries);
-}
-
-/// The single-interface ingest comparison: every implementation sorted by ingest throughput,
-/// with the Python reference's throughput as the `×ref` anchor.
-fn render_standard(
-    out: &mut String,
-    scenario: &str,
-    mut entries: Vec<Comparison<'_>>,
-    manifest: &Manifest,
-    impls: &[ImplementationDescriptor],
-) {
-    entries.sort_by(|a, b| {
-        throughput_desc(a.throughput_single, &a.name, b.throughput_single, &b.name)
-    });
-    let reference_throughput = impls
-        .iter()
-        .find(|d| d.role == ImplementationRole::Reference)
-        .and_then(|d| entries.iter().find(|e| e.name == d.implementation))
-        .and_then(|e| e.throughput_single);
-
-    let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
-    if !manifest.description.is_empty() {
-        let _ = writeln!(out, "{}\n", manifest.description);
-    }
-    out.push_str(
-        "Same wire bytes through each implementation's real parse → Ed25519 verify → store \
-         path, best-of-50 min wall time. This axis is ~97% Ed25519 verify, so the ranking is a \
-         crypto-backend story; figures are comparable only within this host.\n\n",
-    );
-
-    out.push_str(
-        "| Implementation | Language | Ed25519 backend | Conformance | Ingest throughput | ×ref |\n",
-    );
-    out.push_str(
-        "|----------------|----------|-----------------|-------------|-------------------|------|\n",
-    );
-    let mut any_partial = false;
-    for entry in &entries {
-        let language = entry.descriptor.map_or("—", |d| d.language.as_str());
-        let backend = entry.descriptor.map_or("—", |d| d.crypto_backend.as_str());
-        let is_reference = entry.descriptor.is_some_and(|d| d.role == ImplementationRole::Reference);
-        let partial = entry.descriptor.and_then(|d| d.maturity.as_deref()) == Some("partial");
-        any_partial |= partial;
-
-        let mut label = entry.name.clone();
-        if is_reference {
-            label.push_str(" _(reference)_");
-        }
-        if partial {
-            label.push_str(" †");
-        }
-        let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
-        let throughput = entry
-            .throughput_single
-            .map(|t| format!("{} announce/s", humanize(t)))
-            .unwrap_or_else(pending);
-        let relative = match (entry.throughput_single, reference_throughput) {
-            (Some(t), Some(r)) if r > 0.0 => format!("{:.1}×", t / r),
-            _ => "—".to_string(),
-        };
-        let _ = writeln!(
-            out,
-            "| {label} | {language} | {backend} | {conformance} | {throughput} | {relative} |"
-        );
-    }
-
-    if any_partial {
-        out.push_str(
-            "\n† Marked partial / not-yet-feature-complete on the upstream maturity list — \
-             included as a data point, not part of the feature-complete tier.\n",
-        );
-    }
-
-    render_provenance(out, &entries);
-}
-
-/// The parallelism comparison: every implementation's ingest throughput single-threaded vs
-/// sharded across all of the host's logical cores, sorted by the all-cores figure.
-fn render_parallel(
-    out: &mut String,
-    scenario: &str,
-    mut entries: Vec<Comparison<'_>>,
-    manifest: &Manifest,
-) {
-    let thread_counts: Vec<u32> = entries
-        .iter()
-        .flat_map(|e| e.throughput_by_threads.keys().copied())
-        .collect();
-    let lo = thread_counts.iter().copied().min().unwrap_or(1);
-    let hi = thread_counts.iter().copied().max().unwrap_or(lo);
-
-    entries.sort_by(|a, b| {
-        let ka = a.throughput_by_threads.get(&hi).copied();
-        let kb = b.throughput_by_threads.get(&hi).copied();
-        throughput_desc(ka, &a.name, kb, &b.name)
-    });
-
-    let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
-    if !manifest.description.is_empty() {
-        let _ = writeln!(out, "{}\n", manifest.description);
-    }
-    out.push_str(
-        "Best-of-30 min wall time; the two columns are single-threaded and the same corpus \
-         sharded across all of this host's logical cores. The announce path is ~97% independent \
-         per-announce Ed25519 verify, so it parallelizes cleanly — but a runtime with a global \
-         interpreter lock (CPython) can't use the extra cores from threads, so its all-cores \
-         figure barely moves, while compiled/JIT runtimes scale with the core count. Figures are \
-         comparable only within this host.\n\n",
-    );
-
-    let _ = writeln!(
-        out,
-        "| Implementation | Language | Conformance | {} | {} |",
-        thread_header(lo),
-        thread_header(hi)
-    );
-    out.push_str("|----------------|----------|-------------|--------:|--------:|\n");
-
-    let mut any_partial = false;
-    let mut any_verify_only = false;
-    for entry in &entries {
-        let language = entry.descriptor.map_or("—", |d| d.language.as_str());
-        let is_reference = entry.descriptor.is_some_and(|d| d.role == ImplementationRole::Reference);
-        let partial = entry.descriptor.and_then(|d| d.maturity.as_deref()) == Some("partial");
-        let verify_only = entry.conformance_metric.as_deref() == Some("announces_verified");
-        any_partial |= partial;
-        any_verify_only |= verify_only;
-
-        let mut label = entry.name.clone();
-        if is_reference {
-            label.push_str(" _(reference)_");
-        }
-        if partial {
-            label.push_str(" †");
-        }
-        if verify_only {
-            label.push_str(" ‡");
-        }
-        let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
-        let lo_cell = throughput_cell(entry.throughput_by_threads.get(&lo).copied());
-        let hi_cell = throughput_cell(entry.throughput_by_threads.get(&hi).copied());
-        let _ = writeln!(out, "| {label} | {language} | {conformance} | {lo_cell} | {hi_cell} |");
-    }
-
-    if any_partial {
-        out.push_str(
-            "\n† Marked partial / not-yet-feature-complete on the upstream maturity list — \
-             included as a data point, not part of the feature-complete tier.\n",
-        );
-    }
-    if any_verify_only {
-        out.push_str(
-            "\n‡ Measured verify-only (parse + Ed25519 verify, no route store) — its store isn't \
-             thread-safe, so the parallel figure isolates the verify work that dominates this axis.\n",
-        );
-    }
-
-    render_provenance(out, &entries);
-}
-
-/// Throughput-descending order (unmeasured last), ties broken by name — the table sort.
-fn throughput_desc(a: Option<f64>, a_name: &str, b: Option<f64>, b_name: &str) -> Ordering {
-    let ka = a.unwrap_or(f64::NEG_INFINITY);
-    let kb = b.unwrap_or(f64::NEG_INFINITY);
-    kb.partial_cmp(&ka)
-        .unwrap_or(Ordering::Equal)
-        .then_with(|| a_name.cmp(b_name))
-}
-
-fn thread_header(t: u32) -> String {
-    if t == 1 {
-        "1 thread".to_string()
-    } else {
-        format!("{t} threads")
-    }
 }
 
 fn throughput_cell(value: Option<f64>) -> String {
@@ -467,8 +282,7 @@ fn comparisons<'a>(
     struct Acc {
         conformance: Option<f64>,
         conformance_metric: Option<String>,
-        throughput_single: Option<f64>,
-        throughput_by_threads: BTreeMap<u32, f64>,
+        throughput: Option<f64>,
         power_watts: Option<f64>,
         energy_uj: Option<f64>,
         toolchain: String,
@@ -482,14 +296,7 @@ fn comparisons<'a>(
                 acc.conformance = row.value;
                 acc.conformance_metric = Some(row.metric.clone());
             }
-            Axis::Throughput => match row.threads {
-                None => acc.throughput_single = row.value,
-                Some(t) => {
-                    if let Some(v) = row.value {
-                        acc.throughput_by_threads.insert(t, v);
-                    }
-                }
-            },
+            Axis::Throughput => acc.throughput = row.value,
             Axis::Power => acc.power_watts = row.value,
             Axis::Energy => acc.energy_uj = row.value,
             _ => {}
@@ -503,8 +310,7 @@ fn comparisons<'a>(
             name,
             conformance: acc.conformance,
             conformance_metric: acc.conformance_metric,
-            throughput_single: acc.throughput_single,
-            throughput_by_threads: acc.throughput_by_threads,
+            throughput: acc.throughput,
             power_watts: acc.power_watts,
             energy_uj: acc.energy_uj,
             toolchain: acc.toolchain,
@@ -606,13 +412,10 @@ const HOST_FOOTNOTES: &str = "
 ---
 
 - _Conformance_ — distinct routes the engine resolves from the corpus (or announces verified, for a verify-only port), against the manifest's expected count.
-- _Ingest throughput_ — best-of-N wall time to parse + verify + store the whole corpus into a fresh engine, as announces per second.
-- _×ref_ — throughput relative to the Python reference (`RNS`) on this host.
-- _1 thread / N threads_ — for the parallel scenario, ingest throughput single-threaded and sharded across all of this host's logical cores.
-- _CPU power / Energy_ — for the energy scenario: average active CPU power under sustained all-cores load, and energy per announce (the cross-comparable price paid).
+- _Throughput_ — sustained announces per second under continuous all-cores load (the energy denominator).
+- _CPU power_ — average active CPU power over that sustained run.
+- _Energy / announce_ — (active power − idle baseline) ÷ throughput; the cross-comparable price paid, sorted ascending.
 
-Regenerate: run each implementation's driver on this host (`bench_result`, `bench_parallel`,
-`reference/driver.py`, `reference/driver_parallel.py`, and the `external/<impl>/run.sh` + `run-mt.sh`
-one-command drivers) to refresh `results/`, then `render_results` to rewrite these tables. The
-energy rows need root: `energy/build.sh` then `sudo energy/measure.sh`.
+Regenerate: `energy/build.sh` then `sudo energy/measure.sh` (root, for the power counters) to
+refresh `results/`, then `cargo run --bin render_results` to rewrite these tables.
 ";

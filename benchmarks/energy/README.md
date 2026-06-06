@@ -8,9 +8,9 @@ regardless of GC/JIT/interpreter, because it's the actual joules paid.
 Each contestant does **one sustained all-cores run** that yields both throughput and power: the
 workload pegs the CPU for the window (looping a replicated 50k working set), `powermetrics`
 integrates package power over it from a separate root process (negligible load), and we divide.
-Throughput here is the sustained *average* under load — the energy denominator — a touch below
-announce-parallel's best-of-N peak. Python runs all-core threads but is GIL-bound, so its
-all-cores ≈ one core (the honest outcome of asking Python to use the machine).
+Throughput here is the sustained *average* under continuous load — the energy denominator.
+Python runs all-core threads but is GIL-bound, so its all-cores ≈ one core (the honest outcome
+of asking Python to use the machine).
 
 ## Run
 
@@ -21,13 +21,14 @@ cargo run --release --bin render_results   # rewrite the tables
 ```
 
 `measure.sh` samples power for `<secs>`; 30s windows ≈ 5 min total, `60` for steadier numbers. It
-files rows owned by `$SUDO_USER`. Conformance (2560/2560) is carried from the announce-parallel
-scenario (same corpus + validate path), since the sustained harnesses don't re-store.
+files rows owned by `$SUDO_USER`. Each harness measures conformance in one pass before the
+sustained loop (printing `CONFORMANCE resolved=N`), so the table's conformance column is a real
+per-impl gate, not an assertion.
 
 ## Why this needs root (and isn't a one-command driver)
 
-`powermetrics` (macOS) reads privileged CPU power counters, so unlike the `external/<impl>/run.sh`
-drivers this can't be a no-auth reproduce — it's a documented `sudo` step, macOS-only for now.
+`powermetrics` (macOS) reads privileged CPU power counters, so unlike the corpus/render drivers
+this can't be a no-auth reproduce — it's a documented `sudo` step, macOS-only for now.
 
 - **Linux:** `perf stat -e power/energy-pkg/,power/energy-cores/ -- <cmd>` (RAPL) returns joules
   directly; swap it into `measure.sh`.
@@ -38,6 +39,6 @@ drivers this can't be a no-auth reproduce — it's a documented `sudo` step, mac
 ## Files
 
 - `../src/bin/sustained.rs` (ours) and `../reference/sustained.py` (RNS; RetiNet reuses it).
-- `contestants/<impl>/` — sustained harnesses for the six external ports, built against the same
-  pinned `external/<impl>/.upstream/` clones the throughput drivers use.
+- `contestants/<impl>/` — sustained harnesses for the six external ports, built against pinned
+  `external/<impl>/.upstream/` clones that `build.sh` fetches.
 - `build.sh` (build + self-test) and `measure.sh` (sample + file rows).

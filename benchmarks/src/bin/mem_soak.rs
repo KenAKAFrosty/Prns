@@ -34,7 +34,7 @@ fn main() {
     let samples: u64 = env("MEM_SOAK_SAMPLES", 12);
     let sample_every = (ticks / samples).max(1);
 
-    let mut announces = load_corpus(&scenario_dir("announce-256"));
+    let mut announces = load_corpus(&scenario_dir("announce-energy"));
     let mut engine = new_engine::<GrowableHeap>();
     ingest_all(&mut engine, &mut announces);
 

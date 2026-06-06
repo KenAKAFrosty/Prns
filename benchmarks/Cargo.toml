@@ -22,8 +22,8 @@ personal-rns = { path = "../personal-rns" }
 # Heap allocation profiler — the host route of the measurement seam (the bins set it
 # as the global allocator; the criterion benches deliberately don't).
 dhat = "0.3"
-# The result substrate is JSON rows (the cross-implementation schema); `bench_result`
-# emits them and `render_results` reads them back to render RESULTS.md.
+# The result substrate is JSON rows (the cross-implementation schema); the energy drivers
+# emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
@@ -57,9 +57,11 @@ name = "describe_host"
 path = "src/bin/describe_host.rs"
 bench = false
 
+# Prns' sustained energy harness (prints CONFORMANCE + THROUGHPUT; energy/measure.sh wraps
+# powermetrics around it and files the rows).
 [[bin]]
-name = "bench_result"
-path = "src/bin/bench_result.rs"
+name = "sustained"
+path = "src/bin/sustained.rs"
 bench = false
 
 [[bin]]
