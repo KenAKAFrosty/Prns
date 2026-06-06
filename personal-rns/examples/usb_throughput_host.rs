@@ -20,7 +20,7 @@ use personal_rns::interfaces::impls::usb_auto::core::{
 };
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
-use personal_rns::interfaces::{InterfaceHandle, InterfaceId};
+use personal_rns::interfaces::{ConnectionState, ControlReport, InterfaceHandle, InterfaceId};
 use personal_rns::runtime::host::impls::LinuxSync;
 
 const BAUD: u32 = 115_200;
@@ -33,6 +33,10 @@ const LINK_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "via-interface-flood") {
+        run_via_interface_flood();
+        return;
+    }
     if args.iter().any(|a| a == "via-interface") {
         run_via_interface();
         return;
@@ -40,7 +44,7 @@ fn main() {
     let flood = args.iter().any(|a| a == "flood");
     let path = args
         .iter()
-        .find(|a| !matches!(a.as_str(), "flood" | "via-interface"))
+        .find(|a| !matches!(a.as_str(), "flood" | "via-interface" | "via-interface-flood"))
         .cloned()
         .unwrap_or_else(autodetect_port);
     if flood {
@@ -48,6 +52,51 @@ fn main() {
     } else {
         run_count(&path);
     }
+}
+
+fn run_via_interface_flood() {
+    eprintln!("flooding through the real worker's egress (watch the board's OLED for its RX rate)");
+    let host = LinuxSync::new();
+    let id = InterfaceId::new(*b"usb-throughput--");
+    let mut started = host.attach::<_, MAX_DATA_BYTES>(usb_auto_interface(id), 64);
+    let payload = [0xA5u8; MAX_DATA_BYTES];
+
+    let started_at = Instant::now();
+    let mut linked = false;
+    while !linked {
+        if started_at.elapsed() >= LINK_TIMEOUT {
+            eprintln!("no link within {}s — is the sink bin flashed and running?", LINK_TIMEOUT.as_secs());
+            std::process::exit(1);
+        }
+        while let Some(report) = started.handle.next_report() {
+            if matches!(report, ControlReport::ConnectionState(ConnectionState::Connected)) {
+                linked = true;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    eprintln!("linked — flooding via the worker for {}s", FLOOD_WINDOW.as_secs());
+    let window_start = Instant::now();
+    let mut granted = 0u64;
+    while window_start.elapsed() < FLOOD_WINDOW {
+        match started.handle.acquire_send_grant(|buf| {
+            buf[..payload.len()].copy_from_slice(&payload);
+            payload.len()
+        }) {
+            Ok(n) => granted += n as u64,
+            Err(_) => std::thread::sleep(Duration::from_micros(20)),
+        }
+    }
+    started.handle.request_stop();
+
+    let secs = window_start.elapsed().as_secs_f64();
+    let mb_s = granted as f64 / 1e6 / secs;
+    println!("desktop -> S3 via the worker over {secs:.2}s:");
+    println!("  {granted} bytes accepted into the worker's egress ({mb_s:.1} MB/s) — this is the");
+    println!("  ring-accept/shed rate when overflooding, NOT delivery. The worker buffers one");
+    println!("  frame and sheds the rest under back-pressure, never blocking the engine.");
+    println!("  The board's OLED shows the true received rate (the transport ceiling).");
 }
 
 fn run_via_interface() {
