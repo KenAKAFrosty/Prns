@@ -1,9 +1,23 @@
+use crate::crypto::Ed25519Signature;
+use crate::engine::commands::{CommandId, Delivered};
 use crate::engine::egress::EgressSerializeError;
+use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
-use crate::routing::dedup::PacketHash;
+use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::wire::{HEADER_MIN_LEN, SIGNATURE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
+
+/// RNS 1.3.1 `PacketReceipt.IMPL_LENGTH`
+pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_LEN;
+/// RNS 1.3.1 `PacketReceipt.EXPL_LENGTH`
+pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_LEN;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofIngest {
+    SendSingleDelivered { id: CommandId, delivered: Delivered },
+    Ignored,
+}
 
 /// The proof of receipt a delivered Single packet earned under its
 /// destination's [`ProofStrategy`](crate::routing::upstream_app_destinations::ProofStrategy):
@@ -44,6 +58,42 @@ impl<S: EngineStorage> EngineState<S> {
         write_implicit_proof_wire_packet(&owed.packet_hash, &signature, buf)
             .map_err(WriteProofError::Serialize)
     }
+
+    /// An arriving proof settles the outstanding send it validates. RNS 1.3.1
+    /// `PacketReceipt.validate_proof` for both forms. Settlement removes the
+    /// receipt, so a replayed proof finds nothing; exactly-once is structural.
+    pub fn ingest_proof(&mut self, payload: &[u8], arrived_at: InstantMillis) -> ProofIngest {
+        let proven = match payload.len() {
+            EXPLICIT_PROOF_PAYLOAD_LEN => {
+                let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
+                let (Ok(named_hash), Ok(signature)) = (named_hash.try_into(), signature.try_into())
+                else {
+                    return ProofIngest::Ignored;
+                };
+                self.receipts.settle_by_explicit_proof(
+                    &PacketHash::new(named_hash),
+                    &Ed25519Signature(signature),
+                )
+            }
+            IMPLICIT_PROOF_PAYLOAD_LEN => {
+                let Ok(signature) = payload.try_into() else {
+                    return ProofIngest::Ignored;
+                };
+                self.receipts
+                    .settle_by_implicit_proof(&Ed25519Signature(signature))
+            }
+            _ => return ProofIngest::Ignored,
+        };
+        match proven {
+            Some(receipt) => ProofIngest::SendSingleDelivered {
+                id: receipt.command_id,
+                delivered: Delivered {
+                    rtt_ms: arrived_at.0.saturating_sub(receipt.sent_at.0),
+                },
+            },
+            None => ProofIngest::Ignored,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -55,15 +105,6 @@ mod tests {
     use crate::routing::dedup::PacketHash;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::MTU;
-
-    const RAW_SEALED_FOR_PROOF: &str =
-        "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
-         a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\
-         25ec6b58715afe16269730584f5fe3a55a6429ded73c3d4b2458f67ef9";
-
-    const RNS_1_3_1_IMPLICIT_PROOF: &str =
-        "0300a34e24b00ebdda0179b642579b71266c00f52e874f44101203b553179c107604fc01ef99e210895f95\
-         423f14aca8094a5a09938d9337aec5c6cb1bc38458d65da559450a9f8e0e78921ca690bed8430100";
 
     #[test]
     fn write_proof_is_byte_identical_to_the_rns_1_3_1_implicit_proof() {

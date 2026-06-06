@@ -33,7 +33,10 @@ pub enum Ingress<'a> {
 
     LinkRequest,
 
-    Proof,
+    Proof {
+        payload: &'a [u8],
+        arrived_at: InstantMillis,
+    },
 
     Unparseable,
 }
@@ -102,7 +105,10 @@ impl<'a> Ingress<'a> {
                 arrived_at,
             },
             PacketType::LinkRequest => Self::LinkRequest,
-            PacketType::Proof => Self::Proof,
+            PacketType::Proof => Self::Proof {
+                payload,
+                arrived_at,
+            },
         }
     }
 }
@@ -174,7 +180,7 @@ mod tests {
             match packet_type {
                 PacketType::Data => assert!(matches!(classified, Ingress::Data { .. })),
                 PacketType::LinkRequest => assert!(matches!(classified, Ingress::LinkRequest)),
-                PacketType::Proof => assert!(matches!(classified, Ingress::Proof)),
+                PacketType::Proof => assert!(matches!(classified, Ingress::Proof { .. })),
                 PacketType::Announce => unreachable!(),
             }
         }
@@ -975,7 +981,7 @@ mod tests {
     }
 }
 
-use crate::engine::proof::ProofOwed;
+use crate::engine::proof::{ProofIngest, ProofOwed};
 use crate::engine::EngineState;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
@@ -1005,6 +1011,7 @@ pub enum IngestPacketOutcome<'p> {
         delivery: Delivery<'p>,
         maybe_owed_proof: Option<ProofOwed>,
     },
+    Proof(ProofIngest),
     Ignored,
 }
 
@@ -1049,7 +1056,12 @@ impl<S: EngineStorage> EngineState<S> {
                 None => IngestPacketOutcome::Ignored,
             },
 
-            Ingress::LinkRequest | Ingress::Proof => IngestPacketOutcome::Ignored,
+            Ingress::Proof {
+                payload,
+                arrived_at,
+            } => IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at)),
+
+            Ingress::LinkRequest => IngestPacketOutcome::Ignored,
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
         }
     }

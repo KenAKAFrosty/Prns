@@ -1,6 +1,6 @@
 use crate::crypto::{X25519PublicKey, X25519SecretKey};
 use crate::engine::commands::{CommandId, CommandOutcome, SendSingle, SendSingleError};
-use crate::engine::receipts::{CulledReceipt, OutstandingReceipt};
+use crate::engine::receipts::{CulledReceipt, ExpiredReceipt, OutstandingReceipt};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::{EncryptError, RemoteIdentity, ENCRYPTION_IV_LEN};
 use crate::interfaces::InterfaceId;
@@ -154,6 +154,12 @@ impl<S: EngineStorage> EngineState<S> {
             culled,
         })
     }
+
+    /// Drain one sent SINGLE whose proof never arrived. Call repeatedly until `None` to fully drain.
+    /// Every pop is that command's timeout settlement.
+    pub fn pop_timed_out_send_single(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
+        self.receipts.pop_expired(now)
+    }
 }
 
 #[cfg(test)]
@@ -214,6 +220,56 @@ mod tests {
 
     fn arrival() -> crate::interfaces::InterfaceId {
         crate::interfaces::InterfaceId::new([0xA1; 16])
+    }
+
+    fn unratcheted_neighbor_with_a_tracked_send(
+        payload: &[u8],
+        sent_at: u64,
+    ) -> (EngineState<Cap>, std::vec::Vec<u8>) {
+        let mut announcer = personal_node_announcer();
+        let mut announce_buf = [0u8; MTU];
+        let announce_len = announcer
+            .write_due_self_announce(
+                InstantMillis(100),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .unwrap()
+            .unwrap();
+
+        let mut state = hearer();
+        hear_announce(&mut state, &announce_buf[..announce_len], arrival());
+
+        let mut buf = [0u8; MTU];
+        let dispatch = state
+            .write_commanded_send_single(
+                CommandId(7),
+                &send_of(payload),
+                InstantMillis(sent_at),
+                vector_send_entropy(),
+                &mut buf,
+            )
+            .unwrap();
+        (state, buf[..dispatch.wire_len].to_vec())
+    }
+
+    fn proof_packet(payload: &[u8], proven: &PacketHash) -> std::vec::Vec<u8> {
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Proof,
+            hops: 0,
+            transport_id: None,
+            destination: proven.proof_destination(),
+            context: WireContext::None,
+        };
+        let mut bytes = std::vec![0u8; crate::wire::HEADER_MIN_LEN + payload.len()];
+        let written = header.write(&mut bytes).unwrap();
+        bytes[written..].copy_from_slice(payload);
+        bytes
     }
 
     #[test]
@@ -441,5 +497,145 @@ mod tests {
             }),
         );
         assert_eq!(state.receipts.len(), 8);
+    }
+
+    #[test]
+    fn a_python_minted_proof_settles_the_tracked_send_with_its_rtt() {
+        use crate::engine::{Delivered, ProofIngest};
+
+        let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
+        assert_eq!(wire, hx(RAW_SEALED_FOR_PROOF));
+
+        let mut proof = hx(RNS_1_3_1_IMPLICIT_PROOF);
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_250),
+                    source_interface: arrival(),
+                    bytes: &mut proof,
+                },
+                TEST_ENTROPY,
+            ),
+            IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
+                id: CommandId(7),
+                delivered: Delivered { rtt_ms: 250 },
+            }),
+        );
+        assert_eq!(state.receipts.len(), 0);
+
+        let mut replay = hx(RNS_1_3_1_IMPLICIT_PROOF);
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_300),
+                    source_interface: arrival(),
+                    bytes: &mut replay,
+                },
+                TEST_ENTROPY,
+            ),
+            IngestPacketOutcome::Proof(ProofIngest::Ignored),
+            "settlement removed the receipt, so a replayed proof finds nothing",
+        );
+    }
+
+    #[test]
+    fn an_explicit_proof_settles_the_send_too() {
+        use crate::crypto::{ed25519_sign, Ed25519SecretKey};
+        use crate::engine::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
+        use crate::engine::{Delivered, ProofIngest};
+
+        let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"explicitly", 2_000);
+        let proven = PacketHash::of_wire_packet(&wire).unwrap();
+        let signature = ed25519_sign(&Ed25519SecretKey::new([0x11; 32]), proven.as_bytes());
+
+        let mut payload = [0u8; EXPLICIT_PROOF_PAYLOAD_LEN];
+        payload[..32].copy_from_slice(proven.as_bytes());
+        payload[32..].copy_from_slice(&signature.0);
+        let mut packet = proof_packet(&payload, &proven);
+
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(2_500),
+                    source_interface: arrival(),
+                    bytes: &mut packet,
+                },
+                TEST_ENTROPY,
+            ),
+            IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
+                id: CommandId(7),
+                delivered: Delivered { rtt_ms: 500 },
+            }),
+        );
+        assert_eq!(state.receipts.len(), 0);
+    }
+
+    #[test]
+    fn a_forged_proof_leaves_the_send_outstanding() {
+        use crate::crypto::{ed25519_sign, Ed25519SecretKey};
+        use crate::engine::ProofIngest;
+
+        let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"unforgeable", 1_000);
+        let proven = PacketHash::of_wire_packet(&wire).unwrap();
+        let forged = ed25519_sign(&Ed25519SecretKey::new([0x99; 32]), proven.as_bytes());
+        let mut packet = proof_packet(&forged.0, &proven);
+
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_250),
+                    source_interface: arrival(),
+                    bytes: &mut packet,
+                },
+                TEST_ENTROPY,
+            ),
+            IngestPacketOutcome::Proof(ProofIngest::Ignored),
+        );
+        assert_eq!(state.receipts.len(), 1, "the timeout still owns the send");
+    }
+
+    #[test]
+    fn an_alien_length_proof_payload_is_ignored() {
+        use crate::engine::ProofIngest;
+
+        let mut state = hearer();
+        let mut packet = proof_packet(&[0u8; 65], &PacketHash::new([0xAA; 32]));
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: arrival(),
+                    bytes: &mut packet,
+                },
+                TEST_ENTROPY,
+            ),
+            IngestPacketOutcome::Proof(ProofIngest::Ignored),
+        );
+    }
+
+    #[test]
+    fn a_timed_out_send_pops_once_for_its_settlement() {
+        let mut state = hearer();
+        hear_announce(&mut state, &hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE), arrival());
+        let mut buf = [0u8; MTU];
+        state
+            .write_commanded_send_single(
+                CommandId(7),
+                &send_of(b"timed"),
+                InstantMillis(1_000),
+                vector_send_entropy(),
+                &mut buf,
+            )
+            .unwrap();
+
+        assert_eq!(state.pop_timed_out_send_single(InstantMillis(12_999)), None);
+        assert_eq!(
+            state.pop_timed_out_send_single(InstantMillis(13_000)),
+            Some(ExpiredReceipt {
+                command_id: CommandId(7),
+            }),
+        );
+        assert_eq!(state.pop_timed_out_send_single(InstantMillis(13_000)), None);
+        assert_eq!(state.receipts.len(), 0);
     }
 }

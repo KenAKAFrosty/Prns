@@ -32,6 +32,15 @@ pub(crate) const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d731400022
                                 7b2891e6d143e6bfc3b80cbdca33f1f85a9ef68835693cb252ba60f558f84436c91761e6f97\
                                 4d0daa069e56495df1870f85d6e6b5af2640868656c6c6f2d706572736f6e616c";
 
+pub(crate) const RAW_SEALED_FOR_PROOF: &str =
+    "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
+     a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\
+     25ec6b58715afe16269730584f5fe3a55a6429ded73c3d4b2458f67ef9";
+
+pub(crate) const RNS_1_3_1_IMPLICIT_PROOF: &str =
+    "0300a34e24b00ebdda0179b642579b71266c00f52e874f44101203b553179c107604fc01ef99e210895f95\
+     423f14aca8094a5a09938d9337aec5c6cb1bc38458d65da559450a9f8e0e78921ca690bed8430100";
+
 pub(crate) fn hx(s: &str) -> Vec<u8> {
     (0..s.len())
         .step_by(2)

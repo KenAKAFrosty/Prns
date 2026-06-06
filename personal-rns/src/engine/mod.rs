@@ -21,7 +21,7 @@ pub use egress::{EgressDirective, EgressSerializeError};
 pub use identity_registration::SetTransportIdentityError;
 pub use ingress::{AnnounceIngest, IngestPacketOutcome};
 pub use ingress::{DataPacket, Ingress};
-pub use proof::{ProofOwed, WriteProofError};
+pub use proof::{ProofIngest, ProofOwed, WriteProofError};
 pub use self_announce::{ReannounceSchedule, SelfAnnounceAppData, WriteSelfAnnounceError};
 pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
 pub use send_single::{SendSingleDispatch, SendSingleEntropy, WriteSendSingleError};

@@ -8,7 +8,7 @@ use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
     AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
     EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis,
-    IssuedCommand, NextScheduledEngineWork, ProofOwed, RatchetEntropy, SendSingle,
+    IssuedCommand, NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy, SendSingle,
     SendSingleEntropy, SendSingleFailure, Settlement,
 };
 use crate::interfaces::storage::InterfaceSet;
@@ -236,6 +236,17 @@ where
                         on_event(PrnsEvent::Delivered(delivery));
                         maybe_owed_proof
                     }
+                    IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
+                        id,
+                        delivered,
+                    }) => {
+                        on_event(PrnsEvent::CommandSettled {
+                            id,
+                            settlement: Settlement::SendSingle(Ok(delivered)),
+                        });
+                        None
+                    }
+                    IngestPacketOutcome::Proof(ProofIngest::Ignored) => None,
                     IngestPacketOutcome::Ignored => None,
                 }
             }) {
@@ -263,6 +274,13 @@ where
                 }
             }
         }
+    }
+
+    while let Some(expired) = engine.pop_timed_out_send_single(now) {
+        on_event(PrnsEvent::CommandSettled {
+            id: expired.command_id,
+            settlement: Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
+        });
     }
 
     let tick_output = engine.tick(now, jitter);
@@ -1152,6 +1170,183 @@ mod tests {
         let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
         assert_eq!(header.packet_type, PacketType::Data);
         assert_eq!(header.destination, destination);
+    }
+
+    #[test]
+    fn an_arriving_proof_settles_the_send_through_the_event_lane() {
+        use crate::engine::test_support::{
+            hx, personal_node_announcer, RAW_SEALED_FOR_PROOF, RNS_1_3_1_IMPLICIT_PROOF,
+            TEST_NONCE, TEST_RATCHET_ENTROPY,
+        };
+        use crate::engine::{Delivered, SendSingle, SendSinglePayload};
+        use crate::identity::Zeroizing;
+
+        let mut announcer = personal_node_announcer();
+        let mut announce_buf = [0u8; MTU];
+        let announce_len = announcer
+            .write_due_self_announce(
+                InstantMillis(100),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .unwrap()
+            .unwrap();
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x55);
+        secret[32..].fill(0x66);
+        let mut engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let mut interfaces = interface_set([started(
+            iface(0xA1),
+            std::vec![(InstantMillis(500), announce_buf[..announce_len].to_vec())],
+        )]);
+        for interface in interfaces.iter() {
+            let _ = engine.register_interface_descriptor(interface.descriptor());
+        }
+        let mut traffic = TrafficLedger::new();
+
+        let destination =
+            DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
+        let mut queue = VecDeque::new();
+        let mut settled = std::vec::Vec::new();
+        let mut collect = |event: PrnsEvent<'_>| {
+            if let PrnsEvent::CommandSettled { id, settlement } = event {
+                settled.push((id, settlement));
+            }
+        };
+
+        let first = cycle_pooled(
+            &mut engine,
+            &mut interfaces,
+            &mut traffic,
+            InstantMillis(600),
+            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            &mut || queue.pop_front(),
+        );
+        assert_eq!(first.accepted_announce_count, 1);
+
+        queue.push_back(IssuedCommand {
+            id: CommandId(7),
+            command: EngineCommand::SendSingle(SendSingle {
+                destination,
+                payload: SendSinglePayload::from_slice(b"proof-parity").unwrap(),
+            }),
+        });
+        let mut send_vector_seed = [0xBB; ENGINE_CYCLE_ENTROPY_LEN];
+        let send_region = ENGINE_CYCLE_ENTROPY_LEN - SendSingleEntropy::LEN;
+        send_vector_seed[send_region..send_region + 32].fill(0x33);
+        send_vector_seed[send_region + 32..].fill(0x44);
+        let second = cycle_pooled(
+            &mut engine,
+            &mut interfaces,
+            &mut traffic,
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new(send_vector_seed),
+            &mut collect,
+            &mut || queue.pop_front(),
+        );
+        assert_eq!(second.processed_command_count, 1);
+        assert_eq!(interfaces.as_slice()[0].handle.sent.len(), 1);
+        assert_eq!(
+            interfaces.as_slice()[0].handle.sent[0],
+            hx(RAW_SEALED_FOR_PROOF),
+        );
+
+        for interface in interfaces.iter_mut() {
+            interface
+                .handle
+                .inbound
+                .push((InstantMillis(1_250), hx(RNS_1_3_1_IMPLICIT_PROOF)));
+        }
+        let third = cycle_pooled(
+            &mut engine,
+            &mut interfaces,
+            &mut traffic,
+            InstantMillis(1_300),
+            EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            &mut || queue.pop_front(),
+        );
+        assert_eq!(third.ingested_packet_count, 1);
+
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::SendSingle(Ok(Delivered { rtt_ms: 250 })),
+            )],
+            "the RNS 1.3.1 proof settles exactly the sent command, with its measured rtt",
+        );
+    }
+
+    #[test]
+    fn an_unproven_send_settles_timeout_through_the_event_lane() {
+        use crate::engine::test_support::{hx, RATCHETED_SELF_ANNOUNCE_RNS_WIRE};
+        use crate::engine::{SendSingle, SendSinglePayload};
+        use crate::identity::Zeroizing;
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x55);
+        secret[32..].fill(0x66);
+        let engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(
+                iface(0xA1),
+                std::vec![(InstantMillis(500), hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE))],
+            )]),
+            (),
+        );
+
+        let destination =
+            DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
+        let mut queue = VecDeque::new();
+        let mut settled = std::vec::Vec::new();
+        let mut collect = |event: PrnsEvent<'_>| {
+            if let PrnsEvent::CommandSettled { id, settlement } = event {
+                settled.push((id, settlement));
+            }
+        };
+
+        let first = runtime.cycle_once(
+            InstantMillis(600),
+            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            || queue.pop_front(),
+        );
+        assert_eq!(first.accepted_announce_count, 1);
+
+        queue.push_back(IssuedCommand {
+            id: CommandId(9),
+            command: EngineCommand::SendSingle(SendSingle {
+                destination,
+                payload: SendSinglePayload::from_slice(b"into-silence").unwrap(),
+            }),
+        });
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            || queue.pop_front(),
+        );
+
+        runtime.cycle_once(
+            InstantMillis(13_000),
+            EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut collect,
+            || queue.pop_front(),
+        );
+
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(9),
+                Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
+            )],
+            "no proof by timeout_at settles the send as Timeout, exactly once",
+        );
     }
 
     #[test]
