@@ -24,7 +24,8 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use personal_rns::interfaces::impls::usb_auto::core::{
-    decode_message, Message, NodeTag, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
+    decode_message, Capabilities, Message, NodeTag, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
+    READ_CHUNK_BYTES,
 };
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
 
@@ -88,8 +89,13 @@ fn main() -> ! {
         if frame.is_empty() {
             continue;
         }
-        if matches!(decode_message(frame), Ok(Message::Hello)) {
-            if let Ok(n) = Message::HelloAck(NODE_TAG).write_framed(&mut frame_buf) {
+        if matches!(decode_message(frame), Ok(Message::Hello(_))) {
+            if let Ok(n) = (Message::HelloAck {
+                tag: NODE_TAG,
+                capabilities: Capabilities::none(),
+            })
+            .write_framed(&mut frame_buf)
+            {
                 let _ = tx.write_all(&frame_buf[..n]);
                 let _ = tx.flush();
             }

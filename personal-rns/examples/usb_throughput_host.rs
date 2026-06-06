@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
 use personal_rns::interfaces::impls::usb_auto::core::{
-    decode_message, Message, MAX_DATA_BYTES, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
+    decode_message, Capabilities, Message, MAX_DATA_BYTES, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
 };
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder;
@@ -156,7 +156,7 @@ fn open_port(path: &str, timeout: Duration) -> Box<dyn serialport::SerialPort> {
 
 fn framed_hello() -> Vec<u8> {
     let mut frame_buf = [0u8; MAX_FRAMED_BYTES];
-    let n = Message::Hello
+    let n = Message::Hello(Capabilities::host())
         .write_framed(&mut frame_buf)
         .expect("frame a Hello");
     frame_buf[..n].to_vec()
@@ -218,7 +218,7 @@ fn run_count(path: &str) {
                 continue;
             }
             match decode_message(frame) {
-                Ok(Message::HelloAck(_)) if !linked => {
+                Ok(Message::HelloAck { .. }) if !linked => {
                     linked = true;
                     window_start = Instant::now();
                     wire_bytes = 0;
@@ -280,7 +280,9 @@ fn run_flood(path: &str) {
         };
         for &b in &rxbuf[..read] {
             if let Ok(Some(frame)) = decoder.feed(b) {
-                if !frame.is_empty() && matches!(decode_message(frame), Ok(Message::HelloAck(_))) {
+                if !frame.is_empty()
+                    && matches!(decode_message(frame), Ok(Message::HelloAck { .. }))
+                {
                     linked = true;
                     break;
                 }

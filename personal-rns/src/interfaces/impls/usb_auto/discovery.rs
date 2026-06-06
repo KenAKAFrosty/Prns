@@ -5,8 +5,8 @@ use std::string::String;
 use std::vec::Vec;
 
 use super::core::{
-    decode_message, Message, NodeTag, MAX_DATA_BYTES, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
-    READ_CHUNK_BYTES,
+    decode_message, Capabilities, Message, NodeTag, PeerProfile, MAX_DATA_BYTES, MAX_FRAMED_BYTES,
+    MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
 };
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::substrate::{StdHostSubstrate, StdOutboundDrain};
@@ -38,11 +38,24 @@ impl PortId {
 const PROBE_SCAN_BUDGET: u8 = 7;
 
 const MAX_READS_PER_DEVICE_PER_PUMP: usize = 8;
+const MAX_READS_PER_HOST_PEER_PER_PUMP: usize = 32;
 
 enum LinkState {
     Probing { scans_left: u8 },
-    Confirmed(NodeTag),
+    Confirmed { tag: NodeTag, profile: PeerProfile },
     Lost,
+}
+
+impl LinkState {
+    fn read_budget(&self) -> usize {
+        match self {
+            LinkState::Confirmed {
+                profile: PeerProfile::Host,
+                ..
+            } => MAX_READS_PER_HOST_PEER_PER_PUMP,
+            _ => MAX_READS_PER_DEVICE_PER_PUMP,
+        }
+    }
 }
 
 struct PendingWrite {
@@ -89,20 +102,42 @@ struct Device<Port> {
     pending: PendingWrite,
 }
 
-impl<Port> Device<Port> {
-    fn ingest_bytes(&mut self, bytes: &[u8], inbound: &mut impl InboundSink) {
+impl<Port: Write> Device<Port> {
+    fn ingest_bytes(
+        &mut self,
+        bytes: &[u8],
+        own_tag: NodeTag,
+        own_capabilities: Capabilities,
+        inbound: &mut impl InboundSink,
+    ) {
+        let mut owes_ack = false;
         let state = &mut self.state;
         self.decoder.feed_slice(bytes, |frame| {
             if !frame.is_empty() {
-                service_inbound_frame(frame, state, inbound);
+                service_inbound_frame(
+                    frame,
+                    state,
+                    own_tag,
+                    own_capabilities,
+                    &mut owes_ack,
+                    inbound,
+                );
             }
         });
+        if owes_ack {
+            self.answer_hello(own_tag, own_capabilities);
+        }
     }
-}
 
-impl<Port: Write> Device<Port> {
+    fn answer_hello(&mut self, tag: NodeTag, capabilities: Capabilities) {
+        let mut frame = [0u8; MAX_FRAMED_BYTES];
+        if let Ok(n) = (Message::HelloAck { tag, capabilities }).write_framed(&mut frame) {
+            let _ = self.port.write_all(&frame[..n]);
+        }
+    }
+
     fn flush_pending(&mut self) {
-        if !matches!(self.state, LinkState::Confirmed(_)) {
+        if !matches!(self.state, LinkState::Confirmed { .. }) {
             return;
         }
         while !self.pending.is_empty() {
@@ -119,7 +154,7 @@ impl<Port: Write> Device<Port> {
     }
 
     fn offer_frame(&mut self, frame: &[u8]) {
-        if !matches!(self.state, LinkState::Confirmed(_)) || !self.pending.is_empty() {
+        if !matches!(self.state, LinkState::Confirmed { .. }) || !self.pending.is_empty() {
             return;
         }
         match self.port.write(frame) {
@@ -137,6 +172,8 @@ pub(in crate::interfaces::impls::usb_auto) enum PumpCadence {
 }
 
 pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
+    node_tag: NodeTag,
+    capabilities: Capabilities,
     devices: Vec<Device<Port>>,
     rejected: Vec<PortId>,
     reported_state: ConnectionState,
@@ -153,8 +190,13 @@ impl<Port> Discoverer<Port> {
 }
 
 impl<Port: Read + Write> Discoverer<Port> {
-    pub(in crate::interfaces::impls::usb_auto) fn new() -> Self {
+    pub(in crate::interfaces::impls::usb_auto) fn new(
+        node_tag: NodeTag,
+        capabilities: Capabilities,
+    ) -> Self {
         Self {
+            node_tag,
+            capabilities,
             devices: Vec::new(),
             rejected: Vec::new(),
             reported_state: ConnectionState::Degraded,
@@ -167,7 +209,7 @@ impl<Port: Read + Write> Discoverer<Port> {
         }
         let Ok(mut port) = open(&id) else { return };
         let mut frame = [0u8; MAX_FRAMED_BYTES];
-        let Ok(n) = Message::Hello.write_framed(&mut frame) else {
+        let Ok(n) = Message::Hello(self.capabilities).write_framed(&mut frame) else {
             return;
         };
         if port.write_all(&frame[..n]).is_ok() {
@@ -199,7 +241,7 @@ impl<Port: Read + Write> Discoverer<Port> {
         // runs out rides over that, without widening the budget. (`open_cdc_port`
         // keeps our own open from resetting the board in the first place.)
         let mut hello = [0u8; MAX_FRAMED_BYTES];
-        if let Ok(n) = Message::Hello.write_framed(&mut hello) {
+        if let Ok(n) = Message::Hello(self.capabilities).write_framed(&mut hello) {
             for device in &mut self.devices {
                 if matches!(device.state, LinkState::Probing { .. }) {
                     let _ = device.port.write_all(&hello[..n]);
@@ -240,18 +282,19 @@ impl<Port: Read + Write> Discoverer<Port> {
     }
 
     fn read_devices(&mut self, inbound: &mut impl InboundSink) -> bool {
+        let (own_tag, own_capabilities) = (self.node_tag, self.capabilities);
         let mut buf = [0u8; READ_CHUNK_BYTES];
         let mut any_saturated = false;
         for device in &mut self.devices {
             let mut drained = false;
-            for _ in 0..MAX_READS_PER_DEVICE_PER_PUMP {
+            for _ in 0..device.state.read_budget() {
                 match device.port.read(&mut buf) {
                     Ok(0) => {
                         drained = true;
                         break;
                     }
                     Ok(n) => {
-                        device.ingest_bytes(&buf[..n], inbound);
+                        device.ingest_bytes(&buf[..n], own_tag, own_capabilities, inbound);
                         if n < buf.len() {
                             drained = true;
                             break;
@@ -278,10 +321,10 @@ impl<Port: Read + Write> Discoverer<Port> {
     fn dedup_confirmed_links(&mut self) {
         let mut i = 0;
         while i < self.devices.len() {
-            if let LinkState::Confirmed(tag) = self.devices[i].state {
-                let superseded = self.devices[i + 1..]
-                    .iter()
-                    .any(|d| matches!(d.state, LinkState::Confirmed(newer) if newer == tag));
+            if let LinkState::Confirmed { tag, .. } = self.devices[i].state {
+                let superseded = self.devices[i + 1..].iter().any(
+                    |d| matches!(d.state, LinkState::Confirmed { tag: newer, .. } if newer == tag),
+                );
                 if superseded {
                     self.devices[i].state = LinkState::Lost;
                 }
@@ -297,7 +340,7 @@ impl<Port: Read + Write> Discoverer<Port> {
         let mut frame = [0u8; MAX_FRAMED_BYTES];
         loop {
             let blocked = self.devices.iter().any(|device| {
-                matches!(device.state, LinkState::Confirmed(_)) && !device.pending.is_empty()
+                matches!(device.state, LinkState::Confirmed { .. }) && !device.pending.is_empty()
             });
             if blocked {
                 break;
@@ -325,7 +368,7 @@ impl<Port: Read + Write> Discoverer<Port> {
         let state = if self
             .devices
             .iter()
-            .any(|d| matches!(d.state, LinkState::Confirmed(_)))
+            .any(|d| matches!(d.state, LinkState::Confirmed { .. }))
         {
             ConnectionState::Connected
         } else {
@@ -338,11 +381,24 @@ impl<Port: Read + Write> Discoverer<Port> {
     }
 }
 
-fn service_inbound_frame(frame: &[u8], state: &mut LinkState, inbound: &mut impl InboundSink) {
+fn service_inbound_frame(
+    frame: &[u8],
+    state: &mut LinkState,
+    own_tag: NodeTag,
+    own_capabilities: Capabilities,
+    owes_ack: &mut bool,
+    inbound: &mut impl InboundSink,
+) {
     match decode_message(frame) {
-        Ok(Message::HelloAck(tag)) => *state = LinkState::Confirmed(tag),
+        Ok(Message::Hello(_)) => *owes_ack = true,
+        Ok(Message::HelloAck { tag, capabilities }) if tag != own_tag => {
+            *state = LinkState::Confirmed {
+                tag,
+                profile: PeerProfile::negotiate(own_capabilities, capabilities),
+            };
+        }
         Ok(Message::Data(packet)) => {
-            if matches!(*state, LinkState::Confirmed(_)) {
+            if matches!(*state, LinkState::Confirmed { .. }) {
                 let _ = inbound.submit(|slot| {
                     slot[..packet.len()].copy_from_slice(packet);
                     packet.len()
@@ -370,6 +426,12 @@ mod tests {
     use std::sync::mpsc::sync_channel;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
+
+    const HOST_TAG: NodeTag = NodeTag([0xAA; 8]);
+
+    fn host() -> Discoverer<MockPort> {
+        Discoverer::new(HOST_TAG, Capabilities::host())
+    }
 
     #[derive(Clone)]
     struct MockWire {
@@ -508,6 +570,21 @@ mod tests {
         false
     }
 
+    fn any_frame_is(bytes: &[u8], pred: impl Fn(&Message) -> bool) -> bool {
+        let mut decoder = RnsSerialDecoder::<MAX_MESSAGE_BYTES>::new();
+        let mut found = false;
+        for &b in bytes {
+            if let Ok(Some(frame)) = decoder.feed(b) {
+                if !frame.is_empty() {
+                    if let Ok(message) = decode_message(frame) {
+                        found |= pred(&message);
+                    }
+                }
+            }
+        }
+        found
+    }
+
     fn seam() -> StdInterfaceSeam<USB_AUTO_MTU> {
         let (wake_tx, _wake_rx) = sync_channel::<()>(1);
         StdInterfaceSeam::<USB_AUTO_MTU>::new(
@@ -524,14 +601,14 @@ mod tests {
 
     #[test]
     fn a_newly_present_port_is_probed_with_a_hello() {
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
         assert!(first_frame_is(&wire.host_wrote(), |m| matches!(
             m,
-            Message::Hello
+            Message::Hello(_)
         )));
     }
 
@@ -541,16 +618,19 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
-        wire.device_sends(Message::HelloAck(NodeTag([7; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([7; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
 
         match &disc.devices[0].state {
-            LinkState::Confirmed(tag) => assert_eq!(*tag, NodeTag([7; 8])),
+            LinkState::Confirmed { tag, .. } => assert_eq!(*tag, NodeTag([7; 8])),
             LinkState::Probing { .. } | LinkState::Lost => {
                 panic!("expected the link to be confirmed")
             }
@@ -567,12 +647,15 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
-        wire.device_sends(Message::HelloAck(NodeTag([1; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([1; 8]),
+            capabilities: Capabilities::none(),
+        });
         let packet = [0xDE, 0xAD, 0xBE, 0xEF];
         wire.device_sends(Message::Data(&packet));
         disc.pump(&mut worker_context);
@@ -589,7 +672,7 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
@@ -606,7 +689,7 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
 
         let confirmed = MockWire::new();
         let probing = MockWire::new();
@@ -614,7 +697,10 @@ mod tests {
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(c));
         disc.note_present(port("/dev/ttyACM1"), move |_| Ok(q));
 
-        confirmed.device_sends(Message::HelloAck(NodeTag([2; 8])));
+        confirmed.device_sends(Message::HelloAck {
+            tag: NodeTag([2; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
 
         let packet = [0x11, 0x22, 0x33];
@@ -638,15 +724,21 @@ mod tests {
         let StdInterfaceSeam {
             mut worker_context, ..
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let old = MockWire::new();
         let new = MockWire::new();
         let (o, n) = (old.port(), new.port());
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(o));
         disc.note_present(port("/dev/ttyACM1"), move |_| Ok(n));
 
-        old.device_sends(Message::HelloAck(NodeTag([9; 8])));
-        new.device_sends(Message::HelloAck(NodeTag([9; 8])));
+        old.device_sends(Message::HelloAck {
+            tag: NodeTag([9; 8]),
+            capabilities: Capabilities::none(),
+        });
+        new.device_sends(Message::HelloAck {
+            tag: NodeTag([9; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
 
         assert_eq!(disc.devices.len(), 1);
@@ -655,14 +747,14 @@ mod tests {
 
     #[test]
     fn a_scan_probes_new_ports_and_drops_vanished_ones() {
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
 
         disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
         assert_eq!(disc.devices.len(), 1);
         assert!(first_frame_is(&wire.host_wrote(), |m| matches!(
             m,
-            Message::Hello
+            Message::Hello(_)
         )));
 
         disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
@@ -674,7 +766,7 @@ mod tests {
 
     #[test]
     fn a_port_that_never_answers_is_rejected_then_left_alone() {
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let present = [port("/dev/ttyACM0")];
 
@@ -700,10 +792,13 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         disc.reconcile_present(&[port("/dev/ttyACM0")], |_| Ok(wire.port()));
-        wire.device_sends(Message::HelloAck(NodeTag([3; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([3; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report();
 
@@ -723,11 +818,14 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
-        wire.device_sends(Message::HelloAck(NodeTag([4; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([4; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report();
 
@@ -747,11 +845,14 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
-        wire.device_sends(Message::HelloAck(NodeTag([5; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([5; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         assert!(matches!(
             runtime_handle.next_report(),
@@ -769,7 +870,7 @@ mod tests {
         disc.pump(&mut worker_context);
 
         assert!(
-            matches!(disc.devices[0].state, LinkState::Confirmed(_)),
+            matches!(disc.devices[0].state, LinkState::Confirmed { .. }),
             "a transient write timeout must not drop a healthy link"
         );
         assert!(
@@ -784,11 +885,14 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
-        wire.device_sends(Message::HelloAck(NodeTag([6; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([6; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report();
 
@@ -812,38 +916,33 @@ mod tests {
     #[test]
     fn a_saturated_port_asks_for_an_immediate_repump() {
         let StdInterfaceSeam {
-            mut worker_context,
-            ..
+            mut worker_context, ..
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
         wire.device_floods_raw(READ_CHUNK_BYTES * MAX_READS_PER_DEVICE_PER_PUMP + 1);
-        assert!(matches!(
-            disc.pump(&mut worker_context),
-            PumpCadence::Busy
-        ));
+        assert!(matches!(disc.pump(&mut worker_context), PumpCadence::Busy));
     }
 
     #[test]
     fn a_drained_port_lets_the_worker_idle() {
         let StdInterfaceSeam {
-            mut worker_context,
-            ..
+            mut worker_context, ..
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
-        wire.device_sends(Message::HelloAck(NodeTag([7; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([7; 8]),
+            capabilities: Capabilities::none(),
+        });
         wire.device_sends(Message::Data(&[0x01, 0x02, 0x03]));
-        assert!(matches!(
-            disc.pump(&mut worker_context),
-            PumpCadence::Idle
-        ));
+        assert!(matches!(disc.pump(&mut worker_context), PumpCadence::Idle));
     }
 
     #[test]
@@ -852,12 +951,15 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
 
-        wire.device_sends(Message::HelloAck(NodeTag([8; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([8; 8]),
+            capabilities: Capabilities::none(),
+        });
         let packets: Vec<[u8; 100]> = (0..5).map(|i| [i as u8; 100]).collect();
         for packet in &packets {
             wire.device_sends(Message::Data(packet));
@@ -878,11 +980,14 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
-        wire.device_sends(Message::HelloAck(NodeTag([5; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([5; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report();
 
@@ -896,7 +1001,7 @@ mod tests {
             .unwrap();
         disc.pump(&mut worker_context);
         assert!(
-            matches!(disc.devices[0].state, LinkState::Confirmed(_)),
+            matches!(disc.devices[0].state, LinkState::Confirmed { .. }),
             "a full tx buffer must not drop the link"
         );
         assert!(
@@ -919,11 +1024,14 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
-        wire.device_sends(Message::HelloAck(NodeTag([6; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([6; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report();
 
@@ -936,7 +1044,7 @@ mod tests {
             })
             .unwrap();
         disc.pump(&mut worker_context);
-        assert!(matches!(disc.devices[0].state, LinkState::Confirmed(_)));
+        assert!(matches!(disc.devices[0].state, LinkState::Confirmed { .. }));
         assert!(
             data_frames(&wire.host_wrote()).is_empty(),
             "a partial frame is not yet a decodable frame"
@@ -953,11 +1061,14 @@ mod tests {
             mut worker_context,
             mut runtime_handle,
         } = seam();
-        let mut disc = Discoverer::new();
+        let mut disc = host();
         let wire = MockWire::new();
         let p = wire.port();
         disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
-        wire.device_sends(Message::HelloAck(NodeTag([7; 8])));
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([7; 8]),
+            capabilities: Capabilities::none(),
+        });
         disc.pump(&mut worker_context);
         let _ = runtime_handle.next_report();
 
@@ -990,5 +1101,99 @@ mod tests {
         for packet in &packets {
             assert!(got.iter().any(|g| g.as_slice() == packet.as_slice()));
         }
+    }
+
+    #[test]
+    fn an_incoming_hello_is_answered_with_our_own_hello_ack() {
+        let StdInterfaceSeam {
+            mut worker_context, ..
+        } = seam();
+        let mut disc = host();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_sends(Message::Hello(Capabilities::host()));
+        disc.pump(&mut worker_context);
+
+        assert!(
+            any_frame_is(&wire.host_wrote(), |m| matches!(
+                m,
+                Message::HelloAck { tag, .. } if *tag == HOST_TAG
+            )),
+            "a peer's Hello must draw our HelloAck — the half that lets two hosts confirm each other"
+        );
+    }
+
+    #[test]
+    fn a_host_capable_peer_confirms_on_the_host_lane() {
+        let StdInterfaceSeam {
+            mut worker_context, ..
+        } = seam();
+        let mut disc = host();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([0x42; 8]),
+            capabilities: Capabilities::host(),
+        });
+        disc.pump(&mut worker_context);
+
+        assert!(matches!(
+            disc.devices[0].state,
+            LinkState::Confirmed {
+                profile: PeerProfile::Host,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_peripheral_peer_confirms_on_the_peripheral_lane() {
+        let StdInterfaceSeam {
+            mut worker_context, ..
+        } = seam();
+        let mut disc = host();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([0x42; 8]),
+            capabilities: Capabilities::none(),
+        });
+        disc.pump(&mut worker_context);
+
+        assert!(matches!(
+            disc.devices[0].state,
+            LinkState::Confirmed {
+                profile: PeerProfile::Peripheral,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_hello_ack_bearing_our_own_tag_is_rejected_as_self() {
+        let StdInterfaceSeam {
+            mut worker_context, ..
+        } = seam();
+        let mut disc = host();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+
+        wire.device_sends(Message::HelloAck {
+            tag: HOST_TAG,
+            capabilities: Capabilities::host(),
+        });
+        disc.pump(&mut worker_context);
+
+        assert!(
+            matches!(disc.devices[0].state, LinkState::Probing { .. }),
+            "a HelloAck carrying our own tag is us reflected over a loopback — never confirm a link to ourselves"
+        );
     }
 }
