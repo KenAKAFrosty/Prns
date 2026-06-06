@@ -20,6 +20,7 @@ use crate::interfaces::{
 /// USB CDC ignores baud, but the serialport API still wants a number.
 const CDC_BAUD: u32 = 115_200;
 const SCAN_INTERVAL: Duration = Duration::from_millis(300);
+const PENDING_FLUSH_INTERVAL: Duration = Duration::from_millis(1);
 const WAKE_TOKEN: Token = Token(0);
 const POLL_EVENTS_CAPACITY: usize = 16;
 
@@ -47,7 +48,7 @@ fn serve(mut ctx: UsbAutoContext) {
 
     let mut events = Events::with_capacity(POLL_EVENTS_CAPACITY);
     let mut discoverer: Discoverer<SerialStream> = Discoverer::new();
-    let mut registered: HashMap<PortId, Registration> = HashMap::new();
+    let mut registered: HashMap<PortId, RawFd> = HashMap::new();
     let mut next_token = WAKE_TOKEN.0 + 1;
     let mut last_scan: Option<Instant> = None;
 
@@ -55,17 +56,19 @@ fn serve(mut ctx: UsbAutoContext) {
         if last_scan.is_none_or(|t| t.elapsed() >= SCAN_INTERVAL) {
             last_scan = Some(Instant::now());
             discoverer.reconcile_present(&scan_cdc_ports(), open_cdc_port);
+            register_ports(poll.registry(), &discoverer, &mut registered, &mut next_token);
         }
 
         let cadence = discoverer.pump(&mut ctx);
-        sync_registrations(poll.registry(), &discoverer, &mut registered, &mut next_token);
         if matches!(ctx.control.next_command(), Some(ControlCommand::Stop)) {
             break;
         }
         if matches!(cadence, PumpCadence::Idle) {
-            let timeout = last_scan.map_or(Duration::ZERO, |t| {
-                SCAN_INTERVAL.saturating_sub(t.elapsed())
-            });
+            let timeout = if discoverer.has_pending_writes() {
+                PENDING_FLUSH_INTERVAL
+            } else {
+                last_scan.map_or(Duration::ZERO, |t| SCAN_INTERVAL.saturating_sub(t.elapsed()))
+            };
             if let Err(e) = poll.poll(&mut events, Some(timeout)) {
                 if e.kind() != io::ErrorKind::Interrupted {
                     break;
@@ -76,60 +79,27 @@ fn serve(mut ctx: UsbAutoContext) {
     ctx.control.report(ControlReport::Stopped);
 }
 
-struct Registration {
-    fd: RawFd,
-    token: Token,
-    writable: bool,
-}
-
-fn sync_registrations(
+fn register_ports(
     registry: &Registry,
     discoverer: &Discoverer<SerialStream>,
-    registered: &mut HashMap<PortId, Registration>,
+    registered: &mut HashMap<PortId, RawFd>,
     next_token: &mut usize,
 ) {
-    let current: Vec<(PortId, RawFd, bool)> = discoverer
+    let current: Vec<(PortId, RawFd)> = discoverer
         .port_registrations()
-        .map(|(id, fd, pending)| (id.clone(), fd, pending))
+        .map(|(id, fd)| (id.clone(), fd))
         .collect();
-    for (id, fd, pending) in &current {
-        let interest = if *pending {
-            Interest::READABLE | Interest::WRITABLE
-        } else {
-            Interest::READABLE
-        };
-        match registered.get(id).map(|reg| (reg.fd, reg.token, reg.writable)) {
-            Some((known_fd, token, was_writable)) if known_fd == *fd => {
-                if was_writable != *pending
-                    && registry
-                        .reregister(&mut SourceFd(fd), token, interest)
-                        .is_ok()
-                {
-                    if let Some(reg) = registered.get_mut(id) {
-                        reg.writable = *pending;
-                    }
-                }
-            }
-            _ => {
-                let token = Token(*next_token);
-                if registry
-                    .register(&mut SourceFd(fd), token, interest)
-                    .is_ok()
-                {
-                    *next_token += 1;
-                    registered.insert(
-                        id.clone(),
-                        Registration {
-                            fd: *fd,
-                            token,
-                            writable: *pending,
-                        },
-                    );
-                }
-            }
+    for (id, fd) in &current {
+        if registered.get(id) != Some(fd)
+            && registry
+                .register(&mut SourceFd(fd), Token(*next_token), Interest::READABLE)
+                .is_ok()
+        {
+            *next_token += 1;
+            registered.insert(id.clone(), *fd);
         }
     }
-    registered.retain(|id, _| current.iter().any(|(present, _, _)| present == id));
+    registered.retain(|id, _| current.iter().any(|(present, _)| present == id));
 }
 
 fn scan_cdc_ports() -> Vec<PortId> {

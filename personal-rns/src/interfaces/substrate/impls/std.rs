@@ -91,6 +91,17 @@ impl<const MTU: usize> StdOutboundDrain<MTU> {
     pub fn arm_wake(&self, notify: impl Fn() + Send + Sync + 'static) {
         self.worker_wake.arm(notify);
     }
+
+    pub fn drain_one(&mut self, write: impl FnOnce(OutboundPacket<'_>)) -> bool {
+        let Ok(chunk) = self.consumer.read_chunk(1) else {
+            return false;
+        };
+        let (read, _) = chunk.as_slices();
+        let slot = &read[0];
+        write(OutboundPacket::new(&slot.bytes[..slot.len as usize]));
+        chunk.commit(1);
+        true
+    }
 }
 
 impl<const MTU: usize> OutboundDrain for StdOutboundDrain<MTU> {

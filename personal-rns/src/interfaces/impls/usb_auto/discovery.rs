@@ -11,10 +11,9 @@ use super::core::{
     READ_CHUNK_BYTES,
 };
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
-use crate::interfaces::substrate::StdHostSubstrate;
+use crate::interfaces::substrate::{StdHostSubstrate, StdOutboundDrain};
 use crate::interfaces::{
     ConnectionState, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
-    OutboundDrain,
 };
 
 pub(in crate::interfaces::impls::usb_auto) const USB_AUTO_MTU: usize = MAX_DATA_BYTES;
@@ -149,10 +148,10 @@ pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
 impl<Port: AsRawFd> Discoverer<Port> {
     pub(in crate::interfaces::impls::usb_auto) fn port_registrations(
         &self,
-    ) -> impl Iterator<Item = (&PortId, RawFd, bool)> + '_ {
+    ) -> impl Iterator<Item = (&PortId, RawFd)> + '_ {
         self.devices
             .iter()
-            .map(|device| (&device.id, device.port.as_raw_fd(), !device.pending.is_empty()))
+            .map(|device| (&device.id, device.port.as_raw_fd()))
     }
 }
 
@@ -294,20 +293,35 @@ impl<Port: Read + Write> Discoverer<Port> {
         }
     }
 
-    fn fan_out(&mut self, outbound: &mut impl OutboundDrain) {
+    fn fan_out(&mut self, outbound: &mut StdOutboundDrain<USB_AUTO_MTU>) {
         for device in &mut self.devices {
             device.flush_pending();
         }
-        let devices = &mut self.devices;
         let mut frame = [0u8; MAX_FRAMED_BYTES];
-        outbound.drain_each(|packet| {
-            let Ok(n) = Message::Data(packet.bytes).write_framed(&mut frame) else {
-                return;
-            };
-            for device in devices.iter_mut() {
-                device.offer_frame(&frame[..n]);
+        loop {
+            let blocked = self.devices.iter().any(|device| {
+                matches!(device.state, LinkState::Confirmed(_)) && !device.pending.is_empty()
+            });
+            if blocked {
+                break;
             }
-        });
+            let devices = &mut self.devices;
+            let pulled = outbound.drain_one(|packet| {
+                let Ok(n) = Message::Data(packet.bytes).write_framed(&mut frame) else {
+                    return;
+                };
+                for device in devices.iter_mut() {
+                    device.offer_frame(&frame[..n]);
+                }
+            });
+            if !pulled {
+                break;
+            }
+        }
+    }
+
+    pub(in crate::interfaces::impls::usb_auto) fn has_pending_writes(&self) -> bool {
+        self.devices.iter().any(|device| !device.pending.is_empty())
     }
 
     fn sync_connection_state(&mut self, control: &mut impl ControlEndpoint) {
@@ -934,5 +948,50 @@ mod tests {
         wire.refill_tx();
         disc.pump(&mut worker_context);
         assert_eq!(data_frames(&wire.host_wrote()), std::vec![packet.to_vec()]);
+    }
+
+    #[test]
+    fn a_blocked_link_back_pressures_the_ring_without_dropping() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+        wire.device_sends(Message::HelloAck(NodeTag([7; 8])));
+        disc.pump(&mut worker_context);
+        let _ = runtime_handle.next_report();
+
+        wire.limit_tx(0);
+        let packets: [[u8; 4]; 5] = [[1; 4], [2; 4], [3; 4], [4; 4], [5; 4]];
+        for packet in &packets {
+            runtime_handle
+                .acquire_send_grant(|buf| {
+                    buf[..packet.len()].copy_from_slice(packet);
+                    packet.len()
+                })
+                .unwrap();
+        }
+        disc.pump(&mut worker_context);
+        assert!(
+            data_frames(&wire.host_wrote()).is_empty(),
+            "a blocked link writes nothing while its tx buffer is full"
+        );
+
+        wire.refill_tx();
+        for _ in 0..packets.len() {
+            disc.pump(&mut worker_context);
+        }
+        let got = data_frames(&wire.host_wrote());
+        assert_eq!(
+            got.len(),
+            packets.len(),
+            "every queued frame is delivered once tx drains — the ring back-pressures, it never drops"
+        );
+        for packet in &packets {
+            assert!(got.iter().any(|g| g.as_slice() == packet.as_slice()));
+        }
     }
 }
