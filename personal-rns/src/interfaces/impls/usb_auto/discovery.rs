@@ -1196,4 +1196,131 @@ mod tests {
             "a HelloAck carrying our own tag is us reflected over a loopback — never confirm a link to ourselves"
         );
     }
+
+    struct DuplexLink {
+        a2b: Arc<Mutex<VecDeque<u8>>>,
+        b2a: Arc<Mutex<VecDeque<u8>>>,
+    }
+
+    impl DuplexLink {
+        fn new() -> Self {
+            Self {
+                a2b: Arc::new(Mutex::new(VecDeque::new())),
+                b2a: Arc::new(Mutex::new(VecDeque::new())),
+            }
+        }
+
+        fn end_a(&self) -> DuplexPort {
+            DuplexPort {
+                read_from: self.b2a.clone(),
+                write_to: self.a2b.clone(),
+            }
+        }
+
+        fn end_b(&self) -> DuplexPort {
+            DuplexPort {
+                read_from: self.a2b.clone(),
+                write_to: self.b2a.clone(),
+            }
+        }
+    }
+
+    struct DuplexPort {
+        read_from: Arc<Mutex<VecDeque<u8>>>,
+        write_to: Arc<Mutex<VecDeque<u8>>>,
+    }
+
+    impl Read for DuplexPort {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let mut q = self.read_from.lock().unwrap();
+            if q.is_empty() {
+                return Err(io::Error::from(io::ErrorKind::WouldBlock));
+            }
+            let n = q.len().min(buf.len());
+            for slot in buf.iter_mut().take(n) {
+                *slot = q.pop_front().unwrap();
+            }
+            Ok(n)
+        }
+    }
+
+    impl Write for DuplexPort {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.write_to.lock().unwrap().extend(buf.iter().copied());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn confirmed_peer(state: &LinkState) -> Option<(NodeTag, PeerProfile)> {
+        match state {
+            LinkState::Confirmed { tag, profile } => Some((*tag, *profile)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn two_hosts_confirm_each_other_and_exchange_data_both_ways() {
+        const A_TAG: NodeTag = NodeTag([0xA1; 8]);
+        const B_TAG: NodeTag = NodeTag([0xB2; 8]);
+
+        let StdInterfaceSeam {
+            worker_context: mut ctx_a,
+            runtime_handle: mut rt_a,
+        } = seam();
+        let StdInterfaceSeam {
+            worker_context: mut ctx_b,
+            runtime_handle: mut rt_b,
+        } = seam();
+
+        let mut a: Discoverer<DuplexPort> = Discoverer::new(A_TAG, Capabilities::host());
+        let mut b: Discoverer<DuplexPort> = Discoverer::new(B_TAG, Capabilities::host());
+
+        let link = DuplexLink::new();
+        let (end_a, end_b) = (link.end_a(), link.end_b());
+        a.note_present(port("A"), move |_| Ok(end_a));
+        b.note_present(port("B"), move |_| Ok(end_b));
+
+        for _ in 0..4 {
+            a.pump(&mut ctx_a);
+            b.pump(&mut ctx_b);
+        }
+
+        assert_eq!(
+            confirmed_peer(&a.devices[0].state),
+            Some((B_TAG, PeerProfile::Host)),
+            "A confirms B on the host lane"
+        );
+        assert_eq!(
+            confirmed_peer(&b.devices[0].state),
+            Some((A_TAG, PeerProfile::Host)),
+            "B confirms A on the host lane"
+        );
+
+        let a_payload = [0x11, 0x22, 0x33];
+        rt_a.acquire_send_grant(|buf| {
+            buf[..a_payload.len()].copy_from_slice(&a_payload);
+            a_payload.len()
+        })
+        .unwrap();
+        a.pump(&mut ctx_a);
+        b.pump(&mut ctx_b);
+        let mut got_b: Vec<Vec<u8>> = Vec::new();
+        rt_b.drain_inbound(|pkt| got_b.push(pkt.bytes.to_vec()));
+        assert_eq!(got_b, std::vec![a_payload.to_vec()], "A's packet reaches B");
+
+        let b_payload = [0xAA, 0xBB];
+        rt_b.acquire_send_grant(|buf| {
+            buf[..b_payload.len()].copy_from_slice(&b_payload);
+            b_payload.len()
+        })
+        .unwrap();
+        b.pump(&mut ctx_b);
+        a.pump(&mut ctx_a);
+        let mut got_a: Vec<Vec<u8>> = Vec::new();
+        rt_a.drain_inbound(|pkt| got_a.push(pkt.bytes.to_vec()));
+        assert_eq!(got_a, std::vec![b_payload.to_vec()], "B's reply reaches A");
+    }
 }
