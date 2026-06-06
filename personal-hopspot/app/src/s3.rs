@@ -405,8 +405,7 @@ async fn node_task(
                 ratchet_policy: RatchetPolicy::Ratcheted,
                 announce: Some(AnnounceConfig {
                     app_data: SELF_ANNOUNCE_APP_DATA,
-                    // Fast re-announce so the desktop catches us promptly during bring-up.
-                    schedule: ReannounceSchedule::every(10_000),
+                    schedule: ReannounceSchedule::every(60_000),
                 }),
             }],
             interfaces,

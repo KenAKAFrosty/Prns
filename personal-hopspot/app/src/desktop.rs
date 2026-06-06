@@ -8,7 +8,10 @@
 //! The engine runs on its own thread; the SDL2 window owns the main thread (SDL
 //! requires it) and repaints the latest runtime snapshot at ~30 fps.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -21,8 +24,9 @@ use heapless::Vec as HVec;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::ReannounceSchedule;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
-    RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Delivered, EngineCommand,
+    IssuedCommand, RatchetPolicy, SendSingle, SendSinglePayload, Settlement,
+    MAX_SEND_SINGLE_PLAINTEXT_LEN,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -64,6 +68,18 @@ const FRAME: Duration = Duration::from_millis(33);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
+/// Announce cadence: slow enough that goodput chunks, not announces, own the traffic line.
+const ANNOUNCE_EVERY_MS: u64 = 60_000;
+/// Cadence of the goodput chunks once a peer is heard.
+const CHUNK_EVERY: Duration = Duration::from_secs(2);
+/// Print the cumulative goodput line after this many chunk settlements.
+const CHUNK_STATS_EVERY: u64 = 10;
+
+enum DemoEvent {
+    PeerHeard(DestinationHash),
+    Settled(CommandId, Settlement),
+}
+
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519
 /// private keys). Handed to the engine through a [`Zeroizing`] buffer so it is
 /// wiped from this stack frame once construction copies it in.
@@ -102,15 +118,33 @@ pub fn run() {
     // short so its command is picked up on the next cycle.
     let (snap_tx, snap_rx) = mpsc::channel::<RuntimeSnapshot>();
     let (command_tx, command_rx) = mpsc::channel::<IssuedCommand>();
+    let (demo_tx, demo_rx) = mpsc::channel::<DemoEvent>();
     let host = LinuxSync::new();
     let wake = host.wake_handle();
+    let next_command_id = Arc::new(AtomicU64::new(0));
 
     std::thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(host, identity_secret_key, snap_tx, command_rx))
+        .spawn(move || run_engine(host, identity_secret_key, snap_tx, command_rx, demo_tx))
         .expect("spawn engine thread");
 
-    run_window(snap_rx, command_tx, wake, self_destination);
+    let goodput_command_tx = command_tx.clone();
+    let goodput_wake = wake.clone();
+    let goodput_command_id = next_command_id.clone();
+    std::thread::Builder::new()
+        .name("hopspot-goodput".into())
+        .spawn(move || {
+            run_goodput_demo(
+                demo_rx,
+                goodput_command_tx,
+                goodput_wake,
+                goodput_command_id,
+                self_destination,
+            )
+        })
+        .expect("spawn goodput thread");
+
+    run_window(snap_rx, command_tx, wake, next_command_id, self_destination);
 }
 
 fn run_engine(
@@ -118,6 +152,7 @@ fn run_engine(
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     snap_tx: Sender<RuntimeSnapshot>,
     command_rx: Receiver<IssuedCommand>,
+    demo_tx: Sender<DemoEvent>,
 ) {
     let mut interfaces = GrowableInterfaceSet::new();
     let _ =
@@ -138,7 +173,7 @@ fn run_engine(
                 ratchet_policy: RatchetPolicy::Ratcheted,
                 announce: Some(AnnounceConfig {
                     app_data: SELF_ANNOUNCE_APP_DATA,
-                    schedule: ReannounceSchedule::every(10_000),
+                    schedule: ReannounceSchedule::every(ANNOUNCE_EVERY_MS),
                 }),
             }],
             interfaces,
@@ -172,9 +207,11 @@ fn run_engine(
                     destination.as_bytes(),
                     source_interface.as_bytes(),
                 );
+                let _ = demo_tx.send(DemoEvent::PeerHeard(destination));
             }
             PrnsEvent::CommandSettled { id, settlement } => {
                 println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
+                let _ = demo_tx.send(DemoEvent::Settled(id, settlement));
             }
         },
         // The engine's tap into the UI's command queue: every cycle sips until
@@ -182,6 +219,106 @@ fn run_engine(
         // re-wake drains any burst).
         move || command_rx.try_recv().ok(),
     ));
+}
+
+/// A full single-packet chunk: a readable seq-stamped header, then a fill
+/// pattern out to the 383-byte MDU so every send carries maximum goodput.
+fn goodput_chunk(seq: u64) -> SendSinglePayload {
+    let mut bytes = format!("hopspot-goodput seq={seq:06} ").into_bytes();
+    while bytes.len() < MAX_SEND_SINGLE_PLAINTEXT_LEN {
+        bytes.push(b'a' + ((seq + bytes.len() as u64) % 26) as u8);
+    }
+    SendSinglePayload::from_slice(&bytes).expect("the chunk is exactly the single-packet MDU")
+}
+
+/// The live goodput demonstration: adopt the first peer the engine hears, then
+/// stream one full chunk every [`CHUNK_EVERY`], tallying settlements into a
+/// running goodput line.
+fn run_goodput_demo(
+    demo_rx: Receiver<DemoEvent>,
+    command_tx: Sender<IssuedCommand>,
+    wake: WakeHandle,
+    next_command_id: Arc<AtomicU64>,
+    self_destination: DestinationHash,
+) {
+    let mut peer: Option<DestinationHash> = None;
+    let mut next_chunk_at: Option<Instant> = None;
+    let mut seq = 0u64;
+    let mut outstanding: HashMap<u64, (u64, usize)> = HashMap::new();
+    let mut sent = 0u64;
+    let mut delivered = 0u64;
+    let mut failed = 0u64;
+    let mut delivered_bytes = 0u64;
+    let mut rtt_total_ms = 0u64;
+
+    loop {
+        let timeout = match next_chunk_at {
+            Some(at) => at.saturating_duration_since(Instant::now()),
+            None => Duration::from_secs(3_600),
+        };
+        match demo_rx.recv_timeout(timeout) {
+            Ok(DemoEvent::PeerHeard(destination)) => {
+                if peer.is_none() && destination != self_destination {
+                    println!(
+                        "HOPSPOT_GOODPUT_TARGET destination={:02x?}",
+                        destination.as_bytes(),
+                    );
+                    peer = Some(destination);
+                    next_chunk_at = Some(Instant::now());
+                }
+            }
+            Ok(DemoEvent::Settled(id, settlement)) => {
+                if let Some((chunk_seq, bytes)) = outstanding.remove(&id.0) {
+                    match settlement {
+                        Settlement::SendSingle(Ok(Delivered { rtt_ms })) => {
+                            delivered += 1;
+                            delivered_bytes += bytes as u64;
+                            rtt_total_ms += rtt_ms;
+                            println!("HOPSPOT_CHUNK_DELIVERED seq={chunk_seq:06} rtt_ms={rtt_ms}");
+                        }
+                        other => {
+                            failed += 1;
+                            println!("HOPSPOT_CHUNK_FAILED seq={chunk_seq:06} {other:?}");
+                        }
+                    }
+                    if (delivered + failed) % CHUNK_STATS_EVERY == 0 {
+                        let avg_rtt_ms = rtt_total_ms / delivered.max(1);
+                        println!(
+                            "HOPSPOT_GOODPUT sent={sent} delivered={delivered} failed={failed} \
+                             delivered_bytes={delivered_bytes} avg_rtt_ms={avg_rtt_ms}",
+                        );
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+
+        if let (Some(destination), Some(at)) = (peer, next_chunk_at) {
+            if Instant::now() >= at {
+                let id = CommandId(next_command_id.fetch_add(1, Ordering::Relaxed));
+                let payload = goodput_chunk(seq);
+                println!(
+                    "HOPSPOT_TX_SEND_SINGLE id={} seq={seq:06} bytes={} destination={:02x?}",
+                    id.0,
+                    payload.len(),
+                    destination.as_bytes(),
+                );
+                outstanding.insert(id.0, (seq, payload.len()));
+                let _ = command_tx.send(IssuedCommand {
+                    id,
+                    command: EngineCommand::SendSingle(SendSingle {
+                        destination,
+                        payload,
+                    }),
+                });
+                wake.poke();
+                sent += 1;
+                seq += 1;
+                next_chunk_at = Some(Instant::now() + CHUNK_EVERY);
+            }
+        }
+    }
 }
 
 /// Desktop-only stand-ins so the single-button selection and pagination path can
@@ -313,6 +450,7 @@ fn run_window(
     snap_rx: Receiver<RuntimeSnapshot>,
     command_tx: Sender<IssuedCommand>,
     wake: WakeHandle,
+    next_command_id: Arc<AtomicU64>,
     self_destination: DestinationHash,
 ) {
     let output = OutputSettingsBuilder::new()
@@ -324,12 +462,10 @@ fn run_window(
 
     // Every input path funnels its UiAction here: selecting "Announce" in the
     // global menu queues the command for the engine thread and pokes its wake.
-    let mut next_command_id = 0u64;
-    let mut apply_action = move |action: UiAction| match action {
+    let apply_action = move |action: UiAction| match action {
         UiAction::None => {}
         UiAction::Announce => {
-            let id = CommandId(next_command_id);
-            next_command_id = next_command_id.wrapping_add(1);
+            let id = CommandId(next_command_id.fetch_add(1, Ordering::Relaxed));
             let _ = command_tx.send(IssuedCommand {
                 id,
                 command: EngineCommand::AnnounceNow(AnnounceNow {
