@@ -6,6 +6,7 @@ use std::vec::Vec;
 
 use super::core::{
     decode_message, Message, NodeTag, MAX_DATA_BYTES, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES,
+    READ_CHUNK_BYTES,
 };
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
 use crate::interfaces::substrate::StdHostSubstrate;
@@ -36,8 +37,6 @@ impl PortId {
 /// enough for a booting board, short enough that a non-Personal device (someone
 /// else's serial gadget) is released promptly.
 const PROBE_SCAN_BUDGET: u8 = 7;
-
-const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;
 
 const MAX_READS_PER_DEVICE_PER_PUMP: usize = 8;
 
