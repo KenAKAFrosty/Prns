@@ -21,7 +21,7 @@ pub use results::{
     HostDescriptor, ResultRow,
 };
 
-pub type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128>;
+pub type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8>;
 
 const JITTER: JitterSeed = JitterSeed(0x5151_5151_5151_5151);
 

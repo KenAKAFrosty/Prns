@@ -1,5 +1,6 @@
 use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::self_announce::FixedSelfAnnounceColumns;
+use crate::engine::self_ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
@@ -21,6 +22,7 @@ pub struct FixedInline<
     const MAX_HELD_IDENTITIES: usize,
     const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
+    const RETAINED_RATCHETS_PER_DESTINATION: usize,
 >;
 
 impl<
@@ -34,6 +36,7 @@ impl<
         const MAX_HELD_IDENTITIES: usize,
         const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
+        const RETAINED_RATCHETS_PER_DESTINATION: usize,
     > EngineStorage
     for FixedInline<
         MAX_TRACKED_DESTINATIONS,
@@ -46,6 +49,7 @@ impl<
         MAX_HELD_IDENTITIES,
         MAX_SELF_ANNOUNCED_DESTINATIONS,
         PACKET_HASH_GENERATION_CAPACITY,
+        RETAINED_RATCHETS_PER_DESTINATION,
     >
 {
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
@@ -67,19 +71,24 @@ impl<
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
     type SelfAnnounces = FixedSelfAnnounceColumns<MAX_SELF_ANNOUNCED_DESTINATIONS>;
+    // Sized by the upstream registry: every registered Single may opt into
+    // ratchets, and nothing else can.
+    type SelfRatchets =
+        FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::self_ratchets::SelfRatchetColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4, 3>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
@@ -89,9 +98,12 @@ mod tests {
         let _directives = <S as EngineStorage>::Directives::default();
         let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <S as EngineStorage>::PacketHashes::default();
+        let self_ratchets = <S as EngineStorage>::SelfRatchets::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
         assert_eq!(upstream_app_destinations.capacity(), 2);
         assert_eq!(packet_hashes.generation_capacity(), 4);
+        assert_eq!(self_ratchets.capacity(), 2);
+        assert_eq!(self_ratchets.retained_per_destination(), 3);
     }
 }
