@@ -315,6 +315,38 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_seal_to_our_announced_ratchet_round_trips() {
+        let mut identities = TestIdentities::default();
+        let hash = identities.hold(secret_key_bytes(0x42)).unwrap();
+        let held = identities.get(&hash).unwrap();
+        let remote = RemoteIdentity::from_public_keys(
+            held.encryption_public_key(),
+            held.signing_public_key(),
+        );
+
+        let ratchet_secret = X25519SecretKey::new([0x55; 32]);
+        let ratchet_public = crate::crypto::x25519_public_key(&ratchet_secret);
+        let mut sealed = [0u8; 256];
+        let sealed_len = remote
+            .encrypt_to_ratchet(
+                &ratchet_public,
+                &X25519SecretKey::new([0x77; 32]),
+                &[0x0B; ENCRYPTION_IV_LEN],
+                b"over-the-air",
+                &mut sealed,
+            )
+            .unwrap();
+
+        assert_eq!(
+            held.decrypt_in_place_with_ratchets(
+                core::slice::from_ref(&ratchet_secret),
+                &mut sealed[..sealed_len],
+            ),
+            Ok(b"over-the-air".as_slice()),
+        );
+    }
+
+    #[test]
     fn the_wrong_identity_cannot_open_a_sealed_token() {
         let mut identities = TestIdentities::default();
         let right = identities.hold(secret_key_bytes(0x42)).unwrap();

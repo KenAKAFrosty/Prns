@@ -264,11 +264,42 @@ impl RemoteIdentity {
         plaintext: &[u8],
         out: &mut [u8],
     ) -> Result<usize, EncryptError> {
+        self.seal_toward(
+            self.encryption_public.as_x25519(),
+            ephemeral_secret,
+            iv,
+            plaintext,
+            out,
+        )
+    }
+
+    /// Seal toward the peer's announced ratchet instead of its identity key —
+    /// RNS 1.3.1 `Identity.encrypt(ratchet=…)`: only the Diffie-Hellman target
+    /// changes; the HKDF salt stays the identity hash.
+    pub fn encrypt_to_ratchet(
+        &self,
+        ratchet_public: &X25519PublicKey,
+        ephemeral_secret: &X25519SecretKey,
+        iv: &[u8; ENCRYPTION_IV_LEN],
+        plaintext: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, EncryptError> {
+        self.seal_toward(ratchet_public, ephemeral_secret, iv, plaintext, out)
+    }
+
+    fn seal_toward(
+        &self,
+        dh_target: &X25519PublicKey,
+        ephemeral_secret: &X25519SecretKey,
+        iv: &[u8; ENCRYPTION_IV_LEN],
+        plaintext: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, EncryptError> {
         if out.len() < ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
             return Err(EncryptError::BufferTooShort);
         }
         let ephemeral_public = x25519_public_key(ephemeral_secret);
-        let shared = x25519_diffie_hellman(ephemeral_secret, self.encryption_public.as_x25519());
+        let shared = x25519_diffie_hellman(ephemeral_secret, dh_target);
         let key = DerivedPacketKey::derive(&shared, &self.hash);
 
         out[..ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN].copy_from_slice(&ephemeral_public.0);
@@ -480,6 +511,38 @@ pub mod in_memory {
                 )
                 .unwrap();
             assert_eq!(out[..n].to_vec(), token_hex(RUST_SEALED_TOKEN));
+        }
+
+        const RATCHET_SEALED_TOKEN: &str =
+            "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14\
+             44444444444444444444444444444444f0c0d10df07782f3a9a89a271b84960b\
+             c9d2525bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
+
+        #[test]
+        fn encrypt_to_ratchet_reproduces_the_rns_1_3_1_minted_token() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let ratchet_public = x25519_public_key(&X25519SecretKey::new([0x55; 32]));
+            let mut out = [0u8; 128];
+            let n = remote_for(&identity)
+                .encrypt_to_ratchet(
+                    &ratchet_public,
+                    &X25519SecretKey::new([0x33; 32]),
+                    &[0x44; 16],
+                    b"ratchet-parity",
+                    &mut out,
+                )
+                .unwrap();
+            assert_eq!(out[..n].to_vec(), token_hex(RATCHET_SEALED_TOKEN));
+        }
+
+        #[test]
+        fn a_ratchet_sealed_token_does_not_open_with_the_identity_key_alone() {
+            let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key_bytes());
+            let mut token = token_hex(RATCHET_SEALED_TOKEN);
+            assert_eq!(
+                identity.decrypt_in_place(&mut token),
+                Err(DecryptError::InvalidToken),
+            );
         }
 
         #[test]
