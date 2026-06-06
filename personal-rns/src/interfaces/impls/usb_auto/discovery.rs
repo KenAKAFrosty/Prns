@@ -48,11 +48,48 @@ enum LinkState {
     Lost,
 }
 
+struct PendingWrite {
+    buf: [u8; MAX_FRAMED_BYTES],
+    len: usize,
+    off: usize,
+}
+
+impl Default for PendingWrite {
+    fn default() -> Self {
+        Self {
+            buf: [0u8; MAX_FRAMED_BYTES],
+            len: 0,
+            off: 0,
+        }
+    }
+}
+
+impl PendingWrite {
+    fn is_empty(&self) -> bool {
+        self.off >= self.len
+    }
+
+    fn set(&mut self, frame: &[u8]) {
+        self.buf[..frame.len()].copy_from_slice(frame);
+        self.len = frame.len();
+        self.off = 0;
+    }
+
+    fn remaining(&self) -> &[u8] {
+        &self.buf[self.off..self.len]
+    }
+
+    fn advance(&mut self, written: usize) {
+        self.off += written;
+    }
+}
+
 struct Device<Port> {
     id: PortId,
     port: Port,
     decoder: RnsSerialDecoder<MAX_MESSAGE_BYTES>,
     state: LinkState,
+    pending: PendingWrite,
 }
 
 impl<Port> Device<Port> {
@@ -63,6 +100,37 @@ impl<Port> Device<Port> {
                 service_inbound_frame(frame, state, inbound);
             }
         });
+    }
+}
+
+impl<Port: Write> Device<Port> {
+    fn flush_pending(&mut self) {
+        if !matches!(self.state, LinkState::Confirmed(_)) {
+            return;
+        }
+        while !self.pending.is_empty() {
+            match self.port.write(self.pending.remaining()) {
+                Ok(0) => break,
+                Ok(written) => self.pending.advance(written),
+                Err(ref e) if is_transient(e) => break,
+                Err(_) => {
+                    self.state = LinkState::Lost;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn offer_frame(&mut self, frame: &[u8]) {
+        if !matches!(self.state, LinkState::Confirmed(_)) || !self.pending.is_empty() {
+            return;
+        }
+        match self.port.write(frame) {
+            Ok(written) if written >= frame.len() => {}
+            Ok(written) => self.pending.set(&frame[written..]),
+            Err(ref e) if is_transient(e) => self.pending.set(frame),
+            Err(_) => self.state = LinkState::Lost,
+        }
     }
 }
 
@@ -81,10 +149,10 @@ pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
 impl<Port: AsRawFd> Discoverer<Port> {
     pub(in crate::interfaces::impls::usb_auto) fn port_registrations(
         &self,
-    ) -> impl Iterator<Item = (&PortId, RawFd)> + '_ {
+    ) -> impl Iterator<Item = (&PortId, RawFd, bool)> + '_ {
         self.devices
             .iter()
-            .map(|device| (&device.id, device.port.as_raw_fd()))
+            .map(|device| (&device.id, device.port.as_raw_fd(), !device.pending.is_empty()))
     }
 }
 
@@ -114,6 +182,7 @@ impl<Port: Read + Write> Discoverer<Port> {
                 state: LinkState::Probing {
                     scans_left: PROBE_SCAN_BUDGET,
                 },
+                pending: PendingWrite::default(),
             });
         }
     }
@@ -226,6 +295,9 @@ impl<Port: Read + Write> Discoverer<Port> {
     }
 
     fn fan_out(&mut self, outbound: &mut impl OutboundDrain) {
+        for device in &mut self.devices {
+            device.flush_pending();
+        }
         let devices = &mut self.devices;
         let mut frame = [0u8; MAX_FRAMED_BYTES];
         outbound.drain_each(|packet| {
@@ -233,14 +305,7 @@ impl<Port: Read + Write> Discoverer<Port> {
                 return;
             };
             for device in devices.iter_mut() {
-                if !matches!(device.state, LinkState::Confirmed(_)) {
-                    continue;
-                }
-                if let Err(e) = device.port.write_all(&frame[..n]) {
-                    if !is_transient(&e) {
-                        device.state = LinkState::Lost;
-                    }
-                }
+                device.offer_frame(&frame[..n]);
             }
         });
     }
@@ -301,6 +366,7 @@ mod tests {
         outbox: Arc<Mutex<Vec<u8>>>,
         broken: Arc<AtomicBool>,
         write_fault: Arc<Mutex<Option<io::ErrorKind>>>,
+        tx_budget: Arc<Mutex<Option<usize>>>,
     }
 
     impl MockWire {
@@ -310,7 +376,14 @@ mod tests {
                 outbox: Arc::new(Mutex::new(Vec::new())),
                 broken: Arc::new(AtomicBool::new(false)),
                 write_fault: Arc::new(Mutex::new(None)),
+                tx_budget: Arc::new(Mutex::new(None)),
             }
+        }
+        fn limit_tx(&self, bytes: usize) {
+            *self.tx_budget.lock().unwrap() = Some(bytes);
+        }
+        fn refill_tx(&self) {
+            *self.tx_budget.lock().unwrap() = None;
         }
         fn device_sends(&self, msg: Message) {
             self.inbox.lock().unwrap().extend(framed(msg));
@@ -365,8 +438,26 @@ mod tests {
             if let Some(kind) = write_fault {
                 return Err(io::Error::from(kind));
             }
-            self.wire.outbox.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
+            let accepted = {
+                let mut budget = self.wire.tx_budget.lock().unwrap();
+                match budget.as_mut() {
+                    Some(0) if !buf.is_empty() => {
+                        return Err(io::Error::from(io::ErrorKind::WouldBlock));
+                    }
+                    Some(remaining) => {
+                        let n = buf.len().min(*remaining);
+                        *remaining -= n;
+                        n
+                    }
+                    None => buf.len(),
+                }
+            };
+            self.wire
+                .outbox
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buf[..accepted]);
+            Ok(accepted)
         }
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
@@ -768,5 +859,80 @@ mod tests {
         for packet in &packets {
             assert!(got.iter().any(|g| g.as_slice() == packet.as_slice()));
         }
+    }
+
+    #[test]
+    fn a_full_tx_buffer_holds_the_frame_until_a_later_pump_flushes_it() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+        wire.device_sends(Message::HelloAck(NodeTag([5; 8])));
+        disc.pump(&mut worker_context);
+        let _ = runtime_handle.next_report();
+
+        wire.limit_tx(0);
+        let packet = [0xCC; 8];
+        runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            })
+            .unwrap();
+        disc.pump(&mut worker_context);
+        assert!(
+            matches!(disc.devices[0].state, LinkState::Confirmed(_)),
+            "a full tx buffer must not drop the link"
+        );
+        assert!(
+            data_frames(&wire.host_wrote()).is_empty(),
+            "nothing reaches the wire while the tx buffer is full"
+        );
+
+        wire.refill_tx();
+        disc.pump(&mut worker_context);
+        assert_eq!(
+            data_frames(&wire.host_wrote()),
+            std::vec![packet.to_vec()],
+            "the buffered frame flushes once the tx buffer drains"
+        );
+    }
+
+    #[test]
+    fn a_partial_write_buffers_the_remainder_and_completes_it_later() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = Discoverer::new();
+        let wire = MockWire::new();
+        let p = wire.port();
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(p));
+        wire.device_sends(Message::HelloAck(NodeTag([6; 8])));
+        disc.pump(&mut worker_context);
+        let _ = runtime_handle.next_report();
+
+        wire.limit_tx(3);
+        let packet = [0x11, 0x22, 0x33, 0x44, 0x55];
+        runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            })
+            .unwrap();
+        disc.pump(&mut worker_context);
+        assert!(matches!(disc.devices[0].state, LinkState::Confirmed(_)));
+        assert!(
+            data_frames(&wire.host_wrote()).is_empty(),
+            "a partial frame is not yet a decodable frame"
+        );
+
+        wire.refill_tx();
+        disc.pump(&mut worker_context);
+        assert_eq!(data_frames(&wire.host_wrote()), std::vec![packet.to_vec()]);
     }
 }
