@@ -1198,7 +1198,7 @@ impl<S: EngineStorage> EngineState<S> {
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
-            destination_is_upstream_app: self
+            destination_is_self_or_upstream: self
                 .upstream_app_destinations
                 .lookup(&announce.destination, DestinationType::Single)
                 .is_some(),
