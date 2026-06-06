@@ -4,6 +4,7 @@ pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::directives::EngineDirectives;
+use crate::engine::receipts::ReceiptColumns;
 use crate::engine::self_announce::SelfAnnounceColumns;
 use crate::engine::self_ratchets::SelfRatchetColumns;
 use crate::engine::InstantMillis;
@@ -166,5 +167,6 @@ pub trait EngineStorage {
     type HeldIdentities: HeldIdentityColumns + Default;
     type SelfAnnounces: SelfAnnounceColumns + Default;
     type SelfRatchets: SelfRatchetColumns + Default;
+    type Receipts: ReceiptColumns + Default;
     type PacketHashes: PacketHashHistory + Default;
 }

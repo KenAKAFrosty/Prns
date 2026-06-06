@@ -1,4 +1,5 @@
 use crate::engine::directives::HeapEngineDirectives;
+use crate::engine::receipts::HeapReceiptColumns;
 use crate::engine::self_announce::HeapSelfAnnounceColumns;
 use crate::engine::self_ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
@@ -25,6 +26,7 @@ impl EngineStorage for GrowableHeap {
     type HeldIdentities = HeapHeldIdentityColumns;
     type SelfAnnounces = HeapSelfAnnounceColumns;
     type SelfRatchets = HeapSelfRatchetColumns;
+    type Receipts = HeapReceiptColumns;
     type PacketHashes = HeapPacketHashHistory;
 }
 

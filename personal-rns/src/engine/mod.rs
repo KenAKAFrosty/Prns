@@ -4,6 +4,7 @@ pub mod egress;
 pub mod identity_registration;
 pub mod ingress;
 pub mod proof;
+pub mod receipts;
 pub mod self_announce;
 pub mod self_ratchets;
 #[cfg(test)]
@@ -395,7 +396,7 @@ mod tests {
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8>>::default();
+            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

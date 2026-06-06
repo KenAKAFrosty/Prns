@@ -960,7 +960,7 @@ mod tests {
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8>>::default();
+            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {
