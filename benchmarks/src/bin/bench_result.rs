@@ -56,6 +56,7 @@ fn main() {
         metric: metric.to_string(),
         value: Some(value),
         unit: unit.to_string(),
+        threads: None,
     };
 
     let rows = vec![

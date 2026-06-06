@@ -81,6 +81,11 @@ pub struct ResultRow {
     pub metric: String,
     pub value: Option<f64>,
     pub unit: String,
+    /// Worker threads the figure was measured with, for a scenario that sweeps
+    /// parallelism (`announce-parallel`). Absent on single-threaded scenarios, so
+    /// their rows serialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threads: Option<u32>,
 }
 
 /// The machine a host's figures were measured on. A `host` (rustc target triple) is the

@@ -23,3 +23,11 @@ Needs Crystal (≥ 1.9) + OpenSSL on `PATH`. Clones the pinned upstream into `.u
 - **Upstream:** https://github.com/jtippett/rns-cr @ `514c309` (v0.1.0)
 - **License:** MIT — we vendor only `bench.cr` (our code) + the numbers.
 - **Crypto backend:** OpenSSL EVP via spider-gazelle/ed25519.
+
+## Parallel scenario
+
+`./run-mt.sh` measures the `announce-parallel` scenario — 2560 distinct announces sharded
+across `[1, cpu_count]` Crystal fibers run on OS threads (`-Dpreview_mt` + `CRYSTAL_WORKERS`),
+single-thread vs all logical cores — and writes `../../results/<host>/announce-parallel/rns-cr.jsonl`.
+Measured **verify-only** (`only_validate_signature: true`, no class-var store write, which isn't
+thread-safe), so it's tagged ‡ in the table.

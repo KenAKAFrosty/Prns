@@ -45,6 +45,14 @@ ground truth and doubles as a conformance corpus. Our engine reproduces it **byt
 (`cargo run --bin gen_corpus -- --check` vs `reference/gen.py --check`), which is the
 first hard proof of wire-exactness against RNS. Every backend here `load_corpus`es it.
 
+There are two scenarios on this same corpus shape. **`announce-256`** is the single-interface
+ingest path. **`announce-parallel`** shards 2560 distinct announces evenly across worker
+threads — the announce path is ~97% independent per-announce Ed25519 verify, so it parallelizes
+cleanly — and reports throughput single-threaded vs sharded across all the host's logical cores;
+its table is the price a runtime pays for a global lock (CPython's GIL can't use the extra cores
+from threads; compiled/JIT runtimes scale with the core count). A port that can't make its route
+store thread-safe may measure that scenario verify-only (no store), tagged ‡ in the table.
+
 **To participate, an implementation writes a thin driver** that:
 
 1. reads `packets.hex` + `manifest.json`,
@@ -77,7 +85,8 @@ and emits its rows.
 ([microReticulum](external/microreticulum)), and a second Python ([RetiNet](external/retinet)) —
 each get an `external/<impl>/` with our harness, a README, and a **one-command `run.sh`** that
 clones the *pinned* upstream into a gitignored `.upstream/`, builds the harness against it, and
-files rows in the schema above (`cd benchmarks && ./external/leviculum/run.sh`). We never vendor
+files rows in the schema above (`cd benchmarks && ./external/leviculum/run.sh`). A sibling
+`run-mt.sh` reproduces that impl's `announce-parallel` row the same way. We never vendor
 upstream source — only our harness and the measured numbers (licenses vary: AGPL, MIT, Apache,
 EPL, …). What an implementation *is* — language, Ed25519 backend, repo, pinned ref, license — is
 host-independent, so it lives once per impl in `implementations/<slug>.json` (the per-impl sibling

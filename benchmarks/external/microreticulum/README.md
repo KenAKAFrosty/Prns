@@ -23,3 +23,13 @@ deps), runs it, and writes `../../results/<host>/announce-256/microreticulum.jso
 - **Upstream:** https://github.com/attermann/microReticulum @ `79b8524`
 - **License:** Apache-2.0 — we vendor only `main.cpp` + `CMakeLists.txt` (our code) + the numbers.
 - **Crypto backend:** rweather Crypto (portable C++, MCU-oriented).
+
+## Parallel scenario
+
+`./run-mt.sh` (CMake-builds `mt/`) measures the `announce-parallel` scenario — 2560 distinct
+announces sharded across `[1, hardware_concurrency]` `std::thread`s, single-thread vs all
+logical cores — and writes `../../results/<host>/announce-parallel/microreticulum.jsonl`.
+Measured **verify-only** (`validate_announce(p, true)`, no write to the static
+`known_destinations` map, which isn't thread-safe), so it's tagged ‡ in the table. Its
+pure-compute portable crypto scales the hardest of the bunch — even the efficiency cores pull
+near-full weight.

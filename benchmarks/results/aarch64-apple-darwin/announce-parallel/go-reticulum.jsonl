@@ -1,0 +1,3 @@
+{"scenario":"announce-parallel","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":2560,"unit":"count"}
+{"scenario":"announce-parallel","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":34524.942,"unit":"announce/s","threads":1}
+{"scenario":"announce-parallel","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"throughput","metric":"ingest_announces_per_sec","value":150797.063,"unit":"announce/s","threads":10}

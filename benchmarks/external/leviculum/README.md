@@ -19,3 +19,9 @@ and writes `../../results/<host>/announce-256/leviculum.jsonl` in the shared res
 - **License:** AGPL-3.0-or-later — we vendor only `harness/` (our code) and the result
   numbers, never upstream source.
 - **Crypto backend:** ed25519-dalek 2.2 (this axis is ~97% Ed25519 verify).
+
+## Parallel scenario
+
+`./run-mt.sh` measures the `announce-parallel` scenario — 2560 distinct announces sharded
+across `[1, cpu_count]` worker threads (a fresh `Transport` per shard), single-thread vs all
+logical cores — and writes `../../results/<host>/announce-parallel/leviculum.jsonl`.

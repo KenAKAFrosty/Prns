@@ -2,5 +2,8 @@
 # `external/<impl>/run.sh` regenerates them. We commit only our harness + run.sh + README.
 external/*/.upstream/
 external/*/build/
+external/*/build-mt/
 external/*/harness/target/
 external/*/harness/Cargo.lock
+external/*/harness-mt/target/
+external/*/harness-mt/Cargo.lock

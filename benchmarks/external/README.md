@@ -14,9 +14,11 @@ builds our harness against it, and writes rows into
 cd benchmarks && ./external/leviculum/run.sh
 ```
 
-reproduces that one column from a clean checkout. Implementation metadata (language, crypto
-backend, repo, pinned ref, license) lives in `../implementations/<slug>.json`; the rendered
-comparison table joins the two. `lib.sh` holds the shared clone/emit helpers.
+reproduces that one column from a clean checkout. A sibling **`run-mt.sh`** reproduces the
+impl's `announce-parallel` row (the same corpus sharded across threads, single-thread vs all
+logical cores) the same way. Implementation metadata (language, crypto backend, repo, pinned
+ref, license) lives in `../implementations/<slug>.json`; the rendered comparison table joins
+the two. `lib.sh` holds the shared clone/emit helpers.
 
 ## Adding an implementation
 
@@ -27,6 +29,10 @@ comparison table joins the two. `lib.sh` holds the shared clone/emit helpers.
 3. Add `../implementations/<slug>.json` (language, crypto_backend, role, repo, pinned_ref,
    license; `maturity: "partial"` if the upstream list marks it not-yet-complete).
 4. Run it, then `cargo run --bin render_results` to refresh the tables.
+
+For the parallel scenario, add a `run-mt.sh` + harness that sweeps `[1, cpu_count]` threads and
+prints `RESULT resolved=<n> lo=<t> lo_per_sec=<f> hi=<t> hi_per_sec=<f>`, then calls `emit_mt_rows`
+(pass `announces_verified` as its last argument if the harness is verify-only).
 
 Numbers are comparable only within a host; toolchain versions are stamped per row. Licenses
 vary (AGPL, MIT, Apache, EPL, …) — we distribute only our harness source and the measured
