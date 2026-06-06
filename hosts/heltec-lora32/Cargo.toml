@@ -67,6 +67,9 @@ log = "0.4"
 lora-phy = "3.0.1"
 embedded-hal-bus = { version = "0.3", default-features = false, features = ["async"] }
 embedded-hal-async = "1.0"
+# Blocking byte-stream traits for the usb_throughput flood bin (src/bin), which
+# drives the USB-serial-jtag synchronously with no executor.
+embedded-io = "0.6"
 
 [profile.release]
 codegen-units = 1
