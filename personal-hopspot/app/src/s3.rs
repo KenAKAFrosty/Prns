@@ -8,6 +8,7 @@ use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
 use esp_hal::rtc_cntl::{Rtc, RwdtStage};
+use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
@@ -41,10 +42,11 @@ use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag
 use personal_rns::interfaces::impls::usb_auto::serve;
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::substrate::{
-    new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, WakeSignal,
+    new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle,
+    EmbassyInterfaceSeam, WakeSignal,
 };
 use personal_rns::interfaces::{
-    InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface,
+    InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface, StartedInterface,
 };
 use personal_rns::routing::storage::FixedInline;
 use personal_rns::routing::ProofStrategy;
@@ -82,6 +84,15 @@ macro_rules! mk_static {
     }};
 }
 const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8> = FixedInline;
+
+/// The engine's own stack on core 1 — explicitly sized, with generous headroom
+/// over the deepest cycle (announce verify is ~6KB of curve25519 frames).
+const CORE1_STACK_BYTES: usize = 32 * 1024;
+
+type EngineInterfaces = FixedInterfaceSet<
+    StartedInterface<EmbassyInterfaceHandle<MAX_DATA_BYTES>, core::convert::Infallible>,
+    2,
+>;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse
@@ -220,9 +231,61 @@ pub async fn run(spawner: Spawner) {
     // Async USB serial, split — the responder task owns the halves.
     let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
     let node_tag = node_tag_from_mac();
-    spawner.spawn(
-        node_task(spawner, usb_rx, usb_tx, node_tag, wifi_stack, wifi_mac)
-            .expect("node task fits the pool"),
+
+    // The device responder is self-driven: its launch spawns the board's concrete
+    // worker task (the USB halves + tag captured here, beside the macro); `start` fires it.
+    let interface = SelfDrivenInterface::new(
+        device_descriptor(USB_INTERFACE_ID),
+        move |context: UsbAutoContext| {
+            spawner.spawn(
+                responder_task(usb_rx, usb_tx, context, node_tag)
+                    .expect("responder task fits the pool"),
+            );
+        },
+    );
+
+    // The WiFi AutoInterface is self-driven the same way: its launch spawns the shared
+    // embassy `serve` loop over the IP stack + this board's MAC (so the worker's token
+    // matches the stack's link-local).
+    let wifi_interface = SelfDrivenInterface::new(
+        auto_interface::descriptor(WIFI_INTERFACE_ID),
+        move |context: WifiAutoContext| {
+            spawner.spawn(
+                wifi_auto_task(wifi_stack, wifi_mac, context)
+                    .expect("wifi auto task fits the pool"),
+            );
+        },
+    );
+
+    // The seams split here on core 0, so both worker tasks spawn onto THIS core's
+    // executor beside the radio; only the runtime ends of the channels cross to
+    // core 1 with the engine.
+    let mut interfaces: EngineInterfaces = FixedInterfaceSet::new();
+    let _ = interfaces
+        .push(EmbassyInterfaceSeam::split(USB_INTERFACE_ID, &CHANNELS, &WAKE).start_interface(interface));
+    let _ = interfaces.push(
+        EmbassyInterfaceSeam::split(WIFI_INTERFACE_ID, &WIFI_CHANNELS, &WAKE)
+            .start_interface(wifi_interface),
+    );
+
+    // The engine gets core 1 to itself: its own scheduler, its own explicitly
+    // sized stack, and no radio task ever preempts a cycle. Radio, render, and
+    // input stay here on core 0 — true parallelism across the seam.
+    let secret_key = fixture_identity_secret_key();
+    esp_rtos::start_second_core(
+        p.CPU_CTRL,
+        sw_int.software_interrupt1,
+        mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new()),
+        move || {
+            static CORE1_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+            CORE1_EXECUTOR
+                .init(esp_rtos::embassy::Executor::new())
+                .run(|engine_spawner| {
+                    engine_spawner.spawn(
+                        engine_task(interfaces, secret_key).expect("engine task fits the pool"),
+                    );
+                })
+        },
     );
 
     // User button (GPIO0, the PRG/BOOT button; the internal pull-up holds it high on
@@ -372,9 +435,6 @@ pub async fn run(spawner: Spawner) {
     }
 }
 
-/// The node: build the embassy host, pop the USB-auto responder in, and hand the
-/// recipe to `Prns::run` — the announcing engine + runtime, driven forever. Lives in
-/// one task so the (unnameable) runtime future stays a local.
 // A bring-up fixture identity. The battery sense owns ADC1, so no TRNG can — and the
 // bare RNG without RF isn't trustworthy for a keypair — so the identity is fixed
 // (the oracle vectors' X25519 0x22 ‖ Ed25519 0x11). NEVER ship: every fixture node
@@ -386,17 +446,14 @@ fn fixture_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     secret_key
 }
 
+/// The node: build the embassy host and hand the recipe to `Prns::run` — the
+/// announcing engine + runtime, driven forever on core 1's executor. Lives in
+/// one task so the (unnameable) runtime future stays a local.
 #[embassy_executor::task]
-async fn node_task(
-    spawner: Spawner,
-    usb_rx: UsbSerialJtagRx<'static, Async>,
-    usb_tx: UsbSerialJtagTx<'static, Async>,
-    node_tag: NodeTag,
-    wifi_stack: Stack<'static>,
-    wifi_mac: MacAddress,
+async fn engine_task(
+    interfaces: EngineInterfaces,
+    secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
 ) {
-    let secret_key = fixture_identity_secret_key();
-
     // The embassy contract host owns the shared wake and draws each cycle's announce
     // jitter from the RNG (timing only — its quality is non-critical). No heap: the
     // board owns the `static` CHANNELS.
@@ -405,38 +462,6 @@ async fn node_task(
         Rng::new().read(&mut bytes);
         EngineCycleEntropySeed::new(bytes)
     });
-
-    // The device responder is self-driven: its launch spawns the board's concrete
-    // worker task (the USB halves + tag captured here, beside the macro); `start` fires it.
-    let interface = SelfDrivenInterface::new(
-        device_descriptor(USB_INTERFACE_ID),
-        move |context: UsbAutoContext| {
-            spawner.spawn(
-                responder_task(usb_rx, usb_tx, context, node_tag)
-                    .expect("responder task fits the pool"),
-            );
-        },
-    );
-
-    // The WiFi AutoInterface is self-driven the same way: its launch spawns the shared
-    // embassy `serve` loop over the IP stack + this board's MAC (so the worker's token
-    // matches the stack's link-local).
-    let wifi_interface = SelfDrivenInterface::new(
-        auto_interface::descriptor(WIFI_INTERFACE_ID),
-        move |context: WifiAutoContext| {
-            spawner.spawn(
-                wifi_auto_task(wifi_stack, wifi_mac, context)
-                    .expect("wifi auto task fits the pool"),
-            );
-        },
-    );
-
-    // `attach` glues the seam from the board's `static` channels (keyed by the id the
-    // interface carries), then starts it: the worker task holds the context, the runtime
-    // keeps the handle.
-    let mut interfaces = FixedInterfaceSet::<_, 2>::new();
-    let _ = interfaces.push(host.attach(interface, &CHANNELS));
-    let _ = interfaces.push(host.attach(wifi_interface, &WIFI_CHANNELS));
 
     // Each cycle's snapshot goes to the OLED render loop, never the shared
     // usb-serial-jtag (a mid-frame log byte would corrupt the link).
