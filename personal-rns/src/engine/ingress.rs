@@ -25,6 +25,7 @@ pub enum Ingress<'a> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         next_hop: NextHop,
+        is_path_response: bool,
     },
 
     Data {
@@ -98,6 +99,7 @@ impl<'a> Ingress<'a> {
                     source_interface,
                     arrived_at,
                     next_hop: header.transport_id.map_or(NextHop::Direct, NextHop::Via),
+                    is_path_response: header.context == WireContext::PathResponse,
                 }
             }
             PacketType::Data => Self::Data {
@@ -552,6 +554,61 @@ mod tests {
             relay.write_cached_path_response(&DestinationHash::new([0x44; 16]), &mut buf),
             CachedPathResponseOutcome::Unavailable,
         ));
+    }
+
+    #[test]
+    fn a_path_response_is_learned_as_a_route_but_never_rebroadcast() {
+        let mut relay = transporting_node();
+        let mut response = hx(RAW_ANNOUNCE);
+        // Tag the announce as a path response by flipping its context byte.
+        response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
+
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(500),
+                    source_interface: iface(0xA1),
+                    bytes: &mut response,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                destination: DestinationHash::new(
+                    hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+                ),
+                hops: 1,
+                rebroadcast: RebroadcastDecision::TerminalPathResponse,
+            })),
+        );
+        assert_eq!(relay.route_count(), 1, "the path response is learned");
+        assert_eq!(
+            relay.pending_announce_rebroadcast_count(),
+            0,
+            "a path response is never re-flooded",
+        );
+    }
+
+    #[test]
+    fn the_same_announce_without_the_path_response_tag_is_scheduled() {
+        let mut relay = transporting_node();
+        let mut announce = hx(RAW_ANNOUNCE);
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(500),
+                    source_interface: iface(0xA1),
+                    bytes: &mut announce,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                rebroadcast: RebroadcastDecision::Scheduled,
+                ..
+            })),
+        ));
+        assert_eq!(relay.pending_announce_rebroadcast_count(), 1);
     }
 
     #[test]
@@ -1707,6 +1764,9 @@ pub enum RebroadcastDecision {
     Scheduled,
     NotATransportNode,
     NoTransportInterfaces,
+    /// A path response is learned but never re-flooded — the answer is for the
+    /// requester, not the network (RNS Transport.py:1884).
+    TerminalPathResponse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1770,12 +1830,14 @@ impl<S: EngineStorage> EngineState<S> {
                 source_interface,
                 arrived_at,
                 next_hop,
+                is_path_response,
             } => IngestPacketOutcome::Announce(self.ingest_announce(
                 announce,
                 received_hops,
                 source_interface,
                 arrived_at,
                 next_hop,
+                is_path_response,
                 jitter,
                 interfaces,
             )),
@@ -2060,6 +2122,7 @@ impl<S: EngineStorage> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         next_hop: NextHop,
+        is_path_response: bool,
         jitter: JitterSeed,
         interfaces: &[InterfaceDescriptor],
     ) -> AnnounceIngest {
@@ -2088,7 +2151,11 @@ impl<S: EngineStorage> EngineState<S> {
         );
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
-                let rebroadcast = if self.transport_id.is_none() {
+                let rebroadcast = if is_path_response {
+                    // A path response is learned, never re-flooded: the answer
+                    // belongs to the requester, not the network.
+                    RebroadcastDecision::TerminalPathResponse
+                } else if self.transport_id.is_none() {
                     RebroadcastDecision::NotATransportNode
                 } else if interfaces
                     .iter()
