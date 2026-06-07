@@ -54,6 +54,33 @@ pub enum WriteSendSingleError {
     Serialize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendSingleRejection {
+    RouteVanished,
+    Serialize,
+}
+
+impl From<SendSingleRejection> for WriteSendSingleError {
+    fn from(rejection: SendSingleRejection) -> Self {
+        match rejection {
+            SendSingleRejection::RouteVanished => Self::RouteVanished,
+            SendSingleRejection::Serialize => Self::Serialize,
+        }
+    }
+}
+
+#[must_use]
+pub enum SendSingleWriteOutcome {
+    Written(SendSingleDispatch),
+    Rejected {
+        rejection: SendSingleRejection,
+        unspent_entropy: SendSingleEntropy,
+    },
+    Failed {
+        failure: EncryptError,
+    },
+}
+
 impl<S: EngineStorage> EngineState<S> {
     pub(crate) fn ingest_send_single(&self, id: CommandId, send: SendSingle) -> CommandOutcome {
         let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
@@ -72,7 +99,7 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     /// Seal `send`'s payload to the peer's announced ratchet (identity key
-    /// when it never announced one — RNS 1.3.1 `Destination.encrypt`), frame
+    /// when it never announced one; RNS 1.3.1 `Destination.encrypt`), frame
     /// it directly into `buf`, and track the receipt that will settle `id`.
     pub fn write_commanded_send_single(
         &mut self,
@@ -81,11 +108,15 @@ impl<S: EngineStorage> EngineState<S> {
         now: InstantMillis,
         entropy: SendSingleEntropy,
         buf: &mut [u8],
-    ) -> Result<SendSingleDispatch, WriteSendSingleError> {
-        let retained = self
-            .routing_table
-            .retained_announce_for(&send.destination)
-            .ok_or(WriteSendSingleError::RouteVanished)?;
+    ) -> SendSingleWriteOutcome {
+        use SendSingleWriteOutcome::{Failed, Rejected, Written};
+
+        let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
+            return Rejected {
+                rejection: SendSingleRejection::RouteVanished,
+                unspent_entropy: entropy,
+            };
+        };
         let hops = retained.hops;
         let fire_on = retained.receiving_interface;
         let public_keys = retained.announce.public_keys;
@@ -102,32 +133,36 @@ impl<S: EngineStorage> EngineState<S> {
             destination: send.destination,
             context: WireContext::None,
         };
-        let header_len = header
-            .write(buf)
-            .map_err(|_| WriteSendSingleError::Serialize)?;
+        let Ok(header_len) = header.write(buf) else {
+            return Rejected {
+                rejection: SendSingleRejection::Serialize,
+                unspent_entropy: entropy,
+            };
+        };
 
         let remote = RemoteIdentity::from_public_keys(public_keys.encryption, public_keys.signing);
         let (ephemeral_secret, iv) = entropy.into_parts();
-        let sealed = match maybe_ratchet {
-            Some(ratchet) => remote
-                .encrypt_to_ratchet(
-                    &X25519PublicKey(*ratchet.as_bytes()),
-                    &ephemeral_secret,
-                    &iv,
-                    &send.payload,
-                    &mut buf[header_len..],
-                )
-                .map_err(WriteSendSingleError::Seal)?,
-            None => remote
-                .encrypt(
-                    &ephemeral_secret,
-                    &iv,
-                    &send.payload,
-                    &mut buf[header_len..],
-                )
-                .map_err(WriteSendSingleError::Seal)?,
+        let sealed_result = match maybe_ratchet {
+            Some(ratchet) => remote.encrypt_to_ratchet(
+                &X25519PublicKey(*ratchet.as_bytes()),
+                &ephemeral_secret,
+                &iv,
+                &send.payload,
+                &mut buf[header_len..],
+            ),
+            None => remote.encrypt(
+                &ephemeral_secret,
+                &iv,
+                &send.payload,
+                &mut buf[header_len..],
+            ),
         };
-        let wire_len = header_len + sealed;
+
+        let sealed_len = match sealed_result {
+            Ok(x) => x,
+            Err(error) => return Failed { failure: error },
+        };
+        let wire_len = header_len + sealed_len;
 
         let packet_hash = PacketHash::of_data_fields(
             DestinationType::Single,
@@ -148,7 +183,7 @@ impl<S: EngineStorage> EngineState<S> {
             timeout_at,
         });
 
-        Ok(SendSingleDispatch {
+        Written(SendSingleDispatch {
             wire_len,
             fire_on,
             culled,
@@ -173,6 +208,37 @@ mod tests {
     use crate::interfaces::InboundPacket;
     use crate::routing::delivery::{Delivery, SingleDelivery};
     use crate::wire::{DestinationHash, MTU};
+
+    impl SendSingleWriteOutcome {
+        #[track_caller]
+        pub fn dispatched(self) -> SendSingleDispatch {
+            match self {
+                Self::Written(dispatch) => dispatch,
+                Self::Rejected {
+                    rejection: error, ..
+                } => {
+                    panic!("expected Written, got Rejected({error:?})")
+                }
+                Self::Failed { failure: error } => {
+                    panic!("expected Written, got Failed({error:?})")
+                }
+            }
+        }
+
+        #[track_caller]
+        pub fn rejection(self) -> (SendSingleRejection, SendSingleEntropy) {
+            match self {
+                Self::Rejected {
+                    rejection: error,
+                    unspent_entropy: entropy,
+                } => (error, entropy),
+                Self::Written(dispatch) => panic!("expected Rejected, got Written({dispatch:?})"),
+                Self::Failed { failure: error } => {
+                    panic!("expected Rejected, got Failed({error:?})")
+                }
+            }
+        }
+    }
 
     const PEER_DESTINATION_HEX: &str = "c3cfae69b36bb6e3bbfd96a3b5867a59";
 
@@ -256,8 +322,58 @@ mod tests {
                 vector_send_entropy(),
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
         (state, buf[..dispatch.wire_len].to_vec())
+    }
+
+    #[test]
+    fn a_rejected_send_hands_the_entropy_home_for_a_byte_identical_retry() {
+        let (_, expected_wire) = unratcheted_neighbor_with_a_tracked_send(b"retry-me", 1_000);
+
+        let mut announcer = personal_node_announcer();
+        let mut announce_buf = [0u8; MTU];
+        let announce_len = announcer
+            .write_due_self_announce(
+                InstantMillis(100),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .unwrap()
+            .unwrap();
+        let mut state = hearer();
+        hear_announce(&mut state, &announce_buf[..announce_len], arrival());
+
+        let stranger = SendSingle {
+            destination: DestinationHash::new([0xEE; 16]),
+            payload: SendSinglePayload::from_slice(b"retry-me").unwrap(),
+        };
+        let mut buf = [0u8; MTU];
+        let (error, came_home) = state
+            .write_commanded_send_single(
+                CommandId(6),
+                &stranger,
+                InstantMillis(500),
+                vector_send_entropy(),
+                &mut buf,
+            )
+            .rejection();
+        assert_eq!(error, SendSingleRejection::RouteVanished);
+
+        let dispatch = state
+            .write_commanded_send_single(
+                CommandId(7),
+                &send_of(b"retry-me"),
+                InstantMillis(1_000),
+                came_home,
+                &mut buf,
+            )
+            .dispatched();
+        assert_eq!(
+            &buf[..dispatch.wire_len],
+            &expected_wire[..],
+            "the unit that came home seals byte-identical wire on the retry",
+        );
     }
 
     fn proof_packet(payload: &[u8], proven: &PacketHash) -> std::vec::Vec<u8> {
@@ -304,7 +420,7 @@ mod tests {
                 vector_send_entropy(),
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
 
         assert_eq!(
             &buf[..dispatch.wire_len],
@@ -342,7 +458,7 @@ mod tests {
                 vector_send_entropy(),
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
 
         let fixture = crate::identity::in_memory::InMemoryNodeIdentity::from_secret_key_bytes(&{
             let mut bytes = [0u8; crate::identity::IDENTITY_SECRET_KEY_LEN];
@@ -421,7 +537,7 @@ mod tests {
                 },
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
 
         let mut wire = buf[..dispatch.wire_len].to_vec();
         assert_eq!(
@@ -453,7 +569,7 @@ mod tests {
                 vector_send_entropy(),
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
         assert_eq!(dispatch.culled, None);
 
         let _ = tick_capture(&mut state, InstantMillis(9_000));
@@ -483,7 +599,7 @@ mod tests {
                     vector_send_entropy(),
                     &mut buf,
                 )
-                .unwrap();
+                .dispatched();
             assert_eq!(dispatch.culled, None);
         }
 
@@ -495,7 +611,7 @@ mod tests {
                 vector_send_entropy(),
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
         assert_eq!(
             dispatch.culled,
             Some(crate::engine::receipts::CulledReceipt {
@@ -632,7 +748,7 @@ mod tests {
                 vector_send_entropy(),
                 &mut buf,
             )
-            .unwrap();
+            .dispatched();
 
         assert_eq!(state.pop_timed_out_send_single(InstantMillis(12_999)), None);
         assert_eq!(

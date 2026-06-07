@@ -16,8 +16,9 @@ impl UnspentEntropyPool {
         }
     }
 
+    // REVIEW for now we'll leave this as-is since we're part of a larger sweep. each one of these requiring a 'fresh' to already have been built.... kinda misses the whole point. But again, we'll wait and come back to this
     #[must_use]
-    pub fn checkout_nonce(&mut self, fresh: SelfAnnounceEntropy) -> SelfAnnounceEntropy {
+    pub fn checkout_self_announce(&mut self, fresh: SelfAnnounceEntropy) -> SelfAnnounceEntropy {
         self.nonce.take().unwrap_or(fresh)
     }
 
@@ -27,11 +28,11 @@ impl UnspentEntropyPool {
     }
 
     #[must_use]
-    pub fn checkout_send(&mut self, fresh: SendSingleEntropy) -> SendSingleEntropy {
+    pub fn checkout_send_single(&mut self, fresh: SendSingleEntropy) -> SendSingleEntropy {
         self.send.take().unwrap_or(fresh)
     }
 
-    pub fn restore_nonce(&mut self, unspent: SelfAnnounceEntropy) {
+    pub fn restore_self_announce(&mut self, unspent: SelfAnnounceEntropy) {
         self.nonce = Some(unspent);
     }
 
@@ -39,7 +40,7 @@ impl UnspentEntropyPool {
         self.ratchet = Some(unspent);
     }
 
-    pub fn restore_send(&mut self, unspent: SendSingleEntropy) {
+    pub fn restore_send_single(&mut self, unspent: SendSingleEntropy) {
         self.send = Some(unspent);
     }
 }
@@ -87,24 +88,24 @@ mod tests {
     #[test]
     fn an_empty_pool_hands_back_the_fresh_unit() {
         let mut pool = UnspentEntropyPool::empty();
-        let out = pool.checkout_nonce(nonce_of(0xBB));
+        let out = pool.checkout_self_announce(nonce_of(0xBB));
         assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xBB)));
     }
 
     #[test]
     fn a_restored_survivor_wins_over_the_fresh_unit() {
         let mut pool = UnspentEntropyPool::empty();
-        pool.restore_nonce(nonce_of(0xAA));
-        let out = pool.checkout_nonce(nonce_of(0xBB));
+        pool.restore_self_announce(nonce_of(0xAA));
+        let out = pool.checkout_self_announce(nonce_of(0xBB));
         assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xAA)));
     }
 
     #[test]
     fn checkout_drains_the_slot_so_the_next_cycle_gets_fresh() {
         let mut pool = UnspentEntropyPool::empty();
-        pool.restore_nonce(nonce_of(0xAA));
-        let _first = pool.checkout_nonce(nonce_of(0xBB));
-        let second = pool.checkout_nonce(nonce_of(0xCC));
+        pool.restore_self_announce(nonce_of(0xAA));
+        let _first = pool.checkout_self_announce(nonce_of(0xBB));
+        let second = pool.checkout_self_announce(nonce_of(0xCC));
         assert_eq!(announce_id_of(second), announce_id_of(nonce_of(0xCC)));
     }
 
@@ -147,7 +148,7 @@ mod tests {
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_ratchet(ratchet_of(0x55));
 
-        let nonce = pool.checkout_nonce(nonce_of(0xBB));
+        let nonce = pool.checkout_self_announce(nonce_of(0xBB));
         assert_eq!(announce_id_of(nonce), announce_id_of(nonce_of(0xBB)));
 
         let mut minted = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();

@@ -1,6 +1,7 @@
 use heapless::Vec as HeaplessVec;
 
 use super::core::TrafficLedger;
+use super::entropy::UnspentEntropyPool;
 use super::event::PrnsEvent;
 use super::host::{CycleStamp, Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
@@ -9,7 +10,7 @@ use crate::engine::{
     AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
     EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis,
     IssuedCommand, NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy, SendSingle,
-    SendSingleEntropy, SendSingleFailure, Settlement,
+    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -52,6 +53,7 @@ where
     engine: EngineState<S>,
     interfaces: I,
     traffic: TrafficLedger,
+    pool: UnspentEntropyPool,
     host: Ho,
 }
 
@@ -69,6 +71,7 @@ where
             engine,
             interfaces,
             traffic: TrafficLedger::new(),
+            pool: UnspentEntropyPool::empty(),
             host,
         }
     }
@@ -84,6 +87,7 @@ where
             &mut self.engine,
             &mut self.interfaces,
             &mut self.traffic,
+            &mut self.pool,
             now,
             entropy_seed,
             &mut on_event,
@@ -121,6 +125,7 @@ where
             mut engine,
             mut interfaces,
             mut traffic,
+            mut pool,
             mut host,
         } = self;
         let mut wake = NextWake::Immediate;
@@ -130,6 +135,7 @@ where
                 &mut engine,
                 &mut interfaces,
                 &mut traffic,
+                &mut pool,
                 now,
                 seed,
                 &mut on_event,
@@ -152,10 +158,12 @@ where
 }
 
 #[allow(clippy::expect_used)]
+#[allow(clippy::too_many_arguments)]
 fn cycle_pooled<I, S, OnEvent, NextCommand>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
+    pool: &mut UnspentEntropyPool,
     now: InstantMillis,
     entropy_seed: EngineCycleEntropySeed,
     on_event: &mut OnEvent,
@@ -174,6 +182,7 @@ where
         ratchet,
         send,
     } = EngineCycleEntropy::from_seed(entropy_seed);
+    let send = pool.checkout_send_single(send);
 
     let mut next_poll = NextScheduledInterfaceWake::Idle;
     for started in interfaces.iter_mut() {
@@ -181,8 +190,12 @@ where
     }
 
     let mut processed_command_count = 0;
-    let announce_entropy = match next_command() {
-        None => Some((self_announce, ratchet)),
+    let unspent = match next_command() {
+        None => UnspentCycleEntropy {
+            nonce: Some(self_announce),
+            ratchet: Some(ratchet),
+            send: Some(send),
+        },
         Some(command) => {
             processed_command_count += 1;
             run_command(
@@ -191,12 +204,21 @@ where
                 traffic,
                 command,
                 now,
-                (self_announce, ratchet),
+                self_announce,
+                ratchet,
                 send,
                 on_event,
             )
         }
     };
+    let UnspentCycleEntropy {
+        nonce: unspent_nonce,
+        ratchet: unspent_ratchet,
+        send: unspent_send,
+    } = unspent;
+    if let Some(survivor) = unspent_send {
+        pool.restore_send_single(survivor);
+    }
 
     let mut ingested_packet_count = 0;
     let mut accepted_announce_count = 0;
@@ -311,7 +333,7 @@ where
     tick_output.commit();
 
     if !engine.registered_interfaces().is_empty() {
-        if let Some((nonce, ratchet_entropy)) = announce_entropy {
+        if let (Some(nonce), Some(ratchet_entropy)) = (unspent_nonce, unspent_ratchet) {
             // The self-announce is staged once — building it signs, and signing
             // per interface would be waste — then the fan copies the staged bytes
             // into each grant.
@@ -350,9 +372,16 @@ where
 }
 
 /// Run one app command to completion, spending the cycle's announce entropy if
-/// the command mints an announce. Whatever is handed back unspent is the
-/// scheduled announce step's to use — entropy moves, so the cycle can never
-/// mint twice from it.
+/// the command mints an announce and the send entropy if it seals a send.
+/// Whatever is handed back unspent is the rest of the cycle's to use — entropy
+/// moves, so the cycle can never mint twice from it.
+#[must_use]
+struct UnspentCycleEntropy {
+    nonce: Option<SelfAnnounceEntropy>,
+    ratchet: Option<RatchetEntropy>,
+    send: Option<SendSingleEntropy>,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_command<I, S, OnEvent>(
     engine: &mut EngineState<S>,
@@ -360,10 +389,11 @@ fn run_command<I, S, OnEvent>(
     traffic: &mut TrafficLedger,
     issued: IssuedCommand,
     now: InstantMillis,
-    announce_entropy: (SelfAnnounceEntropy, RatchetEntropy),
+    nonce: SelfAnnounceEntropy,
+    ratchet: RatchetEntropy,
     send_entropy: SendSingleEntropy,
     on_event: &mut OnEvent,
-) -> Option<(SelfAnnounceEntropy, RatchetEntropy)>
+) -> UnspentCycleEntropy
 where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
@@ -377,10 +407,14 @@ where
                 id,
                 settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
             });
-            return Some(announce_entropy);
+            return UnspentCycleEntropy {
+                nonce: Some(nonce),
+                ratchet: Some(ratchet),
+                send: Some(send_entropy),
+            };
         }
         CommandOutcome::OwesSendSingle { id, send } => {
-            run_send_single(
+            let unspent_send = run_send_single(
                 engine,
                 interfaces,
                 traffic,
@@ -390,47 +424,53 @@ where
                 send_entropy,
                 on_event,
             );
-            return Some(announce_entropy);
+            return UnspentCycleEntropy {
+                nonce: Some(nonce),
+                ratchet: Some(ratchet),
+                send: unspent_send,
+            };
         }
         CommandOutcome::SendSingleRejected { id, error } => {
             on_event(PrnsEvent::CommandSettled {
                 id,
                 settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(error))),
             });
-            return Some(announce_entropy);
+            return UnspentCycleEntropy {
+                nonce: Some(nonce),
+                ratchet: Some(ratchet),
+                send: Some(send_entropy),
+            };
         }
     };
 
-    let (nonce, ratchet_entropy) = announce_entropy;
     let mut emit_buffer = [0u8; MTU];
-    let settlement = match engine.write_commanded_announce(
-        &commanded,
-        now,
-        nonce,
-        ratchet_entropy,
-        &mut emit_buffer,
-    ) {
-        Ok(n) => {
-            let fire_on = match &commanded.target {
-                AnnounceTarget::AllInterfaces => engine.registered_interfaces(),
-                AnnounceTarget::Interface(interface) => core::slice::from_ref(interface),
-            };
-            fan_to_handles(
-                interfaces,
-                traffic,
-                |buf| {
-                    buf[..n].copy_from_slice(&emit_buffer[..n]);
-                    n
-                },
-                fire_on,
-                FanoutClass::SelfOriginated,
-            );
-            Settlement::AnnounceNow(Ok(()))
-        }
-        Err(error) => Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(error))),
-    };
+    let settlement =
+        match engine.write_commanded_announce(&commanded, now, nonce, ratchet, &mut emit_buffer) {
+            Ok(n) => {
+                let fire_on = match &commanded.target {
+                    AnnounceTarget::AllInterfaces => engine.registered_interfaces(),
+                    AnnounceTarget::Interface(interface) => core::slice::from_ref(interface),
+                };
+                fan_to_handles(
+                    interfaces,
+                    traffic,
+                    |buf| {
+                        buf[..n].copy_from_slice(&emit_buffer[..n]);
+                        n
+                    },
+                    fire_on,
+                    FanoutClass::SelfOriginated,
+                );
+                Settlement::AnnounceNow(Ok(()))
+            }
+            Err(error) => Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(error))),
+        };
     on_event(PrnsEvent::CommandSettled { id, settlement });
-    None
+    UnspentCycleEntropy {
+        nonce: None,
+        ratchet: None,
+        send: Some(send_entropy),
+    }
 }
 
 /// A written send fires on the interface its destination's announce arrived on and
@@ -446,15 +486,18 @@ fn run_send_single<I, S, OnEvent>(
     now: InstantMillis,
     entropy: SendSingleEntropy,
     on_event: &mut OnEvent,
-) where
+) -> Option<SendSingleEntropy>
+where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
 {
+    use SendSingleWriteOutcome::{Failed, Rejected, Written};
+
     let mut emit_buffer = [0u8; MTU];
     match engine.write_commanded_send_single(id, send_single, now, entropy, &mut emit_buffer) {
-        Ok(dispatch) => {
+        Written(dispatch) => {
             let n = dispatch.wire_len;
             fan_to_handles(
                 interfaces,
@@ -472,11 +515,29 @@ fn run_send_single<I, S, OnEvent>(
                     settlement: Settlement::SendSingle(Err(SendSingleFailure::Culled)),
                 });
             }
+            None
         }
-        Err(error) => on_event(PrnsEvent::CommandSettled {
-            id,
-            settlement: Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(error))),
-        }),
+        Rejected {
+            rejection,
+            unspent_entropy,
+        } => {
+            on_event(PrnsEvent::CommandSettled {
+                id,
+                settlement: Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(
+                    rejection.into(),
+                ))),
+            });
+            Some(unspent_entropy)
+        }
+        Failed { failure } => {
+            on_event(PrnsEvent::CommandSettled {
+                id,
+                settlement: Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(
+                    WriteSendSingleError::Seal(failure),
+                ))),
+            });
+            None
+        }
     }
 }
 
@@ -1178,6 +1239,115 @@ mod tests {
     }
 
     #[test]
+    fn a_rejected_send_restores_its_entropy_and_the_pooled_unit_seals_byte_identically() {
+        use crate::engine::test_support::{
+            personal_node_announcer, second_secret_key, TEST_ENTROPY, TEST_NONCE,
+            TEST_RATCHET_ENTROPY,
+        };
+        use crate::engine::{SendSingle, SendSinglePayload};
+        use SendSingleWriteOutcome::Written;
+
+        fn send_entropy_of(key: u8, iv: u8) -> SendSingleEntropy {
+            let mut bytes = [key; SendSingleEntropy::LEN];
+            bytes[32..].fill(iv);
+            SendSingleEntropy::new(bytes)
+        }
+
+        fn hearer_with_route(announce_wire: &[u8]) -> EngineState<Cap> {
+            let mut state = EngineState::new(second_secret_key());
+            let mut raw = announce_wire.to_vec();
+            let _ = state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(500),
+                    source_interface: iface(0xA1),
+                    bytes: &mut raw,
+                },
+                TEST_ENTROPY,
+            );
+            state
+        }
+
+        let mut announcer = personal_node_announcer();
+        let mut announce_buf = [0u8; MTU];
+        let announce_len = announcer
+            .write_due_self_announce(
+                InstantMillis(100),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .unwrap()
+            .unwrap();
+        let destination = announcer.self_announced_destinations()[0];
+        let send = SendSingle {
+            destination,
+            payload: SendSinglePayload::from_slice(b"pooled-retry").unwrap(),
+        };
+
+        let mut twin = hearer_with_route(&announce_buf[..announce_len]);
+        let mut expected_buf = [0u8; MTU];
+        let expected_len = match twin.write_commanded_send_single(
+            CommandId(1),
+            &send,
+            InstantMillis(1_000),
+            send_entropy_of(0x33, 0x44),
+            &mut expected_buf,
+        ) {
+            Written(dispatch) => dispatch.wire_len,
+            _ => panic!("the routed twin writes the expected wire"),
+        };
+
+        let mut no_route: EngineState<Cap> = EngineState::new(second_secret_key());
+        let mut interfaces = interface_set(Option::<TestInterface>::None);
+        let mut traffic = TrafficLedger::new();
+        let mut settled = std::vec::Vec::new();
+        let came_home = run_send_single(
+            &mut no_route,
+            &mut interfaces,
+            &mut traffic,
+            CommandId(2),
+            &send,
+            InstantMillis(900),
+            send_entropy_of(0x33, 0x44),
+            &mut |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+        );
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(2),
+                Settlement::SendSingle(Err(SendSingleFailure::WriteFailed(
+                    WriteSendSingleError::RouteVanished
+                ))),
+            )],
+        );
+
+        let mut pool = UnspentEntropyPool::empty();
+        pool.restore_send_single(came_home.expect("a rejected send hands its entropy back up"));
+        let pooled = pool.checkout_send_single(send_entropy_of(0xDE, 0xAD));
+        let mut routed = hearer_with_route(&announce_buf[..announce_len]);
+        let mut reused_buf = [0u8; MTU];
+        let reused_len = match routed.write_commanded_send_single(
+            CommandId(3),
+            &send,
+            InstantMillis(1_000),
+            pooled,
+            &mut reused_buf,
+        ) {
+            Written(dispatch) => dispatch.wire_len,
+            _ => panic!("the pooled unit seals on the routed state"),
+        };
+        assert_eq!(
+            &reused_buf[..reused_len],
+            &expected_buf[..expected_len],
+            "the unit that came home from the rejected send seals byte-identical wire",
+        );
+    }
+
+    #[test]
     fn an_arriving_proof_settles_the_send_through_the_event_lane() {
         use crate::engine::test_support::{
             hx, personal_node_announcer, RAW_SEALED_FOR_PROOF, RNS_1_3_1_IMPLICIT_PROOF,
@@ -1214,6 +1384,7 @@ mod tests {
         let destination =
             DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
         let mut queue = VecDeque::new();
+        let mut pool = UnspentEntropyPool::empty();
         let mut settled = std::vec::Vec::new();
         let mut collect = |event: PrnsEvent<'_>| {
             if let PrnsEvent::CommandSettled { id, settlement } = event {
@@ -1221,12 +1392,17 @@ mod tests {
             }
         };
 
+        let mut send_vector_seed = [0xAA; ENGINE_CYCLE_ENTROPY_LEN];
+        let send_region = ENGINE_CYCLE_ENTROPY_LEN - SendSingleEntropy::LEN;
+        send_vector_seed[send_region..send_region + 32].fill(0x33);
+        send_vector_seed[send_region + 32..].fill(0x44);
         let first = cycle_pooled(
             &mut engine,
             &mut interfaces,
             &mut traffic,
+            &mut pool,
             InstantMillis(600),
-            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            EngineCycleEntropySeed::new(send_vector_seed),
             &mut collect,
             &mut || queue.pop_front(),
         );
@@ -1239,16 +1415,13 @@ mod tests {
                 payload: SendSinglePayload::from_slice(b"proof-parity").unwrap(),
             }),
         });
-        let mut send_vector_seed = [0xBB; ENGINE_CYCLE_ENTROPY_LEN];
-        let send_region = ENGINE_CYCLE_ENTROPY_LEN - SendSingleEntropy::LEN;
-        send_vector_seed[send_region..send_region + 32].fill(0x33);
-        send_vector_seed[send_region + 32..].fill(0x44);
         let second = cycle_pooled(
             &mut engine,
             &mut interfaces,
             &mut traffic,
+            &mut pool,
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new(send_vector_seed),
+            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
             &mut collect,
             &mut || queue.pop_front(),
         );
@@ -1269,6 +1442,7 @@ mod tests {
             &mut engine,
             &mut interfaces,
             &mut traffic,
+            &mut pool,
             InstantMillis(1_300),
             EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
             &mut collect,
