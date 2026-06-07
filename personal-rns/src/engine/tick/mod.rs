@@ -95,6 +95,7 @@ impl<S: EngineStorage> EngineState<S> {
                             received_hops,
                             arrival,
                             source_interface,
+                            held.next_hop(),
                             &announce,
                         );
                         if matches!(
@@ -102,9 +103,10 @@ impl<S: EngineStorage> EngineState<S> {
                             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
                         ) {
                             recovered_from_held_count += 1;
-                            if interfaces
-                                .iter()
-                                .any(|descriptor| descriptor.capabilities.allows_transport())
+                            if self.transport_id.is_some()
+                                && interfaces
+                                    .iter()
+                                    .any(|descriptor| descriptor.capabilities.allows_transport())
                             {
                                 let offset = jitter_offset_for(
                                     jitter,
@@ -270,7 +272,7 @@ mod tests {
     #[test]
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
 
         let arrival = InstantMillis(1_000);
@@ -344,7 +346,7 @@ mod tests {
         let other = InterfaceId::new([0xFE; 16]);
         let view = [repeating_descriptor(source), routable_descriptor(other)];
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         assert_eq!(
             rebroadcast_fan_for(&mut state, &view),
             std::vec![source, other],
@@ -357,7 +359,7 @@ mod tests {
         let other = InterfaceId::new([0xFE; 16]);
         let view = [routable_descriptor(source), routable_descriptor(other)];
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![other]);
     }
 
@@ -367,7 +369,7 @@ mod tests {
 
         let source = InterfaceId::new([0u8; 16]);
         let view = [repeating_descriptor(source)];
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let fan = rebroadcast_fan_for(&mut state, &view);
         assert_eq!(fan, std::vec![source]);
 
@@ -400,14 +402,14 @@ mod tests {
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
         let view = [routable_descriptor(source), leaf];
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![]);
     }
 
     #[test]
     fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
             InboundPacket {
@@ -433,8 +435,8 @@ mod tests {
         let now = InstantMillis(5_000);
         let arrival = InstantMillis(1_000);
 
-        let mut left: EngineState<Cap> = EngineState::<Cap>::default();
-        let mut right: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut left = transporting_node();
+        let mut right = transporting_node();
 
         let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
         for state in [&mut left, &mut right] {

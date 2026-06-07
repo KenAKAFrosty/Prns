@@ -37,13 +37,14 @@ use crate::engine::receipts::Receipts;
 use crate::engine::self_announce::SelfAnnounces;
 use crate::engine::self_ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
-use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
+use crate::wire::TransportId;
 use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -67,7 +68,7 @@ pub struct EngineState<S: EngineStorage> {
     upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     packet_hash_history: S::PacketHashes,
     held_identities: HeldIdentities<S::HeldIdentities>,
-    transport_identity: Option<IdentityHash>,
+    transport_id: Option<TransportId>,
     self_announces: SelfAnnounces<S::SelfAnnounces>,
     self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
@@ -86,7 +87,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
             held_identities: HeldIdentities::default(),
-            transport_identity: None,
+            transport_id: None,
             self_announces: SelfAnnounces::default(),
             self_ratchets: SelfRatchets::default(),
             receipts: Receipts::default(),
@@ -117,7 +118,7 @@ where
             .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
             .field("held_identities", &self.held_identities)
-            .field("transport_identity", &self.transport_identity)
+            .field("transport_id", &self.transport_id)
             .field("self_announces", &self.self_announces)
             .field("self_ratchets", &self.self_ratchets)
             .finish()
@@ -125,21 +126,18 @@ where
 }
 
 impl<S: EngineStorage> EngineState<S> {
-    /// NOTE: this may need to be re-worked later, but as of this comment's writing
-    /// is okay to leave in. Specifically, `new` quietly makes this node's first
-    /// identity its transport identity, skipping over the *optionality* of having a
-    /// this-node-id at all — a pure repeater may want neither, an app-only node may
-    /// want held identities but no transport role. Deliberate for now; re-assess
-    /// when Links/transport land and the transport-id story becomes real (relaying
-    /// stamps it into transport headers, and routing a Single beyond one hop may
-    /// need it too).
+    /// The one-identity convenience constructor: the held identity's hash is also
+    /// this node's transport id, so a `new(key)` node can relay. The deliberate
+    /// alternative is `default()` plus explicit verbs — `set_transport_id` for an
+    /// id-only relay (forwarding never signs), `set_transport_identity` to tie the
+    /// role to a held identity, or neither for a leaf.
     #[allow(clippy::expect_used)]
     pub fn new(identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         let mut state = Self::default();
         let identity = state
             .hold_identity(identity_secret_key)
             .expect("an empty store holds the first identity");
-        state.transport_identity = Some(identity);
+        state.transport_id = Some(TransportId::new(*identity.as_bytes()));
         state
     }
 
@@ -256,7 +254,7 @@ mod tests {
     #[test]
     fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -288,6 +286,7 @@ mod tests {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
             EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
+        state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

@@ -10,7 +10,7 @@ use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TransportId};
 use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +66,14 @@ impl<S: EngineStorage> EngineState<S> {
         self.held_identities.hashes()
     }
 
+    /// Take the transport role with a bare 16-byte id (typically the relay flavor).
+    /// Forwarding never signs, so no key needs to exist behind this id.
+    pub fn set_transport_id(&mut self, id: TransportId) {
+        self.transport_id = Some(id);
+    }
+
+    /// Take the transport role as a held identity — the addressable flavor, for
+    /// nodes that will also answer as this identity (management, tunnels later).
     pub fn set_transport_identity(
         &mut self,
         identity: &IdentityHash,
@@ -73,12 +81,12 @@ impl<S: EngineStorage> EngineState<S> {
         if !self.held_identities.contains(identity) {
             return Err(SetTransportIdentityError::UnknownIdentity);
         }
-        self.transport_identity = Some(*identity);
+        self.transport_id = Some(TransportId::new(*identity.as_bytes()));
         Ok(())
     }
 
-    pub const fn transport_identity(&self) -> Option<IdentityHash> {
-        self.transport_identity
+    pub const fn transport_id(&self) -> Option<TransportId> {
+        self.transport_id
     }
 
     pub fn upstream_app_destinations(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
@@ -94,7 +102,7 @@ mod tests {
     #[test]
     fn re_registering_the_announced_name_is_idempotent() {
         let mut state = personal_node_announcer();
-        let node = state.transport_identity().unwrap();
+        let node = state.held_identity_hashes()[0];
         let registered = state
             .register_single_destination(
                 &node,
@@ -136,10 +144,13 @@ mod tests {
             state.set_transport_identity(&unheld),
             Err(SetTransportIdentityError::UnknownIdentity),
         );
-        assert_eq!(state.transport_identity(), None);
+        assert_eq!(state.transport_id(), None);
 
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         assert_eq!(state.set_transport_identity(&held), Ok(()));
-        assert_eq!(state.transport_identity(), Some(held));
+        assert_eq!(
+            state.transport_id(),
+            Some(TransportId::new(*held.as_bytes()))
+        );
     }
 }

@@ -6,6 +6,7 @@ use crate::routing::announce::held_cache::{
     HeldAnnounce, HeldAnnounces, HoldReason, ParkOutcome, HELD_APP_DATA_LIMIT,
 };
 use crate::routing::announce::Announce;
+use crate::routing::NextHop;
 
 #[derive(Debug, Default)]
 pub struct HeapHeldAnnounces {
@@ -24,6 +25,7 @@ impl HeldAnnounces for HeapHeldAnnounces {
         received_hops: u8,
         reason: HoldReason,
         source_interface: InterfaceId,
+        next_hop: NextHop,
     ) -> ParkOutcome {
         if announce.app_data.len() > HELD_APP_DATA_LIMIT {
             return ParkOutcome::AppDataTooLarge;
@@ -44,6 +46,7 @@ impl HeldAnnounces for HeapHeldAnnounces {
             arrived_at,
             received_hops,
             source_interface,
+            next_hop,
         };
         if let Some(slot) = self
             .entries
@@ -120,7 +123,8 @@ mod tests {
                     ts(100 + n as u64),
                     n,
                     HoldReason::RoutingArenaPressure,
-                    any
+                    any,
+                    NextHop::Direct,
                 ),
                 ParkOutcome::Parked
             );
@@ -133,7 +137,8 @@ mod tests {
                 ts(50),
                 0,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::Overwrote
         );
@@ -157,7 +162,8 @@ mod tests {
                 ts(100),
                 1,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::Parked
         );
@@ -167,7 +173,8 @@ mod tests {
                 ts(200),
                 1,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::AppDataTooLarge
         );
@@ -185,6 +192,7 @@ mod tests {
             4,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(2), b"earliest"),
@@ -192,6 +200,7 @@ mod tests {
             4,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(3), b"nearest"),
@@ -199,6 +208,7 @@ mod tests {
             2,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
 
         let held = cache.take_next().unwrap();
@@ -217,6 +227,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(2), b"second"),
@@ -224,6 +235,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
 
         assert_eq!(cache.take_next().unwrap().announce().destination, dest(1));

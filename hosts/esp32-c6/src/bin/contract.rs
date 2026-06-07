@@ -148,6 +148,7 @@ async fn node_task(
     Prns::run(
         Recipe {
             engine_storage: ENGINE_STORAGE,
+            transport_id: None,
             starting_destinations: [StartingDestinationConfig::Single {
                 app_name: "lxmf",
                 aspects: &["delivery"],

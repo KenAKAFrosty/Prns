@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{ColumnsFull, RouteColumns, RouteEntry};
-use crate::routing::RouteResponsiveness;
+use crate::routing::{NextHop, RouteResponsiveness};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
@@ -20,6 +20,7 @@ pub struct HeapRouteColumns {
     expires: Vec<InstantMillis>,
     responsiveness: Vec<RouteResponsiveness>,
     receiving_interface: Vec<InterfaceId>,
+    next_hop: Vec<NextHop>,
 }
 
 impl RouteColumns for HeapRouteColumns {
@@ -45,12 +46,16 @@ impl RouteColumns for HeapRouteColumns {
     fn receiving_interfaces(&self) -> &[InterfaceId] {
         &self.receiving_interface
     }
+    fn next_hops(&self) -> &[NextHop] {
+        &self.next_hop
+    }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.expires[i] = row.expires;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
+        self.next_hop[i] = row.next_hop;
     }
 
     fn push(
@@ -64,6 +69,7 @@ impl RouteColumns for HeapRouteColumns {
         self.expires.push(row.expires);
         self.responsiveness.push(row.responsiveness);
         self.receiving_interface.push(row.receiving_interface);
+        self.next_hop.push(row.next_hop);
         Ok(i)
     }
 }
@@ -84,6 +90,7 @@ mod tests {
             expires: InstantMillis(expires),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
+            next_hop: NextHop::Direct,
         }
     }
 

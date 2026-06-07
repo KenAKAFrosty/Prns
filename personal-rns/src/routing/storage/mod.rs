@@ -15,7 +15,7 @@ use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
-use crate::routing::RouteResponsiveness;
+use crate::routing::{NextHop, RouteResponsiveness};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +24,7 @@ pub struct RouteEntry {
     pub expires: InstantMillis,
     pub responsiveness: RouteResponsiveness,
     pub receiving_interface: InterfaceId,
+    pub next_hop: NextHop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +79,7 @@ pub trait RouteColumns {
     fn expires(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
+    fn next_hops(&self) -> &[NextHop];
 
     fn set_row(&mut self, i: usize, row: RouteEntry);
 

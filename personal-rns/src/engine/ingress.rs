@@ -1,6 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::Announce;
+use crate::routing::NextHop;
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WirePacketHeader, MTU,
 };
@@ -22,6 +23,7 @@ pub enum Ingress<'a> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        next_hop: NextHop,
     },
 
     Data {
@@ -90,6 +92,7 @@ impl<'a> Ingress<'a> {
                     received_hops,
                     source_interface,
                     arrived_at,
+                    next_hop: header.transport_id.map_or(NextHop::Direct, NextHop::Via),
                 }
             }
             PacketType::Data => Self::Data {
@@ -533,7 +536,7 @@ mod tests {
     #[test]
     fn plain_addressed_data_never_reaches_a_single_destination_with_that_hash() {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
-        let node = state.transport_identity().unwrap();
+        let node = state.held_identity_hashes()[0];
         let single = state
             .register_single_destination(
                 &node,
@@ -980,7 +983,7 @@ mod tests {
         use crate::interfaces::{EgressCapability, TransportCapability};
 
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 16]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
 
@@ -1011,7 +1014,7 @@ mod tests {
     #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
 
         let first = state.ingest_packet(
             InboundPacket {
@@ -1045,7 +1048,7 @@ mod tests {
     fn received_hops_are_incremented_so_the_reach_boundary_matches_pathfinder_m() {
         let mut at_limit = hx(RAW_ANNOUNCE);
         at_limit[1] = 127;
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1059,7 +1062,7 @@ mod tests {
 
         let mut beyond = hx(RAW_ANNOUNCE);
         beyond[1] = 128;
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1081,7 +1084,7 @@ mod tests {
         let destination =
             DestinationHash::from_slice(&pristine[2..18]).expect("16-byte destination hash");
 
-        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut state = transporting_node();
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -1101,6 +1104,98 @@ mod tests {
         let mut buf = [0u8; 500];
         let n = retained.announce.to_wire(&mut buf).unwrap();
         assert_eq!(&buf[..n], payload);
+    }
+
+    #[test]
+    fn a_node_without_a_transport_id_learns_the_route_but_owes_no_rebroadcast() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+
+        let out = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        assert_eq!(
+            out,
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                destination: DestinationHash::new(
+                    hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap(),
+                ),
+                hops: 1,
+                rebroadcast: RebroadcastDecision::NotATransportNode,
+            })),
+        );
+        assert_eq!(state.route_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
+    }
+
+    #[test]
+    fn a_relayed_announce_routes_via_its_transport_node_and_a_direct_one_routes_direct() {
+        use crate::routing::NextHop;
+        use crate::wire::PropagationType;
+
+        let raw = hx(RAW_ANNOUNCE);
+        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let destination = header.destination;
+        let relay = TransportId::new([0xBB; 16]);
+
+        let relayed_header = WirePacketHeader {
+            transport_id: Some(relay),
+            propagation: PropagationType::Transport,
+            hops: 1,
+            ..header
+        };
+        let mut relayed = [0u8; MTU];
+        let header_len = relayed_header.write(&mut relayed).unwrap();
+        relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
+
+        let mut state = transporting_node();
+        let out = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut relayed[..header_len + payload.len()],
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(out, raw_announce_accepted(2));
+        assert_eq!(
+            state
+                .routing_table
+                .retained_announce_for(&destination)
+                .unwrap()
+                .next_hop,
+            NextHop::Via(relay),
+            "a relayed announce's next hop is the transport node that stamped it",
+        );
+
+        let mut direct = raw.clone();
+        let mut fresh = transporting_node();
+        let _ = fresh.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut direct,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(
+            fresh
+                .routing_table
+                .retained_announce_for(&destination)
+                .unwrap()
+                .next_hop,
+            NextHop::Direct,
+            "an unrelayed announce is reachable directly",
+        );
     }
 
     #[test]
@@ -1176,6 +1271,7 @@ pub struct AcceptedAnnounce {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RebroadcastDecision {
     Scheduled,
+    NotATransportNode,
     NoTransportInterfaces,
 }
 
@@ -1206,11 +1302,13 @@ impl<S: EngineStorage> EngineState<S> {
                 received_hops,
                 source_interface,
                 arrived_at,
+                next_hop,
             } => IngestPacketOutcome::Announce(self.ingest_announce(
                 announce,
                 received_hops,
                 source_interface,
                 arrived_at,
+                next_hop,
                 jitter,
                 interfaces,
             )),
@@ -1251,10 +1349,7 @@ impl<S: EngineStorage> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> Option<(Delivery<'p>, Option<ProofOwed>)> {
         if let Some(transport_id) = data.maybe_transport_id {
-            let ours = self
-                .transport_identity
-                .is_some_and(|ours| ours.as_bytes() == transport_id.as_bytes());
-            if !ours {
+            if self.transport_id != Some(transport_id) {
                 return None;
             }
         }
@@ -1328,12 +1423,14 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ingest_announce(
         &mut self,
         announce: Announce<'_>,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        next_hop: NextHop,
         jitter: JitterSeed,
         interfaces: &[InterfaceDescriptor],
     ) -> AnnounceIngest {
@@ -1353,12 +1450,18 @@ impl<S: EngineStorage> EngineState<S> {
             return AnnounceIngest::Ignored;
         }
 
-        let outcome =
-            self.routing_table
-                .upsert_route(received_hops, arrived_at, source_interface, &announce);
+        let outcome = self.routing_table.upsert_route(
+            received_hops,
+            arrived_at,
+            source_interface,
+            next_hop,
+            &announce,
+        );
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
-                let rebroadcast = if interfaces
+                let rebroadcast = if self.transport_id.is_none() {
+                    RebroadcastDecision::NotATransportNode
+                } else if interfaces
                     .iter()
                     .any(|descriptor| descriptor.capabilities.allows_transport())
                 {
@@ -1390,6 +1493,7 @@ impl<S: EngineStorage> EngineState<S> {
                     received_hops,
                     HoldReason::RoutingArenaPressure,
                     source_interface,
+                    next_hop,
                 ) {
                     ParkOutcome::Parked | ParkOutcome::Overwrote => AnnounceIngest::HeldForRetry,
                     ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {

@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::storage::{ColumnsFull, RouteColumns, RouteEntry};
-use crate::routing::RouteResponsiveness;
+use crate::routing::{NextHop, RouteResponsiveness};
 use crate::wire::DestinationHash;
 
 /// `PartialEq` is structural — every slot compares, including unused tail
@@ -15,6 +15,7 @@ pub struct FixedArrayRouteColumns<const MAX_TRACKED_DESTINATIONS: usize> {
     expires: [InstantMillis; MAX_TRACKED_DESTINATIONS],
     responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
     receiving_interface: [InterfaceId; MAX_TRACKED_DESTINATIONS],
+    next_hop: [NextHop; MAX_TRACKED_DESTINATIONS],
 }
 
 impl<const MAX_TRACKED_DESTINATIONS: usize> Default
@@ -28,6 +29,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             expires: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
             receiving_interface: [InterfaceId::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
+            next_hop: [NextHop::Direct; MAX_TRACKED_DESTINATIONS],
         }
     }
 }
@@ -57,12 +59,16 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
     fn receiving_interfaces(&self) -> &[InterfaceId] {
         &self.receiving_interface[..self.len]
     }
+    fn next_hops(&self) -> &[NextHop] {
+        &self.next_hop[..self.len]
+    }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.expires[i] = row.expires;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
+        self.next_hop[i] = row.next_hop;
     }
 
     fn push(
@@ -104,6 +110,7 @@ mod tests {
             expires: InstantMillis(expires),
             responsiveness,
             receiving_interface,
+            next_hop: NextHop::Direct,
         }
     }
 

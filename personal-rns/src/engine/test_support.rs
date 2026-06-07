@@ -27,6 +27,13 @@ pub(crate) const TEST_NONCE: SelfAnnounceEntropy =
     SelfAnnounceEntropy::new([0xAB; SelfAnnounceEntropy::LEN]);
 pub(crate) const TEST_RATCHET_ENTROPY: RatchetEntropy =
     RatchetEntropy::new([0x55; RatchetEntropy::LEN]);
+pub(crate) const TEST_TRANSPORT_ID: TransportId = TransportId::new([0x7A; 16]);
+
+pub(crate) fn transporting_node() -> EngineState<Cap> {
+    let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+    state.set_transport_id(TEST_TRANSPORT_ID);
+    state
+}
 
 pub(crate) const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -80,7 +87,7 @@ pub(crate) fn personal_node_announcer() -> EngineState<Cap> {
 
 pub(crate) fn personal_node_announcer_with(ratchet_policy: RatchetPolicy) -> EngineState<Cap> {
     let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
-    let node = state.transport_identity().unwrap();
+    let node = state.held_identity_hashes()[0];
     let destination = state
         .register_single_destination(
             &node,

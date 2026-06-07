@@ -2,10 +2,16 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::storage::AnnounceIdHistoryView;
+use crate::wire::TransportId;
 
-/// Whether a learned route is currently answering direct traffic. RNS tracks
-/// this as a boolean `path_is_unresponsive`; modelled as a two-state type so
-/// the predicate reads as intent rather than a bare flag
+/// RNS 1.3.1 `path_table` `received_from` (Transport.py:1714/1739).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextHop {
+    Direct,
+    Via(TransportId),
+}
+
+/// RNS 1.3.1 `path_is_unresponsive`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteResponsiveness {
     Responsive,
@@ -24,6 +30,7 @@ pub struct ExistingRoute<'a> {
 pub struct RetainedAnnounce<'a> {
     pub hops: u8,
     pub receiving_interface: InterfaceId,
+    pub next_hop: NextHop,
     pub announce: Announce<'a>,
 }
 

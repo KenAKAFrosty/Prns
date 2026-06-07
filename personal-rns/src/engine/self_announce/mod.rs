@@ -777,7 +777,7 @@ mod tests {
         use crate::engine::self_ratchets::MIN_RATCHET_ROTATION_INTERVAL_MS;
 
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
-        let node = state.transport_identity().unwrap();
+        let node = state.held_identity_hashes()[0];
         let destination = state
             .register_single_destination(
                 &node,
@@ -851,7 +851,7 @@ mod tests {
         use crate::engine::self_announce::MAX_SELF_ANNOUNCE_APP_DATA_LEN;
 
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
-        let node = state.transport_identity().unwrap();
+        let node = state.held_identity_hashes()[0];
         let destination = state
             .register_single_destination(
                 &node,
@@ -1157,7 +1157,7 @@ mod tests {
     #[test]
     fn schedule_announce_requires_a_registered_single() {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
-        let node = state.transport_identity().unwrap();
+        let node = state.held_identity_hashes()[0];
         let config = AnnounceConfig {
             app_data: b"",
             schedule: ReannounceSchedule::default(),
@@ -1281,7 +1281,7 @@ mod tests {
     #[test]
     fn a_commanded_announce_for_an_unscheduled_destination_announces_bare() {
         let mut state = personal_node_announcer();
-        let node = state.transport_identity().unwrap();
+        let node = state.held_identity_hashes()[0];
         let unscheduled = state
             .register_single_destination(
                 &node,

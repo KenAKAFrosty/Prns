@@ -38,6 +38,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::wire::TransportId;
 use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
 use personal_rns::interfaces::impls::usb_auto::serve;
@@ -565,9 +566,15 @@ async fn engine_task(
     // Each cycle's snapshot goes to the OLED render loop, never the shared
     // usb-serial-jtag (a mid-frame log byte would corrupt the link).
     let snapshot_tx = SNAPSHOT_WATCH.sender();
+    let transport_id = TransportId::new(
+        *InMemoryNodeIdentity::from_secret_key_bytes(&secret_key)
+            .identity_hash()
+            .as_bytes(),
+    );
     Prns::run(
         Recipe {
             engine_storage: ENGINE_STORAGE,
+            transport_id: Some(transport_id),
             starting_destinations: [StartingDestinationConfig::Single {
                 app_name: "lxmf",
                 aspects: &["delivery"],

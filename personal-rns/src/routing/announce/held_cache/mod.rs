@@ -8,6 +8,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::{
     Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_FIXED_FIELDS_LEN,
 };
+use crate::routing::NextHop;
 use crate::wire::{DestinationHash, HEADER_MIN_LEN, MTU};
 
 pub const HELD_APP_DATA_LIMIT: usize = MTU - HEADER_MIN_LEN - ANNOUNCE_FIXED_FIELDS_LEN;
@@ -40,6 +41,7 @@ pub struct HeldAnnounce {
     arrived_at: InstantMillis,
     received_hops: u8,
     source_interface: InterfaceId,
+    next_hop: NextHop,
 }
 
 impl HeldAnnounce {
@@ -70,6 +72,10 @@ impl HeldAnnounce {
     pub fn source_interface(&self) -> InterfaceId {
         self.source_interface
     }
+
+    pub fn next_hop(&self) -> NextHop {
+        self.next_hop
+    }
 }
 
 pub trait HeldAnnounces {
@@ -84,6 +90,7 @@ pub trait HeldAnnounces {
         received_hops: u8,
         reason: HoldReason,
         source_interface: InterfaceId,
+        next_hop: NextHop,
     ) -> ParkOutcome;
     fn take_next(&mut self) -> Option<HeldAnnounce>;
 }

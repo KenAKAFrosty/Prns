@@ -34,6 +34,7 @@ use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN}
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::wire::TransportId;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
@@ -165,9 +166,15 @@ fn run_engine(
     //     MAX_BUFFERED_PACKETS,
     // ));
 
+    let transport_id = TransportId::new(
+        *InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key)
+            .identity_hash()
+            .as_bytes(),
+    );
     block_on(Prns::run(
         Recipe {
             engine_storage: GrowableHeap,
+            transport_id: Some(transport_id),
             starting_destinations: [StartingDestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,

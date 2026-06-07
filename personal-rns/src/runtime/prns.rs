@@ -7,6 +7,7 @@ use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::RegisteredInterface;
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::ProofStrategy;
+use crate::wire::TransportId;
 
 /// One destination this node serves from the moment it starts. The runtime
 /// control surface will let apps register more later; these are the ones the
@@ -38,6 +39,10 @@ pub enum StartingDestinationConfig<'a> {
 pub struct Recipe<S, Ho, I, D> {
     pub engine_storage: S,
     pub starting_destinations: D,
+    /// `Some` opts this node into the transport role: it relays announces and
+    /// (as the transport arc lands) forwards packets addressed to this id. A
+    /// bare 16-byte id suffices — forwarding never signs.
+    pub transport_id: Option<TransportId>,
     pub interfaces: I,
     pub host: Ho,
 }
@@ -63,11 +68,15 @@ impl Prns {
         let Recipe {
             engine_storage: _,
             starting_destinations,
+            transport_id,
             interfaces,
             host,
         } = recipe;
 
         let mut engine = EngineState::<S>::default();
+        if let Some(id) = transport_id {
+            engine.set_transport_id(id);
+        }
         for destination in starting_destinations {
             match destination {
                 StartingDestinationConfig::Plain { app_name, aspects } => {

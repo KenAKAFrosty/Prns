@@ -82,6 +82,7 @@ fn run_engine(slot: SharedSnapshot, bridge_tx: mpsc::Sender<AndroidUsbBridge>) {
     block_on(Prns::run(
         Recipe {
             engine_storage: GrowableHeap,
+            transport_id: None,
             starting_destinations: [StartingDestinationConfig::Single {
                 app_name: SELF_ANNOUNCE_APP_NAME,
                 aspects: SELF_ANNOUNCE_ASPECTS,

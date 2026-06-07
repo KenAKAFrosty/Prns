@@ -205,7 +205,7 @@ mod tests {
             crate::interfaces::StartedInterface<NullHandle, core::convert::Infallible>;
 
         let mut engine: EngineState<Cap> = EngineState::new(fixed_secret_key());
-        let node = engine.transport_identity().unwrap();
+        let node = engine.held_identity_hashes()[0];
         let destination = engine
             .register_single_destination(
                 &node,
@@ -339,7 +339,7 @@ mod tests {
         type LinkedInterface = StartedInterface<ChannelHandle, core::convert::Infallible>;
 
         let mut prover: EngineState<Cap> = EngineState::new(fixed_secret_key());
-        let node = prover.transport_identity().unwrap();
+        let node = prover.held_identity_hashes()[0];
         let destination = prover
             .register_single_destination(
                 &node,

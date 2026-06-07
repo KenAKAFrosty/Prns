@@ -694,7 +694,7 @@ fn host_wake(engine: NextScheduledEngineWork, interface: NextScheduledInterfaceW
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::transporting_view;
+    use crate::engine::test_support::{transporting_view, TEST_TRANSPORT_ID};
     use std::collections::VecDeque;
 
     use crate::engine::{
@@ -999,7 +999,7 @@ mod tests {
         secret[..32].fill(0x22);
         secret[32..].fill(0x11);
         let mut engine = EngineState::<Cap>::new(Zeroizing::new(secret));
-        let node = engine.transport_identity().unwrap();
+        let node = engine.held_identity_hashes()[0];
         let destination = engine
             .register_single_destination(
                 &node,
@@ -1113,7 +1113,11 @@ mod tests {
     fn an_announce_heard_on_a_repeating_interface_fires_back_out_that_interface() {
         let raw = hx(RAW_ANNOUNCE);
         let mut runtime = Runtime::new(
-            EngineState::<Cap>::default(),
+            {
+                let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
+                engine.set_transport_id(TEST_TRANSPORT_ID);
+                engine
+            },
             interface_set([started_with_descriptor_and_reports(
                 descriptor_with_capabilities(
                     iface(0xA1),
@@ -1154,7 +1158,11 @@ mod tests {
     fn a_lone_cross_interface_only_interface_never_repeats_what_it_heard() {
         let raw = hx(RAW_ANNOUNCE);
         let mut runtime = Runtime::new(
-            EngineState::<Cap>::default(),
+            {
+                let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
+                engine.set_transport_id(TEST_TRANSPORT_ID);
+                engine
+            },
             interface_set([started_with_descriptor_and_reports(
                 descriptor_with_capabilities(
                     iface(0xA1),
@@ -1769,7 +1777,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let node = engine.transport_identity().unwrap();
+        let node = engine.held_identity_hashes()[0];
         let commanded = engine
             .register_single_destination(
                 &node,
@@ -1941,7 +1949,8 @@ mod tests {
         let peer = iface(0xB2);
         let arrival = InstantMillis(1_000);
 
-        let engine = EngineState::<Cap>::default();
+        let mut engine = EngineState::<Cap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
         let mut runtime = Runtime::new(
             engine,
             interface_set([
@@ -2006,7 +2015,8 @@ mod tests {
         let peer = iface(0xB2);
         let arrival = InstantMillis(1_000);
 
-        let engine = EngineState::<GrowableHeap>::default();
+        let mut engine = EngineState::<GrowableHeap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
         let mut runtime = Runtime::new(
             engine,
             interface_set([

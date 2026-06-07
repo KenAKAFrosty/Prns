@@ -8,6 +8,7 @@ use crate::routing::announce::held_cache::{
 use crate::routing::announce::{
     Announce, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
 };
+use crate::routing::NextHop;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +26,7 @@ pub struct FixedHeldAnnounces<const CAPACITY: usize> {
     app_data_len: [u16; CAPACITY],
     reason: [HoldReason; CAPACITY],
     source_interface: [InterfaceId; CAPACITY],
+    next_hop: [NextHop; CAPACITY],
 }
 
 impl<const CAPACITY: usize> Default for FixedHeldAnnounces<CAPACITY> {
@@ -46,6 +48,7 @@ impl<const CAPACITY: usize> Default for FixedHeldAnnounces<CAPACITY> {
             app_data_len: [0u16; CAPACITY],
             reason: [HoldReason::RoutingArenaPressure; CAPACITY],
             source_interface: [InterfaceId::new([0u8; 16]); CAPACITY],
+            next_hop: [NextHop::Direct; CAPACITY],
         }
     }
 }
@@ -67,6 +70,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         CAPACITY
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn park(
         &mut self,
         announce: &Announce<'_>,
@@ -74,6 +78,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         received_hops: u8,
         reason: HoldReason,
         source_interface: InterfaceId,
+        next_hop: NextHop,
     ) -> ParkOutcome {
         if announce.app_data.len() > HELD_APP_DATA_LIMIT {
             return ParkOutcome::AppDataTooLarge;
@@ -88,6 +93,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
                     received_hops,
                     reason,
                     source_interface,
+                    next_hop,
                 );
                 return ParkOutcome::Overwrote;
             }
@@ -104,6 +110,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
             received_hops,
             reason,
             source_interface,
+            next_hop,
         );
         self.len += 1;
         ParkOutcome::Parked
@@ -136,12 +143,14 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
             arrived_at: self.arrived_at[best_idx],
             received_hops: self.received_hops[best_idx],
             source_interface: self.source_interface[best_idx],
+            next_hop: self.next_hop[best_idx],
         };
 
         self.swap_remove_at(best_idx);
         Some(held)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_at(
         &mut self,
         i: usize,
@@ -150,6 +159,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         received_hops: u8,
         reason: HoldReason,
         source_interface: InterfaceId,
+        next_hop: NextHop,
     ) {
         self.destinations[i] = announce.destination;
         self.received_hops[i] = received_hops;
@@ -167,6 +177,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
         self.app_data_len[i] = len as u16;
         self.reason[i] = reason;
         self.source_interface[i] = source_interface;
+        self.next_hop[i] = next_hop;
     }
 
     fn swap_remove_at(&mut self, i: usize) {
@@ -184,6 +195,7 @@ impl<const CAPACITY: usize> FixedHeldAnnounces<CAPACITY> {
             self.app_data_len[i] = self.app_data_len[last];
             self.reason[i] = self.reason[last];
             self.source_interface[i] = self.source_interface[last];
+            self.next_hop[i] = self.next_hop[last];
         }
         self.len = last;
     }
@@ -200,6 +212,7 @@ impl<const CAPACITY: usize> HeldAnnounces for FixedHeldAnnounces<CAPACITY> {
         received_hops: u8,
         reason: HoldReason,
         source_interface: InterfaceId,
+        next_hop: NextHop,
     ) -> ParkOutcome {
         FixedHeldAnnounces::park(
             self,
@@ -208,6 +221,7 @@ impl<const CAPACITY: usize> HeldAnnounces for FixedHeldAnnounces<CAPACITY> {
             received_hops,
             reason,
             source_interface,
+            next_hop,
         )
     }
     fn take_next(&mut self) -> Option<HeldAnnounce> {
@@ -265,7 +279,8 @@ mod tests {
                 ts(100),
                 1,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::Parked
         );
@@ -278,8 +293,16 @@ mod tests {
         let app_data = b"hello-personal";
         let a = announce_for(dest(1), app_data);
         let source = InterfaceId::new([0xA5; 16]);
+        let via = NextHop::Via(crate::wire::TransportId::new([0xBB; 16]));
         assert_eq!(
-            cache.park(&a, ts(100), 3, HoldReason::RoutingArenaPressure, source),
+            cache.park(
+                &a,
+                ts(100),
+                3,
+                HoldReason::RoutingArenaPressure,
+                source,
+                via
+            ),
             ParkOutcome::Parked
         );
         assert_eq!(cache.len(), 1);
@@ -292,6 +315,7 @@ mod tests {
         assert_eq!(held.received_hops(), 3);
         assert_eq!(held.reason(), HoldReason::RoutingArenaPressure);
         assert_eq!(held.source_interface(), source);
+        assert_eq!(held.next_hop(), via);
     }
 
     #[test]
@@ -308,7 +332,8 @@ mod tests {
                 ts(100),
                 5,
                 HoldReason::RoutingArenaPressure,
-                first_source
+                first_source,
+                NextHop::Direct,
             ),
             ParkOutcome::Parked
         );
@@ -318,7 +343,8 @@ mod tests {
                 ts(200),
                 2,
                 HoldReason::RoutingArenaPressure,
-                second_source
+                second_source,
+                NextHop::Direct,
             ),
             ParkOutcome::Overwrote
         );
@@ -341,7 +367,8 @@ mod tests {
                 ts(100),
                 3,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::Parked
         );
@@ -351,7 +378,8 @@ mod tests {
                 ts(200),
                 3,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::Parked
         );
@@ -361,7 +389,8 @@ mod tests {
                 ts(300),
                 3,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::CacheFull
         );
@@ -381,7 +410,8 @@ mod tests {
                 ts(100),
                 1,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::Parked
         );
@@ -391,7 +421,8 @@ mod tests {
                 ts(200),
                 1,
                 HoldReason::RoutingArenaPressure,
-                any
+                any,
+                NextHop::Direct,
             ),
             ParkOutcome::AppDataTooLarge
         );
@@ -408,6 +439,7 @@ mod tests {
             10,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(2), b"near"),
@@ -415,6 +447,7 @@ mod tests {
             2,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(3), b"medium"),
@@ -422,6 +455,7 @@ mod tests {
             5,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
 
         let held = cache.take_next().unwrap();
@@ -445,6 +479,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(2), b"b"),
@@ -452,6 +487,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(3), b"c"),
@@ -459,6 +495,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
 
         let held = cache.take_next().unwrap();
@@ -476,6 +513,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
         cache.park(
             &announce_for(dest(2), b"second"),
@@ -483,6 +521,7 @@ mod tests {
             3,
             HoldReason::RoutingArenaPressure,
             any,
+            NextHop::Direct,
         );
 
         assert_eq!(cache.take_next().unwrap().announce().destination, dest(1));

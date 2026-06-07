@@ -16,7 +16,7 @@ use storage::{
     RetainedAppData, RouteColumns, RouteEntry,
 };
 pub use types::{
-    DropCause, ExistingRoute, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
+    DropCause, ExistingRoute, NextHop, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
@@ -84,14 +84,22 @@ where
         hops: u8,
         arrived_at: InstantMillis,
         receiving_interface: InterfaceId,
+        next_hop: NextHop,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
         let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
-            None => self.insert_new_route(hops, expires_at, receiving_interface, announce),
-            Some(i) => {
-                self.refresh_existing_route(i, hops, expires_at, receiving_interface, announce)
+            None => {
+                self.insert_new_route(hops, expires_at, receiving_interface, next_hop, announce)
             }
+            Some(i) => self.refresh_existing_route(
+                i,
+                hops,
+                expires_at,
+                receiving_interface,
+                next_hop,
+                announce,
+            ),
         }
     }
 
@@ -100,6 +108,7 @@ where
         hops: u8,
         expires_at: InstantMillis,
         receiving_interface: InterfaceId,
+        next_hop: NextHop,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
         if self.routes.len() >= self.routes.capacity() {
@@ -113,6 +122,7 @@ where
             expires: expires_at,
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
+            next_hop,
         };
         let announce_entry = RetainedAnnounceEntry {
             public_keys: announce.public_keys,
@@ -134,12 +144,14 @@ where
         UpsertRouteOutcome::Inserted
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn refresh_existing_route(
         &mut self,
         i: usize,
         hops: u8,
         expires_at: InstantMillis,
         receiving_interface: InterfaceId,
+        next_hop: NextHop,
         announce: &Announce<'_>,
     ) -> UpsertRouteOutcome {
         let Some(handle) = self.retained_announces.app_data_handle()[i] else {
@@ -161,6 +173,7 @@ where
                 expires: expires_at,
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface,
+                next_hop,
             },
         );
         self.retained_announces.set_row(
@@ -192,6 +205,7 @@ where
         Some(RetainedAnnounce {
             hops: self.routes.hops()[i],
             receiving_interface: self.routes.receiving_interfaces()[i],
+            next_hop: self.routes.next_hops()[i],
             announce: Announce {
                 destination: self.routes.destinations()[i],
                 public_keys: self.retained_announces.public_keys()[i],
@@ -291,6 +305,7 @@ mod tests {
             hops,
             arrival,
             source(),
+            NextHop::Direct,
             &announce_for(destination, announce_id, None, app_data),
         )
     }
@@ -329,6 +344,7 @@ mod tests {
                     1,
                     InstantMillis(100),
                     learned_on,
+                    NextHop::Direct,
                     &announce_for(
                         dest(dest_byte),
                         announce_id(id_byte, 1),
@@ -350,6 +366,7 @@ mod tests {
                 1,
                 InstantMillis(200),
                 usb,
+                NextHop::Direct,
                 &announce_for(dest(1), announce_id(0xB1, 2), None, &app_data(0xB1)),
             ),
             UpsertRouteOutcome::Updated
@@ -603,6 +620,7 @@ mod tests {
             3,
             InstantMillis(0),
             source(),
+            NextHop::Direct,
             &announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();
