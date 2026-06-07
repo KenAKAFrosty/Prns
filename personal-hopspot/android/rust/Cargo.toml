@@ -1,0 +1,25 @@
+[package]
+name = "personal-hopspot-android"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Personal Hopspot Android face: a JNI + DrawTarget bridge that renders the shared Hopspot screen into an Android bitmap and feeds taps back as single-button input."
+
+[workspace]
+resolver = "2"
+
+[lib]
+name = "personal_hopspot_android"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+personal-hopspot-ui = { path = "../../ui", default-features = false }
+embedded-graphics = "0.8"
+heapless = { version = "0.8", default-features = false }
+jni = "0.21"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "s"
+strip = true
