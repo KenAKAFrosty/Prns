@@ -1,0 +1,74 @@
+# Personal Hopspot — Android
+
+The Android face of Personal Hopspot. The shared `personal-hopspot-ui` renderer
+(generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
+identical 64x128 screen here that it draws on the S3 OLED and the Linux debug
+window. This crate adds only the two platform adapters Android needs:
+
+- a `DrawTarget` backed by a flat RGBA framebuffer (`rust/src/framebuffer.rs`)
+- a single-button input source: every tap is a `ShortPress`, every hold a
+  `LongPress` (`rust/src/face.rs` + the `nativePostInput` entry point)
+
+`rust/` is the JNI `cdylib`. The Kotlin/Compose app shell that hosts it lands in
+`app/` next.
+
+## Native ABI — `com.personal.hopspot.NativeBridge`
+
+```
+nativeInit() -> long handle
+nativePostInput(handle, code) -> int action   // code: 0 = tap, 1 = hold; action: 0 = none, 1 = announce
+nativeRender(handle, directByteBuffer)         // fills PANEL_WIDTH * PANEL_HEIGHT * 4 RGBA bytes
+nativeFree(handle)
+```
+
+The render path is pull-model and zero-copy: Kotlin owns a direct `ByteBuffer`,
+Rust draws the current `UiState` into it, Kotlin blits it nearest-neighbor into an
+`ARGB_8888` `Bitmap`. The panel is 64x128; bytes are `[R, G, B, A]` per pixel.
+
+For Milestone 0 the cards are stub data (`stub_cards`), exactly how the Linux
+debug window bootstrapped before the engine was wired in.
+
+## Toolchain (installed and verified on this machine)
+
+Installed via Homebrew (no sudo) + sdkmanager; env is persisted in `~/.zshrc`:
+
+- JDK 17 (`openjdk@17`) — `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`
+- Android SDK at `ANDROID_HOME=/opt/homebrew/share/android-commandlinetools` (platform-tools, platform android-34, build-tools 34.0.0)
+- NDK r27c — `ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018`
+- Rust target `aarch64-linux-android` + `cargo-ndk`
+- Gradle 8.7 via the committed wrapper (`./gradlew`); the system Gradle is 9.x, too new for AGP 8.5.2, so always use the wrapper
+
+## Build the `.so` (arm64)
+
+From `rust/`:
+
+```
+cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release
+```
+
+Produces `app/src/main/jniLibs/arm64-v8a/libpersonal_hopspot_android.so`.
+
+## Build, install, and launch on a device
+
+From this directory (`personal-hopspot/android`), with the phone plugged in and
+USB debugging authorized (`adb devices` should list it):
+
+```
+./gradlew installDebug
+adb shell am start -n com.personal.hopspot/.MainActivity
+```
+
+`installDebug` packages whatever `.so` is in `jniLibs/`, so rebuild the `.so`
+first whenever the Rust changes. To install the prebuilt APK directly:
+
+```
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+## Host-side checks (no NDK or device required)
+
+From `rust/`:
+
+```
+cargo test
+```

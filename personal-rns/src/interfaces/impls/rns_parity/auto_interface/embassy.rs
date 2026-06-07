@@ -17,7 +17,6 @@ use crate::wire::MTU;
 
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL_MS: u64 = 1600;
-const MCAST_REJOIN_EVERY_CYCLES: u32 = 19;
 
 fn now_millis() -> InstantMillis {
     InstantMillis(EmbassyInstant::now().as_millis())
@@ -65,14 +64,13 @@ fn submit_data_arm(
     match recv {
         Ok((n, _meta)) => {
             *rx_count = rx_count.wrapping_add(1);
-            if n > MTU {
-                log::warn!("RNS_AUTO oversized datagram dropped: {n}B > {MTU}B MTU");
-            } else if inbound
-                .submit(|buf| {
-                    buf[..n].copy_from_slice(&read_buf[..n]);
-                    n
-                })
-                .is_err()
+            if n <= MTU
+                && inbound
+                    .submit(|buf| {
+                        buf[..n].copy_from_slice(&read_buf[..n]);
+                        n
+                    })
+                    .is_err()
             {
                 log::warn!("RNS_AUTO inbound ring full, dropped {n}B");
             }
@@ -96,6 +94,11 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
         brain.our_peering_token().as_bytes()[2],
         brain.our_peering_token().as_bytes()[3],
     );
+
+    match stack.join_multicast_group(IpAddress::Ipv6(DISCOVERY_GROUP)) {
+        Ok(()) => log::info!("RNS_AUTO joined {DISCOVERY_GROUP}"),
+        Err(e) => log::warn!("RNS_AUTO mcast join failed: {e:?}"),
+    }
 
     let mut discovery_rx_meta = [PacketMetadata::EMPTY; 8];
     let mut discovery_rx_payload = [0u8; 512];
@@ -145,7 +148,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
     let mut data_read_buf = [0u8; HARDWARE_MTU];
     let mut beacon = Ticker::every(Duration::from_millis(BEACON_INTERVAL_MS));
     let mut cycle: u32 = 0;
-    let mut link_was_up = false;
 
     let mut discovery_rx_count: u32 = 0;
     let mut unicast_discovery_rx_count: u32 = 0;
@@ -195,22 +197,6 @@ pub async fn serve<const MAX_BUFFERED_PACKETS: usize>(
             Either::First(Either4::Fourth(_)) => {
                 cycle = cycle.wrapping_add(1);
                 let now = now_millis().0;
-                let link_is_up = stack.is_link_up();
-                let rising_edge = link_is_up && !link_was_up;
-                if rising_edge || (link_is_up && cycle.is_multiple_of(MCAST_REJOIN_EVERY_CYCLES)) {
-                    let _ = stack.leave_multicast_group(IpAddress::Ipv6(DISCOVERY_GROUP));
-                    match stack.join_multicast_group(IpAddress::Ipv6(DISCOVERY_GROUP)) {
-                        Ok(()) => {
-                            if rising_edge {
-                                log::info!("RNS_AUTO joined {DISCOVERY_GROUP}");
-                            }
-                            link_was_up = true;
-                        }
-                        Err(e) => log::warn!("RNS_AUTO mcast join failed: {e:?}"),
-                    }
-                } else {
-                    link_was_up = link_is_up;
-                }
                 if let Err(e) = discovery_socket
                     .send_to(
                         brain.our_peering_token().as_bytes(),
