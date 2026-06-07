@@ -7,12 +7,12 @@ use super::host::{Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
-    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome,
-    InstantMillis, IssuedCommand, NextScheduledEngineWork, PathFound, PathRequestWriteOutcome,
-    PathResponseWriteOutcome, ProofIngest, ProofOwed, RatchetEntropy, RebroadcastDecision,
-    RequestPath, RequestPathFailure, SendSingle, SendSingleEntropy, SendSingleFailure,
-    SendSingleWriteOutcome, Settlement, WriteSendSingleError,
+    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CachedPathResponseOutcome, CommandId,
+    CommandOutcome, CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState,
+    IngestPacketOutcome, InstantMillis, IssuedCommand, NextScheduledEngineWork, PathFound,
+    PathRequestWriteOutcome, PathResponseWriteOutcome, ProofIngest, ProofOwed, RatchetEntropy,
+    RebroadcastDecision, RequestPath, RequestPathFailure, SendSingle, SendSingleEntropy,
+    SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -52,6 +52,9 @@ enum InboundStep {
         fire_on: InterfaceId,
     },
     AnswersPathRequest {
+        destination: DestinationHash,
+    },
+    AnswersPathRequestFromCache {
         destination: DestinationHash,
     },
 }
@@ -323,6 +326,9 @@ where
                     IngestPacketOutcome::AnswerPathRequest { destination } => {
                         InboundStep::AnswersPathRequest { destination }
                     }
+                    IngestPacketOutcome::AnswerPathRequestFromCache { destination } => {
+                        InboundStep::AnswersPathRequestFromCache { destination }
+                    }
                     IngestPacketOutcome::Ignored => InboundStep::NothingOwed,
                 }
             }) {
@@ -381,6 +387,23 @@ where
                             },
                             FanTargets::Listed(core::slice::from_ref(&id)),
                             FanoutClass::SelfOriginated,
+                        );
+                    }
+                }
+                InboundStep::AnswersPathRequestFromCache { destination } => {
+                    let mut response = [0u8; MTU];
+                    if let CachedPathResponseOutcome::Written { wire_len } =
+                        engine.write_cached_path_response(&destination, &mut response)
+                    {
+                        fan_to_handles(
+                            interfaces,
+                            traffic,
+                            |buf| {
+                                buf[..wire_len].copy_from_slice(&response[..wire_len]);
+                                wire_len
+                            },
+                            FanTargets::Listed(core::slice::from_ref(&id)),
+                            FanoutClass::Transported,
                         );
                     }
                 }
@@ -1488,6 +1511,46 @@ mod tests {
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.context, WireContext::PathResponse);
         assert_eq!(header.destination, local);
+    }
+
+    #[test]
+    fn a_relay_answers_a_cached_path_request_with_a_transport_retransmission() {
+        let raw = hx(RAW_ANNOUNCE);
+        let cached = parsed_announce_destination(&raw);
+        let mut request = [0u8; 500];
+        let n = write_path_request_wire_packet(cached, &[0x55; 16], &mut request).unwrap();
+        let mut runtime = Runtime::new(
+            {
+                let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
+                engine.set_transport_id(TEST_TRANSPORT_ID);
+                engine
+            },
+            interface_set([started(
+                iface(0xA1),
+                std::vec![
+                    (InstantMillis(900), raw),
+                    (InstantMillis(900), request[..n].to_vec()),
+                ],
+            )]),
+            (),
+        );
+
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |_| {},
+            || None,
+        );
+
+        // The cached answer leaves during the inbound step, ahead of any
+        // scheduled rebroadcast the tick might drain — so it is the first out.
+        let sent = &runtime.interfaces()[0].handle.sent;
+        assert!(!sent.is_empty(), "the relay answered the request");
+        let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.propagation, PropagationType::Transport);
+        assert_eq!(header.transport_id, Some(TEST_TRANSPORT_ID));
+        assert_eq!(header.destination, cached);
     }
 
     #[test]

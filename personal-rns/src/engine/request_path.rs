@@ -1,5 +1,7 @@
 use crate::engine::commands::{CommandId, RequestPath};
-use crate::engine::egress::{write_path_request_wire_packet, EgressSerializeError};
+use crate::engine::egress::{
+    write_path_request_wire_packet, write_retransmitted_announce_wire_packet, EgressSerializeError,
+};
 use crate::engine::pending_path_requests::{
     CulledPathRequest, ExpiredPathRequest, PendingPathRequest, SettledPathRequest,
     PATH_REQUEST_TIMEOUT_MS,
@@ -18,6 +20,12 @@ pub enum PathRequestWriteOutcome {
         culled: Option<CulledPathRequest>,
     },
     SerializeFailed(EgressSerializeError),
+}
+
+#[must_use]
+pub enum CachedPathResponseOutcome {
+    Written { wire_len: usize },
+    Unavailable,
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -50,6 +58,25 @@ impl<S: EngineStorage> EngineState<S> {
         });
 
         PathRequestWriteOutcome::Written { wire_len, culled }
+    }
+
+    /// RNS 1.3.1 `Transport.path_request`'s cached-packet branch
+    pub fn write_cached_path_response(
+        &self,
+        destination: &DestinationHash,
+        buf: &mut [u8],
+    ) -> CachedPathResponseOutcome {
+        let (Some(retained), Some(via)) = (
+            self.routing_table.retained_announce_for(destination),
+            self.transport_id,
+        ) else {
+            return CachedPathResponseOutcome::Unavailable;
+        };
+        match write_retransmitted_announce_wire_packet(&retained.announce, retained.hops, via, buf)
+        {
+            Ok(wire_len) => CachedPathResponseOutcome::Written { wire_len },
+            Err(_) => CachedPathResponseOutcome::Unavailable,
+        }
     }
 
     pub fn pop_settled_path_request(

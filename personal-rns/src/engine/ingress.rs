@@ -445,6 +445,115 @@ mod tests {
         ));
     }
 
+    fn relay_holding_a_cached_route() -> (EngineState<Cap>, DestinationHash) {
+        let cached =
+            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let mut relay = transporting_node();
+        let mut announce = hx(RAW_ANNOUNCE);
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(500),
+                    source_interface: iface(0xB2),
+                    bytes: &mut announce,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
+        ));
+        (relay, cached)
+    }
+
+    fn path_request_wire(destination: DestinationHash) -> std::vec::Vec<u8> {
+        let mut buf = [0u8; MTU];
+        let n = crate::engine::write_path_request_wire_packet(destination, &[0x55; 16], &mut buf)
+            .unwrap();
+        buf[..n].to_vec()
+    }
+
+    #[test]
+    fn a_transport_node_answers_a_path_request_from_its_cache() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::AnswerPathRequestFromCache {
+                destination: cached
+            },
+        );
+    }
+
+    #[test]
+    fn a_leaf_with_a_route_but_no_transport_role_does_not_answer_from_cache() {
+        let cached =
+            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut announce = hx(RAW_ANNOUNCE);
+        let _ = leaf.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            leaf.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "without a transport role a node never answers from cache, even holding the route",
+        );
+    }
+
+    #[test]
+    fn a_cached_path_response_re_emits_the_retained_announce_stamped_for_transport() {
+        use crate::engine::CachedPathResponseOutcome;
+        use crate::wire::PropagationType;
+
+        let (relay, cached) = relay_holding_a_cached_route();
+        let mut buf = [0u8; MTU];
+        let CachedPathResponseOutcome::Written { wire_len } =
+            relay.write_cached_path_response(&cached, &mut buf)
+        else {
+            panic!("the relay holds a route to re-emit");
+        };
+
+        let (header, _) = WirePacketHeader::parse(&buf[..wire_len]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.propagation, PropagationType::Transport);
+        assert_eq!(header.transport_id, Some(TEST_TRANSPORT_ID));
+        assert_eq!(header.destination, cached);
+        assert_eq!(
+            header.context,
+            WireContext::None,
+            "a relay's answer is a plain transport retransmission, not a PATH_RESPONSE",
+        );
+
+        assert!(matches!(
+            relay.write_cached_path_response(&DestinationHash::new([0x44; 16]), &mut buf),
+            CachedPathResponseOutcome::Unavailable,
+        ));
+    }
+
     #[test]
     fn ingest_counts_each_packet_without_a_clock() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
@@ -1614,6 +1723,11 @@ pub enum IngestPacketOutcome<'p> {
     AnswerPathRequest {
         destination: DestinationHash,
     },
+    /// A path request arrived for a destination we relay but do not own — the
+    /// runtime owes a re-emission of the announce we cached for it.
+    AnswerPathRequestFromCache {
+        destination: DestinationHash,
+    },
     Ignored,
 }
 
@@ -1848,6 +1962,15 @@ impl<S: EngineStorage> EngineState<S> {
             .is_some()
         {
             IngestPacketOutcome::AnswerPathRequest { destination }
+        } else if self.transport_id.is_some()
+            && self
+                .routing_table
+                .retained_announce_for(&destination)
+                .is_some()
+        {
+            // Only a transport node answers from cache (RNS `transport_enabled()`),
+            // and only when it holds a route to re-emit.
+            IngestPacketOutcome::AnswerPathRequestFromCache { destination }
         } else {
             IngestPacketOutcome::Ignored
         }

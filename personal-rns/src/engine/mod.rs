@@ -34,7 +34,7 @@ pub use pending_path_requests::{
     CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
 };
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
-pub use request_path::PathRequestWriteOutcome;
+pub use request_path::{CachedPathResponseOutcome, PathRequestWriteOutcome};
 pub use self_announce::{
     CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, PathResponseWriteOutcome,
     ReannounceSchedule, SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure,
