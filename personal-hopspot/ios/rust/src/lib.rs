@@ -1,5 +1,6 @@
 //WIP NEEDS REVIEW
 mod cards;
+mod engine;
 mod face;
 mod framebuffer;
 
@@ -15,6 +16,7 @@ const ACTION_ANNOUNCE: i32 = 1;
 
 #[no_mangle]
 pub extern "C" fn hopspot_init() -> *mut HopspotFace {
+    engine::start();
     Box::into_raw(Box::new(HopspotFace::new()))
 }
 

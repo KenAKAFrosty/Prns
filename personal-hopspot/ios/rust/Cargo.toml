@@ -14,8 +14,10 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 personal-hopspot-ui = { path = "../../ui", default-features = false }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["std-sync-host"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
+getrandom = "0.2"
 
 [profile.release]
 codegen-units = 1
