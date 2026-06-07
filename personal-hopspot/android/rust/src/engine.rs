@@ -20,7 +20,7 @@ const MAX_BUFFERED_PACKETS: usize = 64;
 const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
 const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
-const ANNOUNCE_EVERY_MS: u64 = 60_000;
+const ANNOUNCE_EVERY_MS: u64 = 8_000;
 
 pub(crate) type SharedSnapshot = Arc<Mutex<Option<RuntimeSnapshot>>>;
 

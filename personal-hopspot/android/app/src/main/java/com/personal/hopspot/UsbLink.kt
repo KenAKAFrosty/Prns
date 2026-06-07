@@ -38,6 +38,12 @@ class UsbLink(private val context: Context) {
     @Volatile
     private var txTotal = 0L
 
+    @Volatile
+    private var lastRxLogMs = 0L
+
+    @Volatile
+    private var lastTxLogMs = 0L
+
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             when (intent.action) {
@@ -141,9 +147,11 @@ class UsbLink(private val context: Context) {
             serialPort,
             object : SerialInputOutputManager.Listener {
                 override fun onNewData(data: ByteArray) {
-                    if (rxTotal == 0L) {
-                        val head = data.take(16).joinToString(" ") { "%02x".format(it) }
-                        Log.i(TAG, "first RX ${data.size}B: $head")
+                    val now = System.currentTimeMillis()
+                    if (now - lastRxLogMs > 700) {
+                        lastRxLogMs = now
+                        val head = data.take(28).joinToString(" ") { "%02x".format(it) }
+                        Log.i(TAG, "RX ${data.size}B total=${rxTotal + data.size}: $head")
                     }
                     rxTotal += data.size
                     val n = minOf(data.size, rxBuffer.capacity())
@@ -169,8 +177,12 @@ class UsbLink(private val context: Context) {
                 txBuffer.clear()
                 val n = NativeBridge.nativeUsbTx(txBuffer)
                 if (n > 0) {
-                    if (txTotal == 0L) Log.i(TAG, "first TX ${n}B")
                     txTotal += n
+                    val now = System.currentTimeMillis()
+                    if (now - lastTxLogMs > 700) {
+                        lastTxLogMs = now
+                        Log.i(TAG, "TX ${n}B total=$txTotal")
+                    }
                     txBuffer.position(0)
                     txBuffer.get(scratch, 0, n)
                     runCatching { port?.write(scratch.copyOf(n), WRITE_TIMEOUT_MS) }
