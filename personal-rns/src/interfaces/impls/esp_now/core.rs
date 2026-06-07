@@ -133,6 +133,41 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn encoded_len_of_packets(packets: &[std::vec::Vec<u8>]) -> usize {
+        ESP_NOW_FRAME_HEADER_LEN
+            + packets
+                .iter()
+                .map(|packet| ESP_NOW_LENGTH_PREFIX_LEN + packet.len())
+                .sum::<usize>()
+    }
+
+    fn fitting_packet_prefix(
+        packets: std::vec::Vec<std::vec::Vec<u8>>,
+    ) -> std::vec::Vec<std::vec::Vec<u8>> {
+        let mut kept = std::vec::Vec::new();
+        let mut used = ESP_NOW_FRAME_HEADER_LEN;
+
+        for packet in packets {
+            let need = ESP_NOW_LENGTH_PREFIX_LEN + packet.len();
+            if used + need > ESP_NOW_MAX_FRAME_PAYLOAD {
+                break;
+            }
+            used += need;
+            kept.push(packet);
+        }
+
+        kept
+    }
+
+    fn fitting_packet_lists() -> impl Strategy<Value = std::vec::Vec<std::vec::Vec<u8>>> {
+        prop::collection::vec(
+            prop::collection::vec(any::<u8>(), 0..=crate::wire::MTU),
+            0..12,
+        )
+        .prop_map(fitting_packet_prefix)
+    }
 
     #[test]
     fn single_packet_round_trips_under_the_version_tag() {
@@ -232,5 +267,81 @@ mod tests {
             d.capabilities.egress,
             EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_fitting_packet_lists_round_trip_in_order(
+            packets in fitting_packet_lists(),
+        ) {
+            let mut buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
+            let mut writer = EspNowFrameWriter::new(&mut buf);
+
+            for packet in &packets {
+                prop_assert!(writer.try_push(packet));
+            }
+
+            prop_assert_eq!(writer.packet_count(), packets.len());
+            prop_assert_eq!(writer.is_empty(), packets.is_empty());
+            prop_assert_eq!(writer.frame().len(), encoded_len_of_packets(&packets));
+
+            let decoded: std::vec::Vec<std::vec::Vec<u8>> = decode_frame(writer.frame())
+                .unwrap()
+                .map(|packet| packet.to_vec())
+                .collect();
+            prop_assert_eq!(decoded, packets);
+        }
+
+        #[test]
+        fn a_failed_push_leaves_the_existing_frame_valid_and_unchanged(
+            packets in fitting_packet_lists(),
+            fill_byte in any::<u8>(),
+        ) {
+            let mut buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
+            let mut writer = EspNowFrameWriter::new(&mut buf);
+
+            for packet in &packets {
+                prop_assert!(writer.try_push(packet));
+            }
+
+            let remaining = ESP_NOW_MAX_FRAME_PAYLOAD - writer.frame().len();
+            let failing_packet = std::vec![fill_byte; remaining.saturating_sub(1)];
+            let before_frame = writer.frame().to_vec();
+            let before_count = writer.packet_count();
+
+            prop_assert!(!writer.try_push(&failing_packet));
+            prop_assert_eq!(writer.packet_count(), before_count);
+            prop_assert_eq!(writer.frame(), before_frame.as_slice());
+
+            let decoded: std::vec::Vec<std::vec::Vec<u8>> = decode_frame(writer.frame())
+                .unwrap()
+                .map(|packet| packet.to_vec())
+                .collect();
+            prop_assert_eq!(decoded, packets);
+        }
+
+        #[test]
+        fn truncated_trailing_records_stop_after_the_last_clean_packet(
+            packets in fitting_packet_lists(),
+            truncated_tail in prop::collection::vec(any::<u8>(), 1..=crate::wire::MTU),
+            visible_tail_len in 0usize..=crate::wire::MTU,
+        ) {
+            let mut buf = [0u8; ESP_NOW_MAX_FRAME_PAYLOAD];
+            let mut writer = EspNowFrameWriter::new(&mut buf);
+            for packet in &packets {
+                prop_assert!(writer.try_push(packet));
+            }
+
+            let mut truncated = writer.frame().to_vec();
+            truncated.extend_from_slice(&(truncated_tail.len() as u16).to_be_bytes());
+            let partial_len = visible_tail_len.min(truncated_tail.len() - 1);
+            truncated.extend_from_slice(&truncated_tail[..partial_len]);
+
+            let decoded: std::vec::Vec<std::vec::Vec<u8>> = decode_frame(&truncated)
+                .unwrap()
+                .map(|packet| packet.to_vec())
+                .collect();
+            prop_assert_eq!(decoded, packets);
+        }
     }
 }
