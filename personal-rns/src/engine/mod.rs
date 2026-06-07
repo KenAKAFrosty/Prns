@@ -5,6 +5,7 @@ pub mod identity_registration;
 pub mod ingress;
 pub mod proof;
 pub mod receipts;
+pub mod reverse_routes;
 pub mod self_announce;
 pub mod self_ratchets;
 pub mod send_single;
@@ -19,7 +20,9 @@ pub use commands::{
 };
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use identity_registration::SetTransportIdentityError;
-pub use ingress::{AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome, RebroadcastDecision};
+pub use ingress::{
+    AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome, PacketToForward, RebroadcastDecision,
+};
 pub use ingress::{DataPacket, Ingress};
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
 pub use self_announce::{
@@ -34,6 +37,7 @@ pub use send_single::{
 pub use tick::TickOutput;
 
 use crate::engine::receipts::Receipts;
+use crate::engine::reverse_routes::ReverseRoutes;
 use crate::engine::self_announce::SelfAnnounces;
 use crate::engine::self_ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
@@ -72,6 +76,7 @@ pub struct EngineState<S: EngineStorage> {
     self_announces: SelfAnnounces<S::SelfAnnounces>,
     self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
+    reverse_routes: ReverseRoutes<S::ReverseRoutes>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -91,6 +96,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             self_announces: SelfAnnounces::default(),
             self_ratchets: SelfRatchets::default(),
             receipts: Receipts::default(),
+            reverse_routes: ReverseRoutes::default(),
         }
     }
 }
@@ -285,7 +291,7 @@ mod tests {
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
+            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>>::default();
         state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
             InboundPacket {

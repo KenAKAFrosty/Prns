@@ -3,7 +3,8 @@ use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::routing::NextHop;
 use crate::wire::{
-    DestinationHash, DestinationType, PacketType, TransportId, WireContext, WirePacketHeader, MTU,
+    DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
+    WirePacketHeader, MTU,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub enum Ingress<'a> {
 
     Data {
         data: DataPacket<'a>,
+        header: WirePacketHeader,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -37,6 +39,9 @@ pub enum Ingress<'a> {
 
     Proof {
         payload: &'a [u8],
+        destination: DestinationHash,
+        received_hops: u8,
+        source_interface: InterfaceId,
         arrived_at: InstantMillis,
     },
 
@@ -103,6 +108,7 @@ impl<'a> Ingress<'a> {
                     maybe_transport_id: header.transport_id,
                     payload,
                 },
+                header,
                 received_hops,
                 source_interface,
                 arrived_at,
@@ -110,6 +116,9 @@ impl<'a> Ingress<'a> {
             PacketType::LinkRequest => Self::LinkRequest,
             PacketType::Proof => Self::Proof {
                 payload,
+                destination: header.destination,
+                received_hops,
+                source_interface,
                 arrived_at,
             },
         }
@@ -216,6 +225,7 @@ mod tests {
 
         let Ingress::Data {
             data,
+            header: _,
             received_hops,
             source_interface,
             arrived_at,
@@ -1012,6 +1022,209 @@ mod tests {
     }
 
     #[test]
+    fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
+        let mut relay = transporting_node();
+        let mut announce = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: InterfaceId::new([0xB2; 16]),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xA1; 16]),
+                bytes: &mut in_transport,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let IngestPacketOutcome::Forward(forward) = out else {
+            panic!("a transport-addressed packet with a one-hop route forwards, got {out:?}");
+        };
+        assert_eq!(forward.fire_on, InterfaceId::new([0xB2; 16]));
+        let mut wire = [0u8; MTU];
+        let n = forward.to_wire(&mut wire).unwrap();
+        let mut expected = hx(RAW_SEALED_TO_RATCHET);
+        expected[1] = 1;
+        assert_eq!(
+            &wire[..n],
+            expected.as_slice(),
+            "the final hop strips transport framing: the destination hears the direct wire, one hop further",
+        );
+
+        let mut replay = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let again = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: InterfaceId::new([0xA1; 16]),
+                bytes: &mut replay,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(
+            again,
+            IngestPacketOutcome::Ignored,
+            "a relay forwards each packet exactly once",
+        );
+    }
+
+    #[test]
+    fn a_mid_path_forward_swaps_the_transport_id_to_the_next_relay() {
+        use crate::wire::PropagationType;
+
+        let next_relay = TransportId::new([0xBB; 16]);
+        let mut relay = transporting_node();
+
+        let raw = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let relayed_header = WirePacketHeader {
+            transport_id: Some(next_relay),
+            propagation: PropagationType::Transport,
+            hops: 1,
+            ..header
+        };
+        let mut relayed = [0u8; MTU];
+        let header_len = relayed_header.write(&mut relayed).unwrap();
+        relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: InterfaceId::new([0xB2; 16]),
+                bytes: &mut relayed[..header_len + payload.len()],
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xA1; 16]),
+                bytes: &mut in_transport,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let IngestPacketOutcome::Forward(forward) = out else {
+            panic!("a transport-addressed packet with a multi-hop route forwards, got {out:?}");
+        };
+        let mut wire = [0u8; MTU];
+        let n = forward.to_wire(&mut wire).unwrap();
+        let mut expected = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        expected[1] = 1;
+        expected[2..18].copy_from_slice(next_relay.as_bytes());
+        assert_eq!(
+            &wire[..n],
+            expected.as_slice(),
+            "mid-path the only bytes that change are the hop count and the next relay's id",
+        );
+    }
+
+    #[test]
+    fn a_proof_rides_the_reverse_route_home_exactly_once() {
+        let mut relay = transporting_node();
+        let mut announce = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: InterfaceId::new([0xB2; 16]),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xA1; 16]),
+                bytes: &mut in_transport,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        let IngestPacketOutcome::Forward(forward) = out else {
+            panic!("the data leg must forward first");
+        };
+        let proof_destination = PacketHash::of_data_fields(
+            forward.header.destination_type,
+            &forward.header.destination,
+            forward.header.context,
+            forward.payload,
+        )
+        .proof_destination();
+
+        let proof_header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: crate::wire::PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Proof,
+            hops: 0,
+            transport_id: None,
+            destination: proof_destination,
+            context: WireContext::None,
+        };
+        let mut proof_wire = [0u8; MTU];
+        let header_len = proof_header.write(&mut proof_wire).unwrap();
+        proof_wire[header_len..header_len + 64].fill(0xAB);
+        let proof_len = header_len + 64;
+
+        let mut wrong_lane = proof_wire;
+        let mut right_lane = proof_wire;
+
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: InterfaceId::new([0xB2; 16]),
+                bytes: &mut right_lane[..proof_len],
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        let IngestPacketOutcome::Forward(returned) = out else {
+            panic!("the proof must ride the reverse route, got {out:?}");
+        };
+        assert_eq!(
+            returned.fire_on,
+            InterfaceId::new([0xA1; 16]),
+            "the proof leaves on the interface the data packet arrived from",
+        );
+        let mut wire = [0u8; MTU];
+        let n = returned.to_wire(&mut wire).unwrap();
+        let mut expected = std::vec::Vec::new();
+        expected.extend_from_slice(&proof_wire[..proof_len]);
+        expected[1] = 1;
+        assert_eq!(&wire[..n], expected.as_slice());
+
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(3_000),
+                source_interface: InterfaceId::new([0xB2; 16]),
+                bytes: &mut wrong_lane[..proof_len],
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(
+            out,
+            IngestPacketOutcome::Proof(crate::engine::ProofIngest::Ignored),
+            "reverse rows pop on use: the second copy finds no path home",
+        );
+    }
+
+    #[test]
     fn ingest_accepts_a_real_announce_then_rejects_its_replay() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
@@ -1215,7 +1428,7 @@ mod tests {
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
+            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {
@@ -1237,6 +1450,7 @@ mod tests {
 }
 
 use crate::engine::proof::{ProofIngest, ProofOwed};
+use crate::engine::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::engine::EngineState;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
@@ -1251,6 +1465,7 @@ use crate::routing::delivery::{
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::{DropCause, UpsertRouteOutcome};
+use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceIngest {
@@ -1283,7 +1498,30 @@ pub enum IngestPacketOutcome<'p> {
         maybe_owed_proof: Option<ProofOwed>,
     },
     Proof(ProofIngest),
+    Forward(PacketToForward<'p>),
     Ignored,
+}
+
+/// A packet in transport, re-framed and owed to another interface — RNS 1.3.1
+/// Transport.py:1556-1580 (data riding the path table onward) and :2254 (a
+/// proof riding the reverse table home).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PacketToForward<'p> {
+    pub header: WirePacketHeader,
+    pub payload: &'p [u8],
+    pub fire_on: InterfaceId,
+}
+
+impl PacketToForward<'_> {
+    pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, WireError> {
+        let header_len = self.header.write(buf)?;
+        let total_len = header_len + self.payload.len();
+        if buf.len() < total_len {
+            return Err(WireError::BufferTooShort);
+        }
+        buf[header_len..total_len].copy_from_slice(self.payload);
+        Ok(total_len)
+    }
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -1315,26 +1553,74 @@ impl<S: EngineStorage> EngineState<S> {
 
             Ingress::Data {
                 data,
+                header,
                 received_hops,
                 source_interface,
                 arrived_at,
-            } => match self.maybe_upstream_delivery(
-                data,
-                received_hops,
-                source_interface,
-                arrived_at,
-            ) {
-                Some((delivery, maybe_owed_proof)) => IngestPacketOutcome::Delivery {
-                    delivery,
-                    maybe_owed_proof,
-                },
-                None => IngestPacketOutcome::Ignored,
-            },
+            } => {
+                let in_transport_through_us = self.transport_id.is_some()
+                    && header.transport_id == self.transport_id
+                    && self
+                        .upstream_app_destinations
+                        .lookup(&data.destination, data.destination_type)
+                        .is_none();
+                if in_transport_through_us {
+                    return match self.maybe_forward(
+                        header,
+                        data.payload,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                    ) {
+                        Some(forward) => IngestPacketOutcome::Forward(forward),
+                        None => IngestPacketOutcome::Ignored,
+                    };
+                }
+                match self.maybe_upstream_delivery(
+                    data,
+                    received_hops,
+                    source_interface,
+                    arrived_at,
+                ) {
+                    Some((delivery, maybe_owed_proof)) => IngestPacketOutcome::Delivery {
+                        delivery,
+                        maybe_owed_proof,
+                    },
+                    None => IngestPacketOutcome::Ignored,
+                }
+            }
 
             Ingress::Proof {
                 payload,
+                destination,
+                received_hops,
+                source_interface,
                 arrived_at,
-            } => IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at)),
+            } => {
+                if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
+                    // The proof must arrive back over the interface we forwarded
+                    // toward; anything else is dropped (Transport.py:2256).
+                    if reverse.outbound_interface != source_interface {
+                        return IngestPacketOutcome::Ignored;
+                    }
+                    return IngestPacketOutcome::Forward(PacketToForward {
+                        header: WirePacketHeader {
+                            ifac_flag: IfacFlag::Open,
+                            context_flag: ContextFlag::Unset,
+                            propagation: PropagationType::Broadcast,
+                            destination_type: DestinationType::Single,
+                            packet_type: PacketType::Proof,
+                            hops: received_hops,
+                            transport_id: None,
+                            destination,
+                            context: WireContext::None,
+                        },
+                        payload,
+                        fire_on: reverse.received_interface,
+                    });
+                }
+                IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at))
+            }
 
             Ingress::LinkRequest => IngestPacketOutcome::Ignored,
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
@@ -1421,6 +1707,82 @@ impl<S: EngineStorage> EngineState<S> {
             }
             DestinationType::Group | DestinationType::Link => None,
         }
+    }
+
+    /// RNS 1.3.1 Transport.py:1556-1580: a transport-addressed packet rides the
+    /// path table onward — re-addressed at the next relay while more than one
+    /// hop remains, stripped back to a plain broadcast for the final hop — and
+    /// leaves a reverse-table row so its proof can ride home.
+    fn maybe_forward<'p>(
+        &mut self,
+        header: WirePacketHeader,
+        payload: &'p mut [u8],
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> Option<PacketToForward<'p>> {
+        if header.destination_type != DestinationType::Single
+            || header.packet_type != PacketType::Data
+        {
+            return None;
+        }
+        let route = self
+            .routing_table
+            .forwarding_route_for(&header.destination)?;
+
+        let packet_hash = PacketHash::of_data_fields(
+            header.destination_type,
+            &header.destination,
+            header.context,
+            payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return None,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+
+        let forwarded_header = if route.hops == 1 {
+            WirePacketHeader {
+                ifac_flag: IfacFlag::Open,
+                context_flag: ContextFlag::Unset,
+                propagation: PropagationType::Broadcast,
+                destination_type: header.destination_type,
+                packet_type: header.packet_type,
+                hops: received_hops,
+                transport_id: None,
+                destination: header.destination,
+                context: header.context,
+            }
+        } else {
+            let NextHop::Via(next) = route.next_hop else {
+                return None;
+            };
+            WirePacketHeader {
+                hops: received_hops,
+                transport_id: Some(next),
+                ..header
+            }
+        };
+
+        self.reverse_routes.remember(
+            ReverseRouteEntry {
+                proof_destination: packet_hash.proof_destination(),
+                received_interface: source_interface,
+                outbound_interface: route.receiving_interface,
+                expires_at: InstantMillis(
+                    arrived_at
+                        .0
+                        .saturating_add(DEFAULT_REVERSE_ROUTE_TIMEOUT_MS),
+                ),
+            },
+            arrived_at,
+        );
+
+        Some(PacketToForward {
+            header: forwarded_header,
+            payload,
+            fire_on: route.receiving_interface,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]

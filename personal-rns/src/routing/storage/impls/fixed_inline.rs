@@ -1,5 +1,6 @@
 use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::receipts::FixedReceiptColumns;
+use crate::engine::reverse_routes::FixedReverseRouteColumns;
 use crate::engine::self_announce::FixedSelfAnnounceColumns;
 use crate::engine::self_ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
@@ -25,6 +26,7 @@ pub struct FixedInline<
     const PACKET_HASH_GENERATION_CAPACITY: usize,
     const RETAINED_RATCHETS_PER_DESTINATION: usize,
     const MAX_OUTSTANDING_RECEIPTS: usize,
+    const MAX_REVERSE_ROUTES: usize,
 >;
 
 impl<
@@ -40,6 +42,7 @@ impl<
         const PACKET_HASH_GENERATION_CAPACITY: usize,
         const RETAINED_RATCHETS_PER_DESTINATION: usize,
         const MAX_OUTSTANDING_RECEIPTS: usize,
+        const MAX_REVERSE_ROUTES: usize,
     > EngineStorage
     for FixedInline<
         MAX_TRACKED_DESTINATIONS,
@@ -54,6 +57,7 @@ impl<
         PACKET_HASH_GENERATION_CAPACITY,
         RETAINED_RATCHETS_PER_DESTINATION,
         MAX_OUTSTANDING_RECEIPTS,
+        MAX_REVERSE_ROUTES,
     >
 {
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
@@ -81,6 +85,7 @@ impl<
         FixedSelfRatchetColumns<MAX_UPSTREAM_APP_DESTINATIONS, RETAINED_RATCHETS_PER_DESTINATION>;
     type PacketHashes = FixedPacketHashHistory<PACKET_HASH_GENERATION_CAPACITY>;
     type Receipts = FixedReceiptColumns<MAX_OUTSTANDING_RECEIPTS>;
+    type ReverseRoutes = FixedReverseRouteColumns<MAX_REVERSE_ROUTES>;
 }
 
 #[cfg(test)]
@@ -94,7 +99,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4, 3, 5>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4, 3, 5, 8>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();

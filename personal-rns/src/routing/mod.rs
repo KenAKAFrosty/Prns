@@ -16,7 +16,8 @@ use storage::{
     RetainedAppData, RouteColumns, RouteEntry,
 };
 pub use types::{
-    DropCause, ExistingRoute, NextHop, RetainedAnnounce, RouteResponsiveness, UpsertRouteOutcome,
+    DropCause, ExistingRoute, ForwardingRoute, NextHop, RetainedAnnounce, RouteResponsiveness,
+    UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
@@ -76,6 +77,15 @@ where
             expires: self.routes.expires()[i],
             announce_id_history: self.announce_id_history.history(i),
             responsiveness: self.routes.responsiveness()[i],
+        })
+    }
+
+    pub fn forwarding_route_for(&self, destination: &DestinationHash) -> Option<ForwardingRoute> {
+        let i = self.index_of(destination)?;
+        Some(ForwardingRoute {
+            hops: self.routes.hops()[i],
+            receiving_interface: self.routes.receiving_interfaces()[i],
+            next_hop: self.routes.next_hops()[i],
         })
     }
 

@@ -31,6 +31,7 @@ pub struct RuntimeStepOutput {
     pub scheduled_rebroadcast_count: usize,
     pub delivered_count: usize,
     pub emitted_proof_count: usize,
+    pub forwarded_count: usize,
     pub egress_directive_count: usize,
     pub next_poll: NextScheduledInterfaceWake,
 }
@@ -45,6 +46,10 @@ enum InboundStep {
     LaneDry,
     NothingOwed,
     OwesProof(ProofOwed),
+    ForwardsPacket {
+        wire_len: usize,
+        fire_on: InterfaceId,
+    },
 }
 
 pub struct Runtime<Ho, I, S>
@@ -232,19 +237,23 @@ where
     let mut scheduled_rebroadcast_count = 0;
     let mut delivered_count = 0;
     let mut emitted_proof_count = 0;
-    for interface in interfaces.iter_mut() {
-        let descriptor = interface.descriptor();
+    let mut forwarded_count = 0;
+    let mut forward_buffer = [0u8; MTU];
+    for index in 0..interfaces.len() {
+        let descriptor = interfaces.as_mut_slice()[index].descriptor();
         let id = descriptor.id;
         let answers_proofs = matches!(
             descriptor.state,
             ConnectionState::Connected | ConnectionState::Degraded
         ) && descriptor.capabilities.allows_transmit();
 
-        // One packet per step: between steps the interface is free again, so a
-        // delivery's owed proof is answered on the lane it arrived through
-        // before the next packet is taken. This happens per-packet, in arrival order,
-        // mirroring the reference's own receive-then-prove rhythm.
+        // One packet per step: between steps every interface is free again, so a
+        // delivery's owed proof is answered on the lane it arrived through (and
+        // a packet in transport fans onward, wherever its path leads) before the
+        // next packet is taken. This happens per-packet, in arrival order,
+        // mirroring the reference's own receive-then-act rhythm.
         loop {
+            let interface = &mut interfaces.as_mut_slice()[index];
             let step = match interface.next_inbound(|packet| {
                 traffic.add_rx(id, packet.bytes.len() as u64);
                 ingested_packet_count += 1;
@@ -259,18 +268,21 @@ where
                             hops: accepted.hops,
                             source_interface: id,
                         });
-                        None
+                        InboundStep::NothingOwed
                     }
                     IngestPacketOutcome::Announce(
                         AnnounceIngest::HeldForRetry | AnnounceIngest::Ignored,
-                    ) => None,
+                    ) => InboundStep::NothingOwed,
                     IngestPacketOutcome::Delivery {
                         delivery,
                         maybe_owed_proof,
                     } => {
                         delivered_count += 1;
                         on_event(PrnsEvent::Delivered(delivery));
-                        maybe_owed_proof
+                        match maybe_owed_proof {
+                            Some(owed) => InboundStep::OwesProof(owed),
+                            None => InboundStep::NothingOwed,
+                        }
                     }
                     IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                         id,
@@ -280,15 +292,23 @@ where
                             id,
                             settlement: Settlement::SendSingle(Ok(delivered)),
                         });
-                        None
+                        InboundStep::NothingOwed
                     }
-                    IngestPacketOutcome::Proof(ProofIngest::Ignored) => None,
-                    IngestPacketOutcome::Ignored => None,
+                    IngestPacketOutcome::Proof(ProofIngest::Ignored) => InboundStep::NothingOwed,
+                    IngestPacketOutcome::Forward(forward) => {
+                        match forward.to_wire(&mut forward_buffer) {
+                            Ok(wire_len) => InboundStep::ForwardsPacket {
+                                wire_len,
+                                fire_on: forward.fire_on,
+                            },
+                            Err(_) => InboundStep::NothingOwed,
+                        }
+                    }
+                    IngestPacketOutcome::Ignored => InboundStep::NothingOwed,
                 }
             }) {
                 None => InboundStep::LaneDry,
-                Some(None) => InboundStep::NothingOwed,
-                Some(Some(owed)) => InboundStep::OwesProof(owed),
+                Some(step) => step,
             };
 
             match step {
@@ -298,6 +318,7 @@ where
                 InboundStep::OwesProof(owed) => {
                     let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
                     if let Ok(n) = engine.write_proof(&owed, &mut proof) {
+                        let interface = &mut interfaces.as_mut_slice()[index];
                         let sent = interface.send_with(|buf| {
                             buf[..n].copy_from_slice(&proof[..n]);
                             n
@@ -307,6 +328,19 @@ where
                             emitted_proof_count += 1;
                         }
                     }
+                }
+                InboundStep::ForwardsPacket { wire_len, fire_on } => {
+                    fan_to_handles(
+                        interfaces,
+                        traffic,
+                        |buf| {
+                            buf[..wire_len].copy_from_slice(&forward_buffer[..wire_len]);
+                            wire_len
+                        },
+                        FanTargets::Listed(core::slice::from_ref(&fire_on)),
+                        FanoutClass::Transported,
+                    );
+                    forwarded_count += 1;
                 }
             }
         }
@@ -408,6 +442,7 @@ where
         scheduled_rebroadcast_count,
         delivered_count,
         emitted_proof_count,
+        forwarded_count,
         egress_directive_count,
         next_poll,
     }
@@ -715,7 +750,7 @@ mod tests {
         DestinationHash, PacketType, PropagationType, WirePacketHeader, HEADER_MAX_LEN,
     };
 
-    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>;
+    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>;
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\

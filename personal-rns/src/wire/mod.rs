@@ -257,7 +257,7 @@ impl TransportId {
 /// ```text
 /// [flags:1][hops:1] ( [transport_id:16] )? [destination:16][context:1] [payload…]
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WirePacketHeader {
     pub ifac_flag: IfacFlag,
     pub context_flag: ContextFlag,

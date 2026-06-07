@@ -195,7 +195,7 @@ mod tests {
     fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
+            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
@@ -219,7 +219,7 @@ mod tests {
         use crate::routing::announce::expand_name;
 
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8>>::default();
+            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>>::default();
 
         let key = fixed_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
@@ -494,7 +494,7 @@ mod tests {
     fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 8, 128, 8, 8>>::default();
+            EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 8, 128, 8, 8, 8>>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),

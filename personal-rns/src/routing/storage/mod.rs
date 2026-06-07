@@ -5,6 +5,7 @@ pub use impls::*;
 use crate::crypto::Ed25519Signature;
 use crate::engine::directives::EngineDirectives;
 use crate::engine::receipts::ReceiptColumns;
+use crate::engine::reverse_routes::ReverseRouteColumns;
 use crate::engine::self_announce::SelfAnnounceColumns;
 use crate::engine::self_ratchets::SelfRatchetColumns;
 use crate::engine::InstantMillis;
@@ -171,4 +172,5 @@ pub trait EngineStorage {
     type SelfRatchets: SelfRatchetColumns + Default;
     type Receipts: ReceiptColumns + Default;
     type PacketHashes: PacketHashHistory + Default;
+    type ReverseRoutes: ReverseRouteColumns + Default;
 }

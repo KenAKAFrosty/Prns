@@ -11,6 +11,13 @@ pub enum NextHop {
     Via(TransportId),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForwardingRoute {
+    pub hops: u8,
+    pub receiving_interface: InterfaceId,
+    pub next_hop: NextHop,
+}
+
 /// RNS 1.3.1 `path_is_unresponsive`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteResponsiveness {

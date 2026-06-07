@@ -50,6 +50,9 @@ impl<H, const CAPACITY: usize> InterfaceSet for FixedInterfaceSet<H, CAPACITY> {
     fn as_slice(&self) -> &[H] {
         &self.interfaces
     }
+    fn as_mut_slice(&mut self) -> &mut [H] {
+        &mut self.interfaces
+    }
 }
 
 #[cfg(test)]
