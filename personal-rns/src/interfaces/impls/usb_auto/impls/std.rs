@@ -7,7 +7,7 @@ use std::vec::Vec;
 
 use mio::{Events, Interest, Poll, Registry, Token, Waker};
 use mio_serial::SerialStream;
-use serialport::SerialPort;
+use serialport::{SerialPort, SerialPortInfo, SerialPortType, UsbPortInfo};
 
 use super::super::core::{host_descriptor, node_tag_for, Capabilities, NodeTag};
 use super::super::discovery::{Discoverer, PortId, PumpCadence, UsbAutoContext};
@@ -21,6 +21,8 @@ const SCAN_INTERVAL: Duration = Duration::from_millis(300);
 const PENDING_FLUSH_INTERVAL: Duration = Duration::from_millis(1);
 const WAKE_TOKEN: Token = Token(0);
 const POLL_EVENTS_CAPACITY: usize = 16;
+const ESPRESSIF_USB_VID: u16 = 0x303A;
+const ESPRESSIF_USB_JTAG_SERIAL_PID: u16 = 0x1001;
 
 pub fn usb_auto_interface(id: InterfaceId) -> SelfDrivenInterface<impl FnOnce(UsbAutoContext)> {
     let node_tag = node_tag_for(id);
@@ -109,9 +111,36 @@ fn scan_cdc_ports() -> Vec<PortId> {
     serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
-        .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
+        .filter(is_usb_auto_candidate)
         .map(|info| PortId::new(info.port_name))
         .collect()
+}
+
+fn is_usb_auto_candidate(info: &SerialPortInfo) -> bool {
+    match &info.port_type {
+        SerialPortType::UsbPort(usb) => is_known_usb_auto_device(usb),
+        SerialPortType::PciPort | SerialPortType::BluetoothPort | SerialPortType::Unknown => false,
+    }
+}
+
+fn is_known_usb_auto_device(usb: &UsbPortInfo) -> bool {
+    matches!(
+        (usb.vid, usb.pid),
+        (ESPRESSIF_USB_VID, ESPRESSIF_USB_JTAG_SERIAL_PID)
+    ) || usb_metadata_mentions_personal_rns(usb)
+}
+
+fn usb_metadata_mentions_personal_rns(usb: &UsbPortInfo) -> bool {
+    usb.manufacturer
+        .iter()
+        .chain(usb.product.iter())
+        .chain(usb.serial_number.iter())
+        .any(|value| {
+            let value = value.to_ascii_lowercase();
+            value.contains("personal rns")
+                || value.contains("personal reticulum")
+                || value.contains("hopspot")
+        })
 }
 
 fn open_cdc_port(id: &PortId) -> io::Result<SerialStream> {
@@ -127,4 +156,41 @@ fn open_cdc_port(id: &PortId) -> io::Result<SerialStream> {
     let _ = port.write_request_to_send(false);
     let _ = port.write_data_terminal_ready(false);
     Ok(port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn usb(vid: u16, pid: u16) -> UsbPortInfo {
+        UsbPortInfo {
+            vid,
+            pid,
+            serial_number: None,
+            manufacturer: None,
+            product: None,
+        }
+    }
+
+    #[test]
+    fn accepts_the_native_espressif_usb_serial_jtag_device() {
+        assert!(is_known_usb_auto_device(&usb(
+            ESPRESSIF_USB_VID,
+            ESPRESSIF_USB_JTAG_SERIAL_PID
+        )));
+    }
+
+    #[test]
+    fn rejects_unrelated_usb_serial_devices_by_default() {
+        assert!(!is_known_usb_auto_device(&usb(0x10C4, 0xEA60)));
+        assert!(!is_known_usb_auto_device(&usb(0x1A86, 0x7523)));
+    }
+
+    #[test]
+    fn accepts_future_devices_that_identify_as_personal_rns() {
+        let mut info = usb(0x1209, 0x0001);
+        info.product = Some("Personal RNS Hopspot".into());
+
+        assert!(is_known_usb_auto_device(&info));
+    }
 }

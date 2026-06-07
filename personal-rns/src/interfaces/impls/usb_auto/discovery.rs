@@ -2,6 +2,7 @@
 
 use std::io::{self, Read, Write};
 use std::string::String;
+use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use super::core::{
@@ -39,6 +40,7 @@ const PROBE_SCAN_BUDGET: u8 = 7;
 
 const MAX_READS_PER_DEVICE_PER_PUMP: usize = 8;
 const MAX_READS_PER_HOST_PEER_PER_PUMP: usize = 32;
+const PENDING_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 enum LinkState {
     Probing { scans_left: u8 },
@@ -62,6 +64,7 @@ struct PendingWrite {
     buf: [u8; MAX_FRAMED_BYTES],
     len: usize,
     off: usize,
+    queued_at: Option<Instant>,
 }
 
 impl Default for PendingWrite {
@@ -70,6 +73,7 @@ impl Default for PendingWrite {
             buf: [0u8; MAX_FRAMED_BYTES],
             len: 0,
             off: 0,
+            queued_at: None,
         }
     }
 }
@@ -83,6 +87,7 @@ impl PendingWrite {
         self.buf[..frame.len()].copy_from_slice(frame);
         self.len = frame.len();
         self.off = 0;
+        self.queued_at = Some(Instant::now());
     }
 
     fn remaining(&self) -> &[u8] {
@@ -91,6 +96,14 @@ impl PendingWrite {
 
     fn advance(&mut self, written: usize) {
         self.off += written;
+        if self.is_empty() {
+            self.queued_at = None;
+        }
+    }
+
+    fn timed_out(&self, now: Instant) -> bool {
+        self.queued_at
+            .is_some_and(|queued_at| now.duration_since(queued_at) >= PENDING_WRITE_TIMEOUT)
     }
 }
 
@@ -136,8 +149,12 @@ impl<Port: Write> Device<Port> {
         }
     }
 
-    fn flush_pending(&mut self) {
+    fn flush_pending(&mut self, now: Instant) {
         if !matches!(self.state, LinkState::Confirmed { .. }) {
+            return;
+        }
+        if self.pending.timed_out(now) {
+            self.state = LinkState::Lost;
             return;
         }
         while !self.pending.is_empty() {
@@ -334,15 +351,16 @@ impl<Port: Read + Write> Discoverer<Port> {
     }
 
     fn fan_out(&mut self, outbound: &mut StdOutboundDrain<USB_AUTO_MTU>) {
+        let now = Instant::now();
         for device in &mut self.devices {
-            device.flush_pending();
+            device.flush_pending(now);
         }
         let mut frame = [0u8; MAX_FRAMED_BYTES];
         loop {
-            let blocked = self.devices.iter().any(|device| {
-                matches!(device.state, LinkState::Confirmed { .. }) && !device.pending.is_empty()
+            let has_ready_link = self.devices.iter().any(|device| {
+                matches!(device.state, LinkState::Confirmed { .. }) && device.pending.is_empty()
             });
-            if blocked {
+            if !has_ready_link {
                 break;
             }
             let devices = &mut self.devices;
@@ -1101,6 +1119,53 @@ mod tests {
         for packet in &packets {
             assert!(got.iter().any(|g| g.as_slice() == packet.as_slice()));
         }
+    }
+
+    #[test]
+    fn a_blocked_peer_does_not_starve_a_ready_peer() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = host();
+        let blocked = MockWire::new();
+        let ready = MockWire::new();
+        let (blocked_port, ready_port) = (blocked.port(), ready.port());
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(blocked_port));
+        disc.note_present(port("/dev/ttyACM1"), move |_| Ok(ready_port));
+        blocked.device_sends(Message::HelloAck {
+            tag: NodeTag([0xB0; 8]),
+            capabilities: Capabilities::none(),
+        });
+        ready.device_sends(Message::HelloAck {
+            tag: NodeTag([0xB1; 8]),
+            capabilities: Capabilities::none(),
+        });
+        disc.pump(&mut worker_context);
+        let _ = runtime_handle.next_report();
+
+        blocked.limit_tx(0);
+        let packets: [[u8; 4]; 2] = [[0x11; 4], [0x22; 4]];
+        for packet in &packets {
+            runtime_handle
+                .acquire_send_grant(|buf| {
+                    buf[..packet.len()].copy_from_slice(packet);
+                    packet.len()
+                })
+                .unwrap();
+            disc.pump(&mut worker_context);
+        }
+
+        let got = data_frames(&ready.host_wrote());
+        assert_eq!(
+            got,
+            std::vec![packets[0].to_vec(), packets[1].to_vec()],
+            "the ready peer keeps receiving while another peer is back-pressured"
+        );
+        assert!(
+            data_frames(&blocked.host_wrote()).is_empty(),
+            "the blocked peer has not completed a frame"
+        );
     }
 
     #[test]
