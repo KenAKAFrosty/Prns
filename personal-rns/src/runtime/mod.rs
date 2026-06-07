@@ -1,11 +1,13 @@
 pub mod channels;
 mod core;
+mod entropy;
 mod event;
 pub mod host;
 mod prns;
 mod runtime;
 mod snapshot;
 
+pub use entropy::UnspentEntropyPool;
 pub use event::PrnsEvent;
 pub use host::{block_on, CycleStamp, Host, NextWake};
 pub use prns::{Prns, Recipe, StartingDestinationConfig};

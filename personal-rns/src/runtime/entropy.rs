@@ -1,0 +1,167 @@
+use crate::engine::{RatchetEntropy, SendSingleEntropy};
+use crate::routing::announce::SelfAnnounceEntropy;
+
+pub struct UnspentEntropyPool {
+    nonce: Option<SelfAnnounceEntropy>,
+    ratchet: Option<RatchetEntropy>,
+    send: Option<SendSingleEntropy>,
+}
+
+impl UnspentEntropyPool {
+    pub const fn empty() -> Self {
+        Self {
+            nonce: None,
+            ratchet: None,
+            send: None,
+        }
+    }
+
+    #[must_use]
+    pub fn checkout_nonce(&mut self, fresh: SelfAnnounceEntropy) -> SelfAnnounceEntropy {
+        self.nonce.take().unwrap_or(fresh)
+    }
+
+    #[must_use]
+    pub fn checkout_ratchet(&mut self, fresh: RatchetEntropy) -> RatchetEntropy {
+        self.ratchet.take().unwrap_or(fresh)
+    }
+
+    #[must_use]
+    pub fn checkout_send(&mut self, fresh: SendSingleEntropy) -> SendSingleEntropy {
+        self.send.take().unwrap_or(fresh)
+    }
+
+    pub fn restore_nonce(&mut self, unspent: SelfAnnounceEntropy) {
+        self.nonce = Some(unspent);
+    }
+
+    pub fn restore_ratchet(&mut self, unspent: RatchetEntropy) {
+        self.ratchet = Some(unspent);
+    }
+
+    pub fn restore_send(&mut self, unspent: SendSingleEntropy) {
+        self.send = Some(unspent);
+    }
+}
+
+impl Default for UnspentEntropyPool {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::self_ratchets::{
+        FixedSelfRatchetColumns, RatchetRotation, SelfRatchets, MIN_RATCHET_ROTATION_INTERVAL_MS,
+    };
+    use crate::engine::InstantMillis;
+    use crate::routing::announce::AnnounceId;
+
+    fn nonce_of(byte: u8) -> SelfAnnounceEntropy {
+        SelfAnnounceEntropy::new([byte; SelfAnnounceEntropy::LEN])
+    }
+
+    fn ratchet_of(byte: u8) -> RatchetEntropy {
+        RatchetEntropy::new([byte; RatchetEntropy::LEN])
+    }
+
+    fn announce_id_of(entropy: SelfAnnounceEntropy) -> AnnounceId {
+        AnnounceId::mint(entropy, InstantMillis(7))
+    }
+
+    fn minted_key_of(
+        ratchets: &mut SelfRatchets<FixedSelfRatchetColumns<1, 3>>,
+        at: InstantMillis,
+        entropy: RatchetEntropy,
+    ) -> crate::routing::announce::RatchetKey {
+        let destination = crate::wire::DestinationHash::new([1; 16]);
+        assert!(matches!(
+            ratchets.rotate_if_due(&destination, at, entropy),
+            RatchetRotation::Rotated
+        ));
+        ratchets.newest_ratchet_key(&destination).unwrap()
+    }
+
+    #[test]
+    fn an_empty_pool_hands_back_the_fresh_unit() {
+        let mut pool = UnspentEntropyPool::empty();
+        let out = pool.checkout_nonce(nonce_of(0xBB));
+        assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xBB)));
+    }
+
+    #[test]
+    fn a_restored_survivor_wins_over_the_fresh_unit() {
+        let mut pool = UnspentEntropyPool::empty();
+        pool.restore_nonce(nonce_of(0xAA));
+        let out = pool.checkout_nonce(nonce_of(0xBB));
+        assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xAA)));
+    }
+
+    #[test]
+    fn checkout_drains_the_slot_so_the_next_cycle_gets_fresh() {
+        let mut pool = UnspentEntropyPool::empty();
+        pool.restore_nonce(nonce_of(0xAA));
+        let _first = pool.checkout_nonce(nonce_of(0xBB));
+        let second = pool.checkout_nonce(nonce_of(0xCC));
+        assert_eq!(announce_id_of(second), announce_id_of(nonce_of(0xCC)));
+    }
+
+    #[test]
+    fn the_ratchet_slot_round_trips_byte_faithfully() {
+        let mut pool = UnspentEntropyPool::empty();
+        pool.restore_ratchet(ratchet_of(0x55));
+        let out = pool.checkout_ratchet(ratchet_of(0x66));
+
+        let mut minted = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
+        minted
+            .track(crate::wire::DestinationHash::new([1; 16]))
+            .unwrap();
+        let mut expected = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
+        expected
+            .track(crate::wire::DestinationHash::new([1; 16]))
+            .unwrap();
+        assert_eq!(
+            minted_key_of(&mut minted, InstantMillis(0), out),
+            minted_key_of(&mut expected, InstantMillis(0), ratchet_of(0x55)),
+        );
+
+        let next = pool.checkout_ratchet(ratchet_of(0x66));
+        assert_eq!(
+            minted_key_of(
+                &mut minted,
+                InstantMillis(MIN_RATCHET_ROTATION_INTERVAL_MS),
+                next
+            ),
+            minted_key_of(
+                &mut expected,
+                InstantMillis(MIN_RATCHET_ROTATION_INTERVAL_MS),
+                ratchet_of(0x66)
+            ),
+        );
+    }
+
+    #[test]
+    fn each_slot_is_independent() {
+        let mut pool = UnspentEntropyPool::empty();
+        pool.restore_ratchet(ratchet_of(0x55));
+
+        let nonce = pool.checkout_nonce(nonce_of(0xBB));
+        assert_eq!(announce_id_of(nonce), announce_id_of(nonce_of(0xBB)));
+
+        let mut minted = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
+        minted
+            .track(crate::wire::DestinationHash::new([1; 16]))
+            .unwrap();
+        let mut expected = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
+        expected
+            .track(crate::wire::DestinationHash::new([1; 16]))
+            .unwrap();
+        let ratchet = pool.checkout_ratchet(ratchet_of(0x66));
+        assert_eq!(
+            minted_key_of(&mut minted, InstantMillis(0), ratchet),
+            minted_key_of(&mut expected, InstantMillis(0), ratchet_of(0x55)),
+        );
+    }
+}
