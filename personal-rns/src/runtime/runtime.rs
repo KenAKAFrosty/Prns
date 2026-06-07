@@ -3,20 +3,21 @@ use heapless::Vec as HeaplessVec;
 use super::core::TrafficLedger;
 use super::entropy::UnspentEntropyPool;
 use super::event::PrnsEvent;
-use super::host::{CycleStamp, Host, NextWake};
+use super::host::{Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
     AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
-    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineCycleEntropy,
-    EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
-    NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy, SendSingle, SendSingleEntropy,
-    SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
+    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome,
+    InstantMillis, IssuedCommand, NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy,
+    SendSingle, SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement,
+    WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
     ConnectionState, InterfaceId, NextScheduledInterfaceWake, RegisteredInterface, SendError,
 };
+use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
@@ -80,7 +81,7 @@ where
     pub fn cycle_once(
         &mut self,
         now: InstantMillis,
-        entropy_seed: EngineCycleEntropySeed,
+        mut fill_entropy: impl FnMut(&mut [u8]),
         mut on_event: impl FnMut(PrnsEvent<'_>),
         mut next_command: impl FnMut() -> Option<IssuedCommand>,
     ) -> RuntimeStepOutput {
@@ -90,7 +91,7 @@ where
             &mut self.traffic,
             &mut self.pool,
             now,
-            entropy_seed,
+            &mut fill_entropy,
             &mut on_event,
             &mut next_command,
         )
@@ -131,14 +132,14 @@ where
         } = self;
         let mut wake = NextWake::Immediate;
         loop {
-            let CycleStamp { now, seed } = host.wait(wake).await;
+            let now = host.wait(wake).await;
             let output = cycle_pooled(
                 &mut engine,
                 &mut interfaces,
                 &mut traffic,
                 &mut pool,
                 now,
-                seed,
+                &mut |bytes: &mut [u8]| host.fill_entropy(bytes),
                 &mut on_event,
                 &mut next_command,
             );
@@ -160,13 +161,13 @@ where
 
 #[allow(clippy::expect_used)]
 #[allow(clippy::too_many_arguments)]
-fn cycle_pooled<I, S, OnEvent, NextCommand>(
+fn cycle_pooled<I, S, OnEvent, NextCommand, FillEntropy>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic: &mut TrafficLedger,
     pool: &mut UnspentEntropyPool,
     now: InstantMillis,
-    entropy_seed: EngineCycleEntropySeed,
+    fill_entropy: &mut FillEntropy,
     on_event: &mut OnEvent,
     next_command: &mut NextCommand,
 ) -> RuntimeStepOutput
@@ -176,16 +177,14 @@ where
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
     NextCommand: FnMut() -> Option<IssuedCommand>,
+    FillEntropy: FnMut(&mut [u8]),
 {
-    let EngineCycleEntropy {
-        jitter,
-        self_announce,
-        ratchet,
-        send,
-    } = EngineCycleEntropy::from_seed(entropy_seed);
-    let self_announce = pool.checkout_self_announce(self_announce);
-    let ratchet = pool.checkout_ratchet(ratchet);
-    let send = pool.checkout_send_single(send);
+    let mut jitter_bytes = [0u8; core::mem::size_of::<u64>()];
+    fill_entropy(&mut jitter_bytes);
+    let jitter = JitterSeed(u64::from_le_bytes(jitter_bytes));
+    let self_announce = pool.checkout_self_announce(&mut *fill_entropy);
+    let ratchet = pool.checkout_ratchet(&mut *fill_entropy);
+    let send = pool.checkout_send_single(&mut *fill_entropy);
 
     let mut next_poll = NextScheduledInterfaceWake::Idle;
     for started in interfaces.iter_mut() {
@@ -676,7 +675,6 @@ mod tests {
     use crate::engine::{
         AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
         CommandId, EngineCommand, IssuedCommand, RatchetPolicy, Settlement,
-        ENGINE_CYCLE_ENTROPY_LEN,
     };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
@@ -849,7 +847,7 @@ mod tests {
             std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + 1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |event| match event {
                 PrnsEvent::Delivered(Delivery::Plain(delivery)) => delivered.push((
                     delivery.destination,
@@ -941,7 +939,7 @@ mod tests {
             std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + 1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |event| match event {
                 PrnsEvent::Delivered(Delivery::Single(delivery)) => {
                     delivered.push((delivery.destination, delivery.plaintext.to_vec()))
@@ -1036,7 +1034,7 @@ mod tests {
         let mut settled = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |event| {
                 if let PrnsEvent::CommandSettled { id, settlement } = event {
                     settled.push((id, settlement));
@@ -1074,7 +1072,7 @@ mod tests {
         )]);
         runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             no_failed_settlements,
             || queue.pop_front(),
         );
@@ -1102,7 +1100,7 @@ mod tests {
         let mut settled = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |event| {
                 if let PrnsEvent::CommandSettled { id, settlement } = event {
                     settled.push((id, settlement));
@@ -1152,13 +1150,13 @@ mod tests {
         };
         let first = runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xAA),
             &mut collect,
             || queue.pop_front(),
         );
         let second = runtime.cycle_once(
             InstantMillis(2_000),
-            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xBB),
             &mut collect,
             || queue.pop_front(),
         );
@@ -1195,19 +1193,19 @@ mod tests {
 
         let _boot = runtime.cycle_once(
             InstantMillis(600),
-            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xAA),
             |_| {},
             || None,
         );
         let _idle = runtime.cycle_once(
             InstantMillis(700),
-            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xBB),
             |_| {},
             || None,
         );
         let _due = runtime.cycle_once(
             InstantMillis(600 + interval),
-            EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCC),
             |_| {},
             || None,
         );
@@ -1268,7 +1266,7 @@ mod tests {
         let mut settled = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |event| {
                 if let PrnsEvent::CommandSettled { id, settlement } = event {
                     settled.push((id, settlement));
@@ -1322,7 +1320,7 @@ mod tests {
 
         let first = runtime.cycle_once(
             InstantMillis(600),
-            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xAA),
             &mut collect,
             || queue.pop_front(),
         );
@@ -1337,7 +1335,7 @@ mod tests {
         });
         let second = runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xBB),
             &mut collect,
             || queue.pop_front(),
         );
@@ -1443,7 +1441,10 @@ mod tests {
 
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_send_single(came_home.expect("a rejected send hands its entropy back up"));
-        let pooled = pool.checkout_send_single(send_entropy_of(0xDE, 0xAD));
+        let pooled = pool.checkout_send_single(|bytes: &mut [u8]| {
+            bytes[..32].fill(0xDE);
+            bytes[32..].fill(0xAD);
+        });
         let mut routed = hearer_with_route(&announce_buf[..announce_len]);
         let mut reused_buf = [0u8; MTU];
         let reused_len = match routed.write_commanded_send_single(
@@ -1507,17 +1508,21 @@ mod tests {
             }
         };
 
-        let mut send_vector_seed = [0xAA; ENGINE_CYCLE_ENTROPY_LEN];
-        let send_region = ENGINE_CYCLE_ENTROPY_LEN - SendSingleEntropy::LEN;
-        send_vector_seed[send_region..send_region + 32].fill(0x33);
-        send_vector_seed[send_region + 32..].fill(0x44);
+        let mut send_vector_fill = |bytes: &mut [u8]| {
+            if bytes.len() == SendSingleEntropy::LEN {
+                bytes[..32].fill(0x33);
+                bytes[32..].fill(0x44);
+            } else {
+                bytes.fill(0xAA);
+            }
+        };
         let first = cycle_pooled(
             &mut engine,
             &mut interfaces,
             &mut traffic,
             &mut pool,
             InstantMillis(600),
-            EngineCycleEntropySeed::new(send_vector_seed),
+            &mut send_vector_fill,
             &mut collect,
             &mut || queue.pop_front(),
         );
@@ -1536,7 +1541,7 @@ mod tests {
             &mut traffic,
             &mut pool,
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut |bytes: &mut [u8]| bytes.fill(0xBB),
             &mut collect,
             &mut || queue.pop_front(),
         );
@@ -1559,7 +1564,7 @@ mod tests {
             &mut traffic,
             &mut pool,
             InstantMillis(1_300),
-            EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
+            &mut |bytes: &mut [u8]| bytes.fill(0xCC),
             &mut collect,
             &mut || queue.pop_front(),
         );
@@ -1606,7 +1611,7 @@ mod tests {
 
         let first = runtime.cycle_once(
             InstantMillis(600),
-            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xAA),
             &mut collect,
             || queue.pop_front(),
         );
@@ -1621,14 +1626,14 @@ mod tests {
         });
         runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xBB),
             &mut collect,
             || queue.pop_front(),
         );
 
         runtime.cycle_once(
             InstantMillis(13_000),
-            EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCC),
             &mut collect,
             || queue.pop_front(),
         );
@@ -1680,13 +1685,13 @@ mod tests {
         )]);
         runtime.cycle_once(
             InstantMillis(1_000),
-            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xAA),
             no_failed_settlements,
             || queue.pop_front(),
         );
         runtime.cycle_once(
             InstantMillis(2_000),
-            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xBB),
             no_failed_settlements,
             || queue.pop_front(),
         );
@@ -1763,7 +1768,7 @@ mod tests {
 
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + 1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |_event| {},
             || None,
         );
@@ -1797,7 +1802,7 @@ mod tests {
         let mut heard = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_100),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |event| {
                 if let PrnsEvent::AnnounceHeard {
                     destination,
@@ -1842,7 +1847,7 @@ mod tests {
 
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |_event| {},
             || None,
         );
@@ -1907,7 +1912,7 @@ mod tests {
 
         let out = runtime.cycle_once(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |_event| {},
             || None,
         );
@@ -1933,7 +1938,7 @@ mod tests {
 
         let _ = runtime.cycle_once(
             InstantMillis(1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |_event| {},
             || None,
         );
@@ -1957,7 +1962,7 @@ mod tests {
 
         let _ = runtime.cycle_once(
             InstantMillis(1),
-            EngineCycleEntropySeed::new([0xCA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
             |_event| {},
             || None,
         );

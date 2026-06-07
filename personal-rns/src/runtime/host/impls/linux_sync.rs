@@ -1,8 +1,8 @@
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 
-use super::super::{CycleStamp, Host, NextWake};
-use crate::engine::{EngineCycleEntropySeed, InstantMillis, ENGINE_CYCLE_ENTROPY_LEN};
+use super::super::{Host, NextWake};
+use crate::engine::InstantMillis;
 use crate::interfaces::substrate::{StdHostSubstrate, StdInterfaceHandle, StdInterfaceSeam};
 use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 
@@ -88,8 +88,7 @@ fn wait_for(next: NextWake, now: InstantMillis, max: Duration) -> Duration {
 }
 
 impl Host for LinuxSync {
-    #[allow(clippy::expect_used)]
-    async fn wait(&mut self, wake: NextWake) -> CycleStamp {
+    async fn wait(&mut self, wake: NextWake) -> InstantMillis {
         // Block until the engine's next deadline or an interface pokes the wake —
         // whichever first. `recv_timeout` blocks the thread (this never `.await`s),
         // so `block_on` carries the loop straight through with no executor. The
@@ -100,13 +99,12 @@ impl Host for LinuxSync {
         if !timeout.is_zero() {
             let _ = self.wake.recv_timeout(timeout);
         }
+        self.now()
+    }
 
-        let mut seed = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        getrandom::getrandom(&mut seed).expect("OS CSPRNG must provide cycle entropy");
-        CycleStamp {
-            now: self.now(),
-            seed: EngineCycleEntropySeed::new(seed),
-        }
+    #[allow(clippy::expect_used)]
+    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        getrandom::getrandom(bytes).expect("OS CSPRNG must provide cycle entropy");
     }
 }
 
@@ -127,6 +125,6 @@ mod tests {
                 1
             })
             .unwrap();
-        let _stamp = block_on(host.wait(NextWake::Idle));
+        let _now = block_on(host.wait(NextWake::Idle));
     }
 }

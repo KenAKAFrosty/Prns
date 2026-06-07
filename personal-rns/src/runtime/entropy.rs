@@ -16,20 +16,31 @@ impl UnspentEntropyPool {
         }
     }
 
-    // REVIEW for now we'll leave this as-is since we're part of a larger sweep. each one of these requiring a 'fresh' to already have been built.... kinda misses the whole point. But again, we'll wait and come back to this
     #[must_use]
-    pub fn checkout_self_announce(&mut self, fresh: SelfAnnounceEntropy) -> SelfAnnounceEntropy {
-        self.nonce.take().unwrap_or(fresh)
+    pub fn checkout_self_announce(&mut self, fill: impl FnOnce(&mut [u8])) -> SelfAnnounceEntropy {
+        self.nonce.take().unwrap_or_else(|| {
+            let mut bytes = [0u8; SelfAnnounceEntropy::LEN];
+            fill(&mut bytes);
+            SelfAnnounceEntropy::new(bytes)
+        })
     }
 
     #[must_use]
-    pub fn checkout_ratchet(&mut self, fresh: RatchetEntropy) -> RatchetEntropy {
-        self.ratchet.take().unwrap_or(fresh)
+    pub fn checkout_ratchet(&mut self, fill: impl FnOnce(&mut [u8])) -> RatchetEntropy {
+        self.ratchet.take().unwrap_or_else(|| {
+            let mut bytes = [0u8; RatchetEntropy::LEN];
+            fill(&mut bytes);
+            RatchetEntropy::new(bytes)
+        })
     }
 
     #[must_use]
-    pub fn checkout_send_single(&mut self, fresh: SendSingleEntropy) -> SendSingleEntropy {
-        self.send.take().unwrap_or(fresh)
+    pub fn checkout_send_single(&mut self, fill: impl FnOnce(&mut [u8])) -> SendSingleEntropy {
+        self.send.take().unwrap_or_else(|| {
+            let mut bytes = [0u8; SendSingleEntropy::LEN];
+            fill(&mut bytes);
+            SendSingleEntropy::new(bytes)
+        })
     }
 
     pub fn restore_self_announce(&mut self, unspent: SelfAnnounceEntropy) {
@@ -88,7 +99,7 @@ mod tests {
     #[test]
     fn an_empty_pool_hands_back_the_fresh_unit() {
         let mut pool = UnspentEntropyPool::empty();
-        let out = pool.checkout_self_announce(nonce_of(0xBB));
+        let out = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
         assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xBB)));
     }
 
@@ -96,7 +107,7 @@ mod tests {
     fn a_restored_survivor_wins_over_the_fresh_unit() {
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_self_announce(nonce_of(0xAA));
-        let out = pool.checkout_self_announce(nonce_of(0xBB));
+        let out = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
         assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xAA)));
     }
 
@@ -104,8 +115,8 @@ mod tests {
     fn checkout_drains_the_slot_so_the_next_cycle_gets_fresh() {
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_self_announce(nonce_of(0xAA));
-        let _first = pool.checkout_self_announce(nonce_of(0xBB));
-        let second = pool.checkout_self_announce(nonce_of(0xCC));
+        let _first = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
+        let second = pool.checkout_self_announce(|bytes| bytes.fill(0xCC));
         assert_eq!(announce_id_of(second), announce_id_of(nonce_of(0xCC)));
     }
 
@@ -113,7 +124,7 @@ mod tests {
     fn the_ratchet_slot_round_trips_byte_faithfully() {
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_ratchet(ratchet_of(0x55));
-        let out = pool.checkout_ratchet(ratchet_of(0x66));
+        let out = pool.checkout_ratchet(|bytes| bytes.fill(0x66));
 
         let mut minted = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
         minted
@@ -128,7 +139,7 @@ mod tests {
             minted_key_of(&mut expected, InstantMillis(0), ratchet_of(0x55)),
         );
 
-        let next = pool.checkout_ratchet(ratchet_of(0x66));
+        let next = pool.checkout_ratchet(|bytes| bytes.fill(0x66));
         assert_eq!(
             minted_key_of(
                 &mut minted,
@@ -148,7 +159,7 @@ mod tests {
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_ratchet(ratchet_of(0x55));
 
-        let nonce = pool.checkout_self_announce(nonce_of(0xBB));
+        let nonce = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
         assert_eq!(announce_id_of(nonce), announce_id_of(nonce_of(0xBB)));
 
         let mut minted = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
@@ -159,7 +170,7 @@ mod tests {
         expected
             .track(crate::wire::DestinationHash::new([1; 16]))
             .unwrap();
-        let ratchet = pool.checkout_ratchet(ratchet_of(0x66));
+        let ratchet = pool.checkout_ratchet(|bytes| bytes.fill(0x66));
         assert_eq!(
             minted_key_of(&mut minted, InstantMillis(0), ratchet),
             minted_key_of(&mut expected, InstantMillis(0), ratchet_of(0x55)),

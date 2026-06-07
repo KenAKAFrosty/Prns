@@ -11,6 +11,8 @@ use crate::interfaces::{
     ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
     MediumKind, TransportCapability,
 };
+use crate::routing::announce::defaults::JitterSeed;
+use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::FixedInline;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{

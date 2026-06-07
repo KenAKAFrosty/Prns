@@ -2,12 +2,7 @@ use core::future::Future;
 use core::pin::pin;
 use core::task::{Context, Poll, Waker};
 
-use crate::engine::{EngineCycleEntropySeed, InstantMillis};
-
-pub struct CycleStamp {
-    pub now: InstantMillis,
-    pub seed: EngineCycleEntropySeed,
-}
+use crate::engine::InstantMillis;
 
 #[derive(Debug, Clone, Copy)]
 pub enum NextWake {
@@ -21,7 +16,8 @@ pub enum NextWake {
 /// [`block_on`] drives it with no executor.
 #[allow(async_fn_in_trait)]
 pub trait Host {
-    async fn wait(&mut self, wake: NextWake) -> CycleStamp;
+    async fn wait(&mut self, wake: NextWake) -> InstantMillis;
+    fn fill_entropy(&mut self, bytes: &mut [u8]);
 }
 
 /// Drive a runtime future on a substrate with no async executor — a sync poll-loop

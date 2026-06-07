@@ -1,8 +1,8 @@
 use embassy_futures::select::select;
 use embassy_time::{Instant as EmbassyInstant, Timer};
 
-use super::super::{CycleStamp, Host, NextWake};
-use crate::engine::{EngineCycleEntropySeed, InstantMillis};
+use super::super::{Host, NextWake};
+use crate::engine::InstantMillis;
 use crate::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle, EmbassyInterfaceSeam,
     WakeSignal,
@@ -16,7 +16,7 @@ pub struct EmbassyContractHost<E> {
 
 impl<E> EmbassyContractHost<E>
 where
-    E: FnMut() -> EngineCycleEntropySeed,
+    E: FnMut(&mut [u8]),
 {
     pub fn new(wake: &'static WakeSignal, draw_entropy: E) -> Self {
         Self { wake, draw_entropy }
@@ -45,9 +45,9 @@ where
 
 impl<E> Host for EmbassyContractHost<E>
 where
-    E: FnMut() -> EngineCycleEntropySeed,
+    E: FnMut(&mut [u8]),
 {
-    async fn wait(&mut self, wake: NextWake) -> CycleStamp {
+    async fn wait(&mut self, wake: NextWake) -> InstantMillis {
         // Suspend until the engine's next deadline or an interface pokes the wake —
         // whichever first. This is the genuine `.await`: the executor sleeps the core
         // here. The signal is coalesced (a pending poke makes the next wait return at
@@ -63,10 +63,10 @@ where
                 self.wake.wait().await;
             }
         }
+        InstantMillis(EmbassyInstant::now().as_millis())
+    }
 
-        CycleStamp {
-            now: InstantMillis(EmbassyInstant::now().as_millis()),
-            seed: (self.draw_entropy)(),
-        }
+    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        (self.draw_entropy)(bytes);
     }
 }

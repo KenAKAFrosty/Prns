@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Notify;
 
-use super::super::{CycleStamp, Host, NextWake};
-use crate::engine::{EngineCycleEntropySeed, InstantMillis, ENGINE_CYCLE_ENTROPY_LEN};
+use super::super::{Host, NextWake};
+use crate::engine::InstantMillis;
 use crate::interfaces::substrate::{TokioHostSubstrate, TokioInterfaceHandle, TokioInterfaceSeam};
 use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 
@@ -79,8 +79,7 @@ fn wait_for(next: NextWake, now: InstantMillis, max: Duration) -> Duration {
 }
 
 impl Host for TokioHost {
-    #[allow(clippy::expect_used)]
-    async fn wait(&mut self, wake: NextWake) -> CycleStamp {
+    async fn wait(&mut self, wake: NextWake) -> InstantMillis {
         // Suspend until the engine's next deadline or an interface pokes the
         // wake — whichever first — yielding the executor to the worker tasks
         // meanwhile. The wake is coalesced (`Notify` holds one permit); the
@@ -90,13 +89,12 @@ impl Host for TokioHost {
         if !timeout.is_zero() {
             let _ = tokio::time::timeout(timeout, self.wake.notified()).await;
         }
+        self.now()
+    }
 
-        let mut seed = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        getrandom::getrandom(&mut seed).expect("OS CSPRNG must provide cycle entropy");
-        CycleStamp {
-            now: self.now(),
-            seed: EngineCycleEntropySeed::new(seed),
-        }
+    #[allow(clippy::expect_used)]
+    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        getrandom::getrandom(bytes).expect("OS CSPRNG must provide cycle entropy");
     }
 }
 
@@ -170,8 +168,8 @@ mod tests {
     #[tokio::test]
     async fn an_immediate_wake_does_not_wait() {
         let mut host = TokioHost::new();
-        let stamp = host.wait(NextWake::Immediate).await;
-        assert!(stamp.now.0 < 100);
+        let now = host.wait(NextWake::Immediate).await;
+        assert!(now.0 < 100);
     }
 
     #[tokio::test]

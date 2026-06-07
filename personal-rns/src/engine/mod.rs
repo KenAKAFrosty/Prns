@@ -39,10 +39,8 @@ use crate::engine::self_ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES};
-use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
-use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
@@ -51,51 +49,6 @@ use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstantMillis(pub u64);
-
-const JITTER_SEED_LEN: usize = core::mem::size_of::<u64>();
-
-pub const ENGINE_CYCLE_ENTROPY_LEN: usize =
-    JITTER_SEED_LEN + SelfAnnounceEntropy::LEN + RatchetEntropy::LEN + SendSingleEntropy::LEN;
-
-pub struct EngineCycleEntropySeed([u8; ENGINE_CYCLE_ENTROPY_LEN]);
-
-impl EngineCycleEntropySeed {
-    pub const fn new(bytes: [u8; ENGINE_CYCLE_ENTROPY_LEN]) -> Self {
-        Self(bytes)
-    }
-
-    pub const fn as_bytes(&self) -> &[u8; ENGINE_CYCLE_ENTROPY_LEN] {
-        &self.0
-    }
-}
-
-pub struct EngineCycleEntropy {
-    pub jitter: JitterSeed,
-    pub self_announce: SelfAnnounceEntropy,
-    pub ratchet: RatchetEntropy,
-    pub send: SendSingleEntropy,
-}
-
-impl EngineCycleEntropy {
-    pub fn from_seed(seed: EngineCycleEntropySeed) -> Self {
-        let bytes = seed.as_bytes();
-        let mut jitter = [0u8; JITTER_SEED_LEN];
-        jitter.copy_from_slice(&bytes[..JITTER_SEED_LEN]);
-        let mut nonce = [0u8; SelfAnnounceEntropy::LEN];
-        nonce.copy_from_slice(&bytes[JITTER_SEED_LEN..JITTER_SEED_LEN + SelfAnnounceEntropy::LEN]);
-        let ratchet_start = JITTER_SEED_LEN + SelfAnnounceEntropy::LEN;
-        let mut ratchet = [0u8; RatchetEntropy::LEN];
-        ratchet.copy_from_slice(&bytes[ratchet_start..ratchet_start + RatchetEntropy::LEN]);
-        let mut send = [0u8; SendSingleEntropy::LEN];
-        send.copy_from_slice(&bytes[ratchet_start + RatchetEntropy::LEN..]);
-        Self {
-            jitter: JitterSeed(u64::from_le_bytes(jitter)),
-            self_announce: SelfAnnounceEntropy::new(nonce),
-            ratchet: RatchetEntropy::new(ratchet),
-            send: SendSingleEntropy::new(send),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextScheduledEngineWork {
