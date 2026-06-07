@@ -1,9 +1,12 @@
 //WIP NEEDS REVIEW
-use heapless::Vec as HVec;
-use personal_hopspot_ui::{Card, CardKind};
-
 pub const MAX_CARDS: usize = 8;
 
+#[cfg(test)]
+use heapless::Vec as HVec;
+#[cfg(test)]
+use personal_hopspot_ui::{Card, CardKind};
+
+#[cfg(test)]
 pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
     let mut cards = HVec::new();
     let _ = cards.push(Card {

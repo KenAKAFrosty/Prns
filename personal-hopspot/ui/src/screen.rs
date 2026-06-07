@@ -84,6 +84,7 @@ const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Scan", "Channel", "B
 const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Pair", "Advert", "Back"];
 const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Freq", "Power", "Back"];
 const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peers", "Channel", "Back"];
+const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peer", "Drop", "Back"];
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in [`draw_interface_icon`]) as new interface
@@ -95,6 +96,7 @@ pub enum CardKind {
     Ble,
     LoRa,
     EspNow,
+    Tcp,
 }
 
 /// One interface's card. The host fills the static bits (kind, label) and the
@@ -500,6 +502,7 @@ fn interface_menu_items(kind: CardKind) -> &'static [&'static str; MENU_ITEM_COU
         CardKind::Ble => &BLE_MENU_ITEMS,
         CardKind::LoRa => &LORA_MENU_ITEMS,
         CardKind::EspNow => &ESP_NOW_MENU_ITEMS,
+        CardKind::Tcp => &TCP_MENU_ITEMS,
     }
 }
 
@@ -844,6 +847,26 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                     "  # # #  ",
                     " #     # ",
                     "#       #",
+                    "         ",
+                ],
+                color,
+            );
+        }
+        //WIP NEEDS REVIEW
+        CardKind::Tcp => {
+            draw_pattern_colored(
+                display,
+                x,
+                y,
+                &[
+                    "         ",
+                    "         ",
+                    "      #  ",
+                    " ####### ",
+                    "      #  ",
+                    "  #      ",
+                    " ####### ",
+                    "  #      ",
                     "         ",
                 ],
                 color,

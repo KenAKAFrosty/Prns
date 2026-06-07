@@ -1,15 +1,17 @@
 //WIP NEEDS REVIEW
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, splash, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshot_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
 };
 
-use crate::cards::{dummy_cards, MAX_CARDS};
+use crate::cards::MAX_CARDS;
+use crate::engine::{classify, shared_snapshot, SharedSnapshot};
 use crate::framebuffer::FrameBuffer;
 
 pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
+    snapshot: SharedSnapshot,
 }
 
 impl HopspotFace {
@@ -17,6 +19,7 @@ impl HopspotFace {
         Self {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
+            snapshot: shared_snapshot(),
         }
     }
 
@@ -32,14 +35,18 @@ impl HopspotFace {
     }
 
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        dummy_cards()
+        let guard = self.snapshot.lock().expect("snapshot mutex poisoned");
+        match &*guard {
+            Some(snapshot) => snapshot_to_cards(snapshot, classify),
+            None => HVec::new(),
+        }
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
         self.state.sync_card_count(cards.len());
         self.framebuffer.clear();
         if cards.is_empty() {
-            splash(&mut self.framebuffer, "starting");
+            splash(&mut self.framebuffer, "connecting");
         } else {
             draw_with_state(
                 &mut self.framebuffer,
@@ -61,15 +68,35 @@ impl Default for HopspotFace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cards::dummy_cards;
     use crate::framebuffer::{DARK_RGBA, RGBA_BYTES};
+    use std::sync::{Arc, Mutex};
+
+    impl HopspotFace {
+        fn detached() -> Self {
+            Self {
+                state: UiState::new(),
+                framebuffer: FrameBuffer::new(),
+                snapshot: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
 
     fn fresh_buffer() -> Vec<u8> {
         vec![0u8; RGBA_BYTES]
     }
 
     #[test]
-    fn the_dummy_cards_light_some_pixels() {
-        let mut face = HopspotFace::new();
+    fn rendered_cards_light_some_pixels() {
+        let mut face = HopspotFace::detached();
+        let mut out = fresh_buffer();
+        face.render_cards(&dummy_cards(), &mut out);
+        assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
+    }
+
+    #[test]
+    fn an_empty_snapshot_renders_the_connecting_splash() {
+        let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render(&mut out);
         assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
@@ -77,26 +104,28 @@ mod tests {
 
     #[test]
     fn a_short_press_changes_the_rendered_screen() {
-        let mut face = HopspotFace::new();
+        let mut face = HopspotFace::detached();
+        let cards = dummy_cards();
         let mut before = fresh_buffer();
         let mut after = fresh_buffer();
 
-        face.render(&mut before);
-        let _ = face.post_input(InputEvent::ShortPress);
-        face.render(&mut after);
+        face.render_cards(&cards, &mut before);
+        let _ = face.state.handle_input(InputEvent::ShortPress, cards.len());
+        face.render_cards(&cards, &mut after);
 
         assert_ne!(before, after);
     }
 
     #[test]
     fn a_long_press_opens_a_menu_changing_the_screen() {
-        let mut face = HopspotFace::new();
+        let mut face = HopspotFace::detached();
+        let cards = dummy_cards();
         let mut before = fresh_buffer();
         let mut after = fresh_buffer();
 
-        face.render(&mut before);
-        let _ = face.post_input(InputEvent::LongPress);
-        face.render(&mut after);
+        face.render_cards(&cards, &mut before);
+        let _ = face.state.handle_input(InputEvent::LongPress, cards.len());
+        face.render_cards(&cards, &mut after);
 
         assert_ne!(before, after);
     }
