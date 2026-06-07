@@ -5,6 +5,7 @@ use personal_hopspot_ui::CardKind;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::{IssuedCommand, RatchetPolicy, ReannounceSchedule};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
 use personal_rns::interfaces::impls::usb_auto::{android_usb_auto_interface, AndroidUsbBridge};
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
@@ -16,6 +17,7 @@ use personal_rns::runtime::{
 };
 
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+const WIFI_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD1; 16]);
 const MAX_BUFFERED_PACKETS: usize = 64;
 const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
 const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
@@ -46,6 +48,8 @@ pub(crate) fn usb_bridge() -> AndroidUsbBridge {
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, "USB"))
+    } else if id == WIFI_INTERFACE_ID {
+        Some((CardKind::Wifi, "WiFi"))
     } else {
         None
     }
@@ -78,6 +82,10 @@ fn run_engine(slot: SharedSnapshot, bridge_tx: mpsc::Sender<AndroidUsbBridge>) {
 
     let mut interfaces = GrowableInterfaceSet::new();
     let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
+    let _ = interfaces.push(host.attach(
+        wifi_lan_auto_interface(WIFI_INTERFACE_ID),
+        MAX_BUFFERED_PACKETS,
+    ));
 
     block_on(Prns::run(
         Recipe {
@@ -100,9 +108,10 @@ fn run_engine(slot: SharedSnapshot, bridge_tx: mpsc::Sender<AndroidUsbBridge>) {
         move |event: PrnsEvent<'_>| {
             if let PrnsEvent::SnapshotUpdated(snapshot) = event {
                 for view in &snapshot.interfaces {
-                    if view.id == USB_INTERFACE_ID {
+                    if matches!(view.id, USB_INTERFACE_ID | WIFI_INTERFACE_ID) {
                         log::info!(
-                            "usb interface: state={:?} dests={} tx={} rx={}",
+                            "interface {:?}: state={:?} dests={} tx={} rx={}",
+                            view.id,
                             view.connection_state,
                             view.tracked_destinations,
                             view.reticulum_tx_byte_count,

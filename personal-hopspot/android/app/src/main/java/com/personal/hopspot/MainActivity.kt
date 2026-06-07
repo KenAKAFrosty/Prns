@@ -27,10 +27,12 @@ import java.nio.ByteBuffer
 class MainActivity : ComponentActivity() {
     private var handle: Long = 0L
     private var usbLink: UsbLink? = null
+    private var wifiAutoLink: WifiAutoLink? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handle = NativeBridge.nativeInit()
+        wifiAutoLink = WifiAutoLink(this).also { it.start() }
         usbLink = UsbLink(this).also { it.start() }
         setContent { HopspotScreen(handle) }
     }
@@ -39,6 +41,8 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         usbLink?.stop()
         usbLink = null
+        wifiAutoLink?.stop()
+        wifiAutoLink = null
         if (handle != 0L) {
             NativeBridge.nativeFree(handle)
             handle = 0L
