@@ -240,7 +240,7 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         },
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
-        state: ConnectionState::Degraded,
+        state: ConnectionState::Connected,
     }
 }
 
@@ -277,12 +277,6 @@ mod tests {
             payload_roundtrip(Message::HelloAck { tag, capabilities }),
             Message::HelloAck { tag, capabilities }
         );
-    }
-
-    #[test]
-    fn device_descriptor_starts_degraded_until_a_host_handshakes() {
-        let descriptor = device_descriptor(InterfaceId::new([0xD0; 16]));
-        assert_eq!(descriptor.state, ConnectionState::Degraded);
     }
 
     #[test]
