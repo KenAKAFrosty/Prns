@@ -6,6 +6,7 @@ use crate::identity::{EncryptError, RemoteIdentity, ENCRYPTION_IV_LEN};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::PacketHash;
 use crate::routing::storage::EngineStorage;
+use crate::routing::NextHop;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
     WirePacketHeader,
@@ -89,7 +90,7 @@ impl<S: EngineStorage> EngineState<S> {
                 error: SendSingleError::NoRouteToDestination,
             };
         };
-        if retained.hops > 1 {
+        if retained.hops > 1 && retained.next_hop == NextHop::Direct {
             return CommandOutcome::SendSingleRejected {
                 id,
                 error: SendSingleError::NotDirectlyReachable,
@@ -122,14 +123,21 @@ impl<S: EngineStorage> EngineState<S> {
         let public_keys = retained.announce.public_keys;
         let maybe_ratchet = retained.announce.maybe_ratchet;
 
+        // RNS 1.3.1 `Transport.outbound`: a packet for a destination more than
+        // one hop away is injected into transport, addressed at the relay that
+        // announced the route, instead of broadcast at the destination.
+        let (propagation, transport_id) = match retained.next_hop {
+            NextHop::Direct => (PropagationType::Broadcast, None),
+            NextHop::Via(via) => (PropagationType::Transport, Some(via)),
+        };
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,
             context_flag: ContextFlag::Unset,
-            propagation: PropagationType::Broadcast,
+            propagation,
             destination_type: DestinationType::Single,
             packet_type: PacketType::Data,
             hops: 0,
-            transport_id: None,
+            transport_id,
             destination: send.destination,
             context: WireContext::None,
         };
@@ -493,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn a_multi_hop_destination_is_not_directly_reachable_yet() {
+    fn a_multi_hop_route_with_no_relay_to_address_is_not_directly_reachable() {
         let mut state = hearer();
         let mut relayed = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
         relayed[1] = 1;
@@ -512,6 +520,47 @@ mod tests {
                 error: SendSingleError::NotDirectlyReachable,
             },
         );
+    }
+
+    #[test]
+    fn a_send_to_a_multi_hop_destination_is_addressed_at_its_relay() {
+        let mut state = hearer();
+        hear_announce(&mut state, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE), arrival());
+        let send = send_of(b"ratchet-parity");
+
+        assert_eq!(
+            state.ingest_command(
+                IssuedCommand {
+                    id: CommandId(7),
+                    command: EngineCommand::SendSingle(send.clone()),
+                },
+                &[],
+            ),
+            CommandOutcome::OwesSendSingle {
+                id: CommandId(7),
+                send: send.clone(),
+            },
+        );
+
+        let mut buf = [0u8; MTU];
+        let dispatch = state
+            .write_commanded_send_single(
+                CommandId(7),
+                &send,
+                InstantMillis(1_000),
+                vector_send_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        assert_eq!(
+            &buf[..dispatch.wire_len],
+            hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT).as_slice(),
+            "the sealed packet rides transport addressed at the announcing relay",
+        );
+        assert_eq!(dispatch.fire_on, arrival());
+        assert_eq!(dispatch.culled, None);
+        assert_eq!(state.receipts.len(), 1);
     }
 
     #[test]

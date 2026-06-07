@@ -261,6 +261,16 @@ pub(crate) const RATCHETED_SELF_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3b
          3e9646aa7ffdf1530150aa30d0c684aab5b6236ea71a4b8f8c72b2b02768bf02\
          68656c6c6f2d706572736f6e616c";
 
+/// [`RAW_SEALED_TO_RATCHET`] as RNS 1.3.1 `Transport.outbound` injects it into
+/// transport for a multi-hop destination: `HEADER_2`/`TRANSPORT` flags spliced
+/// in, addressed at the relay `0x7A…` ([`TEST_TRANSPORT_ID`]), hops untouched.
+/// Self-checked: the reference parses it and `get_hash()` equals the direct
+/// form's — the packet hash (and so the receipt) is transport-invariant.
+pub(crate) const RAW_SEALED_TO_RATCHET_VIA_TRANSPORT: &str =
+    "50007a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7ac3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f831116078\
+     1c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1444444444444444444444444444444444f0c0d10df07782f3a9\
+     a89a271b84960bc9d2525bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
+
 pub(crate) const RAW_SEALED_TO_RATCHET: &str =
     "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
          a0ee19a4cb8a1b1444444444444444444444444444444444f0c0d10df07782f3a9a89a271b84960bc9d252\
