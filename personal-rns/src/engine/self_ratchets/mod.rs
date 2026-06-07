@@ -45,6 +45,12 @@ pub enum TrackRatchetsError {
     TableFull,
 }
 
+#[must_use]
+pub enum RatchetRotation {
+    Rotated,
+    Unspent(RatchetEntropy),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LastRotated {
     Never,
@@ -103,19 +109,20 @@ impl<C: SelfRatchetColumns> SelfRatchets<C> {
         destination: &DestinationHash,
         now: InstantMillis,
         entropy: RatchetEntropy,
-    ) {
+    ) -> RatchetRotation {
         let Some(index) = self.index_of(destination) else {
-            return;
+            return RatchetRotation::Unspent(entropy);
         };
         let Some(last_rotated) = self.columns.last_rotated().get(index) else {
-            return;
+            return RatchetRotation::Unspent(entropy);
         };
         if !last_rotated.is_rotation_due(now) {
-            return;
+            return RatchetRotation::Unspent(entropy);
         }
         self.columns
             .insert_newest_secret(index, entropy.into_secret());
         self.columns.set_last_rotated(index, now);
+        RatchetRotation::Rotated
     }
 
     pub fn newest_ratchet_key(&self, destination: &DestinationHash) -> Option<RatchetKey> {
@@ -171,14 +178,29 @@ mod tests {
         RatchetKey::new(x25519_public_key(&X25519SecretKey::new([byte; 32])).0)
     }
 
+    fn rotated(rotation: RatchetRotation) {
+        assert!(matches!(rotation, RatchetRotation::Rotated));
+    }
+
+    fn unspent(rotation: RatchetRotation) -> RatchetEntropy {
+        match rotation {
+            RatchetRotation::Unspent(entropy) => entropy,
+            RatchetRotation::Rotated => panic!("expected the entropy to come home unspent"),
+        }
+    }
+
     #[test]
-    fn an_untracked_destination_has_no_ratchets_and_ignores_rotation() {
+    fn an_untracked_destination_has_no_ratchets_and_hands_the_entropy_home() {
         let mut ratchets = TestRatchets::default();
         assert!(!ratchets.is_tracked(&dest(1)));
-        ratchets.rotate_if_due(&dest(1), InstantMillis(0), entropy(0x11));
+        let came_home = unspent(ratchets.rotate_if_due(&dest(1), InstantMillis(0), entropy(0x11)));
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), None);
         assert!(ratchets.secrets_newest_first(&dest(1)).is_empty());
         assert!(ratchets.is_empty());
+
+        ratchets.track(dest(1)).unwrap();
+        rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(0), came_home));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
     }
 
     #[test]
@@ -187,36 +209,43 @@ mod tests {
         ratchets.track(dest(1)).unwrap();
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), None);
 
-        ratchets.rotate_if_due(&dest(1), InstantMillis(5_000), entropy(0x11));
+        rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(5_000), entropy(0x11)));
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
         assert_eq!(ratchets.secrets_newest_first(&dest(1)).len(), 1);
     }
 
     #[test]
-    fn rotation_inside_the_floor_keeps_the_newest_ratchet() {
+    fn rotation_inside_the_floor_keeps_the_newest_ratchet_and_hands_the_entropy_home() {
         let mut ratchets = TestRatchets::default();
         ratchets.track(dest(1)).unwrap();
-        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11));
-        ratchets.rotate_if_due(
+        rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11)));
+        let came_home = unspent(ratchets.rotate_if_due(
             &dest(1),
             InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS - 1),
             entropy(0x22),
-        );
+        ));
 
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
         assert_eq!(ratchets.secrets_newest_first(&dest(1)).len(), 1);
+
+        rotated(ratchets.rotate_if_due(
+            &dest(1),
+            InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
+            came_home,
+        ));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x22)));
     }
 
     #[test]
     fn rotation_past_the_floor_mints_and_keeps_the_prior_ratchet_behind_it() {
         let mut ratchets = TestRatchets::default();
         ratchets.track(dest(1)).unwrap();
-        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11));
-        ratchets.rotate_if_due(
+        rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11)));
+        rotated(ratchets.rotate_if_due(
             &dest(1),
             InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
             entropy(0x22),
-        );
+        ));
 
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x22)));
         let secrets = ratchets.secrets_newest_first(&dest(1));
@@ -236,11 +265,11 @@ mod tests {
         let mut ratchets = TestRatchets::default();
         ratchets.track(dest(1)).unwrap();
         for (round, byte) in [0x11u8, 0x22, 0x33, 0x44].into_iter().enumerate() {
-            ratchets.rotate_if_due(
+            rotated(ratchets.rotate_if_due(
                 &dest(1),
                 InstantMillis(round as u64 * MIN_RATCHET_ROTATION_INTERVAL_MS),
                 entropy(byte),
-            );
+            ));
         }
 
         let secrets = ratchets.secrets_newest_first(&dest(1));
@@ -276,12 +305,12 @@ mod tests {
         let mut ratchets = TestRatchets::default();
         ratchets.track(dest(1)).unwrap();
         ratchets.track(dest(2)).unwrap();
-        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11));
+        rotated(ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), entropy(0x11)));
 
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
         assert_eq!(ratchets.newest_ratchet_key(&dest(2)), None);
 
-        ratchets.rotate_if_due(&dest(2), InstantMillis(1_000), entropy(0x22));
+        rotated(ratchets.rotate_if_due(&dest(2), InstantMillis(1_000), entropy(0x22)));
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
         assert_eq!(ratchets.newest_ratchet_key(&dest(2)), Some(public_of(0x22)));
     }

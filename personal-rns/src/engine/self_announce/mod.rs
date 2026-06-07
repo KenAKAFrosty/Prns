@@ -258,7 +258,8 @@ impl<S: EngineStorage> EngineState<S> {
             return Ok(None);
         };
         let destination = due.destination;
-        self.self_ratchets
+        let _rotation = self
+            .self_ratchets
             .rotate_if_due(&destination, now, ratchet_entropy);
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
         let outcome =
@@ -276,7 +277,8 @@ impl<S: EngineStorage> EngineState<S> {
         buf: &mut [u8],
     ) -> Result<usize, WriteSelfAnnounceError> {
         let destination = commanded.destination;
-        self.self_ratchets
+        let _rotation = self
+            .self_ratchets
             .rotate_if_due(&destination, now, ratchet_entropy);
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
         let app_data = match &commanded.app_data {
