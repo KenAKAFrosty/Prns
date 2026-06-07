@@ -4,9 +4,11 @@
 //! a platform worker.
 //!
 //! Today: [`auto_interface`] (the WiFi/IP multicast LAN interface), [`serial`]
-//! (the RNS `SerialInterface` over any byte stream — USB-CDC, RS-232), and
-//! [`rnode_lora`] (RNode-compatible LoRa).
+//! (the RNS `SerialInterface` over any byte stream — USB-CDC, RS-232), [`pipe`]
+//! (the RNS `PipeInterface` over a subprocess's stdio), and [`rnode_lora`]
+//! (RNode-compatible LoRa).
 
 pub mod auto_interface;
+pub mod pipe;
 pub mod rnode_lora;
 pub mod serial;
