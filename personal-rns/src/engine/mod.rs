@@ -36,8 +36,9 @@ pub use pending_path_requests::{
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
 pub use request_path::PathRequestWriteOutcome;
 pub use self_announce::{
-    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, ReannounceSchedule,
-    SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure, WriteSelfAnnounceError,
+    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, PathResponseWriteOutcome,
+    ReannounceSchedule, SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure,
+    WriteSelfAnnounceError,
 };
 pub use self_ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
 pub use send_single::{

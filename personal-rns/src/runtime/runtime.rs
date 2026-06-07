@@ -10,9 +10,9 @@ use crate::engine::{
     AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
     CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome,
     InstantMillis, IssuedCommand, NextScheduledEngineWork, PathFound, PathRequestWriteOutcome,
-    ProofIngest, ProofOwed, RatchetEntropy, RebroadcastDecision, RequestPath, RequestPathFailure,
-    SendSingle, SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement,
-    WriteSendSingleError,
+    PathResponseWriteOutcome, ProofIngest, ProofOwed, RatchetEntropy, RebroadcastDecision,
+    RequestPath, RequestPathFailure, SendSingle, SendSingleEntropy, SendSingleFailure,
+    SendSingleWriteOutcome, Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -22,7 +22,7 @@ use crate::interfaces::{
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::EngineStorage;
-use crate::wire::MTU;
+use crate::wire::{DestinationHash, MTU};
 
 #[derive(Debug)]
 pub struct RuntimeStepOutput {
@@ -50,6 +50,9 @@ enum InboundStep {
     ForwardsPacket {
         wire_len: usize,
         fire_on: InterfaceId,
+    },
+    AnswersPathRequest {
+        destination: DestinationHash,
     },
 }
 
@@ -317,6 +320,9 @@ where
                             Err(_) => InboundStep::NothingOwed,
                         }
                     }
+                    IngestPacketOutcome::AnswerPathRequest { destination } => {
+                        InboundStep::AnswersPathRequest { destination }
+                    }
                     IngestPacketOutcome::Ignored => InboundStep::NothingOwed,
                 }
             }) {
@@ -354,6 +360,29 @@ where
                         FanoutClass::Transported,
                     );
                     forwarded_count += 1;
+                }
+                InboundStep::AnswersPathRequest { destination } => {
+                    let self_announce = pool.checkout_self_announce(&mut *fill_entropy);
+                    let mut response = [0u8; MTU];
+                    if let PathResponseWriteOutcome::Written { wire_len } = engine
+                        .write_path_response_announce(
+                            &destination,
+                            now,
+                            self_announce,
+                            &mut response,
+                        )
+                    {
+                        fan_to_handles(
+                            interfaces,
+                            traffic,
+                            |buf| {
+                                buf[..wire_len].copy_from_slice(&response[..wire_len]);
+                                wire_len
+                            },
+                            FanTargets::Listed(core::slice::from_ref(&id)),
+                            FanoutClass::SelfOriginated,
+                        );
+                    }
                 }
             }
         }
@@ -829,9 +858,10 @@ mod tests {
     use std::collections::VecDeque;
 
     use crate::engine::{
-        AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
-        CommandId, EngineCommand, IssuedCommand, PathFound, PathRequestId, RatchetPolicy,
-        RequestPath, RequestPathFailure, Settlement, PATH_REQUEST_DESTINATION,
+        write_path_request_wire_packet, AnnounceAppData, AnnounceNow, AnnounceNowError,
+        AnnounceNowFailure, AnnounceTarget, CommandId, EngineCommand, IssuedCommand, PathFound,
+        PathRequestId, RatchetPolicy, RequestPath, RequestPathFailure, Settlement,
+        PATH_REQUEST_DESTINATION,
     };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
@@ -844,8 +874,8 @@ mod tests {
     use crate::routing::storage::FixedInline;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{
-        DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader,
-        HEADER_MAX_LEN,
+        DestinationHash, DestinationType, PacketType, PropagationType, WireContext,
+        WirePacketHeader, HEADER_MAX_LEN,
     };
 
     type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8>;
@@ -1425,6 +1455,39 @@ mod tests {
             runtime.interfaces()[0].handle.sent.is_empty(),
             "nothing to ask for, so no path request leaves",
         );
+    }
+
+    #[test]
+    fn a_path_request_for_a_local_destination_is_answered_on_its_interface() {
+        let (engine, local) = single_destination_engine();
+        let mut request = [0u8; 500];
+        let n = write_path_request_wire_packet(local, &[0x55; 16], &mut request).unwrap();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(
+                iface(0xA1),
+                std::vec![(InstantMillis(900), request[..n].to_vec())],
+            )]),
+            (),
+        );
+
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |_| {},
+            || None,
+        );
+
+        let sent = &runtime.interfaces()[0].handle.sent;
+        assert_eq!(
+            sent.len(),
+            1,
+            "the request is answered with exactly one packet"
+        );
+        let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.context, WireContext::PathResponse);
+        assert_eq!(header.destination, local);
     }
 
     #[test]

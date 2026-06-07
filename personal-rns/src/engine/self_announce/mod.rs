@@ -3,7 +3,23 @@ mod impls;
 pub use impls::*;
 
 use super::InstantMillis;
+use crate::engine::commands::{AnnounceAppData, AnnounceNow};
+use crate::engine::egress::{
+    write_announce_wire_packet, write_path_response_announce_wire_packet, EgressSerializeError,
+};
+use crate::engine::self_ratchets::{RatchetEntropy, RatchetRotation};
+use crate::engine::EngineState;
+use crate::identity::held::{HeldIdentities, HeldIdentityColumns, HeldIdentityRef};
+use crate::identity::IdentitySigner;
 use crate::routing::announce::ANNOUNCE_FIXED_FIELDS_LEN;
+use crate::routing::announce::{
+    Announce, AnnounceBuildError, AnnounceId, DottedNameHash, RatchetKey, SelfAnnounceEntropy,
+};
+use crate::routing::storage::EngineStorage;
+use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
+use crate::routing::upstream_app_destinations::{
+    UpstreamAppDestinationColumns, UpstreamAppDestinations,
+};
 use crate::wire::{DestinationHash, DestinationType, MDU, RATCHET_LEN};
 use heapless::Vec as HeaplessVec;
 
@@ -262,21 +278,24 @@ pub enum CommandedAnnounceWriteOutcome {
     },
 }
 
-use crate::engine::commands::{AnnounceAppData, AnnounceNow};
-use crate::engine::egress::{write_announce_wire_packet, EgressSerializeError};
-use crate::engine::self_ratchets::{RatchetEntropy, RatchetRotation};
-use crate::engine::EngineState;
-use crate::identity::held::{HeldIdentities, HeldIdentityColumns, HeldIdentityRef};
-use crate::identity::IdentitySigner;
-use crate::routing::announce::{
-    Announce, AnnounceBuildError, AnnounceId, DottedNameHash, RatchetKey, SelfAnnounceEntropy,
-};
-use crate::routing::storage::EngineStorage;
-use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
-use crate::routing::upstream_app_destinations::{
-    UpstreamAppDestinationColumns, UpstreamAppDestinations,
-};
+#[must_use]
+pub enum PathResponseWriteOutcome {
+    Written { wire_len: usize },
+    NotLocal,
+    Failed { failure: SelfAnnounceWriteFailure },
+}
 
+/// The only two announces we frame: a normal announcement, and a path response
+/// answering a request. Identical signed bodies; they differ only in the wire
+/// context byte. A dedicated pair keeps the other context values unrepresentable
+/// here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnounceContext {
+    Announcement,
+    PathResponse,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn frame_announce(
     signer: &impl IdentitySigner,
     name_hash: DottedNameHash,
@@ -284,6 +303,7 @@ fn frame_announce(
     now: InstantMillis,
     self_announce_entropy: SelfAnnounceEntropy,
     maybe_ratchet: Option<RatchetKey>,
+    context: AnnounceContext,
     buf: &mut [u8],
 ) -> Result<usize, SelfAnnounceWriteFailure> {
     let announce = Announce::build_signed(
@@ -294,7 +314,13 @@ fn frame_announce(
         app_data,
     )
     .map_err(SelfAnnounceWriteFailure::Build)?;
-    write_announce_wire_packet(&announce, 0, buf).map_err(SelfAnnounceWriteFailure::Serialize)
+    let framed = match context {
+        AnnounceContext::Announcement => write_announce_wire_packet(&announce, 0, buf),
+        AnnounceContext::PathResponse => {
+            write_path_response_announce_wire_packet(&announce, 0, buf)
+        }
+    };
+    framed.map_err(SelfAnnounceWriteFailure::Serialize)
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -392,6 +418,7 @@ impl<S: EngineStorage> EngineState<S> {
             now,
             self_announce_entropy,
             maybe_ratchet,
+            AnnounceContext::Announcement,
             buf,
         );
         match framed {
@@ -444,11 +471,50 @@ impl<S: EngineStorage> EngineState<S> {
             now,
             self_announce_entropy,
             maybe_ratchet,
+            AnnounceContext::Announcement,
             buf,
         );
         match framed {
             Ok(len) => Written { len, rotation },
             Err(failure) => Failed { failure, rotation },
+        }
+    }
+
+    /// Answer a path request for one of our own self-or-upstream destinations; RNS 1.3.1
+    /// `Destination.announce(path_response=True)`.
+    pub fn write_path_response_announce(
+        &mut self,
+        destination: &DestinationHash,
+        now: InstantMillis,
+        self_announce_entropy: SelfAnnounceEntropy,
+        buf: &mut [u8],
+    ) -> PathResponseWriteOutcome {
+        let (name_hash, identity) = match resolve_announce_signer(
+            &self.upstream_app_destinations,
+            &self.held_identities,
+            destination,
+        ) {
+            Ok(resolved) => resolved,
+            Err(_) => return PathResponseWriteOutcome::NotLocal,
+        };
+
+        let app_data = self
+            .self_announces
+            .scheduled_app_data(destination)
+            .unwrap_or(&[]);
+        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(destination);
+        match frame_announce(
+            &identity,
+            name_hash,
+            app_data,
+            now,
+            self_announce_entropy,
+            maybe_ratchet,
+            AnnounceContext::PathResponse,
+            buf,
+        ) {
+            Ok(wire_len) => PathResponseWriteOutcome::Written { wire_len },
+            Err(failure) => PathResponseWriteOutcome::Failed { failure },
         }
     }
 }

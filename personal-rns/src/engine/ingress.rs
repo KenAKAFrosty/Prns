@@ -4,7 +4,7 @@ use crate::routing::announce::Announce;
 use crate::routing::NextHop;
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
-    WirePacketHeader, MTU,
+    WirePacketHeader, MTU, TRUNCATED_HASH_BYTE_LEN,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -335,6 +335,115 @@ mod tests {
     use crate::routing::delivery::{Delivery, PlainDelivery, SingleDelivery};
     use crate::routing::storage::FixedInline;
     use crate::routing::upstream_app_destinations::ProofStrategy;
+
+    #[test]
+    fn a_path_request_for_a_local_destination_owes_an_answer() {
+        let mut state = personal_node_announcer();
+        let local = state.self_announced_destinations()[0];
+
+        let mut buf = [0u8; MTU];
+        let n =
+            crate::engine::write_path_request_wire_packet(local, &[0x55; 16], &mut buf).unwrap();
+        let mut wire = buf[..n].to_vec();
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::AnswerPathRequest { destination: local },
+        );
+    }
+
+    #[test]
+    fn a_path_request_for_a_stranger_is_ignored() {
+        let mut state = personal_node_announcer();
+        let mut buf = [0u8; MTU];
+        let n = crate::engine::write_path_request_wire_packet(
+            DestinationHash::new([0x44; 16]),
+            &[0x55; 16],
+            &mut buf,
+        )
+        .unwrap();
+        let mut wire = buf[..n].to_vec();
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn write_path_response_announce_emits_a_path_response_a_peer_learns_as_a_route() {
+        use crate::engine::PathResponseWriteOutcome;
+        use crate::routing::announce::Announce;
+
+        // B answers for its own destination with a PATH_RESPONSE announce.
+        let mut b = personal_node_announcer();
+        let local = b.self_announced_destinations()[0];
+        let mut buf = [0u8; MTU];
+        let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
+            &local,
+            InstantMillis(500),
+            TEST_SELF_ANNOUNCE_ENTROPY,
+            &mut buf,
+        ) else {
+            panic!("a local destination is answerable");
+        };
+
+        let (header, payload) = WirePacketHeader::parse(&buf[..wire_len]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(header.context, WireContext::PathResponse);
+        assert_eq!(header.destination, local);
+        assert_eq!(
+            Announce::from_wire(&header, payload).unwrap().destination,
+            local
+        );
+
+        // A fresh peer accepts it as an ordinary announce — a learned route.
+        let mut a: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut wire = buf[..wire_len].to_vec();
+        assert!(matches!(
+            a.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_200),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
+        ));
+        assert_eq!(a.route_count(), 1);
+    }
+
+    #[test]
+    fn a_path_response_for_a_destination_we_do_not_hold_is_refused() {
+        use crate::engine::PathResponseWriteOutcome;
+        let mut b = personal_node_announcer();
+        let mut buf = [0u8; MTU];
+        assert!(matches!(
+            b.write_path_response_announce(
+                &DestinationHash::new([0x44; 16]),
+                InstantMillis(500),
+                TEST_SELF_ANNOUNCE_ENTROPY,
+                &mut buf,
+            ),
+            PathResponseWriteOutcome::NotLocal,
+        ));
+    }
 
     #[test]
     fn ingest_counts_each_packet_without_a_clock() {
@@ -1449,6 +1558,7 @@ mod tests {
     }
 }
 
+use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::proof::{ProofIngest, ProofOwed};
 use crate::engine::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::engine::EngineState;
@@ -1499,6 +1609,11 @@ pub enum IngestPacketOutcome<'p> {
     },
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
+    /// A path request arrived for one of our own destinations — the runtime
+    /// owes a path-response announce for it.
+    AnswerPathRequest {
+        destination: DestinationHash,
+    },
     Ignored,
 }
 
@@ -1558,6 +1673,11 @@ impl<S: EngineStorage> EngineState<S> {
                 source_interface,
                 arrived_at,
             } => {
+                if data.destination == PATH_REQUEST_DESTINATION
+                    && data.destination_type == DestinationType::Plain
+                {
+                    return self.ingest_path_request(&data);
+                }
                 let in_transport_through_us = self.transport_id.is_some()
                     && header.transport_id == self.transport_id
                     && self
@@ -1706,6 +1826,30 @@ impl<S: EngineStorage> EngineState<S> {
                 ))
             }
             DestinationType::Group | DestinationType::Link => None,
+        }
+    }
+
+    /// RNS 1.3.1 `Transport.path_request_handler`: the payload opens with the
+    /// requested destination hash (an optional requester transport id and tag
+    /// follow, both deferred to the relay/forward work). We answer only requests
+    /// for a destination of our own; relaying a request we can't answer is later
+    /// work.
+    fn ingest_path_request<'p>(&mut self, data: &DataPacket<'_>) -> IngestPacketOutcome<'p> {
+        let Some(destination) = data
+            .payload
+            .get(..TRUNCATED_HASH_BYTE_LEN)
+            .and_then(DestinationHash::from_slice)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        if self
+            .upstream_app_destinations
+            .lookup(&destination, DestinationType::Single)
+            .is_some()
+        {
+            IngestPacketOutcome::AnswerPathRequest { destination }
+        } else {
+            IngestPacketOutcome::Ignored
         }
     }
 

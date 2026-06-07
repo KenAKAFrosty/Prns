@@ -26,20 +26,47 @@ pub fn write_announce_wire_packet(
     hops: u8,
     buf: &mut [u8],
 ) -> Result<usize, EgressSerializeError> {
-    frame_announce_wire_packet(announce, hops, PropagationType::Broadcast, None, buf)
+    frame_announce_wire_packet(
+        announce,
+        hops,
+        PropagationType::Broadcast,
+        None,
+        WireContext::None,
+        buf,
+    )
 }
 
-/// RNS 1.3.1 `Transport.jobs()` announce retransmission: the same announce
-/// body re-framed under a transport header — `HEADER_2`, `TRANSPORT`
-/// propagation, and the relaying node's id stamped in — so hearers learn the
-/// next hop back toward the destination.
+/// RNS 1.3.1 `Destination.announce(path_response=True)`
+pub fn write_path_response_announce_wire_packet(
+    announce: &Announce,
+    hops: u8,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    frame_announce_wire_packet(
+        announce,
+        hops,
+        PropagationType::Broadcast,
+        None,
+        WireContext::PathResponse,
+        buf,
+    )
+}
+
+/// RNS 1.3.1 `Transport.jobs()` announce retransmission
 pub fn write_retransmitted_announce_wire_packet(
     announce: &Announce,
     hops: u8,
     via: TransportId,
     buf: &mut [u8],
 ) -> Result<usize, EgressSerializeError> {
-    frame_announce_wire_packet(announce, hops, PropagationType::Transport, Some(via), buf)
+    frame_announce_wire_packet(
+        announce,
+        hops,
+        PropagationType::Transport,
+        Some(via),
+        WireContext::None,
+        buf,
+    )
 }
 
 fn frame_announce_wire_packet(
@@ -47,6 +74,7 @@ fn frame_announce_wire_packet(
     hops: u8,
     propagation: PropagationType,
     transport_id: Option<TransportId>,
+    context: WireContext,
     buf: &mut [u8],
 ) -> Result<usize, EgressSerializeError> {
     let context_flag = if announce.maybe_ratchet.is_some() {
@@ -63,7 +91,7 @@ fn frame_announce_wire_packet(
         hops,
         transport_id,
         destination: announce.destination,
-        context: WireContext::None,
+        context,
     };
     let header_len = if transport_id.is_some() {
         HEADER_MAX_LEN
@@ -83,14 +111,7 @@ fn frame_announce_wire_packet(
     Ok(total_len)
 }
 
-/// RNS 1.3.1 `Identity.prove` in its implicit form — the reference default
-/// (`use_implicit_proof`, a node-global config that virtually every deployed
-/// node leaves on): a proof packet is addressed to the proved packet's
-/// truncated hash and its whole payload is the 64-byte signature over the
-/// full hash. The explicit form (hash ‖ signature) is a different wire shape
-/// with its own writer if that knob is ever wanted; receivers accept both.
-/// Proofs are never encrypted (`ProofDestination.encrypt` is the identity
-/// function).
+/// RNS 1.3.1 `Identity.prove` in its implicit form
 pub fn write_implicit_proof_wire_packet(
     packet_hash: &PacketHash,
     signature: &Ed25519Signature,
@@ -249,6 +270,43 @@ mod tests {
                 &mut tiny
             ),
             Err(EgressSerializeError::BufferTooShort),
+        );
+    }
+
+    #[test]
+    fn a_path_response_is_a_normal_announce_with_only_the_context_byte_flipped() {
+        let raw = hx(RAW_ANNOUNCE);
+        let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
+        let announce = Announce::from_wire(&header, payload).unwrap();
+
+        let mut normal = [0u8; 500];
+        let n = write_announce_wire_packet(&announce, 0, &mut normal).unwrap();
+        let mut response = [0u8; 500];
+        let m = write_path_response_announce_wire_packet(&announce, 0, &mut response).unwrap();
+        assert_eq!(n, m);
+
+        // The context byte is the last of a type-1 header.
+        let context_offset = HEADER_MIN_LEN - 1;
+        assert_eq!(normal[context_offset], WireContext::None.to_byte());
+        assert_eq!(
+            response[context_offset],
+            WireContext::PathResponse.to_byte()
+        );
+
+        let mut patched = response;
+        patched[context_offset] = WireContext::None.to_byte();
+        assert_eq!(
+            &patched[..m],
+            &normal[..n],
+            "the only difference from a normal announce is the context byte",
+        );
+
+        let (re_header, re_payload) = WirePacketHeader::parse(&response[..m]).unwrap();
+        assert_eq!(re_header.context, WireContext::PathResponse);
+        assert_eq!(re_header.packet_type, PacketType::Announce);
+        assert_eq!(
+            Announce::from_wire(&re_header, re_payload).unwrap(),
+            announce
         );
     }
 
