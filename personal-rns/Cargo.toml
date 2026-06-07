@@ -52,6 +52,10 @@ usb-auto = ["std-sync-host", "dep:serialport", "dep:mio", "dep:mio-serial"]
 # if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
 # want it never link either crate.
 wifi-lan-auto = ["std-sync-host", "dep:socket2", "dep:if-addrs"]
+# The RNS-parity TCP interface (TCPClientInterface / TCPServerInterface) for std hosts:
+# the std worker machinery plus socket2 (TCP_NODELAY + keepalive parity). Opt-in, so std
+# hosts that don't want TCP never link socket2.
+tcp = ["std-sync-host", "dep:socket2"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]

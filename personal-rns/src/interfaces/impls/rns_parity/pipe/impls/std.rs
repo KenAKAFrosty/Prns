@@ -1,21 +1,17 @@
 //! WIP — unreviewed (PipeInterface, rns_parity). API, naming, and structure may still change.
 
-use std::io::{self, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::time::Duration;
 
 use super::super::core::{descriptor, PIPE_MTU};
-use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
+use crate::interfaces::impls::rns_parity::framed_stream::{self, ConnectionEnd};
 use crate::interfaces::substrate::StdHostSubstrate;
 use crate::interfaces::{
     ConnectionState, ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceId,
     InterfaceWorkerContext, OutboundDrain, SelfDrivenInterface,
 };
-
-const READ_CHUNK: usize = 4096;
-const WRITE_PARK_FALLBACK: Duration = Duration::from_millis(250);
 
 type PipeContext = InterfaceWorkerContext<StdHostSubstrate<PIPE_MTU>>;
 
@@ -71,10 +67,14 @@ where
                 if matches!(end, ConnectionEnd::Stopped) {
                     break;
                 }
-                control.report(ControlReport::ConnectionState(ConnectionState::Reconnecting));
+                control.report(ControlReport::ConnectionState(
+                    ConnectionState::Reconnecting,
+                ));
             }
             Err(_) => {
-                control.report(ControlReport::ConnectionState(ConnectionState::Reconnecting));
+                control.report(ControlReport::ConnectionState(
+                    ConnectionState::Reconnecting,
+                ));
             }
         }
 
@@ -83,11 +83,6 @@ where
     }
 
     control.report(ControlReport::Stopped);
-}
-
-enum ConnectionEnd {
-    Stopped,
-    Disconnected,
 }
 
 fn serve_connection<I, O, C>(
@@ -114,10 +109,11 @@ where
 
     let end = std::thread::scope(|scope| {
         let dead = &connection_dead;
-        let reader = scope.spawn(move || read_loop(stdout, inbound, dead, wake_tx));
+        let reader = scope.spawn(move || framed_stream::read_loop(stdout, inbound, dead, wake_tx));
 
         control.report(ControlReport::ConnectionState(ConnectionState::Connected));
-        let end = write_loop(&mut stdin, outbound, control, wake_rx, &connection_dead);
+        let end =
+            framed_stream::write_loop(&mut stdin, outbound, control, wake_rx, &connection_dead);
 
         let _ = child.kill();
         drop(stdin);
@@ -127,77 +123,6 @@ where
 
     let _ = child.wait();
     end
-}
-
-fn read_loop<I: InboundSink>(
-    mut stdout: ChildStdout,
-    inbound: &mut I,
-    connection_dead: &AtomicBool,
-    wake: &SyncSender<()>,
-) {
-    let mut decoder = RnsSerialDecoder::<PIPE_MTU>::new();
-    let mut read_buf = [0u8; READ_CHUNK];
-
-    loop {
-        match stdout.read(&mut read_buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                decoder.feed_slice(&read_buf[..n], |frame| {
-                    if !frame.is_empty() {
-                        let _ = inbound.submit(|buf| {
-                            buf[..frame.len()].copy_from_slice(frame);
-                            frame.len()
-                        });
-                    }
-                });
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-            Err(_) => break,
-        }
-    }
-
-    connection_dead.store(true, Ordering::Release);
-    let _ = wake.try_send(());
-}
-
-fn write_loop<O: OutboundDrain, C: ControlEndpoint>(
-    stdin: &mut ChildStdin,
-    outbound: &mut O,
-    control: &mut C,
-    wake_rx: &Receiver<()>,
-    connection_dead: &AtomicBool,
-) -> ConnectionEnd {
-    let mut frame_buf = [0u8; rns_serial_framing::max_encoded_len(PIPE_MTU)];
-
-    loop {
-        if matches!(control.next_command(), Some(ControlCommand::Stop)) {
-            return ConnectionEnd::Stopped;
-        }
-        if connection_dead.load(Ordering::Acquire) {
-            return ConnectionEnd::Disconnected;
-        }
-
-        let mut write_failed = false;
-        outbound.drain_each(|packet| {
-            if write_failed {
-                return;
-            }
-            if let Ok(n) = rns_serial_framing::encode(packet.bytes, &mut frame_buf) {
-                if stdin
-                    .write_all(&frame_buf[..n])
-                    .and_then(|()| stdin.flush())
-                    .is_err()
-                {
-                    write_failed = true;
-                }
-            }
-        });
-        if write_failed {
-            return ConnectionEnd::Disconnected;
-        }
-
-        let _ = wake_rx.recv_timeout(WRITE_PARK_FALLBACK);
-    }
 }
 
 #[cfg(all(test, unix))]
@@ -241,8 +166,7 @@ mod tests {
             wake_tx,
         );
 
-        let interface =
-            std_pipe_interface(test_id(), cat_unbuffered, Duration::from_millis(20));
+        let interface = std_pipe_interface(test_id(), cat_unbuffered, Duration::from_millis(20));
         let _drive = interface.start(worker_context);
 
         runtime_handle

@@ -8,7 +8,11 @@
 //! (the RNS `PipeInterface` over a subprocess's stdio), and [`rnode_lora`]
 //! (RNode-compatible LoRa).
 
+#[cfg(feature = "std-sync-host")]
+pub(crate) mod framed_stream;
+
 pub mod auto_interface;
 pub mod pipe;
 pub mod rnode_lora;
 pub mod serial;
+pub mod tcp;
