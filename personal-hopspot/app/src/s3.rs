@@ -15,6 +15,8 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use esp_println::println;
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use embassy_executor::Spawner;
 use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_net::{Ipv6Cidr, Runner, Stack, StackResources, StaticConfigV6};
@@ -31,13 +33,12 @@ use static_cell::StaticCell;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand,
-    EngineCycleEntropySeed, IssuedCommand, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineCycleEntropySeed,
+    IssuedCommand, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
-use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
 use personal_rns::interfaces::impls::usb_auto::serve;
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
@@ -48,6 +49,7 @@ use personal_rns::interfaces::substrate::{
 use personal_rns::interfaces::{
     InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface, StartedInterface,
 };
+use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::storage::FixedInline;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
@@ -85,9 +87,78 @@ macro_rules! mk_static {
 }
 const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8> = FixedInline;
 
-/// The engine's own stack on core 1 — explicitly sized, with generous headroom
-/// over the deepest cycle (announce verify is ~6KB of curve25519 frames).
-const CORE1_STACK_BYTES: usize = 32 * 1024;
+/// The engine's own stack on core 1 — sized from the painted watermark: the
+/// measured peak is 69.1KB, and it is the boot spawn (embassy constructs the
+/// ~68KB engine_task future here before moving it into the task pool), not
+/// crypto — every dalek sign/verify ran beneath it. Re-measure via BUDGETS
+/// whenever the engine grows.
+const CORE1_STACK_BYTES: usize = 76 * 1024;
+
+const STACK_PAINT_WORD: u32 = 0x57AC_C0DE;
+const STACK_GUARD_SKIP_BYTES: usize = 64;
+const CORE1_ENTRY_BLOB_SKIP_BYTES: usize = 2048;
+const STACK_PAINT_SP_MARGIN_BYTES: usize = 2048;
+const BUDGET_REPORT_EVERY: Duration = Duration::from_secs(20);
+
+struct PaintedStack {
+    floor: AtomicUsize,
+    top: AtomicUsize,
+}
+
+static CORE0_STACK: PaintedStack = PaintedStack::unpainted();
+static CORE1_STACK: PaintedStack = PaintedStack::unpainted();
+
+impl PaintedStack {
+    const fn unpainted() -> Self {
+        Self {
+            floor: AtomicUsize::new(0),
+            top: AtomicUsize::new(0),
+        }
+    }
+
+    unsafe fn paint(&self, floor: usize, paint_top: usize, true_top: usize) {
+        critical_section::with(|_| {
+            let mut addr = floor;
+            while addr + 4 <= paint_top {
+                (addr as *mut u32).write_volatile(STACK_PAINT_WORD);
+                addr += 4;
+            }
+        });
+        self.floor.store(floor, Ordering::Release);
+        self.top.store(true_top, Ordering::Release);
+    }
+
+    fn peak_bytes(&self) -> usize {
+        let floor = self.floor.load(Ordering::Acquire);
+        let top = self.top.load(Ordering::Acquire);
+        if floor == 0 {
+            return 0;
+        }
+        let mut addr = floor;
+        while addr + 4 <= top {
+            if unsafe { (addr as *const u32).read_volatile() } != STACK_PAINT_WORD {
+                return top - addr;
+            }
+            addr += 4;
+        }
+        0
+    }
+
+    fn span_bytes(&self) -> usize {
+        self.top.load(Ordering::Acquire) - self.floor.load(Ordering::Acquire)
+    }
+}
+
+fn core0_stack_bounds() -> (usize, usize) {
+    extern "C" {
+        static _stack_end: u32;
+        static _stack_start: u32;
+    }
+    (
+        core::ptr::addr_of!(_stack_end) as usize,
+        core::ptr::addr_of!(_stack_start) as usize,
+    )
+}
 
 type EngineInterfaces = FixedInterfaceSet<
     StartedInterface<EmbassyInterfaceHandle<MAX_DATA_BYTES>, core::convert::Infallible>,
@@ -156,10 +227,21 @@ pub async fn run(spawner: Spawner) {
     // esp-rtos needs a heap + a timer + a software interrupt to boot the scheduler and
     // the embassy-time driver. WiFi and the IP stack push the heap well past the
     // USB-only footprint, so size it for the radio.
-    esp_alloc::heap_allocator!(size: 92 * 1024);
+    esp_alloc::heap_allocator!(size: 64 * 1024);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+
+    let (core0_floor, core0_top) = core0_stack_bounds();
+    let sp: usize;
+    unsafe { core::arch::asm!("mov {0}, a1", out(reg) sp) };
+    unsafe {
+        CORE0_STACK.paint(
+            core0_floor + STACK_GUARD_SKIP_BYTES,
+            sp - STACK_PAINT_SP_MARGIN_BYTES,
+            core0_top,
+        )
+    };
 
     esp_println::logger::init_logger_from_env();
 
@@ -261,8 +343,9 @@ pub async fn run(spawner: Spawner) {
     // executor beside the radio; only the runtime ends of the channels cross to
     // core 1 with the engine.
     let mut interfaces: EngineInterfaces = FixedInterfaceSet::new();
-    let _ = interfaces
-        .push(EmbassyInterfaceSeam::split(USB_INTERFACE_ID, &CHANNELS, &WAKE).start_interface(interface));
+    let _ = interfaces.push(
+        EmbassyInterfaceSeam::split(USB_INTERFACE_ID, &CHANNELS, &WAKE).start_interface(interface),
+    );
     let _ = interfaces.push(
         EmbassyInterfaceSeam::split(WIFI_INTERFACE_ID, &WIFI_CHANNELS, &WAKE)
             .start_interface(wifi_interface),
@@ -272,10 +355,20 @@ pub async fn run(spawner: Spawner) {
     // sized stack, and no radio task ever preempts a cycle. Radio, render, and
     // input stay here on core 0 — true parallelism across the seam.
     let secret_key = fixture_identity_secret_key();
+    let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
+    let core1_floor = core1_stack as *const CpuStack<CORE1_STACK_BYTES> as usize;
+    let core1_top = core1_floor + core::mem::size_of::<CpuStack<CORE1_STACK_BYTES>>();
+    unsafe {
+        CORE1_STACK.paint(
+            core1_floor + CORE1_ENTRY_BLOB_SKIP_BYTES,
+            core1_top,
+            core1_top,
+        )
+    };
     esp_rtos::start_second_core(
         p.CPU_CTRL,
         sw_int.software_interrupt1,
-        mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new()),
+        core1_stack,
         move || {
             static CORE1_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
             CORE1_EXECUTOR
@@ -325,8 +418,23 @@ pub async fn run(spawner: Spawner) {
     let mut last_active = Instant::now();
     let mut panel_on = true;
     let mut battery_tick = Ticker::every(Duration::from_secs(2));
+    let mut last_budget_report = Instant::now();
     loop {
         rtc.rwdt.feed();
+        if last_budget_report.elapsed() >= BUDGET_REPORT_EVERY {
+            last_budget_report = Instant::now();
+            let heap = esp_alloc::HEAP.stats();
+            log::info!(
+                "BUDGETS core0 {}B peak / {}B span | core1 {}B peak / {}B span | heap {}B now / {}B peak / {}B cap",
+                CORE0_STACK.peak_bytes(),
+                CORE0_STACK.span_bytes(),
+                CORE1_STACK.peak_bytes(),
+                CORE1_STACK.span_bytes(),
+                heap.current_usage,
+                heap.max_usage,
+                heap.size,
+            );
+        }
         // Battery level from the smoothed pin voltage; an implausibly low reading means
         // no LiPo (USB-only) → Unknown.
         let mut pin_mv = 0u16;
