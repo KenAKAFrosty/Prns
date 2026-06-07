@@ -145,7 +145,7 @@ pub async fn run(spawner: Spawner) {
     // esp-rtos needs a heap + a timer + a software interrupt to boot the scheduler and
     // the embassy-time driver. WiFi and the IP stack push the heap well past the
     // USB-only footprint, so size it for the radio.
-    esp_alloc::heap_allocator!(size: 110 * 1024);
+    esp_alloc::heap_allocator!(size: 92 * 1024);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
