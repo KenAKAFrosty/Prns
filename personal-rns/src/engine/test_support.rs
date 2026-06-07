@@ -40,6 +40,7 @@ pub(crate) fn raw_announce_accepted(hops: u8) -> IngestPacketOutcome<'static> {
             hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap(),
         ),
         hops,
+        rebroadcast: RebroadcastDecision::Scheduled,
     }))
 }
 
@@ -226,6 +227,10 @@ pub(crate) fn repeating_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         },
         ..routable_descriptor(id)
     }
+}
+
+pub(crate) fn transporting_view() -> [InterfaceDescriptor; 1] {
+    [routable_descriptor(InterfaceId::new([0xEE; 16]))]
 }
 
 pub(crate) const RATCHETED_SELF_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\

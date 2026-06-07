@@ -10,8 +10,8 @@ use crate::engine::{
     AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
     CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome,
     InstantMillis, IssuedCommand, NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy,
-    SendSingle, SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement,
-    WriteSendSingleError,
+    RebroadcastDecision, SendSingle, SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome,
+    Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -248,10 +248,12 @@ where
             let step = match interface.next_inbound(|packet| {
                 traffic.add_rx(id, packet.bytes.len() as u64);
                 ingested_packet_count += 1;
-                match engine.ingest_packet(packet, jitter) {
+                match engine.ingest_packet(packet, jitter, &interface_view) {
                     IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
                         accepted_announce_count += 1;
-                        scheduled_rebroadcast_count += 1;
+                        if accepted.rebroadcast == RebroadcastDecision::Scheduled {
+                            scheduled_rebroadcast_count += 1;
+                        }
                         on_event(PrnsEvent::AnnounceHeard {
                             destination: accepted.destination,
                             hops: accepted.hops,
@@ -692,6 +694,7 @@ fn host_wake(engine: NextScheduledEngineWork, interface: NextScheduledInterfaceW
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::transporting_view;
     use std::collections::VecDeque;
 
     use crate::engine::{
@@ -1400,6 +1403,7 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             );
             state
         }

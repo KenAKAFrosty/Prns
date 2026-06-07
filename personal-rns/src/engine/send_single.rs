@@ -266,6 +266,7 @@ mod tests {
         let announced = crate::engine::AcceptedAnnounce {
             destination: header.destination,
             hops: header.hops + 1,
+            rebroadcast: crate::engine::RebroadcastDecision::Scheduled,
         };
         let mut raw = wire.to_vec();
         let outcome = state.ingest_packet(
@@ -275,6 +276,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(
             outcome,
@@ -546,7 +548,11 @@ mod tests {
 
         let mut wire = buf[..dispatch.wire_len].to_vec();
         assert_eq!(
-            peer.ingest_packet(plain_data_packet(&mut wire), TEST_ENTROPY),
+            peer.ingest_packet(
+                plain_data_packet(&mut wire),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination: peer_destination(),
@@ -642,6 +648,7 @@ mod tests {
                     bytes: &mut proof,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                 id: CommandId(7),
@@ -659,6 +666,7 @@ mod tests {
                     bytes: &mut replay,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
             "settlement removed the receipt, so a replayed proof finds nothing",
@@ -688,6 +696,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                 id: CommandId(7),
@@ -715,6 +724,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );
@@ -735,6 +745,7 @@ mod tests {
                     bytes: &mut packet,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );

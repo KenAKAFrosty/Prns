@@ -19,7 +19,7 @@ pub use commands::{
 };
 pub use egress::{EgressDirective, EgressSerializeError};
 pub use identity_registration::SetTransportIdentityError;
-pub use ingress::{AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome};
+pub use ingress::{AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome, RebroadcastDecision};
 pub use ingress::{DataPacket, Ingress};
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
 pub use self_announce::{
@@ -264,6 +264,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
@@ -294,6 +295,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(out, raw_announce_accepted(1));
         assert_eq!(state.route_count(), 1);

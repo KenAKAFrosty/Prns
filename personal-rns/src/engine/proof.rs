@@ -124,7 +124,11 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
         assert_eq!(raw, hx(RAW_SEALED_FOR_PROOF));
 
-        let outcome = state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY);
+        let outcome = state.ingest_packet(
+            plain_data_packet(&mut raw),
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
         let IngestPacketOutcome::Delivery {
             maybe_owed_proof: Some(owed),
             ..

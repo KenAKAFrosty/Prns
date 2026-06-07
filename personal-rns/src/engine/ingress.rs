@@ -1,5 +1,5 @@
 use crate::engine::InstantMillis;
-use crate::interfaces::{InboundPacket, InterfaceId};
+use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WirePacketHeader, MTU,
@@ -335,6 +335,7 @@ mod tests {
                 bytes: &mut first_bytes,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         let mut second_bytes = [4];
         let second = state.ingest_packet(
@@ -344,6 +345,7 @@ mod tests {
                 bytes: &mut second_bytes,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
 
         assert_eq!(first, IngestPacketOutcome::Ignored);
@@ -358,7 +360,11 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-announced");
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -379,7 +385,11 @@ mod tests {
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -410,7 +420,11 @@ mod tests {
         let destination = state.self_announced_destinations()[0];
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -432,7 +446,11 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -457,7 +475,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Plain(PlainDelivery {
                     destination,
@@ -481,7 +503,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -495,7 +521,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -530,7 +560,11 @@ mod tests {
         raw[header_len] = 0xFF;
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw[..header_len + 1]), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw[..header_len + 1]),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -554,14 +588,22 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Plain(delivered),
             ..
-        } = state.ingest_packet(plain_data_packet(&mut raw_for_us), TEST_ENTROPY)
+        } = state.ingest_packet(
+            plain_data_packet(&mut raw_for_us),
+            TEST_ENTROPY,
+            &transporting_view(),
+        )
         else {
             panic!("in-transport data named to us must deliver plainly");
         };
         assert_eq!(delivered.payload, &[0xEE]);
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw_for_other), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw_for_other),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -579,7 +621,11 @@ mod tests {
         ));
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -600,7 +646,11 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -631,7 +681,11 @@ mod tests {
 
         let mut first_copy = raw.clone();
         assert!(matches!(
-            state.ingest_packet(plain_data_packet(&mut first_copy), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut first_copy),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
                 ..
@@ -640,7 +694,11 @@ mod tests {
 
         let mut replayed_copy = raw.clone();
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut replayed_copy), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut replayed_copy),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -664,13 +722,21 @@ mod tests {
         let last = tampered.len() - 1;
         tampered[last] ^= 0x01;
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut tampered), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut tampered),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
 
         let mut genuine = raw.clone();
         assert!(matches!(
-            state.ingest_packet(plain_data_packet(&mut genuine), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut genuine),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
                 ..
@@ -709,7 +775,11 @@ mod tests {
 
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut to_a), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut to_a),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination: dest_a,
@@ -724,7 +794,11 @@ mod tests {
 
         let mut to_b = sealed_single_packet(&identity_b, dest_b, b"for-b");
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut to_b), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut to_b),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination: dest_b,
@@ -739,7 +813,11 @@ mod tests {
 
         let mut crossed = sealed_single_packet(&identity_b, dest_a, b"crossed");
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut crossed), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut crossed),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -768,14 +846,22 @@ mod tests {
 
         let mut as_app_only = raw.clone();
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut as_app_only), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut as_app_only),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
 
         state.set_transport_identity(&held).unwrap();
         let mut as_transport = raw.clone();
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut as_transport), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut as_transport),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -807,7 +893,11 @@ mod tests {
         let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
                     destination,
@@ -845,7 +935,11 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, unregistered, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet(plain_data_packet(&mut raw), TEST_ENTROPY),
+            state.ingest_packet(
+                plain_data_packet(&mut raw),
+                TEST_ENTROPY,
+                &transporting_view()
+            ),
             IngestPacketOutcome::Ignored,
         );
     }
@@ -873,11 +967,45 @@ mod tests {
                     bytes: &mut relayed,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
             "a transport echoing our announce back must not become a route to ourselves",
         );
         assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
+    fn a_node_without_transport_interfaces_learns_the_route_but_owes_no_rebroadcast() {
+        use crate::interfaces::{EgressCapability, TransportCapability};
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 16]));
+        leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
+
+        let out = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &[leaf],
+        );
+
+        assert_eq!(
+            out,
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                destination: DestinationHash::new(
+                    hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap(),
+                ),
+                hops: 1,
+                rebroadcast: RebroadcastDecision::NoTransportInterfaces,
+            })),
+        );
+        assert_eq!(state.route_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
     }
 
     #[test]
@@ -892,6 +1020,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(first, raw_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
@@ -903,6 +1032,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(
             second,
@@ -923,6 +1053,7 @@ mod tests {
                 bytes: &mut at_limit,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(out, raw_announce_accepted(128));
 
@@ -936,6 +1067,7 @@ mod tests {
                 bytes: &mut beyond,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
         assert_eq!(state.route_count(), 0);
@@ -957,6 +1089,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(out, raw_announce_accepted(1));
 
@@ -978,7 +1111,7 @@ mod tests {
             source_interface: InterfaceId::new([0u8; 16]),
             bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
-        let out = state.ingest_packet(junk, TEST_ENTROPY);
+        let out = state.ingest_packet(junk, TEST_ENTROPY, &transporting_view());
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
@@ -996,6 +1129,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
 
         assert_eq!(
@@ -1036,6 +1170,13 @@ pub enum AnnounceIngest {
 pub struct AcceptedAnnounce {
     pub destination: DestinationHash,
     pub hops: u8,
+    pub rebroadcast: RebroadcastDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebroadcastDecision {
+    Scheduled,
+    NoTransportInterfaces,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1055,6 +1196,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         packet: InboundPacket<'p>,
         jitter: JitterSeed,
+        interfaces: &[InterfaceDescriptor],
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -1070,6 +1212,7 @@ impl<S: EngineStorage> EngineState<S> {
                 source_interface,
                 arrived_at,
                 jitter,
+                interfaces,
             )),
 
             Ingress::Data {
@@ -1192,6 +1335,7 @@ impl<S: EngineStorage> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         jitter: JitterSeed,
+        interfaces: &[InterfaceDescriptor],
     ) -> AnnounceIngest {
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
@@ -1214,19 +1358,28 @@ impl<S: EngineStorage> EngineState<S> {
                 .upsert_route(received_hops, arrived_at, source_interface, &announce);
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
-                let offset = jitter_offset_for(
-                    jitter,
-                    &announce.destination,
-                    DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                );
-                self.pending_rebroadcasts.schedule(
-                    announce.destination,
-                    InstantMillis(arrived_at.0.saturating_add(offset)),
-                    source_interface,
-                );
+                let rebroadcast = if interfaces
+                    .iter()
+                    .any(|descriptor| descriptor.capabilities.allows_transport())
+                {
+                    let offset = jitter_offset_for(
+                        jitter,
+                        &announce.destination,
+                        DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                    );
+                    self.pending_rebroadcasts.schedule(
+                        announce.destination,
+                        InstantMillis(arrived_at.0.saturating_add(offset)),
+                        source_interface,
+                    );
+                    RebroadcastDecision::Scheduled
+                } else {
+                    RebroadcastDecision::NoTransportInterfaces
+                };
                 AnnounceIngest::Accepted(AcceptedAnnounce {
                     destination: announce.destination,
                     hops: received_hops,
+                    rebroadcast,
                 })
             }
             UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {

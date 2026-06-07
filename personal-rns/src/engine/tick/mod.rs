@@ -102,16 +102,21 @@ impl<S: EngineStorage> EngineState<S> {
                             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
                         ) {
                             recovered_from_held_count += 1;
-                            let offset = jitter_offset_for(
-                                jitter,
-                                &announce.destination,
-                                DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                            );
-                            self.pending_rebroadcasts.schedule(
-                                announce.destination,
-                                InstantMillis(arrival.0.saturating_add(offset)),
-                                source_interface,
-                            );
+                            if interfaces
+                                .iter()
+                                .any(|descriptor| descriptor.capabilities.allows_transport())
+                            {
+                                let offset = jitter_offset_for(
+                                    jitter,
+                                    &announce.destination,
+                                    DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                                );
+                                self.pending_rebroadcasts.schedule(
+                                    announce.destination,
+                                    InstantMillis(arrival.0.saturating_add(offset)),
+                                    source_interface,
+                                );
+                            }
                         }
                     }
                 }
@@ -194,6 +199,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(state.held_announce_count(), 1);
 
@@ -232,6 +238,7 @@ mod tests {
                 bytes: &mut raw1,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         let _ = state.ingest_packet(
             InboundPacket {
@@ -240,6 +247,7 @@ mod tests {
                 bytes: &mut buf2[..n2],
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(
             state.held_announce_count(),
@@ -273,6 +281,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(out, raw_announce_accepted(1));
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
@@ -311,6 +320,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
@@ -376,6 +386,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
@@ -404,6 +415,7 @@ mod tests {
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
+                &transporting_view(),
             );
         }
         let (left_tick, left_bytes) = tick_capture(&mut left, now, &view);
@@ -427,6 +439,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
+            &transporting_view(),
         );
         assert_eq!(state.held_announce_count(), 1);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
