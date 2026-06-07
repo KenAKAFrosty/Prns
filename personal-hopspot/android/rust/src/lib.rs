@@ -6,9 +6,11 @@ pub use face::HopspotFace;
 pub use framebuffer::{ARGB_BYTES, PANEL_HEIGHT, PANEL_WIDTH};
 
 use jni::objects::{JByteBuffer, JClass};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use jni::JNIEnv;
 use personal_hopspot_ui::{InputEvent, UiAction};
+
+use crate::engine::usb_bridge;
 
 const INPUT_SHORT_PRESS: jint = 0;
 const INPUT_LONG_PRESS: jint = 1;
@@ -89,4 +91,57 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeRender(
     // `ARGB_BYTES` long, and nothing else aliases it while we render into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
     face.render(out);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbConnected(
+    _env: JNIEnv,
+    _class: JClass,
+    connected: jboolean,
+) {
+    usb_bridge().set_connected(connected != 0);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbRx(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+    len: jint,
+) {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return;
+    };
+    let n = (len.max(0) as usize).min(capacity);
+    if address.is_null() || n == 0 {
+        return;
+    }
+    // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call;
+    // `n` is clamped to the buffer's reported capacity and we only read from it.
+    let bytes = unsafe { core::slice::from_raw_parts(address, n) };
+    usb_bridge().push_inbound(bytes);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbTx(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+) -> jint {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return 0;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return 0;
+    };
+    if address.is_null() || capacity == 0 {
+        return 0;
+    }
+    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for
+    // this call; nothing else aliases it while we drain outbound frames into it.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
+    usb_bridge().pull_outbound(out) as jint
 }

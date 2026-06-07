@@ -1,10 +1,11 @@
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use personal_hopspot_ui::CardKind;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::{IssuedCommand, RatchetPolicy, ReannounceSchedule};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
+use personal_rns::interfaces::impls::usb_auto::{android_usb_auto_interface, AndroidUsbBridge};
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::storage::GrowableHeap;
@@ -23,10 +24,23 @@ const ANNOUNCE_EVERY_MS: u64 = 60_000;
 
 pub(crate) type SharedSnapshot = Arc<Mutex<Option<RuntimeSnapshot>>>;
 
-static ENGINE: OnceLock<SharedSnapshot> = OnceLock::new();
+struct Engine {
+    snapshot: SharedSnapshot,
+    bridge: AndroidUsbBridge,
+}
+
+static ENGINE: OnceLock<Engine> = OnceLock::new();
+
+fn engine() -> &'static Engine {
+    ENGINE.get_or_init(start_engine)
+}
 
 pub(crate) fn shared_snapshot() -> SharedSnapshot {
-    ENGINE.get_or_init(start_engine).clone()
+    engine().snapshot.clone()
+}
+
+pub(crate) fn usb_bridge() -> AndroidUsbBridge {
+    engine().bridge.clone()
 }
 
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
@@ -37,13 +51,17 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
     }
 }
 
-fn start_engine() -> SharedSnapshot {
+fn start_engine() -> Engine {
     let snapshot: SharedSnapshot = Arc::new(Mutex::new(None));
     let slot = snapshot.clone();
+    let (bridge_tx, bridge_rx) = mpsc::channel();
     let _ = std::thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(slot));
-    snapshot
+        .spawn(move || run_engine(slot, bridge_tx));
+    let bridge = bridge_rx
+        .recv()
+        .expect("the engine hands its USB bridge out before it starts running");
+    Engine { snapshot, bridge }
 }
 
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -52,11 +70,14 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn run_engine(slot: SharedSnapshot) {
+fn run_engine(slot: SharedSnapshot, bridge_tx: mpsc::Sender<AndroidUsbBridge>) {
     let identity_secret_key = load_identity_secret_key();
     let host = LinuxSync::new();
+    let (interface, bridge) = android_usb_auto_interface(USB_INTERFACE_ID);
+    let _ = bridge_tx.send(bridge);
+
     let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(host.attach(usb_auto_interface(USB_INTERFACE_ID), MAX_BUFFERED_PACKETS));
+    let _ = interfaces.push(host.attach(interface, MAX_BUFFERED_PACKETS));
 
     block_on(Prns::run(
         Recipe {
