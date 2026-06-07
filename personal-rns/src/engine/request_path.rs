@@ -57,6 +57,10 @@ impl<S: EngineStorage> EngineState<S> {
             timeout_at: InstantMillis(now.0.saturating_add(PATH_REQUEST_TIMEOUT_MS)),
         });
 
+        let _ = self
+            .seen_path_requests
+            .observe(request.destination, *request.id.as_bytes());
+
         PathRequestWriteOutcome::Written { wire_len, culled }
     }
 

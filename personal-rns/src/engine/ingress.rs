@@ -1,7 +1,26 @@
+use crate::engine::egress::PATH_REQUEST_DESTINATION;
+use crate::engine::proof::{ProofIngest, ProofOwed};
+use crate::engine::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
+use crate::engine::seen_path_requests::{PathRequestIdBytes, PathRequestNovelty};
+use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::routing::announce::defaults::{
+    jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+};
+use crate::routing::announce::held_cache::HeldAnnounces;
+use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::Announce;
+use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
+use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
+use crate::routing::delivery::{
+    Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
+};
+use crate::routing::storage::EngineStorage;
+use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
+use crate::routing::{DropCause, UpsertRouteOutcome};
+use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
     WirePacketHeader, MTU, TRUNCATED_HASH_BYTE_LEN,
@@ -123,6 +142,487 @@ impl<'a> Ingress<'a> {
                 source_interface,
                 arrived_at,
             },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceIngest {
+    Accepted(AcceptedAnnounce),
+    HeldForRetry,
+    Ignored,
+}
+
+/// The route an accepted announce just took — what an app needs to discover
+/// the peer behind it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcceptedAnnounce {
+    pub destination: DestinationHash,
+    pub hops: u8,
+    pub rebroadcast: RebroadcastDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RebroadcastDecision {
+    Scheduled,
+    NotATransportNode,
+    NoTransportInterfaces,
+    /// A path response is learned but never re-flooded — the answer is for the
+    /// requester, not the network (RNS Transport.py:1884).
+    TerminalPathResponse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestPacketOutcome<'p> {
+    Announce(AnnounceIngest),
+    Delivery {
+        delivery: Delivery<'p>,
+        maybe_owed_proof: Option<ProofOwed>,
+    },
+    Proof(ProofIngest),
+    Forward(PacketToForward<'p>),
+    /// A path request arrived for one of our own destinations — the runtime
+    /// owes a path-response announce for it.
+    AnswerPathRequest {
+        destination: DestinationHash,
+    },
+    /// A path request arrived for a destination we relay but do not own — the
+    /// runtime owes a re-emission of the announce we cached for it.
+    AnswerPathRequestFromCache {
+        destination: DestinationHash,
+    },
+    /// A path request arrived for a destination we neither own nor route — a
+    /// transport node re-broadcasts it onward to discover the path, reusing the
+    /// id so the network recognises and stops loops.
+    ForwardPathRequest {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
+    },
+    Ignored,
+}
+
+/// A packet in transport, re-framed and owed to another interface — RNS 1.3.1
+/// Transport.py:1556-1580 (data riding the path table onward) and :2254 (a
+/// proof riding the reverse table home).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PacketToForward<'p> {
+    pub header: WirePacketHeader,
+    pub payload: &'p [u8],
+    pub fire_on: InterfaceId,
+}
+
+impl PacketToForward<'_> {
+    pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, WireError> {
+        let header_len = self.header.write(buf)?;
+        let total_len = header_len + self.payload.len();
+        if buf.len() < total_len {
+            return Err(WireError::BufferTooShort);
+        }
+        buf[header_len..total_len].copy_from_slice(self.payload);
+        Ok(total_len)
+    }
+}
+
+impl<S: EngineStorage> EngineState<S> {
+    #[must_use]
+    pub fn ingest_packet<'p>(
+        &mut self,
+        packet: InboundPacket<'p>,
+        jitter: JitterSeed,
+        interfaces: &[InterfaceDescriptor],
+    ) -> IngestPacketOutcome<'p> {
+        self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
+
+        match Ingress::classify(packet) {
+            Ingress::Announce {
+                announce,
+                received_hops,
+                source_interface,
+                arrived_at,
+                next_hop,
+                is_path_response,
+            } => IngestPacketOutcome::Announce(self.ingest_announce(
+                announce,
+                received_hops,
+                source_interface,
+                arrived_at,
+                next_hop,
+                is_path_response,
+                jitter,
+                interfaces,
+            )),
+
+            Ingress::Data {
+                data,
+                header,
+                received_hops,
+                source_interface,
+                arrived_at,
+            } => {
+                if data.destination == PATH_REQUEST_DESTINATION
+                    && data.destination_type == DestinationType::Plain
+                {
+                    return self.ingest_path_request(&data);
+                }
+                let in_transport_through_us = self.transport_id.is_some()
+                    && header.transport_id == self.transport_id
+                    && self
+                        .upstream_app_destinations
+                        .lookup(&data.destination, data.destination_type)
+                        .is_none();
+                if in_transport_through_us {
+                    return match self.maybe_forward(
+                        header,
+                        data.payload,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                    ) {
+                        Some(forward) => IngestPacketOutcome::Forward(forward),
+                        None => IngestPacketOutcome::Ignored,
+                    };
+                }
+                match self.maybe_upstream_delivery(
+                    data,
+                    received_hops,
+                    source_interface,
+                    arrived_at,
+                ) {
+                    Some((delivery, maybe_owed_proof)) => IngestPacketOutcome::Delivery {
+                        delivery,
+                        maybe_owed_proof,
+                    },
+                    None => IngestPacketOutcome::Ignored,
+                }
+            }
+
+            Ingress::Proof {
+                payload,
+                destination,
+                received_hops,
+                source_interface,
+                arrived_at,
+            } => {
+                if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
+                    // The proof must arrive back over the interface we forwarded
+                    // toward; anything else is dropped (Transport.py:2256).
+                    if reverse.outbound_interface != source_interface {
+                        return IngestPacketOutcome::Ignored;
+                    }
+                    return IngestPacketOutcome::Forward(PacketToForward {
+                        header: WirePacketHeader {
+                            ifac_flag: IfacFlag::Open,
+                            context_flag: ContextFlag::Unset,
+                            propagation: PropagationType::Broadcast,
+                            destination_type: DestinationType::Single,
+                            packet_type: PacketType::Proof,
+                            hops: received_hops,
+                            transport_id: None,
+                            destination,
+                            context: WireContext::None,
+                        },
+                        payload,
+                        fire_on: reverse.received_interface,
+                    });
+                }
+                IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at))
+            }
+
+            Ingress::LinkRequest => IngestPacketOutcome::Ignored,
+            Ingress::Unparseable => IngestPacketOutcome::Ignored,
+        }
+    }
+
+    fn maybe_upstream_delivery<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> Option<(Delivery<'p>, Option<ProofOwed>)> {
+        if let Some(transport_id) = data.maybe_transport_id {
+            if self.transport_id != Some(transport_id) {
+                return None;
+            }
+        }
+
+        match data.destination_type {
+            DestinationType::Plain => {
+                if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
+                    return None;
+                }
+                self.upstream_app_destinations
+                    .lookup(&data.destination, DestinationType::Plain)?;
+                Some((
+                    Delivery::Plain(PlainDelivery {
+                        destination: data.destination,
+                        context: data.context,
+                        payload: data.payload,
+                        arrived_at,
+                        source_interface,
+                    }),
+                    None,
+                ))
+            }
+            DestinationType::Single => {
+                let registered = self
+                    .upstream_app_destinations
+                    .lookup(&data.destination, DestinationType::Single)?;
+                let UpstreamAppDestinationKind::Single {
+                    identity,
+                    proof_strategy,
+                } = registered.kind
+                else {
+                    return None;
+                };
+                let held = self.held_identities.get(&identity)?;
+
+                let packet_hash = PacketHash::of_data_fields(
+                    DestinationType::Single,
+                    &data.destination,
+                    data.context,
+                    data.payload,
+                );
+                match self.packet_hash_history.remember(packet_hash) {
+                    RememberPacketOutcome::AlreadyKnown => return None,
+                    RememberPacketOutcome::StoredFresh
+                    | RememberPacketOutcome::StoredAfterRotation => {}
+                }
+
+                let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
+                let plaintext = held
+                    .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
+                    .ok()?;
+                let maybe_owed_proof = match proof_strategy {
+                    ProofStrategy::ProveAll => Some(ProofOwed {
+                        packet_hash,
+                        identity,
+                    }),
+                    ProofStrategy::ProveNone => None,
+                };
+                Some((
+                    Delivery::Single(SingleDelivery {
+                        destination: data.destination,
+                        context: data.context,
+                        plaintext,
+                        arrived_at,
+                        source_interface,
+                    }),
+                    maybe_owed_proof,
+                ))
+            }
+            DestinationType::Group | DestinationType::Link => None,
+        }
+    }
+
+    /// RNS 1.3.1 `Transport.path_request_handler`: the payload opens with the
+    /// requested destination hash (an optional requester transport id and tag
+    /// follow, both deferred to the relay/forward work). We answer only requests
+    /// for a destination of our own; relaying a request we can't answer is later
+    /// work.
+    fn ingest_path_request<'p>(&mut self, data: &DataPacket<'_>) -> IngestPacketOutcome<'p> {
+        // The leaf form: the requested destination then a random id (the
+        // optional requester transport id is deferred to a later slice).
+        let (Some(destination), Some(id)) = (
+            data.payload
+                .get(..TRUNCATED_HASH_BYTE_LEN)
+                .and_then(DestinationHash::from_slice),
+            data.payload
+                .get(TRUNCATED_HASH_BYTE_LEN..TRUNCATED_HASH_BYTE_LEN * 2)
+                .and_then(|bytes| PathRequestIdBytes::try_from(bytes).ok()),
+        ) else {
+            return IngestPacketOutcome::Ignored;
+        };
+
+        // A request we have already seen (same destination and id) is a loop or
+        // a re-arrival — drop it before answering or forwarding again.
+        if self.seen_path_requests.observe(destination, id) == PathRequestNovelty::Duplicate {
+            return IngestPacketOutcome::Ignored;
+        }
+
+        if self
+            .upstream_app_destinations
+            .lookup(&destination, DestinationType::Single)
+            .is_some()
+        {
+            IngestPacketOutcome::AnswerPathRequest { destination }
+        } else if self.transport_id.is_some() {
+            // A transport node answers from cache when it holds the route, and
+            // otherwise forwards the request onward to discover it.
+            if self
+                .routing_table
+                .retained_announce_for(&destination)
+                .is_some()
+            {
+                IngestPacketOutcome::AnswerPathRequestFromCache { destination }
+            } else {
+                IngestPacketOutcome::ForwardPathRequest { destination, id }
+            }
+        } else {
+            IngestPacketOutcome::Ignored
+        }
+    }
+
+    /// RNS 1.3.1 Transport.py:1556-1580: a transport-addressed packet rides the
+    /// path table onward. It's re-addressed at the next relay while more than one
+    /// hop remains, stripped back to a plain broadcast for the final hop. It also
+    /// leaves a reverse-table row so its proof can ride home.
+    fn maybe_forward<'p>(
+        &mut self,
+        header: WirePacketHeader,
+        payload: &'p mut [u8],
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> Option<PacketToForward<'p>> {
+        if header.destination_type != DestinationType::Single
+            || header.packet_type != PacketType::Data
+        {
+            return None;
+        }
+        let route = self
+            .routing_table
+            .forwarding_route_for(&header.destination)?;
+
+        let packet_hash = PacketHash::of_data_fields(
+            header.destination_type,
+            &header.destination,
+            header.context,
+            payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return None,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+
+        let forwarded_header = if route.hops == 1 {
+            WirePacketHeader {
+                ifac_flag: IfacFlag::Open,
+                context_flag: ContextFlag::Unset,
+                propagation: PropagationType::Broadcast,
+                destination_type: header.destination_type,
+                packet_type: header.packet_type,
+                hops: received_hops,
+                transport_id: None,
+                destination: header.destination,
+                context: header.context,
+            }
+        } else {
+            let NextHop::Via(next) = route.next_hop else {
+                return None;
+            };
+            WirePacketHeader {
+                hops: received_hops,
+                transport_id: Some(next),
+                ..header
+            }
+        };
+
+        self.reverse_routes.remember(
+            ReverseRouteEntry {
+                proof_destination: packet_hash.proof_destination(),
+                received_interface: source_interface,
+                outbound_interface: route.receiving_interface,
+                expires_at: InstantMillis(
+                    arrived_at
+                        .0
+                        .saturating_add(DEFAULT_REVERSE_ROUTE_TIMEOUT_MS),
+                ),
+            },
+            arrived_at,
+        );
+
+        Some(PacketToForward {
+            header: forwarded_header,
+            payload,
+            fire_on: route.receiving_interface,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ingest_announce(
+        &mut self,
+        announce: Announce<'_>,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+        next_hop: NextHop,
+        is_path_response: bool,
+        jitter: JitterSeed,
+        interfaces: &[InterfaceDescriptor],
+    ) -> AnnounceIngest {
+        let decision = AnnounceAcceptanceInput {
+            packet_hops: received_hops,
+            announce_id: announce.announce_id,
+            destination_is_self_or_upstream: self
+                .upstream_app_destinations
+                .lookup(&announce.destination, DestinationType::Single)
+                .is_some(),
+            existing_route: self.routing_table.existing_route_for(&announce.destination),
+            arrived_at,
+        }
+        .determine_acceptance();
+
+        if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
+            return AnnounceIngest::Ignored;
+        }
+
+        let outcome = self.routing_table.upsert_route(
+            received_hops,
+            arrived_at,
+            source_interface,
+            next_hop,
+            &announce,
+        );
+        match outcome {
+            UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
+                let rebroadcast = if is_path_response {
+                    // A path response is learned, never re-flooded: the answer
+                    // belongs to the requester, not the network.
+                    RebroadcastDecision::TerminalPathResponse
+                } else if self.transport_id.is_none() {
+                    RebroadcastDecision::NotATransportNode
+                } else if interfaces
+                    .iter()
+                    .any(|descriptor| descriptor.capabilities.allows_transport())
+                {
+                    let offset = jitter_offset_for(
+                        jitter,
+                        &announce.destination,
+                        DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+                    );
+                    self.pending_rebroadcasts.schedule(
+                        announce.destination,
+                        InstantMillis(arrived_at.0.saturating_add(offset)),
+                        source_interface,
+                    );
+                    RebroadcastDecision::Scheduled
+                } else {
+                    RebroadcastDecision::NoTransportInterfaces
+                };
+                AnnounceIngest::Accepted(AcceptedAnnounce {
+                    destination: announce.destination,
+                    hops: received_hops,
+                    rebroadcast,
+                })
+            }
+            UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
+                use crate::routing::announce::held_cache::{HoldReason, ParkOutcome};
+                match self.held_announces_cache.park(
+                    &announce,
+                    arrived_at,
+                    received_hops,
+                    HoldReason::RoutingArenaPressure,
+                    source_interface,
+                    next_hop,
+                ) {
+                    ParkOutcome::Parked | ParkOutcome::Overwrote => AnnounceIngest::HeldForRetry,
+                    ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {
+                        AnnounceIngest::Ignored
+                    }
+                }
+            }
+            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => AnnounceIngest::Ignored,
         }
     }
 }
@@ -362,8 +862,10 @@ mod tests {
     }
 
     #[test]
-    fn a_path_request_for_a_stranger_is_ignored() {
-        let mut state = personal_node_announcer();
+    fn a_leaf_ignores_a_path_request_for_a_stranger() {
+        // A non-transport node with no route to the destination has nothing to
+        // answer and nothing to forward.
+        let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
         let mut buf = [0u8; MTU];
         let n = crate::engine::write_path_request_wire_packet(
             DestinationHash::new([0x44; 16]),
@@ -373,7 +875,7 @@ mod tests {
         .unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
-            state.ingest_packet(
+            leaf.ingest_packet(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -609,6 +1111,96 @@ mod tests {
             })),
         ));
         assert_eq!(relay.pending_announce_rebroadcast_count(), 1);
+    }
+
+    #[test]
+    fn a_transport_node_forwards_a_request_it_can_neither_own_nor_route() {
+        let mut relay = transporting_node();
+        let stranger = DestinationHash::new([0x44; 16]);
+        let mut wire = path_request_wire(stranger);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::ForwardPathRequest {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+        );
+    }
+
+    #[test]
+    fn a_duplicate_path_request_is_dropped() {
+        let mut relay = transporting_node();
+        let stranger = DestinationHash::new([0x44; 16]);
+
+        let mut first = path_request_wire(stranger);
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut first,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::ForwardPathRequest { .. },
+        ));
+
+        let mut echo = path_request_wire(stranger);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_100),
+                    source_interface: iface(0xB2),
+                    bytes: &mut echo,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "the same (destination, id) is a duplicate, dropped before re-forwarding",
+        );
+    }
+
+    #[test]
+    fn the_originator_does_not_re_forward_its_own_request() {
+        use crate::engine::{CommandId, PathRequestId, RequestPath};
+
+        let mut a = transporting_node();
+        let stranger = DestinationHash::new([0x44; 16]);
+        let mut buf = [0u8; MTU];
+        let _ = a.write_commanded_path_request(
+            CommandId(7),
+            &RequestPath {
+                destination: stranger,
+                id: PathRequestId::new([0x55; 16]),
+            },
+            InstantMillis(1_000),
+            &mut buf,
+        );
+
+        let mut echo = path_request_wire(stranger);
+        assert_eq!(
+            a.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_100),
+                    source_interface: iface(0xA1),
+                    bytes: &mut echo,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "a node recorded its own request on send, so its echo is a duplicate",
+        );
     }
 
     #[test]
@@ -1702,8 +2294,9 @@ mod tests {
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8>>::default();
+        let mut state = EngineState::<
+            FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16>,
+        >::default();
 
         let out = state.ingest_packet(
             InboundPacket {
@@ -1721,483 +2314,5 @@ mod tests {
         );
         assert_eq!(state.route_count(), 0);
         assert_eq!(state.held_announce_count(), 1);
-    }
-}
-
-use crate::engine::egress::PATH_REQUEST_DESTINATION;
-use crate::engine::proof::{ProofIngest, ProofOwed};
-use crate::engine::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
-use crate::engine::EngineState;
-use crate::routing::announce::defaults::{
-    jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-};
-use crate::routing::announce::held_cache::HeldAnnounces;
-use crate::routing::announce::schedule::RebroadcastQueue;
-use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
-use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
-use crate::routing::delivery::{
-    Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
-};
-use crate::routing::storage::EngineStorage;
-use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
-use crate::routing::{DropCause, UpsertRouteOutcome};
-use crate::wire::{ContextFlag, IfacFlag, PropagationType};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnounceIngest {
-    Accepted(AcceptedAnnounce),
-    HeldForRetry,
-    Ignored,
-}
-
-/// The route an accepted announce just took — what an app needs to discover
-/// the peer behind it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcceptedAnnounce {
-    pub destination: DestinationHash,
-    pub hops: u8,
-    pub rebroadcast: RebroadcastDecision,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RebroadcastDecision {
-    Scheduled,
-    NotATransportNode,
-    NoTransportInterfaces,
-    /// A path response is learned but never re-flooded — the answer is for the
-    /// requester, not the network (RNS Transport.py:1884).
-    TerminalPathResponse,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IngestPacketOutcome<'p> {
-    Announce(AnnounceIngest),
-    Delivery {
-        delivery: Delivery<'p>,
-        maybe_owed_proof: Option<ProofOwed>,
-    },
-    Proof(ProofIngest),
-    Forward(PacketToForward<'p>),
-    /// A path request arrived for one of our own destinations — the runtime
-    /// owes a path-response announce for it.
-    AnswerPathRequest {
-        destination: DestinationHash,
-    },
-    /// A path request arrived for a destination we relay but do not own — the
-    /// runtime owes a re-emission of the announce we cached for it.
-    AnswerPathRequestFromCache {
-        destination: DestinationHash,
-    },
-    Ignored,
-}
-
-/// A packet in transport, re-framed and owed to another interface — RNS 1.3.1
-/// Transport.py:1556-1580 (data riding the path table onward) and :2254 (a
-/// proof riding the reverse table home).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PacketToForward<'p> {
-    pub header: WirePacketHeader,
-    pub payload: &'p [u8],
-    pub fire_on: InterfaceId,
-}
-
-impl PacketToForward<'_> {
-    pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, WireError> {
-        let header_len = self.header.write(buf)?;
-        let total_len = header_len + self.payload.len();
-        if buf.len() < total_len {
-            return Err(WireError::BufferTooShort);
-        }
-        buf[header_len..total_len].copy_from_slice(self.payload);
-        Ok(total_len)
-    }
-}
-
-impl<S: EngineStorage> EngineState<S> {
-    #[must_use]
-    pub fn ingest_packet<'p>(
-        &mut self,
-        packet: InboundPacket<'p>,
-        jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
-    ) -> IngestPacketOutcome<'p> {
-        self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
-
-        match Ingress::classify(packet) {
-            Ingress::Announce {
-                announce,
-                received_hops,
-                source_interface,
-                arrived_at,
-                next_hop,
-                is_path_response,
-            } => IngestPacketOutcome::Announce(self.ingest_announce(
-                announce,
-                received_hops,
-                source_interface,
-                arrived_at,
-                next_hop,
-                is_path_response,
-                jitter,
-                interfaces,
-            )),
-
-            Ingress::Data {
-                data,
-                header,
-                received_hops,
-                source_interface,
-                arrived_at,
-            } => {
-                if data.destination == PATH_REQUEST_DESTINATION
-                    && data.destination_type == DestinationType::Plain
-                {
-                    return self.ingest_path_request(&data);
-                }
-                let in_transport_through_us = self.transport_id.is_some()
-                    && header.transport_id == self.transport_id
-                    && self
-                        .upstream_app_destinations
-                        .lookup(&data.destination, data.destination_type)
-                        .is_none();
-                if in_transport_through_us {
-                    return match self.maybe_forward(
-                        header,
-                        data.payload,
-                        received_hops,
-                        source_interface,
-                        arrived_at,
-                    ) {
-                        Some(forward) => IngestPacketOutcome::Forward(forward),
-                        None => IngestPacketOutcome::Ignored,
-                    };
-                }
-                match self.maybe_upstream_delivery(
-                    data,
-                    received_hops,
-                    source_interface,
-                    arrived_at,
-                ) {
-                    Some((delivery, maybe_owed_proof)) => IngestPacketOutcome::Delivery {
-                        delivery,
-                        maybe_owed_proof,
-                    },
-                    None => IngestPacketOutcome::Ignored,
-                }
-            }
-
-            Ingress::Proof {
-                payload,
-                destination,
-                received_hops,
-                source_interface,
-                arrived_at,
-            } => {
-                if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
-                    // The proof must arrive back over the interface we forwarded
-                    // toward; anything else is dropped (Transport.py:2256).
-                    if reverse.outbound_interface != source_interface {
-                        return IngestPacketOutcome::Ignored;
-                    }
-                    return IngestPacketOutcome::Forward(PacketToForward {
-                        header: WirePacketHeader {
-                            ifac_flag: IfacFlag::Open,
-                            context_flag: ContextFlag::Unset,
-                            propagation: PropagationType::Broadcast,
-                            destination_type: DestinationType::Single,
-                            packet_type: PacketType::Proof,
-                            hops: received_hops,
-                            transport_id: None,
-                            destination,
-                            context: WireContext::None,
-                        },
-                        payload,
-                        fire_on: reverse.received_interface,
-                    });
-                }
-                IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at))
-            }
-
-            Ingress::LinkRequest => IngestPacketOutcome::Ignored,
-            Ingress::Unparseable => IngestPacketOutcome::Ignored,
-        }
-    }
-
-    fn maybe_upstream_delivery<'p>(
-        &mut self,
-        data: DataPacket<'p>,
-        received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
-    ) -> Option<(Delivery<'p>, Option<ProofOwed>)> {
-        if let Some(transport_id) = data.maybe_transport_id {
-            if self.transport_id != Some(transport_id) {
-                return None;
-            }
-        }
-
-        match data.destination_type {
-            DestinationType::Plain => {
-                if received_hops > PLAIN_DATA_MAX_RECEIVED_HOPS {
-                    return None;
-                }
-                self.upstream_app_destinations
-                    .lookup(&data.destination, DestinationType::Plain)?;
-                Some((
-                    Delivery::Plain(PlainDelivery {
-                        destination: data.destination,
-                        context: data.context,
-                        payload: data.payload,
-                        arrived_at,
-                        source_interface,
-                    }),
-                    None,
-                ))
-            }
-            DestinationType::Single => {
-                let registered = self
-                    .upstream_app_destinations
-                    .lookup(&data.destination, DestinationType::Single)?;
-                let UpstreamAppDestinationKind::Single {
-                    identity,
-                    proof_strategy,
-                } = registered.kind
-                else {
-                    return None;
-                };
-                let held = self.held_identities.get(&identity)?;
-
-                let packet_hash = PacketHash::of_data_fields(
-                    DestinationType::Single,
-                    &data.destination,
-                    data.context,
-                    data.payload,
-                );
-                match self.packet_hash_history.remember(packet_hash) {
-                    RememberPacketOutcome::AlreadyKnown => return None,
-                    RememberPacketOutcome::StoredFresh
-                    | RememberPacketOutcome::StoredAfterRotation => {}
-                }
-
-                let ratchet_secrets = self.self_ratchets.secrets_newest_first(&data.destination);
-                let plaintext = held
-                    .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
-                    .ok()?;
-                let maybe_owed_proof = match proof_strategy {
-                    ProofStrategy::ProveAll => Some(ProofOwed {
-                        packet_hash,
-                        identity,
-                    }),
-                    ProofStrategy::ProveNone => None,
-                };
-                Some((
-                    Delivery::Single(SingleDelivery {
-                        destination: data.destination,
-                        context: data.context,
-                        plaintext,
-                        arrived_at,
-                        source_interface,
-                    }),
-                    maybe_owed_proof,
-                ))
-            }
-            DestinationType::Group | DestinationType::Link => None,
-        }
-    }
-
-    /// RNS 1.3.1 `Transport.path_request_handler`: the payload opens with the
-    /// requested destination hash (an optional requester transport id and tag
-    /// follow, both deferred to the relay/forward work). We answer only requests
-    /// for a destination of our own; relaying a request we can't answer is later
-    /// work.
-    fn ingest_path_request<'p>(&mut self, data: &DataPacket<'_>) -> IngestPacketOutcome<'p> {
-        let Some(destination) = data
-            .payload
-            .get(..TRUNCATED_HASH_BYTE_LEN)
-            .and_then(DestinationHash::from_slice)
-        else {
-            return IngestPacketOutcome::Ignored;
-        };
-        if self
-            .upstream_app_destinations
-            .lookup(&destination, DestinationType::Single)
-            .is_some()
-        {
-            IngestPacketOutcome::AnswerPathRequest { destination }
-        } else if self.transport_id.is_some()
-            && self
-                .routing_table
-                .retained_announce_for(&destination)
-                .is_some()
-        {
-            // Only a transport node answers from cache (RNS `transport_enabled()`),
-            // and only when it holds a route to re-emit.
-            IngestPacketOutcome::AnswerPathRequestFromCache { destination }
-        } else {
-            IngestPacketOutcome::Ignored
-        }
-    }
-
-    /// RNS 1.3.1 Transport.py:1556-1580: a transport-addressed packet rides the
-    /// path table onward. It's re-addressed at the next relay while more than one
-    /// hop remains, stripped back to a plain broadcast for the final hop. It also
-    /// leaves a reverse-table row so its proof can ride home.
-    fn maybe_forward<'p>(
-        &mut self,
-        header: WirePacketHeader,
-        payload: &'p mut [u8],
-        received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
-    ) -> Option<PacketToForward<'p>> {
-        if header.destination_type != DestinationType::Single
-            || header.packet_type != PacketType::Data
-        {
-            return None;
-        }
-        let route = self
-            .routing_table
-            .forwarding_route_for(&header.destination)?;
-
-        let packet_hash = PacketHash::of_data_fields(
-            header.destination_type,
-            &header.destination,
-            header.context,
-            payload,
-        );
-        match self.packet_hash_history.remember(packet_hash) {
-            RememberPacketOutcome::AlreadyKnown => return None,
-            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
-        }
-
-        let forwarded_header = if route.hops == 1 {
-            WirePacketHeader {
-                ifac_flag: IfacFlag::Open,
-                context_flag: ContextFlag::Unset,
-                propagation: PropagationType::Broadcast,
-                destination_type: header.destination_type,
-                packet_type: header.packet_type,
-                hops: received_hops,
-                transport_id: None,
-                destination: header.destination,
-                context: header.context,
-            }
-        } else {
-            let NextHop::Via(next) = route.next_hop else {
-                return None;
-            };
-            WirePacketHeader {
-                hops: received_hops,
-                transport_id: Some(next),
-                ..header
-            }
-        };
-
-        self.reverse_routes.remember(
-            ReverseRouteEntry {
-                proof_destination: packet_hash.proof_destination(),
-                received_interface: source_interface,
-                outbound_interface: route.receiving_interface,
-                expires_at: InstantMillis(
-                    arrived_at
-                        .0
-                        .saturating_add(DEFAULT_REVERSE_ROUTE_TIMEOUT_MS),
-                ),
-            },
-            arrived_at,
-        );
-
-        Some(PacketToForward {
-            header: forwarded_header,
-            payload,
-            fire_on: route.receiving_interface,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn ingest_announce(
-        &mut self,
-        announce: Announce<'_>,
-        received_hops: u8,
-        source_interface: InterfaceId,
-        arrived_at: InstantMillis,
-        next_hop: NextHop,
-        is_path_response: bool,
-        jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
-    ) -> AnnounceIngest {
-        let decision = AnnounceAcceptanceInput {
-            packet_hops: received_hops,
-            announce_id: announce.announce_id,
-            destination_is_self_or_upstream: self
-                .upstream_app_destinations
-                .lookup(&announce.destination, DestinationType::Single)
-                .is_some(),
-            existing_route: self.routing_table.existing_route_for(&announce.destination),
-            arrived_at,
-        }
-        .determine_acceptance();
-
-        if !matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-            return AnnounceIngest::Ignored;
-        }
-
-        let outcome = self.routing_table.upsert_route(
-            received_hops,
-            arrived_at,
-            source_interface,
-            next_hop,
-            &announce,
-        );
-        match outcome {
-            UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
-                let rebroadcast = if is_path_response {
-                    // A path response is learned, never re-flooded: the answer
-                    // belongs to the requester, not the network.
-                    RebroadcastDecision::TerminalPathResponse
-                } else if self.transport_id.is_none() {
-                    RebroadcastDecision::NotATransportNode
-                } else if interfaces
-                    .iter()
-                    .any(|descriptor| descriptor.capabilities.allows_transport())
-                {
-                    let offset = jitter_offset_for(
-                        jitter,
-                        &announce.destination,
-                        DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                    );
-                    self.pending_rebroadcasts.schedule(
-                        announce.destination,
-                        InstantMillis(arrived_at.0.saturating_add(offset)),
-                        source_interface,
-                    );
-                    RebroadcastDecision::Scheduled
-                } else {
-                    RebroadcastDecision::NoTransportInterfaces
-                };
-                AnnounceIngest::Accepted(AcceptedAnnounce {
-                    destination: announce.destination,
-                    hops: received_hops,
-                    rebroadcast,
-                })
-            }
-            UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
-                use crate::routing::announce::held_cache::{HoldReason, ParkOutcome};
-                match self.held_announces_cache.park(
-                    &announce,
-                    arrived_at,
-                    received_hops,
-                    HoldReason::RoutingArenaPressure,
-                    source_interface,
-                    next_hop,
-                ) {
-                    ParkOutcome::Parked | ParkOutcome::Overwrote => AnnounceIngest::HeldForRetry,
-                    ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {
-                        AnnounceIngest::Ignored
-                    }
-                }
-            }
-            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => AnnounceIngest::Ignored,
-        }
     }
 }

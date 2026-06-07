@@ -2,6 +2,7 @@ use crate::engine::directives::HeapEngineDirectives;
 use crate::engine::pending_path_requests::HeapPendingPathRequestColumns;
 use crate::engine::receipts::HeapReceiptColumns;
 use crate::engine::reverse_routes::HeapReverseRouteColumns;
+use crate::engine::seen_path_requests::HeapSeenPathRequestColumns;
 use crate::engine::self_announce::HeapSelfAnnounceColumns;
 use crate::engine::self_ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
@@ -32,6 +33,7 @@ impl EngineStorage for GrowableHeap {
     type PacketHashes = HeapPacketHashHistory;
     type ReverseRoutes = HeapReverseRouteColumns;
     type PendingPathRequests = HeapPendingPathRequestColumns;
+    type SeenPathRequests = HeapSeenPathRequestColumns;
 }
 
 #[cfg(test)]

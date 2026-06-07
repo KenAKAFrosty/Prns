@@ -7,6 +7,7 @@ use crate::engine::directives::EngineDirectives;
 use crate::engine::pending_path_requests::PendingPathRequestColumns;
 use crate::engine::receipts::ReceiptColumns;
 use crate::engine::reverse_routes::ReverseRouteColumns;
+use crate::engine::seen_path_requests::SeenPathRequestColumns;
 use crate::engine::self_announce::SelfAnnounceColumns;
 use crate::engine::self_ratchets::SelfRatchetColumns;
 use crate::engine::InstantMillis;
@@ -175,4 +176,5 @@ pub trait EngineStorage {
     type PacketHashes: PacketHashHistory + Default;
     type ReverseRoutes: ReverseRouteColumns + Default;
     type PendingPathRequests: PendingPathRequestColumns + Default;
+    type SeenPathRequests: SeenPathRequestColumns + Default;
 }

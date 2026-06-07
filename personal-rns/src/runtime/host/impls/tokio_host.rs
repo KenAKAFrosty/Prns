@@ -468,7 +468,7 @@ mod tests {
 
         // Three engines live on this test thread at once; a desk-sized storage
         // spell keeps their combined footprint far from the thread's stack.
-        type SmallCap = FixedInline<8, 8, 512, 4, 64, 4, 4, 4, 4, 32, 4, 4, 4, 4>;
+        type SmallCap = FixedInline<8, 8, 512, 4, 64, 4, 4, 4, 4, 32, 4, 4, 4, 4, 4>;
 
         struct ChannelHandle {
             id: InterfaceId,

@@ -2,6 +2,7 @@ use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::pending_path_requests::FixedPendingPathRequestColumns;
 use crate::engine::receipts::FixedReceiptColumns;
 use crate::engine::reverse_routes::FixedReverseRouteColumns;
+use crate::engine::seen_path_requests::FixedSeenPathRequestColumns;
 use crate::engine::self_announce::FixedSelfAnnounceColumns;
 use crate::engine::self_ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
@@ -29,6 +30,7 @@ pub struct FixedInline<
     const MAX_OUTSTANDING_RECEIPTS: usize,
     const MAX_REVERSE_ROUTES: usize,
     const MAX_PENDING_PATH_REQUESTS: usize,
+    const MAX_SEEN_PATH_REQUESTS: usize,
 >;
 
 impl<
@@ -46,6 +48,7 @@ impl<
         const MAX_OUTSTANDING_RECEIPTS: usize,
         const MAX_REVERSE_ROUTES: usize,
         const MAX_PENDING_PATH_REQUESTS: usize,
+        const MAX_SEEN_PATH_REQUESTS: usize,
     > EngineStorage
     for FixedInline<
         MAX_TRACKED_DESTINATIONS,
@@ -62,6 +65,7 @@ impl<
         MAX_OUTSTANDING_RECEIPTS,
         MAX_REVERSE_ROUTES,
         MAX_PENDING_PATH_REQUESTS,
+        MAX_SEEN_PATH_REQUESTS,
     >
 {
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
@@ -91,6 +95,7 @@ impl<
     type Receipts = FixedReceiptColumns<MAX_OUTSTANDING_RECEIPTS>;
     type ReverseRoutes = FixedReverseRouteColumns<MAX_REVERSE_ROUTES>;
     type PendingPathRequests = FixedPendingPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
+    type SeenPathRequests = FixedSeenPathRequestColumns<MAX_SEEN_PATH_REQUESTS>;
 }
 
 #[cfg(test)]
@@ -104,7 +109,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4, 3, 5, 8, 4>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4, 3, 5, 8, 4, 8>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();

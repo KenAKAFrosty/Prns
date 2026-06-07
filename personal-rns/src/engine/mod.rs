@@ -8,6 +8,7 @@ pub mod proof;
 pub mod receipts;
 pub mod request_path;
 pub mod reverse_routes;
+pub mod seen_path_requests;
 pub mod self_announce;
 pub mod self_ratchets;
 pub mod send_single;
@@ -35,6 +36,7 @@ pub use pending_path_requests::{
 };
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
 pub use request_path::{CachedPathResponseOutcome, PathRequestWriteOutcome};
+pub use seen_path_requests::PathRequestIdBytes;
 pub use self_announce::{
     CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, PathResponseWriteOutcome,
     ReannounceSchedule, SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure,
@@ -50,6 +52,7 @@ pub use tick::TickOutput;
 use crate::engine::pending_path_requests::PendingPathRequests;
 use crate::engine::receipts::Receipts;
 use crate::engine::reverse_routes::ReverseRoutes;
+use crate::engine::seen_path_requests::SeenPathRequests;
 use crate::engine::self_announce::SelfAnnounces;
 use crate::engine::self_ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
@@ -90,6 +93,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) receipts: Receipts<S::Receipts>,
     reverse_routes: ReverseRoutes<S::ReverseRoutes>,
     pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
+    seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -111,6 +115,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             receipts: Receipts::default(),
             reverse_routes: ReverseRoutes::default(),
             pending_path_requests: PendingPathRequests::default(),
+            seen_path_requests: SeenPathRequests::default(),
         }
     }
 }
@@ -312,7 +317,7 @@ mod tests {
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<
-            FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8>,
+            FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16>,
         >::default();
         state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
