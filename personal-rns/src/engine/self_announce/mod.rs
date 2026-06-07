@@ -352,14 +352,17 @@ impl<S: EngineStorage> EngineState<S> {
     ) -> DueSelfAnnounceWriteOutcome {
         use DueSelfAnnounceWriteOutcome::{Failed, NothingDue, Rejected, Written};
 
-        let Some(due) = self.self_announces.due_announce(now) else {
+        let Some(destination) = self
+            .self_announces
+            .due_announce(now)
+            .map(|due| due.destination)
+        else {
             return NothingDue {
                 unspent_nonce: nonce,
                 unspent_ratchet: ratchet,
             };
         };
-        let destination = due.destination;
-        let app_data = due.app_data;
+        self.self_announces.mark_announced(&destination, now);
 
         let (name_hash, identity) = match resolve_announce_signer(
             &self.upstream_app_destinations,
@@ -368,7 +371,6 @@ impl<S: EngineStorage> EngineState<S> {
         ) {
             Ok(resolved) => resolved,
             Err(rejection) => {
-                self.self_announces.mark_announced(&destination, now);
                 return Rejected {
                     rejection,
                     unspent_nonce: nonce,
@@ -377,6 +379,10 @@ impl<S: EngineStorage> EngineState<S> {
             }
         };
 
+        let app_data = self
+            .self_announces
+            .scheduled_app_data(&destination)
+            .unwrap_or(&[]);
         let rotation = self.self_ratchets.rotate_if_due(&destination, now, ratchet);
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
         let framed = frame_announce(
@@ -388,7 +394,6 @@ impl<S: EngineStorage> EngineState<S> {
             maybe_ratchet,
             buf,
         );
-        self.self_announces.mark_announced(&destination, now);
         match framed {
             Ok(len) => Written { len, rotation },
             Err(failure) => Failed { failure, rotation },
@@ -406,6 +411,7 @@ impl<S: EngineStorage> EngineState<S> {
         use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
 
         let destination = commanded.destination;
+        self.self_announces.mark_announced(&destination, now);
 
         let (name_hash, identity) = match resolve_announce_signer(
             &self.upstream_app_destinations,
@@ -414,7 +420,6 @@ impl<S: EngineStorage> EngineState<S> {
         ) {
             Ok(resolved) => resolved,
             Err(rejection) => {
-                self.self_announces.mark_announced(&destination, now);
                 return Rejected {
                     rejection,
                     unspent_nonce: nonce,
@@ -441,7 +446,6 @@ impl<S: EngineStorage> EngineState<S> {
             maybe_ratchet,
             buf,
         );
-        self.self_announces.mark_announced(&destination, now);
         match framed {
             Ok(len) => Written { len, rotation },
             Err(failure) => Failed { failure, rotation },

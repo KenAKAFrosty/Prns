@@ -426,7 +426,7 @@ fn run_command<I, S, OnEvent>(
     now: InstantMillis,
     nonce: SelfAnnounceEntropy,
     ratchet: RatchetEntropy,
-    send_entropy: SendSingleEntropy,
+    send_single_entropy: SendSingleEntropy,
     on_event: &mut OnEvent,
 ) -> UnspentCycleEntropy
 where
@@ -445,7 +445,7 @@ where
             return UnspentCycleEntropy {
                 self_announce: Some(nonce),
                 ratchet: Some(ratchet),
-                send_single: Some(send_entropy),
+                send_single: Some(send_single_entropy),
             };
         }
         CommandOutcome::OwesSendSingle { id, send } => {
@@ -456,7 +456,7 @@ where
                 id,
                 &send,
                 now,
-                send_entropy,
+                send_single_entropy,
                 on_event,
             );
             return UnspentCycleEntropy {
@@ -473,7 +473,7 @@ where
             return UnspentCycleEntropy {
                 self_announce: Some(nonce),
                 ratchet: Some(ratchet),
-                send_single: Some(send_entropy),
+                send_single: Some(send_single_entropy),
             };
         }
     };
@@ -481,7 +481,7 @@ where
     use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
 
     let mut emit_buffer = [0u8; MTU];
-    let (settlement, unspent_nonce, unspent_ratchet) =
+    let (settlement, maybe_self_announce_entropy, maybe_ratchet_entropy) =
         match engine.write_commanded_announce(&commanded, now, nonce, ratchet, &mut emit_buffer) {
             Written { len: n, rotation } => {
                 let fire_on = match &commanded.target {
@@ -521,9 +521,9 @@ where
         };
     on_event(PrnsEvent::CommandSettled { id, settlement });
     UnspentCycleEntropy {
-        self_announce: unspent_nonce,
-        ratchet: unspent_ratchet,
-        send_single: Some(send_entropy),
+        self_announce: maybe_self_announce_entropy,
+        ratchet: maybe_ratchet_entropy,
+        send_single: Some(send_single_entropy),
     }
 }
 
