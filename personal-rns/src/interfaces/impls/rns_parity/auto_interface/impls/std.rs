@@ -190,11 +190,17 @@ fn ingest_discovery(
 fn ingest_data(socket: &UdpSocket, buf: &mut [u8], context: &mut WifiLanContext) -> bool {
     match socket.recv_from(buf) {
         Ok((n, _src)) => {
-            if n <= MTU {
-                let _ = context.inbound.submit(|slot| {
+            if n > MTU {
+                eprintln!("WIFI_LAN_AUTO oversized datagram dropped: {n}B > {MTU}B MTU");
+            } else if context
+                .inbound
+                .submit(|slot| {
                     slot[..n].copy_from_slice(&buf[..n]);
                     n
-                });
+                })
+                .is_err()
+            {
+                eprintln!("WIFI_LAN_AUTO inbound ring full, dropped {n}B");
             }
             true
         }
