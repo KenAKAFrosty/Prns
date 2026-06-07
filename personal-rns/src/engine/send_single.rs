@@ -307,8 +307,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
 
         let mut state = hearer();
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
@@ -339,8 +338,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
         let mut state = hearer();
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
 
@@ -442,8 +440,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
 
         let mut state = hearer();
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
@@ -517,8 +514,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
 
         let mut state = hearer();
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());

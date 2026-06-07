@@ -194,15 +194,108 @@ pub enum WriteSelfAnnounceError {
     Serialize(EgressSerializeError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfAnnounceRejection {
+    NotRegisteredAsSingle,
+    IdentityNotHeld,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfAnnounceWriteFailure {
+    Build(AnnounceBuildError),
+    Serialize(EgressSerializeError),
+}
+
+impl From<SelfAnnounceRejection> for WriteSelfAnnounceError {
+    fn from(rejection: SelfAnnounceRejection) -> Self {
+        match rejection {
+            SelfAnnounceRejection::NotRegisteredAsSingle => Self::NotRegisteredAsSingle,
+            SelfAnnounceRejection::IdentityNotHeld => Self::IdentityNotHeld,
+        }
+    }
+}
+
+impl From<SelfAnnounceWriteFailure> for WriteSelfAnnounceError {
+    fn from(failure: SelfAnnounceWriteFailure) -> Self {
+        match failure {
+            SelfAnnounceWriteFailure::Build(error) => Self::Build(error),
+            SelfAnnounceWriteFailure::Serialize(error) => Self::Serialize(error),
+        }
+    }
+}
+
+#[must_use]
+pub enum DueSelfAnnounceWriteOutcome {
+    NothingDue {
+        unspent_nonce: SelfAnnounceEntropy,
+        unspent_ratchet: RatchetEntropy,
+    },
+    Written {
+        len: usize,
+        rotation: RatchetRotation,
+    },
+    Rejected {
+        rejection: SelfAnnounceRejection,
+        unspent_nonce: SelfAnnounceEntropy,
+        unspent_ratchet: RatchetEntropy,
+    },
+    Failed {
+        failure: SelfAnnounceWriteFailure,
+        rotation: RatchetRotation,
+    },
+}
+
+#[must_use]
+pub enum CommandedAnnounceWriteOutcome {
+    Written {
+        len: usize,
+        rotation: RatchetRotation,
+    },
+    Rejected {
+        rejection: SelfAnnounceRejection,
+        unspent_nonce: SelfAnnounceEntropy,
+        unspent_ratchet: RatchetEntropy,
+    },
+    Failed {
+        failure: SelfAnnounceWriteFailure,
+        rotation: RatchetRotation,
+    },
+}
+
 use crate::engine::commands::{AnnounceAppData, AnnounceNow};
 use crate::engine::egress::{write_announce_wire_packet, EgressSerializeError};
-use crate::engine::self_ratchets::RatchetEntropy;
+use crate::engine::self_ratchets::{RatchetEntropy, RatchetRotation};
 use crate::engine::EngineState;
+use crate::identity::held::{HeldIdentities, HeldIdentityColumns, HeldIdentityRef};
+use crate::identity::IdentitySigner;
 use crate::routing::announce::{
-    Announce, AnnounceBuildError, AnnounceId, RatchetKey, SelfAnnounceEntropy,
+    Announce, AnnounceBuildError, AnnounceId, DottedNameHash, RatchetKey, SelfAnnounceEntropy,
 };
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
+use crate::routing::upstream_app_destinations::{
+    UpstreamAppDestinationColumns, UpstreamAppDestinations,
+};
+
+fn frame_announce(
+    signer: &impl IdentitySigner,
+    name_hash: DottedNameHash,
+    app_data: &[u8],
+    now: InstantMillis,
+    nonce: SelfAnnounceEntropy,
+    maybe_ratchet: Option<RatchetKey>,
+    buf: &mut [u8],
+) -> Result<usize, SelfAnnounceWriteFailure> {
+    let announce = Announce::build_signed(
+        signer,
+        name_hash,
+        AnnounceId::mint(nonce, now),
+        maybe_ratchet,
+        app_data,
+    )
+    .map_err(SelfAnnounceWriteFailure::Build)?;
+    write_announce_wire_packet(&announce, 0, buf).map_err(SelfAnnounceWriteFailure::Serialize)
+}
 
 impl<S: EngineStorage> EngineState<S> {
     pub fn schedule_announce(
@@ -239,48 +332,97 @@ impl<S: EngineStorage> EngineState<S> {
         self.self_announces.destinations()
     }
 
-    /// `Ok(None)` means nothing was due — the common case, not a failure. An
-    /// attempt at a due announce consumes its due-ness whether or not it
-    /// succeeds: a persistently failing announce retries next interval instead
-    /// of spinning the engine's `Immediate` wakeup forever.
+    /// `NothingDue` is the common case, not a failure. An attempt at a due
+    /// announce consumes its due-ness whatever the arm: a persistently failing
+    /// announce retries next interval instead of spinning the engine's
+    /// `Immediate` wakeup forever.
     ///
     /// A ratcheted destination rotates here, before the announce is framed
     /// (RNS 1.3.1 `Destination.announce` calls `rotate_ratchets` first), so
-    /// the announce always carries the newest ratchet.
+    /// the announce always carries the newest ratchet. Every arm hands back
+    /// exactly the entropy whose bytes were never read: a rejected announce
+    /// happens before rotation and the id mint, so both units come home; a
+    /// framing failure happens after both, so only the rotation's verdict does.
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
-        entropy: SelfAnnounceEntropy,
-        ratchet_entropy: RatchetEntropy,
+        nonce: SelfAnnounceEntropy,
+        ratchet: RatchetEntropy,
         buf: &mut [u8],
-    ) -> Result<Option<usize>, WriteSelfAnnounceError> {
+    ) -> DueSelfAnnounceWriteOutcome {
+        use DueSelfAnnounceWriteOutcome::{Failed, NothingDue, Rejected, Written};
+
         let Some(due) = self.self_announces.due_announce(now) else {
-            return Ok(None);
+            return NothingDue {
+                unspent_nonce: nonce,
+                unspent_ratchet: ratchet,
+            };
         };
         let destination = due.destination;
-        let _rotation = self
-            .self_ratchets
-            .rotate_if_due(&destination, now, ratchet_entropy);
+        let app_data = due.app_data;
+
+        let (name_hash, identity) = match resolve_announce_signer(
+            &self.upstream_app_destinations,
+            &self.held_identities,
+            &destination,
+        ) {
+            Ok(resolved) => resolved,
+            Err(rejection) => {
+                self.self_announces.mark_announced(&destination, now);
+                return Rejected {
+                    rejection,
+                    unspent_nonce: nonce,
+                    unspent_ratchet: ratchet,
+                };
+            }
+        };
+
+        let rotation = self.self_ratchets.rotate_if_due(&destination, now, ratchet);
         let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
-        let outcome =
-            self.write_announce_for(&destination, due.app_data, now, entropy, maybe_ratchet, buf);
+        let framed = frame_announce(
+            &identity,
+            name_hash,
+            app_data,
+            now,
+            nonce,
+            maybe_ratchet,
+            buf,
+        );
         self.self_announces.mark_announced(&destination, now);
-        outcome.map(Some)
+        match framed {
+            Ok(len) => Written { len, rotation },
+            Err(failure) => Failed { failure, rotation },
+        }
     }
 
     pub fn write_commanded_announce(
         &mut self,
         commanded: &AnnounceNow,
         now: InstantMillis,
-        entropy: SelfAnnounceEntropy,
-        ratchet_entropy: RatchetEntropy,
+        nonce: SelfAnnounceEntropy,
+        ratchet: RatchetEntropy,
         buf: &mut [u8],
-    ) -> Result<usize, WriteSelfAnnounceError> {
+    ) -> CommandedAnnounceWriteOutcome {
+        use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
+
         let destination = commanded.destination;
-        let _rotation = self
-            .self_ratchets
-            .rotate_if_due(&destination, now, ratchet_entropy);
-        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
+
+        let (name_hash, identity) = match resolve_announce_signer(
+            &self.upstream_app_destinations,
+            &self.held_identities,
+            &destination,
+        ) {
+            Ok(resolved) => resolved,
+            Err(rejection) => {
+                self.self_announces.mark_announced(&destination, now);
+                return Rejected {
+                    rejection,
+                    unspent_nonce: nonce,
+                    unspent_ratchet: ratchet,
+                };
+            }
+        };
+
         let app_data = match &commanded.app_data {
             AnnounceAppData::Scheduled => self
                 .self_announces
@@ -288,48 +430,147 @@ impl<S: EngineStorage> EngineState<S> {
                 .unwrap_or(&[]),
             AnnounceAppData::Data(data) => data,
         };
-        let outcome =
-            self.write_announce_for(&destination, app_data, now, entropy, maybe_ratchet, buf);
-        self.self_announces.mark_announced(&destination, now);
-        outcome
-    }
-
-    fn write_announce_for(
-        &self,
-        destination: &DestinationHash,
-        app_data: &[u8],
-        now: InstantMillis,
-        entropy: SelfAnnounceEntropy,
-        maybe_ratchet: Option<RatchetKey>,
-        buf: &mut [u8],
-    ) -> Result<usize, WriteSelfAnnounceError> {
-        let registered = self
-            .upstream_app_destinations
-            .lookup(destination, DestinationType::Single)
-            .ok_or(WriteSelfAnnounceError::NotRegisteredAsSingle)?;
-        let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
-            return Err(WriteSelfAnnounceError::NotRegisteredAsSingle);
-        };
-        let identity = self
-            .held_identities
-            .get(&identity)
-            .ok_or(WriteSelfAnnounceError::IdentityNotHeld)?;
-
-        let announce = Announce::build_signed(
+        let rotation = self.self_ratchets.rotate_if_due(&destination, now, ratchet);
+        let maybe_ratchet = self.self_ratchets.newest_ratchet_key(&destination);
+        let framed = frame_announce(
             &identity,
-            registered.name_hash,
-            AnnounceId::mint(entropy, now),
-            maybe_ratchet,
+            name_hash,
             app_data,
-        )
-        .map_err(WriteSelfAnnounceError::Build)?;
-        write_announce_wire_packet(&announce, 0, buf).map_err(WriteSelfAnnounceError::Serialize)
+            now,
+            nonce,
+            maybe_ratchet,
+            buf,
+        );
+        self.self_announces.mark_announced(&destination, now);
+        match framed {
+            Ok(len) => Written { len, rotation },
+            Err(failure) => Failed { failure, rotation },
+        }
     }
+}
+
+fn resolve_announce_signer<'held, U, H>(
+    upstream_app_destinations: &UpstreamAppDestinations<U>,
+    held_identities: &'held HeldIdentities<H>,
+    destination: &DestinationHash,
+) -> Result<(DottedNameHash, HeldIdentityRef<'held>), SelfAnnounceRejection>
+where
+    U: UpstreamAppDestinationColumns,
+    H: HeldIdentityColumns,
+{
+    let registered = upstream_app_destinations
+        .lookup(destination, DestinationType::Single)
+        .ok_or(SelfAnnounceRejection::NotRegisteredAsSingle)?;
+    let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
+        return Err(SelfAnnounceRejection::NotRegisteredAsSingle);
+    };
+    let identity = held_identities
+        .get(&identity)
+        .ok_or(SelfAnnounceRejection::IdentityNotHeld)?;
+    Ok((registered.name_hash, identity))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl DueSelfAnnounceWriteOutcome {
+        #[track_caller]
+        pub fn written_len(self) -> usize {
+            match self {
+                Self::Written { len, .. } => len,
+                Self::NothingDue { .. } => panic!("expected Written, got NothingDue"),
+                Self::Rejected { rejection, .. } => {
+                    panic!("expected Written, got Rejected({rejection:?})")
+                }
+                Self::Failed { failure, .. } => panic!("expected Written, got Failed({failure:?})"),
+            }
+        }
+
+        #[track_caller]
+        pub fn nothing_due(self) -> (SelfAnnounceEntropy, RatchetEntropy) {
+            match self {
+                Self::NothingDue {
+                    unspent_nonce,
+                    unspent_ratchet,
+                } => (unspent_nonce, unspent_ratchet),
+                Self::Written { len, .. } => panic!("expected NothingDue, got Written({len}B)"),
+                Self::Rejected { rejection, .. } => {
+                    panic!("expected NothingDue, got Rejected({rejection:?})")
+                }
+                Self::Failed { failure, .. } => {
+                    panic!("expected NothingDue, got Failed({failure:?})")
+                }
+            }
+        }
+
+        #[track_caller]
+        pub fn rejection(self) -> (SelfAnnounceRejection, SelfAnnounceEntropy, RatchetEntropy) {
+            match self {
+                Self::Rejected {
+                    rejection,
+                    unspent_nonce,
+                    unspent_ratchet,
+                } => (rejection, unspent_nonce, unspent_ratchet),
+                Self::NothingDue { .. } => panic!("expected Rejected, got NothingDue"),
+                Self::Written { len, .. } => panic!("expected Rejected, got Written({len}B)"),
+                Self::Failed { failure, .. } => {
+                    panic!("expected Rejected, got Failed({failure:?})")
+                }
+            }
+        }
+
+        #[track_caller]
+        pub fn failure(self) -> (SelfAnnounceWriteFailure, RatchetRotation) {
+            match self {
+                Self::Failed { failure, rotation } => (failure, rotation),
+                Self::NothingDue { .. } => panic!("expected Failed, got NothingDue"),
+                Self::Written { len, .. } => panic!("expected Failed, got Written({len}B)"),
+                Self::Rejected { rejection, .. } => {
+                    panic!("expected Failed, got Rejected({rejection:?})")
+                }
+            }
+        }
+    }
+
+    impl CommandedAnnounceWriteOutcome {
+        #[track_caller]
+        pub fn written_len(self) -> usize {
+            match self {
+                Self::Written { len, .. } => len,
+                Self::Rejected { rejection, .. } => {
+                    panic!("expected Written, got Rejected({rejection:?})")
+                }
+                Self::Failed { failure, .. } => panic!("expected Written, got Failed({failure:?})"),
+            }
+        }
+
+        #[track_caller]
+        pub fn rejection(self) -> (SelfAnnounceRejection, SelfAnnounceEntropy, RatchetEntropy) {
+            match self {
+                Self::Rejected {
+                    rejection,
+                    unspent_nonce,
+                    unspent_ratchet,
+                } => (rejection, unspent_nonce, unspent_ratchet),
+                Self::Written { len, .. } => panic!("expected Rejected, got Written({len}B)"),
+                Self::Failed { failure, .. } => {
+                    panic!("expected Rejected, got Failed({failure:?})")
+                }
+            }
+        }
+
+        #[track_caller]
+        pub fn failure(self) -> (SelfAnnounceWriteFailure, RatchetRotation) {
+            match self {
+                Self::Failed { failure, rotation } => (failure, rotation),
+                Self::Written { len, .. } => panic!("expected Failed, got Written({len}B)"),
+                Self::Rejected { rejection, .. } => {
+                    panic!("expected Failed, got Rejected({rejection:?})")
+                }
+            }
+        }
+    }
 
     type TestAnnounces = SelfAnnounces<FixedSelfAnnounceColumns<2>>;
 
@@ -493,8 +734,7 @@ mod tests {
         let mut buf = [0u8; MTU];
         let n = state
             .write_due_self_announce(now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
-            .expect("writing a due self-announce succeeds")
-            .expect("a self-announce is due on the first call");
+            .written_len();
 
         let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
@@ -517,8 +757,7 @@ mod tests {
         let mut buf = [0u8; MTU];
         let n = state
             .write_due_self_announce(now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
-            .expect("writing a due self-announce succeeds")
-            .expect("a self-announce is due on the first call");
+            .written_len();
 
         assert_eq!(&buf[..n], hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE));
     }
@@ -557,7 +796,7 @@ mod tests {
         let expected_first =
             RatchetKey::new(x25519_public_key(&X25519SecretKey::new([0x55; 32])).0);
         let expected_rotated =
-            RatchetKey::new(x25519_public_key(&X25519SecretKey::new([0x77; 32])).0);
+            RatchetKey::new(x25519_public_key(&X25519SecretKey::new([0x66; 32])).0);
 
         let mut buf = [0u8; MTU];
         let n = state
@@ -567,35 +806,40 @@ mod tests {
                 RatchetEntropy::new([0x55; RatchetEntropy::LEN]),
                 &mut buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
         assert_eq!(parsed_ratchet_of(&buf[..n]), Some(expected_first));
 
-        let n = state
-            .write_due_self_announce(
-                InstantMillis(2_000),
-                TEST_NONCE,
-                RatchetEntropy::new([0x66; RatchetEntropy::LEN]),
-                &mut buf,
-            )
-            .unwrap()
-            .unwrap();
+        let (n, came_home) = match state.write_due_self_announce(
+            InstantMillis(2_000),
+            TEST_NONCE,
+            RatchetEntropy::new([0x66; RatchetEntropy::LEN]),
+            &mut buf,
+        ) {
+            DueSelfAnnounceWriteOutcome::Written {
+                len,
+                rotation: RatchetRotation::Unspent(entropy),
+            } => (len, entropy),
+            _ => panic!("inside the floor the announce writes and the entropy comes home"),
+        };
         assert_eq!(
             parsed_ratchet_of(&buf[..n]),
             Some(expected_first),
-            "inside the floor the unused entropy is discarded, not minted",
+            "inside the floor the unused entropy is handed home, not minted",
         );
 
         let n = state
             .write_due_self_announce(
                 InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
                 TEST_NONCE,
-                RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
+                came_home,
                 &mut buf,
             )
-            .unwrap()
-            .unwrap();
-        assert_eq!(parsed_ratchet_of(&buf[..n]), Some(expected_rotated));
+            .written_len();
+        assert_eq!(
+            parsed_ratchet_of(&buf[..n]),
+            Some(expected_rotated),
+            "the unit that came home mints byte-identical key material later",
+        );
     }
 
     #[test]
@@ -646,101 +890,250 @@ mod tests {
         let mut buf = [0u8; MTU];
         let interval = ReannounceSchedule::default().interval_millis();
 
-        assert!(state
+        let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
+                &mut buf,
             )
-            .unwrap()
-            .is_some());
-        assert!(state
+            .written_len();
+        let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
+                &mut buf,
             )
-            .unwrap()
-            .is_none());
-        assert!(state
+            .nothing_due();
+        let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000 + interval),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
+                &mut buf,
             )
-            .unwrap()
-            .is_some());
+            .written_len();
     }
 
     #[test]
     fn a_failed_announce_attempt_surfaces_the_error_and_consumes_the_due_ness() {
         let mut state = personal_node_announcer();
         let mut tiny = [0u8; 8];
-        assert_eq!(
-            state.write_due_self_announce(
+        let (error, _rotation) = state
+            .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut tiny
-            ),
-            Err(WriteSelfAnnounceError::Serialize(
-                EgressSerializeError::BufferTooShort
-            )),
+                &mut tiny,
+            )
+            .failure();
+        assert_eq!(
+            error,
+            SelfAnnounceWriteFailure::Serialize(EgressSerializeError::BufferTooShort),
         );
 
         let mut buf = [0u8; MTU];
-        assert_eq!(
-            state.write_due_self_announce(
+        let _ = state
+            .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
-            ),
-            Ok(None),
-        );
+                &mut buf,
+            )
+            .nothing_due();
         let interval = ReannounceSchedule::default().interval_millis();
-        assert!(state
+        let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000 + interval),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
+                &mut buf,
             )
-            .unwrap()
-            .is_some());
+            .written_len();
+    }
+
+    #[test]
+    fn nothing_due_hands_both_units_home_intact() {
+        let mut state = personal_node_announcer();
+        let mut probe = personal_node_announcer();
+        let mut buf = [0u8; MTU];
+        let interval = ReannounceSchedule::default().interval_millis();
+        let later = InstantMillis(1_000 + interval);
+
+        let _ = state
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .written_len();
+        let (nonce, ratchet) = state
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .nothing_due();
+
+        let mut reused = [0u8; MTU];
+        let n = state
+            .write_due_self_announce(later, nonce, ratchet, &mut reused)
+            .written_len();
+
+        let _ = probe
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .written_len();
+        let mut fresh = [0u8; MTU];
+        let m = probe
+            .write_due_self_announce(later, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut fresh)
+            .written_len();
+
+        assert_eq!(
+            &reused[..n],
+            &fresh[..m],
+            "units that came home write byte-identical wire later",
+        );
+    }
+
+    #[test]
+    fn a_rejected_commanded_announce_hands_both_units_home_intact() {
+        let mut state = personal_node_announcer();
+        let commanded = AnnounceNow {
+            destination: DestinationHash::new([0xEE; 16]),
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+        let mut buf = [0u8; MTU];
+        let (error, nonce, ratchet) = state
+            .write_commanded_announce(
+                &commanded,
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .rejection();
+        assert_eq!(error, SelfAnnounceRejection::NotRegisteredAsSingle);
+
+        let mut reused = [0u8; MTU];
+        let n = state
+            .write_due_self_announce(InstantMillis(1_000), nonce, ratchet, &mut reused)
+            .written_len();
+        let mut fresh = [0u8; MTU];
+        let m = personal_node_announcer()
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut fresh,
+            )
+            .written_len();
+        assert_eq!(
+            &reused[..n],
+            &fresh[..m],
+            "a rejected command's units come home intact for the scheduled announce",
+        );
+    }
+
+    #[test]
+    fn a_due_announce_for_a_destination_no_longer_registered_rejects_with_units_home() {
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        state
+            .self_announces
+            .schedule(
+                dest(0xEE),
+                AnnounceConfig {
+                    app_data: b"drifted",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .unwrap();
+
+        let mut buf = [0u8; MTU];
+        let (error, _nonce, _ratchet) = state
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .rejection();
+        assert_eq!(error, SelfAnnounceRejection::NotRegisteredAsSingle);
+
+        let _ = state
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
+            .nothing_due();
+    }
+
+    #[test]
+    fn a_failed_commanded_announce_surfaces_the_error_and_the_rotation_verdict() {
+        let mut state = personal_node_announcer();
+        let destination = state.self_announced_destinations()[0];
+        let commanded = AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+
+        let mut tiny = [0u8; 8];
+        let (error, rotation) = state
+            .write_commanded_announce(
+                &commanded,
+                InstantMillis(1_000),
+                TEST_NONCE,
+                TEST_RATCHET_ENTROPY,
+                &mut tiny,
+            )
+            .failure();
+        assert_eq!(
+            error,
+            SelfAnnounceWriteFailure::Serialize(EgressSerializeError::BufferTooShort),
+        );
+        assert!(
+            matches!(rotation, RatchetRotation::Unspent(_)),
+            "an unratcheted destination's rotation verdict hands the entropy home",
+        );
     }
 
     #[test]
     fn a_relay_default_state_never_originates() {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let mut buf = [0u8; MTU];
-        assert_eq!(
-            state.write_due_self_announce(
+        let _ = state
+            .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
-            ),
-            Ok(None),
-        );
+                &mut buf,
+            )
+            .nothing_due();
     }
 
     #[test]
     fn an_identity_only_node_never_originates() {
         let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
         let mut buf = [0u8; MTU];
-        assert_eq!(
-            state.write_due_self_announce(
+        let _ = state
+            .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
-                &mut buf
-            ),
-            Ok(None),
-        );
+                &mut buf,
+            )
+            .nothing_due();
     }
 
     #[test]
@@ -816,7 +1209,7 @@ mod tests {
         let mut buf = [0u8; MTU];
         let n = state
             .write_commanded_announce(&commanded, now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
-            .unwrap();
+            .written_len();
 
         assert_eq!(&buf[..n], hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE));
     }
@@ -832,7 +1225,7 @@ mod tests {
         };
 
         let mut buf = [0u8; MTU];
-        state
+        let _ = state
             .write_commanded_announce(
                 &commanded,
                 InstantMillis(1_000),
@@ -840,17 +1233,16 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
-            .unwrap();
+            .written_len();
 
-        assert_eq!(
-            state.write_due_self_announce(
+        let _ = state
+            .write_due_self_announce(
                 InstantMillis(2_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
-            ),
-            Ok(None),
-        );
+            )
+            .nothing_due();
     }
 
     #[test]
@@ -874,7 +1266,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
-            .unwrap();
+            .written_len();
 
         let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
@@ -910,7 +1302,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
-            .unwrap();
+            .written_len();
 
         let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
@@ -945,17 +1337,14 @@ mod tests {
         let mut first_buf = [0u8; MTU];
         let first_len = state
             .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut first_buf)
-            .expect("writing a due self-announce succeeds")
-            .expect("the first scheduled announce fires");
+            .written_len();
         let mut second_buf = [0u8; MTU];
         let second_len = state
             .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut second_buf)
-            .expect("writing a due self-announce succeeds")
-            .expect("the second scheduled announce fires");
-        assert_eq!(
-            state.write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut [0u8; MTU]),
-            Ok(None),
-        );
+            .written_len();
+        let _ = state
+            .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut [0u8; MTU])
+            .nothing_due();
 
         let second_identity = InMemoryNodeIdentity::from_secret_key_bytes(&second_secret_key());
         let expected = Announce::build_signed(

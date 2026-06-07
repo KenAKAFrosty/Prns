@@ -8,9 +8,10 @@ use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
     AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
-    EngineCycleEntropy, EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis,
-    IssuedCommand, NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy, SendSingle,
-    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
+    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineCycleEntropy,
+    EngineCycleEntropySeed, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
+    NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy, SendSingle, SendSingleEntropy,
+    SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -182,6 +183,8 @@ where
         ratchet,
         send,
     } = EngineCycleEntropy::from_seed(entropy_seed);
+    let self_announce = pool.checkout_self_announce(self_announce);
+    let ratchet = pool.checkout_ratchet(ratchet);
     let send = pool.checkout_send_single(send);
 
     let mut next_poll = NextScheduledInterfaceWake::Idle;
@@ -192,9 +195,9 @@ where
     let mut processed_command_count = 0;
     let unspent = match next_command() {
         None => UnspentCycleEntropy {
-            nonce: Some(self_announce),
+            self_announce: Some(self_announce),
             ratchet: Some(ratchet),
-            send: Some(send),
+            send_single: Some(send),
         },
         Some(command) => {
             processed_command_count += 1;
@@ -212,11 +215,11 @@ where
         }
     };
     let UnspentCycleEntropy {
-        nonce: unspent_nonce,
-        ratchet: unspent_ratchet,
-        send: unspent_send,
+        self_announce: mut unspent_self_announce_entropy,
+        ratchet: mut unspent_ratchet_entropy,
+        send_single: unspent_send_single_entropy,
     } = unspent;
-    if let Some(survivor) = unspent_send {
+    if let Some(survivor) = unspent_send_single_entropy {
         pool.restore_send_single(survivor);
     }
 
@@ -333,26 +336,59 @@ where
     tick_output.commit();
 
     if !engine.registered_interfaces().is_empty() {
-        if let (Some(nonce), Some(ratchet_entropy)) = (unspent_nonce, unspent_ratchet) {
+        if let (Some(nonce), Some(ratchet_entropy)) = (
+            unspent_self_announce_entropy.take(),
+            unspent_ratchet_entropy.take(),
+        ) {
+            use DueSelfAnnounceWriteOutcome::{Failed, NothingDue, Rejected, Written};
+
             // The self-announce is staged once — building it signs, and signing
             // per interface would be waste — then the fan copies the staged bytes
             // into each grant.
             let mut emit_buffer = [0u8; MTU];
-            if let Ok(Some(n)) =
-                engine.write_due_self_announce(now, nonce, ratchet_entropy, &mut emit_buffer)
-            {
-                fan_to_handles(
-                    interfaces,
-                    traffic,
-                    |buf| {
-                        buf[..n].copy_from_slice(&emit_buffer[..n]);
-                        n
-                    },
-                    engine.registered_interfaces(),
-                    FanoutClass::SelfOriginated,
-                );
+            match engine.write_due_self_announce(now, nonce, ratchet_entropy, &mut emit_buffer) {
+                Written { len: n, rotation } => {
+                    unspent_ratchet_entropy = rotation.into_unspent();
+                    fan_to_handles(
+                        interfaces,
+                        traffic,
+                        |buf| {
+                            buf[..n].copy_from_slice(&emit_buffer[..n]);
+                            n
+                        },
+                        engine.registered_interfaces(),
+                        FanoutClass::SelfOriginated,
+                    );
+                }
+                NothingDue {
+                    unspent_nonce: nonce_home,
+                    unspent_ratchet: ratchet_home,
+                } => {
+                    unspent_self_announce_entropy = Some(nonce_home);
+                    unspent_ratchet_entropy = Some(ratchet_home);
+                }
+                Rejected {
+                    rejection: _,
+                    unspent_nonce: nonce_home,
+                    unspent_ratchet: ratchet_home,
+                } => {
+                    unspent_self_announce_entropy = Some(nonce_home);
+                    unspent_ratchet_entropy = Some(ratchet_home);
+                }
+                Failed {
+                    failure: _,
+                    rotation,
+                } => {
+                    unspent_ratchet_entropy = rotation.into_unspent();
+                }
             }
         }
+    }
+    if let Some(survivor) = unspent_self_announce_entropy {
+        pool.restore_self_announce(survivor);
+    }
+    if let Some(survivor) = unspent_ratchet_entropy {
+        pool.restore_ratchet(survivor);
     }
 
     for started in interfaces.iter_mut() {
@@ -377,9 +413,9 @@ where
 /// moves, so the cycle can never mint twice from it.
 #[must_use]
 struct UnspentCycleEntropy {
-    nonce: Option<SelfAnnounceEntropy>,
+    self_announce: Option<SelfAnnounceEntropy>,
     ratchet: Option<RatchetEntropy>,
-    send: Option<SendSingleEntropy>,
+    send_single: Option<SendSingleEntropy>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -408,9 +444,9 @@ where
                 settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
             });
             return UnspentCycleEntropy {
-                nonce: Some(nonce),
+                self_announce: Some(nonce),
                 ratchet: Some(ratchet),
-                send: Some(send_entropy),
+                send_single: Some(send_entropy),
             };
         }
         CommandOutcome::OwesSendSingle { id, send } => {
@@ -425,9 +461,9 @@ where
                 on_event,
             );
             return UnspentCycleEntropy {
-                nonce: Some(nonce),
+                self_announce: Some(nonce),
                 ratchet: Some(ratchet),
-                send: unspent_send,
+                send_single: unspent_send,
             };
         }
         CommandOutcome::SendSingleRejected { id, error } => {
@@ -436,17 +472,19 @@ where
                 settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(error))),
             });
             return UnspentCycleEntropy {
-                nonce: Some(nonce),
+                self_announce: Some(nonce),
                 ratchet: Some(ratchet),
-                send: Some(send_entropy),
+                send_single: Some(send_entropy),
             };
         }
     };
 
+    use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
+
     let mut emit_buffer = [0u8; MTU];
-    let settlement =
+    let (settlement, unspent_nonce, unspent_ratchet) =
         match engine.write_commanded_announce(&commanded, now, nonce, ratchet, &mut emit_buffer) {
-            Ok(n) => {
+            Written { len: n, rotation } => {
                 let fire_on = match &commanded.target {
                     AnnounceTarget::AllInterfaces => engine.registered_interfaces(),
                     AnnounceTarget::Interface(interface) => core::slice::from_ref(interface),
@@ -461,15 +499,32 @@ where
                     fire_on,
                     FanoutClass::SelfOriginated,
                 );
-                Settlement::AnnounceNow(Ok(()))
+                (
+                    Settlement::AnnounceNow(Ok(())),
+                    None,
+                    rotation.into_unspent(),
+                )
             }
-            Err(error) => Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(error))),
+            Rejected {
+                rejection,
+                unspent_nonce,
+                unspent_ratchet,
+            } => (
+                Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(rejection.into()))),
+                Some(unspent_nonce),
+                Some(unspent_ratchet),
+            ),
+            Failed { failure, rotation } => (
+                Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(failure.into()))),
+                None,
+                rotation.into_unspent(),
+            ),
         };
     on_event(PrnsEvent::CommandSettled { id, settlement });
     UnspentCycleEntropy {
-        nonce: None,
-        ratchet: None,
-        send: Some(send_entropy),
+        self_announce: unspent_nonce,
+        ratchet: unspent_ratchet,
+        send_single: Some(send_entropy),
     }
 }
 
@@ -1127,6 +1182,68 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_cycles_announce_entropy_is_pooled_and_seals_the_next_due_announce() {
+        use crate::engine::test_support::personal_node_announcer;
+        use crate::engine::ReannounceSchedule;
+
+        let interval = ReannounceSchedule::default().interval_millis();
+        let mut runtime = Runtime::new(
+            personal_node_announcer(),
+            interface_set([started(iface(0xA1), std::vec::Vec::new())]),
+            (),
+        );
+
+        let _boot = runtime.cycle_once(
+            InstantMillis(600),
+            EngineCycleEntropySeed::new([0xAA; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_| {},
+            || None,
+        );
+        let _idle = runtime.cycle_once(
+            InstantMillis(700),
+            EngineCycleEntropySeed::new([0xBB; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_| {},
+            || None,
+        );
+        let _due = runtime.cycle_once(
+            InstantMillis(600 + interval),
+            EngineCycleEntropySeed::new([0xCC; ENGINE_CYCLE_ENTROPY_LEN]),
+            |_| {},
+            || None,
+        );
+
+        let sent = &runtime.interfaces()[0].handle.sent;
+        assert_eq!(sent.len(), 2);
+
+        let mut twin = personal_node_announcer();
+        let mut boot_expected = [0u8; MTU];
+        let boot_len = twin
+            .write_due_self_announce(
+                InstantMillis(600),
+                SelfAnnounceEntropy::new([0xAA; SelfAnnounceEntropy::LEN]),
+                RatchetEntropy::new([0xAA; RatchetEntropy::LEN]),
+                &mut boot_expected,
+            )
+            .written_len();
+        assert_eq!(&sent[0][..], &boot_expected[..boot_len]);
+
+        let mut due_expected = [0u8; MTU];
+        let due_len = twin
+            .write_due_self_announce(
+                InstantMillis(600 + interval),
+                SelfAnnounceEntropy::new([0xBB; SelfAnnounceEntropy::LEN]),
+                RatchetEntropy::new([0xBB; RatchetEntropy::LEN]),
+                &mut due_expected,
+            )
+            .written_len();
+        assert_eq!(
+            &sent[1][..],
+            &due_expected[..due_len],
+            "the idle cycle's pooled units seal the next due announce, not the fresh seed",
+        );
+    }
+
+    #[test]
     fn a_rejected_send_settles_on_the_event_lane() {
         use crate::engine::{SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload};
         use crate::identity::Zeroizing;
@@ -1276,8 +1393,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
         let destination = announcer.self_announced_destinations()[0];
         let send = SendSingle {
             destination,
@@ -1365,8 +1481,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
 
         let mut secret = [0u8; 64];
         secret[..32].fill(0x55);

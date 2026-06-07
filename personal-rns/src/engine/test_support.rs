@@ -109,8 +109,7 @@ pub(crate) fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
             TEST_RATCHET_ENTROPY,
             &mut buf,
         )
-        .expect("writing the seeding announce succeeds")
-        .expect("the seeding announce is due");
+        .written_len();
     state
 }
 

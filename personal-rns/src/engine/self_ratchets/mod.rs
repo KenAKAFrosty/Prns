@@ -51,6 +51,15 @@ pub enum RatchetRotation {
     Unspent(RatchetEntropy),
 }
 
+impl RatchetRotation {
+    pub fn into_unspent(self) -> Option<RatchetEntropy> {
+        match self {
+            Self::Rotated => None,
+            Self::Unspent(entropy) => Some(entropy),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LastRotated {
     Never,

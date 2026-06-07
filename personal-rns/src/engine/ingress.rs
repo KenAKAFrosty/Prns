@@ -398,15 +398,14 @@ mod tests {
         let mut state = ratcheted_personal_node_announcer();
         let interval = ReannounceSchedule::default().interval_millis();
         let mut buf = [0u8; MTU];
-        state
+        let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000 + interval),
                 TEST_NONCE,
                 RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
                 &mut buf,
             )
-            .expect("writing the rotating announce succeeds")
-            .expect("the rotating announce is due");
+            .written_len();
 
         let destination = state.self_announced_destinations()[0];
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
@@ -862,8 +861,7 @@ mod tests {
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
-            .unwrap()
-            .unwrap();
+            .written_len();
 
         let mut relayed = announce_buf[..announce_len].to_vec();
         relayed[1] = 1;

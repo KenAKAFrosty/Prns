@@ -22,8 +22,11 @@ pub use identity_registration::SetTransportIdentityError;
 pub use ingress::{AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome};
 pub use ingress::{DataPacket, Ingress};
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
-pub use self_announce::{ReannounceSchedule, SelfAnnounceAppData, WriteSelfAnnounceError};
-pub use self_ratchets::{RatchetEntropy, RatchetPolicy};
+pub use self_announce::{
+    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, ReannounceSchedule,
+    SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure, WriteSelfAnnounceError,
+};
+pub use self_ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
 pub use send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
     WriteSendSingleError,
@@ -312,14 +315,14 @@ mod tests {
     fn next_wakeup_reports_the_reannounce_deadline_once_we_have_announced() {
         let mut state = personal_node_announcer();
         let mut buf = [0u8; MTU];
-        state
+        let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
                 TEST_NONCE,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
-            .expect("first announce is due");
+            .written_len();
 
         let interval = ReannounceSchedule::default().interval_millis();
         assert_eq!(
