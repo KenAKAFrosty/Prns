@@ -937,20 +937,20 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
         BinaryColor::On,
     );
 
-    // Link and destination counters sit in a compact right-side stats column.
-    draw_link(display, STAT_ICON_X, tx_y + 1);
-    let links = fmt_count(card.links);
-    draw_compact_number(
-        display,
-        links.as_str(),
-        Point::new(STAT_TEXT_X, tx_y),
-        BinaryColor::On,
-    );
-    draw_person(display, STAT_ICON_X, rx_y + 1);
+    // Destination and link counters sit in a compact right-side stats column.
+    draw_person(display, STAT_ICON_X, tx_y + 1);
     let destinations = fmt_count(card.destinations);
     draw_compact_number(
         display,
         destinations.as_str(),
+        Point::new(STAT_TEXT_X, tx_y),
+        BinaryColor::On,
+    );
+    draw_link(display, STAT_ICON_X, rx_y + 1);
+    let links = fmt_count(card.links);
+    draw_compact_number(
+        display,
+        links.as_str(),
         Point::new(STAT_TEXT_X, rx_y),
         BinaryColor::On,
     );
@@ -1778,9 +1778,11 @@ mod tests {
         assert_eq!(display.get_pixel(Point::new(4, 28)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(4, 29)), None);
         assert_eq!(display.get_pixel(Point::new(33, 14)), None);
-        assert_eq!(display.get_pixel(Point::new(35, 14)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(37, 14)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(35, 14)), None);
         assert_eq!(display.get_pixel(Point::new(42, 14)), None);
-        assert_eq!(display.get_pixel(Point::new(37, 23)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(35, 23)), Some(BinaryColor::On));
+        assert_eq!(display.get_pixel(Point::new(37, 23)), None);
         assert_eq!(display.get_pixel(Point::new(5, 32)), Some(BinaryColor::On));
         assert_eq!(display.get_pixel(Point::new(38, 32)), Some(BinaryColor::On));
     }
