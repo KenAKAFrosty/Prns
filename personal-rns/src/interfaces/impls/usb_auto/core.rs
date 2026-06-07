@@ -248,6 +248,63 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
 mod tests {
     use super::*;
     use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
+    use proptest::prelude::*;
+
+    #[derive(Clone, PartialEq, Eq, Debug)]
+    enum OwnedMessage {
+        Hello(Capabilities),
+        HelloAck {
+            tag: NodeTag,
+            capabilities: Capabilities,
+        },
+        Data(std::vec::Vec<u8>),
+    }
+
+    impl OwnedMessage {
+        fn as_borrowed(&self) -> Message<'_> {
+            match self {
+                OwnedMessage::Hello(capabilities) => Message::Hello(*capabilities),
+                OwnedMessage::HelloAck { tag, capabilities } => Message::HelloAck {
+                    tag: *tag,
+                    capabilities: *capabilities,
+                },
+                OwnedMessage::Data(packet) => Message::Data(packet),
+            }
+        }
+
+        fn payload_len(&self) -> usize {
+            match self {
+                OwnedMessage::Hello(_) => MESSAGE_KIND_LEN + HELLO_BODY_LEN,
+                OwnedMessage::HelloAck { .. } => MESSAGE_KIND_LEN + HELLO_ACK_BODY_LEN,
+                OwnedMessage::Data(packet) => MESSAGE_KIND_LEN + packet.len(),
+            }
+        }
+    }
+
+    fn to_owned(message: Message<'_>) -> OwnedMessage {
+        match message {
+            Message::Hello(capabilities) => OwnedMessage::Hello(capabilities),
+            Message::HelloAck { tag, capabilities } => OwnedMessage::HelloAck { tag, capabilities },
+            Message::Data(packet) => OwnedMessage::Data(packet.to_vec()),
+        }
+    }
+
+    fn capabilities() -> impl Strategy<Value = Capabilities> {
+        any::<u8>().prop_map(Capabilities)
+    }
+
+    fn node_tags() -> impl Strategy<Value = NodeTag> {
+        any::<[u8; NODE_TAG_LEN]>().prop_map(NodeTag)
+    }
+
+    fn owned_messages() -> impl Strategy<Value = OwnedMessage> {
+        prop_oneof![
+            capabilities().prop_map(OwnedMessage::Hello),
+            (node_tags(), capabilities())
+                .prop_map(|(tag, capabilities)| OwnedMessage::HelloAck { tag, capabilities }),
+            prop::collection::vec(any::<u8>(), 0..=MAX_DATA_BYTES).prop_map(OwnedMessage::Data),
+        ]
+    }
 
     fn payload_roundtrip(message: Message<'_>) -> Message<'static> {
         let mut buf = [0u8; MAX_MESSAGE_BYTES];
@@ -483,6 +540,69 @@ mod tests {
     impl Message<'_> {
         fn is_data_with(&self, expected: &[u8]) -> bool {
             matches!(self, Message::Data(body) if *body == expected)
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_messages_round_trip_through_payload_codec(message in owned_messages()) {
+            let mut buf = std::vec![0u8; message.payload_len()];
+            let written = message.as_borrowed().write_payload(&mut buf).unwrap();
+
+            prop_assert_eq!(written, message.payload_len());
+            prop_assert_eq!(to_owned(decode_message(&buf[..written]).unwrap()), message);
+        }
+
+        #[test]
+        fn arbitrary_messages_fit_exact_payload_buffers_and_reject_one_byte_short(
+            message in owned_messages()
+        ) {
+            let exact_len = message.payload_len();
+
+            let mut exact = std::vec![0u8; exact_len];
+            let written = message.as_borrowed().write_payload(&mut exact).unwrap();
+            prop_assert_eq!(written, exact_len);
+
+            let mut short = std::vec![0u8; exact_len - 1];
+            prop_assert_eq!(
+                message.as_borrowed().write_payload(&mut short),
+                Err(WriteError::BufferTooSmall)
+            );
+        }
+
+        #[test]
+        fn arbitrary_messages_round_trip_through_framed_stream(
+            message in owned_messages(),
+            chunk_size in 1usize..32,
+        ) {
+            let mut wire =
+                std::vec![0u8; rns_serial_framing::max_encoded_len(message.payload_len())];
+            let n = message.as_borrowed().write_framed(&mut wire).unwrap();
+
+            let mut decoder: RnsSerialDecoder<MAX_MESSAGE_BYTES> = RnsSerialDecoder::new();
+            let mut decoded = std::vec::Vec::new();
+            for chunk in wire[..n].chunks(chunk_size) {
+                decoder.feed_slice(chunk, |frame| {
+                    decoded.push(to_owned(decode_message(frame).unwrap()));
+                });
+            }
+
+            prop_assert_eq!(decoded, std::vec![message]);
+        }
+
+        #[test]
+        fn arbitrary_capabilities_negotiate_symmetrically(
+            local in capabilities(),
+            peer in capabilities(),
+        ) {
+            let expected = if local.supports_host_lane() && peer.supports_host_lane() {
+                PeerProfile::Host
+            } else {
+                PeerProfile::Peripheral
+            };
+
+            prop_assert_eq!(PeerProfile::negotiate(local, peer), expected);
+            prop_assert_eq!(PeerProfile::negotiate(peer, local), expected);
         }
     }
 }
