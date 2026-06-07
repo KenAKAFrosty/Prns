@@ -183,8 +183,10 @@ const VBAT_FULL_MV: u32 = 4200;
 const VBAT_ABSENT_MV: u32 = 3000;
 
 /// Blank the OLED after this long with no Reticulum activity; it wakes the instant
-/// traffic resumes. On a busy fabric, announces keep it effectively always on.
-const OLED_IDLE_BLANK_SECS: u64 = 30;
+/// traffic resumes. `None` keeps the panel always on, so a dark screen can only
+/// mean a reset, reflash, or crash — never idleness. (Battery/field builds want
+/// `Some(secs)` back.)
+const OLED_IDLE_BLANK_SECS: Option<u64> = None;
 
 /// Hold the user button at least this long for a long press (open/close a menu);
 /// anything shorter is a tap that advances focus. Matches the desktop face's threshold.
@@ -338,10 +340,14 @@ pub async fn run(spawner: Spawner) {
     let _ = interfaces.push(
         EmbassyInterfaceSeam::split(USB_INTERFACE_ID, &CHANNELS, &WAKE).start_interface(interface),
     );
-    let _ = interfaces.push(
-        EmbassyInterfaceSeam::split(WIFI_INTERFACE_ID, &WIFI_CHANNELS, &WAKE)
-            .start_interface(wifi_interface),
-    );
+    // WiFi interface deliberately unregistered for now: the working rig is
+    // USB-only, so every routed byte is attributable to the cable. Re-enable by
+    // restoring this push when the rig needs WiFi again.
+    let _ = &wifi_interface;
+    // let _ = interfaces.push(
+    //     EmbassyInterfaceSeam::split(WIFI_INTERFACE_ID, &WIFI_CHANNELS, &WAKE)
+    //         .start_interface(wifi_interface),
+    // );
 
     // The engine gets core 1 to itself: its own scheduler, its own explicitly
     // sized stack, and no radio task ever preempts a cycle. Radio, render, and
@@ -469,7 +475,8 @@ pub async fn run(spawner: Spawner) {
                 last_activity_key = key;
             }
         }
-        let idle = last_active.elapsed() >= Duration::from_secs(OLED_IDLE_BLANK_SECS);
+        let idle = OLED_IDLE_BLANK_SECS
+            .is_some_and(|secs| last_active.elapsed() >= Duration::from_secs(secs));
         if idle && panel_on {
             let _ = display.set_display_on(false);
             panel_on = false;
@@ -528,6 +535,15 @@ fn fixture_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
     secret_key[..32].fill(0x22);
     secret_key[32..].fill(0x11);
+    // The board MAC mixed into both halves makes every flashed board a distinct
+    // node (multi-board rigs need distinct identities to route at all). Still a
+    // fixture: predictable from the MAC, so the NEVER-ship bar above stands.
+    let mac = base_mac_address();
+    let mac_bytes = mac.as_bytes();
+    for (i, byte) in mac_bytes.iter().enumerate() {
+        secret_key[i] ^= byte;
+        secret_key[32 + i] ^= byte;
+    }
     secret_key
 }
 

@@ -30,7 +30,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
+// use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
@@ -157,10 +157,13 @@ fn run_engine(
     let mut interfaces = GrowableInterfaceSet::new();
     let _ =
         interfaces.push(host.attach(usb_auto_interface(USB_INTERFACE_ID), MAX_BUFFERED_PACKETS));
-    let _ = interfaces.push(host.attach(
-        wifi_lan_auto_interface(WIFI_INTERFACE_ID),
-        MAX_BUFFERED_PACKETS,
-    ));
+    // WiFi interface deliberately unregistered for now: the working rig is
+    // USB-only, so every routed byte is attributable to the cable. Re-enable by
+    // restoring this push when the rig needs WiFi again.
+    // let _ = interfaces.push(host.attach(
+    //     wifi_lan_auto_interface(WIFI_INTERFACE_ID),
+    //     MAX_BUFFERED_PACKETS,
+    // ));
 
     block_on(Prns::run(
         Recipe {
