@@ -1,0 +1,22 @@
+[package]
+name = "personal-hopspot-ios"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Personal Hopspot iOS face: a C-ABI + DrawTarget bridge that renders the shared Hopspot screen into an iOS RGBA buffer and feeds taps back as single-button input."
+
+[workspace]
+resolver = "2"
+
+[lib]
+name = "personal_hopspot_ios"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+personal-hopspot-ui = { path = "../../ui", default-features = false }
+embedded-graphics = "0.8"
+heapless = { version = "0.8", default-features = false }
+
+[profile.release]
+codegen-units = 1
+opt-level = "s"

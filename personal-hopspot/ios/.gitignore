@@ -1,0 +1,9 @@
+rust/target/
+app/build/
+*.a
+
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+DerivedData/
+.DS_Store
