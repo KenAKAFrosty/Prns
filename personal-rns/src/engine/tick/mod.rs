@@ -362,6 +362,36 @@ mod tests {
     }
 
     #[test]
+    fn our_own_repeat_echoed_back_is_deduplicated() {
+        use crate::engine::{AnnounceIngest, IngestPacketOutcome};
+
+        let source = InterfaceId::new([0u8; 16]);
+        let view = [repeating_descriptor(source)];
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let fan = rebroadcast_fan_for(&mut state, &view);
+        assert_eq!(fan, std::vec![source]);
+
+        let mut echo = hx(RAW_ANNOUNCE);
+        echo[1] += 1;
+        let out = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(5_000),
+                source_interface: source,
+                bytes: &mut echo,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        assert_eq!(
+            out,
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
+            "the repeat coming home is the same announce: dedup eats it, no loop",
+        );
+        assert_eq!(state.route_count(), 1);
+        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
+    }
+
+    #[test]
     fn an_interface_that_cannot_transport_never_joins_a_rebroadcast_fan() {
         use crate::interfaces::{EgressCapability, TransportCapability};
 

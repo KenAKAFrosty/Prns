@@ -1110,6 +1110,89 @@ mod tests {
     }
 
     #[test]
+    fn an_announce_heard_on_a_repeating_interface_fires_back_out_that_interface() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut runtime = Runtime::new(
+            EngineState::<Cap>::default(),
+            interface_set([started_with_descriptor_and_reports(
+                descriptor_with_capabilities(
+                    iface(0xA1),
+                    ConnectionState::Connected,
+                    EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
+                ),
+                std::vec![(InstantMillis(500), raw.clone())],
+                [],
+            )]),
+            (),
+        );
+
+        let out = runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |_| {},
+            || None,
+        );
+        assert_eq!(out.accepted_announce_count, 1);
+        assert_eq!(out.scheduled_rebroadcast_count, 1);
+
+        let _ = runtime.cycle_once(
+            InstantMillis(500 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |_| {},
+            || None,
+        );
+        let mut expected = raw;
+        expected[1] += 1;
+        assert_eq!(
+            runtime.interfaces()[0].handle.sent,
+            std::vec![expected],
+            "the announce must re-emit on the interface it arrived through, one hop further, exactly once",
+        );
+    }
+
+    #[test]
+    fn a_lone_cross_interface_only_interface_never_repeats_what_it_heard() {
+        let raw = hx(RAW_ANNOUNCE);
+        let mut runtime = Runtime::new(
+            EngineState::<Cap>::default(),
+            interface_set([started_with_descriptor_and_reports(
+                descriptor_with_capabilities(
+                    iface(0xA1),
+                    ConnectionState::Connected,
+                    EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+                ),
+                std::vec![(InstantMillis(500), raw)],
+                [],
+            )]),
+            (),
+        );
+
+        let out = runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |_| {},
+            || None,
+        );
+        assert_eq!(out.accepted_announce_count, 1);
+
+        for now in [
+            500 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1,
+            500 + 2 * DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1,
+        ] {
+            let _ = runtime.cycle_once(
+                InstantMillis(now),
+                |bytes: &mut [u8]| bytes.fill(0xCA),
+                |_| {},
+                || None,
+            );
+        }
+        assert!(
+            runtime.interfaces()[0].handle.sent.is_empty(),
+            "a point-to-point pipe must never replay an announce at its only peer",
+        );
+    }
+
+    #[test]
     fn a_rejected_command_surfaces_on_the_event_lane() {
         let (engine, _) = single_destination_engine();
         let mut runtime = Runtime::new(
