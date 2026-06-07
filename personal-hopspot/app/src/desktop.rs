@@ -8,7 +8,6 @@
 //! The engine runs on its own thread; the SDL2 window owns the main thread (SDL
 //! requires it) and repaints the latest runtime snapshot at ~30 fps.
 
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -30,7 +29,6 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 // use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
-use personal_rns::interfaces::impls::rns_parity::tcp::tcp_client_interface;
 use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
 use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
@@ -52,8 +50,6 @@ use personal_hopspot_ui::{
 /// Stable id for this node's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
 const WIFI_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD1; 16]);
-const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD2; 16]);
-const TCP_PEER_PORT: u16 = 4242;
 
 /// The destination this node announces itself as (`personal.node`).
 const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
@@ -94,6 +90,49 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     }
 
     key
+}
+
+fn interface_label(id: InterfaceId) -> &'static str {
+    if id == USB_INTERFACE_ID {
+        "USB"
+    } else if id == WIFI_INTERFACE_ID {
+        "WiFi"
+    } else {
+        "Unknown"
+    }
+}
+
+fn snapshot_connectivity_changed(
+    previous: Option<&RuntimeSnapshot>,
+    next: &RuntimeSnapshot,
+) -> bool {
+    let Some(previous) = previous else {
+        return true;
+    };
+    previous.interfaces.len() != next.interfaces.len()
+        || previous
+            .interfaces
+            .iter()
+            .zip(next.interfaces.iter())
+            .any(|(left, right)| {
+                left.id != right.id
+                    || left.connection_state != right.connection_state
+                    || left.tracked_destinations != right.tracked_destinations
+            })
+}
+
+fn log_snapshot(snapshot: &RuntimeSnapshot) {
+    for view in &snapshot.interfaces {
+        println!(
+            "HOPSPOT_SNAPSHOT interface={} id={:02x?} state={:?} destinations={} rx={} tx={}",
+            interface_label(view.id),
+            view.id.as_bytes(),
+            view.connection_state,
+            view.tracked_destinations,
+            view.reticulum_rx_byte_count,
+            view.reticulum_tx_byte_count,
+        );
+    }
 }
 
 /// Spawn the engine on its own thread, then own the SDL2 window on this (the main) thread: SDL requires it.
@@ -140,14 +179,6 @@ fn run_engine(
     //     MAX_BUFFERED_PACKETS,
     // ));
     //WIP NEEDS REVIEW
-    let _ = interfaces.push(host.attach(
-        tcp_client_interface(
-            TCP_INTERFACE_ID,
-            SocketAddr::from(([127, 0, 0, 1], TCP_PEER_PORT)),
-        ),
-        MAX_BUFFERED_PACKETS,
-    ));
-
     let transport_id = TransportId::new(
         *InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key)
             .identity_hash()
@@ -171,37 +202,44 @@ fn run_engine(
             interfaces,
             host,
         },
-        move |event: PrnsEvent<'_>| match event {
-            PrnsEvent::SnapshotUpdated(snapshot) => {
-                let _ = snap_tx.send(snapshot.clone());
-            }
-            PrnsEvent::Delivered(Delivery::Plain(delivery)) => {
-                println!(
-                    "HOPSPOT_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
-                    delivery.destination.as_bytes(),
-                    delivery.payload.len(),
-                );
-            }
-            PrnsEvent::Delivered(Delivery::Single(delivery)) => {
-                println!(
-                    "HOPSPOT_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
-                    delivery.destination.as_bytes(),
-                    delivery.plaintext.len(),
-                );
-            }
-            PrnsEvent::AnnounceHeard {
-                destination,
-                hops,
-                source_interface,
-            } => {
-                println!(
-                    "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
-                    destination.as_bytes(),
-                    source_interface.as_bytes(),
-                );
-            }
-            PrnsEvent::CommandSettled { id, settlement } => {
-                println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
+        {
+            let mut last_logged_snapshot: Option<RuntimeSnapshot> = None;
+            move |event: PrnsEvent<'_>| match event {
+                PrnsEvent::SnapshotUpdated(snapshot) => {
+                    if snapshot_connectivity_changed(last_logged_snapshot.as_ref(), snapshot) {
+                        log_snapshot(snapshot);
+                        last_logged_snapshot = Some(snapshot.clone());
+                    }
+                    let _ = snap_tx.send(snapshot.clone());
+                }
+                PrnsEvent::Delivered(Delivery::Plain(delivery)) => {
+                    println!(
+                        "HOPSPOT_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
+                        delivery.destination.as_bytes(),
+                        delivery.payload.len(),
+                    );
+                }
+                PrnsEvent::Delivered(Delivery::Single(delivery)) => {
+                    println!(
+                        "HOPSPOT_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
+                        delivery.destination.as_bytes(),
+                        delivery.plaintext.len(),
+                    );
+                }
+                PrnsEvent::AnnounceHeard {
+                    destination,
+                    hops,
+                    source_interface,
+                } => {
+                    println!(
+                        "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
+                        destination.as_bytes(),
+                        source_interface.as_bytes(),
+                    );
+                }
+                PrnsEvent::CommandSettled { id, settlement } => {
+                    println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
+                }
             }
         },
         // The engine's tap into the UI's command queue: every cycle sips until
@@ -395,8 +433,6 @@ fn run_window(
                         Some((CardKind::Usb, "USB"))
                     } else if id == WIFI_INTERFACE_ID {
                         Some((CardKind::Wifi, "WiFi"))
-                    } else if id == TCP_INTERFACE_ID {
-                        Some((CardKind::Tcp, "iPad"))
                     } else {
                         None
                     }

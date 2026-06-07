@@ -33,8 +33,8 @@ use static_cell::StaticCell;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
-    ReannounceSchedule, SendSingle, SendSinglePayload, Settlement,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, InstantMillis,
+    IssuedCommand, ReannounceSchedule, SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -44,7 +44,7 @@ use personal_rns::interfaces::impls::usb_auto::serve;
 use personal_rns::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::substrate::{
     new_wake_signal, EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle,
-    EmbassyInterfaceSeam, WakeSignal,
+    EmbassyInterfaceSeam, EmbassyTimebase, WakeSignal,
 };
 use personal_rns::interfaces::{
     InterfaceId, InterfaceWorkerContext, MacAddress, SelfDrivenInterface, StartedInterface,
@@ -273,6 +273,8 @@ pub async fn run(spawner: Spawner) {
     };
 
     esp_println::logger::init_logger_from_env();
+    let rtc = Rtc::new(p.LPWR);
+    let announce_timebase = EmbassyTimebase::start_at(InstantMillis(rtc.current_time_us() / 1000));
 
     // This first banner is the only thing on the usb-serial-jtag before frames flow, so
     // the desktop's decoder skips it as pre-frame noise.
@@ -365,7 +367,13 @@ pub async fn run(spawner: Spawner) {
     // core 1 with the engine.
     let mut interfaces: EngineInterfaces = FixedInterfaceSet::new();
     let _ = interfaces.push(
-        EmbassyInterfaceSeam::split(USB_INTERFACE_ID, &CHANNELS, &WAKE).start_interface(interface),
+        EmbassyInterfaceSeam::split_with_timebase(
+            USB_INTERFACE_ID,
+            &CHANNELS,
+            &WAKE,
+            announce_timebase,
+        )
+        .start_interface(interface),
     );
     // WiFi interface deliberately unregistered for now: the working rig is
     // USB-only, so every routed byte is attributable to the cable. Re-enable by
@@ -400,7 +408,8 @@ pub async fn run(spawner: Spawner) {
                 .init(esp_rtos::embassy::Executor::new())
                 .run(|engine_spawner| {
                     engine_spawner.spawn(
-                        engine_task(interfaces, secret_key).expect("engine task fits the pool"),
+                        engine_task(interfaces, secret_key, announce_timebase)
+                            .expect("engine task fits the pool"),
                     );
                 })
         },
@@ -581,13 +590,15 @@ fn fixture_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 async fn engine_task(
     interfaces: EngineInterfaces,
     secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    announce_timebase: EmbassyTimebase,
 ) {
     // The embassy contract host owns the shared wake and draws each cycle's announce
     // jitter from the RNG (timing only — its quality is non-critical). No heap: the
     // board owns the `static` CHANNELS.
-    let host = EmbassyContractHost::new(&WAKE, |bytes: &mut [u8]| {
-        Rng::new().read(bytes);
-    });
+    let host =
+        EmbassyContractHost::new_with_timebase(&WAKE, announce_timebase, |bytes: &mut [u8]| {
+            Rng::new().read(bytes);
+        });
 
     // Each cycle's snapshot goes to the OLED render loop, never the shared
     // usb-serial-jtag (a mid-frame log byte would corrupt the link).

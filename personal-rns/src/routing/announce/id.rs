@@ -41,11 +41,11 @@ impl SelfAnnounceEntropy {
     }
 }
 
-/// The origin's clock at announce emission: a 5-byte big-endian count
-/// (`0..=2^40-1`, ~34,800 years). Receivers only ever *compare* these, never
-/// add them to a wall-clock value, so the type stays distinct from epoch
-/// seconds; `Ord` is correct because big-endian byte order is unsigned numeric
-/// order.
+/// The origin's clock at announce emission: a 5-byte big-endian count of
+/// whole seconds (`0..=2^40-1`, ~34,800 years). Receivers only ever *compare*
+/// these, never add them to a wall-clock value, so the type stays distinct
+/// from epoch seconds; `Ord` is correct because big-endian byte order is
+/// unsigned numeric order.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MonotonicTimebase([u8; TIMEBASE_LEN]);
@@ -82,8 +82,9 @@ pub struct AnnounceId {
 
 impl AnnounceId {
     pub fn mint(nonce: SelfAnnounceEntropy, now: InstantMillis) -> Self {
+        let emitted_seconds = now.0 / 1_000;
         let mut timebase = [0u8; TIMEBASE_LEN];
-        timebase.copy_from_slice(&now.0.to_be_bytes()[8 - TIMEBASE_LEN..]);
+        timebase.copy_from_slice(&emitted_seconds.to_be_bytes()[8 - TIMEBASE_LEN..]);
         Self {
             nonce: AnnounceNonce(nonce.0),
             timebase: MonotonicTimebase(timebase),
@@ -132,5 +133,15 @@ mod tests {
     fn timebase_debug_prints_the_numeric_count() {
         let timebase = MonotonicTimebase::from_wire([0, 0, 0, 1, 0]);
         assert_eq!(format!("{timebase:?}"), "MonotonicTimebase(256)");
+    }
+
+    #[test]
+    fn mint_floors_milliseconds_to_whole_seconds() {
+        let id = AnnounceId::mint(
+            SelfAnnounceEntropy::new([9, 8, 7, 6, 5]),
+            InstantMillis(123_456),
+        );
+        assert_eq!(id.timebase.as_count(), 123);
+        assert_eq!(id.to_wire_bytes(), [9, 8, 7, 6, 5, 0, 0, 0, 0, 123]);
     }
 }

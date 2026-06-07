@@ -24,7 +24,7 @@ heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(not(target_arch = "xtensa"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["std-sync-host", "usb-auto", "wifi-lan-auto", "tcp"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["std-sync-host", "usb-auto", "wifi-lan-auto"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 

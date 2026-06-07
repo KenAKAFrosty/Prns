@@ -266,6 +266,30 @@ mod tests {
     }
 
     #[test]
+    fn same_hops_fresh_nonce_but_older_emission_rejects() {
+        let stored = announce_id(0x55, 200);
+        let decision = decide(AnnounceAcceptanceInput {
+            packet_hops: 3,
+            announce_id: announce_id(0x56, 150),
+            destination_is_self_or_upstream: false,
+            existing_route: Some(ExistingRoute {
+                hops: 3,
+                expires: InstantMillis(10_000),
+                announce_id_history: AnnounceIdHistoryView::from_slices(
+                    core::slice::from_ref(&stored),
+                    &[],
+                ),
+                responsiveness: RouteResponsiveness::Responsive,
+            }),
+            arrived_at: InstantMillis(1_000),
+        });
+        assert_eq!(
+            decision,
+            AnnounceAcceptanceDecision::Reject(RejectReason::KnownRouteNoNewerEvidence)
+        );
+    }
+
+    #[test]
     fn longer_hops_expired_path_unseen_id_accepts() {
         let stored = announce_id(0x66, 200);
         let decision = decide(AnnounceAcceptanceInput {

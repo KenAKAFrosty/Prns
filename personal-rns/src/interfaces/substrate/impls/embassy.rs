@@ -20,6 +20,36 @@ pub const fn new_wake_signal() -> WakeSignal {
     Signal::new()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbassyTimebase {
+    raw_start: EmbassyInstant,
+    logical_start: InstantMillis,
+}
+
+impl EmbassyTimebase {
+    pub fn capture_now() -> Self {
+        let raw_start = EmbassyInstant::now();
+        Self {
+            raw_start,
+            logical_start: InstantMillis(raw_start.as_millis()),
+        }
+    }
+
+    pub fn start_at(logical_start: InstantMillis) -> Self {
+        Self {
+            raw_start: EmbassyInstant::now(),
+            logical_start,
+        }
+    }
+
+    pub fn now(&self) -> InstantMillis {
+        let elapsed = EmbassyInstant::now()
+            .saturating_duration_since(self.raw_start)
+            .as_millis();
+        InstantMillis(self.logical_start.0.saturating_add(elapsed))
+    }
+}
+
 struct InboundSlot<const MTU: usize> {
     arrived_at: InstantMillis,
     len: u16,
@@ -83,6 +113,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize> Default
 pub struct EmbassyInboundSink<const MTU: usize> {
     producer: zerocopy_channel::Sender<'static, CriticalSectionRawMutex, InboundSlot<MTU>>,
     wake: &'static WakeSignal,
+    timebase: EmbassyTimebase,
 }
 
 impl<const MTU: usize> InboundSink for EmbassyInboundSink<MTU> {
@@ -93,7 +124,7 @@ impl<const MTU: usize> InboundSink for EmbassyInboundSink<MTU> {
             self.wake.signal(());
             return Err(QueueFull);
         };
-        slot.arrived_at = InstantMillis(EmbassyInstant::now().as_millis());
+        slot.arrived_at = self.timebase.now();
         slot.len = fill(&mut slot.bytes) as u16;
         self.producer.send_done();
         self.wake.signal(());
@@ -286,6 +317,15 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
         channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
         wake: &'static WakeSignal,
     ) -> Self {
+        Self::split_with_timebase(id, channels, wake, EmbassyTimebase::capture_now())
+    }
+
+    pub fn split_with_timebase(
+        id: InterfaceId,
+        channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
+        wake: &'static WakeSignal,
+        timebase: EmbassyTimebase,
+    ) -> Self {
         let inbound = channels.inbound.init(zerocopy_channel::Channel::new(
             channels.inbound_slots.take(),
         ));
@@ -299,6 +339,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
                 inbound: EmbassyInboundSink {
                     producer: inbound_sender,
                     wake,
+                    timebase,
                 },
                 outbound: EmbassyOutboundDrain {
                     consumer: outbound_receiver,
@@ -559,6 +600,30 @@ mod tests {
             std::vec![(std::vec![1, 2, 3], id()), (std::vec![4, 5], id()),]
         );
         assert_eq!(runtime_handle.drain_inbound(|_packet| {}), 0);
+    }
+
+    #[test]
+    fn a_custom_timebase_stamps_inbound_packets_from_its_logical_start() {
+        static CH: EmbassyInterfaceChannels<MTU, 1> = EmbassyInterfaceChannels::new();
+        static WAKE: WakeSignal = new_wake_signal();
+        let timebase = EmbassyTimebase::start_at(InstantMillis(123_000));
+        let EmbassyInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = EmbassyInterfaceSeam::split_with_timebase(id(), &CH, &WAKE, timebase);
+
+        worker_context
+            .inbound
+            .submit(|buf| {
+                buf[0] = 0xAB;
+                1
+            })
+            .unwrap();
+
+        let arrived_at = runtime_handle
+            .next_inbound(|packet| packet.arrived_at)
+            .unwrap();
+        assert!(arrived_at.0 >= 123_000);
     }
 
     #[test]

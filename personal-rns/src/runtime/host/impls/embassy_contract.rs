@@ -1,17 +1,18 @@
 use embassy_futures::select::select;
-use embassy_time::{Instant as EmbassyInstant, Timer};
+use embassy_time::{Duration, Timer};
 
 use super::super::{Host, NextWake};
 use crate::engine::InstantMillis;
 use crate::interfaces::substrate::{
     EmbassyHostSubstrate, EmbassyInterfaceChannels, EmbassyInterfaceHandle, EmbassyInterfaceSeam,
-    WakeSignal,
+    EmbassyTimebase, WakeSignal,
 };
 use crate::interfaces::{Interface, InterfaceId, StartedInterface};
 
 pub struct EmbassyContractHost<E> {
     wake: &'static WakeSignal,
     draw_entropy: E,
+    timebase: EmbassyTimebase,
 }
 
 impl<E> EmbassyContractHost<E>
@@ -19,7 +20,19 @@ where
     E: FnMut(&mut [u8]),
 {
     pub fn new(wake: &'static WakeSignal, draw_entropy: E) -> Self {
-        Self { wake, draw_entropy }
+        Self::new_with_timebase(wake, EmbassyTimebase::capture_now(), draw_entropy)
+    }
+
+    pub fn new_with_timebase(
+        wake: &'static WakeSignal,
+        timebase: EmbassyTimebase,
+        draw_entropy: E,
+    ) -> Self {
+        Self {
+            wake,
+            draw_entropy,
+            timebase,
+        }
     }
 
     pub fn glue_seam<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>(
@@ -27,7 +40,7 @@ where
         id: InterfaceId,
         channels: &'static EmbassyInterfaceChannels<MTU, MAX_BUFFERED_PACKETS>,
     ) -> EmbassyInterfaceSeam<MTU, MAX_BUFFERED_PACKETS> {
-        EmbassyInterfaceSeam::split(id, channels, self.wake)
+        EmbassyInterfaceSeam::split_with_timebase(id, channels, self.wake, self.timebase)
     }
 
     pub fn attach<I, const MTU: usize, const MAX_BUFFERED_PACKETS: usize>(
@@ -56,14 +69,17 @@ where
         match wake {
             NextWake::Immediate => {}
             NextWake::At(deadline) => {
-                let at = EmbassyInstant::from_millis(deadline.0);
-                let _ = select(self.wake.wait(), Timer::at(at)).await;
+                let now = self.timebase.now();
+                let timeout = Duration::from_millis(deadline.0.saturating_sub(now.0));
+                if timeout != Duration::from_millis(0) {
+                    let _ = select(self.wake.wait(), Timer::after(timeout)).await;
+                }
             }
             NextWake::Idle => {
                 self.wake.wait().await;
             }
         }
-        InstantMillis(EmbassyInstant::now().as_millis())
+        self.timebase.now()
     }
 
     fn fill_entropy(&mut self, bytes: &mut [u8]) {

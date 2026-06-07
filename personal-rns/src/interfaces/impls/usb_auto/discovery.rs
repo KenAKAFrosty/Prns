@@ -36,6 +36,10 @@ impl PortId {
 /// enough for a booting board, short enough that a non-Personal device (someone
 /// else's serial gadget) is released promptly.
 const PROBE_SCAN_BUDGET: u8 = 7;
+/// How long a timed-out probe rests before we try that still-present port again.
+/// This keeps a slow-booting board from requiring a physical replug while still
+/// backing off from unrelated serial gadgets that never answer our Hello.
+const PROBE_RETRY_COOLDOWN_SCANS: u8 = 7;
 
 const MAX_READS_PER_DEVICE_PER_PUMP: usize = 8;
 const MAX_READS_PER_HOST_PEER_PER_PUMP: usize = 32;
@@ -44,6 +48,11 @@ enum LinkState {
     Probing { scans_left: u8 },
     Confirmed { tag: NodeTag, profile: PeerProfile },
     Lost,
+}
+
+struct RejectedPort {
+    id: PortId,
+    scans_until_retry: u8,
 }
 
 impl LinkState {
@@ -175,7 +184,7 @@ pub(in crate::interfaces::impls::usb_auto) struct Discoverer<Port> {
     node_tag: NodeTag,
     capabilities: Capabilities,
     devices: Vec<Device<Port>>,
-    rejected: Vec<PortId>,
+    rejected: Vec<RejectedPort>,
     reported_state: ConnectionState,
 }
 
@@ -249,16 +258,21 @@ impl<Port: Read + Write> Discoverer<Port> {
             }
         }
 
-        for device in &self.devices {
-            if matches!(device.state, LinkState::Probing { scans_left: 0 }) {
-                self.rejected.push(device.id.clone());
-            }
+        let timed_out: Vec<_> = self
+            .devices
+            .iter()
+            .filter(|device| matches!(device.state, LinkState::Probing { scans_left: 0 }))
+            .map(|device| device.id.clone())
+            .collect();
+        for id in timed_out {
+            self.reject(id);
         }
+        self.cool_rejections(present);
+        let rejected_ids: Vec<_> = self.rejected.iter().map(|entry| entry.id.clone()).collect();
         self.devices
-            .retain(|d| present.contains(&d.id) && !self.rejected.contains(&d.id));
-        self.rejected.retain(|id| present.contains(id));
+            .retain(|d| present.contains(&d.id) && !rejected_ids.contains(&d.id));
         for id in present {
-            if !self.rejected.contains(id) {
+            if !rejected_ids.contains(id) {
                 self.note_present(id.clone(), &open);
             }
         }
@@ -377,6 +391,33 @@ impl<Port: Read + Write> Discoverer<Port> {
         if state != self.reported_state {
             self.reported_state = state;
             control.report(ControlReport::ConnectionState(state));
+        }
+    }
+
+    fn reject(&mut self, id: PortId) {
+        if self.rejected.iter().any(|entry| entry.id == id) {
+            return;
+        }
+        self.rejected.push(RejectedPort {
+            id,
+            scans_until_retry: PROBE_RETRY_COOLDOWN_SCANS,
+        });
+    }
+
+    fn cool_rejections(&mut self, present: &[PortId]) {
+        let mut index = 0;
+        while index < self.rejected.len() {
+            let entry = &mut self.rejected[index];
+            if !present.contains(&entry.id) {
+                self.rejected.swap_remove(index);
+                continue;
+            }
+            entry.scans_until_retry = entry.scans_until_retry.saturating_sub(1);
+            if entry.scans_until_retry == 0 {
+                self.rejected.swap_remove(index);
+                continue;
+            }
+            index += 1;
         }
     }
 }
@@ -720,6 +761,44 @@ mod tests {
     }
 
     #[test]
+    fn outbound_fans_out_to_all_confirmed_links() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = host();
+
+        let left = MockWire::new();
+        let right = MockWire::new();
+        let (l, r) = (left.port(), right.port());
+        disc.note_present(port("/dev/ttyACM0"), move |_| Ok(l));
+        disc.note_present(port("/dev/ttyACM1"), move |_| Ok(r));
+
+        left.device_sends(Message::HelloAck {
+            tag: NodeTag([2; 8]),
+            capabilities: Capabilities::none(),
+        });
+        right.device_sends(Message::HelloAck {
+            tag: NodeTag([3; 8]),
+            capabilities: Capabilities::none(),
+        });
+        disc.pump(&mut worker_context);
+        let _ = runtime_handle.next_report();
+
+        let packet = [0x55, 0x66, 0x77];
+        runtime_handle
+            .acquire_send_grant(|buf| {
+                buf[..packet.len()].copy_from_slice(&packet);
+                packet.len()
+            })
+            .unwrap();
+        disc.pump(&mut worker_context);
+
+        assert_eq!(data_frames(&left.host_wrote()), std::vec![packet.to_vec()]);
+        assert_eq!(data_frames(&right.host_wrote()), std::vec![packet.to_vec()]);
+    }
+
+    #[test]
     fn the_same_node_on_two_ports_keeps_only_the_newest_link() {
         let StdInterfaceSeam {
             mut worker_context, ..
@@ -765,7 +844,11 @@ mod tests {
     }
 
     #[test]
-    fn a_port_that_never_answers_is_rejected_then_left_alone() {
+    fn a_slow_booting_port_is_retried_without_replugging() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
         let mut disc = host();
         let wire = MockWire::new();
         let present = [port("/dev/ttyACM0")];
@@ -776,14 +859,30 @@ mod tests {
         for _ in 0..PROBE_SCAN_BUDGET {
             disc.reconcile_present(&present, |_| Ok(wire.port()));
         }
-        assert!(disc.devices.is_empty(), "an unanswered probe is released");
+        assert!(
+            disc.devices.is_empty(),
+            "an unanswered probe is released for a cooldown"
+        );
 
-        disc.reconcile_present(&present, |_| Ok(wire.port()));
-        assert!(disc.devices.is_empty());
+        for _ in 0..PROBE_RETRY_COOLDOWN_SCANS {
+            disc.reconcile_present(&present, |_| Ok(wire.port()));
+        }
+        assert_eq!(
+            disc.devices.len(),
+            1,
+            "a still-present port gets reprobed after its cooldown"
+        );
 
-        disc.reconcile_present(&[], |_| Ok(wire.port()));
-        disc.reconcile_present(&present, |_| Ok(wire.port()));
-        assert_eq!(disc.devices.len(), 1, "a replugged port is probed again");
+        wire.device_sends(Message::HelloAck {
+            tag: NodeTag([0x31; 8]),
+            capabilities: Capabilities::none(),
+        });
+        disc.pump(&mut worker_context);
+
+        assert!(matches!(
+            runtime_handle.next_report(),
+            Some(ControlReport::ConnectionState(ConnectionState::Connected))
+        ));
     }
 
     #[test]
@@ -810,6 +909,56 @@ mod tests {
             runtime_handle.next_report(),
             Some(ControlReport::ConnectionState(ConnectionState::Degraded))
         ));
+    }
+
+    #[test]
+    fn dropping_one_of_two_confirmed_links_keeps_the_interface_connected() {
+        let StdInterfaceSeam {
+            mut worker_context,
+            mut runtime_handle,
+        } = seam();
+        let mut disc = host();
+        let left = MockWire::new();
+        let right = MockWire::new();
+
+        disc.reconcile_present(&[port("/dev/ttyACM0"), port("/dev/ttyACM1")], |id| {
+            if id == &port("/dev/ttyACM0") {
+                Ok(left.port())
+            } else if id == &port("/dev/ttyACM1") {
+                Ok(right.port())
+            } else {
+                unreachable!("only the two test ports are present")
+            }
+        });
+        left.device_sends(Message::HelloAck {
+            tag: NodeTag([0x10; 8]),
+            capabilities: Capabilities::none(),
+        });
+        right.device_sends(Message::HelloAck {
+            tag: NodeTag([0x20; 8]),
+            capabilities: Capabilities::none(),
+        });
+        disc.pump(&mut worker_context);
+        assert!(matches!(
+            runtime_handle.next_report(),
+            Some(ControlReport::ConnectionState(ConnectionState::Connected))
+        ));
+
+        disc.reconcile_present(&[port("/dev/ttyACM1")], |id| {
+            if id == &port("/dev/ttyACM1") {
+                Ok(right.port())
+            } else {
+                unreachable!("only the surviving test port is present")
+            }
+        });
+        disc.pump(&mut worker_context);
+
+        assert_eq!(disc.devices.len(), 1);
+        assert_eq!(disc.devices[0].id, port("/dev/ttyACM1"));
+        assert!(
+            runtime_handle.next_report().is_none(),
+            "one surviving confirmed peer keeps the host interface connected"
+        );
     }
 
     #[test]
