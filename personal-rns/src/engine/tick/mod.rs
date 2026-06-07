@@ -1,6 +1,6 @@
 use crate::engine::directives::{EngineDirective, EngineDirectives as _};
 use crate::engine::{EgressDirective, EngineState, InstantMillis};
-use crate::interfaces::{InterfaceId, MAX_REGISTERED_INTERFACES};
+use crate::interfaces::{InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES};
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -60,7 +60,12 @@ impl<S: EngineStorage> Drop for TickOutput<'_, S> {
 }
 
 impl<S: EngineStorage> EngineState<S> {
-    pub fn tick(&mut self, now: InstantMillis, jitter: JitterSeed) -> TickOutput<'_, S> {
+    pub fn tick(
+        &mut self,
+        now: InstantMillis,
+        jitter: JitterSeed,
+        interfaces: &[InterfaceDescriptor],
+    ) -> TickOutput<'_, S> {
         self.tick_count = self.tick_count.saturating_add(1);
 
         let mut recovered_from_held_count = 0;
@@ -124,9 +129,14 @@ impl<S: EngineStorage> EngineState<S> {
             }
             let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> =
                 HeaplessVec::new();
-            for &iface in &self.interfaces {
-                if iface != scheduled.source_interface {
-                    let _ = fire_on.push(iface);
+            for descriptor in interfaces {
+                let firable = if descriptor.id == scheduled.source_interface {
+                    descriptor.capabilities.allows_same_interface_repeat()
+                } else {
+                    descriptor.capabilities.allows_transport()
+                };
+                if firable {
+                    let _ = fire_on.push(descriptor.id);
                 }
             }
             if fire_on.is_empty() {
@@ -161,8 +171,8 @@ mod tests {
         let mut left: EngineState<Cap> = EngineState::<Cap>::default();
         let mut right: EngineState<Cap> = EngineState::<Cap>::default();
 
-        let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000));
-        let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000));
+        let (left_out, left_bytes) = tick_capture(&mut left, InstantMillis(1_000), &[]);
+        let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000), &[]);
 
         assert_eq!(observable_state(&left), observable_state(&right));
         assert_eq!(left.tick_count(), 1);
@@ -187,7 +197,7 @@ mod tests {
         );
         assert_eq!(state.held_announce_count(), 1);
 
-        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
+        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000), &[]);
         assert_eq!(out.recovered_from_held_count, 0);
         assert_eq!(state.held_announce_count(), 0);
         assert_eq!(state.route_count(), 0);
@@ -237,7 +247,7 @@ mod tests {
             "both distinct destinations parked under arena pressure"
         );
 
-        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000));
+        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000), &[]);
         assert_eq!(
             state.held_announce_count(),
             0,
@@ -253,7 +263,7 @@ mod tests {
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        register_test_interface(&mut state, InterfaceId::new([0xFE; 16]));
+        let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
 
         let arrival = InstantMillis(1_000);
         let out = state.ingest_packet(
@@ -270,6 +280,7 @@ mod tests {
         let (tick_out, emitted) = tick_capture(
             &mut state,
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            &view,
         );
         assert_eq!(tick_out.egress_directive_count, 1);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
@@ -287,6 +298,72 @@ mod tests {
         assert_eq!(payload, original_payload);
     }
 
+    fn rebroadcast_fan_for(
+        state: &mut EngineState<Cap>,
+        view: &[InterfaceDescriptor],
+    ) -> std::vec::Vec<InterfaceId> {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let arrival = InstantMillis(1_000);
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+        );
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+
+        let tick_out = state.tick(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            TEST_ENTROPY,
+            view,
+        );
+        tick_out
+            .egress_directives()
+            .flat_map(|directive| {
+                let EgressDirective::ReemitAnnounce { fire_on, .. } = directive;
+                fire_on.to_vec()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_same_interface_repeat_source_joins_its_own_rebroadcast_fan() {
+        let source = InterfaceId::new([0u8; 16]);
+        let other = InterfaceId::new([0xFE; 16]);
+        let view = [repeating_descriptor(source), routable_descriptor(other)];
+
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, &view),
+            std::vec![source, other],
+        );
+    }
+
+    #[test]
+    fn a_cross_interface_only_source_is_left_out_of_its_own_rebroadcast_fan() {
+        let source = InterfaceId::new([0u8; 16]);
+        let other = InterfaceId::new([0xFE; 16]);
+        let view = [routable_descriptor(source), routable_descriptor(other)];
+
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![other]);
+    }
+
+    #[test]
+    fn an_interface_that_cannot_transport_never_joins_a_rebroadcast_fan() {
+        use crate::interfaces::{EgressCapability, TransportCapability};
+
+        let source = InterfaceId::new([0u8; 16]);
+        let mut leaf = routable_descriptor(InterfaceId::new([0xFE; 16]));
+        leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
+        let view = [routable_descriptor(source), leaf];
+
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![]);
+    }
+
     #[test]
     fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
         let mut raw = hx(RAW_ANNOUNCE);
@@ -302,7 +379,8 @@ mod tests {
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
-        let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1));
+        let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
+        let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1), &view);
         assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
@@ -317,8 +395,8 @@ mod tests {
         let mut left: EngineState<Cap> = EngineState::<Cap>::default();
         let mut right: EngineState<Cap> = EngineState::<Cap>::default();
 
+        let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
         for state in [&mut left, &mut right] {
-            register_test_interface(state, InterfaceId::new([0xFE; 16]));
             let _ = state.ingest_packet(
                 InboundPacket {
                     arrived_at: arrival,
@@ -328,8 +406,8 @@ mod tests {
                 TEST_ENTROPY,
             );
         }
-        let (left_tick, left_bytes) = tick_capture(&mut left, now);
-        let (right_tick, right_bytes) = tick_capture(&mut right, now);
+        let (left_tick, left_bytes) = tick_capture(&mut left, now, &view);
+        let (right_tick, right_bytes) = tick_capture(&mut right, now, &view);
 
         assert_eq!(observable_state(&left), observable_state(&right));
         assert_eq!(left_tick, right_tick);
@@ -353,7 +431,7 @@ mod tests {
         assert_eq!(state.held_announce_count(), 1);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
 
-        let (tick_out, bytes) = tick_capture(&mut state, InstantMillis(2_000));
+        let (tick_out, bytes) = tick_capture(&mut state, InstantMillis(2_000), &[]);
         assert_eq!(tick_out.recovered_from_held_count, 0);
         assert_eq!(tick_out.egress_directive_count, 0);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);

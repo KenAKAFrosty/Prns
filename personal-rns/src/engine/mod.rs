@@ -38,13 +38,12 @@ use crate::engine::self_announce::SelfAnnounces;
 use crate::engine::self_ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::{InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES};
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
-use heapless::Vec as HeaplessVec;
 use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -65,7 +64,6 @@ pub struct EngineState<S: EngineStorage> {
     held_announces_cache: S::Held,
     pending_rebroadcasts: S::Pending,
     directives: S::Directives,
-    interfaces: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES>,
     upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     packet_hash_history: S::PacketHashes,
     held_identities: HeldIdentities<S::HeldIdentities>,
@@ -85,7 +83,6 @@ impl<S: EngineStorage> Default for EngineState<S> {
             held_announces_cache: Default::default(),
             pending_rebroadcasts: Default::default(),
             directives: Default::default(),
-            interfaces: HeaplessVec::new(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
             held_identities: HeldIdentities::default(),
@@ -117,7 +114,6 @@ where
             .field("routing_table", &self.routing_table)
             .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
-            .field("interfaces", &self.interfaces)
             .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
             .field("held_identities", &self.held_identities)
@@ -126,11 +122,6 @@ where
             .field("self_ratchets", &self.self_ratchets)
             .finish()
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterInterfaceError {
-    RegistryFull,
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -180,27 +171,6 @@ impl<S: EngineStorage> EngineState<S> {
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// Track `descriptor`'s interface for routing. Registration is membership only:
-    /// whether a packet actually leaves an interface is re-decided per transmit
-    /// against its live connection state and capabilities (in the egress fan), so an
-    /// interface that is down now — or comes up later — is handled there, not gated
-    /// here. The sole failure is a full registry.
-    pub fn register_interface_descriptor(
-        &mut self,
-        descriptor: &InterfaceDescriptor,
-    ) -> Result<(), RegisterInterfaceError> {
-        if self.interfaces.contains(&descriptor.id) {
-            return Ok(());
-        }
-        self.interfaces
-            .push(descriptor.id)
-            .map_err(|_| RegisterInterfaceError::RegistryFull)
-    }
-
-    pub fn registered_interfaces(&self) -> &[InterfaceId] {
-        &self.interfaces
-    }
-
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
         if self.held_announce_count() > 0 {
             return NextScheduledEngineWork::Immediate;
@@ -241,7 +211,6 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use crate::interfaces::InboundPacket;
-    use crate::interfaces::{ConnectionState, EgressCapability};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::storage::FixedInline;
     use crate::wire::MTU;
@@ -310,62 +279,6 @@ mod tests {
         assert_eq!(
             state.next_wakeup(InstantMillis(1_000_000)),
             NextScheduledEngineWork::Immediate,
-        );
-    }
-
-    #[test]
-    fn register_interface_descriptor_tracks_an_interface_in_any_state() {
-        for (idx, connection_state) in [
-            ConnectionState::Connected,
-            ConnectionState::Degraded,
-            ConnectionState::Initializing,
-            ConnectionState::Reconnecting,
-            ConnectionState::Failed,
-            ConnectionState::Disconnected,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let id = InterfaceId::new([idx as u8; 16]);
-            let descriptor = InterfaceDescriptor {
-                state: connection_state,
-                ..routable_descriptor(id)
-            };
-            let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
-
-            assert_eq!(engine.register_interface_descriptor(&descriptor), Ok(()));
-            assert_eq!(engine.registered_interfaces(), &[id]);
-        }
-    }
-
-    #[test]
-    fn register_interface_descriptor_tracks_a_receive_only_interface() {
-        let mut descriptor = routable_descriptor(InterfaceId::new([0xCD; 16]));
-        descriptor.capabilities.egress = EgressCapability::Disabled;
-        let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
-
-        assert_eq!(engine.register_interface_descriptor(&descriptor), Ok(()));
-        assert_eq!(engine.registered_interfaces(), &[descriptor.id]);
-    }
-
-    #[test]
-    fn register_interface_descriptor_reports_a_full_registry() {
-        let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
-        for idx in 0..MAX_REGISTERED_INTERFACES {
-            let id = InterfaceId::new([idx as u8; 16]);
-            assert_eq!(
-                engine.register_interface_descriptor(&routable_descriptor(id)),
-                Ok(())
-            );
-        }
-        let overflow = InterfaceId::new([0xFF; 16]);
-        assert_eq!(
-            engine.register_interface_descriptor(&routable_descriptor(overflow)),
-            Err(RegisterInterfaceError::RegistryFull)
-        );
-        assert_eq!(
-            engine.registered_interfaces().len(),
-            MAX_REGISTERED_INTERFACES
         );
     }
 

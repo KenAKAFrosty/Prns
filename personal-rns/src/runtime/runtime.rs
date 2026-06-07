@@ -15,7 +15,8 @@ use crate::engine::{
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
-    ConnectionState, InterfaceId, NextScheduledInterfaceWake, RegisteredInterface, SendError,
+    ConnectionState, InterfaceDescriptor, InterfaceId, NextScheduledInterfaceWake,
+    RegisteredInterface, SendError, MAX_REGISTERED_INTERFACES,
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
@@ -65,10 +66,7 @@ where
     I::Item: RegisteredInterface,
     S: EngineStorage,
 {
-    pub fn new(mut engine: EngineState<S>, interfaces: I, host: Ho) -> Self {
-        for interface in interfaces.iter() {
-            let _ = engine.register_interface_descriptor(interface.descriptor());
-        }
+    pub fn new(engine: EngineState<S>, interfaces: I, host: Ho) -> Self {
         Self {
             engine,
             interfaces,
@@ -191,6 +189,12 @@ where
         next_poll = next_poll.sooner(started.poll(now));
     }
 
+    let mut interface_view: HeaplessVec<InterfaceDescriptor, MAX_REGISTERED_INTERFACES> =
+        HeaplessVec::new();
+    for started in interfaces.iter() {
+        let _ = interface_view.push(*started.descriptor());
+    }
+
     let mut processed_command_count = 0;
     let unspent = match next_command() {
         None => UnspentCycleEntropy {
@@ -203,6 +207,7 @@ where
             run_command(
                 engine,
                 interfaces,
+                &interface_view,
                 traffic,
                 command,
                 now,
@@ -312,7 +317,7 @@ where
         });
     }
 
-    let tick_output = engine.tick(now, jitter);
+    let tick_output = engine.tick(now, jitter, &interface_view);
     let egress_directive_count = tick_output.egress_directive_count();
     for directive in tick_output.egress_directives() {
         // Serializing per interface (instead of once into a staging buffer) is
@@ -328,13 +333,13 @@ where
                     .to_wire(buf)
                     .expect("MTU-sized buf fits any valid wire packet")
             },
-            directive.fire_on(),
+            FanTargets::Listed(directive.fire_on()),
             FanoutClass::Transported,
         );
     }
     tick_output.commit();
 
-    if !engine.registered_interfaces().is_empty() {
+    if !interface_view.is_empty() {
         if let (Some(nonce), Some(ratchet_entropy)) = (
             unspent_self_announce_entropy.take(),
             unspent_ratchet_entropy.take(),
@@ -355,7 +360,7 @@ where
                             buf[..n].copy_from_slice(&emit_buffer[..n]);
                             n
                         },
-                        engine.registered_interfaces(),
+                        FanTargets::EveryInterface,
                         FanoutClass::SelfOriginated,
                     );
                 }
@@ -421,6 +426,7 @@ struct UnspentCycleEntropy {
 fn run_command<I, S, OnEvent>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
+    interface_view: &[InterfaceDescriptor],
     traffic: &mut TrafficLedger,
     issued: IssuedCommand,
     now: InstantMillis,
@@ -435,7 +441,7 @@ where
     S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
 {
-    let (id, commanded) = match engine.ingest_command(issued) {
+    let (id, commanded) = match engine.ingest_command(issued, interface_view) {
         CommandOutcome::OwesAnnounce { id, announce } => (id, announce),
         CommandOutcome::AnnounceRejected { id, error } => {
             on_event(PrnsEvent::CommandSettled {
@@ -485,8 +491,10 @@ where
         match engine.write_commanded_announce(&commanded, now, nonce, ratchet, &mut emit_buffer) {
             Written { len: n, rotation } => {
                 let fire_on = match &commanded.target {
-                    AnnounceTarget::AllInterfaces => engine.registered_interfaces(),
-                    AnnounceTarget::Interface(interface) => core::slice::from_ref(interface),
+                    AnnounceTarget::AllInterfaces => FanTargets::EveryInterface,
+                    AnnounceTarget::Interface(interface) => {
+                        FanTargets::Listed(core::slice::from_ref(interface))
+                    }
                 };
                 fan_to_handles(
                     interfaces,
@@ -534,7 +542,7 @@ where
 fn run_send_single<I, S, OnEvent>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
-    traffic: &mut TrafficLedger,
+    traffic_ledger: &mut TrafficLedger,
     id: CommandId,
     send_single: &SendSingle,
     now: InstantMillis,
@@ -555,12 +563,12 @@ where
             let n = dispatch.wire_len;
             fan_to_handles(
                 interfaces,
-                traffic,
+                traffic_ledger,
                 |buf| {
                     buf[..n].copy_from_slice(&emit_buffer[..n]);
                     n
                 },
-                core::slice::from_ref(&dispatch.fire_on),
+                FanTargets::Listed(core::slice::from_ref(&dispatch.fire_on)),
                 FanoutClass::SelfOriginated,
             );
             if let Some(culled) = dispatch.culled {
@@ -595,11 +603,25 @@ where
     }
 }
 
+enum FanTargets<'a> {
+    EveryInterface,
+    Listed(&'a [InterfaceId]),
+}
+
+impl FanTargets<'_> {
+    fn includes(&self, id: InterfaceId) -> bool {
+        match self {
+            Self::EveryInterface => true,
+            Self::Listed(ids) => ids.contains(&id),
+        }
+    }
+}
+
 fn fan_to_handles<I>(
     interfaces: &mut I,
-    traffic: &mut TrafficLedger,
+    traffic_ledger: &mut TrafficLedger,
     write_packet: impl Fn(&mut [u8]) -> usize,
-    fire_on: &[InterfaceId],
+    fire_on: FanTargets<'_>,
     fanout_class: FanoutClass,
 ) where
     I: InterfaceSet,
@@ -610,7 +632,7 @@ fn fan_to_handles<I>(
         // the mutable `send_with`.
         let descriptor = started.descriptor();
         let id = descriptor.id;
-        let eligible = fire_on.contains(&id)
+        let eligible = fire_on.includes(id)
             && matches!(
                 descriptor.state,
                 ConnectionState::Connected | ConnectionState::Degraded
@@ -621,7 +643,7 @@ fn fan_to_handles<I>(
             };
         if eligible {
             match started.send_with(&write_packet) {
-                Ok(written) => traffic.add_tx(id, written as u64),
+                Ok(written) => traffic_ledger.add_tx(id, written as u64),
                 Err(SendError::QueueFull) => {}
             }
         }
@@ -1492,9 +1514,6 @@ mod tests {
             iface(0xA1),
             std::vec![(InstantMillis(500), announce_buf[..announce_len].to_vec())],
         )]);
-        for interface in interfaces.iter() {
-            let _ = engine.register_interface_descriptor(interface.descriptor());
-        }
         let mut traffic = TrafficLedger::new();
 
         let destination =
@@ -2002,7 +2021,7 @@ mod tests {
                 buf[..bytes.len()].copy_from_slice(&bytes);
                 bytes.len()
             },
-            &[connected, failed],
+            FanTargets::Listed(&[connected, failed]),
             FanoutClass::Transported,
         );
 
@@ -2050,7 +2069,7 @@ mod tests {
             &mut interfaces,
             &mut traffic,
             write_packet,
-            &[transmit_only, transport],
+            FanTargets::Listed(&[transmit_only, transport]),
             FanoutClass::Transported,
         );
 
@@ -2066,7 +2085,7 @@ mod tests {
             &mut interfaces,
             &mut traffic,
             write_packet,
-            &[transmit_only, transport],
+            FanTargets::Listed(&[transmit_only, transport]),
             FanoutClass::SelfOriginated,
         );
 

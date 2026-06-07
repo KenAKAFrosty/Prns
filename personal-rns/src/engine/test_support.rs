@@ -8,8 +8,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IdentitySigner;
 use crate::interfaces::InboundPacket;
 use crate::interfaces::{
-    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
-    MediumKind, TransportCapability,
+    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceMode, MediumKind, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
@@ -177,8 +177,9 @@ pub(crate) struct TickSnapshot {
 pub(crate) fn tick_capture<S: EngineStorage>(
     state: &mut EngineState<S>,
     now: InstantMillis,
+    interfaces: &[InterfaceDescriptor],
 ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
-    let tick_out = state.tick(now, TEST_ENTROPY);
+    let tick_out = state.tick(now, TEST_ENTROPY, interfaces);
     let snapshot = TickSnapshot {
         egress_directive_count: tick_out.egress_directive_count(),
         recovered_from_held_count: tick_out.recovered_from_held_count(),
@@ -194,14 +195,13 @@ pub(crate) fn tick_capture<S: EngineStorage>(
 
 pub(crate) fn observable_state<S: EngineStorage>(
     state: &EngineState<S>,
-) -> (u64, u64, usize, usize, usize, std::vec::Vec<InterfaceId>) {
+) -> (u64, u64, usize, usize, usize) {
     (
         state.tick_count(),
         state.ingested_packet_count(),
         state.route_count(),
         state.held_announce_count(),
         state.pending_announce_rebroadcast_count(),
-        state.registered_interfaces().to_vec(),
     )
 }
 
@@ -218,10 +218,14 @@ pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     }
 }
 
-pub(crate) fn register_test_interface(state: &mut EngineState<Cap>, id: InterfaceId) {
-    state
-        .register_interface_descriptor(&routable_descriptor(id))
-        .unwrap();
+pub(crate) fn repeating_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+    InterfaceDescriptor {
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
+        },
+        ..routable_descriptor(id)
+    }
 }
 
 pub(crate) const RATCHETED_SELF_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\

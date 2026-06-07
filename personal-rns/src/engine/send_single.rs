@@ -399,10 +399,13 @@ mod tests {
         let send = send_of(b"ratchet-parity");
 
         assert_eq!(
-            state.ingest_command(IssuedCommand {
-                id: CommandId(7),
-                command: EngineCommand::SendSingle(send.clone()),
-            }),
+            state.ingest_command(
+                IssuedCommand {
+                    id: CommandId(7),
+                    command: EngineCommand::SendSingle(send.clone()),
+                },
+                &[],
+            ),
             CommandOutcome::OwesSendSingle {
                 id: CommandId(7),
                 send: send.clone(),
@@ -472,10 +475,13 @@ mod tests {
         let mut state = hearer();
         let send = send_of(b"into-the-void");
         assert_eq!(
-            state.ingest_command(IssuedCommand {
-                id: CommandId(7),
-                command: EngineCommand::SendSingle(send),
-            }),
+            state.ingest_command(
+                IssuedCommand {
+                    id: CommandId(7),
+                    command: EngineCommand::SendSingle(send),
+                },
+                &[],
+            ),
             CommandOutcome::SendSingleRejected {
                 id: CommandId(7),
                 error: SendSingleError::NoRouteToDestination,
@@ -492,10 +498,13 @@ mod tests {
         hear_announce(&mut state, &relayed, arrival());
 
         assert_eq!(
-            state.ingest_command(IssuedCommand {
-                id: CommandId(7),
-                command: EngineCommand::SendSingle(send_of(b"too-far")),
-            }),
+            state.ingest_command(
+                IssuedCommand {
+                    id: CommandId(7),
+                    command: EngineCommand::SendSingle(send_of(b"too-far")),
+                },
+                &[],
+            ),
             CommandOutcome::SendSingleRejected {
                 id: CommandId(7),
                 error: SendSingleError::NotDirectlyReachable,
@@ -568,7 +577,7 @@ mod tests {
             .dispatched();
         assert_eq!(dispatch.culled, None);
 
-        let _ = tick_capture(&mut state, InstantMillis(9_000));
+        let _ = tick_capture(&mut state, InstantMillis(9_000), &[]);
         assert_eq!(
             state.next_wakeup(InstantMillis(9_500)),
             NextScheduledEngineWork::At(InstantMillis(13_000)),

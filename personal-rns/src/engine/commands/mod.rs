@@ -178,21 +178,33 @@ impl Settleable for SendSingle {
 
 use crate::engine::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;
 use crate::engine::EngineState;
+use crate::interfaces::InterfaceDescriptor;
 use crate::routing::storage::EngineStorage;
 use crate::wire::DestinationType;
 
 impl<S: EngineStorage> EngineState<S> {
     #[must_use]
-    pub fn ingest_command(&mut self, issued: IssuedCommand) -> CommandOutcome {
+    pub fn ingest_command(
+        &mut self,
+        issued: IssuedCommand,
+        interfaces: &[InterfaceDescriptor],
+    ) -> CommandOutcome {
         self.ingested_command_count = self.ingested_command_count.saturating_add(1);
         let IssuedCommand { id, command } = issued;
         match command {
-            EngineCommand::AnnounceNow(announce_now) => self.ingest_announce_now(id, announce_now),
+            EngineCommand::AnnounceNow(announce_now) => {
+                self.ingest_announce_now(id, announce_now, interfaces)
+            }
             EngineCommand::SendSingle(send) => self.ingest_send_single(id, send),
         }
     }
 
-    fn ingest_announce_now(&self, id: CommandId, announce_now: AnnounceNow) -> CommandOutcome {
+    fn ingest_announce_now(
+        &self,
+        id: CommandId,
+        announce_now: AnnounceNow,
+        interfaces: &[InterfaceDescriptor],
+    ) -> CommandOutcome {
         if self
             .upstream_app_destinations
             .lookup(&announce_now.destination, DestinationType::Single)
@@ -212,7 +224,10 @@ impl<S: EngineStorage> EngineState<S> {
             };
         }
         if let AnnounceTarget::Interface(interface) = announce_now.target {
-            if !self.interfaces.contains(&interface) {
+            if !interfaces
+                .iter()
+                .any(|descriptor| descriptor.id == interface)
+            {
                 return CommandOutcome::AnnounceRejected {
                     id,
                     error: AnnounceNowError::UnknownInterface,
@@ -263,7 +278,7 @@ mod tests {
         let destination = state.self_announced_destinations()[0];
 
         assert_eq!(
-            state.ingest_command(announce_now(destination)),
+            state.ingest_command(announce_now(destination), &[]),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {
@@ -281,7 +296,7 @@ mod tests {
         let mut state = personal_node_announcer();
 
         assert_eq!(
-            state.ingest_command(announce_now(DestinationHash::new([0x77; 16]))),
+            state.ingest_command(announce_now(DestinationHash::new([0x77; 16])), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 error: AnnounceNowError::UnknownDestination,
@@ -298,7 +313,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_command(announce_now(plain)),
+            state.ingest_command(announce_now(plain), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 error: AnnounceNowError::NotASingleDestination,
@@ -307,10 +322,10 @@ mod tests {
     }
 
     #[test]
-    fn an_announce_now_targets_only_interfaces_the_engine_knows() {
+    fn an_announce_now_targets_only_interfaces_the_view_offers() {
         let mut state = personal_node_announcer();
         let destination = state.self_announced_destinations()[0];
-        register_test_interface(&mut state, InterfaceId::new([0xAA; 16]));
+        let view = [routable_descriptor(InterfaceId::new([0xAA; 16]))];
         let on = |interface| IssuedCommand {
             id: TEST_COMMAND_ID,
             command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -321,7 +336,7 @@ mod tests {
         };
 
         assert_eq!(
-            state.ingest_command(on(InterfaceId::new([0xAA; 16]))),
+            state.ingest_command(on(InterfaceId::new([0xAA; 16])), &view),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {
@@ -332,7 +347,7 @@ mod tests {
             },
         );
         assert_eq!(
-            state.ingest_command(on(InterfaceId::new([0xBB; 16]))),
+            state.ingest_command(on(InterfaceId::new([0xBB; 16])), &view),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 error: AnnounceNowError::UnknownInterface,
@@ -355,7 +370,7 @@ mod tests {
 
         for id in [CommandId(0), CommandId(42), CommandId(u64::MAX)] {
             assert_eq!(
-                state.ingest_command(issued_as(id)),
+                state.ingest_command(issued_as(id), &[]),
                 CommandOutcome::OwesAnnounce {
                     id,
                     announce: AnnounceNow {
@@ -411,7 +426,7 @@ mod tests {
         let mut ratcheted = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let destination = ratcheted.self_announced_destinations()[0];
         assert_eq!(
-            ratcheted.ingest_command(with_data(destination)),
+            ratcheted.ingest_command(with_data(destination), &[]),
             CommandOutcome::AnnounceRejected {
                 id: TEST_COMMAND_ID,
                 error: AnnounceNowError::AppDataTooLong,
@@ -421,7 +436,7 @@ mod tests {
         let mut unratcheted = personal_node_announcer();
         let destination = unratcheted.self_announced_destinations()[0];
         assert_eq!(
-            unratcheted.ingest_command(with_data(destination)),
+            unratcheted.ingest_command(with_data(destination), &[]),
             CommandOutcome::OwesAnnounce {
                 id: TEST_COMMAND_ID,
                 announce: AnnounceNow {
