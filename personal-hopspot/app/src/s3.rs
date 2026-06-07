@@ -7,6 +7,7 @@ use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
+use esp_hal::rtc_cntl::{Rtc, RwdtStage};
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
@@ -151,9 +152,17 @@ pub async fn run(spawner: Spawner) {
 
     esp_println::logger::init_logger_from_env();
 
+    let mut rtc = Rtc::new(p.LPWR);
+    rtc.rwdt
+        .set_timeout(RwdtStage::Stage0, esp_hal::time::Duration::from_secs(12));
+    rtc.rwdt.enable();
+
     // This first banner is the only thing on the usb-serial-jtag before frames flow, so
     // the desktop's decoder skips it as pre-frame noise.
-    println!("HOPSPOT_S3 boot — USB-auto + WiFi");
+    println!(
+        "HOPSPOT_S3 boot — USB-auto + WiFi (reset: {:?})",
+        esp_hal::system::reset_reason()
+    );
 
     // WiFi radio + IPv6 link-local stack for the LAN AutoInterface. The brain hashes its
     // peering token over the EUI-64 link-local, so pin the stack to that exact address
@@ -254,6 +263,7 @@ pub async fn run(spawner: Spawner) {
     let mut panel_on = true;
     let mut battery_tick = Ticker::every(Duration::from_secs(2));
     loop {
+        rtc.rwdt.feed();
         // Battery level from the smoothed pin voltage; an implausibly low reading means
         // no LiPo (USB-only) → Unknown.
         let mut pin_mv = 0u16;
@@ -537,6 +547,12 @@ async fn button_task(mut button: Input<'static>) {
         }
         Timer::after(BUTTON_DEBOUNCE).await;
     }
+}
+
+#[no_mangle]
+fn custom_halt() -> ! {
+    esp_hal::delay::Delay::new().delay_millis(50);
+    esp_hal::system::software_reset()
 }
 
 /// This board's opaque link tag: the 6-byte eFuse MAC, padded to the 8-byte width.
