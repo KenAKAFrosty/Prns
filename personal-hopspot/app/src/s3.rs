@@ -33,8 +33,8 @@ use static_cell::StaticCell;
 use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineCycleEntropySeed,
-    IssuedCommand, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
+    ReannounceSchedule,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -565,10 +565,8 @@ async fn engine_task(
     // The embassy contract host owns the shared wake and draws each cycle's announce
     // jitter from the RNG (timing only — its quality is non-critical). No heap: the
     // board owns the `static` CHANNELS.
-    let host = EmbassyContractHost::new(&WAKE, || {
-        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        Rng::new().read(&mut bytes);
-        EngineCycleEntropySeed::new(bytes)
+    let host = EmbassyContractHost::new(&WAKE, |bytes: &mut [u8]| {
+        Rng::new().read(bytes);
     });
 
     // Each cycle's snapshot goes to the OLED render loop, never the shared

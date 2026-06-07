@@ -31,7 +31,7 @@ use esp_println::println;
 use static_cell::StaticCell;
 
 use personal_rns::engine::self_announce::AnnounceConfig;
-use personal_rns::engine::{EngineCycleEntropySeed, ReannounceSchedule, ENGINE_CYCLE_ENTROPY_LEN};
+use personal_rns::engine::ReannounceSchedule;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::rns_parity::serial::serve;
 use personal_rns::interfaces::impls::rns_parity::serial::{
@@ -122,10 +122,8 @@ async fn node_task(
 
     // The embassy contract host owns the shared wake and draws each cycle's jitter
     // entropy from the TRNG. The board owns the `static` CHANNELS — no heap.
-    let host = EmbassyContractHost::new(&WAKE, || {
-        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        Rng::new().read(&mut bytes);
-        EngineCycleEntropySeed::new(bytes)
+    let host = EmbassyContractHost::new(&WAKE, |bytes: &mut [u8]| {
+        Rng::new().read(bytes);
     });
 
     // The interface launches itself by spawning the board's concrete serial `#[task]`

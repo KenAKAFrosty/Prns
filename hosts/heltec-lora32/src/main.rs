@@ -62,10 +62,7 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{self, Config as WifiConfig, Interface as WifiStaInterface, PowerSaveMode};
 
 use personal_rns::engine::self_announce::AnnounceConfig;
-use personal_rns::engine::{
-    EngineCycleEntropySeed, EngineState, ReannounceSchedule,
-    ENGINE_CYCLE_ENTROPY_LEN,
-};
+use personal_rns::engine::{EngineState, ReannounceSchedule};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::impls::esp_now::core::descriptor as espnow_descriptor;
 use personal_rns::interfaces::impls::esp_now::embassy::{serve as serve_esp_now, EspNowLink};
@@ -540,10 +537,8 @@ async fn main(spawner: Spawner) {
     // each cycle's CSPRNG from the radio-seeded RNG (true-random now WiFi is up). Glue
     // each interface's seam from it (split from a board `static`); the runtime keeps
     // the four handles (unified by `HeltecHandle`), each worker its context.
-    let host = EmbassyContractHost::new(&WAKE, || {
-        let mut bytes = [0u8; ENGINE_CYCLE_ENTROPY_LEN];
-        Rng::new().read(&mut bytes);
-        EngineCycleEntropySeed::new(bytes)
+    let host = EmbassyContractHost::new(&WAKE, |bytes: &mut [u8]| {
+        Rng::new().read(bytes);
     });
     let EmbassyInterfaceSeam {
         worker_context: auto_context,
