@@ -3,8 +3,10 @@ pub mod directives;
 pub mod egress;
 pub mod identity_registration;
 pub mod ingress;
+pub mod pending_path_requests;
 pub mod proof;
 pub mod receipts;
+pub mod request_path;
 pub mod reverse_routes;
 pub mod self_announce;
 pub mod self_ratchets;
@@ -15,7 +17,7 @@ pub mod tick;
 
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
-    CommandOutcome, Delivered, EngineCommand, IssuedCommand, PathRequestId, RequestPath,
+    CommandOutcome, Delivered, EngineCommand, IssuedCommand, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
     Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
@@ -28,7 +30,11 @@ pub use ingress::{
     AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome, PacketToForward, RebroadcastDecision,
 };
 pub use ingress::{DataPacket, Ingress};
+pub use pending_path_requests::{
+    CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
+};
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
+pub use request_path::PathRequestWriteOutcome;
 pub use self_announce::{
     CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, ReannounceSchedule,
     SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure, WriteSelfAnnounceError,
@@ -40,6 +46,7 @@ pub use send_single::{
 };
 pub use tick::TickOutput;
 
+use crate::engine::pending_path_requests::PendingPathRequests;
 use crate::engine::receipts::Receipts;
 use crate::engine::reverse_routes::ReverseRoutes;
 use crate::engine::self_announce::SelfAnnounces;
@@ -81,6 +88,7 @@ pub struct EngineState<S: EngineStorage> {
     self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
     reverse_routes: ReverseRoutes<S::ReverseRoutes>,
+    pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -101,6 +109,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             self_ratchets: SelfRatchets::default(),
             receipts: Receipts::default(),
             reverse_routes: ReverseRoutes::default(),
+            pending_path_requests: PendingPathRequests::default(),
         }
     }
 }
@@ -207,6 +216,13 @@ impl<S: EngineStorage> EngineState<S> {
             earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
         }
 
+        if let Some(timeout_at) = self.pending_path_requests.earliest_timeout_at() {
+            if timeout_at <= now {
+                return NextScheduledEngineWork::Immediate;
+            }
+            earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
+        }
+
         match earliest {
             Some(instant) => NextScheduledEngineWork::At(instant),
             None => NextScheduledEngineWork::Idle,
@@ -294,8 +310,9 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>>::default();
+        let mut state = EngineState::<
+            FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8>,
+        >::default();
         state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
             InboundPacket {

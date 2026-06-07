@@ -7,11 +7,12 @@ use super::host::{Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    write_path_request_wire_packet, AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId,
-    CommandOutcome, CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState,
-    IngestPacketOutcome, InstantMillis, IssuedCommand, NextScheduledEngineWork, ProofIngest,
-    ProofOwed, RatchetEntropy, RebroadcastDecision, RequestPath, RequestPathFailure, SendSingle,
-    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
+    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
+    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome,
+    InstantMillis, IssuedCommand, NextScheduledEngineWork, PathFound, PathRequestWriteOutcome,
+    ProofIngest, ProofOwed, RatchetEntropy, RebroadcastDecision, RequestPath, RequestPathFailure,
+    SendSingle, SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement,
+    WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -268,6 +269,18 @@ where
                             hops: accepted.hops,
                             source_interface: id,
                         });
+                        // A learned route answers every path request waiting on
+                        // this destination — each settles found, at this hop count.
+                        while let Some(settled) =
+                            engine.pop_settled_path_request(&accepted.destination)
+                        {
+                            on_event(PrnsEvent::CommandSettled {
+                                id: settled.command_id,
+                                settlement: Settlement::RequestPath(Ok(PathFound {
+                                    hops: accepted.hops,
+                                })),
+                            });
+                        }
                         InboundStep::NothingOwed
                     }
                     IngestPacketOutcome::Announce(
@@ -350,6 +363,13 @@ where
         on_event(PrnsEvent::CommandSettled {
             id: expired.command_id,
             settlement: Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
+        });
+    }
+
+    while let Some(expired) = engine.pop_timed_out_path_request(now) {
+        on_event(PrnsEvent::CommandSettled {
+            id: expired.command_id,
+            settlement: Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
         });
     }
 
@@ -525,7 +545,7 @@ where
             };
         }
         CommandOutcome::OwesPathRequest { id, request } => {
-            run_request_path(interfaces, traffic, id, &request, on_event);
+            run_request_path(engine, interfaces, traffic, id, &request, now, on_event);
             return UnspentCycleEntropy {
                 self_announce: Some(self_announce_entropy),
                 ratchet: Some(ratchet),
@@ -659,27 +679,37 @@ where
     }
 }
 
-/// A path request is a broadcast that owes no acknowledgement: it fans to every
-/// interface and settles the instant it leaves, since its answer arrives later
-/// as an ordinary announce.
-fn run_request_path<I, OnEvent>(
+/// A path request broadcasts to every interface and then waits: it settles
+/// later, when an announce learns the destination's route (found) or its
+/// timeout passes. The cases that resolve at emission are handled here — an
+/// already-known route (found at once, nothing sent), a full pending table
+/// culling an older request, or a serialize failure.
+fn run_request_path<I, S, OnEvent>(
+    engine: &mut EngineState<S>,
     interfaces: &mut I,
     traffic_ledger: &mut TrafficLedger,
     id: CommandId,
     request: &RequestPath,
+    now: InstantMillis,
     on_event: &mut OnEvent,
 ) where
     I: InterfaceSet,
     I::Item: RegisteredInterface,
+    S: EngineStorage,
     OnEvent: FnMut(PrnsEvent<'_>),
 {
     let mut emit_buffer = [0u8; MTU];
-    let settlement = match write_path_request_wire_packet(
-        request.destination,
-        request.id.as_bytes(),
-        &mut emit_buffer,
-    ) {
-        Ok(n) => {
+    match engine.write_commanded_path_request(id, request, now, &mut emit_buffer) {
+        PathRequestWriteOutcome::AlreadyReachable { hops } => {
+            on_event(PrnsEvent::CommandSettled {
+                id,
+                settlement: Settlement::RequestPath(Ok(PathFound { hops })),
+            });
+        }
+        PathRequestWriteOutcome::Written {
+            wire_len: n,
+            culled,
+        } => {
             fan_to_handles(
                 interfaces,
                 traffic_ledger,
@@ -690,11 +720,20 @@ fn run_request_path<I, OnEvent>(
                 FanTargets::EveryInterface,
                 FanoutClass::SelfOriginated,
             );
-            Settlement::RequestPath(Ok(()))
+            if let Some(culled) = culled {
+                on_event(PrnsEvent::CommandSettled {
+                    id: culled.command_id,
+                    settlement: Settlement::RequestPath(Err(RequestPathFailure::Culled)),
+                });
+            }
         }
-        Err(error) => Settlement::RequestPath(Err(RequestPathFailure::WriteFailed(error))),
-    };
-    on_event(PrnsEvent::CommandSettled { id, settlement });
+        PathRequestWriteOutcome::SerializeFailed(error) => {
+            on_event(PrnsEvent::CommandSettled {
+                id,
+                settlement: Settlement::RequestPath(Err(RequestPathFailure::WriteFailed(error))),
+            });
+        }
+    }
 }
 
 enum FanTargets<'a> {
@@ -791,8 +830,8 @@ mod tests {
 
     use crate::engine::{
         AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
-        CommandId, EngineCommand, IssuedCommand, PathRequestId, RatchetPolicy, RequestPath,
-        Settlement, PATH_REQUEST_DESTINATION,
+        CommandId, EngineCommand, IssuedCommand, PathFound, PathRequestId, RatchetPolicy,
+        RequestPath, RequestPathFailure, Settlement, PATH_REQUEST_DESTINATION,
     };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
@@ -809,7 +848,7 @@ mod tests {
         HEADER_MAX_LEN,
     };
 
-    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>;
+    type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8>;
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -1205,8 +1244,18 @@ mod tests {
         assert_eq!(parsed_announce_destination(&first[0]), destination);
     }
 
+    fn request_path_command(destination: DestinationHash) -> IssuedCommand {
+        IssuedCommand {
+            id: CommandId(7),
+            command: EngineCommand::RequestPath(RequestPath {
+                destination,
+                id: PathRequestId::new([0x55; 16]),
+            }),
+        }
+    }
+
     #[test]
-    fn a_request_path_fans_to_every_interface_and_settles() {
+    fn a_request_path_with_no_route_fans_everywhere_and_waits() {
         let (engine, _) = single_destination_engine();
         let mut runtime = Runtime::new(
             engine,
@@ -1218,13 +1267,7 @@ mod tests {
         );
 
         let wanted = DestinationHash::new([0x44; 16]);
-        let mut queue = VecDeque::from([IssuedCommand {
-            id: CommandId(7),
-            command: EngineCommand::RequestPath(RequestPath {
-                destination: wanted,
-                id: PathRequestId::new([0x55; 16]),
-            }),
-        }]);
+        let mut queue = VecDeque::from([request_path_command(wanted)]);
         let mut settled = std::vec::Vec::new();
         let out = runtime.cycle_once(
             InstantMillis(1_000),
@@ -1238,10 +1281,9 @@ mod tests {
         );
 
         assert_eq!(out.processed_command_count, 1);
-        assert_eq!(
-            settled,
-            std::vec![(CommandId(7), Settlement::RequestPath(Ok(())))],
-            "a path request settles the instant it leaves",
+        assert!(
+            settled.is_empty(),
+            "with no route yet, the request waits — it does not settle on emission",
         );
 
         let first = &runtime.interfaces()[0].handle.sent;
@@ -1258,6 +1300,131 @@ mod tests {
         assert_eq!(header.propagation, PropagationType::Broadcast);
         assert_eq!(header.destination, PATH_REQUEST_DESTINATION);
         assert_eq!(&payload[..16], wanted.as_bytes());
+    }
+
+    #[test]
+    fn a_request_path_settles_found_when_its_route_arrives() {
+        let raw = hx(RAW_ANNOUNCE);
+        let wanted = parsed_announce_destination(&raw);
+        let mut runtime = Runtime::new(
+            EngineState::<Cap>::default(),
+            interface_set([started(iface(0xA1), std::vec![(InstantMillis(900), raw)])]),
+            (),
+        );
+
+        // The command drains before the inbound loop, so within one cycle the
+        // request goes out unanswered, then the announce arrives and answers it.
+        let mut queue = VecDeque::from([request_path_command(wanted)]);
+        let mut settled = std::vec::Vec::new();
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+            || queue.pop_front(),
+        );
+
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::RequestPath(Ok(PathFound { hops: 1 })),
+            )],
+            "the learned route settles the request, found one hop away",
+        );
+    }
+
+    #[test]
+    fn a_request_path_settles_timeout_when_no_route_arrives() {
+        let (engine, _) = single_destination_engine();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([started(iface(0xA1), std::vec::Vec::new())]),
+            (),
+        );
+
+        let mut queue = VecDeque::from([request_path_command(DestinationHash::new([0x44; 16]))]);
+        let mut settled = std::vec::Vec::new();
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+            || queue.pop_front(),
+        );
+        assert!(settled.is_empty());
+
+        runtime.cycle_once(
+            InstantMillis(1_000 + crate::engine::PATH_REQUEST_TIMEOUT_MS),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+            || None,
+        );
+
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
+            )],
+        );
+    }
+
+    #[test]
+    fn a_request_path_for_a_known_route_settles_found_at_once_without_emitting() {
+        let raw = hx(RAW_ANNOUNCE);
+        let wanted = parsed_announce_destination(&raw);
+        let mut runtime = Runtime::new(
+            EngineState::<Cap>::default(),
+            interface_set([started(iface(0xA1), std::vec![(InstantMillis(900), raw)])]),
+            (),
+        );
+
+        // Cycle one only hears the announce — a lone cross-interface-only pipe
+        // with no transport id sends nothing back.
+        runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |_| {},
+            || None,
+        );
+        assert!(runtime.interfaces()[0].handle.sent.is_empty());
+
+        let mut queue = VecDeque::from([request_path_command(wanted)]);
+        let mut settled = std::vec::Vec::new();
+        runtime.cycle_once(
+            InstantMillis(2_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+            || queue.pop_front(),
+        );
+
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::RequestPath(Ok(PathFound { hops: 1 })),
+            )],
+            "the route is already known — found at once",
+        );
+        assert!(
+            runtime.interfaces()[0].handle.sent.is_empty(),
+            "nothing to ask for, so no path request leaves",
+        );
     }
 
     #[test]

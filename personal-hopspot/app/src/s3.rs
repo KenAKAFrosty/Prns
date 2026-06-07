@@ -86,7 +86,7 @@ macro_rules! mk_static {
         CELL.init($val)
     }};
 }
-const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8> = FixedInline;
+const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8, 8> = FixedInline;
 
 /// The engine's own stack on core 1 — sized from the painted watermark: the
 /// measured peak is 69.1KB, and it is the boot spawn (embassy constructs the

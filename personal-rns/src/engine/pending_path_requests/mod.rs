@@ -1,0 +1,257 @@
+//! RNS 1.3.1 fires path requests as fire-and-forget and lets the app poll `has_path`.
+//! This table is the extension that turns the request into an awaitable outcome.
+
+mod impls;
+
+pub use impls::*;
+
+use crate::engine::commands::CommandId;
+use crate::engine::InstantMillis;
+use crate::wire::DestinationHash;
+
+/// RNS 1.3.1 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path
+/// request waits for an answer before giving up.
+pub const PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingPathRequest {
+    pub destination: DestinationHash,
+    pub command_id: CommandId,
+    pub timeout_at: InstantMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettledPathRequest {
+    pub command_id: CommandId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpiredPathRequest {
+    pub command_id: CommandId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CulledPathRequest {
+    pub command_id: CommandId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackPathRequestError {
+    TableFull,
+}
+
+pub trait PendingPathRequestColumns {
+    fn capacity(&self) -> usize;
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn destinations(&self) -> &[DestinationHash];
+    fn command_ids(&self) -> &[CommandId];
+    fn timeout_ats(&self) -> &[InstantMillis];
+
+    fn push(&mut self, request: PendingPathRequest) -> Result<usize, TrackPathRequestError>;
+    fn swap_remove(&mut self, index: usize);
+}
+
+#[derive(Debug, Default)]
+pub struct PendingPathRequests<C: PendingPathRequestColumns> {
+    columns: C,
+}
+
+impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
+    /// A full table evicts its soonest-expiring row to make room, always
+    /// favoring the newer request. The dropped one still settles, typed,
+    /// through the returned cull. At capacity zero the new request is itself
+    /// the cull.
+    pub fn track(&mut self, request: PendingPathRequest) -> Option<CulledPathRequest> {
+        let mut culled = None;
+        if self.columns.len() >= self.columns.capacity() {
+            culled = self.cull_soonest_expiring();
+        }
+        match self.columns.push(request) {
+            Ok(_) => culled,
+            Err(TrackPathRequestError::TableFull) => Some(CulledPathRequest {
+                command_id: request.command_id,
+            }),
+        }
+    }
+
+    fn cull_soonest_expiring(&mut self) -> Option<CulledPathRequest> {
+        let index = self
+            .columns
+            .timeout_ats()
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, timeout_at)| **timeout_at)
+            .map(|(index, _)| index)?;
+        let culled = CulledPathRequest {
+            command_id: *self.columns.command_ids().get(index)?,
+        };
+        self.columns.swap_remove(index);
+        Some(culled)
+    }
+
+    pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
+        self.columns.timeout_ats().iter().min().copied()
+    }
+
+    /// Settle one pending request for a destination whose route just arrived.
+    /// Call repeatedly until `None` to settle every request waiting on it.
+    pub fn pop_settled_for(&mut self, destination: &DestinationHash) -> Option<SettledPathRequest> {
+        let index = self
+            .columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        let settled = SettledPathRequest {
+            command_id: *self.columns.command_ids().get(index)?,
+        };
+        self.columns.swap_remove(index);
+        Some(settled)
+    }
+
+    /// Pop one request whose timeout has passed. Call repeatedly until `None` to fully drain.
+    pub fn pop_expired(&mut self, now: InstantMillis) -> Option<ExpiredPathRequest> {
+        let index = self
+            .columns
+            .timeout_ats()
+            .iter()
+            .position(|timeout_at| *timeout_at <= now)?;
+        let expired = ExpiredPathRequest {
+            command_id: *self.columns.command_ids().get(index)?,
+        };
+        self.columns.swap_remove(index);
+        Some(expired)
+    }
+
+    pub fn len(&self) -> usize {
+        self.columns.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dest(byte: u8) -> DestinationHash {
+        DestinationHash::new([byte; 16])
+    }
+
+    fn pending(destination: u8, command_id: u64, timeout_at: u64) -> PendingPathRequest {
+        PendingPathRequest {
+            destination: dest(destination),
+            command_id: CommandId(command_id),
+            timeout_at: InstantMillis(timeout_at),
+        }
+    }
+
+    #[test]
+    fn a_learned_route_settles_its_pending_request_exactly_once() {
+        let mut table: PendingPathRequests<FixedPendingPathRequestColumns<4>> =
+            PendingPathRequests::default();
+        assert_eq!(table.track(pending(1, 7, 15_000)), None);
+
+        assert_eq!(
+            table.pop_settled_for(&dest(1)),
+            Some(SettledPathRequest {
+                command_id: CommandId(7),
+            }),
+        );
+        assert_eq!(table.pop_settled_for(&dest(1)), None);
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn every_request_waiting_on_a_destination_settles_when_it_arrives() {
+        let mut table: PendingPathRequests<FixedPendingPathRequestColumns<4>> =
+            PendingPathRequests::default();
+        assert_eq!(table.track(pending(1, 7, 15_000)), None);
+        assert_eq!(table.track(pending(1, 8, 16_000)), None);
+
+        let mut settled = std::vec::Vec::new();
+        while let Some(s) = table.pop_settled_for(&dest(1)) {
+            settled.push(s.command_id);
+        }
+        settled.sort_unstable_by_key(|id| id.0);
+        assert_eq!(settled, std::vec![CommandId(7), CommandId(8)]);
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn an_expired_request_pops_for_its_timeout() {
+        let mut table: PendingPathRequests<FixedPendingPathRequestColumns<4>> =
+            PendingPathRequests::default();
+        assert_eq!(table.track(pending(1, 7, 15_000)), None);
+
+        assert_eq!(table.pop_expired(InstantMillis(14_999)), None);
+        assert_eq!(
+            table.pop_expired(InstantMillis(15_000)),
+            Some(ExpiredPathRequest {
+                command_id: CommandId(7),
+            }),
+        );
+        assert_eq!(table.pop_expired(InstantMillis(15_000)), None);
+    }
+
+    #[test]
+    fn the_earliest_timeout_drives_the_wakeup() {
+        let mut table: PendingPathRequests<FixedPendingPathRequestColumns<4>> =
+            PendingPathRequests::default();
+        assert_eq!(table.earliest_timeout_at(), None);
+        assert_eq!(table.track(pending(1, 7, 18_000)), None);
+        assert_eq!(table.track(pending(2, 8, 15_000)), None);
+        assert_eq!(table.earliest_timeout_at(), Some(InstantMillis(15_000)));
+    }
+
+    #[test]
+    fn a_full_table_culls_its_soonest_expiring_request_for_the_new_one() {
+        let mut table: PendingPathRequests<FixedPendingPathRequestColumns<2>> =
+            PendingPathRequests::default();
+        assert_eq!(table.track(pending(1, 1, 30_000)), None);
+        assert_eq!(table.track(pending(2, 2, 20_000)), None);
+
+        assert_eq!(
+            table.track(pending(3, 3, 40_000)),
+            Some(CulledPathRequest {
+                command_id: CommandId(2),
+            }),
+            "the soonest-expiring request is culled, not the newest",
+        );
+        assert_eq!(table.len(), 2);
+        assert_eq!(table.pop_settled_for(&dest(2)), None);
+        assert!(table.pop_settled_for(&dest(1)).is_some());
+        assert!(table.pop_settled_for(&dest(3)).is_some());
+    }
+
+    #[test]
+    fn at_capacity_zero_the_new_request_is_the_cull() {
+        let mut table: PendingPathRequests<FixedPendingPathRequestColumns<0>> =
+            PendingPathRequests::default();
+        assert_eq!(
+            table.track(pending(1, 9, 15_000)),
+            Some(CulledPathRequest {
+                command_id: CommandId(9),
+            }),
+        );
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn heap_columns_grow_past_any_fixed_ceiling() {
+        let mut table: PendingPathRequests<HeapPendingPathRequestColumns> =
+            PendingPathRequests::default();
+        for n in 0..64u8 {
+            assert_eq!(table.track(pending(n, u64::from(n), 100_000)), None);
+        }
+        assert_eq!(table.len(), 64);
+        assert!(table.pop_settled_for(&dest(17)).is_some());
+        assert_eq!(table.len(), 63);
+    }
+}

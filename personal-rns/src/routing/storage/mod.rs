@@ -4,6 +4,7 @@ pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::directives::EngineDirectives;
+use crate::engine::pending_path_requests::PendingPathRequestColumns;
 use crate::engine::receipts::ReceiptColumns;
 use crate::engine::reverse_routes::ReverseRouteColumns;
 use crate::engine::self_announce::SelfAnnounceColumns;
@@ -173,4 +174,5 @@ pub trait EngineStorage {
     type Receipts: ReceiptColumns + Default;
     type PacketHashes: PacketHashHistory + Default;
     type ReverseRoutes: ReverseRouteColumns + Default;
+    type PendingPathRequests: PendingPathRequestColumns + Default;
 }

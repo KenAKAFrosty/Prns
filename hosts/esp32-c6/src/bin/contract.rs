@@ -61,7 +61,7 @@ const MAX_BUFFERED_PACKETS: usize = 8;
 /// This board's engine-storage sizing (USB-only, no WiFi stack, so it can afford
 /// the generous preset): 64 dests / 64 ids each / 4 KB arena / 4 floor / 512
 /// overflow / 64 held.
-const ENGINE_STORAGE: FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8> = FixedInline;
+const ENGINE_STORAGE: FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8> = FixedInline;
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal C6")` ‖ `nil` — the shape LXMF apps parse, so they

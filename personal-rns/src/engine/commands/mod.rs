@@ -145,7 +145,12 @@ pub enum AnnounceNowError {
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
     SendSingle(Result<Delivered, SendSingleFailure>),
-    RequestPath(Result<(), RequestPathFailure>),
+    RequestPath(Result<PathFound, RequestPathFailure>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathFound {
+    pub hops: u8,
 }
 
 /// RNS 1.3.1 `PacketReceipt.DELIVERED`, with the round trip it measured.
@@ -171,6 +176,8 @@ pub enum AnnounceNowFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestPathFailure {
     WriteFailed(EgressSerializeError),
+    Timeout,
+    Culled,
 }
 
 pub trait Settleable {
@@ -214,14 +221,14 @@ impl Settleable for SendSingle {
 }
 
 impl Settleable for RequestPath {
-    type Success = ();
+    type Success = PathFound;
     type Failure = RequestPathFailure;
 
     fn into_command(self) -> EngineCommand {
         EngineCommand::RequestPath(self)
     }
 
-    fn from_settlement(settlement: Settlement) -> Option<Result<(), RequestPathFailure>> {
+    fn from_settlement(settlement: Settlement) -> Option<Result<PathFound, RequestPathFailure>> {
         match settlement {
             Settlement::RequestPath(result) => Some(result),
             Settlement::AnnounceNow(_) | Settlement::SendSingle(_) => None,
@@ -498,8 +505,8 @@ mod tests {
 
         assert_eq!(verb.into_command(), EngineCommand::RequestPath(verb));
         assert_eq!(
-            RequestPath::from_settlement(Settlement::RequestPath(Ok(()))),
-            Some(Ok(())),
+            RequestPath::from_settlement(Settlement::RequestPath(Ok(PathFound { hops: 2 }))),
+            Some(Ok(PathFound { hops: 2 })),
         );
         assert_eq!(
             RequestPath::from_settlement(Settlement::AnnounceNow(Ok(()))),
