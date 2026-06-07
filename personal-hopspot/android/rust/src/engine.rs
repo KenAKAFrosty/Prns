@@ -98,6 +98,17 @@ fn run_engine(slot: SharedSnapshot, bridge_tx: mpsc::Sender<AndroidUsbBridge>) {
         },
         move |event: PrnsEvent<'_>| {
             if let PrnsEvent::SnapshotUpdated(snapshot) = event {
+                for view in &snapshot.interfaces {
+                    if view.id == USB_INTERFACE_ID {
+                        log::info!(
+                            "usb interface: state={:?} dests={} tx={} rx={}",
+                            view.connection_state,
+                            view.tracked_destinations,
+                            view.reticulum_tx_byte_count,
+                            view.reticulum_rx_byte_count,
+                        );
+                    }
+                }
                 if let Ok(mut guard) = slot.lock() {
                     *guard = Some(snapshot.clone());
                 }

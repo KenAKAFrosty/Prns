@@ -24,4 +24,10 @@ object NativeBridge {
     external fun nativePostInput(handle: Long, code: Int): Int
 
     external fun nativeRender(handle: Long, buffer: ByteBuffer)
+
+    external fun nativeUsbConnected(connected: Boolean)
+
+    external fun nativeUsbRx(buffer: ByteBuffer, len: Int)
+
+    external fun nativeUsbTx(buffer: ByteBuffer): Int
 }

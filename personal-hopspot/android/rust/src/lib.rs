@@ -17,11 +17,28 @@ const INPUT_LONG_PRESS: jint = 1;
 const ACTION_NONE: jint = 0;
 const ACTION_ANNOUNCE: jint = 1;
 
+#[cfg(target_os = "android")]
+fn init_logging() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Info)
+                .with_tag("HopspotRust"),
+        );
+    });
+}
+
+#[cfg(not(target_os = "android"))]
+fn init_logging() {}
+
 #[no_mangle]
 pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeInit(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
+    init_logging();
     Box::into_raw(Box::new(HopspotFace::new())) as usize as jlong
 }
 
