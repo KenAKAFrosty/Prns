@@ -4,8 +4,8 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::wire::{
-    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
-    WirePacketHeader, HEADER_MIN_LEN,
+    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, TransportId, WireContext,
+    WirePacketHeader, HEADER_MAX_LEN, HEADER_MIN_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,29 @@ pub fn write_announce_wire_packet(
     hops: u8,
     buf: &mut [u8],
 ) -> Result<usize, EgressSerializeError> {
+    frame_announce_wire_packet(announce, hops, PropagationType::Broadcast, None, buf)
+}
+
+/// RNS 1.3.1 `Transport.jobs()` announce retransmission: the same announce
+/// body re-framed under a transport header — `HEADER_2`, `TRANSPORT`
+/// propagation, and the relaying node's id stamped in — so hearers learn the
+/// next hop back toward the destination.
+pub fn write_retransmitted_announce_wire_packet(
+    announce: &Announce,
+    hops: u8,
+    via: TransportId,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    frame_announce_wire_packet(announce, hops, PropagationType::Transport, Some(via), buf)
+}
+
+fn frame_announce_wire_packet(
+    announce: &Announce,
+    hops: u8,
+    propagation: PropagationType,
+    transport_id: Option<TransportId>,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
     let context_flag = if announce.maybe_ratchet.is_some() {
         ContextFlag::Set
     } else {
@@ -33,23 +56,28 @@ pub fn write_announce_wire_packet(
     let header = WirePacketHeader {
         ifac_flag: IfacFlag::Open,
         context_flag,
-        propagation: PropagationType::Broadcast,
+        propagation,
         destination_type: DestinationType::Single,
         packet_type: PacketType::Announce,
         hops,
-        transport_id: None,
+        transport_id,
         destination: announce.destination,
         context: WireContext::None,
     };
-    let total_len = HEADER_MIN_LEN + announce.wire_len();
+    let header_len = if transport_id.is_some() {
+        HEADER_MAX_LEN
+    } else {
+        HEADER_MIN_LEN
+    };
+    let total_len = header_len + announce.wire_len();
     if buf.len() < total_len {
         return Err(EgressSerializeError::BufferTooShort);
     }
     header
-        .write(&mut buf[..HEADER_MIN_LEN])
+        .write(&mut buf[..header_len])
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
     announce
-        .to_wire(&mut buf[HEADER_MIN_LEN..])
+        .to_wire(&mut buf[header_len..])
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
     Ok(total_len)
 }
@@ -94,6 +122,7 @@ pub enum EgressDirective<'a> {
     ReemitAnnounce {
         announce: Announce<'a>,
         emit_hops: u8,
+        via: TransportId,
         fire_on: &'a [InterfaceId],
     },
 }
@@ -104,8 +133,9 @@ impl<'a> EgressDirective<'a> {
             Self::ReemitAnnounce {
                 announce,
                 emit_hops,
+                via,
                 ..
-            } => write_announce_wire_packet(announce, *emit_hops, buf),
+            } => write_retransmitted_announce_wire_packet(announce, *emit_hops, *via, buf),
         }
     }
 
@@ -119,6 +149,8 @@ impl<'a> EgressDirective<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_VIA: TransportId = TransportId::new([0x7A; 16]);
 
     const RAW_ANNOUNCE: &str = "010016f8a6d3f7d7c5b6f106d293804d73140002281f6d21232cbba9d12e516183197f08e\
                                 59b7afba27e99e4fe39f01b0d4d2583a5920220253970a16861e82e52e955a05ee39e2b6d2\
@@ -147,6 +179,7 @@ mod tests {
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: orig_header.hops + 1,
+            via: TEST_VIA,
             fire_on: &targets,
         };
 
@@ -157,8 +190,8 @@ mod tests {
         let (parsed_header, parsed_payload) = WirePacketHeader::parse(wire).unwrap();
         assert_eq!(parsed_header.packet_type, PacketType::Announce);
         assert_eq!(parsed_header.destination_type, DestinationType::Single);
-        assert_eq!(parsed_header.propagation, PropagationType::Broadcast);
-        assert_eq!(parsed_header.transport_id, None);
+        assert_eq!(parsed_header.propagation, PropagationType::Transport);
+        assert_eq!(parsed_header.transport_id, Some(TEST_VIA));
         assert_eq!(parsed_header.hops, orig_header.hops + 1);
         assert_eq!(parsed_header.destination, orig_header.destination);
         assert_eq!(parsed_payload, orig_payload);
@@ -174,6 +207,7 @@ mod tests {
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: 1,
+            via: TEST_VIA,
             fire_on: &targets,
         };
 
@@ -189,12 +223,13 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
-        let exact_len = HEADER_MIN_LEN + announce.wire_len();
+        let exact_len = HEADER_MAX_LEN + announce.wire_len();
         let targets = [iface(0xAC)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: 9,
+            via: TEST_VIA,
             fire_on: &targets,
         };
 
@@ -218,6 +253,7 @@ mod tests {
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: header.hops + 1,
+            via: TEST_VIA,
             fire_on: &targets,
         };
 
@@ -234,6 +270,7 @@ mod tests {
         let directive = EgressDirective::ReemitAnnounce {
             announce: orig_announce.clone(),
             emit_hops: 5,
+            via: TEST_VIA,
             fire_on: &targets,
         };
 
@@ -286,6 +323,7 @@ mod kani_proofs {
         let directive = EgressDirective::ReemitAnnounce {
             announce: announce.clone(),
             emit_hops,
+            via: TEST_VIA,
             fire_on: &targets,
         };
 
@@ -314,6 +352,7 @@ mod kani_proofs {
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: kani::any(),
+            via: TEST_VIA,
             fire_on: &targets,
         };
 

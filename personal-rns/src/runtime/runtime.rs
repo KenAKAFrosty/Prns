@@ -711,7 +711,9 @@ mod tests {
     use crate::routing::delivery::Delivery;
     use crate::routing::storage::FixedInline;
     use crate::routing::upstream_app_destinations::ProofStrategy;
-    use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
+    use crate::wire::{
+        DestinationHash, PacketType, PropagationType, WirePacketHeader, HEADER_MAX_LEN,
+    };
 
     type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8>;
 
@@ -1145,12 +1147,20 @@ mod tests {
             |_| {},
             || None,
         );
-        let mut expected = raw;
-        expected[1] += 1;
+        let (original_header, original_payload) = WirePacketHeader::parse(&raw).unwrap();
+        let stamped_header = WirePacketHeader {
+            transport_id: Some(TEST_TRANSPORT_ID),
+            propagation: PropagationType::Transport,
+            hops: original_header.hops + 1,
+            ..original_header
+        };
+        let mut expected = std::vec![0u8; HEADER_MAX_LEN + original_payload.len()];
+        let header_len = stamped_header.write(&mut expected).unwrap();
+        expected[header_len..].copy_from_slice(original_payload);
         assert_eq!(
             runtime.interfaces()[0].handle.sent,
             std::vec![expected],
-            "the announce must re-emit on the interface it arrived through, one hop further, exactly once",
+            "the announce must re-emit on its arrival interface, one hop further, stamped with our transport id, exactly once",
         );
     }
 

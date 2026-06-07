@@ -35,10 +35,12 @@ impl<'a, S: EngineStorage> TickOutput<'a, S> {
                 destination,
                 fire_on,
             } = directive;
+            let via = state.transport_id?;
             let retained = state.routing_table.retained_announce_for(destination)?;
             Some(EgressDirective::ReemitAnnounce {
                 announce: retained.announce,
                 emit_hops: retained.hops,
+                via,
                 fire_on: fire_on.as_slice(),
             })
         })
@@ -301,12 +303,41 @@ mod tests {
         let (header, payload) = WirePacketHeader::parse(wire).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.destination_type, DestinationType::Single);
-        assert_eq!(header.propagation, PropagationType::Broadcast);
+        assert_eq!(header.propagation, PropagationType::Transport);
+        assert_eq!(header.transport_id, Some(TEST_TRANSPORT_ID));
         let original = WirePacketHeader::parse(&raw).unwrap().0;
         assert_eq!(header.hops, original.hops + 1);
         assert_eq!(header.destination, original.destination);
         let original_payload = WirePacketHeader::parse(&raw).unwrap().1;
         assert_eq!(payload, original_payload);
+    }
+
+    #[test]
+    fn a_rebroadcast_reproduces_the_rns_1_3_1_retransmitted_wire() {
+        let mut heard = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let mut state = transporting_node();
+        let arrival = InstantMillis(1_000);
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut heard,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+
+        let (_, emitted) = tick_capture(
+            &mut state,
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            &transporting_view(),
+        );
+        assert_eq!(
+            emitted,
+            std::vec![hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE)],
+            "our retransmission must be byte-identical to the reference's own",
+        );
     }
 
     fn rebroadcast_fan_for(

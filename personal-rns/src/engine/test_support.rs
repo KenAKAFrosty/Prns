@@ -51,6 +51,18 @@ pub(crate) fn raw_announce_accepted(hops: u8) -> IngestPacketOutcome<'static> {
     }))
 }
 
+/// The reference's own retransmission of [`RATCHETED_SELF_ANNOUNCE_RNS_WIRE`]:
+/// minted by RNS 1.3.1 `Transport.jobs()` packet construction (`HEADER_2`,
+/// `TRANSPORT`, transport_id `0x7A…` = [`TEST_TRANSPORT_ID`], hops 1) and
+/// self-checked through `Identity.validate_announce` before pinning.
+pub(crate) const RNS_1_3_1_RETRANSMITTED_ANNOUNCE: &str =
+    "71017a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7ac3cfae69b36bb6e3bbfd96a3b5867a59000faa684ed28867b97f\
+     4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a\
+     016baf8520a332c9778737ab49baa826f122c1437f4444444444444444444438ab664bd86f77d7e66bdd9ae0\
+     792913a94fd8b33a1260027e4b46c1f4884c6791d8c21a401611ca859e9ae293e86a6860fb2babd90fe4c58c\
+     f315d7a111cc0a3e9646aa7ffdf1530150aa30d0c684aab5b6236ea71a4b8f8c72b2b02768bf0268656c6c6f\
+     2d706572736f6e616c";
+
 pub(crate) const RAW_SEALED_FOR_PROOF: &str =
     "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
      a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\
