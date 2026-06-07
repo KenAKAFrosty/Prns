@@ -1710,8 +1710,8 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     /// RNS 1.3.1 Transport.py:1556-1580: a transport-addressed packet rides the
-    /// path table onward — re-addressed at the next relay while more than one
-    /// hop remains, stripped back to a plain broadcast for the final hop — and
+    /// path table onward. It's re-addressed at the next relay while more than one
+    /// hop remains, stripped back to a plain broadcast for the final hop. It also
     /// leaves a reverse-table row so its proof can ride home.
     fn maybe_forward<'p>(
         &mut self,

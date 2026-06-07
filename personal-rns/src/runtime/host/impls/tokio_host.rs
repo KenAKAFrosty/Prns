@@ -444,4 +444,220 @@ mod tests {
             "a live loopback proof returns fast, measured rtt_ms = {rtt_ms}",
         );
     }
+
+    #[tokio::test]
+    async fn a_send_settles_delivered_through_a_keyless_relay_across_three_live_runtimes() {
+        use std::sync::mpsc::{channel, Receiver, Sender};
+
+        use crate::engine::self_announce::AnnounceConfig;
+        use crate::engine::test_support::{fixed_secret_key, second_secret_key};
+        use crate::engine::{
+            Delivered, EngineState, RatchetPolicy, ReannounceSchedule, SendSingle, SendSingleError,
+            SendSingleFailure, SendSinglePayload,
+        };
+        use crate::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
+        use crate::interfaces::{
+            ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
+            IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+            InterfaceMode, MediumKind, SendError, StartedInterface, TransportCapability,
+        };
+        use crate::routing::storage::FixedInline;
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::runtime::{PrnsEvent, Runtime};
+        use crate::wire::{TransportId, MTU};
+
+        // Three engines live on this test thread at once; a desk-sized storage
+        // spell keeps their combined footprint far from the thread's stack.
+        type SmallCap = FixedInline<8, 8, 512, 4, 64, 4, 4, 4, 4, 32, 4, 4, 4>;
+
+        struct ChannelHandle {
+            id: InterfaceId,
+            clock_base: Instant,
+            rx: Receiver<std::vec::Vec<u8>>,
+            tx: Sender<std::vec::Vec<u8>>,
+            peer_wake: TokioWakeHandle,
+        }
+
+        impl InterfaceHandle for ChannelHandle {
+            fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+                let mut bytes = self.rx.try_recv().ok()?;
+                Some(f(InboundPacket {
+                    arrived_at: InstantMillis(self.clock_base.elapsed().as_millis() as u64),
+                    source_interface: self.id,
+                    bytes: &mut bytes,
+                }))
+            }
+            fn acquire_send_grant(
+                &mut self,
+                fill: impl FnOnce(&mut [u8]) -> usize,
+            ) -> Result<usize, SendError> {
+                let mut buf = [0u8; MTU];
+                let written = fill(&mut buf);
+                let _ = self.tx.send(buf[..written].to_vec());
+                self.peer_wake.poke();
+                Ok(written)
+            }
+            fn request_stop(&mut self) {}
+            fn next_report(&mut self) -> Option<ControlReport> {
+                None
+            }
+        }
+
+        fn linked_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+            InterfaceDescriptor {
+                id,
+                capabilities: InterfaceCapabilities {
+                    ingress: IngressCapability::Enabled,
+                    egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+                },
+                mode: InterfaceMode::Full,
+                medium: MediumKind::Loopback,
+                state: ConnectionState::Connected,
+            }
+        }
+
+        type LinkedInterface = StartedInterface<ChannelHandle, core::convert::Infallible>;
+
+        let mut prover: EngineState<SmallCap> = EngineState::new(fixed_secret_key());
+        let node = prover.held_identity_hashes()[0];
+        let destination = prover
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        prover
+            .schedule_announce(
+                &destination,
+                AnnounceConfig {
+                    app_data: b"three-node-capstone",
+                    schedule: ReannounceSchedule::default(),
+                },
+            )
+            .unwrap();
+        let sender: EngineState<SmallCap> = EngineState::new(second_secret_key());
+
+        // The relay holds no identity and registers nothing: a bare transport id
+        // is its entire cryptographic existence.
+        let mut relay: EngineState<SmallCap> = EngineState::<SmallCap>::default();
+        relay.set_transport_id(TransportId::new([0x7A; 16]));
+
+        let sender_host = TokioHost::new();
+        let relay_host = TokioHost::new();
+        let prover_host = TokioHost::new();
+
+        let (sender_to_relay_tx, sender_to_relay_rx) = channel();
+        let (relay_to_sender_tx, relay_to_sender_rx) = channel();
+        let (relay_to_prover_tx, relay_to_prover_rx) = channel();
+        let (prover_to_relay_tx, prover_to_relay_rx) = channel();
+
+        let mut sender_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
+        let _ = sender_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xA1; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xA1; 16]),
+                clock_base: Instant::now(),
+                rx: relay_to_sender_rx,
+                tx: sender_to_relay_tx,
+                peer_wake: relay_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+
+        let mut relay_set = FixedInterfaceSet::<LinkedInterface, 2>::new();
+        let _ = relay_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xB2; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xB2; 16]),
+                clock_base: Instant::now(),
+                rx: sender_to_relay_rx,
+                tx: relay_to_sender_tx,
+                peer_wake: sender_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+        let _ = relay_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xC3; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xC3; 16]),
+                clock_base: Instant::now(),
+                rx: prover_to_relay_rx,
+                tx: relay_to_prover_tx,
+                peer_wake: prover_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+
+        let mut prover_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
+        let _ = prover_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xD4; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xD4; 16]),
+                clock_base: Instant::now(),
+                rx: relay_to_prover_rx,
+                tx: prover_to_relay_tx,
+                peer_wake: relay_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let commander = Arc::new(Commander {
+            next_id: AtomicU64::new(0),
+            pending: Mutex::new(HashMap::new()),
+            command_tx,
+            wake: sender_host.wake_handle(),
+        });
+
+        let sender_runtime = Runtime::new(sender, sender_set, sender_host);
+        let relay_runtime = Runtime::new(relay, relay_set, relay_host);
+        let prover_runtime = Runtime::new(prover, prover_set, prover_host);
+        let settler = commander.clone();
+        tokio::spawn(async move {
+            sender_runtime
+                .run(
+                    move |event| {
+                        if let PrnsEvent::CommandSettled { id, settlement } = event {
+                            settler.settle(id, settlement);
+                        }
+                    },
+                    move || command_rx.try_recv().ok(),
+                )
+                .await
+        });
+        tokio::spawn(async move { relay_runtime.run(|_event| {}, || None).await });
+        tokio::spawn(async move { prover_runtime.run(|_event| {}, || None).await });
+
+        let payload = SendSinglePayload::from_slice(b"across-the-relay").unwrap();
+        let delivered = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let settled = commander
+                    .issue(SendSingle {
+                        destination,
+                        payload: payload.clone(),
+                    })
+                    .await;
+                match settled {
+                    Err(SendSingleFailure::Rejected(SendSingleError::NoRouteToDestination)) => {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                    settled => break settled,
+                }
+            }
+        })
+        .await
+        .expect("the relayed send settles well inside the timeout");
+
+        let rtt_ms = match delivered {
+            Ok(Delivered { rtt_ms }) => rtt_ms,
+            other => panic!("the relayed send must settle Delivered, got {other:?}"),
+        };
+        assert!(
+            rtt_ms < 5_000,
+            "a proof crossing two hops still returns fast, measured rtt_ms = {rtt_ms}",
+        );
+    }
 }

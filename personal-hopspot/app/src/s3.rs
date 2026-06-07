@@ -34,11 +34,10 @@ use personal_rns::engine::self_announce::AnnounceConfig;
 use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
-    ReannounceSchedule,
+    ReannounceSchedule, SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::wire::TransportId;
 use personal_rns::interfaces::impls::rns_parity::auto_interface::{self, link_local_from_mac};
 use personal_rns::interfaces::impls::usb_auto::core::{device_descriptor, NodeTag, MAX_DATA_BYTES};
 use personal_rns::interfaces::impls::usb_auto::serve;
@@ -56,6 +55,7 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::channels::embassy::RuntimeSnapshotWatch;
 use personal_rns::runtime::host::impls::EmbassyContractHost;
 use personal_rns::runtime::{Prns, PrnsEvent, Recipe, RuntimeSnapshot, StartingDestinationConfig};
+use personal_rns::wire::TransportId;
 
 use personal_hopspot_ui as screen;
 
@@ -86,7 +86,7 @@ macro_rules! mk_static {
         CELL.init($val)
     }};
 }
-const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8> = FixedInline;
+const ENGINE_STORAGE: FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8> = FixedInline;
 
 /// The engine's own stack on core 1 — sized from the painted watermark: the
 /// measured peak is 69.1KB, and it is the boot spawn (embassy constructs the
@@ -219,6 +219,32 @@ static SNAPSHOT_WATCH: RuntimeSnapshotWatch = RuntimeSnapshotWatch::new();
 static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, screen::InputEvent, 4> = Channel::new();
 /// The render loop's issued commands, drained by the engine one per cycle.
 static COMMANDS: Channel<CriticalSectionRawMutex, IssuedCommand, 4> = Channel::new();
+
+/// Ping command ids live in their own id space (top bit set), so the settle
+/// handler never confuses them with the button's announce commands.
+const PING_COMMAND_ID_BIT: u64 = 1 << 63;
+
+/// One ping at the indirect neighbor: settlement-gated, so the stream is paced
+/// by the real round trip through the relay - every tx/rx tick on the OLED is
+/// a full sealed-forwarded-delivered-proven circle.
+fn queue_ping(peer: personal_rns::wire::DestinationHash, seq: u64) {
+    let mut payload_bytes = [0u8; 16];
+    payload_bytes[..8].copy_from_slice(b"s3-ping:");
+    payload_bytes[8..].copy_from_slice(&seq.to_le_bytes());
+    let Ok(payload) = SendSinglePayload::from_slice(&payload_bytes) else {
+        return;
+    };
+    let queued = COMMANDS.try_send(IssuedCommand {
+        id: CommandId(PING_COMMAND_ID_BIT | seq),
+        command: EngineCommand::SendSingle(SendSingle {
+            destination: peer,
+            payload,
+        }),
+    });
+    if queued.is_ok() {
+        WAKE.signal(());
+    }
+}
 
 /// Platform bring-up, then the Hopspot screen loop. Never returns — its frame holds the
 /// panel-power gate, the OLED, and the battery ADC alive while the spawned tasks (node,
@@ -589,11 +615,33 @@ async fn engine_task(
             interfaces,
             host,
         },
-        move |event: PrnsEvent<'_>| match event {
-            PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
-            PrnsEvent::Delivered(_) => {}
-            PrnsEvent::AnnounceHeard { .. } => {}
-            PrnsEvent::CommandSettled { .. } => {}
+        {
+            let mut ping_peer = None;
+            let mut ping_seq: u64 = 0;
+            move |event: PrnsEvent<'_>| match event {
+                PrnsEvent::SnapshotUpdated(snapshot) => snapshot_tx.send(snapshot.clone()),
+                PrnsEvent::Delivered(_) => {}
+                PrnsEvent::AnnounceHeard {
+                    destination, hops, ..
+                } => {
+                    // A peer two or more hops out is an indirect neighbor behind
+                    // a relay - exactly the path worth exercising continuously.
+                    if hops >= 2 && ping_peer.is_none() {
+                        ping_peer = Some(destination);
+                        queue_ping(destination, ping_seq);
+                    }
+                }
+                PrnsEvent::CommandSettled {
+                    id,
+                    settlement: Settlement::SendSingle(_),
+                } if id.0 & PING_COMMAND_ID_BIT != 0 => {
+                    if let Some(peer) = ping_peer {
+                        ping_seq = ping_seq.wrapping_add(1);
+                        queue_ping(peer, ping_seq);
+                    }
+                }
+                PrnsEvent::CommandSettled { .. } => {}
+            }
         },
         || COMMANDS.try_receive().ok(),
     )

@@ -449,6 +449,34 @@ mod tests {
         assert_eq!(decoded, Some(true));
     }
 
+    #[test]
+    fn a_full_transport_stamped_announce_survives_the_streaming_decoder() {
+        // A 238-byte wire packet (a transport-stamped rebroadcast: HEADER_2 + a
+        // 16-byte transport id + a ratcheted lxmf announce) — every byte value
+        // present, including FLAG/ESC that must escape — is exactly the frame the
+        // live rig saw written but never decoded. If this round-trips, the serial
+        // layer is innocent.
+        let mut packet = [0u8; 238];
+        for (i, slot) in packet.iter_mut().enumerate() {
+            *slot = (i * 7 + 3) as u8;
+        }
+        packet[2] = FLAG_LIKE;
+        packet[19] = ESC_LIKE;
+        packet[200] = FLAG_LIKE;
+
+        let mut wire = [0u8; MAX_FRAMED_BYTES];
+        let n = Message::Data(&packet).write_framed(&mut wire).unwrap();
+
+        let mut decoder: RnsSerialDecoder<MAX_MESSAGE_BYTES> = RnsSerialDecoder::new();
+        let mut decoded = None;
+        for &byte in &wire[..n] {
+            if let Some(frame) = decoder.feed(byte).unwrap() {
+                decoded = Some(decode_message(frame).unwrap().is_data_with(&packet));
+            }
+        }
+        assert_eq!(decoded, Some(true));
+    }
+
     const FLAG_LIKE: u8 = 0x7E;
     const ESC_LIKE: u8 = 0x7D;
 
