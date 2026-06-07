@@ -200,6 +200,17 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn payloads() -> impl Strategy<Value = std::vec::Vec<u8>> {
+        prop::collection::vec(any::<u8>(), 0..=LORA_MAX_PAYLOAD)
+    }
+
+    fn chunk_bounds(payload_len: usize, index: usize) -> (usize, usize) {
+        let start = (index * LORA_SINGLE_FRAME_PAYLOAD_MAX).min(payload_len);
+        let end = (start + LORA_SINGLE_FRAME_PAYLOAD_MAX).min(payload_len);
+        (start, end)
+    }
 
     #[test]
     fn single_frame_has_no_split_flag_and_round_trips() {
@@ -320,5 +331,77 @@ mod tests {
             d.capabilities.egress,
             EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_payloads_round_trip_through_air_frames_and_reassembly(
+            payload in payloads(),
+            sequence_entropy in any::<u8>(),
+        ) {
+            let frame_count = air_frame_count(payload.len());
+            let split = payload.len() > LORA_SINGLE_FRAME_PAYLOAD_MAX;
+            let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
+
+            for index in 0..frame_count {
+                let mut out = [0u8; LORA_SINGLE_FRAME_MAX];
+                let n = encode_air_frame_part(&payload, sequence_entropy, index, &mut out).unwrap();
+                let parsed = decode_air_frame(&out[..n]).unwrap();
+                let (start, end) = chunk_bounds(payload.len(), index);
+
+                prop_assert_eq!(parsed.sequence, sequence_entropy & HEADER_SEQUENCE_NIBBLE);
+                prop_assert_eq!(parsed.is_split_fragment, split);
+                prop_assert_eq!(parsed.payload, &payload[start..end]);
+
+                let delivered = reassembler.feed(&out[..n]);
+                if index + 1 == frame_count {
+                    prop_assert_eq!(delivered, Some(payload.as_slice()));
+                } else {
+                    prop_assert_eq!(delivered, None);
+                }
+            }
+        }
+
+        #[test]
+        fn valid_parts_fit_exact_buffers_and_reject_one_byte_shorter_buffers(
+            payload in payloads(),
+            sequence_entropy in any::<u8>(),
+        ) {
+            for index in 0..air_frame_count(payload.len()) {
+                let (start, end) = chunk_bounds(payload.len(), index);
+                let exact_len = LORA_HEADER_LEN + (end - start);
+
+                let mut exact = std::vec![0u8; exact_len];
+                let written =
+                    encode_air_frame_part(&payload, sequence_entropy, index, &mut exact).unwrap();
+                prop_assert_eq!(written, exact_len);
+
+                let mut short = std::vec![0u8; exact_len.saturating_sub(1)];
+                prop_assert_eq!(
+                    encode_air_frame_part(&payload, sequence_entropy, index, &mut short),
+                    Err(AirFrameError::OutputBufferTooSmall)
+                );
+            }
+        }
+
+        #[test]
+        fn out_of_range_indices_emit_header_only_frames_without_panicking(
+            payload in payloads(),
+            sequence_entropy in any::<u8>(),
+            extra_index in 0usize..8,
+        ) {
+            let index = air_frame_count(payload.len()) + extra_index;
+            let mut out = [0u8; LORA_HEADER_LEN];
+            let n = encode_air_frame_part(&payload, sequence_entropy, index, &mut out).unwrap();
+            let parsed = decode_air_frame(&out[..n]).unwrap();
+
+            prop_assert_eq!(n, LORA_HEADER_LEN);
+            prop_assert_eq!(parsed.sequence, sequence_entropy & HEADER_SEQUENCE_NIBBLE);
+            prop_assert_eq!(
+                parsed.is_split_fragment,
+                payload.len() > LORA_SINGLE_FRAME_PAYLOAD_MAX
+            );
+            prop_assert!(parsed.payload.is_empty());
+        }
     }
 }
