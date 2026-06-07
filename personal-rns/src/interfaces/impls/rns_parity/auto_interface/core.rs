@@ -52,7 +52,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+            egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::Multicast,

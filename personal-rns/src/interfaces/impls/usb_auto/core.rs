@@ -223,7 +223,7 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
-            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+            egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
