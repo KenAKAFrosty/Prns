@@ -245,17 +245,9 @@ pub async fn run(spawner: Spawner) {
 
     esp_println::logger::init_logger_from_env();
 
-    let mut rtc = Rtc::new(p.LPWR);
-    rtc.rwdt
-        .set_timeout(RwdtStage::Stage0, esp_hal::time::Duration::from_secs(12));
-    rtc.rwdt.enable();
-
     // This first banner is the only thing on the usb-serial-jtag before frames flow, so
     // the desktop's decoder skips it as pre-frame noise.
-    println!(
-        "HOPSPOT_S3 boot — USB-auto + WiFi (reset: {:?})",
-        esp_hal::system::reset_reason()
-    );
+    println!("HOPSPOT_S3 boot — USB-auto + WiFi");
 
     // WiFi radio + IPv6 link-local stack for the LAN AutoInterface. The brain hashes its
     // peering token over the EUI-64 link-local, so pin the stack to that exact address
@@ -420,21 +412,6 @@ pub async fn run(spawner: Spawner) {
     let mut battery_tick = Ticker::every(Duration::from_secs(2));
     let mut last_budget_report = Instant::now();
     loop {
-        rtc.rwdt.feed();
-        if last_budget_report.elapsed() >= BUDGET_REPORT_EVERY {
-            last_budget_report = Instant::now();
-            let heap = esp_alloc::HEAP.stats();
-            log::info!(
-                "BUDGETS core0 {}B peak / {}B span | core1 {}B peak / {}B span | heap {}B now / {}B peak / {}B cap",
-                CORE0_STACK.peak_bytes(),
-                CORE0_STACK.span_bytes(),
-                CORE1_STACK.peak_bytes(),
-                CORE1_STACK.span_bytes(),
-                heap.current_usage,
-                heap.max_usage,
-                heap.size,
-            );
-        }
         // Battery level from the smoothed pin voltage; an implausibly low reading means
         // no LiPo (USB-only) → Unknown.
         let mut pin_mv = 0u16;
@@ -680,12 +657,6 @@ async fn button_task(mut button: Input<'static>) {
         }
         Timer::after(BUTTON_DEBOUNCE).await;
     }
-}
-
-#[no_mangle]
-fn custom_halt() -> ! {
-    esp_hal::delay::Delay::new().delay_millis(50);
-    esp_hal::system::software_reset()
 }
 
 /// This board's opaque link tag: the 6-byte eFuse MAC, padded to the 8-byte width.
