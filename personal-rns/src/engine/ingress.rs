@@ -191,13 +191,6 @@ pub enum IngestPacketOutcome<'p> {
     AnswerPathRequestFromCache {
         destination: DestinationHash,
     },
-    /// A path request arrived for a destination we neither own nor route — a
-    /// transport node re-broadcasts it onward to discover the path, reusing the
-    /// id so the network recognises and stops loops.
-    ForwardPathRequest {
-        destination: DestinationHash,
-        id: PathRequestIdBytes,
-    },
     Ignored,
 }
 
@@ -440,24 +433,23 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
 
+        // We answer a path request we can satisfy — for one of our own
+        // destinations, or, as a transport node, for a route we hold. We never
+        // *forward* an unknown onward: that is opt-in recursive discovery
+        // (RNS `DISCOVER_PATHS_FOR`), gated off and built later.
         if self
             .upstream_app_destinations
             .lookup(&destination, DestinationType::Single)
             .is_some()
         {
             IngestPacketOutcome::AnswerPathRequest { destination }
-        } else if self.transport_id.is_some() {
-            // A transport node answers from cache when it holds the route, and
-            // otherwise forwards the request onward to discover it.
-            if self
+        } else if self.transport_id.is_some()
+            && self
                 .routing_table
                 .retained_announce_for(&destination)
                 .is_some()
-            {
-                IngestPacketOutcome::AnswerPathRequestFromCache { destination }
-            } else {
-                IngestPacketOutcome::ForwardPathRequest { destination, id }
-            }
+        {
+            IngestPacketOutcome::AnswerPathRequestFromCache { destination }
         } else {
             IngestPacketOutcome::Ignored
         }
@@ -1114,10 +1106,11 @@ mod tests {
     }
 
     #[test]
-    fn a_transport_node_forwards_a_request_it_can_neither_own_nor_route() {
+    fn a_transport_node_with_no_route_does_not_forward_the_request() {
+        // Forwarding an unknown onward is opt-in recursive discovery (off by
+        // default), so a relay that holds no route simply ignores the request.
         let mut relay = transporting_node();
-        let stranger = DestinationHash::new([0x44; 16]);
-        let mut wire = path_request_wire(stranger);
+        let mut wire = path_request_wire(DestinationHash::new([0x44; 16]));
         assert_eq!(
             relay.ingest_packet(
                 InboundPacket {
@@ -1128,20 +1121,18 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::ForwardPathRequest {
-                destination: stranger,
-                id: [0x55; 16],
-            },
+            IngestPacketOutcome::Ignored,
         );
     }
 
     #[test]
-    fn a_duplicate_path_request_is_dropped() {
-        let mut relay = transporting_node();
-        let stranger = DestinationHash::new([0x44; 16]);
+    fn a_duplicate_path_request_is_not_answered_twice() {
+        // Dedup is always on: a relay answers once from cache, and a re-arrival
+        // of the same (destination, id) is dropped.
+        let (mut relay, cached) = relay_holding_a_cached_route();
 
-        let mut first = path_request_wire(stranger);
-        assert!(matches!(
+        let mut first = path_request_wire(cached);
+        assert_eq!(
             relay.ingest_packet(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
@@ -1151,10 +1142,12 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::ForwardPathRequest { .. },
-        ));
+            IngestPacketOutcome::AnswerPathRequestFromCache {
+                destination: cached
+            },
+        );
 
-        let mut echo = path_request_wire(stranger);
+        let mut echo = path_request_wire(cached);
         assert_eq!(
             relay.ingest_packet(
                 InboundPacket {
@@ -1166,40 +1159,7 @@ mod tests {
                 &transporting_view(),
             ),
             IngestPacketOutcome::Ignored,
-            "the same (destination, id) is a duplicate, dropped before re-forwarding",
-        );
-    }
-
-    #[test]
-    fn the_originator_does_not_re_forward_its_own_request() {
-        use crate::engine::{CommandId, PathRequestId, RequestPath};
-
-        let mut a = transporting_node();
-        let stranger = DestinationHash::new([0x44; 16]);
-        let mut buf = [0u8; MTU];
-        let _ = a.write_commanded_path_request(
-            CommandId(7),
-            &RequestPath {
-                destination: stranger,
-                id: PathRequestId::new([0x55; 16]),
-            },
-            InstantMillis(1_000),
-            &mut buf,
-        );
-
-        let mut echo = path_request_wire(stranger);
-        assert_eq!(
-            a.ingest_packet(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_100),
-                    source_interface: iface(0xA1),
-                    bytes: &mut echo,
-                },
-                TEST_ENTROPY,
-                &transporting_view(),
-            ),
-            IngestPacketOutcome::Ignored,
-            "a node recorded its own request on send, so its echo is a duplicate",
+            "the same (destination, id) is a duplicate, not answered again",
         );
     }
 

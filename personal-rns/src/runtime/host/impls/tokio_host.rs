@@ -660,4 +660,185 @@ mod tests {
             "a proof crossing two hops still returns fast, measured rtt_ms = {rtt_ms}",
         );
     }
+
+    #[tokio::test]
+    async fn a_path_request_discovers_a_route_that_then_delivers_across_two_live_runtimes() {
+        use std::sync::mpsc::{channel, Receiver, Sender};
+
+        use crate::engine::test_support::{fixed_secret_key, second_secret_key, Cap};
+        use crate::engine::{
+            Delivered, EngineState, PathFound, PathRequestId, RatchetPolicy, RequestPath,
+            SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
+        };
+        use crate::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
+        use crate::interfaces::{
+            ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
+            IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+            InterfaceMode, MediumKind, SendError, StartedInterface, TransportCapability,
+        };
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::runtime::{PrnsEvent, Runtime};
+        use crate::wire::MTU;
+
+        struct ChannelHandle {
+            id: InterfaceId,
+            clock_base: Instant,
+            rx: Receiver<std::vec::Vec<u8>>,
+            tx: Sender<std::vec::Vec<u8>>,
+            peer_wake: TokioWakeHandle,
+        }
+
+        impl InterfaceHandle for ChannelHandle {
+            fn next_inbound<R>(&mut self, f: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
+                let mut bytes = self.rx.try_recv().ok()?;
+                Some(f(InboundPacket {
+                    arrived_at: InstantMillis(self.clock_base.elapsed().as_millis() as u64),
+                    source_interface: self.id,
+                    bytes: &mut bytes,
+                }))
+            }
+            fn acquire_send_grant(
+                &mut self,
+                fill: impl FnOnce(&mut [u8]) -> usize,
+            ) -> Result<usize, SendError> {
+                let mut buf = [0u8; MTU];
+                let written = fill(&mut buf);
+                let _ = self.tx.send(buf[..written].to_vec());
+                self.peer_wake.poke();
+                Ok(written)
+            }
+            fn request_stop(&mut self) {}
+            fn next_report(&mut self) -> Option<ControlReport> {
+                None
+            }
+        }
+
+        fn linked_descriptor(id: InterfaceId) -> InterfaceDescriptor {
+            InterfaceDescriptor {
+                id,
+                capabilities: InterfaceCapabilities {
+                    ingress: IngressCapability::Enabled,
+                    egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+                },
+                mode: InterfaceMode::Full,
+                medium: MediumKind::Loopback,
+                state: ConnectionState::Connected,
+            }
+        }
+
+        type LinkedInterface = StartedInterface<ChannelHandle, core::convert::Infallible>;
+
+        // The target registers but never *announces* — so the requester can only
+        // learn its route by asking for it.
+        let mut target: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = target.held_identity_hashes()[0];
+        let destination = target
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        let requester: EngineState<Cap> = EngineState::new(second_secret_key());
+
+        let requester_host = TokioHost::new();
+        let target_host = TokioHost::new();
+        let (to_target_tx, to_target_rx) = channel();
+        let (to_requester_tx, to_requester_rx) = channel();
+
+        let mut requester_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
+        let _ = requester_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xA1; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xA1; 16]),
+                clock_base: Instant::now(),
+                rx: to_requester_rx,
+                tx: to_target_tx,
+                peer_wake: target_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+        let mut target_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
+        let _ = target_set.push(StartedInterface {
+            descriptor: linked_descriptor(InterfaceId::new([0xB2; 16])),
+            handle: ChannelHandle {
+                id: InterfaceId::new([0xB2; 16]),
+                clock_base: Instant::now(),
+                rx: to_target_rx,
+                tx: to_requester_tx,
+                peer_wake: requester_host.wake_handle(),
+            },
+            drive: DriverMode::SelfDriven,
+        });
+
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let commander = Arc::new(Commander {
+            next_id: AtomicU64::new(0),
+            pending: Mutex::new(HashMap::new()),
+            command_tx,
+            wake: requester_host.wake_handle(),
+        });
+
+        let requester_runtime = Runtime::new(requester, requester_set, requester_host);
+        let target_runtime = Runtime::new(target, target_set, target_host);
+        let settler = commander.clone();
+        tokio::spawn(async move {
+            requester_runtime
+                .run(
+                    move |event| {
+                        if let PrnsEvent::CommandSettled { id, settlement } = event {
+                            settler.settle(id, settlement);
+                        }
+                    },
+                    move || command_rx.try_recv().ok(),
+                )
+                .await
+        });
+        tokio::spawn(async move { target_runtime.run(|_event| {}, || None).await });
+
+        // The requester knows nothing of the target; it asks the network and the
+        // target answers, so the request settles found.
+        let found = tokio::time::timeout(
+            Duration::from_secs(10),
+            commander.issue(RequestPath {
+                destination,
+                id: PathRequestId::new([0x5A; 16]),
+            }),
+        )
+        .await
+        .expect("the path request settles well inside the timeout");
+        let PathFound { hops } = match found {
+            Ok(found) => found,
+            other => panic!("the path request must settle found, got {other:?}"),
+        };
+        assert_eq!(hops, 1, "the target answered directly, one hop away");
+
+        // The route just discovered carries a real send to delivery.
+        let payload = SendSinglePayload::from_slice(b"after-discovery").unwrap();
+        let delivered = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match commander
+                    .issue(SendSingle {
+                        destination,
+                        payload: payload.clone(),
+                    })
+                    .await
+                {
+                    Err(SendSingleFailure::Rejected(SendSingleError::NoRouteToDestination)) => {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                    settled => break settled,
+                }
+            }
+        })
+        .await
+        .expect("the discovered route delivers well inside the timeout");
+
+        assert!(
+            matches!(delivered, Ok(Delivered { .. })),
+            "the route discovered by the path request must carry a delivery, got {delivered:?}",
+        );
+    }
 }

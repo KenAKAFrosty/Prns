@@ -7,13 +7,12 @@ use super::host::{Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    write_path_request_wire_packet, AnnounceIngest, AnnounceNowFailure, AnnounceTarget,
-    CachedPathResponseOutcome, CommandId, CommandOutcome, CommandedAnnounceWriteOutcome,
-    DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
-    NextScheduledEngineWork, PathFound, PathRequestIdBytes, PathRequestWriteOutcome,
-    PathResponseWriteOutcome, ProofIngest, ProofOwed, RatchetEntropy, RebroadcastDecision,
-    RequestPath, RequestPathFailure, SendSingle, SendSingleEntropy, SendSingleFailure,
-    SendSingleWriteOutcome, Settlement, WriteSendSingleError,
+    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CachedPathResponseOutcome, CommandId,
+    CommandOutcome, CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState,
+    IngestPacketOutcome, InstantMillis, IssuedCommand, NextScheduledEngineWork, PathFound,
+    PathRequestWriteOutcome, PathResponseWriteOutcome, ProofIngest, ProofOwed, RatchetEntropy,
+    RebroadcastDecision, RequestPath, RequestPathFailure, SendSingle, SendSingleEntropy,
+    SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -57,10 +56,6 @@ enum InboundStep {
     },
     AnswersPathRequestFromCache {
         destination: DestinationHash,
-    },
-    ForwardsPathRequest {
-        destination: DestinationHash,
-        id: PathRequestIdBytes,
     },
 }
 
@@ -334,9 +329,6 @@ where
                     IngestPacketOutcome::AnswerPathRequestFromCache { destination } => {
                         InboundStep::AnswersPathRequestFromCache { destination }
                     }
-                    IngestPacketOutcome::ForwardPathRequest { destination, id } => {
-                        InboundStep::ForwardsPathRequest { destination, id }
-                    }
                     IngestPacketOutcome::Ignored => InboundStep::NothingOwed,
                 }
             }) {
@@ -411,26 +403,6 @@ where
                                 wire_len
                             },
                             FanTargets::Listed(core::slice::from_ref(&id)),
-                            FanoutClass::Transported,
-                        );
-                    }
-                }
-                InboundStep::ForwardsPathRequest {
-                    destination,
-                    id: request_id,
-                } => {
-                    let mut forwarded = [0u8; MTU];
-                    if let Ok(wire_len) =
-                        write_path_request_wire_packet(destination, &request_id, &mut forwarded)
-                    {
-                        fan_to_handles(
-                            interfaces,
-                            traffic,
-                            |buf| {
-                                buf[..wire_len].copy_from_slice(&forwarded[..wire_len]);
-                                wire_len
-                            },
-                            FanTargets::EveryExcept(id),
                             FanoutClass::Transported,
                         );
                     }
@@ -818,7 +790,6 @@ fn run_request_path<I, S, OnEvent>(
 
 enum FanTargets<'a> {
     EveryInterface,
-    EveryExcept(InterfaceId),
     Listed(&'a [InterfaceId]),
 }
 
@@ -826,7 +797,6 @@ impl FanTargets<'_> {
     fn includes(&self, id: InterfaceId) -> bool {
         match self {
             Self::EveryInterface => true,
-            Self::EveryExcept(excluded) => id != *excluded,
             Self::Listed(ids) => ids.contains(&id),
         }
     }
@@ -1581,50 +1551,6 @@ mod tests {
         assert_eq!(header.propagation, PropagationType::Transport);
         assert_eq!(header.transport_id, Some(TEST_TRANSPORT_ID));
         assert_eq!(header.destination, cached);
-    }
-
-    #[test]
-    fn a_relay_forwards_an_unanswerable_request_on_its_other_interfaces() {
-        let stranger = DestinationHash::new([0x44; 16]);
-        let mut request = [0u8; 500];
-        let n = write_path_request_wire_packet(stranger, &[0x55; 16], &mut request).unwrap();
-        let mut runtime = Runtime::new(
-            {
-                let mut engine: EngineState<Cap> = EngineState::<Cap>::default();
-                engine.set_transport_id(TEST_TRANSPORT_ID);
-                engine
-            },
-            interface_set([
-                started(
-                    iface(0xA1),
-                    std::vec![(InstantMillis(900), request[..n].to_vec())],
-                ),
-                started(iface(0xB2), std::vec::Vec::new()),
-            ]),
-            (),
-        );
-
-        runtime.cycle_once(
-            InstantMillis(1_000),
-            |bytes: &mut [u8]| bytes.fill(0xCA),
-            |_| {},
-            || None,
-        );
-
-        assert!(
-            runtime.interfaces()[0].handle.sent.is_empty(),
-            "never re-broadcast back out the interface it arrived on",
-        );
-        let forwarded = &runtime.interfaces()[1].handle.sent;
-        assert_eq!(forwarded.len(), 1, "forwarded onward to discover the path");
-        let (header, payload) = WirePacketHeader::parse(&forwarded[0]).unwrap();
-        assert_eq!(header.destination, PATH_REQUEST_DESTINATION);
-        assert_eq!(&payload[..16], stranger.as_bytes());
-        assert_eq!(
-            &payload[16..32],
-            &[0x55; 16],
-            "the id is reused, to stop loops"
-        );
     }
 
     #[test]
