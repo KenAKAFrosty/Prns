@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer();
-        let now = InstantMillis(0x44_4444_4444);
+        let now = InstantMillis(0x44_4444_4444 * 1000);
         let self_announce_entropy = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
 
         let mut buf = [0u8; MTU];
@@ -821,7 +821,7 @@ mod tests {
     #[test]
     fn a_ratcheted_self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
-        let now = InstantMillis(0x44_4444_4444);
+        let now = InstantMillis(0x44_4444_4444 * 1000);
         let self_announce_entropy = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
 
         let mut buf = [0u8; MTU];
@@ -1278,7 +1278,7 @@ mod tests {
     fn a_commanded_announce_is_the_scheduled_announce_on_the_wire() {
         let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let destination = state.self_announced_destinations()[0];
-        let now = InstantMillis(0x44_4444_4444);
+        let now = InstantMillis(0x44_4444_4444 * 1000);
         let self_announce_entropy = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
         let commanded = AnnounceNow {
             destination,
