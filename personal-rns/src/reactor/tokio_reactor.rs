@@ -5,8 +5,7 @@ use tokio::time::Instant;
 
 use super::Host;
 use crate::engine::{
-    AnnounceIngest, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
-    Journaled, NextScheduledEngineWork,
+    EngineReaction, EngineState, InstantMillis, IssuedCommand, NextScheduledEngineWork,
 };
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
@@ -70,20 +69,20 @@ pub async fn run<S, H>(
         tokio::select! {
             arrived = inbound.recv() => {
                 let Some((id, mut bytes)) = arrived else { return };
+                let now = host.now();
                 let packet = InboundPacket {
-                    arrived_at: host.now(),
+                    arrived_at: now,
                     source_interface: id,
                     bytes: &mut bytes,
                 };
-                if let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) =
-                    engine.ingest_packet(packet, jitter, &view)
-                {
-                    on_reaction(EngineReaction::Journaled(Journaled::AnnounceHeard {
-                        destination: accepted.destination,
-                        hops: accepted.hops,
-                        source_interface: id,
-                    }));
-                }
+                engine.ingest_packet_into(
+                    packet,
+                    jitter,
+                    &view,
+                    now,
+                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut on_reaction,
+                );
             }
             issued = commands.recv() => {
                 let Some(issued) = issued else { return };
@@ -110,7 +109,7 @@ async fn wait_for_deadline<H: Host>(host: &H, wake: NextScheduledEngineWork) {
 mod tests {
     use super::*;
     use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
-    use crate::engine::Directive;
+    use crate::engine::{Directive, Journaled};
     use crate::interfaces::{
         ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
         MediumKind, TransportCapability,
@@ -150,6 +149,9 @@ mod tests {
             EngineReaction::Journaled(Journaled::AnnounceHeard { .. }) => {
                 let _ = heard_tx.send(());
             }
+            EngineReaction::Journaled(
+                Journaled::Delivered(_) | Journaled::CommandSettled { .. },
+            ) => {}
             EngineReaction::Directive(Directive::Send { target, bytes }) => {
                 let _ = sent_tx.send((target, bytes.to_vec()));
             }

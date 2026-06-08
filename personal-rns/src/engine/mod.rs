@@ -2,6 +2,7 @@ pub mod announce_rate;
 pub mod commands;
 pub mod egress;
 pub mod identity_registration;
+mod inbound;
 pub mod ingress;
 pub mod pending_path_requests;
 pub mod proof;
