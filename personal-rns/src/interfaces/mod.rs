@@ -23,7 +23,7 @@ pub use mac::MacAddress;
 pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 
-pub use descriptor::InterfaceDescriptor;
+pub use descriptor::{AnnounceRateLimit, InterfaceDescriptor};
 pub use packet::{InboundPacket, OutboundPacket};
 pub use substrate::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,

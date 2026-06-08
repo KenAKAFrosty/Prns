@@ -235,6 +235,7 @@ pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::Full,
         medium: MediumKind::Loopback,
         state: ConnectionState::Connected,
+        announce_rate_limit: None,
     }
 }
 

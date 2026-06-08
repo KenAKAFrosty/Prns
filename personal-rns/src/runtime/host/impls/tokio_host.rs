@@ -333,6 +333,7 @@ mod tests {
                 mode: InterfaceMode::Full,
                 medium: MediumKind::Loopback,
                 state: ConnectionState::Connected,
+                announce_rate_limit: None,
             }
         }
 
@@ -513,6 +514,7 @@ mod tests {
                 mode: InterfaceMode::Full,
                 medium: MediumKind::Loopback,
                 state: ConnectionState::Connected,
+                announce_rate_limit: None,
             }
         }
 
@@ -723,6 +725,7 @@ mod tests {
                 mode: InterfaceMode::Full,
                 medium: MediumKind::Loopback,
                 state: ConnectionState::Connected,
+                announce_rate_limit: None,
             }
         }
 

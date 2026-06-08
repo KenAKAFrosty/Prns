@@ -16,5 +16,6 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
         state: ConnectionState::Connected,
+        announce_rate_limit: None,
     }
 }

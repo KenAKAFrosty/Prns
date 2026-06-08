@@ -979,6 +979,7 @@ mod tests {
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,
             state,
+            announce_rate_limit: None,
         }
     }
 

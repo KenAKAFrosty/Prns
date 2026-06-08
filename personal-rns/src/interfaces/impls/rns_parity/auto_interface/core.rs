@@ -57,6 +57,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::Full,
         medium: MediumKind::Multicast,
         state: ConnectionState::Connected,
+        announce_rate_limit: None,
     }
 }
 

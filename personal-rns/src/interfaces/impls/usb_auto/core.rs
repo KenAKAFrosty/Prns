@@ -228,6 +228,7 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
         state: ConnectionState::Degraded,
+        announce_rate_limit: None,
     }
 }
 
@@ -241,6 +242,7 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
         state: ConnectionState::Connected,
+        announce_rate_limit: None,
     }
 }
 

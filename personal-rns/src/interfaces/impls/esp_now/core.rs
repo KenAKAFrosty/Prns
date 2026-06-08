@@ -127,6 +127,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         mode: InterfaceMode::Full,
         medium: MediumKind::SharedHalfDuplex,
         state: ConnectionState::Connected,
+        announce_rate_limit: None,
     }
 }
 
