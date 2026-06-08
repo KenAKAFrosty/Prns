@@ -18,9 +18,7 @@ pub mod crypto;
 pub mod engine;
 pub mod identity;
 pub mod interfaces;
+pub mod reactor;
 pub mod routing;
 pub mod runtime;
 pub mod wire;
-
-#[cfg(test)]
-mod reactor_spike;

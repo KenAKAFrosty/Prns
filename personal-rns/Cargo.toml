@@ -89,9 +89,10 @@ getrandom = { version = "0.2", optional = true }
 rtrb = { version = "0.3", optional = true }
 
 # Async runtime for the `tokio-host` seam: `sync` for the Notify wakers that
-# cross it, `time` for the host's deadline waits. Workers bring their own I/O
-# features; the seam itself needs no runtime flavor.
-tokio = { version = "1", optional = true, default-features = false, features = ["sync", "time"] }
+# cross it, `time` for the host's deadline waits, `macros` for the reactor's
+# `select!` over its three inputs. Workers bring their own I/O features; the seam
+# itself needs no runtime flavor.
+tokio = { version = "1", optional = true, default-features = false, features = ["macros", "sync", "time"] }
 
 # The USB-auto host interface's portable USB-serial layer (under `usb-auto`):
 # enumerate, open, and raw byte I/O on Linux/macOS/Windows. Default features keep
