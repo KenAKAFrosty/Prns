@@ -1,6 +1,5 @@
 pub mod announce_rate;
 pub mod commands;
-pub mod directives;
 pub mod egress;
 pub mod identity_registration;
 pub mod ingress;
@@ -85,7 +84,6 @@ pub struct EngineState<S: EngineStorage> {
     routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
     held_announces_cache: S::Held,
     pending_rebroadcasts: S::Pending,
-    directives: S::Directives,
     upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     packet_hash_history: S::PacketHashes,
     held_identities: HeldIdentities<S::HeldIdentities>,
@@ -108,7 +106,6 @@ impl<S: EngineStorage> Default for EngineState<S> {
             routing_table: Default::default(),
             held_announces_cache: Default::default(),
             pending_rebroadcasts: Default::default(),
-            directives: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
             held_identities: HeldIdentities::default(),

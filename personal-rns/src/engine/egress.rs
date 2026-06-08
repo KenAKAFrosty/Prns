@@ -1,6 +1,6 @@
 use crate::crypto::Ed25519Signature;
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::wire::{
@@ -185,6 +185,24 @@ pub fn write_path_request_wire_packet(
     Ok(total_len)
 }
 
+/// Whether a transported rebroadcast that arrived on `source` fires on `descriptor`
+/// — the engine's sole say on fan-out, decided off the descriptor view it is handed:
+/// the source interface only when it repeats, every other interface when it
+/// transports, and only while the link is up. The runtime never re-decides this; it
+/// routes each named target to its handle and sends.
+pub(crate) fn firable_on(descriptor: &InterfaceDescriptor, source: InterfaceId) -> bool {
+    let connected = matches!(
+        descriptor.state,
+        ConnectionState::Connected | ConnectionState::Degraded
+    );
+    let capable = if descriptor.id == source {
+        descriptor.capabilities.allows_same_interface_repeat()
+    } else {
+        descriptor.capabilities.allows_transport()
+    };
+    connected && capable
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum EgressDirective<'a> {
@@ -192,11 +210,11 @@ pub enum EgressDirective<'a> {
         announce: Announce<'a>,
         emit_hops: u8,
         via: TransportId,
-        fire_on: &'a [InterfaceId],
+        target: InterfaceId,
     },
 }
 
-impl<'a> EgressDirective<'a> {
+impl EgressDirective<'_> {
     pub fn to_wire(&self, buf: &mut [u8]) -> Result<usize, EgressSerializeError> {
         match self {
             Self::ReemitAnnounce {
@@ -208,9 +226,9 @@ impl<'a> EgressDirective<'a> {
         }
     }
 
-    pub fn fire_on(&self) -> &[InterfaceId] {
+    pub fn target(&self) -> InterfaceId {
         match self {
-            Self::ReemitAnnounce { fire_on, .. } => fire_on,
+            Self::ReemitAnnounce { target, .. } => *target,
         }
     }
 }
@@ -315,13 +333,12 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
-        let targets = [iface(0xAA), iface(0xBB)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: orig_header.hops + 1,
             via: TEST_VIA,
-            fire_on: &targets,
+            target: iface(0xAA),
         };
 
         let mut buf = [0u8; 500];
@@ -343,13 +360,12 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
-        let targets = [iface(0xAB)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: 1,
             via: TEST_VIA,
-            fire_on: &targets,
+            target: iface(0xAB),
         };
 
         let mut tiny_buf = [0u8; 8];
@@ -365,13 +381,12 @@ mod tests {
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
         let exact_len = HEADER_MAX_LEN + announce.wire_len();
-        let targets = [iface(0xAC)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: 9,
             via: TEST_VIA,
-            fire_on: &targets,
+            target: iface(0xAC),
         };
 
         let mut exact_buf = std::vec![0u8; exact_len];
@@ -385,20 +400,19 @@ mod tests {
     }
 
     #[test]
-    fn fire_on_accessor_returns_the_engine_supplied_targets() {
+    fn target_accessor_returns_the_engine_named_interface() {
         let raw = hx(RAW_ANNOUNCE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
-        let targets = [iface(0xCD), iface(0xEF)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: header.hops + 1,
             via: TEST_VIA,
-            fire_on: &targets,
+            target: iface(0xCD),
         };
 
-        assert_eq!(directive.fire_on(), &targets);
+        assert_eq!(directive.target(), iface(0xCD));
     }
 
     #[test]
@@ -406,13 +420,12 @@ mod tests {
         let raw = hx(RAW_ANNOUNCE);
         let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
         let orig_announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
-        let targets = [iface(0x42)];
 
         let directive = EgressDirective::ReemitAnnounce {
             announce: orig_announce.clone(),
             emit_hops: 5,
             via: TEST_VIA,
-            fire_on: &targets,
+            target: iface(0x42),
         };
 
         let mut buf = [0u8; 500];
@@ -460,12 +473,12 @@ mod kani_proofs {
     fn reemit_announce_exact_buffer_serializes_header_and_payload_length() {
         let announce = arbitrary_announce();
         let emit_hops: u8 = kani::any();
-        let targets = [InterfaceId::new(kani::any()), InterfaceId::new(kani::any())];
+        let target = InterfaceId::new(kani::any());
         let directive = EgressDirective::ReemitAnnounce {
             announce: announce.clone(),
             emit_hops,
             via: TEST_VIA,
-            fire_on: &targets,
+            target,
         };
 
         let mut buf = [0u8; EXACT_REEMIT_LEN];
@@ -483,18 +496,17 @@ mod kani_proofs {
         assert_eq!(header.destination, announce.destination);
         assert_eq!(header.context, Context::None);
         assert_eq!(payload.len(), ANNOUNCE_WIRE_LEN);
-        assert_eq!(directive.fire_on(), &targets);
+        assert_eq!(directive.target(), target);
     }
 
     #[kani::proof]
     fn reemit_announce_short_buffer_rejects_before_a_full_packet_is_written() {
         let announce = arbitrary_announce();
-        let targets = [InterfaceId::new(kani::any())];
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: kani::any(),
             via: TEST_VIA,
-            fire_on: &targets,
+            target: InterfaceId::new(kani::any()),
         };
 
         let mut buf = [0u8; EXACT_REEMIT_LEN - 1];

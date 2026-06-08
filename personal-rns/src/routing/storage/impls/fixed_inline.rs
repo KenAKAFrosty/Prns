@@ -1,5 +1,4 @@
 use crate::engine::announce_rate::FixedAnnounceRateColumns;
-use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::pending_path_requests::FixedPendingPathRequestColumns;
 use crate::engine::receipts::FixedReceiptColumns;
 use crate::engine::reverse_routes::FixedReverseRouteColumns;
@@ -82,8 +81,6 @@ impl<
     // cache — there is never more than one pending rebroadcast per destination.
     type Pending = FixedRebroadcastQueue<MAX_TRACKED_DESTINATIONS>;
     type Held = FixedHeldAnnounces<HELD_CACHE_CAPACITY>;
-    // One directive per tracked destination at most, so sized by the routing table.
-    type Directives = FixedEngineDirectives<MAX_TRACKED_DESTINATIONS>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
@@ -120,7 +117,6 @@ mod tests {
         let _app_data = <S as EngineStorage>::AppData::default();
         let _pending = <S as EngineStorage>::Pending::default();
         let _held = <S as EngineStorage>::Held::default();
-        let _directives = <S as EngineStorage>::Directives::default();
         let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <S as EngineStorage>::PacketHashes::default();
         let self_ratchets = <S as EngineStorage>::SelfRatchets::default();

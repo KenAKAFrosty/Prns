@@ -206,7 +206,7 @@ pub(crate) fn tick_capture<S: EngineStorage>(
     };
     let mut emitted = std::vec::Vec::new();
     let mut buf = [0u8; MTU];
-    for directive in tick_out.egress_directives() {
+    for directive in tick_out.egress_directives(interfaces) {
         let n = directive.to_wire(&mut buf).expect("serialize directive");
         emitted.push(buf[..n].to_vec());
     }

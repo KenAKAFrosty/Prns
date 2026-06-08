@@ -1,6 +1,6 @@
-use crate::engine::directives::{EngineDirective, EngineDirectives as _};
+use crate::engine::egress::firable_on;
 use crate::engine::{EgressDirective, EngineState, InstantMillis};
-use crate::interfaces::{InterfaceDescriptor, InterfaceId, MAX_REGISTERED_INTERFACES};
+use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -10,7 +10,6 @@ use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInp
 use crate::routing::storage::EngineStorage;
 use crate::routing::UpsertRouteOutcome;
 use crate::wire::DestinationType;
-use heapless::Vec as HeaplessVec;
 
 #[must_use]
 pub struct TickOutput<'a, S: EngineStorage> {
@@ -20,30 +19,59 @@ pub struct TickOutput<'a, S: EngineStorage> {
 }
 
 impl<'a, S: EngineStorage> TickOutput<'a, S> {
+    /// The number of announces this tick re-emits — one per destination whose
+    /// rebroadcast is due, independent of how many interfaces each fans to.
     pub fn egress_directive_count(&self) -> usize {
-        self.state.directives.len()
+        let now = self.now;
+        self.state
+            .pending_rebroadcasts
+            .as_slice()
+            .iter()
+            .filter(|scheduled| scheduled.due_at.0 <= now.0)
+            .count()
     }
 
     pub const fn recovered_from_held_count(&self) -> usize {
         self.recovered_from_held_count
     }
 
-    pub fn egress_directives(&self) -> impl Iterator<Item = EgressDirective<'_>> + '_ {
+    /// Resolve this tick's rebroadcasts against the descriptor `view` the runtime
+    /// holds, yielding one [`EgressDirective`] per (due destination × interface the
+    /// engine decides to fire on). The fan-out call is the engine's alone
+    /// ([`firable_on`]); the runtime takes each named target to its handle and sends.
+    pub fn egress_directives<'v>(
+        &'v self,
+        view: &'v [InterfaceDescriptor],
+    ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
         let state = &*self.state;
-        state.directives.iter().filter_map(move |directive| {
-            let EngineDirective::ReemitAnnounce {
-                destination,
-                fire_on,
-            } = directive;
-            let via = state.transport_id?;
-            let retained = state.routing_table.retained_announce_for(destination)?;
-            Some(EgressDirective::ReemitAnnounce {
-                announce: retained.announce,
-                emit_hops: retained.hops,
-                via,
-                fire_on: fire_on.as_slice(),
+        let now = self.now;
+        state
+            .pending_rebroadcasts
+            .as_slice()
+            .iter()
+            .filter(move |scheduled| scheduled.due_at.0 <= now.0)
+            .filter_map(move |scheduled| {
+                let via = state.transport_id?;
+                let retained = state
+                    .routing_table
+                    .retained_announce_for(&scheduled.destination)?;
+                Some((
+                    retained.announce,
+                    retained.hops,
+                    via,
+                    scheduled.source_interface,
+                ))
             })
-        })
+            .flat_map(move |(announce, emit_hops, via, source)| {
+                view.iter()
+                    .filter(move |descriptor| firable_on(descriptor, source))
+                    .map(move |descriptor| EgressDirective::ReemitAnnounce {
+                        announce: announce.clone(),
+                        emit_hops,
+                        via,
+                        target: descriptor.id,
+                    })
+            })
     }
 
     pub fn commit(mut self) {
@@ -127,36 +155,6 @@ impl<S: EngineStorage> EngineState<S> {
             }
         }
 
-        // Materialize this tick's directives from the due rebroadcasts. Indexed (not
-        // iterated) so the read of `pending_rebroadcasts` doesn't overlap the write to
-        // `directives` — both are fields of `self`.
-        self.directives.clear();
-        for index in 0..self.pending_rebroadcasts.as_slice().len() {
-            let scheduled = self.pending_rebroadcasts.as_slice()[index];
-            if scheduled.due_at > now {
-                continue;
-            }
-            let mut fire_on: HeaplessVec<InterfaceId, MAX_REGISTERED_INTERFACES> =
-                HeaplessVec::new();
-            for descriptor in interfaces {
-                let firable = if descriptor.id == scheduled.source_interface {
-                    descriptor.capabilities.allows_same_interface_repeat()
-                } else {
-                    descriptor.capabilities.allows_transport()
-                };
-                if firable {
-                    let _ = fire_on.push(descriptor.id);
-                }
-            }
-            if fire_on.is_empty() {
-                continue;
-            }
-            self.directives.push(EngineDirective::ReemitAnnounce {
-                destination: scheduled.destination,
-                fire_on,
-            });
-        }
-
         TickOutput {
             state: self,
             now,
@@ -170,7 +168,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::identity::in_memory::InMemoryNodeIdentity;
-    use crate::interfaces::InboundPacket;
+    use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::announce::{Announce, AnnounceId};
     use crate::routing::storage::FixedInline;
     use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader, MTU};
@@ -365,11 +363,8 @@ mod tests {
             view,
         );
         tick_out
-            .egress_directives()
-            .flat_map(|directive| {
-                let EgressDirective::ReemitAnnounce { fire_on, .. } = directive;
-                fire_on.to_vec()
-            })
+            .egress_directives(view)
+            .map(|directive| directive.target())
             .collect()
     }
 

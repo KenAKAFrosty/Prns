@@ -4,7 +4,6 @@ pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
 use crate::engine::announce_rate::AnnounceRateColumns;
-use crate::engine::directives::EngineDirectives;
 use crate::engine::pending_path_requests::PendingPathRequestColumns;
 use crate::engine::receipts::ReceiptColumns;
 use crate::engine::reverse_routes::ReverseRouteColumns;
@@ -168,7 +167,6 @@ pub trait EngineStorage {
     type AppData: RetainedAppData + Default;
     type Pending: RebroadcastQueue + Default;
     type Held: HeldAnnounces + Default;
-    type Directives: EngineDirectives + Default;
     type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
     type HeldIdentities: HeldIdentityColumns + Default;
     type SelfAnnounces: SelfAnnounceColumns + Default;

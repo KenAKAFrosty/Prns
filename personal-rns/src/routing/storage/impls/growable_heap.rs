@@ -1,5 +1,4 @@
 use crate::engine::announce_rate::HeapAnnounceRateColumns;
-use crate::engine::directives::HeapEngineDirectives;
 use crate::engine::pending_path_requests::HeapPendingPathRequestColumns;
 use crate::engine::receipts::HeapReceiptColumns;
 use crate::engine::reverse_routes::HeapReverseRouteColumns;
@@ -25,7 +24,6 @@ impl EngineStorage for GrowableHeap {
     type AppData = HeapRetainedAppData;
     type Pending = HeapRebroadcastQueue;
     type Held = HeapHeldAnnounces;
-    type Directives = HeapEngineDirectives;
     type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
     type HeldIdentities = HeapHeldIdentityColumns;
     type SelfAnnounces = HeapSelfAnnounceColumns;
@@ -53,7 +51,6 @@ mod tests {
         let _app_data = <GrowableHeap as EngineStorage>::AppData::default();
         let _pending = <GrowableHeap as EngineStorage>::Pending::default();
         let _held = <GrowableHeap as EngineStorage>::Held::default();
-        let _directives = <GrowableHeap as EngineStorage>::Directives::default();
         let upstream_app_destinations =
             <GrowableHeap as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <GrowableHeap as EngineStorage>::PacketHashes::default();

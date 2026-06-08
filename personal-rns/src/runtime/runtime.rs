@@ -427,23 +427,17 @@ where
 
     let tick_output = engine.tick(now, jitter, &interface_view);
     let egress_directive_count = tick_output.egress_directive_count();
-    for directive in tick_output.egress_directives() {
-        // Serializing per interface (instead of once into a staging buffer) is
-        // free (`to_wire` is a header write plus a copy of the retained,
-        // already-signed payload) and it lets each packet land in its queue
-        // slot grant directly. With IFAC it stops being an optimization and
-        // becomes required: each interface masks the whole packet differently.
-        fan_to_handles(
-            interfaces,
-            traffic,
-            |buf| {
-                directive
-                    .to_wire(buf)
-                    .expect("MTU-sized buf fits any valid wire packet")
-            },
-            FanTargets::Listed(directive.fire_on()),
-            FanoutClass::Transported,
-        );
+    // The engine already decided every target off the descriptor view; the runtime
+    // just lands each named emit in its interface's queue grant. Serializing per
+    // interface (not once into a staging buffer) is free — `to_wire` is a header
+    // write plus a copy of the retained, already-signed payload — and with IFAC it
+    // becomes required, since each interface masks the whole packet differently.
+    for directive in tick_output.egress_directives(&interface_view) {
+        send_to_target(interfaces, traffic, directive.target(), |buf| {
+            directive
+                .to_wire(buf)
+                .expect("MTU-sized buf fits any valid wire packet")
+        });
     }
     tick_output.commit();
 
@@ -832,6 +826,31 @@ fn fan_to_handles<I>(
                 Err(SendError::QueueFull) => {}
             }
         }
+    }
+}
+
+/// Land one engine-resolved emit on its named interface. The engine already made the
+/// fan-out call off the descriptor view, so there is no eligibility to re-decide here
+/// — find the handle, serialize into its grant, send. Only a full queue is the
+/// runtime's to absorb.
+fn send_to_target<I>(
+    interfaces: &mut I,
+    traffic_ledger: &mut TrafficLedger,
+    target: InterfaceId,
+    write_packet: impl Fn(&mut [u8]) -> usize,
+) where
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
+{
+    for started in interfaces.iter_mut() {
+        if started.descriptor().id != target {
+            continue;
+        }
+        match started.send_with(&write_packet) {
+            Ok(written) => traffic_ledger.add_tx(target, written as u64),
+            Err(SendError::QueueFull) => {}
+        }
+        return;
     }
 }
 
