@@ -1,5 +1,5 @@
 use crate::engine::egress::firable_on;
-use crate::engine::{EgressDirective, EngineState, InstantMillis};
+use crate::engine::{Directive, EgressDirective, EngineState, InstantMillis};
 use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
@@ -9,7 +9,7 @@ use crate::routing::announce::schedule::RebroadcastQueue as _;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::storage::EngineStorage;
 use crate::routing::UpsertRouteOutcome;
-use crate::wire::DestinationType;
+use crate::wire::{DestinationType, MTU};
 
 #[must_use]
 pub struct TickOutput<'a, S: EngineStorage> {
@@ -160,6 +160,31 @@ impl<S: EngineStorage> EngineState<S> {
             now,
             recovered_from_held_count,
         }
+    }
+
+    /// Advance scheduled work and stream it as [`Directive`]s: recover held announces,
+    /// then fan every due rebroadcast to its engine-chosen targets, serializing each onto
+    /// a scratch buffer lent to `sink` for the call. This is the sink-shaped face of
+    /// [`tick`](Self::tick) — the legacy runtime still drains the same work through
+    /// [`TickOutput`]; the reactor takes it here.
+    pub fn drain_scheduled(
+        &mut self,
+        now: InstantMillis,
+        jitter: JitterSeed,
+        view: &[InterfaceDescriptor],
+        sink: &mut impl FnMut(Directive<'_>),
+    ) {
+        let tick_output = self.tick(now, jitter, view);
+        for egress in tick_output.egress_directives(view) {
+            let mut buf = [0u8; MTU];
+            if let Ok(written) = egress.to_wire(&mut buf) {
+                sink(Directive::Send {
+                    target: egress.target(),
+                    bytes: &buf[..written],
+                });
+            }
+        }
+        tick_output.commit();
     }
 }
 

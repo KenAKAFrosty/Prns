@@ -5,13 +5,12 @@ use tokio::time::Instant;
 
 use super::Host;
 use crate::engine::{
-    AnnounceIngest, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    IssuedCommand, Journaled, NextScheduledEngineWork,
+    AnnounceIngest, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis, IssuedCommand,
+    Journaled, NextScheduledEngineWork,
 };
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::storage::EngineStorage;
-use crate::wire::MTU;
 
 /// A [`Host`] backed by tokio's clock and the OS CSPRNG.
 pub struct TokioHost {
@@ -91,17 +90,9 @@ pub async fn run<S, H>(
                 let _ = engine.ingest_command(issued, &view);
             }
             () = wait_for_deadline(&host, wake) => {
-                let tick_output = engine.tick(host.now(), jitter, &view);
-                for egress in tick_output.egress_directives(&view) {
-                    let mut buf = [0u8; MTU];
-                    if let Ok(written) = egress.to_wire(&mut buf) {
-                        on_reaction(EngineReaction::Directive(Directive::Send {
-                            target: egress.target(),
-                            bytes: &buf[..written],
-                        }));
-                    }
-                }
-                tick_output.commit();
+                engine.drain_scheduled(host.now(), jitter, &view, &mut |directive| {
+                    on_reaction(EngineReaction::Directive(directive));
+                });
             }
         }
     }
@@ -119,6 +110,7 @@ async fn wait_for_deadline<H: Host>(host: &H, wake: NextScheduledEngineWork) {
 mod tests {
     use super::*;
     use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
+    use crate::engine::Directive;
     use crate::interfaces::{
         ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
         MediumKind, TransportCapability,
