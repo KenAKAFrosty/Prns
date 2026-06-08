@@ -1,3 +1,4 @@
+use crate::engine::announce_rate::AnnounceRateVerdict;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::proof::{ProofIngest, ProofOwed};
 use crate::engine::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
@@ -170,6 +171,10 @@ pub enum RebroadcastDecision {
     /// A path response is learned but never re-flooded — the answer is for the
     /// requester, not the network (RNS Transport.py:1884).
     TerminalPathResponse,
+    /// The route is learned, but the destination is announcing faster than the
+    /// receiving interface's rate target allows, so its rebroadcast is suppressed
+    /// for a penalty window (RNS Transport.py:1835-1887).
+    RateBlocked,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -531,6 +536,24 @@ impl<S: EngineStorage> EngineState<S> {
         })
     }
 
+    /// Off (false) when the interface sets no target, which is the reference default (RNS Transport.py:1836).
+    fn announce_rate_blocks_rebroadcast(
+        &mut self,
+        source_interface: InterfaceId,
+        destination: DestinationHash,
+        now: InstantMillis,
+        interfaces: &[InterfaceDescriptor],
+    ) -> bool {
+        let Some(limit) = interfaces
+            .iter()
+            .find(|descriptor| descriptor.id == source_interface)
+            .and_then(|descriptor| descriptor.announce_rate_limit)
+        else {
+            return false;
+        };
+        self.announce_rates.observe(destination, now, limit) == AnnounceRateVerdict::Blocked
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn ingest_announce(
         &mut self,
@@ -569,15 +592,22 @@ impl<S: EngineStorage> EngineState<S> {
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
                 let rebroadcast = if is_path_response {
-                    // A path response is learned, never re-flooded: the answer
-                    // belongs to the requester, not the network.
                     RebroadcastDecision::TerminalPathResponse
                 } else if self.transport_id.is_none() {
                     RebroadcastDecision::NotATransportNode
-                } else if interfaces
+                } else if !interfaces
                     .iter()
                     .any(|descriptor| descriptor.capabilities.allows_transport())
                 {
+                    RebroadcastDecision::NoTransportInterfaces
+                } else if self.announce_rate_blocks_rebroadcast(
+                    source_interface,
+                    announce.destination,
+                    arrived_at,
+                    interfaces,
+                ) {
+                    RebroadcastDecision::RateBlocked
+                } else {
                     let offset = jitter_offset_for(
                         jitter,
                         &announce.destination,
@@ -589,8 +619,6 @@ impl<S: EngineStorage> EngineState<S> {
                         source_interface,
                     );
                     RebroadcastDecision::Scheduled
-                } else {
-                    RebroadcastDecision::NoTransportInterfaces
                 };
                 AnnounceIngest::Accepted(AcceptedAnnounce {
                     destination: announce.destination,
@@ -1103,6 +1131,176 @@ mod tests {
             })),
         ));
         assert_eq!(relay.pending_announce_rebroadcast_count(), 1);
+    }
+
+    #[test]
+    fn a_destination_announcing_faster_than_the_interface_target_is_rate_blocked() {
+        use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
+        use crate::interfaces::AnnounceRateLimit;
+        use crate::routing::announce::SelfAnnounceEntropy;
+
+        // A peer mints two distinct announces for its own destination.
+        let mut announcer = personal_node_announcer();
+        let destination = announcer.self_announced_destinations()[0];
+        let command = AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+        let mut buf_a = [0u8; MTU];
+        let first_len = announcer
+            .write_commanded_announce(
+                &command,
+                InstantMillis(1_000),
+                SelfAnnounceEntropy::new([0x11; SelfAnnounceEntropy::LEN]),
+                TEST_RATCHET_ENTROPY,
+                &mut buf_a,
+            )
+            .written_len();
+        let mut first = buf_a[..first_len].to_vec();
+        let mut buf_b = [0u8; MTU];
+        let second_len = announcer
+            .write_commanded_announce(
+                &command,
+                InstantMillis(2_000),
+                SelfAnnounceEntropy::new([0x22; SelfAnnounceEntropy::LEN]),
+                TEST_RATCHET_ENTROPY,
+                &mut buf_b,
+            )
+            .written_len();
+        let mut second = buf_b[..second_len].to_vec();
+
+        // The receiving interface caps a destination to one announce per 10s.
+        let source = iface(0xB2);
+        let rate_limited = [InterfaceDescriptor {
+            announce_rate_limit: Some(AnnounceRateLimit {
+                target_ms: 10_000,
+                grace: 0,
+                penalty_ms: 60_000,
+            }),
+            ..routable_descriptor(source)
+        }];
+
+        let mut relay = transporting_node();
+        // First sighting: learned and scheduled to rebroadcast.
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(10_000),
+                    source_interface: source,
+                    bytes: &mut first,
+                },
+                TEST_ENTROPY,
+                &rate_limited,
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                rebroadcast: RebroadcastDecision::Scheduled,
+                ..
+            })),
+        ));
+        // A second announce 1s later — far under the 10s target — is learned but
+        // its rebroadcast is suppressed.
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(11_000),
+                    source_interface: source,
+                    bytes: &mut second,
+                },
+                TEST_ENTROPY,
+                &rate_limited,
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                rebroadcast: RebroadcastDecision::RateBlocked,
+                ..
+            })),
+        ));
+        assert_eq!(relay.route_count(), 1, "the route is still learned");
+        assert_eq!(
+            relay.pending_announce_rebroadcast_count(),
+            1,
+            "only the first announce was scheduled to rebroadcast",
+        );
+    }
+
+    #[test]
+    fn a_destination_within_the_interface_target_is_not_rate_blocked() {
+        use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
+        use crate::interfaces::AnnounceRateLimit;
+        use crate::routing::announce::SelfAnnounceEntropy;
+
+        let mut announcer = personal_node_announcer();
+        let destination = announcer.self_announced_destinations()[0];
+        let command = AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Scheduled,
+        };
+        let mut buf_a = [0u8; MTU];
+        let first_len = announcer
+            .write_commanded_announce(
+                &command,
+                InstantMillis(1_000),
+                SelfAnnounceEntropy::new([0x11; SelfAnnounceEntropy::LEN]),
+                TEST_RATCHET_ENTROPY,
+                &mut buf_a,
+            )
+            .written_len();
+        let mut first = buf_a[..first_len].to_vec();
+        let mut buf_b = [0u8; MTU];
+        let second_len = announcer
+            .write_commanded_announce(
+                &command,
+                InstantMillis(2_000),
+                SelfAnnounceEntropy::new([0x22; SelfAnnounceEntropy::LEN]),
+                TEST_RATCHET_ENTROPY,
+                &mut buf_b,
+            )
+            .written_len();
+        let mut second = buf_b[..second_len].to_vec();
+
+        let source = iface(0xB2);
+        let rate_limited = [InterfaceDescriptor {
+            announce_rate_limit: Some(AnnounceRateLimit {
+                target_ms: 10_000,
+                grace: 0,
+                penalty_ms: 60_000,
+            }),
+            ..routable_descriptor(source)
+        }];
+
+        let mut relay = transporting_node();
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(10_000),
+                source_interface: source,
+                bytes: &mut first,
+            },
+            TEST_ENTROPY,
+            &rate_limited,
+        );
+        // A second announce a full target window later stays under the limit and
+        // is scheduled like any other.
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(25_000),
+                    source_interface: source,
+                    bytes: &mut second,
+                },
+                TEST_ENTROPY,
+                &rate_limited,
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
+                rebroadcast: RebroadcastDecision::Scheduled,
+                ..
+            })),
+        ));
+        assert_eq!(
+            relay.pending_announce_rebroadcast_count(),
+            1,
+            "one pending per destination — the second schedule replaces the first",
+        );
     }
 
     #[test]

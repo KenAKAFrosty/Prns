@@ -1,3 +1,4 @@
+use crate::engine::announce_rate::FixedAnnounceRateColumns;
 use crate::engine::directives::FixedEngineDirectives;
 use crate::engine::pending_path_requests::FixedPendingPathRequestColumns;
 use crate::engine::receipts::FixedReceiptColumns;
@@ -96,6 +97,9 @@ impl<
     type ReverseRoutes = FixedReverseRouteColumns<MAX_REVERSE_ROUTES>;
     type PendingPathRequests = FixedPendingPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type SeenPathRequests = FixedSeenPathRequestColumns<MAX_SEEN_PATH_REQUESTS>;
+    // One rate entry per tracked destination at most (we rate-check only what we
+    // would rebroadcast), so sized by the routing table like Pending/Directives.
+    type AnnounceRates = FixedAnnounceRateColumns<MAX_TRACKED_DESTINATIONS>;
 }
 
 #[cfg(test)]

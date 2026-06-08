@@ -1,3 +1,4 @@
+pub mod announce_rate;
 pub mod commands;
 pub mod directives;
 pub mod egress;
@@ -49,6 +50,7 @@ pub use send_single::{
 };
 pub use tick::TickOutput;
 
+use crate::engine::announce_rate::AnnounceRates;
 use crate::engine::pending_path_requests::PendingPathRequests;
 use crate::engine::receipts::Receipts;
 use crate::engine::reverse_routes::ReverseRoutes;
@@ -94,6 +96,7 @@ pub struct EngineState<S: EngineStorage> {
     reverse_routes: ReverseRoutes<S::ReverseRoutes>,
     pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
     seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
+    announce_rates: AnnounceRates<S::AnnounceRates>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -116,6 +119,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             reverse_routes: ReverseRoutes::default(),
             pending_path_requests: PendingPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
+            announce_rates: AnnounceRates::default(),
         }
     }
 }

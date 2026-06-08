@@ -1,3 +1,4 @@
+use crate::engine::announce_rate::HeapAnnounceRateColumns;
 use crate::engine::directives::HeapEngineDirectives;
 use crate::engine::pending_path_requests::HeapPendingPathRequestColumns;
 use crate::engine::receipts::HeapReceiptColumns;
@@ -34,6 +35,7 @@ impl EngineStorage for GrowableHeap {
     type ReverseRoutes = HeapReverseRouteColumns;
     type PendingPathRequests = HeapPendingPathRequestColumns;
     type SeenPathRequests = HeapSeenPathRequestColumns;
+    type AnnounceRates = HeapAnnounceRateColumns;
 }
 
 #[cfg(test)]

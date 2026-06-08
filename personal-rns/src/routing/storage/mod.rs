@@ -3,6 +3,7 @@ mod impls;
 pub use impls::*;
 
 use crate::crypto::Ed25519Signature;
+use crate::engine::announce_rate::AnnounceRateColumns;
 use crate::engine::directives::EngineDirectives;
 use crate::engine::pending_path_requests::PendingPathRequestColumns;
 use crate::engine::receipts::ReceiptColumns;
@@ -177,4 +178,5 @@ pub trait EngineStorage {
     type ReverseRoutes: ReverseRouteColumns + Default;
     type PendingPathRequests: PendingPathRequestColumns + Default;
     type SeenPathRequests: SeenPathRequestColumns + Default;
+    type AnnounceRates: AnnounceRateColumns + Default;
 }
