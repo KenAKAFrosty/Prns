@@ -5,6 +5,7 @@ pub mod identity_registration;
 pub mod ingress;
 pub mod pending_path_requests;
 pub mod proof;
+pub mod reaction;
 pub mod receipts;
 pub mod request_path;
 pub mod reverse_routes;
@@ -35,6 +36,7 @@ pub use pending_path_requests::{
     CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
 };
 pub use proof::{ProofIngest, ProofOwed, WriteProofError};
+pub use reaction::{Directive, EngineReaction, Journaled};
 pub use request_path::{CachedPathResponseOutcome, PathRequestWriteOutcome};
 pub use seen_path_requests::PathRequestIdBytes;
 pub use self_announce::{
