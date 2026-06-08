@@ -26,8 +26,9 @@ impl AnnounceNonce {
     }
 }
 
-/// The 5-byte per-emission announce nonce, freshly drawn each cycle. Move-only
-/// (no `Copy`/`Clone`): it is a wire-exposed, must-be-unique value, so the type
+/// The 5-byte self-announce entropy, freshly drawn each cycle — the random
+/// material an announce mints its [`AnnounceNonce`] from. Move-only (no
+/// `Copy`/`Clone`): it is a wire-exposed, must-be-unique draw, so the type
 /// enforces single-use — `AnnounceId::mint` consumes it, and there is no way to
 /// silently mint two announces from one draw.
 #[derive(Debug)]
@@ -81,12 +82,12 @@ pub struct AnnounceId {
 }
 
 impl AnnounceId {
-    pub fn mint(nonce: SelfAnnounceEntropy, now: InstantMillis) -> Self {
+    pub fn mint(self_announce_entropy: SelfAnnounceEntropy, now: InstantMillis) -> Self {
         let emitted_seconds = now.0 / 1_000;
         let mut timebase = [0u8; TIMEBASE_LEN];
         timebase.copy_from_slice(&emitted_seconds.to_be_bytes()[8 - TIMEBASE_LEN..]);
         Self {
-            nonce: AnnounceNonce(nonce.0),
+            nonce: AnnounceNonce(self_announce_entropy.0),
             timebase: MonotonicTimebase(timebase),
         }
     }

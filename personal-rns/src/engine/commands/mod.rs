@@ -7,11 +7,12 @@
 //! timers). So [`AnnounceNow`] is the reference primitive, and this engine's
 //! re-announce schedule is the extension built ahead of it.
 
+use crate::engine::egress::EgressSerializeError;
 use crate::engine::self_announce::SelfAnnounceAppData;
 use crate::engine::send_single::WriteSendSingleError;
 use crate::engine::WriteSelfAnnounceError;
 use crate::interfaces::InterfaceId;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
 /// Ephemeral correlation for one issued command: minted by the caller (a
@@ -30,6 +31,7 @@ pub struct IssuedCommand {
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
     SendSingle(SendSingle),
+    RequestPath(RequestPath),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -73,6 +75,10 @@ pub enum CommandOutcome {
         id: CommandId,
         error: SendSingleError,
     },
+    OwesPathRequest {
+        id: CommandId,
+        request: RequestPath,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +104,31 @@ pub struct SendSingle {
     pub payload: SendSinglePayload,
 }
 
+pub const PATH_REQUEST_ID_LEN: usize = TRUNCATED_HASH_BYTE_LEN;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PathRequestId([u8; PATH_REQUEST_ID_LEN]);
+
+impl PathRequestId {
+    pub const fn new(bytes: [u8; PATH_REQUEST_ID_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; PATH_REQUEST_ID_LEN] {
+        &self.0
+    }
+}
+
+/// RNS 1.3.1 `Transport.request_path`: ask the network for a path to
+/// `destination`. A broadcast plain packet, answered by any reachable peer that
+/// holds the path (re-)announcing it. Fire-and-forget — it settles the moment
+/// it leaves, since the answer arrives later as an ordinary announce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestPath {
+    pub destination: DestinationHash,
+    pub id: PathRequestId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceNowError {
     UnknownDestination,
@@ -114,6 +145,7 @@ pub enum AnnounceNowError {
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
     SendSingle(Result<Delivered, SendSingleFailure>),
+    RequestPath(Result<(), RequestPathFailure>),
 }
 
 /// RNS 1.3.1 `PacketReceipt.DELIVERED`, with the round trip it measured.
@@ -136,6 +168,11 @@ pub enum AnnounceNowFailure {
     WriteFailed(WriteSelfAnnounceError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestPathFailure {
+    WriteFailed(EgressSerializeError),
+}
+
 pub trait Settleable {
     type Success;
     type Failure;
@@ -155,7 +192,7 @@ impl Settleable for AnnounceNow {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
         match settlement {
             Settlement::AnnounceNow(result) => Some(result),
-            Settlement::SendSingle(_) => None,
+            Settlement::SendSingle(_) | Settlement::RequestPath(_) => None,
         }
     }
 }
@@ -171,7 +208,23 @@ impl Settleable for SendSingle {
     fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendSingleFailure>> {
         match settlement {
             Settlement::SendSingle(result) => Some(result),
-            Settlement::AnnounceNow(_) => None,
+            Settlement::AnnounceNow(_) | Settlement::RequestPath(_) => None,
+        }
+    }
+}
+
+impl Settleable for RequestPath {
+    type Success = ();
+    type Failure = RequestPathFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::RequestPath(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), RequestPathFailure>> {
+        match settlement {
+            Settlement::RequestPath(result) => Some(result),
+            Settlement::AnnounceNow(_) | Settlement::SendSingle(_) => None,
         }
     }
 }
@@ -196,6 +249,7 @@ impl<S: EngineStorage> EngineState<S> {
                 self.ingest_announce_now(id, announce_now, interfaces)
             }
             EngineCommand::SendSingle(send) => self.ingest_send_single(id, send),
+            EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
         }
     }
 
@@ -406,6 +460,51 @@ mod tests {
             Some(Err(AnnounceNowFailure::Rejected(
                 AnnounceNowError::UnknownDestination
             ))),
+        );
+    }
+
+    #[test]
+    fn a_request_path_owes_its_emission_for_any_destination() {
+        // No registration, no route — a path request to a wholly unknown
+        // destination still owes its emission. That is the point of asking.
+        let mut state = personal_node_announcer();
+        let request = RequestPath {
+            destination: DestinationHash::new([0x44; 16]),
+            id: PathRequestId::new([0x55; 16]),
+        };
+
+        assert_eq!(
+            state.ingest_command(
+                IssuedCommand {
+                    id: TEST_COMMAND_ID,
+                    command: EngineCommand::RequestPath(request),
+                },
+                &[],
+            ),
+            CommandOutcome::OwesPathRequest {
+                id: TEST_COMMAND_ID,
+                request,
+            },
+        );
+        assert_eq!(state.ingested_command_count(), 1);
+    }
+
+    #[test]
+    fn request_path_recovers_its_typed_settlement() {
+        let verb = RequestPath {
+            destination: DestinationHash::new([0x11; 16]),
+            id: PathRequestId::new([0x22; 16]),
+        };
+
+        assert_eq!(verb.into_command(), EngineCommand::RequestPath(verb));
+        assert_eq!(
+            RequestPath::from_settlement(Settlement::RequestPath(Ok(()))),
+            Some(Ok(())),
+        );
+        assert_eq!(
+            RequestPath::from_settlement(Settlement::AnnounceNow(Ok(()))),
+            None,
+            "a path request never reads another verb's settlement",
         );
     }
 

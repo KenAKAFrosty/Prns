@@ -313,7 +313,7 @@ mod tests {
         let announce_len = announcer
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -344,7 +344,7 @@ mod tests {
         let announce_len = announcer
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -449,7 +449,7 @@ mod tests {
         let announce_len = announcer
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -570,7 +570,7 @@ mod tests {
         let announce_len = peer
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )

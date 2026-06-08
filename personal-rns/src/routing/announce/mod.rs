@@ -586,6 +586,18 @@ mod tests {
     }
 
     #[test]
+    fn derive_plain_destination_hash_matches_rns_1_3_1() {
+        // The well-known path-request destination, `rnstransport.path.request`,
+        // derived from its name alone (no identity) — the plain-destination arm.
+        let name = expand_name("rnstransport", &["path", "request"]).unwrap();
+        assert_eq!(name, DottedNameHash::new(a("7926bbe7dd7f9aba88b0")));
+        assert_eq!(
+            derive_plain_destination_hash(&name),
+            DestinationHash::new(a("6b9f66014d9853faab220fba47d02761")),
+        );
+    }
+
+    #[test]
     fn derive_single_destination_hash_composes_the_rns_1_3_1_address_from_name_parts() {
         let identity_hash = IdentityHash::new(a("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         assert_eq!(

@@ -23,7 +23,7 @@ use crate::wire::{
 pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>;
 
 pub(crate) const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
-pub(crate) const TEST_NONCE: SelfAnnounceEntropy =
+pub(crate) const TEST_SELF_ANNOUNCE_ENTROPY: SelfAnnounceEntropy =
     SelfAnnounceEntropy::new([0xAB; SelfAnnounceEntropy::LEN]);
 pub(crate) const TEST_RATCHET_ENTROPY: RatchetEntropy =
     RatchetEntropy::new([0x55; RatchetEntropy::LEN]);
@@ -127,7 +127,7 @@ pub(crate) fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
     state
         .write_due_self_announce(
             InstantMillis(1_000),
-            TEST_NONCE,
+            TEST_SELF_ANNOUNCE_ENTROPY,
             TEST_RATCHET_ENTROPY,
             &mut buf,
         )

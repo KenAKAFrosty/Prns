@@ -424,7 +424,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000 + interval),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
                 &mut buf,
             )
@@ -964,7 +964,7 @@ mod tests {
         let announce_len = state
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )

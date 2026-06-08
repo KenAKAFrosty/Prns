@@ -15,10 +15,14 @@ pub mod tick;
 
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
-    CommandOutcome, Delivered, EngineCommand, IssuedCommand, SendSingle, SendSingleError,
-    SendSingleFailure, SendSinglePayload, Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN,
+    CommandOutcome, Delivered, EngineCommand, IssuedCommand, PathRequestId, RequestPath,
+    RequestPathFailure, SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
+    Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
-pub use egress::{EgressDirective, EgressSerializeError};
+pub use egress::{
+    write_path_request_wire_packet, EgressDirective, EgressSerializeError,
+    PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
+};
 pub use identity_registration::SetTransportIdentityError;
 pub use ingress::{
     AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome, PacketToForward, RebroadcastDecision,
@@ -244,7 +248,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )

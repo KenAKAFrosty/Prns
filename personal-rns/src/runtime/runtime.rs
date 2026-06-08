@@ -7,11 +7,11 @@ use super::host::{Host, NextWake};
 use super::snapshot::{InterfaceView, RuntimeSnapshot};
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
-    AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId, CommandOutcome,
-    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState, IngestPacketOutcome,
-    InstantMillis, IssuedCommand, NextScheduledEngineWork, ProofIngest, ProofOwed, RatchetEntropy,
-    RebroadcastDecision, SendSingle, SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome,
-    Settlement, WriteSendSingleError,
+    write_path_request_wire_packet, AnnounceIngest, AnnounceNowFailure, AnnounceTarget, CommandId,
+    CommandOutcome, CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, EngineState,
+    IngestPacketOutcome, InstantMillis, IssuedCommand, NextScheduledEngineWork, ProofIngest,
+    ProofOwed, RatchetEntropy, RebroadcastDecision, RequestPath, RequestPathFailure, SendSingle,
+    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
@@ -376,7 +376,7 @@ where
     tick_output.commit();
 
     if !interface_view.is_empty() {
-        if let (Some(nonce), Some(ratchet_entropy)) = (
+        if let (Some(self_announce_entropy), Some(ratchet_entropy)) = (
             unspent_self_announce_entropy.take(),
             unspent_ratchet_entropy.take(),
         ) {
@@ -386,7 +386,12 @@ where
             // per interface would be waste — then the fan copies the staged bytes
             // into each grant.
             let mut emit_buffer = [0u8; MTU];
-            match engine.write_due_self_announce(now, nonce, ratchet_entropy, &mut emit_buffer) {
+            match engine.write_due_self_announce(
+                now,
+                self_announce_entropy,
+                ratchet_entropy,
+                &mut emit_buffer,
+            ) {
                 Written { len: n, rotation } => {
                     unspent_ratchet_entropy = rotation.into_unspent();
                     fan_to_handles(
@@ -401,18 +406,18 @@ where
                     );
                 }
                 NothingDue {
-                    unspent_nonce: nonce_home,
+                    unspent_self_announce: self_announce_home,
                     unspent_ratchet: ratchet_home,
                 } => {
-                    unspent_self_announce_entropy = Some(nonce_home);
+                    unspent_self_announce_entropy = Some(self_announce_home);
                     unspent_ratchet_entropy = Some(ratchet_home);
                 }
                 Rejected {
                     rejection: _,
-                    unspent_nonce: nonce_home,
+                    unspent_self_announce: self_announce_home,
                     unspent_ratchet: ratchet_home,
                 } => {
-                    unspent_self_announce_entropy = Some(nonce_home);
+                    unspent_self_announce_entropy = Some(self_announce_home);
                     unspent_ratchet_entropy = Some(ratchet_home);
                 }
                 Failed {
@@ -467,7 +472,7 @@ fn run_command<I, S, OnEvent>(
     traffic: &mut TrafficLedger,
     issued: IssuedCommand,
     now: InstantMillis,
-    nonce: SelfAnnounceEntropy,
+    self_announce_entropy: SelfAnnounceEntropy,
     ratchet: RatchetEntropy,
     send_single_entropy: SendSingleEntropy,
     on_event: &mut OnEvent,
@@ -486,7 +491,7 @@ where
                 settlement: Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(error))),
             });
             return UnspentCycleEntropy {
-                self_announce: Some(nonce),
+                self_announce: Some(self_announce_entropy),
                 ratchet: Some(ratchet),
                 send_single: Some(send_single_entropy),
             };
@@ -503,7 +508,7 @@ where
                 on_event,
             );
             return UnspentCycleEntropy {
-                self_announce: Some(nonce),
+                self_announce: Some(self_announce_entropy),
                 ratchet: Some(ratchet),
                 send_single: unspent_send,
             };
@@ -514,7 +519,15 @@ where
                 settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(error))),
             });
             return UnspentCycleEntropy {
-                self_announce: Some(nonce),
+                self_announce: Some(self_announce_entropy),
+                ratchet: Some(ratchet),
+                send_single: Some(send_single_entropy),
+            };
+        }
+        CommandOutcome::OwesPathRequest { id, request } => {
+            run_request_path(interfaces, traffic, id, &request, on_event);
+            return UnspentCycleEntropy {
+                self_announce: Some(self_announce_entropy),
                 ratchet: Some(ratchet),
                 send_single: Some(send_single_entropy),
             };
@@ -524,46 +537,52 @@ where
     use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
 
     let mut emit_buffer = [0u8; MTU];
-    let (settlement, maybe_self_announce_entropy, maybe_ratchet_entropy) =
-        match engine.write_commanded_announce(&commanded, now, nonce, ratchet, &mut emit_buffer) {
-            Written { len: n, rotation } => {
-                let fire_on = match &commanded.target {
-                    AnnounceTarget::AllInterfaces => FanTargets::EveryInterface,
-                    AnnounceTarget::Interface(interface) => {
-                        FanTargets::Listed(core::slice::from_ref(interface))
-                    }
-                };
-                fan_to_handles(
-                    interfaces,
-                    traffic,
-                    |buf| {
-                        buf[..n].copy_from_slice(&emit_buffer[..n]);
-                        n
-                    },
-                    fire_on,
-                    FanoutClass::SelfOriginated,
-                );
-                (
-                    Settlement::AnnounceNow(Ok(())),
-                    None,
-                    rotation.into_unspent(),
-                )
-            }
-            Rejected {
-                rejection,
-                unspent_nonce,
-                unspent_ratchet,
-            } => (
-                Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(rejection.into()))),
-                Some(unspent_nonce),
-                Some(unspent_ratchet),
-            ),
-            Failed { failure, rotation } => (
-                Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(failure.into()))),
+    let (settlement, maybe_self_announce_entropy, maybe_ratchet_entropy) = match engine
+        .write_commanded_announce(
+            &commanded,
+            now,
+            self_announce_entropy,
+            ratchet,
+            &mut emit_buffer,
+        ) {
+        Written { len: n, rotation } => {
+            let fire_on = match &commanded.target {
+                AnnounceTarget::AllInterfaces => FanTargets::EveryInterface,
+                AnnounceTarget::Interface(interface) => {
+                    FanTargets::Listed(core::slice::from_ref(interface))
+                }
+            };
+            fan_to_handles(
+                interfaces,
+                traffic,
+                |buf| {
+                    buf[..n].copy_from_slice(&emit_buffer[..n]);
+                    n
+                },
+                fire_on,
+                FanoutClass::SelfOriginated,
+            );
+            (
+                Settlement::AnnounceNow(Ok(())),
                 None,
                 rotation.into_unspent(),
-            ),
-        };
+            )
+        }
+        Rejected {
+            rejection,
+            unspent_self_announce,
+            unspent_ratchet,
+        } => (
+            Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(rejection.into()))),
+            Some(unspent_self_announce),
+            Some(unspent_ratchet),
+        ),
+        Failed { failure, rotation } => (
+            Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(failure.into()))),
+            None,
+            rotation.into_unspent(),
+        ),
+    };
     on_event(PrnsEvent::CommandSettled { id, settlement });
     UnspentCycleEntropy {
         self_announce: maybe_self_announce_entropy,
@@ -638,6 +657,44 @@ where
             None
         }
     }
+}
+
+/// A path request is a broadcast that owes no acknowledgement: it fans to every
+/// interface and settles the instant it leaves, since its answer arrives later
+/// as an ordinary announce.
+fn run_request_path<I, OnEvent>(
+    interfaces: &mut I,
+    traffic_ledger: &mut TrafficLedger,
+    id: CommandId,
+    request: &RequestPath,
+    on_event: &mut OnEvent,
+) where
+    I: InterfaceSet,
+    I::Item: RegisteredInterface,
+    OnEvent: FnMut(PrnsEvent<'_>),
+{
+    let mut emit_buffer = [0u8; MTU];
+    let settlement = match write_path_request_wire_packet(
+        request.destination,
+        request.id.as_bytes(),
+        &mut emit_buffer,
+    ) {
+        Ok(n) => {
+            fan_to_handles(
+                interfaces,
+                traffic_ledger,
+                |buf| {
+                    buf[..n].copy_from_slice(&emit_buffer[..n]);
+                    n
+                },
+                FanTargets::EveryInterface,
+                FanoutClass::SelfOriginated,
+            );
+            Settlement::RequestPath(Ok(()))
+        }
+        Err(error) => Settlement::RequestPath(Err(RequestPathFailure::WriteFailed(error))),
+    };
+    on_event(PrnsEvent::CommandSettled { id, settlement });
 }
 
 enum FanTargets<'a> {
@@ -734,7 +791,8 @@ mod tests {
 
     use crate::engine::{
         AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget,
-        CommandId, EngineCommand, IssuedCommand, RatchetPolicy, Settlement,
+        CommandId, EngineCommand, IssuedCommand, PathRequestId, RatchetPolicy, RequestPath,
+        Settlement, PATH_REQUEST_DESTINATION,
     };
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
@@ -747,7 +805,8 @@ mod tests {
     use crate::routing::storage::FixedInline;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{
-        DestinationHash, PacketType, PropagationType, WirePacketHeader, HEADER_MAX_LEN,
+        DestinationHash, DestinationType, PacketType, PropagationType, WirePacketHeader,
+        HEADER_MAX_LEN,
     };
 
     type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8>;
@@ -1147,6 +1206,61 @@ mod tests {
     }
 
     #[test]
+    fn a_request_path_fans_to_every_interface_and_settles() {
+        let (engine, _) = single_destination_engine();
+        let mut runtime = Runtime::new(
+            engine,
+            interface_set([
+                started(iface(0xA1), std::vec::Vec::new()),
+                started(iface(0xB2), std::vec::Vec::new()),
+            ]),
+            (),
+        );
+
+        let wanted = DestinationHash::new([0x44; 16]);
+        let mut queue = VecDeque::from([IssuedCommand {
+            id: CommandId(7),
+            command: EngineCommand::RequestPath(RequestPath {
+                destination: wanted,
+                id: PathRequestId::new([0x55; 16]),
+            }),
+        }]);
+        let mut settled = std::vec::Vec::new();
+        let out = runtime.cycle_once(
+            InstantMillis(1_000),
+            |bytes: &mut [u8]| bytes.fill(0xCA),
+            |event| {
+                if let PrnsEvent::CommandSettled { id, settlement } = event {
+                    settled.push((id, settlement));
+                }
+            },
+            || queue.pop_front(),
+        );
+
+        assert_eq!(out.processed_command_count, 1);
+        assert_eq!(
+            settled,
+            std::vec![(CommandId(7), Settlement::RequestPath(Ok(())))],
+            "a path request settles the instant it leaves",
+        );
+
+        let first = &runtime.interfaces()[0].handle.sent;
+        let second = &runtime.interfaces()[1].handle.sent;
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first, second,
+            "a path request broadcasts identically on every interface",
+        );
+
+        let (header, payload) = WirePacketHeader::parse(&first[0]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Data);
+        assert_eq!(header.destination_type, DestinationType::Plain);
+        assert_eq!(header.propagation, PropagationType::Broadcast);
+        assert_eq!(header.destination, PATH_REQUEST_DESTINATION);
+        assert_eq!(&payload[..16], wanted.as_bytes());
+    }
+
+    #[test]
     fn an_announce_heard_on_a_repeating_interface_fires_back_out_that_interface() {
         let raw = hx(RAW_ANNOUNCE);
         let mut runtime = Runtime::new(
@@ -1517,8 +1631,8 @@ mod tests {
     #[test]
     fn a_rejected_send_restores_its_entropy_and_the_pooled_unit_seals_byte_identically() {
         use crate::engine::test_support::{
-            personal_node_announcer, second_secret_key, TEST_ENTROPY, TEST_NONCE,
-            TEST_RATCHET_ENTROPY,
+            personal_node_announcer, second_secret_key, TEST_ENTROPY, TEST_RATCHET_ENTROPY,
+            TEST_SELF_ANNOUNCE_ENTROPY,
         };
         use crate::engine::{SendSingle, SendSinglePayload};
         use SendSingleWriteOutcome::Written;
@@ -1549,7 +1663,7 @@ mod tests {
         let announce_len = announcer
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -1630,7 +1744,7 @@ mod tests {
     fn an_arriving_proof_settles_the_send_through_the_event_lane() {
         use crate::engine::test_support::{
             hx, personal_node_announcer, RAW_SEALED_FOR_PROOF, RNS_1_3_1_IMPLICIT_PROOF,
-            TEST_NONCE, TEST_RATCHET_ENTROPY,
+            TEST_RATCHET_ENTROPY, TEST_SELF_ANNOUNCE_ENTROPY,
         };
         use crate::engine::{Delivered, SendSingle, SendSinglePayload};
         use crate::identity::Zeroizing;
@@ -1640,7 +1754,7 @@ mod tests {
         let announce_len = announcer
             .write_due_self_announce(
                 InstantMillis(100),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )

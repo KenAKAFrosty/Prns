@@ -2,7 +2,7 @@ use crate::engine::{RatchetEntropy, SendSingleEntropy};
 use crate::routing::announce::SelfAnnounceEntropy;
 
 pub struct UnspentEntropyPool {
-    nonce: Option<SelfAnnounceEntropy>,
+    self_announce: Option<SelfAnnounceEntropy>,
     ratchet: Option<RatchetEntropy>,
     send: Option<SendSingleEntropy>,
 }
@@ -10,7 +10,7 @@ pub struct UnspentEntropyPool {
 impl UnspentEntropyPool {
     pub const fn empty() -> Self {
         Self {
-            nonce: None,
+            self_announce: None,
             ratchet: None,
             send: None,
         }
@@ -18,7 +18,7 @@ impl UnspentEntropyPool {
 
     #[must_use]
     pub fn checkout_self_announce(&mut self, fill: impl FnOnce(&mut [u8])) -> SelfAnnounceEntropy {
-        self.nonce.take().unwrap_or_else(|| {
+        self.self_announce.take().unwrap_or_else(|| {
             let mut bytes = [0u8; SelfAnnounceEntropy::LEN];
             fill(&mut bytes);
             SelfAnnounceEntropy::new(bytes)
@@ -44,7 +44,7 @@ impl UnspentEntropyPool {
     }
 
     pub fn restore_self_announce(&mut self, unspent: SelfAnnounceEntropy) {
-        self.nonce = Some(unspent);
+        self.self_announce = Some(unspent);
     }
 
     pub fn restore_ratchet(&mut self, unspent: RatchetEntropy) {
@@ -71,7 +71,7 @@ mod tests {
     use crate::engine::InstantMillis;
     use crate::routing::announce::AnnounceId;
 
-    fn nonce_of(byte: u8) -> SelfAnnounceEntropy {
+    fn self_announce_of(byte: u8) -> SelfAnnounceEntropy {
         SelfAnnounceEntropy::new([byte; SelfAnnounceEntropy::LEN])
     }
 
@@ -100,24 +100,27 @@ mod tests {
     fn an_empty_pool_hands_back_the_fresh_unit() {
         let mut pool = UnspentEntropyPool::empty();
         let out = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
-        assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xBB)));
+        assert_eq!(announce_id_of(out), announce_id_of(self_announce_of(0xBB)));
     }
 
     #[test]
     fn a_restored_survivor_wins_over_the_fresh_unit() {
         let mut pool = UnspentEntropyPool::empty();
-        pool.restore_self_announce(nonce_of(0xAA));
+        pool.restore_self_announce(self_announce_of(0xAA));
         let out = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
-        assert_eq!(announce_id_of(out), announce_id_of(nonce_of(0xAA)));
+        assert_eq!(announce_id_of(out), announce_id_of(self_announce_of(0xAA)));
     }
 
     #[test]
     fn checkout_drains_the_slot_so_the_next_cycle_gets_fresh() {
         let mut pool = UnspentEntropyPool::empty();
-        pool.restore_self_announce(nonce_of(0xAA));
+        pool.restore_self_announce(self_announce_of(0xAA));
         let _first = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
         let second = pool.checkout_self_announce(|bytes| bytes.fill(0xCC));
-        assert_eq!(announce_id_of(second), announce_id_of(nonce_of(0xCC)));
+        assert_eq!(
+            announce_id_of(second),
+            announce_id_of(self_announce_of(0xCC))
+        );
     }
 
     #[test]
@@ -159,8 +162,11 @@ mod tests {
         let mut pool = UnspentEntropyPool::empty();
         pool.restore_ratchet(ratchet_of(0x55));
 
-        let nonce = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
-        assert_eq!(announce_id_of(nonce), announce_id_of(nonce_of(0xBB)));
+        let self_announce_entropy = pool.checkout_self_announce(|bytes| bytes.fill(0xBB));
+        assert_eq!(
+            announce_id_of(self_announce_entropy),
+            announce_id_of(self_announce_of(0xBB))
+        );
 
         let mut minted = SelfRatchets::<FixedSelfRatchetColumns<1, 3>>::default();
         minted

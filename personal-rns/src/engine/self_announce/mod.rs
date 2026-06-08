@@ -227,7 +227,7 @@ impl From<SelfAnnounceWriteFailure> for WriteSelfAnnounceError {
 #[must_use]
 pub enum DueSelfAnnounceWriteOutcome {
     NothingDue {
-        unspent_nonce: SelfAnnounceEntropy,
+        unspent_self_announce: SelfAnnounceEntropy,
         unspent_ratchet: RatchetEntropy,
     },
     Written {
@@ -236,7 +236,7 @@ pub enum DueSelfAnnounceWriteOutcome {
     },
     Rejected {
         rejection: SelfAnnounceRejection,
-        unspent_nonce: SelfAnnounceEntropy,
+        unspent_self_announce: SelfAnnounceEntropy,
         unspent_ratchet: RatchetEntropy,
     },
     Failed {
@@ -253,7 +253,7 @@ pub enum CommandedAnnounceWriteOutcome {
     },
     Rejected {
         rejection: SelfAnnounceRejection,
-        unspent_nonce: SelfAnnounceEntropy,
+        unspent_self_announce: SelfAnnounceEntropy,
         unspent_ratchet: RatchetEntropy,
     },
     Failed {
@@ -282,14 +282,14 @@ fn frame_announce(
     name_hash: DottedNameHash,
     app_data: &[u8],
     now: InstantMillis,
-    nonce: SelfAnnounceEntropy,
+    self_announce_entropy: SelfAnnounceEntropy,
     maybe_ratchet: Option<RatchetKey>,
     buf: &mut [u8],
 ) -> Result<usize, SelfAnnounceWriteFailure> {
     let announce = Announce::build_signed(
         signer,
         name_hash,
-        AnnounceId::mint(nonce, now),
+        AnnounceId::mint(self_announce_entropy, now),
         maybe_ratchet,
         app_data,
     )
@@ -346,7 +346,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn write_due_self_announce(
         &mut self,
         now: InstantMillis,
-        nonce: SelfAnnounceEntropy,
+        self_announce_entropy: SelfAnnounceEntropy,
         ratchet: RatchetEntropy,
         buf: &mut [u8],
     ) -> DueSelfAnnounceWriteOutcome {
@@ -358,7 +358,7 @@ impl<S: EngineStorage> EngineState<S> {
             .map(|due| due.destination)
         else {
             return NothingDue {
-                unspent_nonce: nonce,
+                unspent_self_announce: self_announce_entropy,
                 unspent_ratchet: ratchet,
             };
         };
@@ -373,7 +373,7 @@ impl<S: EngineStorage> EngineState<S> {
             Err(rejection) => {
                 return Rejected {
                     rejection,
-                    unspent_nonce: nonce,
+                    unspent_self_announce: self_announce_entropy,
                     unspent_ratchet: ratchet,
                 };
             }
@@ -390,7 +390,7 @@ impl<S: EngineStorage> EngineState<S> {
             name_hash,
             app_data,
             now,
-            nonce,
+            self_announce_entropy,
             maybe_ratchet,
             buf,
         );
@@ -404,7 +404,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         commanded: &AnnounceNow,
         now: InstantMillis,
-        nonce: SelfAnnounceEntropy,
+        self_announce_entropy: SelfAnnounceEntropy,
         ratchet: RatchetEntropy,
         buf: &mut [u8],
     ) -> CommandedAnnounceWriteOutcome {
@@ -422,7 +422,7 @@ impl<S: EngineStorage> EngineState<S> {
             Err(rejection) => {
                 return Rejected {
                     rejection,
-                    unspent_nonce: nonce,
+                    unspent_self_announce: self_announce_entropy,
                     unspent_ratchet: ratchet,
                 };
             }
@@ -442,7 +442,7 @@ impl<S: EngineStorage> EngineState<S> {
             name_hash,
             app_data,
             now,
-            nonce,
+            self_announce_entropy,
             maybe_ratchet,
             buf,
         );
@@ -495,9 +495,9 @@ mod tests {
         pub fn nothing_due(self) -> (SelfAnnounceEntropy, RatchetEntropy) {
             match self {
                 Self::NothingDue {
-                    unspent_nonce,
+                    unspent_self_announce,
                     unspent_ratchet,
-                } => (unspent_nonce, unspent_ratchet),
+                } => (unspent_self_announce, unspent_ratchet),
                 Self::Written { len, .. } => panic!("expected NothingDue, got Written({len}B)"),
                 Self::Rejected { rejection, .. } => {
                     panic!("expected NothingDue, got Rejected({rejection:?})")
@@ -513,9 +513,9 @@ mod tests {
             match self {
                 Self::Rejected {
                     rejection,
-                    unspent_nonce,
+                    unspent_self_announce,
                     unspent_ratchet,
-                } => (rejection, unspent_nonce, unspent_ratchet),
+                } => (rejection, unspent_self_announce, unspent_ratchet),
                 Self::NothingDue { .. } => panic!("expected Rejected, got NothingDue"),
                 Self::Written { len, .. } => panic!("expected Rejected, got Written({len}B)"),
                 Self::Failed { failure, .. } => {
@@ -554,9 +554,9 @@ mod tests {
             match self {
                 Self::Rejected {
                     rejection,
-                    unspent_nonce,
+                    unspent_self_announce,
                     unspent_ratchet,
-                } => (rejection, unspent_nonce, unspent_ratchet),
+                } => (rejection, unspent_self_announce, unspent_ratchet),
                 Self::Written { len, .. } => panic!("expected Rejected, got Written({len}B)"),
                 Self::Failed { failure, .. } => {
                     panic!("expected Rejected, got Failed({failure:?})")
@@ -733,11 +733,11 @@ mod tests {
     fn self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer();
         let now = InstantMillis(0x44_4444_4444);
-        let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
+        let self_announce_entropy = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
 
         let mut buf = [0u8; MTU];
         let n = state
-            .write_due_self_announce(now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
+            .write_due_self_announce(now, self_announce_entropy, TEST_RATCHET_ENTROPY, &mut buf)
             .written_len();
 
         let (header, payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
@@ -756,11 +756,11 @@ mod tests {
     fn a_ratcheted_self_announce_originates_the_rns_1_3_1_vector() {
         let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let now = InstantMillis(0x44_4444_4444);
-        let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
+        let self_announce_entropy = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
 
         let mut buf = [0u8; MTU];
         let n = state
-            .write_due_self_announce(now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
+            .write_due_self_announce(now, self_announce_entropy, TEST_RATCHET_ENTROPY, &mut buf)
             .written_len();
 
         assert_eq!(&buf[..n], hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE));
@@ -806,7 +806,7 @@ mod tests {
         let n = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 RatchetEntropy::new([0x55; RatchetEntropy::LEN]),
                 &mut buf,
             )
@@ -815,7 +815,7 @@ mod tests {
 
         let (n, came_home) = match state.write_due_self_announce(
             InstantMillis(2_000),
-            TEST_NONCE,
+            TEST_SELF_ANNOUNCE_ENTROPY,
             RatchetEntropy::new([0x66; RatchetEntropy::LEN]),
             &mut buf,
         ) {
@@ -834,7 +834,7 @@ mod tests {
         let n = state
             .write_due_self_announce(
                 InstantMillis(1_000 + MIN_RATCHET_ROTATION_INTERVAL_MS),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 came_home,
                 &mut buf,
             )
@@ -897,7 +897,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -905,7 +905,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -913,7 +913,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000 + interval),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -927,7 +927,7 @@ mod tests {
         let (error, _rotation) = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut tiny,
             )
@@ -941,7 +941,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -950,7 +950,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000 + interval),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -968,15 +968,15 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
             .written_len();
-        let (nonce, ratchet) = state
+        let (self_announce_entropy, ratchet) = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -984,20 +984,25 @@ mod tests {
 
         let mut reused = [0u8; MTU];
         let n = state
-            .write_due_self_announce(later, nonce, ratchet, &mut reused)
+            .write_due_self_announce(later, self_announce_entropy, ratchet, &mut reused)
             .written_len();
 
         let _ = probe
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
             .written_len();
         let mut fresh = [0u8; MTU];
         let m = probe
-            .write_due_self_announce(later, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut fresh)
+            .write_due_self_announce(
+                later,
+                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut fresh,
+            )
             .written_len();
 
         assert_eq!(
@@ -1016,11 +1021,11 @@ mod tests {
             app_data: AnnounceAppData::Scheduled,
         };
         let mut buf = [0u8; MTU];
-        let (error, nonce, ratchet) = state
+        let (error, self_announce_entropy, ratchet) = state
             .write_commanded_announce(
                 &commanded,
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1029,13 +1034,18 @@ mod tests {
 
         let mut reused = [0u8; MTU];
         let n = state
-            .write_due_self_announce(InstantMillis(1_000), nonce, ratchet, &mut reused)
+            .write_due_self_announce(
+                InstantMillis(1_000),
+                self_announce_entropy,
+                ratchet,
+                &mut reused,
+            )
             .written_len();
         let mut fresh = [0u8; MTU];
         let m = personal_node_announcer()
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut fresh,
             )
@@ -1062,10 +1072,10 @@ mod tests {
             .unwrap();
 
         let mut buf = [0u8; MTU];
-        let (error, _nonce, _ratchet) = state
+        let (error, _self_announce_entropy, _ratchet) = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1075,7 +1085,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1097,7 +1107,7 @@ mod tests {
             .write_commanded_announce(
                 &commanded,
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut tiny,
             )
@@ -1119,7 +1129,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1133,7 +1143,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1203,7 +1213,7 @@ mod tests {
         let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let destination = state.self_announced_destinations()[0];
         let now = InstantMillis(0x44_4444_4444);
-        let nonce = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
+        let self_announce_entropy = SelfAnnounceEntropy::new([0x44; SelfAnnounceEntropy::LEN]);
         let commanded = AnnounceNow {
             destination,
             target: AnnounceTarget::AllInterfaces,
@@ -1212,7 +1222,13 @@ mod tests {
 
         let mut buf = [0u8; MTU];
         let n = state
-            .write_commanded_announce(&commanded, now, nonce, TEST_RATCHET_ENTROPY, &mut buf)
+            .write_commanded_announce(
+                &commanded,
+                now,
+                self_announce_entropy,
+                TEST_RATCHET_ENTROPY,
+                &mut buf,
+            )
             .written_len();
 
         assert_eq!(&buf[..n], hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE));
@@ -1233,7 +1249,7 @@ mod tests {
             .write_commanded_announce(
                 &commanded,
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1242,7 +1258,7 @@ mod tests {
         let _ = state
             .write_due_self_announce(
                 InstantMillis(2_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1266,7 +1282,7 @@ mod tests {
             .write_commanded_announce(
                 &commanded,
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1302,7 +1318,7 @@ mod tests {
             .write_commanded_announce(
                 &commanded,
                 InstantMillis(1_000),
-                TEST_NONCE,
+                TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut buf,
             )
@@ -1340,21 +1356,36 @@ mod tests {
         let now = InstantMillis(5_000);
         let mut first_buf = [0u8; MTU];
         let first_len = state
-            .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut first_buf)
+            .write_due_self_announce(
+                now,
+                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut first_buf,
+            )
             .written_len();
         let mut second_buf = [0u8; MTU];
         let second_len = state
-            .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut second_buf)
+            .write_due_self_announce(
+                now,
+                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut second_buf,
+            )
             .written_len();
         let _ = state
-            .write_due_self_announce(now, TEST_NONCE, TEST_RATCHET_ENTROPY, &mut [0u8; MTU])
+            .write_due_self_announce(
+                now,
+                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut [0u8; MTU],
+            )
             .nothing_due();
 
         let second_identity = InMemoryNodeIdentity::from_secret_key_bytes(&second_secret_key());
         let expected = Announce::build_signed(
             &second_identity,
             crate::routing::announce::expand_name("personal", &["second"]).unwrap(),
-            AnnounceId::mint(TEST_NONCE, now),
+            AnnounceId::mint(TEST_SELF_ANNOUNCE_ENTROPY, now),
             None,
             b"hello-second",
         )

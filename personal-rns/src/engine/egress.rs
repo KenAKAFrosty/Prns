@@ -4,8 +4,9 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::wire::{
-    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, TransportId, WireContext,
-    WirePacketHeader, HEADER_MAX_LEN, HEADER_MIN_LEN,
+    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+    TransportId, WireContext, WirePacketHeader, HEADER_MAX_LEN, HEADER_MIN_LEN,
+    TRUNCATED_HASH_BYTE_LEN,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +117,53 @@ pub fn write_implicit_proof_wire_packet(
     Ok(IMPLICIT_PROOF_WIRE_LEN)
 }
 
+/// The well-known plain destination every path request is addressed to,
+/// `rnstransport.path.request`. A wire-protocol constant: RNS derives it once at
+/// startup from the name alone (plain destinations bind to no identity), and
+/// [`crate::routing::announce::derive_plain_destination_hash`] reproduces it.
+pub const PATH_REQUEST_DESTINATION: DestinationHash = DestinationHash::new([
+    0x6b, 0x9f, 0x66, 0x01, 0x4d, 0x98, 0x53, 0xfa, 0xab, 0x22, 0x0f, 0xba, 0x47, 0xd0, 0x27, 0x61,
+]);
+
+/// RNS 1.3.1 `Transport.request_path` payload in its leaf (non-transport) form:
+/// the requested destination hash followed by a random request id, both
+/// truncated-hash sized.
+pub const PATH_REQUEST_PAYLOAD_LEN: usize = TRUNCATED_HASH_BYTE_LEN * 2;
+
+/// RNS 1.3.1 `Transport.request_path`: a broadcast plain
+/// DATA packet to the well-known [`PATH_REQUEST_DESTINATION`], carrying the
+/// requested `destination` and a random `id` that lets the network drop
+/// duplicate requests. Any reachable peer holding a path answers by
+/// (re-)announcing it.
+pub fn write_path_request_wire_packet(
+    destination: DestinationHash,
+    id: &[u8; TRUNCATED_HASH_BYTE_LEN],
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Plain,
+        packet_type: PacketType::Data,
+        hops: 0,
+        transport_id: None,
+        destination: PATH_REQUEST_DESTINATION,
+        context: WireContext::None,
+    };
+    let total_len = HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN;
+    if buf.len() < total_len {
+        return Err(EgressSerializeError::BufferTooShort);
+    }
+    header
+        .write(&mut buf[..HEADER_MIN_LEN])
+        .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    let payload = &mut buf[HEADER_MIN_LEN..total_len];
+    payload[..TRUNCATED_HASH_BYTE_LEN].copy_from_slice(destination.as_bytes());
+    payload[TRUNCATED_HASH_BYTE_LEN..].copy_from_slice(id);
+    Ok(total_len)
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum EgressDirective<'a> {
@@ -167,6 +215,41 @@ mod tests {
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 16])
+    }
+
+    // Minted from RNS 1.3.1: a leaf path request for destination [0x22; 16] with
+    // id [0xAB; 16] — `08 00 <dest:6b9f…2761> 00 <requested:22…> <id:ab…>`.
+    const RNS_1_3_1_PATH_REQUEST: &str = "08006b9f66014d9853faab220fba47d02761002222222222\
+                                          2222222222222222222222abababababababababababababababab";
+
+    #[test]
+    fn path_request_destination_matches_rns_1_3_1() {
+        assert_eq!(
+            PATH_REQUEST_DESTINATION,
+            DestinationHash::new(hx("6b9f66014d9853faab220fba47d02761").try_into().unwrap()),
+        );
+    }
+
+    #[test]
+    fn write_path_request_reproduces_the_rns_1_3_1_wire() {
+        let mut buf = [0u8; HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN];
+        let n =
+            write_path_request_wire_packet(DestinationHash::new([0x22; 16]), &[0xAB; 16], &mut buf)
+                .unwrap();
+        assert_eq!(&buf[..n], hx(RNS_1_3_1_PATH_REQUEST).as_slice());
+    }
+
+    #[test]
+    fn write_path_request_into_a_short_buffer_is_rejected() {
+        let mut tiny = [0u8; HEADER_MIN_LEN + PATH_REQUEST_PAYLOAD_LEN - 1];
+        assert_eq!(
+            write_path_request_wire_packet(
+                DestinationHash::new([0x22; 16]),
+                &[0xAB; 16],
+                &mut tiny
+            ),
+            Err(EgressSerializeError::BufferTooShort),
+        );
     }
 
     #[test]
