@@ -17,3 +17,24 @@ pub trait InterfaceStatus {
     fn rx_bytes(&self) -> u64;
     fn tx_bytes(&self) -> u64;
 }
+
+/// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the
+/// card builder when the handle itself can't be cloned (the no_std `&'static` handle a board
+/// shares between its interface and display tasks), not only the std `Arc`-clone case.
+impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
+    fn id(&self) -> InterfaceId {
+        (**self).id()
+    }
+
+    fn connection(&self) -> ConnectionState {
+        (**self).connection()
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        (**self).rx_bytes()
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        (**self).tx_bytes()
+    }
+}
