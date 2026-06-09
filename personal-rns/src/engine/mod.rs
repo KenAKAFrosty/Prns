@@ -11,6 +11,7 @@ pub mod reaction;
 pub mod receipts;
 pub mod request_path;
 pub mod reverse_routes;
+mod scheduled;
 pub mod seen_path_requests;
 pub mod self_announce;
 pub mod self_ratchets;

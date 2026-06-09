@@ -96,9 +96,18 @@ pub async fn run<S, H>(
                 );
             }
             () = wait_for_deadline(&host, wake) => {
-                engine.drain_scheduled(host.now(), jitter, &view, &mut |directive| {
+                let now = host.now();
+                engine.settle_timed_out_send_singles(now, &mut on_reaction);
+                engine.settle_timed_out_path_requests(now, &mut on_reaction);
+                engine.drain_scheduled(now, jitter, &view, &mut |directive| {
                     on_reaction(EngineReaction::Directive(directive));
                 });
+                engine.fire_due_self_announces(
+                    now,
+                    &view,
+                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut on_reaction,
+                );
             }
         }
     }
