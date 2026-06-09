@@ -203,4 +203,122 @@ mod tests {
             "the rebroadcast bumps the hop count"
         );
     }
+
+    #[tokio::test]
+    async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
+        use crate::crypto::X25519SecretKey;
+        use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
+        use crate::engine::RatchetPolicy;
+        use crate::identity::in_memory::InMemoryNodeIdentity;
+        use crate::identity::{IdentitySigner, RemoteIdentity, Zeroizing};
+        use crate::routing::dedup::PacketHash;
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+        use crate::wire::{
+            ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, MTU,
+        };
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        let secret = Zeroizing::new(secret);
+
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+        let mut engine = EngineState::<Cap>::new(secret);
+        let destination = engine
+            .register_single_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["node"],
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .expect("registers the single destination");
+
+        let remote = RemoteIdentity::from_public_keys(
+            identity.encryption_public_key(),
+            identity.signing_public_key(),
+        );
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Single,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination,
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; MTU];
+        let header_len = header.write(&mut wire).expect("writes the header");
+        let sealed = remote
+            .encrypt(
+                &X25519SecretKey::new([0x77; 32]),
+                &[0x88; 16],
+                b"prove-through-the-stack",
+                &mut wire[header_len..],
+            )
+            .expect("seals the payload");
+        let raw = wire[..header_len + sealed].to_vec();
+        let packet_hash = PacketHash::of_wire_packet(&raw).expect("hashes the wire packet");
+
+        let mut expected_proof = std::vec::Vec::new();
+        expected_proof.push(0x03);
+        expected_proof.push(0x00);
+        expected_proof.extend_from_slice(packet_hash.proof_destination().as_bytes());
+        expected_proof.push(0x00);
+        expected_proof.extend_from_slice(&identity.sign(packet_hash.as_bytes()).0);
+        assert_eq!(expected_proof.len(), IMPLICIT_PROOF_WIRE_LEN);
+
+        let source = InterfaceId::new([0xA1; 16]);
+        let view = std::vec![descriptor(source)];
+
+        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (delivered_tx, mut delivered_rx) = mpsc::unbounded_channel::<()>();
+        let (sent_tx, mut sent_rx) = mpsc::unbounded_channel::<(InterfaceId, std::vec::Vec<u8>)>();
+
+        let on_reaction = move |reaction: EngineReaction<'_>| match reaction {
+            EngineReaction::Journaled(Journaled::Delivered(_)) => {
+                let _ = delivered_tx.send(());
+            }
+            EngineReaction::Journaled(
+                Journaled::AnnounceHeard { .. } | Journaled::CommandSettled { .. },
+            ) => {}
+            EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                let _ = sent_tx.send((target, bytes.to_vec()));
+            }
+        };
+
+        tokio::spawn(run(
+            engine,
+            view,
+            TokioHost::new(),
+            inbound_rx,
+            command_rx,
+            on_reaction,
+        ));
+
+        inbound_tx
+            .send((source, raw))
+            .expect("the reactor task holds the receiver");
+
+        tokio::time::timeout(Duration::from_secs(2), delivered_rx.recv())
+            .await
+            .expect("the delivery journals within the window")
+            .expect("the reactor task is alive");
+
+        let (target, bytes) = tokio::time::timeout(Duration::from_secs(2), sent_rx.recv())
+            .await
+            .expect("the owed proof is emitted within the window")
+            .expect("the reactor task is alive");
+        assert_eq!(
+            target, source,
+            "the proof returns on the lane the packet arrived through"
+        );
+        assert_eq!(
+            bytes, expected_proof,
+            "the proof is byte-identical to the RNS 1.3.1 implicit proof"
+        );
+    }
 }
