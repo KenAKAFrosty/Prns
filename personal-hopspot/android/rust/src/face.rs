@@ -1,6 +1,7 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshot_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshot_to_cards, splash, BatteryState, Card, InputEvent, Liveness, UiAction,
+    UiState,
 };
 
 use crate::engine::{classify, shared_snapshot, SharedSnapshot};
@@ -88,7 +89,7 @@ mod tests {
             kind: CardKind::Usb,
             label: "USB",
             selected: false,
-            online: true,
+            liveness: Liveness::Live,
             tx_bytes: 1_204_000,
             rx_bytes: 938_000,
             links: 2,
@@ -100,7 +101,7 @@ mod tests {
             kind: CardKind::Wifi,
             label: "WiFi",
             selected: false,
-            online: true,
+            liveness: Liveness::Live,
             tx_bytes: 22_400_000,
             rx_bytes: 41_900_000,
             links: 4,

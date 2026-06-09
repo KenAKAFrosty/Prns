@@ -21,11 +21,27 @@
 pub mod screen;
 
 pub use screen::{
-    draw, draw_with_state, splash, BatteryState, Card, CardKind, InputEvent, UiAction, UiState,
+    draw, draw_with_state, splash, BatteryState, Card, CardKind, InputEvent, Liveness, UiAction,
+    UiState,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
 use personal_rns::runtime::RuntimeSnapshot;
+
+/// Collapse an interface's connection state into the card's [`Liveness`]. A confirmed, routable
+/// link is `Live` — the full card with numbers. An interface that is up and watching but has no
+/// confirmed link — the USB discoverer with nothing plugged, a link still handshaking or one that
+/// dropped — is `Dormant`, not pretending to carry traffic it has none of. A genuinely failed
+/// interface is `Offline`.
+fn liveness(connection: ConnectionState) -> Liveness {
+    match connection {
+        ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
+        ConnectionState::Failed => Liveness::Offline,
+        ConnectionState::Initializing
+        | ConnectionState::Reconnecting
+        | ConnectionState::Disconnected => Liveness::Dormant,
+    }
+}
 
 /// Build the renderable [`Card`] list from a runtime snapshot, one card per
 /// interface view, in snapshot order. `classify` maps each interface's
@@ -45,13 +61,7 @@ pub fn snapshot_to_cards<const N: usize>(
             kind,
             label,
             selected: false,
-            // The status dot collapses the engine's ConnectionState: an interface
-            // reads as online when it is routable (Connected or Degraded), matching
-            // the engine's own routability grouping.
-            online: matches!(
-                view.connection_state,
-                ConnectionState::Connected | ConnectionState::Degraded
-            ),
+            liveness: liveness(view.connection_state),
             tx_bytes: view.reticulum_tx_byte_count,
             rx_bytes: view.reticulum_rx_byte_count,
             // The runtime snapshot does not expose active-link counts yet. Keep
@@ -74,11 +84,10 @@ pub fn snapshot_to_cards<const N: usize>(
 /// interface from the screen. `N` bounds the returned vector — pass the panel's
 /// card capacity.
 ///
-/// The handle carries the two facts the interface knows first-hand: its
-/// connection — the online dot lights for the routable `Connected`/`Degraded`
-/// grouping — and the raw bytes it has moved across the wire. Destinations,
-/// links, rate, and last-activity are engine or derived state the handle does
-/// not carry yet, so they report neutral values until their own sources land.
+/// The handle carries the two facts the interface knows first-hand: its connection — which
+/// resolves the card's [`Liveness`] (Dormant until a link confirms, then Live) — and the bytes it
+/// has moved, which fill the Live card. Links, rate, and last-activity are derived state the
+/// handle does not carry yet, so they report neutral values until their own sources land.
 pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
     statuses: &[S],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, &'static str)>,
@@ -92,10 +101,7 @@ pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
             kind,
             label,
             selected: false,
-            online: matches!(
-                status.connection(),
-                ConnectionState::Connected | ConnectionState::Degraded
-            ),
+            liveness: liveness(status.connection()),
             tx_bytes: status.tx_bytes(),
             rx_bytes: status.rx_bytes(),
             links: 0,

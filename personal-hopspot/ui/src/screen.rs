@@ -99,14 +99,34 @@ pub enum CardKind {
     Tcp,
 }
 
+/// How alive an interface's card reads. `Live` is a confirmed link — the full
+/// card with numbers. `Dormant` is the interface up and watching but with no
+/// confirmed link yet (the USB discoverer with nothing plugged): the *live* icon
+/// — it is working — over a "Dormant" body, so the card never pretends to carry
+/// traffic it has none of. The moment a board connects and handshakes it flips to
+/// `Live`; drop every link and it falls back to `Dormant`. `Offline` is a
+/// genuinely failed interface — the offline icon and an "Offline" body.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Liveness {
+    Offline,
+    Dormant,
+    Live,
+}
+
+impl Liveness {
+    fn is_offline(self) -> bool {
+        matches!(self, Liveness::Offline)
+    }
+}
+
 /// One interface's card. The host fills the static bits (kind, label) and the
-/// live numbers from the runtime snapshot's per-interface view.
+/// live numbers from the interface's status handle.
 pub struct Card {
     pub kind: CardKind,
     pub label: &'static str,
     /// Invert the name/icon row for selection or active focus.
     pub selected: bool,
-    pub online: bool,
+    pub liveness: Liveness,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     /// Link sessions active on this interface.
@@ -908,8 +928,10 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     let label_style = MonoTextStyle::new(&FONT_6X10, name_color);
     let num_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
 
-    // Name line: [icon] label.
-    if card.online {
+    // Name line: [icon] label. Dormant keeps the live icon — only the body changes.
+    if card.liveness.is_offline() {
+        draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
+    } else {
         draw_interface_icon(
             display,
             NAME_ICON_X,
@@ -917,8 +939,6 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
             card.kind,
             name_color,
         );
-    } else {
-        draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     }
     let _ = Text::with_baseline(
         card.label,
@@ -928,18 +948,19 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     )
     .draw(display);
 
-    // Traffic rows, or a whole-card offline state when disconnected.
+    // Traffic rows for a live link, or a whole-card word for one that is down or
+    // up-but-quiet.
     let tx_y = top + 13;
     let rx_y = top + 22;
     let live_y = top + 31;
-    if !card.online {
-        let _ = Text::with_baseline(
-            "Offline",
-            Point::new(16, top + 20),
-            num_style,
-            Baseline::Top,
-        )
-        .draw(display);
+    let whole_card_word = match card.liveness {
+        Liveness::Offline => Some("Offline"),
+        Liveness::Dormant => Some("Dormant"),
+        Liveness::Live => None,
+    };
+    if let Some(word) = whole_card_word {
+        let _ = Text::with_baseline(word, Point::new(16, top + 20), num_style, Baseline::Top)
+            .draw(display);
         return;
     }
 
@@ -1026,7 +1047,9 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
         BinaryColor::On
     };
     let label_style = MonoTextStyle::new(&FONT_6X10, name_color);
-    if card.online {
+    if card.liveness.is_offline() {
+        draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
+    } else {
         draw_interface_icon(
             display,
             NAME_ICON_X,
@@ -1034,8 +1057,6 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
             card.kind,
             name_color,
         );
-    } else {
-        draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     }
     let _ = Text::with_baseline(
         card.label,
@@ -1263,7 +1284,7 @@ mod tests {
             kind: CardKind::Usb,
             label,
             selected: false,
-            online: true,
+            liveness: Liveness::Live,
             tx_bytes: 0,
             rx_bytes: 0,
             links: 0,
@@ -1522,7 +1543,7 @@ mod tests {
                 kind: CardKind::Ble,
                 label: "BLE",
                 selected: false,
-                online: true,
+                liveness: Liveness::Live,
                 tx_bytes: 0,
                 rx_bytes: 0,
                 links: 0,
@@ -1783,7 +1804,7 @@ mod tests {
             kind: CardKind::Usb,
             label: "USB",
             selected: false,
-            online: true,
+            liveness: Liveness::Live,
             tx_bytes: 123,
             rx_bytes: 456,
             links: 5,
@@ -1818,7 +1839,7 @@ mod tests {
             kind: CardKind::Wifi,
             label: "WiFi",
             selected: false,
-            online: true,
+            liveness: Liveness::Live,
             tx_bytes: 999_999_999,
             rx_bytes: 999_999_999,
             links: 999_999,
@@ -1845,7 +1866,7 @@ mod tests {
             kind: CardKind::EspNow,
             label: "ESP-NOW",
             selected: false,
-            online: false,
+            liveness: Liveness::Offline,
             tx_bytes: 123,
             rx_bytes: 456,
             links: 5,
@@ -1876,7 +1897,7 @@ mod tests {
             kind: CardKind::Wifi,
             label: "WiFi",
             selected: true,
-            online: true,
+            liveness: Liveness::Live,
             tx_bytes: 0,
             rx_bytes: 0,
             links: 0,

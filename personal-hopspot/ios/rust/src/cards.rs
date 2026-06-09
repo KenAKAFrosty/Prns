@@ -4,7 +4,7 @@ pub const MAX_CARDS: usize = 8;
 #[cfg(test)]
 use heapless::Vec as HVec;
 #[cfg(test)]
-use personal_hopspot_ui::{Card, CardKind};
+use personal_hopspot_ui::{Card, CardKind, Liveness};
 
 #[cfg(test)]
 pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
@@ -13,7 +13,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         kind: CardKind::Usb,
         label: "USB",
         selected: false,
-        online: true,
+        liveness: Liveness::Live,
         tx_bytes: 1_204_000,
         rx_bytes: 938_000,
         links: 2,
@@ -25,7 +25,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         kind: CardKind::Wifi,
         label: "WiFi",
         selected: false,
-        online: true,
+        liveness: Liveness::Live,
         tx_bytes: 22_400_000,
         rx_bytes: 41_900_000,
         links: 4,
@@ -37,7 +37,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         kind: CardKind::EspNow,
         label: "ESP-NOW",
         selected: false,
-        online: true,
+        liveness: Liveness::Live,
         tx_bytes: 0,
         rx_bytes: 0,
         links: 999_999,
@@ -49,7 +49,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         kind: CardKind::Ble,
         label: "BLE",
         selected: false,
-        online: true,
+        liveness: Liveness::Live,
         tx_bytes: 42,
         rx_bytes: 12_340,
         links: 7,
@@ -61,7 +61,7 @@ pub fn dummy_cards() -> HVec<Card, MAX_CARDS> {
         kind: CardKind::LoRa,
         label: "LoRa",
         selected: false,
-        online: false,
+        liveness: Liveness::Offline,
         tx_bytes: 0,
         rx_bytes: 0,
         links: 0,
