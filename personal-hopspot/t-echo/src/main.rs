@@ -17,6 +17,7 @@ use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Timer};
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State};
 use embassy_usb::{Builder, Config as UsbConfig};
@@ -37,7 +38,7 @@ use personal_rns::routing::storage::FixedInline;
 mod ssd1681;
 use ssd1681::Ssd1681;
 
-type TEchoEngineState = EngineState<FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8>>;
+type TEchoEngineState = EngineState<FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8, 8, 8>>;
 
 const PANEL_SIZE: i32 = 200;
 const SCREEN_WIDTH: i32 = 64;
@@ -52,9 +53,11 @@ const SCALED_ORIGIN_Y: i32 = (PANEL_SIZE - SCALED_SHORT) / 2;
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 const FULL_REFRESH_INTERVAL: u32 = 20;
+const FRONTLIGHT_HOLD: Duration = Duration::from_secs(8);
 
 static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, hopspot::InputEvent, 4> = Channel::new();
 static BUTTON_COUNT: AtomicU32 = AtomicU32::new(0);
+static FRONTLIGHT_WAKE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -146,9 +149,22 @@ fn placeholder_cards() -> [hopspot::Card; 3] {
 }
 
 #[embassy_executor::task]
+async fn frontlight_task(mut frontlight: Output<'static>) {
+    loop {
+        FRONTLIGHT_WAKE.wait().await;
+        frontlight.set_high();
+        while let Either::First(()) =
+            select(FRONTLIGHT_WAKE.wait(), Timer::after(FRONTLIGHT_HOLD)).await
+        {}
+        frontlight.set_low();
+    }
+}
+
+#[embassy_executor::task]
 async fn button_task(mut button: Input<'static>) {
     loop {
         button.wait_for_falling_edge().await;
+        FRONTLIGHT_WAKE.signal(());
         match select(
             button.wait_for_rising_edge(),
             Timer::after(BUTTON_LONG_PRESS),
@@ -176,8 +192,6 @@ async fn main(spawner: Spawner) -> ! {
     let p = embassy_nrf::init(nrf_config);
 
     let _eink_rail = Output::new(p.P0_12, Level::High, OutputDrive::Standard);
-    let _rail_3v3 = Output::new(p.P0_13, Level::High, OutputDrive::Standard);
-    let _eink_backlight = Output::new(p.P1_11, Level::Low, OutputDrive::Standard);
 
     static ENGINE: StaticCell<TEchoEngineState> = StaticCell::new();
     let state = ENGINE.init(TEchoEngineState::default());
@@ -226,6 +240,12 @@ async fn main(spawner: Spawner) -> ! {
     let eink_ok = eink.is_some();
 
     if let Ok(token) = button_task(Input::new(p.P1_10, Pull::Up)) {
+        spawner.spawn(token);
+    }
+
+    if let Ok(token) =
+        frontlight_task(Output::new(p.P1_11, Level::Low, OutputDrive::Standard))
+    {
         spawner.spawn(token);
     }
 
