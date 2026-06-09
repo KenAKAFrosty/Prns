@@ -1,49 +1,79 @@
+use std::future::Future;
+use std::io;
+use std::time::Duration;
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::interfaces::serial::core;
 
-pub struct SerialInterface<S> {
+/// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
+/// byte stream (the consumer supplies it, e.g. a reopened `tokio_serial::SerialStream`), and
+/// the interface reconnects on its own — serve a connection until it drops, wait `reconnect`,
+/// reopen. A single never-dropping stream is just a factory that yields once.
+pub struct SerialInterface<Open> {
     id: InterfaceId,
-    stream: S,
+    open: Open,
+    reconnect: Duration,
 }
 
-impl<S> SerialInterface<S> {
+impl<Open> SerialInterface<Open> {
     #[must_use]
-    pub fn new(id: InterfaceId, stream: S) -> Self {
-        Self { id, stream }
+    pub fn new(id: InterfaceId, open: Open, reconnect: Duration) -> Self {
+        Self {
+            id,
+            open,
+            reconnect,
+        }
     }
 }
 
-impl<S> Interface for SerialInterface<S>
+impl<Open, Fut, S> Interface for SerialInterface<Open>
 where
+    Open: FnMut() -> Fut,
+    Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
     fn descriptor(&self) -> InterfaceDescriptor {
         core::descriptor(self.id)
     }
 
-    async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
-        let mut io = self.stream;
-        let mut decoder = core::Decoder::new();
-        let mut read_buf = [0u8; core::READ_BUF_LEN];
-
+    async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
         loop {
-            tokio::select! {
-                read = io.read(&mut read_buf) => {
-                    let read = match read {
-                        Ok(0) | Err(_) => return,
-                        Ok(read) => read,
-                    };
-                    core::deframe_to_seam(&mut decoder, &read_buf[..read], &mut seam).await;
-                }
-                outbound = seam.next_outbound() => {
-                    let mut frame_buf = [0u8; core::FRAMED_LEN];
-                    if let Some(framed) = core::frame_for_wire(outbound.bytes(), &mut frame_buf) {
-                        if io.write_all(&frame_buf[..framed]).await.is_err() {
-                            return;
-                        }
+            if let Ok(stream) = (self.open)().await {
+                serve(stream, &mut seam).await;
+            }
+            tokio::time::sleep(self.reconnect).await;
+        }
+    }
+}
+
+/// Serve one connection until the stream drops: read bytes and deframe them up to the seam,
+/// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller can
+/// reconnect; a fresh decoder per connection discards any half-frame the drop interrupted.
+async fn serve<S, Seam>(mut stream: S, seam: &mut Seam)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    Seam: InterfaceSeam,
+{
+    let mut decoder = core::Decoder::new();
+    let mut read_buf = [0u8; core::READ_BUF_LEN];
+
+    loop {
+        tokio::select! {
+            read = stream.read(&mut read_buf) => {
+                let read = match read {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => read,
+                };
+                core::deframe_to_seam(&mut decoder, &read_buf[..read], seam).await;
+            }
+            outbound = seam.next_outbound() => {
+                let mut frame_buf = [0u8; core::FRAMED_LEN];
+                if let Some(framed) = core::frame_for_wire(outbound.bytes(), &mut frame_buf) {
+                    if stream.write_all(&frame_buf[..framed]).await.is_err() {
+                        return;
                     }
                 }
             }
@@ -56,7 +86,6 @@ mod tests {
     use super::*;
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use crate::reactor::interface_seam::OutboundFrame;
-    use std::time::Duration;
     use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
@@ -85,8 +114,14 @@ mod tests {
 
     #[tokio::test]
     async fn frames_outbound_and_deframes_inbound_across_a_real_async_stream() {
-        // A duplex stands in for the serial wire: the interface owns one end, the test the other.
+        // A duplex stands in for the serial wire: the factory yields its end once, then refuses
+        // (the reconnect loop just retries harmlessly until the test drops the task).
         let (interface_wire, mut test_wire) = tokio::io::duplex(1024);
+        let mut wire = Some(interface_wire);
+        let open = move || {
+            let taken = wire.take();
+            async move { taken.ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected)) }
+        };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
@@ -95,7 +130,7 @@ mod tests {
             outbound: out_rx,
         };
 
-        tokio::spawn(SerialInterface::new(test_id(), interface_wire).run(seam));
+        tokio::spawn(SerialInterface::new(test_id(), open, Duration::from_millis(10)).run(seam));
 
         // Inbound: the test writes a framed payload (FLAG/ESC bytes exercise the escaping) onto
         // the wire; the interface deframes it and hands the original across the seam.
