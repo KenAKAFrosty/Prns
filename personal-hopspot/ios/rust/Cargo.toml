@@ -14,10 +14,13 @@ crate-type = ["staticlib", "lib"]
 
 [dependencies]
 personal-hopspot-ui = { path = "../../ui", default-features = false }
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["std-sync-host", "tcp"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 getrandom = "0.2"
+# The async runtime + a TCP listener: RNS TCP framing is the serial HDLC framing, so the
+# reactor's serial interface serves a TCP connection directly — `accept` standing in for `open`.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 
 [profile.release]
 codegen-units = 1

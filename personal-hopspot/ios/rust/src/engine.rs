@@ -1,34 +1,39 @@
-//WIP NEEDS REVIEW
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, OnceLock};
+use std::thread;
+use std::time::Duration;
 
 use personal_hopspot_ui::CardKind;
-use personal_rns::engine::self_announce::AnnounceConfig;
-use personal_rns::engine::{IssuedCommand, RatchetPolicy, ReannounceSchedule};
+use personal_rns::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
+    IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
+};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::impls::rns_parity::tcp::tcp_server_interface;
-use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
 use personal_rns::interfaces::InterfaceId;
+use personal_rns::reactor::impls::tokio_reactor::{
+    run as run_reactor, Egress, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
+};
+use personal_rns::reactor::interface_seam::{InboundFrame, Interface, OutboundFrame};
+use personal_rns::reactor::interfaces::serial::impls::tokio::SerialInterface;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::host::impls::LinuxSync;
-use personal_rns::runtime::{
-    block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot, StartingDestinationConfig,
-};
+use personal_rns::wire::DestinationHash;
+use tokio::net::TcpListener;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 pub(crate) const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC0; 16]);
 const TCP_LOOPBACK_PORT: u16 = 4242;
-const MAX_BUFFERED_PACKETS: usize = 64;
 
 const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
 const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
-const ANNOUNCE_EVERY_MS: u64 = 8_000;
-
-pub(crate) type SharedSnapshot = Arc<Mutex<Option<RuntimeSnapshot>>>;
+const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
+/// How long the interface waits before accepting the next connection after one drops.
+const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
 struct Engine {
-    snapshot: SharedSnapshot,
+    status: TokioInterfaceStatus,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -41,8 +46,8 @@ pub(crate) fn start() {
     let _ = engine();
 }
 
-pub(crate) fn shared_snapshot() -> SharedSnapshot {
-    engine().snapshot.clone()
+pub(crate) fn shared_status() -> TokioInterfaceStatus {
+    engine().status.clone()
 }
 
 pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
@@ -54,12 +59,14 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
 }
 
 fn spawn_engine() -> Engine {
-    let snapshot: SharedSnapshot = Arc::new(Mutex::new(None));
-    let slot = snapshot.clone();
-    let _ = std::thread::Builder::new()
+    let (ready_tx, ready_rx) = mpsc::channel::<TokioInterfaceStatus>();
+    let _ = thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(slot));
-    Engine { snapshot }
+        .spawn(move || run_engine(ready_tx));
+    let status = ready_rx
+        .recv()
+        .expect("the engine hands its status out before the reactor runs");
+    Engine { status }
 }
 
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -68,44 +75,97 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn run_engine(slot: SharedSnapshot) {
-    let identity_secret_key = load_identity_secret_key();
-    let host = LinuxSync::new();
+fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the engine thread builds its tokio runtime");
 
-    let bind = SocketAddr::from(([127, 0, 0, 1], TCP_LOOPBACK_PORT));
-    let mut interfaces = GrowableInterfaceSet::new();
-    let _ = interfaces.push(host.attach(
-        tcp_server_interface(TCP_INTERFACE_ID, bind),
-        MAX_BUFFERED_PACKETS,
-    ));
+    runtime.block_on(async move {
+        let mut engine = EngineState::<GrowableHeap>::new(load_identity_secret_key());
+        let node = engine.held_identity_hashes()[0];
+        let destination = engine
+            .register_single_destination(
+                &node,
+                SELF_ANNOUNCE_APP_NAME,
+                SELF_ANNOUNCE_ASPECTS,
+                ProofStrategy::ProveAll,
+                RatchetPolicy::Ratcheted,
+            )
+            .expect("registers the lxmf.delivery destination");
 
-    println!("HOPSPOT_IOS_ENGINE serving TCP on 127.0.0.1:{TCP_LOOPBACK_PORT} (loopback; bridge a host with iproxy)");
+        let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
+        let (funnel_tx, funnel_rx) = unbounded_channel::<InboundFrame>();
+        let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
+        let egress = Egress::new(std::vec![(TCP_INTERFACE_ID, outbound_tx)]);
 
-    block_on(Prns::run(
-        Recipe {
-            engine_storage: GrowableHeap,
-            transport_id: None,
-            starting_destinations: [StartingDestinationConfig::Single {
-                app_name: SELF_ANNOUNCE_APP_NAME,
-                aspects: SELF_ANNOUNCE_ASPECTS,
-                identity_secret_key,
-                proof_strategy: ProofStrategy::ProveAll,
-                ratchet_policy: RatchetPolicy::Ratcheted,
-                announce: Some(AnnounceConfig {
-                    app_data: SELF_ANNOUNCE_APP_DATA,
-                    schedule: ReannounceSchedule::every(ANNOUNCE_EVERY_MS),
-                }),
-            }],
+        // The interface owns the listener: each `open` accepts the next connection (the iOS host
+        // bridged in over `iproxy`), and the interface re-accepts when one drops — the reconnect
+        // loop the serial interface already runs, with `accept` standing in for `open`. RNS's TCP
+        // framing IS the serial HDLC framing, so the serial interface speaks it directly.
+        let listener = Arc::new(
+            TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], TCP_LOOPBACK_PORT)))
+                .await
+                .expect("binds the loopback TCP port"),
+        );
+        println!(
+            "HOPSPOT_IOS_ENGINE serving TCP on 127.0.0.1:{TCP_LOOPBACK_PORT} (loopback; bridge a host with iproxy)"
+        );
+
+        let interface = SerialInterface::new(
+            TCP_INTERFACE_ID,
+            move || {
+                let listener = listener.clone();
+                async move { listener.accept().await.map(|(stream, _)| stream) }
+            },
+            RECONNECT_INTERVAL,
+        );
+        let status = interface.status();
+        let interfaces = std::vec![interface.descriptor()];
+        let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, funnel_tx, outbound_rx);
+
+        let _ = ready_tx.send(status);
+
+        let app_data =
+            SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
+        tokio::spawn(announce_loop(command_tx, destination, app_data));
+        tokio::spawn(interface.run(seam));
+
+        run_reactor(
+            engine,
             interfaces,
-            host,
-        },
-        move |event: PrnsEvent<'_>| {
-            if let PrnsEvent::SnapshotUpdated(snapshot) = event {
-                if let Ok(mut guard) = slot.lock() {
-                    *guard = Some(snapshot.clone());
-                }
-            }
-        },
-        || -> Option<IssuedCommand> { None },
-    ));
+            TokioHost::new(),
+            funnel_rx,
+            command_rx,
+            egress,
+            |_journaled: Journaled<'_>| {},
+        )
+        .await
+    });
+}
+
+/// The face's announce cadence: the engine no longer self-announces, so the app fires a scheduled
+/// `lxmf.delivery` announce on its own timer.
+async fn announce_loop(
+    commands: UnboundedSender<IssuedCommand>,
+    destination: DestinationHash,
+    app_data: SelfAnnounceAppData,
+) {
+    let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
+    let mut next_id = 0u64;
+    loop {
+        interval.tick().await;
+        next_id += 1;
+        let command = IssuedCommand {
+            id: CommandId(next_id),
+            command: EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Data(app_data.clone()),
+            }),
+        };
+        if commands.send(command).is_err() {
+            return;
+        }
+    }
 }

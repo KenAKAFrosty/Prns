@@ -1,17 +1,17 @@
-//WIP NEEDS REVIEW
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshot_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, splash, statuses_to_cards, BatteryState, Card, InputEvent, UiAction, UiState,
 };
+use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 use crate::cards::MAX_CARDS;
-use crate::engine::{classify, shared_snapshot, SharedSnapshot};
+use crate::engine::{classify, shared_status};
 use crate::framebuffer::FrameBuffer;
 
 pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
-    snapshot: SharedSnapshot,
+    statuses: Vec<TokioInterfaceStatus>,
 }
 
 impl HopspotFace {
@@ -19,7 +19,7 @@ impl HopspotFace {
         Self {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
-            snapshot: shared_snapshot(),
+            statuses: std::vec![shared_status()],
         }
     }
 
@@ -35,11 +35,7 @@ impl HopspotFace {
     }
 
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        let guard = self.snapshot.lock().expect("snapshot mutex poisoned");
-        match &*guard {
-            Some(snapshot) => snapshot_to_cards(snapshot, classify),
-            None => HVec::new(),
-        }
+        statuses_to_cards(&self.statuses, classify)
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
@@ -70,14 +66,13 @@ mod tests {
     use super::*;
     use crate::cards::dummy_cards;
     use crate::framebuffer::{DARK_RGBA, RGBA_BYTES};
-    use std::sync::{Arc, Mutex};
 
     impl HopspotFace {
         fn detached() -> Self {
             Self {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
-                snapshot: Arc::new(Mutex::new(None)),
+                statuses: Vec::new(),
             }
         }
     }
@@ -95,7 +90,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_snapshot_renders_the_connecting_splash() {
+    fn an_empty_status_set_renders_the_connecting_splash() {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render(&mut out);
