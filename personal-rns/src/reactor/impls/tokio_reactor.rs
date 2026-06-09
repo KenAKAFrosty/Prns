@@ -8,12 +8,13 @@ use tokio::time::Instant;
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
-use crate::interfaces::{ConnectionState, InboundPacket, InterfaceConfig, InterfaceId};
+use crate::interfaces::{
+    ConnectionState, InboundPacket, InterfaceConfig, InterfaceId, InterfaceStatus,
+};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
 };
 use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
-use crate::reactor::interface_status::{decode_connection, encode_connection, InterfaceStatus};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -126,6 +127,31 @@ struct StatusCell {
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
+}
+
+/// Encode a [`ConnectionState`] into the `u8` the status cell stores in its atomic. Paired
+/// exhaustively with [`decode_connection`] so the two can never drift.
+fn encode_connection(connection: ConnectionState) -> u8 {
+    match connection {
+        ConnectionState::Initializing => 0,
+        ConnectionState::Connected => 1,
+        ConnectionState::Degraded => 2,
+        ConnectionState::Reconnecting => 3,
+        ConnectionState::Failed => 4,
+        ConnectionState::Disconnected => 5,
+    }
+}
+
+/// Decode the `u8` from the status cell's atomic back into a [`ConnectionState`].
+fn decode_connection(code: u8) -> ConnectionState {
+    match code {
+        1 => ConnectionState::Connected,
+        2 => ConnectionState::Degraded,
+        3 => ConnectionState::Reconnecting,
+        4 => ConnectionState::Failed,
+        5 => ConnectionState::Disconnected,
+        _ => ConnectionState::Initializing,
+    }
 }
 
 impl TokioInterfaceStatus {

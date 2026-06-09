@@ -99,8 +99,8 @@ where
 mod tests {
     use super::*;
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
+    use crate::interfaces::InterfaceStatus;
     use crate::reactor::interface_seam::OutboundFrame;
-    use crate::reactor::interface_status::InterfaceStatus;
     use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a

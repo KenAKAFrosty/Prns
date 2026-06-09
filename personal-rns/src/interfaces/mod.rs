@@ -11,6 +11,7 @@ mod config;
 mod framing;
 pub mod impls;
 mod packet;
+mod status;
 mod worker;
 
 pub use capabilities::{
@@ -25,6 +26,7 @@ pub use mode::InterfaceMode;
 
 pub use config::{AnnounceRateLimit, InterfaceConfig};
 pub use packet::{InboundPacket, OutboundPacket};
+pub use status::InterfaceStatus;
 pub use substrate::{
     ControlCommand, ControlEndpoint, ControlReport, InboundSink, InterfaceWorkerContext,
     OutboundDrain, Substrate,
