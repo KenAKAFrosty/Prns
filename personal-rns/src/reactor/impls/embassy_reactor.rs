@@ -3,7 +3,7 @@
 //! sink-methods through the same [`fire_due_lane`]/[`wait_for_due_lane`] the tokio driver
 //! uses — only the channel and select primitives differ (`embassy_sync` + `embassy_futures`
 //! for `tokio::sync` + `tokio::select!`). The interface boundary is identical too: the same
-//! [`InterfaceSeam`] contract, an [`EmbassySeam`] supplying the no_std channels behind it.
+//! [`InterfaceSeam`] contract, an [`EmbassyInterfaceSeam`] supplying the no_std channels behind it.
 //! That the dispatch *and* the seam are shared is the point: the sync core's shape holds
 //! across std and no_std.
 
@@ -71,13 +71,15 @@ where
 /// inbound stream (a bounded channel, so `next_inbound` backpressures the wire when the reactor
 /// is behind), and `next_outbound` parks on this interface's own outbound channel until the
 /// reactor enqueues a frame for it.
-pub struct EmbassySeam<'a, M: RawMutex, const INBOUND: usize, const OUT: usize> {
+pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const INBOUND: usize, const OUT: usize> {
     id: InterfaceId,
     inbound: Sender<'a, M, InboundFrame, INBOUND>,
     outbound: Receiver<'a, M, OutboundFrame, OUT>,
 }
 
-impl<'a, M: RawMutex, const INBOUND: usize, const OUT: usize> EmbassySeam<'a, M, INBOUND, OUT> {
+impl<'a, M: RawMutex, const INBOUND: usize, const OUT: usize>
+    EmbassyInterfaceSeam<'a, M, INBOUND, OUT>
+{
     #[must_use]
     pub fn new(
         id: InterfaceId,
@@ -93,7 +95,7 @@ impl<'a, M: RawMutex, const INBOUND: usize, const OUT: usize> EmbassySeam<'a, M,
 }
 
 impl<M: RawMutex, const INBOUND: usize, const OUT: usize> InterfaceSeam
-    for EmbassySeam<'_, M, INBOUND, OUT>
+    for EmbassyInterfaceSeam<'_, M, INBOUND, OUT>
 {
     async fn next_inbound(&mut self, frame: &[u8]) {
         self.inbound.send(InboundFrame::new(self.id, frame)).await;
@@ -319,7 +321,8 @@ mod tests {
 
             // The source interface: the test plays the announce onto its wire; its seam
             // funnels the frame into the reactor.
-            let source_seam = EmbassySeam::new(source, funnel.sender(), source_out.receiver());
+            let source_seam =
+                EmbassyInterfaceSeam::new(source, funnel.sender(), source_out.receiver());
             let source_iface = EmbassyLoopbackInterface {
                 descriptor: descriptor(source),
                 wire_in: source_wire_in.receiver(),
@@ -328,7 +331,7 @@ mod tests {
             let source_run = source_iface.run(source_seam);
 
             // The peer interface: the rebroadcast must leave through *its* wire.
-            let peer_seam = EmbassySeam::new(peer, funnel.sender(), peer_out.receiver());
+            let peer_seam = EmbassyInterfaceSeam::new(peer, funnel.sender(), peer_out.receiver());
             let peer_iface = EmbassyLoopbackInterface {
                 descriptor: descriptor(peer),
                 wire_in: peer_wire_in.receiver(),

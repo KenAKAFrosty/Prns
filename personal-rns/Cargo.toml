@@ -92,7 +92,7 @@ rtrb = { version = "0.3", optional = true }
 # cross it, `time` for the host's deadline waits, `macros` for the reactor's
 # `select!` over its three inputs. Workers bring their own I/O features; the seam
 # itself needs no runtime flavor.
-tokio = { version = "1", optional = true, default-features = false, features = ["macros", "sync", "time"] }
+tokio = { version = "1", optional = true, default-features = false, features = ["macros", "sync", "time", "io-util"] }
 
 # The USB-auto host interface's portable USB-serial layer (under `usb-auto`):
 # enumerate, open, and raw byte I/O on Linux/macOS/Windows. Default features keep
@@ -147,7 +147,7 @@ proptest = "1"
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 # Executor + macros for the tokio seam's cross-task tests (`--features tokio-host`).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
 
 [lints]
 workspace = true

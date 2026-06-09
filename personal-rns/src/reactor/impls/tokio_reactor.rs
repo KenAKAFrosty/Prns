@@ -51,13 +51,13 @@ impl Host for TokioHost {
 /// The tokio side of one interface's seam: `next_inbound` frames funnel into the reactor's one
 /// inbound stream (tagged with this interface's id), and `next_outbound` parks on this
 /// interface's own outbound queue until the reactor enqueues a frame for it.
-pub struct TokioSeam {
+pub struct TokioInterfaceSeam {
     id: InterfaceId,
     inbound: UnboundedSender<InboundFrame>,
     outbound: UnboundedReceiver<OutboundFrame>,
 }
 
-impl TokioSeam {
+impl TokioInterfaceSeam {
     #[must_use]
     pub fn new(
         id: InterfaceId,
@@ -72,7 +72,7 @@ impl TokioSeam {
     }
 }
 
-impl InterfaceSeam for TokioSeam {
+impl InterfaceSeam for TokioInterfaceSeam {
     async fn next_inbound(&mut self, frame: &[u8]) {
         let _ = self.inbound.send(InboundFrame::new(self.id, frame));
     }
@@ -256,7 +256,7 @@ mod tests {
             wire_in: source_wire_in_rx,
             wire_out: source_wire_out_tx,
         };
-        let source_seam = TokioSeam::new(source, funnel_tx.clone(), source_out_rx);
+        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
 
         // The peer interface: the rebroadcast must leave through *its* wire.
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -268,7 +268,7 @@ mod tests {
             wire_in: peer_wire_in_rx,
             wire_out: peer_wire_out_tx,
         };
-        let peer_seam = TokioSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
 
         drop(funnel_tx);
 
