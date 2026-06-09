@@ -99,9 +99,8 @@ pub async fn run<S, H>(
                 let now = host.now();
                 engine.settle_timed_out_send_singles(now, &mut on_reaction);
                 engine.settle_timed_out_path_requests(now, &mut on_reaction);
-                engine.drain_scheduled(now, jitter, &view, &mut |directive| {
-                    on_reaction(EngineReaction::Directive(directive));
-                });
+                engine.recover_held_announces(jitter, &view, &mut on_reaction);
+                engine.fire_due_announce_rebroadcasts(now, &view, &mut on_reaction);
                 engine.fire_due_self_announces(
                     now,
                     &view,

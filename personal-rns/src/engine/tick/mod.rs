@@ -1,5 +1,7 @@
 use crate::engine::egress::firable_on;
-use crate::engine::{Directive, EgressDirective, EngineState, InstantMillis};
+use crate::engine::{
+    Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, Journaled,
+};
 use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
@@ -43,35 +45,7 @@ impl<'a, S: EngineStorage> TickOutput<'a, S> {
         &'v self,
         view: &'v [InterfaceDescriptor],
     ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
-        let state = &*self.state;
-        let now = self.now;
-        state
-            .pending_rebroadcasts
-            .as_slice()
-            .iter()
-            .filter(move |scheduled| scheduled.due_at.0 <= now.0)
-            .filter_map(move |scheduled| {
-                let via = state.transport_id?;
-                let retained = state
-                    .routing_table
-                    .retained_announce_for(&scheduled.destination)?;
-                Some((
-                    retained.announce,
-                    retained.hops,
-                    via,
-                    scheduled.source_interface,
-                ))
-            })
-            .flat_map(move |(announce, emit_hops, via, source)| {
-                view.iter()
-                    .filter(move |descriptor| firable_on(descriptor, source))
-                    .map(move |descriptor| EgressDirective::ReemitAnnounce {
-                        announce: announce.clone(),
-                        emit_hops,
-                        via,
-                        target: descriptor.id,
-                    })
-            })
+        self.state.due_rebroadcast_directives(self.now, view)
     }
 
     pub fn commit(mut self) {
@@ -97,10 +71,28 @@ impl<S: EngineStorage> EngineState<S> {
         interfaces: &[InterfaceDescriptor],
     ) -> TickOutput<'_, S> {
         self.tick_count = self.tick_count.saturating_add(1);
+        let recovered_from_held_count =
+            self.recover_held_announces(jitter, interfaces, &mut |_| {});
+        TickOutput {
+            state: self,
+            now,
+            recovered_from_held_count,
+        }
+    }
 
-        let mut recovered_from_held_count = 0;
+    /// Retry every held announce against the now-unblocked routing arena. Each that lands
+    /// is journaled `AnnounceHeard` — a hold defers the hearing, it never drops it — and,
+    /// if we transport and an interface can carry it, scheduled for rebroadcast. Returns
+    /// how many recovered, which [`tick`](Self::tick) reports as its held-recovery count.
+    pub fn recover_held_announces(
+        &mut self,
+        jitter: JitterSeed,
+        interfaces: &[InterfaceDescriptor],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> usize {
+        use crate::routing::announce::held_cache::HoldReason;
+        let mut recovered = 0;
         while let Some(held) = self.held_announces_cache.take_next() {
-            use crate::routing::announce::held_cache::HoldReason;
             match held.reason() {
                 HoldReason::RoutingArenaPressure => {
                     let announce = held.announce();
@@ -132,7 +124,12 @@ impl<S: EngineStorage> EngineState<S> {
                             outcome,
                             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
                         ) {
-                            recovered_from_held_count += 1;
+                            recovered += 1;
+                            sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
+                                destination: announce.destination,
+                                hops: received_hops,
+                                source_interface,
+                            }));
                             if self.transport_id.is_some()
                                 && interfaces
                                     .iter()
@@ -154,37 +151,67 @@ impl<S: EngineStorage> EngineState<S> {
                 }
             }
         }
-
-        TickOutput {
-            state: self,
-            now,
-            recovered_from_held_count,
-        }
+        recovered
     }
 
-    /// Advance scheduled work and stream it as [`Directive`]s: recover held announces,
-    /// then fan every due rebroadcast to its engine-chosen targets, serializing each onto
-    /// a scratch buffer lent to `sink` for the call. This is the sink-shaped face of
-    /// [`tick`](Self::tick) — the legacy runtime still drains the same work through
-    /// [`TickOutput`]; the reactor takes it here.
-    pub fn drain_scheduled(
+    /// One [`EgressDirective`] per (rebroadcast due at `now` × interface the engine elects
+    /// to fire it on). The fan-out decision is the engine's alone ([`firable_on`]); the
+    /// caller takes each named target to its handle. Shared by [`tick`](Self::tick)'s
+    /// [`TickOutput`] and the reactor's
+    /// [`fire_due_announce_rebroadcasts`](Self::fire_due_announce_rebroadcasts).
+    fn due_rebroadcast_directives<'v>(
+        &'v self,
+        now: InstantMillis,
+        view: &'v [InterfaceDescriptor],
+    ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
+        self.pending_rebroadcasts
+            .as_slice()
+            .iter()
+            .filter(move |scheduled| scheduled.due_at.0 <= now.0)
+            .filter_map(move |scheduled| {
+                let via = self.transport_id?;
+                let retained = self
+                    .routing_table
+                    .retained_announce_for(&scheduled.destination)?;
+                Some((
+                    retained.announce,
+                    retained.hops,
+                    via,
+                    scheduled.source_interface,
+                ))
+            })
+            .flat_map(move |(announce, emit_hops, via, source)| {
+                view.iter()
+                    .filter(move |descriptor| firable_on(descriptor, source))
+                    .map(move |descriptor| EgressDirective::ReemitAnnounce {
+                        announce: announce.clone(),
+                        emit_hops,
+                        via,
+                        target: descriptor.id,
+                    })
+            })
+    }
+
+    /// Fire every announce rebroadcast due at `now`: serialize each onto a scratch buffer
+    /// lent to `sink` as a [`Directive::Send`], then clear the fired entries. The
+    /// sink-shaped face of a rebroadcast tick — the reactor's timer edge drains it here,
+    /// the legacy runtime drains the same work through [`TickOutput`].
+    pub fn fire_due_announce_rebroadcasts(
         &mut self,
         now: InstantMillis,
-        jitter: JitterSeed,
         view: &[InterfaceDescriptor],
-        sink: &mut impl FnMut(Directive<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
-        let tick_output = self.tick(now, jitter, view);
-        for egress in tick_output.egress_directives(view) {
+        for egress in self.due_rebroadcast_directives(now, view) {
             let mut buf = [0u8; MTU];
             if let Ok(written) = egress.to_wire(&mut buf) {
-                sink(Directive::Send {
+                sink(EngineReaction::Directive(Directive::Send {
                     target: egress.target(),
                     bytes: &buf[..written],
-                });
+                }));
             }
         }
-        tick_output.commit();
+        self.pending_rebroadcasts.drain_due(now);
     }
 }
 
@@ -534,5 +561,95 @@ mod tests {
         assert_eq!(tick_out.egress_directive_count, 0);
         assert_eq!(state.pending_announce_rebroadcast_count(), 0);
         assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn fire_due_announce_rebroadcasts_emits_the_directive_then_clears_the_entry() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let target = InterfaceId::new([0xFE; 16]);
+        let view = [routable_descriptor(target)];
+
+        let arrival = InstantMillis(1_000);
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+
+        let mut sent: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)> = std::vec::Vec::new();
+        state.fire_due_announce_rebroadcasts(
+            InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            &view,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
+                    sent.push((target, bytes.to_vec()));
+                }
+            },
+        );
+
+        assert_eq!(
+            state.pending_announce_rebroadcast_count(),
+            0,
+            "firing clears the due entry",
+        );
+        assert_eq!(
+            sent.len(),
+            1,
+            "one rebroadcast directive for the lone interface"
+        );
+        assert_eq!(
+            sent[0].0, target,
+            "the rebroadcast names the firable interface"
+        );
+        let (header, _) = WirePacketHeader::parse(&sent[0].1).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        let original = WirePacketHeader::parse(&hx(RAW_ANNOUNCE)).unwrap().0;
+        assert_eq!(
+            header.hops,
+            original.hops + 1,
+            "the rebroadcast bumps the hop count",
+        );
+    }
+
+    #[test]
+    fn recover_held_announces_is_silent_when_nothing_recovers() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state =
+            EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(state.held_announce_count(), 1);
+
+        let mut journaled = 0usize;
+        let recovered =
+            state.recover_held_announces(TEST_ENTROPY, &transporting_view(), &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::AnnounceHeard { .. }) = reaction {
+                    journaled += 1;
+                }
+            });
+
+        assert_eq!(recovered, 0, "the arena is still full, nothing recovers");
+        assert_eq!(
+            journaled, 0,
+            "a hold that fails to recover journals nothing"
+        );
+        assert_eq!(
+            state.held_announce_count(),
+            0,
+            "the retry still drains the held cache",
+        );
     }
 }
