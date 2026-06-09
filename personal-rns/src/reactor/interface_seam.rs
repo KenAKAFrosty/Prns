@@ -6,7 +6,7 @@
 //! `tokio` and `embassy` each supply the concrete channels behind it, so one
 //! interface body can be driven under either executor.
 
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::wire::MTU;
 
 pub struct InboundFrame {
@@ -60,6 +60,6 @@ pub trait InterfaceSeam {
 
 #[allow(async_fn_in_trait)]
 pub trait Interface {
-    fn descriptor(&self) -> InterfaceDescriptor;
+    fn descriptor(&self) -> InterfaceConfig;
     async fn run<S: InterfaceSeam>(self, seam: S);
 }

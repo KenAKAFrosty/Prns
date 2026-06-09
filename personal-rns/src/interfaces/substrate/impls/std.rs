@@ -254,6 +254,7 @@ impl<const MTU: usize> StdInterfaceSeam<MTU> {
         let drive = interface.start(self.worker_context);
         StartedInterface {
             descriptor,
+            connection: crate::interfaces::ConnectionState::Initializing,
             handle: self.runtime_handle,
             drive,
         }

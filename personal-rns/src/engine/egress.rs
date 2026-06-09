@@ -1,6 +1,6 @@
 use crate::crypto::Ed25519Signature;
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
-use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::wire::{
@@ -185,22 +185,18 @@ pub fn write_path_request_wire_packet(
     Ok(total_len)
 }
 
-/// Whether a transported rebroadcast that arrived on `source` fires on `descriptor`
-/// — the engine's sole say on fan-out, decided off the descriptor view it is handed:
-/// the source interface only when it repeats, every other interface when it
-/// transports, and only while the link is up. The runtime never re-decides this; it
-/// routes each named target to its handle and sends.
-pub(crate) fn firable_on(descriptor: &InterfaceDescriptor, source: InterfaceId) -> bool {
-    let connected = matches!(
-        descriptor.state,
-        ConnectionState::Connected | ConnectionState::Degraded
-    );
-    let capable = if descriptor.id == source {
-        descriptor.capabilities.allows_same_interface_repeat()
+/// Whether a transported rebroadcast that arrived on `source` fires on `config` — the
+/// engine's sole say on fan-out, decided off the static config view it is handed: the
+/// source interface only when it repeats, every other interface when it transports.
+/// Capability alone decides membership — liveness is never gated here, so a momentary blip
+/// never evicts an interface (the WiFi-blip rule). The runtime routes each named target to
+/// its handle and sends; a dead lane's queue just buffers until it is back.
+pub(crate) fn firable_on(config: &InterfaceConfig, source: InterfaceId) -> bool {
+    if config.id == source {
+        config.capabilities.allows_same_interface_repeat()
     } else {
-        descriptor.capabilities.allows_transport()
-    };
-    connected && capable
+        config.capabilities.allows_transport()
+    }
 }
 
 #[allow(clippy::large_enum_variant)]

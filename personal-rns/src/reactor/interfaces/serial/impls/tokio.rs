@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::interfaces::serial::core;
@@ -45,7 +45,7 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    fn descriptor(&self) -> InterfaceDescriptor {
+    fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id)
     }
 

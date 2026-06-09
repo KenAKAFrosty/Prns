@@ -1,7 +1,7 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::{
-    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MediumKind, TransportCapability,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceId,
+    InterfaceMode, MediumKind, TransportCapability,
 };
 use crate::wire::MTU;
 
@@ -218,8 +218,8 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
     }
 }
 
-pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
+pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
+    InterfaceConfig {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -227,13 +227,12 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         },
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
-        state: ConnectionState::Degraded,
         announce_rate_limit: None,
     }
 }
 
-pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
+pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
+    InterfaceConfig {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -241,7 +240,6 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         },
         mode: InterfaceMode::PointToPoint,
         medium: MediumKind::DirectPeer,
-        state: ConnectionState::Connected,
         announce_rate_limit: None,
     }
 }

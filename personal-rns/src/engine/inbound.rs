@@ -4,7 +4,7 @@ use crate::engine::{
     IngestPacketOutcome, InstantMillis, Journaled, LaneWake, PathFound, PathResponseWriteOutcome,
     ProofIngest, Settlement, WakeSchedules,
 };
-use crate::interfaces::{ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::EngineStorage;
@@ -24,7 +24,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         packet: InboundPacket<'_>,
         jitter: JitterSeed,
-        view: &[InterfaceDescriptor],
+        view: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -138,16 +138,11 @@ enum Egress {
     Transport,
 }
 
-fn directed_eligible(view: &[InterfaceDescriptor], target: InterfaceId, egress: Egress) -> bool {
+fn directed_eligible(view: &[InterfaceConfig], target: InterfaceId, egress: Egress) -> bool {
     view.iter()
-        .find(|descriptor| descriptor.id == target)
-        .is_some_and(|descriptor| {
-            matches!(
-                descriptor.state,
-                ConnectionState::Connected | ConnectionState::Degraded
-            ) && match egress {
-                Egress::Transmit => descriptor.capabilities.allows_transmit(),
-                Egress::Transport => descriptor.capabilities.allows_transport(),
-            }
+        .find(|config| config.id == target)
+        .is_some_and(|config| match egress {
+            Egress::Transmit => config.capabilities.allows_transmit(),
+            Egress::Transport => config.capabilities.allows_transport(),
         })
 }

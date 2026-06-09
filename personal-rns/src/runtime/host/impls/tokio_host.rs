@@ -283,7 +283,7 @@ mod tests {
         use crate::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
         use crate::interfaces::{
             ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
-            IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+            IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceHandle,
             InterfaceMode, MediumKind, SendError, StartedInterface, TransportCapability,
         };
         use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -323,8 +323,8 @@ mod tests {
             }
         }
 
-        fn linked_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-            InterfaceDescriptor {
+        fn linked_descriptor(id: InterfaceId) -> InterfaceConfig {
+            InterfaceConfig {
                 id,
                 capabilities: InterfaceCapabilities {
                     ingress: IngressCapability::Enabled,
@@ -332,7 +332,6 @@ mod tests {
                 },
                 mode: InterfaceMode::Full,
                 medium: MediumKind::Loopback,
-                state: ConnectionState::Connected,
                 announce_rate_limit: None,
             }
         }
@@ -369,6 +368,7 @@ mod tests {
         let mut sender_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
         let _ = sender_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xA1; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xA1; 16]),
                 clock_base: Instant::now(),
@@ -381,6 +381,7 @@ mod tests {
         let mut prover_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
         let _ = prover_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xB2; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xB2; 16]),
                 clock_base: Instant::now(),
@@ -459,7 +460,7 @@ mod tests {
         use crate::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
         use crate::interfaces::{
             ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
-            IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+            IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceHandle,
             InterfaceMode, MediumKind, SendError, StartedInterface, TransportCapability,
         };
         use crate::routing::storage::FixedInline;
@@ -504,8 +505,8 @@ mod tests {
             }
         }
 
-        fn linked_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-            InterfaceDescriptor {
+        fn linked_descriptor(id: InterfaceId) -> InterfaceConfig {
+            InterfaceConfig {
                 id,
                 capabilities: InterfaceCapabilities {
                     ingress: IngressCapability::Enabled,
@@ -513,7 +514,6 @@ mod tests {
                 },
                 mode: InterfaceMode::Full,
                 medium: MediumKind::Loopback,
-                state: ConnectionState::Connected,
                 announce_rate_limit: None,
             }
         }
@@ -559,6 +559,7 @@ mod tests {
         let mut sender_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
         let _ = sender_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xA1; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xA1; 16]),
                 clock_base: Instant::now(),
@@ -572,6 +573,7 @@ mod tests {
         let mut relay_set = FixedInterfaceSet::<LinkedInterface, 2>::new();
         let _ = relay_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xB2; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xB2; 16]),
                 clock_base: Instant::now(),
@@ -583,6 +585,7 @@ mod tests {
         });
         let _ = relay_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xC3; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xC3; 16]),
                 clock_base: Instant::now(),
@@ -596,6 +599,7 @@ mod tests {
         let mut prover_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
         let _ = prover_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xD4; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xD4; 16]),
                 clock_base: Instant::now(),
@@ -675,7 +679,7 @@ mod tests {
         use crate::interfaces::storage::{FixedInterfaceSet, InterfaceSet};
         use crate::interfaces::{
             ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
-            IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
+            IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceHandle,
             InterfaceMode, MediumKind, SendError, StartedInterface, TransportCapability,
         };
         use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -715,8 +719,8 @@ mod tests {
             }
         }
 
-        fn linked_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-            InterfaceDescriptor {
+        fn linked_descriptor(id: InterfaceId) -> InterfaceConfig {
+            InterfaceConfig {
                 id,
                 capabilities: InterfaceCapabilities {
                     ingress: IngressCapability::Enabled,
@@ -724,7 +728,6 @@ mod tests {
                 },
                 mode: InterfaceMode::Full,
                 medium: MediumKind::Loopback,
-                state: ConnectionState::Connected,
                 announce_rate_limit: None,
             }
         }
@@ -754,6 +757,7 @@ mod tests {
         let mut requester_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
         let _ = requester_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xA1; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xA1; 16]),
                 clock_base: Instant::now(),
@@ -766,6 +770,7 @@ mod tests {
         let mut target_set = FixedInterfaceSet::<LinkedInterface, 1>::new();
         let _ = target_set.push(StartedInterface {
             descriptor: linked_descriptor(InterfaceId::new([0xB2; 16])),
+            connection: ConnectionState::Connected,
             handle: ChannelHandle {
                 id: InterfaceId::new([0xB2; 16]),
                 clock_base: Instant::now(),

@@ -315,6 +315,7 @@ impl<const MTU: usize> TokioInterfaceSeam<MTU> {
         let drive = interface.start(self.worker_context);
         StartedInterface {
             descriptor,
+            connection: crate::interfaces::ConnectionState::Initializing,
             handle: self.runtime_handle,
             drive,
         }

@@ -371,6 +371,7 @@ impl<const MTU: usize, const MAX_BUFFERED_PACKETS: usize>
         let drive = interface.start(self.worker_context);
         StartedInterface {
             descriptor,
+            connection: crate::interfaces::ConnectionState::Initializing,
             handle: self.runtime_handle,
             drive,
         }

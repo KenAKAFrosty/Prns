@@ -238,7 +238,7 @@ impl Settleable for RequestPath {
 
 use crate::engine::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;
 use crate::engine::EngineState;
-use crate::interfaces::InterfaceDescriptor;
+use crate::interfaces::InterfaceConfig;
 use crate::routing::storage::EngineStorage;
 use crate::wire::DestinationType;
 
@@ -247,7 +247,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn ingest_command(
         &mut self,
         issued: IssuedCommand,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
     ) -> CommandOutcome {
         self.ingested_command_count = self.ingested_command_count.saturating_add(1);
         let IssuedCommand { id, command } = issued;
@@ -264,7 +264,7 @@ impl<S: EngineStorage> EngineState<S> {
         &self,
         id: CommandId,
         announce_now: AnnounceNow,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
     ) -> CommandOutcome {
         if self
             .upstream_app_destinations

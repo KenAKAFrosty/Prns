@@ -8,7 +8,7 @@ use tokio::time::Instant;
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
-use crate::interfaces::{ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{ConnectionState, InboundPacket, InterfaceConfig, InterfaceId};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
 };
@@ -176,7 +176,7 @@ impl InterfaceStatus for TokioInterfaceStatus {
 
 pub async fn run<S, H, A>(
     mut engine: EngineState<S>,
-    interfaces: std::vec::Vec<InterfaceDescriptor>,
+    interfaces: std::vec::Vec<InterfaceConfig>,
     mut host: H,
     mut inbound: UnboundedReceiver<InboundFrame>,
     mut commands: UnboundedReceiver<IssuedCommand>,
@@ -244,15 +244,15 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
     use crate::interfaces::{
-        ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
-        MediumKind, TransportCapability,
+        EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, MediumKind,
+        TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
     use tokio::sync::mpsc;
 
-    fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-        InterfaceDescriptor {
+    fn descriptor(id: InterfaceId) -> InterfaceConfig {
+        InterfaceConfig {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
@@ -260,7 +260,6 @@ mod tests {
             },
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,
-            state: ConnectionState::Connected,
             announce_rate_limit: None,
         }
     }
@@ -270,13 +269,13 @@ mod tests {
     /// off `wire_out` (the medium sending one). It exercises the [`InterfaceSeam`] in
     /// isolation — no real I/O, just the boundary.
     struct LoopbackInterface {
-        descriptor: InterfaceDescriptor,
+        descriptor: InterfaceConfig,
         wire_in: UnboundedReceiver<std::vec::Vec<u8>>,
         wire_out: UnboundedSender<std::vec::Vec<u8>>,
     }
 
     impl Interface for LoopbackInterface {
-        fn descriptor(&self) -> InterfaceDescriptor {
+        fn descriptor(&self) -> InterfaceConfig {
             self.descriptor
         }
 

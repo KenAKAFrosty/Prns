@@ -4,7 +4,7 @@ use crate::engine::{
     PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendSingleEntropy,
     SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
-use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
@@ -22,7 +22,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn ingest_command_into<F>(
         &mut self,
         issued: IssuedCommand,
-        view: &[InterfaceDescriptor],
+        view: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -165,22 +165,16 @@ impl<S: EngineStorage> EngineState<S> {
 /// runtime's `fan_to_handles` applied with `FanoutClass::SelfOriginated`; the bytes are
 /// lent to each `Send` in turn, never copied into a staging buffer.
 fn fan_self_originated(
-    view: &[InterfaceDescriptor],
+    view: &[InterfaceConfig],
     only: Option<InterfaceId>,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
-    for descriptor in view {
-        let targeted = only.is_none_or(|id| descriptor.id == id);
-        if targeted
-            && matches!(
-                descriptor.state,
-                ConnectionState::Connected | ConnectionState::Degraded
-            )
-            && descriptor.capabilities.allows_transmit()
-        {
+    for config in view {
+        let targeted = only.is_none_or(|id| config.id == id);
+        if targeted && config.capabilities.allows_transmit() {
             sink(EngineReaction::Directive(Directive::Send {
-                target: descriptor.id,
+                target: config.id,
                 bytes,
             }));
         }

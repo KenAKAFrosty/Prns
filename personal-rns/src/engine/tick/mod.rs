@@ -3,7 +3,7 @@ use crate::engine::{
     Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, Journaled, LaneWake,
     WakeSchedules,
 };
-use crate::interfaces::InterfaceDescriptor;
+use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -44,7 +44,7 @@ impl<'a, S: EngineStorage> TickOutput<'a, S> {
     /// (`firable_on`); the runtime takes each named target to its handle and sends.
     pub fn egress_directives<'v>(
         &'v self,
-        view: &'v [InterfaceDescriptor],
+        view: &'v [InterfaceConfig],
     ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
         self.state.due_rebroadcast_directives(self.now, view)
     }
@@ -69,7 +69,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         now: InstantMillis,
         jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
     ) -> TickOutput<'_, S> {
         self.tick_count = self.tick_count.saturating_add(1);
         let mut recovered_from_held_count = 0;
@@ -96,7 +96,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn recover_held_announces(
         &mut self,
         jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         use crate::routing::announce::held_cache::HoldReason;
@@ -173,7 +173,7 @@ impl<S: EngineStorage> EngineState<S> {
     fn due_rebroadcast_directives<'v>(
         &'v self,
         now: InstantMillis,
-        view: &'v [InterfaceDescriptor],
+        view: &'v [InterfaceConfig],
     ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
         self.pending_rebroadcasts
             .as_slice()
@@ -211,7 +211,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn fire_due_announce_rebroadcasts(
         &mut self,
         now: InstantMillis,
-        view: &[InterfaceDescriptor],
+        view: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         for egress in self.due_rebroadcast_directives(now, view) {
@@ -410,7 +410,7 @@ mod tests {
 
     fn rebroadcast_fan_for(
         state: &mut EngineState<Cap>,
-        view: &[InterfaceDescriptor],
+        view: &[InterfaceConfig],
     ) -> std::vec::Vec<InterfaceId> {
         let mut raw = hx(RAW_ANNOUNCE);
         let arrival = InstantMillis(1_000);

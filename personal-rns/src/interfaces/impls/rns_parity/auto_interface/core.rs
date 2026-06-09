@@ -19,8 +19,8 @@ use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::sha256;
 use crate::interfaces::{
-    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceId, InterfaceMode, MacAddress, MediumKind, TransportCapability,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceId,
+    InterfaceMode, MacAddress, MediumKind, TransportCapability,
 };
 
 pub const GROUP_ID: &[u8] = b"reticulum";
@@ -47,8 +47,8 @@ pub const DEFAULT_DATA_PORT: u16 = 42671;
 pub const HARDWARE_MTU: usize = 1196;
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 
-pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
+pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
+    InterfaceConfig {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -56,7 +56,6 @@ pub fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::Multicast,
-        state: ConnectionState::Connected,
         announce_rate_limit: None,
     }
 }

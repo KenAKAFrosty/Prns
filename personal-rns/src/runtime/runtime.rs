@@ -16,8 +16,8 @@ use crate::engine::{
 };
 use crate::interfaces::storage::InterfaceSet;
 use crate::interfaces::{
-    ConnectionState, InterfaceDescriptor, InterfaceId, NextScheduledInterfaceWake,
-    RegisteredInterface, SendError, MAX_REGISTERED_INTERFACES,
+    InterfaceConfig, InterfaceId, NextScheduledInterfaceWake, RegisteredInterface, SendError,
+    MAX_REGISTERED_INTERFACES,
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
@@ -201,7 +201,7 @@ where
         next_poll = next_poll.sooner(started.poll(now));
     }
 
-    let mut interface_view: HeaplessVec<InterfaceDescriptor, MAX_REGISTERED_INTERFACES> =
+    let mut interface_view: HeaplessVec<InterfaceConfig, MAX_REGISTERED_INTERFACES> =
         HeaplessVec::new();
     for started in interfaces.iter() {
         let _ = interface_view.push(*started.descriptor());
@@ -249,10 +249,7 @@ where
     for index in 0..interfaces.len() {
         let descriptor = interfaces.as_mut_slice()[index].descriptor();
         let id = descriptor.id;
-        let answers_proofs = matches!(
-            descriptor.state,
-            ConnectionState::Connected | ConnectionState::Degraded
-        ) && descriptor.capabilities.allows_transmit();
+        let answers_proofs = descriptor.capabilities.allows_transmit();
 
         // One packet per step: between steps every interface is free again, so a
         // delivery's owed proof is answered on the lane it arrived through (and
@@ -534,7 +531,7 @@ struct UnspentCycleEntropy {
 fn run_command<I, S, OnEvent>(
     engine: &mut EngineState<S>,
     interfaces: &mut I,
-    interface_view: &[InterfaceDescriptor],
+    interface_view: &[InterfaceConfig],
     traffic: &mut TrafficLedger,
     issued: IssuedCommand,
     now: InstantMillis,
@@ -812,10 +809,6 @@ fn fan_to_handles<I>(
         let descriptor = started.descriptor();
         let id = descriptor.id;
         let eligible = fire_on.includes(id)
-            && matches!(
-                descriptor.state,
-                ConnectionState::Connected | ConnectionState::Degraded
-            )
             && match fanout_class {
                 FanoutClass::SelfOriginated => descriptor.capabilities.allows_transmit(),
                 FanoutClass::Transported => descriptor.capabilities.allows_transport(),
@@ -871,7 +864,7 @@ where
         let (reticulum_rx_byte_count, reticulum_tx_byte_count) = traffic.totals_for(id);
         let _ = views.push(InterfaceView {
             id,
-            connection_state: descriptor.state,
+            connection_state: started.connection(),
             reticulum_rx_byte_count,
             reticulum_tx_byte_count,
             tracked_destinations: engine.route_count_via(id) as u32,
@@ -908,8 +901,8 @@ mod tests {
     use crate::interfaces::storage::FixedInterfaceSet;
     use crate::interfaces::{
         ConnectionState, ControlReport, DriverMode, EgressCapability, InboundPacket,
-        IngressCapability, InterfaceCapabilities, InterfaceDescriptor, InterfaceHandle,
-        InterfaceMode, MediumKind, StartedInterface, TransportCapability,
+        IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceHandle, InterfaceMode,
+        MediumKind, StartedInterface, TransportCapability,
     };
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::delivery::Delivery;
@@ -976,7 +969,7 @@ mod tests {
         InterfaceId::new([byte; 16])
     }
 
-    fn descriptor_with_state(id: InterfaceId, state: ConnectionState) -> InterfaceDescriptor {
+    fn descriptor_with_state(id: InterfaceId, state: ConnectionState) -> InterfaceConfig {
         descriptor_with_capabilities(
             id,
             state,
@@ -986,10 +979,10 @@ mod tests {
 
     fn descriptor_with_capabilities(
         id: InterfaceId,
-        state: ConnectionState,
+        _state: ConnectionState,
         egress: EgressCapability,
-    ) -> InterfaceDescriptor {
-        InterfaceDescriptor {
+    ) -> InterfaceConfig {
+        InterfaceConfig {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
@@ -997,7 +990,6 @@ mod tests {
             },
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,
-            state,
             announce_rate_limit: None,
         }
     }
@@ -1031,12 +1023,13 @@ mod tests {
     }
 
     fn started_with_descriptor_and_reports(
-        descriptor: InterfaceDescriptor,
+        descriptor: InterfaceConfig,
         inbound: std::vec::Vec<(InstantMillis, std::vec::Vec<u8>)>,
         reports: impl IntoIterator<Item = ControlReport>,
     ) -> StartedInterface<TestHandle, core::convert::Infallible> {
         StartedInterface {
             descriptor,
+            connection: ConnectionState::Connected,
             handle: TestHandle {
                 id: descriptor.id,
                 inbound,
@@ -2563,23 +2556,15 @@ mod tests {
     }
 
     #[test]
-    fn fanout_skips_interfaces_that_are_not_connected() {
+    fn fanout_reaches_capable_interfaces_regardless_of_connection() {
         let connected = iface(0xE5);
-        let failed = iface(0xF6);
+        let down = iface(0xF6);
         let mut interfaces = interface_set([
-            started_with_state_and_reports(
-                connected,
-                ConnectionState::Connected,
-                std::vec::Vec::new(),
-                [],
-            ),
-            started_with_state_and_reports(
-                failed,
-                ConnectionState::Failed,
-                std::vec::Vec::new(),
-                [],
-            ),
+            started_with_reports(connected, []),
+            started_with_reports(down, []),
         ]);
+        // The second interface's link is down — but capability, not liveness, decides the fan.
+        interfaces.as_mut_slice()[1].set_connection_state(ConnectionState::Failed);
         let mut traffic = TrafficLedger::new();
         let bytes = [0xAA, 0xBB, 0xCC];
 
@@ -2590,17 +2575,22 @@ mod tests {
                 buf[..bytes.len()].copy_from_slice(&bytes);
                 bytes.len()
             },
-            FanTargets::Listed(&[connected, failed]),
+            FanTargets::Listed(&[connected, down]),
             FanoutClass::Transported,
         );
 
+        // Both transport-capable interfaces get the fan even though one is Failed — its queue
+        // just buffers until it is back (the WiFi-blip rule). Liveness is the egress's concern.
         assert_eq!(
             interfaces.as_slice()[0].handle.sent,
             std::vec![bytes.to_vec()]
         );
-        assert!(interfaces.as_slice()[1].handle.sent.is_empty());
+        assert_eq!(
+            interfaces.as_slice()[1].handle.sent,
+            std::vec![bytes.to_vec()]
+        );
         assert_eq!(traffic.totals_for(connected), (0, bytes.len() as u64));
-        assert_eq!(traffic.totals_for(failed), (0, 0));
+        assert_eq!(traffic.totals_for(down), (0, bytes.len() as u64));
     }
 
     #[test]

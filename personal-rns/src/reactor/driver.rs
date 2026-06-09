@@ -8,7 +8,7 @@ use super::Host;
 use crate::engine::{
     DueLane, EngineReaction, EngineState, InstantMillis, ScheduledWake, WakeSchedules,
 };
-use crate::interfaces::InterfaceDescriptor;
+use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::storage::EngineStorage;
 
@@ -27,7 +27,7 @@ pub fn fire_due_lane<S, H>(
     engine: &mut EngineState<S>,
     lane: DueLane,
     now: InstantMillis,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: &[InterfaceConfig],
     host: &mut H,
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) -> WakeSchedules

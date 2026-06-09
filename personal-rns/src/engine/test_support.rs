@@ -8,8 +8,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IdentitySigner;
 use crate::interfaces::InboundPacket;
 use crate::interfaces::{
-    ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceDescriptor, InterfaceMode, MediumKind, TransportCapability,
+    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceMode,
+    MediumKind, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
@@ -197,7 +197,7 @@ pub(crate) struct TickSnapshot {
 pub(crate) fn tick_capture<S: EngineStorage>(
     state: &mut EngineState<S>,
     now: InstantMillis,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: &[InterfaceConfig],
 ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
     let tick_out = state.tick(now, TEST_ENTROPY, interfaces);
     let snapshot = TickSnapshot {
@@ -225,8 +225,8 @@ pub(crate) fn observable_state<S: EngineStorage>(
     )
 }
 
-pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
+pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceConfig {
+    InterfaceConfig {
         id,
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
@@ -234,13 +234,12 @@ pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceDescriptor {
         },
         mode: InterfaceMode::Full,
         medium: MediumKind::Loopback,
-        state: ConnectionState::Connected,
         announce_rate_limit: None,
     }
 }
 
-pub(crate) fn repeating_descriptor(id: InterfaceId) -> InterfaceDescriptor {
-    InterfaceDescriptor {
+pub(crate) fn repeating_descriptor(id: InterfaceId) -> InterfaceConfig {
+    InterfaceConfig {
         capabilities: InterfaceCapabilities {
             ingress: IngressCapability::Enabled,
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
@@ -249,7 +248,7 @@ pub(crate) fn repeating_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     }
 }
 
-pub(crate) fn transporting_view() -> [InterfaceDescriptor; 1] {
+pub(crate) fn transporting_view() -> [InterfaceConfig; 1] {
     [routable_descriptor(InterfaceId::new([0xEE; 16]))]
 }
 

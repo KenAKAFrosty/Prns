@@ -5,7 +5,7 @@ use crate::engine::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIM
 use crate::engine::seen_path_requests::{PathRequestIdBytes, PathRequestNovelty};
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
-use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
@@ -227,7 +227,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         packet: InboundPacket<'p>,
         jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
@@ -542,7 +542,7 @@ impl<S: EngineStorage> EngineState<S> {
         source_interface: InterfaceId,
         destination: DestinationHash,
         now: InstantMillis,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
     ) -> bool {
         let Some(limit) = interfaces
             .iter()
@@ -564,7 +564,7 @@ impl<S: EngineStorage> EngineState<S> {
         next_hop: NextHop,
         is_path_response: bool,
         jitter: JitterSeed,
-        interfaces: &[InterfaceDescriptor],
+        interfaces: &[InterfaceConfig],
     ) -> AnnounceIngest {
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
@@ -1172,7 +1172,7 @@ mod tests {
 
         // The receiving interface caps a destination to one announce per 10s.
         let source = iface(0xB2);
-        let rate_limited = [InterfaceDescriptor {
+        let rate_limited = [InterfaceConfig {
             announce_rate_limit: Some(AnnounceRateLimit {
                 target_ms: 10_000,
                 grace: 0,
@@ -1260,7 +1260,7 @@ mod tests {
         let mut second = buf_b[..second_len].to_vec();
 
         let source = iface(0xB2);
-        let rate_limited = [InterfaceDescriptor {
+        let rate_limited = [InterfaceConfig {
             announce_rate_limit: Some(AnnounceRateLimit {
                 target_ms: 10_000,
                 grace: 0,

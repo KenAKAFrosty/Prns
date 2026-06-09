@@ -1,14 +1,14 @@
-use crate::interfaces::{
-    ConnectionState, InterfaceCapabilities, InterfaceId, InterfaceMode, MediumKind,
-};
+use crate::interfaces::{InterfaceCapabilities, InterfaceId, InterfaceMode, MediumKind};
 
+/// The static configuration of an interface — how it *is*, not how it is doing. Live state
+/// (connection, traffic) lives separately, owned by the interface and read by the app through
+/// its status handle; this carries only the facts the engine needs to make routing decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InterfaceDescriptor {
+pub struct InterfaceConfig {
     pub id: InterfaceId,
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
     pub medium: MediumKind,
-    pub state: ConnectionState,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
 }
 

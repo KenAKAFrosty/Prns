@@ -1,6 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::{
-    ConnectionState, ControlReport, InboundPacket, InterfaceDescriptor, InterfaceWorkerContext,
+    ConnectionState, ControlReport, InboundPacket, InterfaceConfig, InterfaceWorkerContext,
     SendError, Substrate,
 };
 
@@ -65,13 +65,18 @@ pub trait InterfaceHandle {
 }
 
 pub struct StartedInterface<H: InterfaceHandle, Worker> {
-    pub descriptor: InterfaceDescriptor,
+    pub descriptor: InterfaceConfig,
+    pub connection: ConnectionState,
     pub handle: H,
     pub drive: DriverMode<Worker>,
 }
 
 pub trait RegisteredInterface {
-    fn descriptor(&self) -> &InterfaceDescriptor;
+    fn descriptor(&self) -> &InterfaceConfig;
+
+    /// The interface's live connection — its own first-hand fact, updated from control
+    /// reports. Lives here, not in the static [`InterfaceConfig`], so the two can't drift.
+    fn connection(&self) -> ConnectionState;
 
     fn set_connection_state(&mut self, state: ConnectionState);
 
@@ -102,12 +107,16 @@ pub trait RegisteredInterface {
 }
 
 impl<H: InterfaceHandle, Worker> RegisteredInterface for StartedInterface<H, Worker> {
-    fn descriptor(&self) -> &InterfaceDescriptor {
+    fn descriptor(&self) -> &InterfaceConfig {
         &self.descriptor
     }
 
+    fn connection(&self) -> ConnectionState {
+        self.connection
+    }
+
     fn set_connection_state(&mut self, state: ConnectionState) {
-        self.descriptor.state = state;
+        self.connection = state;
     }
 
     fn next_inbound<R>(&mut self, on_packet: impl FnOnce(InboundPacket<'_>) -> R) -> Option<R> {
@@ -141,18 +150,18 @@ pub trait Interface<S: Substrate>: Sized {
     /// `DriverMode<Infallible>` with no coercion.
     type Worker;
 
-    fn descriptor(&self) -> InterfaceDescriptor;
+    fn descriptor(&self) -> InterfaceConfig;
 
     fn start(self, context: InterfaceWorkerContext<S>) -> DriverMode<Self::Worker>;
 }
 
 pub struct SelfDrivenInterface<Launch> {
-    descriptor: InterfaceDescriptor,
+    descriptor: InterfaceConfig,
     launch: Launch,
 }
 
 impl<Launch> SelfDrivenInterface<Launch> {
-    pub fn new(descriptor: InterfaceDescriptor, launch: Launch) -> Self {
+    pub fn new(descriptor: InterfaceConfig, launch: Launch) -> Self {
         Self { descriptor, launch }
     }
 }
@@ -164,7 +173,7 @@ where
 {
     type Worker = core::convert::Infallible;
 
-    fn descriptor(&self) -> InterfaceDescriptor {
+    fn descriptor(&self) -> InterfaceConfig {
         self.descriptor
     }
 

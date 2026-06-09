@@ -16,7 +16,7 @@ use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
 use crate::interfaces::substrate::EmbassyTimebase;
-use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
 };
@@ -137,7 +137,7 @@ impl<'a, M: RawMutex, const OUT: usize> EmbassyEgress<'a, M, OUT> {
 /// an MCU is built for.
 pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT: usize>(
     mut engine: EngineState<S>,
-    interfaces: &[InterfaceDescriptor],
+    interfaces: &[InterfaceConfig],
     mut host: H,
     inbound: Receiver<'_, M, InboundFrame, INBOUND>,
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
@@ -210,8 +210,8 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
     use crate::interfaces::{
-        ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
-        MediumKind, TransportCapability,
+        EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, MediumKind,
+        TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
@@ -228,8 +228,8 @@ mod tests {
 
     const WATCHDOG: Duration = Duration::from_secs(5);
 
-    fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
-        InterfaceDescriptor {
+    fn descriptor(id: InterfaceId) -> InterfaceConfig {
+        InterfaceConfig {
             id,
             capabilities: InterfaceCapabilities {
                 ingress: IngressCapability::Enabled,
@@ -237,7 +237,6 @@ mod tests {
             },
             mode: InterfaceMode::Full,
             medium: MediumKind::Loopback,
-            state: ConnectionState::Connected,
             announce_rate_limit: None,
         }
     }
@@ -247,7 +246,7 @@ mod tests {
     /// `wire_out`. It exercises the [`InterfaceSeam`] in isolation on the no_std host — no
     /// real I/O, just the boundary.
     struct EmbassyLoopbackInterface<'a, M: RawMutex, const IN: usize, const OUT: usize> {
-        descriptor: InterfaceDescriptor,
+        descriptor: InterfaceConfig,
         wire_in: Receiver<'a, M, OutboundFrame, IN>,
         wire_out: Sender<'a, M, OutboundFrame, OUT>,
     }
@@ -255,7 +254,7 @@ mod tests {
     impl<M: RawMutex, const IN: usize, const OUT: usize> Interface
         for EmbassyLoopbackInterface<'_, M, IN, OUT>
     {
-        fn descriptor(&self) -> InterfaceDescriptor {
+        fn descriptor(&self) -> InterfaceConfig {
             self.descriptor
         }
 
