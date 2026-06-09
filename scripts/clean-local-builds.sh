@@ -20,9 +20,6 @@ fuzz/coverage
 docs/website/target
 docs/website/dist
 docs/website/node_modules
-hosts/esp32-c6/target
-hosts/heltec-lora32/target
-hosts/nrf52840/target
 android-aar/.gradle
 android-aar/build
 android-aar/lib/build

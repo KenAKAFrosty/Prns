@@ -33,14 +33,9 @@ embassy-seam = ["dep:embassy-sync", "dep:embassy-time", "dep:static_cell"]
 # the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
 # Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
 embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async"]
-# Embedded host shells that also run the WiFi/LoRa stack (ESP32-S3 heltec, …). Adds
-# embassy-net + lora-phy on top of `embassy-contract`; OFF by default so the
-# pure-no_std and no-std-esp-build gates never see it. An embedded host turns it on
-# to get the radio worker shells (e.g. the AutoInterface). No alloc.
-embassy-host = ["embassy-contract", "dep:embassy-net", "dep:lora-phy", "dep:log"]
-# A WiFi-only embedded host: the embassy contract seam + embassy-net (enough for the
-# AutoInterface worker shell), but WITHOUT lora-phy — so the WiFi bring-up never
-# depends on the LoRa PHY building. A Heltec that also wants LoRa uses `embassy-host`.
+# A WiFi embedded host: the embassy contract seam + embassy-net (enough for the
+# AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
+# old LoRa/ESP-NOW radio shells were removed with the device host examples.
 embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
 # The plug-and-play USB-auto host interface: the std worker machinery plus
 # serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
@@ -115,7 +110,7 @@ socket2 = { version = "0.5", optional = true, features = ["all"] }
 # hash over the address peers actually see as our source, so a synthesized one won't do.
 if-addrs = { version = "0.13", optional = true }
 
-# Embassy stack for the `embassy-host` worker shells. Optional + version-matched
+# Embassy stack for the embassy WiFi worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),
 # so enabling the feature adds no redundant copy. Never built by the core gates.
 embassy-net = { version = "0.9.1", optional = true, default-features = false, features = ["udp", "proto-ipv6", "medium-ethernet", "multicast"] }
@@ -131,19 +126,15 @@ embassy-futures = { version = "0.1", optional = true, default-features = false }
 # usb-serial-jtag halves) so `personal-rns` never depends on a specific HAL.
 # 0.6 matches what esp-hal 1.1 implements for its serial peripherals.
 embedded-io-async = { version = "0.6", optional = true, default-features = false }
-# LoRa PHY driver for the RNode-compatible LoRa worker shell. The host builds the
-# `LoRa<RK, DLY>` (SX1262 + board InterfaceVariant) and hands it to the shell, so
-# `personal-rns` names lora-phy but no specific radio HAL. no_std, async.
-lora-phy = { version = "3.0.1", optional = true }
 # Logging facade for the worker shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
 proptest = "1"
-# Host-side execution of the embassy seam + worker tests (`--features
-# embassy-host`): a critical-section impl for the seam's mutex, and the std
-# time driver so worker deadlines (e.g. esp-now's coalesce linger) actually
-# fire under `block_on`. Dev-only; cross-builds never see these.
+# Host-side execution of the embassy seam + reactor tests (`--features
+# embassy-contract`): a critical-section impl for the seam's mutex, and the std
+# time driver so deadlines actually fire under `block_on`. Dev-only; cross-builds
+# never see these.
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 # Executor + macros for the tokio seam's cross-task tests (`--features tokio-host`).

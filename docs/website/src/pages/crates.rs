@@ -30,12 +30,6 @@ const CRATES: &[CrateMeta] = &[
         blurb_key: "crate-lxmf-blurb",
         body: include_str!("../../content/crates/personal-lxmf.md"),
     },
-    CrateMeta {
-        name: "hosts-esp32-c6",
-        role_key: "crate-esp32c6-role",
-        blurb_key: "crate-esp32c6-blurb",
-        body: include_str!("../../content/crates/hosts-esp32-c6.md"),
-    },
 ];
 
 #[component]

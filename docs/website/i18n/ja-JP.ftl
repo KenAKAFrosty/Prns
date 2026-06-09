@@ -57,7 +57,7 @@ start-game-target = personal-rns-ffi
 start-embedded-headline = マイコンをターゲットにしている
 start-embedded-body = エンジンに、メソッド 3 つだけの Host トレイト。リファレンスは ESP32-C6、続いて S3、nRF、RP2040、STM32 と並びます。
 start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + hosts/*
+start-embedded-target = personal-rns + personal-hopspot
 
 start-web-headline = Web またはエッジ向けに作っている
 start-web-body = ブラウザ、そして Cloudflare Workers や Fastly、Spin といったエッジランタイムでも動く WebAssembly ビルド。
@@ -100,8 +100,6 @@ crate-lxmf-role = メッセージング
 crate-lxmf-blurb = Reticulum の上に乗る LXMF — Sideband と Nomadnet がそのまま乗っているレイヤーです。アイデンティティ、アドレス、メッセージ配送。
 crate-ffi-role = モバイルと Python のバインディング
 crate-ffi-blurb = 1 つの uniffi インターフェイスから Kotlin (.aar)、Swift (.xcframework)、Python (.whl) が生まれます。Android でも iOS でも、Jupyter ノートブックでも、同じ形と同じエンジンで Reticulum を使えます。
-crate-esp32c6-role = ESP32-C6 ファームウェア
-crate-esp32c6-blurb = ESP32-C6 向けのベアメタル Host アダプタ。OS もアロケータもありません — 無線機を内蔵した 5 ドルの RISC-V チップ上でエンジンが動くという証拠です。
 
 # 404
 not-found-title = ここにはまだ何もありません。

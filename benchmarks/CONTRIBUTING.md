@@ -25,7 +25,6 @@ and under `esp_alloc::HEAP.stats()` on the microcontroller when that route lands
 | **Memory** — peak footprint + allocation count (*the core makes none*) | `src/bin/mem_profile.rs`, `src/bin/mem_soak.rs` (dhat) | ✅ host route; the `FixedInline` path measures **0** allocations |
 | **Throughput / Latency** — packets & bytes/sec, per-packet time | `benches/throughput.rs` (criterion), `src/bin/sustained.rs` | ✅ sustained cross-impl throughput in [`RESULTS.md`](RESULTS.md) |
 | **Energy** — joules per announce (the cross-comparable price a node pays) | `energy/` (`build.sh` + `sudo measure.sh`, powermetrics) | ✅ eight-impl energy table in [`RESULTS.md`](RESULTS.md); macOS now, Linux via RAPL next |
-| **Binary size** — what the engine costs on a constrained target | `scripts/binary-size.sh` (`cargo bloat` on the ESP32-C6 / riscv32imac firmware) | 🟡 engine ≈ **6.8 KiB** `.text` — crypto (sha2/curve25519/aes/ed25519) is the bulk |
 | **Run on the hardware, down to the microcontroller** | the same scenarios + `esp_alloc::HEAP.stats()` in firmware | ⬜ next route |
 
 ## Other implementations (any language) — run it yourself
@@ -150,12 +149,6 @@ cd reference && python3.13 -m venv .venv && .venv/bin/pip install -r requirement
 .venv/bin/python gen.py                    # regenerate packets.hex from RNS (canonical)
 ```
 
-And the binary-size axis, from the repo root (it builds the ESP32-C6 firmware):
-
-```sh
-./scripts/binary-size.sh                  # the engine's .text share on a constrained target
-```
-
 The memory bins write `dhat-heap.json` (gitignored) for the [DHAT viewer](https://nnethercote.github.io/dh_view/dh_view.html).
 
 ## Methodology (the page's "how")
@@ -164,6 +157,6 @@ The memory bins write `dhat-heap.json` (gitignored) for the [DHAT viewer](https:
 - **Runnable on any machine** — pure Rust, no external profiler install for the memory axis.
 - **Run on the hardware it claims** — the scenarios are storage-generic and reusable in
   firmware; the device route reports its own allocator's stats.
-- **Reproducible** — report a figure with its commit + toolchain (`binary-size.sh` already
-  stamps both; the other runners follow as the suite settles).
+- **Reproducible** — report a figure with its commit + toolchain; the runners stamp both as
+  the suite settles.
 - **Honest** — figures land here as each axis stabilizes; empty slots stay empty until real.

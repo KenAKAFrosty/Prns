@@ -64,7 +64,7 @@ start-game-target = personal-rns-ffi
 start-embedded-headline = I'm targeting microcontrollers
 start-embedded-body = The engine plus a Host trait of three methods. ESP32-C6 is the reference; S3, nRF, RP2040, and STM32 are next.
 start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + hosts/*
+start-embedded-target = personal-rns + personal-hopspot
 
 start-web-headline = I'm building for the web or edge
 start-web-body = A WebAssembly build that runs in the browser and on edge runtimes like Cloudflare Workers, Fastly, and Spin.
@@ -120,8 +120,6 @@ crate-lxmf-role = Messaging
 crate-lxmf-blurb = LXMF on top of Reticulum — the layer Sideband and Nomadnet sit on. Identities, addresses, message delivery.
 crate-ffi-role = Mobile + Python bindings
 crate-ffi-blurb = One uniffi interface generates Kotlin (.aar), Swift (.xcframework), and Python (.whl). Use Reticulum from Android, iOS, or a Jupyter notebook — same shape, same engine.
-crate-esp32c6-role = ESP32-C6 firmware
-crate-esp32c6-blurb = Bare-metal host adapter for the ESP32-C6. No OS, no allocator — proof the engine runs on a five-dollar RISC-V chip with built-in radios.
 
 # 404
 not-found-title = There's nothing here yet.

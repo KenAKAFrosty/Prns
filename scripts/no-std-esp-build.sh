@@ -23,8 +23,8 @@ echo "[4/9] core: no_std + alloc (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --features alloc --target "${C6_TARGET}"
 
 # The embassy contract seam: just embassy-sync + embassy-time (no embassy-net), so
-# it compile-checks on the host toolchain. The full embassy-host stack still needs
-# the ESP cross-build (heltec), but this keeps the seam itself honest every step.
+# it compile-checks on the host toolchain. The WiFi stack (embassy-wifi + embassy-net)
+# still needs the ESP cross-build, but this keeps the seam itself honest every step.
 echo "[5/9] embassy contract seam (no_std, host compile-check)"
 cargo build -p personal-rns --no-default-features --features embassy-seam
 

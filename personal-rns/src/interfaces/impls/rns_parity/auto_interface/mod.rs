@@ -6,7 +6,7 @@ pub use core::{
     UNICAST_DISCOVERY_PORT,
 };
 
-#[cfg(any(feature = "embassy-host", feature = "embassy-wifi"))]
+#[cfg(feature = "embassy-wifi")]
 pub mod embassy;
 
 #[cfg(feature = "wifi-lan-auto")]

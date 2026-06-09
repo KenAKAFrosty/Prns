@@ -57,7 +57,7 @@ start-game-target = personal-rns-ffi
 start-embedded-headline = 我要把它跑在单片机上
 start-embedded-body = 引擎加上一个仅含三个方法的 Host trait。ESP32-C6 是参考实现，接下来是 S3、nRF、RP2040 与 STM32。
 start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + hosts/*
+start-embedded-target = personal-rns + personal-hopspot
 
 start-web-headline = 我在为 Web 或边缘构建
 start-web-body = 一个既能在浏览器中、又能在 Cloudflare Workers、Fastly、Spin 这类边缘运行时上跑的 WebAssembly 构建。
@@ -100,8 +100,6 @@ crate-lxmf-role = 消息层
 crate-lxmf-blurb = 位于 Reticulum 之上的 LXMF——Sideband 与 Nomadnet 所栖身的那一层。身份、地址、消息投递。
 crate-ffi-role = 移动与 Python 绑定
 crate-ffi-blurb = 一份 uniffi 接口同时生成 Kotlin (.aar)、Swift (.xcframework) 与 Python (.whl)。在 Android、iOS 或 Jupyter Notebook 里调用 Reticulum——同样的形态、同一台引擎。
-crate-esp32c6-role = ESP32-C6 固件
-crate-esp32c6-blurb = 面向 ESP32-C6 的裸机 Host 适配器。没有操作系统，也没有分配器——是引擎能跑在一颗内置无线电的五美元 RISC-V 芯片上的实证。
 
 # 404
 not-found-title = 这里还什么都没有。

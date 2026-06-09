@@ -32,9 +32,9 @@ jobs:
           components: rustfmt
       - name: cargo fmt (root workspace)
         run: cargo fmt --all -- --check
-      # NOTE: scripts/fmt-check.sh also fmt-checks hosts/* — those are separate
-      # workspaces on the Xtensa "esp" toolchain (espup), not installable on a stock
-      # runner, so they are checked locally / on a device runner, not here.
+      # NOTE: scripts/fmt-check.sh also fmt-checks personal-hopspot/app — a separate
+      # workspace on the Xtensa "esp" toolchain (espup), not installable on a stock
+      # runner, so it is checked locally / on a device runner, not here.
 
   clippy:
     runs-on: ubuntu-latest

@@ -31,7 +31,7 @@ The core engine is `no_std` and allocation-free, so the same wire contract runs 
 | [`personal-rns-napi`](personal-rns-napi) | Node-API bindings, published as the `@personal/rns` TypeScript package. |
 | [`personal-rns-capi`](personal-rns-capi) | C ABI for C, C++, Go, Zig, and other native consumers. |
 
-Also in the repository: [`personal-hopspot`](personal-hopspot) (embedded status-screen host), [`fuzz`](fuzz) (fuzz targets), and the device host workspaces under [`hosts/`](hosts).
+Also in the repository: [`personal-hopspot`](personal-hopspot) (embedded status-screen host) and [`fuzz`](fuzz) (fuzz targets).
 
 ## Status
 
@@ -51,7 +51,7 @@ This is pre-release software (`0.1.0`). The wire contract and public API may sti
 
 The `personal-rns` core builds `no_std` and allocation-free, and CI cross-compiles it to `riscv32imac-unknown-none-elf` (ESP32-C6 class) on every push. Entropy is supplied by the host as data; the core never owns an RNG.
 
-<!-- TODO: list the feature flags (embassy-seam / embassy-contract / embassy-host) and which board class each targets. -->
+<!-- TODO: list the feature flags (embassy-seam / embassy-contract / embassy-wifi) and which board class each targets. -->
 
 ## Documentation
 

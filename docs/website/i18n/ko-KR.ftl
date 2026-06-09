@@ -57,7 +57,7 @@ start-game-target = personal-rns-ffi
 start-embedded-headline = 마이크로컨트롤러에 올리려고 합니다
 start-embedded-body = 엔진과, 메서드가 셋뿐인 Host 트레이트. ESP32-C6가 레퍼런스이고, S3와 nRF, RP2040, STM32가 그 뒤를 잇습니다.
 start-embedded-code = cargo add personal-rns --no-default-features
-start-embedded-target = personal-rns + hosts/*
+start-embedded-target = personal-rns + personal-hopspot
 
 start-web-headline = 웹이나 엣지를 노리고 있어요
 start-web-body = 브라우저는 물론, Cloudflare Workers·Fastly·Spin 같은 엣지 런타임에서도 동작하는 WebAssembly 빌드.
@@ -100,8 +100,6 @@ crate-lxmf-role = 메시징
 crate-lxmf-blurb = Reticulum 위의 LXMF — Sideband와 Nomadnet이 자리 잡은 바로 그 계층입니다. 신원, 주소, 메시지 전달.
 crate-ffi-role = 모바일 + 파이썬 바인딩
 crate-ffi-blurb = 단 하나의 uniffi 인터페이스가 Kotlin(.aar), Swift(.xcframework), Python(.whl)을 동시에 만들어 냅니다. Android, iOS, Jupyter 노트북에서 같은 모양과 같은 엔진으로 Reticulum을 사용하세요.
-crate-esp32c6-role = ESP32-C6 펌웨어
-crate-esp32c6-blurb = ESP32-C6용 베어메탈 호스트 어댑터. OS도, 할당자도 없습니다 — 무선 라디오를 내장한 5달러짜리 RISC-V 칩 위에서 엔진이 동작한다는 증거입니다.
 
 # 404
 not-found-title = 여기에는 아직 아무것도 없어요.
