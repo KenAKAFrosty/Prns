@@ -3,3 +3,4 @@
 //! (e.g. `rns_serial_framing`) from `crate::interfaces` but none of the old poll-loop seam.
 
 pub mod serial;
+pub mod usb_auto;

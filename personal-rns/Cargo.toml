@@ -87,7 +87,7 @@ rtrb = { version = "0.3", optional = true }
 # cross it, `time` for the host's deadline waits, `macros` for the reactor's
 # `select!` over its three inputs. Workers bring their own I/O features; the seam
 # itself needs no runtime flavor.
-tokio = { version = "1", optional = true, default-features = false, features = ["macros", "sync", "time", "io-util"] }
+tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 
 # The USB-auto host interface's portable USB-serial layer (under `usb-auto`):
 # enumerate, open, and raw byte I/O on Linux/macOS/Windows. Default features keep

@@ -1,10 +1,10 @@
 //! The Linux debug face of the Personal Hopspot — one of the app's two targets.
 //!
-//! Runs the *same* announcing engine the S3 firmware does — here on the async reactor, over a
-//! USB-serial interface that reconnects on its own — and renders the *same* Hopspot status
-//! screen the OLED shows, in an `embedded-graphics-simulator` window. Run `cargo desktop`
-//! (defaults to `/dev/ttyACM0`; pass another with `cargo desktop -- /dev/ttyACM1`), plug in a
-//! Personal board, and watch the cards tick as announces cross the link.
+//! Runs the *same* announcing engine the S3 firmware does — here on the async reactor, over the
+//! plug-and-play USB-auto interface that discovers and multiplexes every Personal board on a CDC
+//! port — and renders the *same* Hopspot status screen the OLED shows, in an
+//! `embedded-graphics-simulator` window. Run `cargo desktop`, plug in a Personal board, and watch
+//! the cards tick as announces cross the link.
 //!
 //! The reactor runs on its own thread inside a tokio runtime; the SDL2 window owns the main
 //! thread (SDL requires it) and repaints the interface's live status handle at ~30 fps — read
@@ -29,30 +29,27 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
-    run as run_reactor, Egress, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
+    run as run_reactor, Egress, TokioHost, TokioInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{InboundFrame, Interface, OutboundFrame};
-use personal_rns::reactor::interfaces::serial::impls::tokio::SerialInterface;
+use personal_rns::reactor::interface_seam::{InboundFrame, OutboundFrame};
+use personal_rns::reactor::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
+use serialport::SerialPort;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio_serial::SerialPortBuilderExt;
+use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 use personal_hopspot_ui::{
     self as screen, BatteryState, Card, CardKind, InputEvent, UiAction, UiState,
 };
 
-/// Stable id for this node's USB-serial interface (opaque to the engine).
+/// Stable id for this node's USB-auto interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
 
-/// The serial device opened when no path is given on the command line.
-const DEFAULT_SERIAL_PATH: &str = "/dev/ttyACM0";
 /// CDC-ACM nominal baud (USB ignores it, but the port builder wants a value).
 const USB_BAUD: u32 = 115_200;
-/// How long to wait before re-opening the port after an open failure or unplug.
-const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
 /// The destination this node announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// message — so the hopspot surfaces as a real, messageable peer.
@@ -122,14 +119,11 @@ struct EngineHandles {
 /// before the reactor starts running.
 pub fn run() {
     let identity_secret_key = load_identity_secret_key();
-    let path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| DEFAULT_SERIAL_PATH.to_string());
 
     let (ready_tx, ready_rx) = mpsc::channel::<EngineHandles>();
     std::thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(ready_tx, identity_secret_key, path))
+        .spawn(move || run_engine(ready_tx, identity_secret_key))
         .expect("spawn engine thread");
 
     let handles = ready_rx
@@ -141,7 +135,6 @@ pub fn run() {
 fn run_engine(
     ready_tx: Sender<EngineHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    path: String,
 ) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -168,21 +161,9 @@ fn run_engine(
         let (funnel_tx, funnel_rx) = unbounded_channel::<InboundFrame>();
         let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
 
-        let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, funnel_tx, outbound_rx);
         let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
 
-        let interface = SerialInterface::new(
-            USB_INTERFACE_ID,
-            move || {
-                let path = path.clone();
-                async move {
-                    tokio_serial::new(&path, USB_BAUD)
-                        .open_native_async()
-                        .map_err(io::Error::other)
-                }
-            },
-            RECONNECT_INTERVAL,
-        );
+        let interface = UsbAutoHost::new(USB_INTERFACE_ID, scan_cdc_ports, open_cdc_port);
         let status = interface.status();
         let interfaces = std::vec![interface.descriptor()];
 
@@ -195,7 +176,7 @@ fn run_engine(
         let app_data = SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA)
             .expect("the lxmf app_data fits");
         tokio::spawn(announce_loop(command_tx, destination, app_data));
-        tokio::spawn(interface.run(seam));
+        tokio::spawn(interface.run(funnel_tx, outbound_rx));
 
         run_reactor(
             engine,
@@ -208,6 +189,31 @@ fn run_engine(
         )
         .await;
     });
+}
+
+/// Enumerate the CDC (USB-serial) ports currently present — the names the host probes and
+/// multiplexes. The host re-runs this on its own scan cadence to pick up hot-plugged boards.
+fn scan_cdc_ports() -> Vec<String> {
+    serialport::available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|info| matches!(info.port_type, serialport::SerialPortType::UsbPort(_)))
+        .map(|info| info.port_name)
+        .collect()
+}
+
+/// Open one CDC port into an async stream, settling the modem lines so an ESP32's native
+/// USB-serial-JTAG (which maps RTS→EN, DTR→GPIO0) is never knocked into reset. Linux cdc-acm
+/// opens the port at DTR=1/RTS=1; we lower RTS *before* DTR — (1,1)→(1,0)→(0,0) — so the lines
+/// never pass through the reset combination DTR=0/RTS=1. A board behind a USB-UART bridge
+/// ignores these, so it is harmless there.
+async fn open_cdc_port(name: String) -> io::Result<SerialStream> {
+    let mut port = tokio_serial::new(&name, USB_BAUD)
+        .open_native_async()
+        .map_err(io::Error::other)?;
+    let _ = port.write_request_to_send(false);
+    let _ = port.write_data_terminal_ready(false);
+    Ok(port)
 }
 
 /// The desktop's own announce cadence: the engine no longer self-announces, so the app fires a
