@@ -86,7 +86,14 @@ pub async fn run<S, H>(
             }
             issued = commands.recv() => {
                 let Some(issued) = issued else { return };
-                let _ = engine.ingest_command(issued, &view);
+                let now = host.now();
+                engine.ingest_command_into(
+                    issued,
+                    &view,
+                    now,
+                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut on_reaction,
+                );
             }
             () = wait_for_deadline(&host, wake) => {
                 engine.drain_scheduled(host.now(), jitter, &view, &mut |directive| {
@@ -319,6 +326,96 @@ mod tests {
         assert_eq!(
             bytes, expected_proof,
             "the proof is byte-identical to the RNS 1.3.1 implicit proof"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_commanded_announce_fans_to_every_interface_and_settles() {
+        use crate::engine::{
+            AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, RatchetPolicy,
+            Settlement,
+        };
+        use crate::identity::Zeroizing;
+        use crate::routing::upstream_app_destinations::ProofStrategy;
+
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        let mut engine = EngineState::<Cap>::new(Zeroizing::new(secret));
+        let node = engine.held_identity_hashes()[0];
+        let destination = engine
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                ProofStrategy::ProveNone,
+                RatchetPolicy::NoRatchets,
+            )
+            .expect("registers the single destination");
+
+        let first = InterfaceId::new([0xA1; 16]);
+        let second = InterfaceId::new([0xB2; 16]);
+        let view = std::vec![descriptor(first), descriptor(second)];
+
+        let (_inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
+        let (sent_tx, mut sent_rx) = mpsc::unbounded_channel::<(InterfaceId, std::vec::Vec<u8>)>();
+
+        let on_reaction = move |reaction: EngineReaction<'_>| match reaction {
+            EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                let _ = settled_tx.send((id, settlement));
+            }
+            EngineReaction::Journaled(
+                Journaled::AnnounceHeard { .. } | Journaled::Delivered(_),
+            ) => {}
+            EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                let _ = sent_tx.send((target, bytes.to_vec()));
+            }
+        };
+
+        tokio::spawn(run(
+            engine,
+            view,
+            TokioHost::new(),
+            inbound_rx,
+            command_rx,
+            on_reaction,
+        ));
+
+        command_tx
+            .send(IssuedCommand {
+                id: CommandId(7),
+                command: EngineCommand::AnnounceNow(AnnounceNow {
+                    destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Scheduled,
+                }),
+            })
+            .expect("the reactor task holds the receiver");
+
+        let (settled_id, settlement) =
+            tokio::time::timeout(Duration::from_secs(2), settled_rx.recv())
+                .await
+                .expect("the command settles within the window")
+                .expect("the reactor task is alive");
+        assert_eq!(settled_id, CommandId(7));
+        assert_eq!(settlement, Settlement::AnnounceNow(Ok(())));
+
+        let mut sent_targets = std::vec::Vec::new();
+        for _ in 0..2 {
+            let (target, bytes) = tokio::time::timeout(Duration::from_secs(2), sent_rx.recv())
+                .await
+                .expect("an announce fires on each interface")
+                .expect("the reactor task is alive");
+            let (header, _) = WirePacketHeader::parse(&bytes).expect("valid announce wire");
+            assert_eq!(header.packet_type, PacketType::Announce);
+            assert_eq!(header.destination, destination);
+            sent_targets.push(target);
+        }
+        assert!(
+            sent_targets.contains(&first) && sent_targets.contains(&second),
+            "the announce fans to every interface"
         );
     }
 }

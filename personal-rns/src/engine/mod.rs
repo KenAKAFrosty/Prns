@@ -1,4 +1,5 @@
 pub mod announce_rate;
+mod command;
 pub mod commands;
 pub mod egress;
 pub mod identity_registration;
