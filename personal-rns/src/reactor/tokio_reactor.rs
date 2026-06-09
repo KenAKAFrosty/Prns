@@ -3,13 +3,12 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
-use super::driver::{advance, draw_jitter, fire_due_lane, wait_for_due_lane};
+use super::driver::{draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane};
 use super::Host;
 use crate::engine::{EngineReaction, EngineState, InstantMillis, IssuedCommand};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::storage::EngineStorage;
 
-/// A [`Host`] backed by tokio's clock and the OS CSPRNG.
 pub struct TokioHost {
     base: Instant,
 }
@@ -44,13 +43,9 @@ impl Host for TokioHost {
     }
 }
 
-/// Run the reactor loop until the input channels close. Each turn parks on the three
-/// inputs, runs the one sync engine method the winner names, and pushes whatever it owes
-/// as `EngineReaction`s to `on_reaction`. Between inputs it is dormant: `Idle` arms no
-/// timer, so the select rests on the two channels alone and the task truly parks.
 pub async fn run<S, H>(
     mut engine: EngineState<S>,
-    view: std::vec::Vec<InterfaceDescriptor>,
+    interfaces: std::vec::Vec<InterfaceDescriptor>,
     mut host: H,
     mut inbound: UnboundedReceiver<(InterfaceId, std::vec::Vec<u8>)>,
     mut commands: UnboundedReceiver<IssuedCommand>,
@@ -59,9 +54,9 @@ pub async fn run<S, H>(
     S: EngineStorage,
     H: Host,
 {
-    let mut outlook = engine.wake_outlook();
+    let mut wake_schedules = engine.wake_schedules();
     loop {
-        let wake = outlook.soonest(host.now());
+        let wake = wake_schedules.soonest(host.now());
         tokio::select! {
             arrived = inbound.recv() => {
                 let Some((id, mut bytes)) = arrived else { return };
@@ -72,32 +67,32 @@ pub async fn run<S, H>(
                     source_interface: id,
                     bytes: &mut bytes,
                 };
-                let delta = engine.ingest_packet_into(
+                let wake_schedules_delta = engine.ingest_packet_into(
                     packet,
                     jitter,
-                    &view,
+                    &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
-                advance(&mut outlook, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
             issued = commands.recv() => {
                 let Some(issued) = issued else { return };
                 let now = host.now();
-                let delta = engine.ingest_command_into(
+                let wake_schedules_delta = engine.ingest_command_into(
                     issued,
-                    &view,
+                    &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
-                advance(&mut outlook, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
             lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
-                let delta = fire_due_lane(&mut engine, lane, now, &view, &mut host, &mut on_reaction);
-                advance(&mut outlook, delta, &engine);
+                let wake_schedules_delta = fire_due_lane(&mut engine, lane, now, &interfaces, &mut host, &mut on_reaction);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
         }
     }
@@ -189,10 +184,7 @@ mod tests {
             .await
             .expect("the rebroadcast deadline fires within the jitter window")
             .expect("the reactor task is alive");
-        assert_eq!(
-            target, peer,
-            "a rebroadcast fans to the peer, never back its source"
-        );
+        assert_eq!(target, peer, "a rebroadcast fans to the peer");
         let (header, _) = WirePacketHeader::parse(&bytes).expect("valid rebroadcast wire");
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(

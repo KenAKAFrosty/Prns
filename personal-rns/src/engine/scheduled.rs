@@ -1,6 +1,6 @@
 use crate::engine::{
     EngineReaction, EngineState, InstantMillis, Journaled, RequestPathFailure, SendSingleFailure,
-    Settlement, WakeOutlook,
+    Settlement, WakeSchedules,
 };
 use crate::routing::storage::EngineStorage;
 
@@ -11,16 +11,16 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeOutlook {
+    ) -> WakeSchedules {
         while let Some(expired) = self.pop_timed_out_send_single(now) {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: expired.command_id,
                 settlement: Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
             }));
         }
-        WakeOutlook {
+        WakeSchedules {
             send_single_timeout: self.send_timeout_lane(),
-            ..WakeOutlook::UNCHANGED
+            ..WakeSchedules::UNCHANGED
         }
     }
 
@@ -30,16 +30,16 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeOutlook {
+    ) -> WakeSchedules {
         while let Some(expired) = self.pop_timed_out_path_request(now) {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: expired.command_id,
                 settlement: Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
             }));
         }
-        WakeOutlook {
+        WakeSchedules {
             path_request_timeout: self.path_timeout_lane(),
-            ..WakeOutlook::UNCHANGED
+            ..WakeSchedules::UNCHANGED
         }
     }
 }

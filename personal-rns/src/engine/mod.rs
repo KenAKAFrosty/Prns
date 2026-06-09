@@ -82,30 +82,14 @@ pub enum NextScheduledEngineWork {
     Idle,
 }
 
-/// Which lane of scheduled work a wake is for. The reactor's timer edge fans on this:
-/// every variant names exactly one engine method, so a wake fires the work it woke for
-/// and nothing else.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DueLane {
-    /// Retry the held announces against the now-unblocked arena
-    /// ([`recover_held_announces`](EngineState::recover_held_announces)).
     HeldAnnounces,
-    /// Re-emit a learned announce whose jittered rebroadcast is due
-    /// ([`fire_due_announce_rebroadcasts`](EngineState::fire_due_announce_rebroadcasts)).
-    Rebroadcast,
-    /// Give up on a send whose proof never came
-    /// ([`settle_timed_out_send_singles`](EngineState::settle_timed_out_send_singles)).
+    RebroadcastAnnounces,
     SendSingleTimeout,
-    /// Give up on a path request whose answer never came
-    /// ([`settle_timed_out_path_requests`](EngineState::settle_timed_out_path_requests)).
     PathRequestTimeout,
 }
 
-/// The next scheduled wake, naming both *when* and *which* lane. `At` carries the lane
-/// that owns the earliest deadline so the reactor can sleep, wake, and fire it without
-/// re-deriving — the engine is frozen while the reactor parks, so the owner is still the
-/// one that comes due. The coarser [`NextScheduledEngineWork`] is this with the lane
-/// dropped, kept for the legacy runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScheduledWake {
     Idle,
@@ -113,57 +97,40 @@ pub enum ScheduledWake {
     At { at: InstantMillis, lane: DueLane },
 }
 
-/// The state of one scheduled lane — or, as a delta an engine method returns, how that
-/// method left it. `Unchanged` only ever appears in a delta (it means "keep the cached
-/// value"); a resolved [`WakeOutlook`] holds only `Idle`, `Due`, or `At`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaneWake {
-    /// Delta only: the method did not touch this lane.
     Unchanged,
-    /// No pending work on this lane.
     Idle,
-    /// Service wanted now, with no deadline of its own — held announces retry ASAP.
     Due,
-    /// The lane's next work is due at this instant.
     At(InstantMillis),
 }
 
 impl LaneWake {
-    /// A deadline lane's state from its earliest pending instant: `Some` is `At`, `None` is
-    /// `Idle`. (The held lane is `Due`/`Idle` instead — it carries no instant.)
     fn from_deadline(earliest: Option<InstantMillis>) -> Self {
         earliest.map_or(LaneWake::Idle, LaneWake::At)
     }
 }
 
-/// The soonest each reactor-scheduled lane next needs service. The reactor keeps one of
-/// these alive across the loop and folds in the delta each engine method returns, so it
-/// re-derives only the lane a method actually moved instead of probing all four every
-/// pass. Self-announce is deliberately absent — it is the application's to schedule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WakeOutlook {
-    pub held: LaneWake,
-    pub rebroadcast: LaneWake,
+pub struct WakeSchedules {
+    pub held_announces: LaneWake,
+    pub rebroadcast_announces: LaneWake,
     pub send_single_timeout: LaneWake,
     pub path_request_timeout: LaneWake,
 }
 
-impl WakeOutlook {
-    /// A delta that touches nothing — the starting point a method fills in for only the
-    /// lanes it moved.
+impl WakeSchedules {
     pub const UNCHANGED: Self = Self {
-        held: LaneWake::Unchanged,
-        rebroadcast: LaneWake::Unchanged,
+        held_announces: LaneWake::Unchanged,
+        rebroadcast_announces: LaneWake::Unchanged,
         send_single_timeout: LaneWake::Unchanged,
         path_request_timeout: LaneWake::Unchanged,
     };
 
-    /// Fold a delta into this live outlook: each lane the delta names replaces the cached
-    /// one; `Unchanged` lanes keep their value.
-    pub fn merge(&mut self, delta: WakeOutlook) {
+    pub fn merge(&mut self, delta: WakeSchedules) {
         for (slot, change) in [
-            (&mut self.held, delta.held),
-            (&mut self.rebroadcast, delta.rebroadcast),
+            (&mut self.held_announces, delta.held_announces),
+            (&mut self.rebroadcast_announces, delta.rebroadcast_announces),
             (&mut self.send_single_timeout, delta.send_single_timeout),
             (&mut self.path_request_timeout, delta.path_request_timeout),
         ] {
@@ -173,15 +140,13 @@ impl WakeOutlook {
         }
     }
 
-    /// The soonest lane to service: held first (immediate, no deadline of its own), then
-    /// the earliest deadline among rebroadcast and the two timeouts — a deadline already
-    /// past fires now. Ties at the same instant go to the higher-priority lane, the order
-    /// scanned here. This is the lane-naming face the reactor's timer edge drives off.
     pub fn soonest(&self, now: InstantMillis) -> ScheduledWake {
         let mut earliest: Option<(InstantMillis, DueLane)> = None;
         for (wake, lane) in [
-            (self.held, DueLane::HeldAnnounces),
-            (self.rebroadcast, DueLane::Rebroadcast),
+            //An implicit priority is here. Items higher in this list will trigger their 'due' before the later items
+            //If we need to manage this, the WakeSchedules might need some more light bookkeeping to better distribute that. Marked here for later REVIEW
+            (self.held_announces, DueLane::HeldAnnounces),
+            (self.rebroadcast_announces, DueLane::RebroadcastAnnounces),
             (self.send_single_timeout, DueLane::SendSingleTimeout),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
         ] {
@@ -390,26 +355,26 @@ impl<S: EngineStorage> EngineState<S> {
         LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
     }
 
-    /// Probe every reactor-scheduled lane fresh into a [`WakeOutlook`]. This is the full
+    /// Probe every reactor-scheduled lane fresh into a [`WakeSchedules`]. This is the full
     /// re-derive — the reactor seeds from it once and then advances incrementally, and it
-    /// stands as the oracle the incremental outlook is checked against. Each method's delta
+    /// stands as the oracle the running schedules are checked against. Each method's delta
     /// recomputes the same per-lane helpers, so the two can only diverge if a method forgets
     /// a lane it moved (which the oracle catches).
-    pub fn wake_outlook(&self) -> WakeOutlook {
-        WakeOutlook {
-            held: self.held_lane(),
-            rebroadcast: self.rebroadcast_lane(),
+    pub fn wake_schedules(&self) -> WakeSchedules {
+        WakeSchedules {
+            held_announces: self.held_lane(),
+            rebroadcast_announces: self.rebroadcast_lane(),
             send_single_timeout: self.send_timeout_lane(),
             path_request_timeout: self.path_timeout_lane(),
         }
     }
 
     /// The reactor's next scheduled wake, named by lane. Equivalent to
-    /// [`wake_outlook`](Self::wake_outlook) resolved at `now`; self-announce is deliberately
+    /// [`wake_schedules`](Self::wake_schedules) resolved at `now`; self-announce is deliberately
     /// absent — it is the application's to schedule, fired immediately through an
     /// `AnnounceNow` command, never a lingering deadline the engine holds.
     pub fn next_scheduled_wake(&self, now: InstantMillis) -> ScheduledWake {
-        self.wake_outlook().soonest(now)
+        self.wake_schedules().soonest(now)
     }
 }
 
@@ -529,7 +494,7 @@ mod tests {
 
         match state.next_scheduled_wake(InstantMillis(0)) {
             ScheduledWake::At { at, lane } => {
-                assert_eq!(lane, DueLane::Rebroadcast);
+                assert_eq!(lane, DueLane::RebroadcastAnnounces);
                 assert!(
                     at.0 >= 1_000 && at.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
                     "due_at {} should sit within the jitter window after arrival",
@@ -541,27 +506,27 @@ mod tests {
 
         assert_eq!(
             state.next_scheduled_wake(InstantMillis(1_000_000)),
-            ScheduledWake::Due(DueLane::Rebroadcast),
+            ScheduledWake::Due(DueLane::RebroadcastAnnounces),
         );
     }
 
-    fn outlook(
+    fn schedules(
         held: LaneWake,
         rebroadcast: LaneWake,
         send: LaneWake,
         path: LaneWake,
-    ) -> WakeOutlook {
-        WakeOutlook {
-            held,
-            rebroadcast,
+    ) -> WakeSchedules {
+        WakeSchedules {
+            held_announces: held,
+            rebroadcast_announces: rebroadcast,
             send_single_timeout: send,
             path_request_timeout: path,
         }
     }
 
     #[test]
-    fn wake_outlook_soonest_is_idle_when_every_lane_is_clear() {
-        let clear = outlook(
+    fn wake_schedules_soonest_is_idle_when_every_lane_is_clear() {
+        let clear = schedules(
             LaneWake::Idle,
             LaneWake::Idle,
             LaneWake::Idle,
@@ -571,8 +536,8 @@ mod tests {
     }
 
     #[test]
-    fn wake_outlook_soonest_lets_held_preempt_every_deadline() {
-        let pressed = outlook(
+    fn wake_schedules_soonest_lets_held_preempt_every_deadline() {
+        let pressed = schedules(
             LaneWake::Due,
             LaneWake::At(InstantMillis(10)),
             LaneWake::At(InstantMillis(5)),
@@ -585,8 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn wake_outlook_soonest_names_the_earliest_future_deadline() {
-        let scheduled = outlook(
+    fn wake_schedules_soonest_names_the_earliest_future_deadline() {
+        let scheduled = schedules(
             LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
@@ -602,8 +567,8 @@ mod tests {
     }
 
     #[test]
-    fn wake_outlook_soonest_fires_a_deadline_already_passed() {
-        let scheduled = outlook(
+    fn wake_schedules_soonest_fires_a_deadline_already_passed() {
+        let scheduled = schedules(
             LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
@@ -617,8 +582,8 @@ mod tests {
     }
 
     #[test]
-    fn wake_outlook_soonest_breaks_a_tie_toward_the_higher_priority_lane() {
-        let tied = outlook(
+    fn wake_schedules_soonest_breaks_a_tie_toward_the_higher_priority_lane() {
+        let tied = schedules(
             LaneWake::Idle,
             LaneWake::At(InstantMillis(5_000)),
             LaneWake::At(InstantMillis(5_000)),
@@ -628,25 +593,25 @@ mod tests {
             tied.soonest(InstantMillis(1_000)),
             ScheduledWake::At {
                 at: InstantMillis(5_000),
-                lane: DueLane::Rebroadcast,
+                lane: DueLane::RebroadcastAnnounces,
             },
         );
     }
 
     #[test]
-    fn wake_outlook_merge_replaces_named_lanes_and_keeps_the_rest() {
-        let mut live = outlook(
+    fn wake_schedules_merge_replaces_named_lanes_and_keeps_the_rest() {
+        let mut live = schedules(
             LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
             LaneWake::Idle,
         );
-        live.merge(WakeOutlook {
-            rebroadcast: LaneWake::Idle,
-            ..WakeOutlook::UNCHANGED
+        live.merge(WakeSchedules {
+            rebroadcast_announces: LaneWake::Idle,
+            ..WakeSchedules::UNCHANGED
         });
         assert_eq!(
-            live.rebroadcast,
+            live.rebroadcast_announces,
             LaneWake::Idle,
             "the fired lane is cleared"
         );
@@ -655,14 +620,14 @@ mod tests {
             LaneWake::At(InstantMillis(3_000)),
             "an untouched lane keeps its cached deadline",
         );
-        assert_eq!(live.held, LaneWake::Idle);
+        assert_eq!(live.held_announces, LaneWake::Idle);
         assert_eq!(live.path_request_timeout, LaneWake::Idle);
     }
 
     #[test]
-    fn wake_outlook_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
+    fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
-        let mut outlook = state.wake_outlook();
+        let mut schedules = state.wake_schedules();
 
         let mut raw = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -677,10 +642,10 @@ mod tests {
             &mut |bytes| bytes.fill(0),
             &mut |_| {},
         );
-        outlook.merge(delta);
+        schedules.merge(delta);
         assert_eq!(
-            outlook,
-            state.wake_outlook(),
+            schedules,
+            state.wake_schedules(),
             "an accepted announce arms the rebroadcast lane; the delta tracks the recompute",
         );
 
@@ -689,20 +654,20 @@ mod tests {
             &transporting_view(),
             &mut |_| {},
         );
-        outlook.merge(delta);
+        schedules.merge(delta);
         assert_eq!(
-            outlook,
-            state.wake_outlook(),
+            schedules,
+            state.wake_schedules(),
             "firing the rebroadcast clears the lane; the delta still tracks",
         );
     }
 
     #[test]
-    fn wake_outlook_delta_tracks_a_recompute_across_a_path_request_lifecycle() {
+    fn wake_schedules_delta_tracks_a_recompute_across_a_path_request_lifecycle() {
         use crate::wire::DestinationHash;
 
         let mut state = EngineState::<Cap>::default();
-        let mut outlook = state.wake_outlook();
+        let mut schedules = state.wake_schedules();
         let issued_at = InstantMillis(1_000);
 
         let delta = state.ingest_command_into(
@@ -718,10 +683,10 @@ mod tests {
             &mut |bytes| bytes.fill(0),
             &mut |_| {},
         );
-        outlook.merge(delta);
+        schedules.merge(delta);
         assert_eq!(
-            outlook,
-            state.wake_outlook(),
+            schedules,
+            state.wake_schedules(),
             "a fresh path request arms the path-timeout lane",
         );
 
@@ -729,10 +694,10 @@ mod tests {
             InstantMillis(issued_at.0 + PATH_REQUEST_TIMEOUT_MS + 1),
             &mut |_| {},
         );
-        outlook.merge(delta);
+        schedules.merge(delta);
         assert_eq!(
-            outlook,
-            state.wake_outlook(),
+            schedules,
+            state.wake_schedules(),
             "settling the timeout clears the lane; the delta still tracks",
         );
     }

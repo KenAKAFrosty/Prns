@@ -10,7 +10,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use embassy_time::{Duration, Timer};
 
-use super::driver::{advance, draw_jitter, fire_due_lane, wait_for_due_lane};
+use super::driver::{draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane};
 use super::Host;
 use crate::engine::{EngineReaction, EngineState, InstantMillis, IssuedCommand};
 use crate::interfaces::substrate::EmbassyTimebase;
@@ -87,7 +87,7 @@ impl InboundFrame {
 /// channels and the core truly sleeps — the dormancy an MCU is built for.
 pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
-    view: &[InterfaceDescriptor],
+    interfaces: &[InterfaceDescriptor],
     mut host: H,
     inbound: Receiver<'_, M, InboundFrame, INBOUND>,
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
@@ -97,9 +97,9 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
     H: Host,
     M: RawMutex,
 {
-    let mut outlook = engine.wake_outlook();
+    let mut wake_schedules = engine.wake_schedules();
     loop {
-        let wake = outlook.soonest(host.now());
+        let wake = wake_schedules.soonest(host.now());
 
         match select3(
             inbound.receive(),
@@ -119,29 +119,35 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
                 let delta = engine.ingest_packet_into(
                     packet,
                     jitter,
-                    view,
+                    interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
-                advance(&mut outlook, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
             }
             Either3::Second(issued) => {
                 let now = host.now();
                 let delta = engine.ingest_command_into(
                     issued,
-                    view,
+                    interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
-                advance(&mut outlook, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
             }
             Either3::Third(lane) => {
                 let now = host.now();
-                let delta =
-                    fire_due_lane(&mut engine, lane, now, view, &mut host, &mut on_reaction);
-                advance(&mut outlook, delta, &engine);
+                let delta = fire_due_lane(
+                    &mut engine,
+                    lane,
+                    now,
+                    interfaces,
+                    &mut host,
+                    &mut on_reaction,
+                );
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
             }
         }
     }

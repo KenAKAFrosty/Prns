@@ -1,7 +1,7 @@
 use crate::engine::egress::firable_on;
 use crate::engine::{
     Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, Journaled, LaneWake,
-    WakeOutlook,
+    WakeSchedules,
 };
 use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::defaults::{
@@ -41,7 +41,7 @@ impl<'a, S: EngineStorage> TickOutput<'a, S> {
     /// Resolve this tick's rebroadcasts against the descriptor `view` the runtime
     /// holds, yielding one [`EgressDirective`] per (due destination × interface the
     /// engine decides to fire on). The fan-out call is the engine's alone
-    /// ([`firable_on`]); the runtime takes each named target to its handle and sends.
+    /// (`firable_on`); the runtime takes each named target to its handle and sends.
     pub fn egress_directives<'v>(
         &'v self,
         view: &'v [InterfaceDescriptor],
@@ -92,13 +92,13 @@ impl<S: EngineStorage> EngineState<S> {
     /// is journaled `AnnounceHeard` — a hold defers the hearing, it never drops it — and,
     /// if we transport and an interface can carry it, scheduled for rebroadcast. Drains the
     /// whole cache, so the held lane ends `Idle`; returns that and the rebroadcast lane's
-    /// new soonest deadline as a [`WakeOutlook`] delta.
+    /// new soonest deadline as a [`WakeSchedules`] delta.
     pub fn recover_held_announces(
         &mut self,
         jitter: JitterSeed,
         interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeOutlook {
+    ) -> WakeSchedules {
         use crate::routing::announce::held_cache::HoldReason;
         while let Some(held) = self.held_announces_cache.take_next() {
             match held.reason() {
@@ -158,10 +158,10 @@ impl<S: EngineStorage> EngineState<S> {
                 }
             }
         }
-        WakeOutlook {
-            held: LaneWake::Idle,
-            rebroadcast: self.rebroadcast_lane(),
-            ..WakeOutlook::UNCHANGED
+        WakeSchedules {
+            held_announces: LaneWake::Idle,
+            rebroadcast_announces: self.rebroadcast_lane(),
+            ..WakeSchedules::UNCHANGED
         }
     }
 
@@ -207,13 +207,13 @@ impl<S: EngineStorage> EngineState<S> {
     /// lent to `sink` as a [`Directive::Send`], then clear the fired entries. The
     /// sink-shaped face of a rebroadcast tick — the reactor's timer edge drains it here,
     /// the legacy runtime drains the same work through [`TickOutput`]. Returns the
-    /// rebroadcast lane's new soonest deadline as a [`WakeOutlook`] delta.
+    /// rebroadcast lane's new soonest deadline as a [`WakeSchedules`] delta.
     pub fn fire_due_announce_rebroadcasts(
         &mut self,
         now: InstantMillis,
         view: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeOutlook {
+    ) -> WakeSchedules {
         for egress in self.due_rebroadcast_directives(now, view) {
             let mut buf = [0u8; MTU];
             if let Ok(written) = egress.to_wire(&mut buf) {
@@ -224,9 +224,9 @@ impl<S: EngineStorage> EngineState<S> {
             }
         }
         self.pending_rebroadcasts.drain_due(now);
-        WakeOutlook {
-            rebroadcast: self.rebroadcast_lane(),
-            ..WakeOutlook::UNCHANGED
+        WakeSchedules {
+            rebroadcast_announces: self.rebroadcast_lane(),
+            ..WakeSchedules::UNCHANGED
         }
     }
 }
@@ -615,7 +615,7 @@ mod tests {
             "firing clears the due entry",
         );
         assert_eq!(
-            delta.rebroadcast,
+            delta.rebroadcast_announces,
             LaneWake::Idle,
             "the only rebroadcast fired, so the lane delta reports it clear",
         );
@@ -667,12 +667,12 @@ mod tests {
             "a hold that fails to recover journals nothing"
         );
         assert_eq!(
-            delta.held,
+            delta.held_announces,
             LaneWake::Idle,
             "draining the cache leaves the held lane idle",
         );
         assert_eq!(
-            delta.rebroadcast,
+            delta.rebroadcast_announces,
             LaneWake::Idle,
             "nothing recovered, so nothing was scheduled to rebroadcast",
         );
