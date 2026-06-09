@@ -28,6 +28,9 @@ mod driver;
 pub mod interface_seam;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod interface_status;
+
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod impls;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]

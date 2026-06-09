@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -6,11 +8,12 @@ use tokio::time::Instant;
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
-use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
 };
 use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
+use crate::reactor::interface_status::{decode_connection, encode_connection, InterfaceStatus};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -107,6 +110,67 @@ impl Egress {
                 return;
             }
         }
+    }
+}
+
+/// A cheap-clone handle to one interface's live state: the interface holds a clone and writes
+/// it as the wire moves (connection on connect/disconnect, bytes as they cross); the app holds
+/// a clone and reads it lock-free via [`InterfaceStatus`] on its own render cadence.
+#[derive(Clone)]
+pub struct TokioInterfaceStatus {
+    inner: Arc<StatusCell>,
+}
+
+struct StatusCell {
+    id: InterfaceId,
+    connection: AtomicU8,
+    rx: AtomicU64,
+    tx: AtomicU64,
+}
+
+impl TokioInterfaceStatus {
+    #[must_use]
+    pub fn new(id: InterfaceId, connection: ConnectionState) -> Self {
+        Self {
+            inner: Arc::new(StatusCell {
+                id,
+                connection: AtomicU8::new(encode_connection(connection)),
+                rx: AtomicU64::new(0),
+                tx: AtomicU64::new(0),
+            }),
+        }
+    }
+
+    pub fn set_connection(&self, connection: ConnectionState) {
+        self.inner
+            .connection
+            .store(encode_connection(connection), Ordering::Relaxed);
+    }
+
+    pub fn add_rx(&self, bytes: u64) {
+        self.inner.rx.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn add_tx(&self, bytes: u64) {
+        self.inner.tx.fetch_add(bytes, Ordering::Relaxed);
+    }
+}
+
+impl InterfaceStatus for TokioInterfaceStatus {
+    fn id(&self) -> InterfaceId {
+        self.inner.id
+    }
+
+    fn connection(&self) -> ConnectionState {
+        decode_connection(self.inner.connection.load(Ordering::Relaxed))
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        self.inner.rx.load(Ordering::Relaxed)
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        self.inner.tx.load(Ordering::Relaxed)
     }
 }
 

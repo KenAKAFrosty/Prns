@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
+use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::interfaces::serial::core;
 
@@ -16,6 +17,7 @@ pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
     reconnect: Duration,
+    status: TokioInterfaceStatus,
 }
 
 impl<Open> SerialInterface<Open> {
@@ -25,7 +27,15 @@ impl<Open> SerialInterface<Open> {
             id,
             open,
             reconnect,
+            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
+    }
+
+    /// A clone of this interface's live-status handle for the app to read on its own render
+    /// cadence. Call before [`run`](Interface::run) consumes the interface.
+    #[must_use]
+    pub fn status(&self) -> TokioInterfaceStatus {
+        self.status.clone()
     }
 }
 
@@ -42,7 +52,9 @@ where
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
         loop {
             if let Ok(stream) = (self.open)().await {
-                serve(stream, &mut seam).await;
+                self.status.set_connection(ConnectionState::Connected);
+                serve(stream, &mut seam, &self.status).await;
+                self.status.set_connection(ConnectionState::Disconnected);
             }
             tokio::time::sleep(self.reconnect).await;
         }
@@ -52,7 +64,7 @@ where
 /// Serve one connection until the stream drops: read bytes and deframe them up to the seam,
 /// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller can
 /// reconnect; a fresh decoder per connection discards any half-frame the drop interrupted.
-async fn serve<S, Seam>(mut stream: S, seam: &mut Seam)
+async fn serve<S, Seam>(mut stream: S, seam: &mut Seam, status: &TokioInterfaceStatus)
 where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
@@ -67,6 +79,7 @@ where
                     Ok(0) | Err(_) => return,
                     Ok(read) => read,
                 };
+                status.add_rx(read as u64);
                 core::deframe_to_seam(&mut decoder, &read_buf[..read], seam).await;
             }
             outbound = seam.next_outbound() => {
@@ -75,6 +88,7 @@ where
                     if stream.write_all(&frame_buf[..framed]).await.is_err() {
                         return;
                     }
+                    status.add_tx(framed as u64);
                 }
             }
         }
@@ -86,6 +100,7 @@ mod tests {
     use super::*;
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use crate::reactor::interface_seam::OutboundFrame;
+    use crate::reactor::interface_status::InterfaceStatus;
     use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
@@ -130,7 +145,9 @@ mod tests {
             outbound: out_rx,
         };
 
-        tokio::spawn(SerialInterface::new(test_id(), open, Duration::from_millis(10)).run(seam));
+        let interface = SerialInterface::new(test_id(), open, Duration::from_millis(10));
+        let status = interface.status();
+        tokio::spawn(interface.run(seam));
 
         // Inbound: the test writes a framed payload (FLAG/ESC bytes exercise the escaping) onto
         // the wire; the interface deframes it and hands the original across the seam.
@@ -178,5 +195,21 @@ mod tests {
             decoded, out_payload,
             "the interface frames outbound packets onto the wire"
         );
+
+        // The interface's live status reflects what crossed — readable by the app directly,
+        // never through the engine. `serve` updates it concurrently, so poll to the window.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if status.connection() == ConnectionState::Connected
+                    && status.rx_bytes() > 0
+                    && status.tx_bytes() > 0
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the live status reflects the connection + bytes both ways within the window");
     }
 }
