@@ -24,8 +24,8 @@ pub trait Host {
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 mod driver;
 
-#[cfg(feature = "tokio-host")]
-pub mod tokio_reactor;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod interface_seam;
 
-#[cfg(feature = "embassy-contract")]
-pub mod embassy_reactor;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod impls;

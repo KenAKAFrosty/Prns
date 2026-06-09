@@ -1,12 +1,17 @@
 use std::time::Duration;
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
-use super::driver::{draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane};
-use super::Host;
-use crate::engine::{EngineReaction, EngineState, InstantMillis, IssuedCommand};
+use crate::engine::{
+    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
+};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::reactor::driver::{
+    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
+};
+use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
+use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
 pub struct TokioHost {
@@ -43,29 +48,101 @@ impl Host for TokioHost {
     }
 }
 
-pub async fn run<S, H>(
+/// The tokio side of one interface's seam: `next_inbound` frames funnel into the reactor's one
+/// inbound stream (tagged with this interface's id), and `next_outbound` parks on this
+/// interface's own outbound queue until the reactor enqueues a frame for it.
+pub struct TokioSeam {
+    id: InterfaceId,
+    inbound: UnboundedSender<InboundFrame>,
+    outbound: UnboundedReceiver<OutboundFrame>,
+}
+
+impl TokioSeam {
+    #[must_use]
+    pub fn new(
+        id: InterfaceId,
+        inbound: UnboundedSender<InboundFrame>,
+        outbound: UnboundedReceiver<OutboundFrame>,
+    ) -> Self {
+        Self {
+            id,
+            inbound,
+            outbound,
+        }
+    }
+}
+
+impl InterfaceSeam for TokioSeam {
+    async fn next_inbound(&mut self, frame: &[u8]) {
+        let _ = self.inbound.send(InboundFrame::new(self.id, frame));
+    }
+
+    async fn next_outbound(&mut self) -> OutboundFrame {
+        match self.outbound.recv().await {
+            Some(frame) => frame,
+            // The reactor's egress dropped this interface's lane: there is no more work
+            // ever. Park (lifecycle/shutdown is a deferred concern, not the seam's).
+            None => core::future::pending().await,
+        }
+    }
+}
+
+/// The reactor's egress: it routes each engine `Directive::Send` to the target
+/// interface's outbound queue. The senders are cheap clones, so `enqueue` is `&self`
+/// and the copy-into-frame is synchronous — exactly what the lent-buffer borrow demands.
+pub struct Egress {
+    lanes: std::vec::Vec<(InterfaceId, UnboundedSender<OutboundFrame>)>,
+}
+
+impl Egress {
+    #[must_use]
+    pub fn new(lanes: std::vec::Vec<(InterfaceId, UnboundedSender<OutboundFrame>)>) -> Self {
+        Self { lanes }
+    }
+
+    fn enqueue(&self, target: InterfaceId, bytes: &[u8]) {
+        for (id, sender) in &self.lanes {
+            if *id == target {
+                let _ = sender.send(OutboundFrame::new(bytes));
+                return;
+            }
+        }
+    }
+}
+
+pub async fn run<S, H, A>(
     mut engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceDescriptor>,
     mut host: H,
-    mut inbound: UnboundedReceiver<(InterfaceId, std::vec::Vec<u8>)>,
+    mut inbound: UnboundedReceiver<InboundFrame>,
     mut commands: UnboundedReceiver<IssuedCommand>,
-    mut on_reaction: impl FnMut(EngineReaction<'_>),
+    egress: Egress,
+    mut app: A,
 ) where
     S: EngineStorage,
     H: Host,
+    A: FnMut(Journaled<'_>),
 {
     let mut wake_schedules = engine.wake_schedules();
+    // The reactor carries out every `Directive` itself (egress is IO, the reactor's job);
+    // the application only ever sees `Journaled` — what already happened.
+    let mut sink = move |reaction: EngineReaction<'_>| match reaction {
+        EngineReaction::Directive(Directive::Send { target, bytes }) => {
+            egress.enqueue(target, bytes);
+        }
+        EngineReaction::Journaled(journaled) => app(journaled),
+    };
     loop {
         let wake = wake_schedules.soonest(host.now());
         tokio::select! {
             arrived = inbound.recv() => {
-                let Some((id, mut bytes)) = arrived else { return };
+                let Some(mut frame) = arrived else { return };
                 let now = host.now();
                 let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
-                    source_interface: id,
-                    bytes: &mut bytes,
+                    source_interface: frame.source,
+                    bytes: &mut frame.bytes[..frame.len],
                 };
                 let wake_schedules_delta = engine.ingest_packet_into(
                     packet,
@@ -73,7 +150,7 @@ pub async fn run<S, H>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut on_reaction,
+                    &mut sink,
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
@@ -85,13 +162,13 @@ pub async fn run<S, H>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut on_reaction,
+                    &mut sink,
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
             lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
-                let wake_schedules_delta = fire_due_lane(&mut engine, lane, now, &interfaces, &mut host, &mut on_reaction);
+                let wake_schedules_delta = fire_due_lane(&mut engine, lane, now, &interfaces, &mut host, &mut sink);
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
         }
@@ -102,11 +179,11 @@ pub async fn run<S, H>(
 mod tests {
     use super::*;
     use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
-    use crate::engine::{Directive, Journaled};
     use crate::interfaces::{
         ConnectionState, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode,
         MediumKind, TransportCapability,
     };
+    use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
     use tokio::sync::mpsc;
 
@@ -124,8 +201,40 @@ mod tests {
         }
     }
 
+    /// An interface whose "wire" is two in-memory channels: the test plays received
+    /// bytes onto `wire_in` (the medium delivering a frame) and reads transmitted bytes
+    /// off `wire_out` (the medium sending one). It exercises the [`InterfaceSeam`] in
+    /// isolation — no real I/O, just the boundary.
+    struct LoopbackInterface {
+        descriptor: InterfaceDescriptor,
+        wire_in: UnboundedReceiver<std::vec::Vec<u8>>,
+        wire_out: UnboundedSender<std::vec::Vec<u8>>,
+    }
+
+    impl Interface for LoopbackInterface {
+        fn descriptor(&self) -> InterfaceDescriptor {
+            self.descriptor
+        }
+
+        async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
+            loop {
+                tokio::select! {
+                    received = self.wire_in.recv() => {
+                        match received {
+                            Some(bytes) => seam.next_inbound(&bytes).await,
+                            None => return,
+                        }
+                    }
+                    outbound = seam.next_outbound() => {
+                        let _ = self.wire_out.send(outbound.bytes().to_vec());
+                    }
+                }
+            }
+        }
+    }
+
     #[tokio::test]
-    async fn a_packet_wakes_the_reactor_to_rebroadcast_then_it_falls_dormant() {
+    async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_the_peer() {
         let source = InterfaceId::new([0xA1; 16]);
         let peer = InterfaceId::new([0xB2; 16]);
         let view = std::vec![descriptor(source), descriptor(peer)];
@@ -133,58 +242,91 @@ mod tests {
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
 
-        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+        // One inbound funnel shared by both interfaces.
+        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+
+        // The source interface: the test plays an announce onto its wire; its seam
+        // funnels the frame to the reactor.
+        let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_wire_out_tx, _source_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let source_iface = LoopbackInterface {
+            descriptor: descriptor(source),
+            wire_in: source_wire_in_rx,
+            wire_out: source_wire_out_tx,
+        };
+        let source_seam = TokioSeam::new(source, funnel_tx.clone(), source_out_rx);
+
+        // The peer interface: the rebroadcast must leave through *its* wire.
+        let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_wire_out_tx, mut peer_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let peer_iface = LoopbackInterface {
+            descriptor: descriptor(peer),
+            wire_in: peer_wire_in_rx,
+            wire_out: peer_wire_out_tx,
+        };
+        let peer_seam = TokioSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+
+        drop(funnel_tx);
+
+        let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
+
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<()>();
-        let (sent_tx, mut sent_rx) = mpsc::unbounded_channel::<(InterfaceId, std::vec::Vec<u8>)>();
-
-        let on_reaction = move |reaction: EngineReaction<'_>| match reaction {
-            EngineReaction::Journaled(Journaled::AnnounceHeard { .. }) => {
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::AnnounceHeard { .. } => {
                 let _ = heard_tx.send(());
             }
-            EngineReaction::Journaled(
-                Journaled::Delivered(_) | Journaled::CommandSettled { .. },
-            ) => {}
-            EngineReaction::Directive(Directive::Send { target, bytes }) => {
-                let _ = sent_tx.send((target, bytes.to_vec()));
-            }
+            Journaled::Delivered(_) | Journaled::CommandSettled { .. } => {}
         };
 
         tokio::spawn(run(
             engine,
             view,
             TokioHost::new(),
-            inbound_rx,
+            funnel_rx,
             command_rx,
-            on_reaction,
+            egress,
+            app,
         ));
+        tokio::spawn(source_iface.run(source_seam));
+        tokio::spawn(peer_iface.run(peer_seam));
 
+        // Idle: the loopback wires are quiet, the reactor journals and emits nothing.
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert!(
             heard_rx.try_recv().is_err(),
             "an idle reactor journals nothing"
         );
-        assert!(sent_rx.try_recv().is_err(), "an idle reactor emits nothing");
+        assert!(
+            peer_wire_out_rx.try_recv().is_err(),
+            "an idle interface transmits nothing"
+        );
 
         let raw = hx(RAW_ANNOUNCE);
         let original_hops = WirePacketHeader::parse(&raw)
             .expect("valid announce wire")
             .0
             .hops;
-        inbound_tx
-            .send((source, raw))
-            .expect("the reactor task holds the receiver");
+        // Play the announce onto the source interface's wire — it crosses the seam itself.
+        source_wire_in_tx
+            .send(raw)
+            .expect("the source interface holds its wire");
 
         tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
             .await
-            .expect("the packet edge journals within the window")
+            .expect("the deposited frame journals within the window")
             .expect("the reactor task is alive");
 
-        let (target, bytes) = tokio::time::timeout(Duration::from_secs(2), sent_rx.recv())
+        // The rebroadcast leaves through the peer interface's wire: egress -> peer seam ->
+        // next_outbound -> the peer's write.
+        let bytes = tokio::time::timeout(Duration::from_secs(2), peer_wire_out_rx.recv())
             .await
-            .expect("the rebroadcast deadline fires within the jitter window")
-            .expect("the reactor task is alive");
-        assert_eq!(target, peer, "a rebroadcast fans to the peer");
+            .expect("the rebroadcast reaches the peer's wire within the window")
+            .expect("the peer interface task is alive");
         let (header, _) = WirePacketHeader::parse(&bytes).expect("valid rebroadcast wire");
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(
@@ -263,21 +405,17 @@ mod tests {
         let source = InterfaceId::new([0xA1; 16]);
         let view = std::vec![descriptor(source)];
 
-        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel::<InboundFrame>();
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
-        let (delivered_tx, mut delivered_rx) = mpsc::unbounded_channel::<()>();
-        let (sent_tx, mut sent_rx) = mpsc::unbounded_channel::<(InterfaceId, std::vec::Vec<u8>)>();
+        let (source_out_tx, mut source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let egress = Egress::new(std::vec![(source, source_out_tx)]);
 
-        let on_reaction = move |reaction: EngineReaction<'_>| match reaction {
-            EngineReaction::Journaled(Journaled::Delivered(_)) => {
+        let (delivered_tx, mut delivered_rx) = mpsc::unbounded_channel::<()>();
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::Delivered(_) => {
                 let _ = delivered_tx.send(());
             }
-            EngineReaction::Journaled(
-                Journaled::AnnounceHeard { .. } | Journaled::CommandSettled { .. },
-            ) => {}
-            EngineReaction::Directive(Directive::Send { target, bytes }) => {
-                let _ = sent_tx.send((target, bytes.to_vec()));
-            }
+            Journaled::AnnounceHeard { .. } | Journaled::CommandSettled { .. } => {}
         };
 
         tokio::spawn(run(
@@ -286,11 +424,12 @@ mod tests {
             TokioHost::new(),
             inbound_rx,
             command_rx,
-            on_reaction,
+            egress,
+            app,
         ));
 
         inbound_tx
-            .send((source, raw))
+            .send(InboundFrame::new(source, &raw))
             .expect("the reactor task holds the receiver");
 
         tokio::time::timeout(Duration::from_secs(2), delivered_rx.recv())
@@ -298,17 +437,14 @@ mod tests {
             .expect("the delivery journals within the window")
             .expect("the reactor task is alive");
 
-        let (target, bytes) = tokio::time::timeout(Duration::from_secs(2), sent_rx.recv())
+        let frame = tokio::time::timeout(Duration::from_secs(2), source_out_rx.recv())
             .await
             .expect("the owed proof is emitted within the window")
             .expect("the reactor task is alive");
         assert_eq!(
-            target, source,
-            "the proof returns on the lane the packet arrived through"
-        );
-        assert_eq!(
-            bytes, expected_proof,
-            "the proof is byte-identical to the RNS 1.3.1 implicit proof"
+            frame.bytes(),
+            expected_proof,
+            "the proof is byte-identical to the RNS 1.3.1 implicit proof, on the arrival lane"
         );
     }
 
@@ -340,21 +476,18 @@ mod tests {
         let second = InterfaceId::new([0xB2; 16]);
         let view = std::vec![descriptor(first), descriptor(second)];
 
-        let (_inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+        let (_inbound_tx, inbound_rx) = mpsc::unbounded_channel::<InboundFrame>();
         let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
-        let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
-        let (sent_tx, mut sent_rx) = mpsc::unbounded_channel::<(InterfaceId, std::vec::Vec<u8>)>();
+        let (first_out_tx, mut first_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (second_out_tx, mut second_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let egress = Egress::new(std::vec![(first, first_out_tx), (second, second_out_tx)]);
 
-        let on_reaction = move |reaction: EngineReaction<'_>| match reaction {
-            EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+        let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::CommandSettled { id, settlement } => {
                 let _ = settled_tx.send((id, settlement));
             }
-            EngineReaction::Journaled(
-                Journaled::AnnounceHeard { .. } | Journaled::Delivered(_),
-            ) => {}
-            EngineReaction::Directive(Directive::Send { target, bytes }) => {
-                let _ = sent_tx.send((target, bytes.to_vec()));
-            }
+            Journaled::AnnounceHeard { .. } | Journaled::Delivered(_) => {}
         };
 
         tokio::spawn(run(
@@ -363,7 +496,8 @@ mod tests {
             TokioHost::new(),
             inbound_rx,
             command_rx,
-            on_reaction,
+            egress,
+            app,
         ));
 
         command_tx
@@ -385,20 +519,14 @@ mod tests {
         assert_eq!(settled_id, CommandId(7));
         assert_eq!(settlement, Settlement::AnnounceNow(Ok(())));
 
-        let mut sent_targets = std::vec::Vec::new();
-        for _ in 0..2 {
-            let (target, bytes) = tokio::time::timeout(Duration::from_secs(2), sent_rx.recv())
+        for out_rx in [&mut first_out_rx, &mut second_out_rx] {
+            let frame = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
                 .await
                 .expect("an announce fires on each interface")
                 .expect("the reactor task is alive");
-            let (header, _) = WirePacketHeader::parse(&bytes).expect("valid announce wire");
+            let (header, _) = WirePacketHeader::parse(frame.bytes()).expect("valid announce wire");
             assert_eq!(header.packet_type, PacketType::Announce);
             assert_eq!(header.destination, destination);
-            sent_targets.push(target);
         }
-        assert!(
-            sent_targets.contains(&first) && sent_targets.contains(&second),
-            "the announce fans to every interface"
-        );
     }
 }
