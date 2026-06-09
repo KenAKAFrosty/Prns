@@ -12,11 +12,15 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_time::{Duration, Timer};
 
+use portable_atomic::{AtomicU64, AtomicU8, Ordering};
+
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
 use crate::interfaces::substrate::EmbassyTimebase;
-use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+use crate::interfaces::{
+    ConnectionState, InboundPacket, InterfaceConfig, InterfaceId, InterfaceStatus,
+};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
 };
@@ -64,6 +68,61 @@ where
 
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
         (self.draw_entropy)(bytes);
+    }
+}
+
+/// One interface's live state on the no_std host, shared by reference (a `&'static` the firmware
+/// parks in a `StaticCell`) rather than an `Arc`: the interface writes it as the wire moves, the
+/// display task reads it lock-free through [`InterfaceStatus`] on its own render cadence — the
+/// embassy twin of `TokioInterfaceStatus`. The byte counters are true `u64` (a board left running
+/// must never wrap a card's numbers); the 32-bit esp32s3 has no native 64-bit atomic, so
+/// `portable-atomic` carries them through critical-section.
+pub struct EmbassyInterfaceStatus {
+    id: InterfaceId,
+    connection: AtomicU8,
+    rx: AtomicU64,
+    tx: AtomicU64,
+}
+
+impl EmbassyInterfaceStatus {
+    #[must_use]
+    pub const fn new(id: InterfaceId, connection: ConnectionState) -> Self {
+        Self {
+            id,
+            connection: AtomicU8::new(connection.as_u8()),
+            rx: AtomicU64::new(0),
+            tx: AtomicU64::new(0),
+        }
+    }
+
+    pub fn set_connection(&self, connection: ConnectionState) {
+        self.connection.store(connection.as_u8(), Ordering::Relaxed);
+    }
+
+    pub fn add_rx(&self, bytes: u64) {
+        self.rx.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn add_tx(&self, bytes: u64) {
+        self.tx.fetch_add(bytes, Ordering::Relaxed);
+    }
+}
+
+impl InterfaceStatus for EmbassyInterfaceStatus {
+    fn id(&self) -> InterfaceId {
+        self.id
+    }
+
+    fn connection(&self) -> ConnectionState {
+        ConnectionState::from_u8(self.connection.load(Ordering::Relaxed))
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        self.rx.load(Ordering::Relaxed)
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        self.tx.load(Ordering::Relaxed)
     }
 }
 

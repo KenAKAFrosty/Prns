@@ -12,6 +12,11 @@ pub use crate::interfaces::impls::usb_auto::core::{
     MalformedMessage, Message, NodeTag, MAX_FRAMED_BYTES, MAX_MESSAGE_BYTES, READ_CHUNK_BYTES,
 };
 
+/// The device side's classification of one decoded message (`AnswerHandshake` / `Deliver` /
+/// `Ignore`), reused from the legacy interface's core for the embassy device link.
+#[cfg(any(test, feature = "embassy-contract"))]
+pub use crate::interfaces::impls::usb_auto::core::{react_to, InboundReaction};
+
 /// The streaming deframer one link feeds wire bytes into, yielding whole handshake/data frames.
 pub type Decoder = RnsSerialDecoder<MAX_MESSAGE_BYTES>;
 

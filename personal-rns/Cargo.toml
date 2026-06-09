@@ -32,7 +32,7 @@ embassy-seam = ["dep:embassy-sync", "dep:embassy-time", "dep:static_cell"]
 # seam + `embassy-futures` (select) + `embedded-io-async` (byte streams), enough for
 # the serial worker (`serve`) and `EmbassyContractHost`, but NOT the WiFi/LoRa stack.
 # Host-buildable (no embassy-net), so it compile-checks off-target. No alloc.
-embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async"]
+embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-async", "dep:portable-atomic"]
 # A WiFi embedded host: the embassy contract seam + embassy-net (enough for the
 # AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
 # old LoRa/ESP-NOW radio shells were removed with the device host examples.
@@ -128,6 +128,11 @@ embassy-futures = { version = "0.1", optional = true, default-features = false }
 embedded-io-async = { version = "0.6", optional = true, default-features = false }
 # Logging facade for the worker shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
+# Real u64 atomics on the 32-bit embedded targets: neither the esp32s3 (xtensa) nor riscv32
+# has a native 64-bit atomic, so the interface-status byte counters would otherwise cap at a
+# u32's 4 GiB. portable-atomic emulates them through critical-section (esp-hal supplies the
+# impl in the firmware binary; native on the host), keeping the counters true u64.
+portable-atomic = { version = "1", optional = true, default-features = false, features = ["critical-section"] }
 
 [dev-dependencies]
 proptest = "1"
