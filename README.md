@@ -27,9 +27,6 @@ The core engine is `no_std` and allocation-free, so the same wire contract runs 
 | [`personal-rns`](personal-rns) | Pure Reticulum engine and wire contract (`no_std`, alloc-free core). |
 | [`personal-rnsd`](personal-rnsd) | Thin daemon host for the engine. |
 | [`personal-lxmf`](personal-lxmf) | LXMF application layer above the engine. |
-| [`personal-rns-ffi`](personal-rns-ffi) | uniffi bindings: Kotlin, Swift, and Python from one UDL. |
-| [`personal-rns-napi`](personal-rns-napi) | Node-API bindings, published as the `@personal/rns` TypeScript package. |
-| [`personal-rns-capi`](personal-rns-capi) | C ABI for C, C++, Go, Zig, and other native consumers. |
 
 Also in the repository: [`personal-hopspot`](personal-hopspot) (embedded status-screen host) and [`fuzz`](fuzz) (fuzz targets).
 
@@ -65,7 +62,7 @@ CI runs formatting, clippy with warnings denied, the full test suite, the `no_st
 
 ## Minimum supported Rust version
 
-The workspace builds on Rust **1.88** and newer, and tracks `stable` (pinned in [rust-toolchain.toml](rust-toolchain.toml)). The floor is set by the `napi` dependencies of the `personal-rns-napi` binding; the `no_std` core itself compiles on older toolchains. The `msrv` CI job pins 1.88 so the declared version cannot silently drift.
+The workspace builds on Rust **1.88** and newer, and tracks `stable` (pinned in [rust-toolchain.toml](rust-toolchain.toml)). 1.88 is the declared workspace MSRV; the `no_std` core itself compiles on older toolchains. The `msrv` CI job pins 1.88 so the declared version cannot silently drift.
 
 ## Contributing
 

@@ -20,9 +20,6 @@ fuzz/coverage
 docs/website/target
 docs/website/dist
 docs/website/node_modules
-android-aar/.gradle
-android-aar/build
-android-aar/lib/build
 "
 
 if [ "$apply" -eq 0 ]; then

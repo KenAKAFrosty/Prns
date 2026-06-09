@@ -10,7 +10,6 @@ on:
       - "personal-rns/**"
       - "personal-rnsd/**"
       - "personal-lxmf/**"
-      - "personal-rns-ffi/**"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 

@@ -62,8 +62,8 @@ jobs:
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
-    # measured floor (1.88, set by the napi binding's deps); catches a feature or a
-    # dependency bump that quietly requires a newer compiler than we advertise.
+    # declared workspace floor (1.88); catches a feature or a dependency bump that
+    # quietly requires a newer compiler than we advertise.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

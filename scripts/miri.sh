@@ -6,7 +6,7 @@
 # Honest ROI note: the engine is `#![forbid(unsafe_code)]`, so there is no in-crate
 # `unsafe` for Miri to find UB in. Its value here is (1) validating that our *usage*
 # of unsafe-internally dependencies (heapless, the dalek/RustCrypto stack) is sound,
-# and (2) being ready the moment `unsafe` does appear — e.g. in personal-rns-ffi.
+# and (2) being ready the moment `unsafe` does appear at a host or FFI boundary.
 # For an unsafe-free pure engine this is cheap insurance, not a primary gate. Some
 # crypto deps are slow under Miri; scope to one test with `scripts/miri.sh <filter>`.
 set -euo pipefail

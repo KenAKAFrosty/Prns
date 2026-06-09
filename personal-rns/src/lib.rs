@@ -5,7 +5,8 @@
 // call. This is the load-bearing guarantee behind "100% safe Rust engine": it holds
 // across every feature combination (including `stream-compression`, so compression
 // can never reach for an FFI codec the way a typical port does). The only `unsafe`
-// in the suite lives at the FFI boundary (personal-rns-ffi), by design.
+// in the suite lives at the platform host boundaries (the Hopspot JNI/FFI
+// bridges), by design.
 #![forbid(unsafe_code)]
 #![doc = "Reticulum"]
 #![deny(rustdoc::broken_intra_doc_links)]
@@ -20,5 +21,4 @@ pub mod identity;
 pub mod interfaces;
 pub mod reactor;
 pub mod routing;
-pub mod runtime;
 pub mod wire;

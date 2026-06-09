@@ -147,7 +147,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 
 [lints]
 workspace = true
-
-[[example]]
-name = "usb_throughput_host"
-required-features = ["usb-auto"]
