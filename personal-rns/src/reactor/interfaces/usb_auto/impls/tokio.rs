@@ -3,6 +3,8 @@
 //! drove every port from one `mio` poll loop on a fixed cadence, here each port is its own async
 //! task — it sleeps on its wire, wakes the instant a byte lands, and funnels straight into the
 //! reactor's inbound — so the discovery latency and the poll-interval jitter both fall away.
+//! Discovery itself is event-driven too: the consumer pokes a rescan signal the instant the OS
+//! reports a hot-plug, so a board appears the moment it is plugged, not on the next poll.
 //!
 //! Inbound fans IN: every confirmed port writes its data frames directly to the shared inbound
 //! funnel (alloc-free, tagged with the host's id). Outbound fans OUT: the run loop drains the
@@ -11,11 +13,13 @@
 
 use std::future::Future;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 use std::vec::Vec;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
@@ -25,15 +29,14 @@ use crate::reactor::interfaces::usb_auto::core::{
     self, Capabilities, HostInbound, Message, NodeTag,
 };
 
-/// How often the host re-enumerates CDC ports to pick up hot-plugged boards and prune unplugged
-/// ones.
-const SCAN_INTERVAL: Duration = Duration::from_millis(300);
+/// A slow fallback re-enumeration. Hot-plug is event-driven (the consumer pokes the rescan
+/// signal the instant the OS reports a change), so this only backstops a missed event, a host
+/// with no hot-plug source (e.g. macOS), and re-opening a port whose task died without an unplug.
+const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 /// How often a not-yet-confirmed port re-sends its `Hello` — covering a board that was still
 /// booting when first opened, with no replug needed.
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
 
-/// One discovered CDC port the host is tracking: its task, the outbound lane the run loop sends
-/// broadcasts down, and whether its handshake has confirmed (only then does it carry traffic).
 struct Port {
     id: String,
     confirmed: bool,
@@ -41,15 +44,11 @@ struct Port {
     task: JoinHandle<()>,
 }
 
-/// A port task's word to the run loop. Inbound data does not flow through here — a confirmed
-/// port writes it straight to the shared funnel — so this lane carries only lifecycle.
 enum PortEvent {
     Confirmed { id: String },
     Closed { id: String },
 }
 
-/// The shared half of a port task: everything every port writes to, identical across all of
-/// them, so one cheap-clone bundle is handed to each spawned task.
 #[derive(Clone)]
 struct PortContext {
     host_id: InterfaceId,
@@ -59,10 +58,6 @@ struct PortContext {
     events: UnboundedSender<PortEvent>,
 }
 
-/// The plug-and-play USB-auto host. `scan` enumerates the present CDC port names; `open` opens
-/// one into an async byte stream (doing any host-specific line dance itself). Both stay with the
-/// consumer so the library keeps no serial-crate dependency — the same split the reactor's
-/// serial interface uses.
 pub struct UsbAutoHost<Scan, Open> {
     id: InterfaceId,
     node_tag: NodeTag,
@@ -115,12 +110,14 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     /// Multiplex every discovered, confirmed port behind this one interface: funnel their inbound
-    /// into `inbound`, broadcast `outbound` out to all of them. Runs until the reactor drops the
-    /// outbound lane.
+    /// into `inbound`, broadcast `outbound` out to all of them, and re-enumerate ports whenever
+    /// `rescan` is poked (the consumer's hot-plug signal) or the fallback timer fires. Runs until
+    /// the reactor drops the outbound lane.
     pub async fn run(
         mut self,
         inbound: UnboundedSender<InboundFrame>,
         mut outbound: UnboundedReceiver<OutboundFrame>,
+        rescan: Arc<Notify>,
     ) {
         let (events_tx, mut events_rx) = mpsc::unbounded_channel::<PortEvent>();
         let context = PortContext {
@@ -131,38 +128,12 @@ where
             events: events_tx,
         };
         let mut ports: Vec<Port> = Vec::new();
-        let mut scan = tokio::time::interval(SCAN_INTERVAL);
+        let mut fallback = tokio::time::interval(FALLBACK_SCAN_INTERVAL);
 
         loop {
             tokio::select! {
-                _ = scan.tick() => {
-                    let present = (self.scan)();
-                    ports.retain(|port| {
-                        if present.iter().any(|name| name == &port.id) {
-                            true
-                        } else {
-                            port.task.abort();
-                            false
-                        }
-                    });
-                    for name in present {
-                        if ports.iter().any(|port| port.id == name) {
-                            continue;
-                        }
-                        if let Ok(stream) = (self.open)(name.clone()).await {
-                            let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
-                            let task =
-                                tokio::spawn(serve_port(name.clone(), stream, context.clone(), out_rx));
-                            ports.push(Port {
-                                id: name,
-                                confirmed: false,
-                                outbound: out_tx,
-                                task,
-                            });
-                        }
-                    }
-                    self.refresh_connection(&ports);
-                }
+                _ = fallback.tick() => self.reconcile(&mut ports, &context).await,
+                () = rescan.notified() => self.reconcile(&mut ports, &context).await,
                 Some(event) = events_rx.recv() => {
                     match event {
                         PortEvent::Confirmed { id } => {
@@ -185,6 +156,36 @@ where
                 }
             }
         }
+    }
+
+    /// Re-enumerate the present CDC ports: drop (and abort) the tasks of any that vanished, spawn
+    /// a fresh task for any newly present, and refresh the connection state.
+    async fn reconcile(&mut self, ports: &mut Vec<Port>, context: &PortContext) {
+        let present = (self.scan)();
+        ports.retain(|port| {
+            if present.iter().any(|name| name == &port.id) {
+                true
+            } else {
+                port.task.abort();
+                false
+            }
+        });
+        for name in present {
+            if ports.iter().any(|port| port.id == name) {
+                continue;
+            }
+            if let Ok(stream) = (self.open)(name.clone()).await {
+                let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+                let task = tokio::spawn(serve_port(name.clone(), stream, context.clone(), out_rx));
+                ports.push(Port {
+                    id: name,
+                    confirmed: false,
+                    outbound: out_tx,
+                    task,
+                });
+            }
+        }
+        self.refresh_connection(ports);
     }
 }
 
@@ -359,7 +360,7 @@ mod tests {
 
         let (funnel_tx, mut funnel_rx) = unbounded_channel::<InboundFrame>();
         let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
-        tokio::spawn(host.run(funnel_tx, outbound_rx));
+        tokio::spawn(host.run(funnel_tx, outbound_rx, Arc::new(Notify::new())));
 
         // The host probes the newly discovered port with a Hello; the device answers HelloAck and
         // the host confirms the link (its status turns Connected).

@@ -13,6 +13,7 @@
 use std::cell::Cell;
 use std::io;
 use std::sync::mpsc::{self, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -39,6 +40,7 @@ use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 use serialport::SerialPort;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::Notify;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
 use personal_hopspot_ui::{
@@ -175,8 +177,11 @@ fn run_engine(
 
         let app_data = SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA)
             .expect("the lxmf app_data fits");
+        let rescan = Arc::new(Notify::new());
+        #[cfg(target_os = "linux")]
+        spawn_hotplug_watcher(rescan.clone());
         tokio::spawn(announce_loop(command_tx, destination, app_data));
-        tokio::spawn(interface.run(funnel_tx, outbound_rx));
+        tokio::spawn(interface.run(funnel_tx, outbound_rx, rescan));
 
         run_reactor(
             engine,
@@ -214,6 +219,48 @@ async fn open_cdc_port(name: String) -> io::Result<SerialStream> {
     let _ = port.write_request_to_send(false);
     let _ = port.write_data_terminal_ready(false);
     Ok(port)
+}
+
+/// Watch the OS for serial-device hot-plug and poke the host's rescan signal on each event, so a
+/// board appears the instant it is plugged in rather than on the host's fallback scan. Linux
+/// only (udev); on other hosts the fallback timer carries discovery on its own.
+///
+/// The udev monitor holds non-`Send` handles, so it rides its own thread with a current-thread
+/// runtime — `block_on` keeps it off the multi-thread reactor while the cross-thread `Notify`
+/// pokes the host.
+#[cfg(target_os = "linux")]
+fn spawn_hotplug_watcher(rescan: Arc<Notify>) {
+    let _ = std::thread::Builder::new()
+        .name("hopspot-udev".into())
+        .spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            runtime.block_on(watch_hotplug(rescan));
+        });
+}
+
+#[cfg(target_os = "linux")]
+async fn watch_hotplug(rescan: Arc<Notify>) {
+    use tokio_stream::StreamExt;
+
+    let listener = tokio_udev::MonitorBuilder::new()
+        .and_then(|builder| builder.match_subsystem("tty"))
+        .and_then(|builder| builder.listen());
+    let Ok(listener) = listener else {
+        return;
+    };
+    let Ok(mut events) = tokio_udev::AsyncMonitorSocket::new(listener) else {
+        return;
+    };
+    while let Some(event) = events.next().await {
+        if event.is_ok() {
+            rescan.notify_one();
+        }
+    }
 }
 
 /// The desktop's own announce cadence: the engine no longer self-announces, so the app fires a

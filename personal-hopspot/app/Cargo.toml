@@ -34,6 +34,13 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 tokio-serial = { version = "5" }
 serialport = { version = "4" }
 
+# Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
+# rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor
+# as an async event stream; tokio-stream gives it `.next()`. macOS leans on the fallback timer.
+[target.'cfg(all(not(target_arch = "xtensa"), target_os = "linux"))'.dependencies]
+tokio-udev = "0.9"
+tokio-stream = "0.1"
+
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
