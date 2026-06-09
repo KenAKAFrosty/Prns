@@ -1,5 +1,3 @@
-pub mod core;
-pub use core::*;
-
 mod impls;
+#[cfg(feature = "embassy-seam")]
 pub use impls::*;
