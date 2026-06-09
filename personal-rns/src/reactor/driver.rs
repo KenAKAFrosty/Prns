@@ -14,7 +14,7 @@ use crate::routing::storage::EngineStorage;
 /// sleeps until its deadline — the engine is frozen while the reactor parks, so the lane
 /// that owned the deadline is still the one now due. `Idle` parks forever, leaving the
 /// select to rest on its channels until one wakes the loop.
-pub(crate) async fn wait_for_due_lane<H: Host>(host: &H, wake: ScheduledWake) -> DueLane {
+pub async fn wait_for_due_lane<H: Host>(host: &H, wake: ScheduledWake) -> DueLane {
     match wake {
         ScheduledWake::Idle => core::future::pending().await,
         ScheduledWake::Due(lane) => lane,
@@ -28,29 +28,19 @@ pub(crate) async fn wait_for_due_lane<H: Host>(host: &H, wake: ScheduledWake) ->
 /// Fire exactly the one scheduled lane that came due, streaming whatever it owes to
 /// `on_reaction`. One arm per [`DueLane`], each naming a single engine method — the wake
 /// does the work it woke for and nothing else.
-pub(crate) fn fire_due_lane<S, H>(
+pub fn fire_due_lane<S>(
     engine: &mut EngineState<S>,
     lane: DueLane,
     now: InstantMillis,
     jitter: JitterSeed,
     view: &[InterfaceDescriptor],
-    host: &mut H,
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) where
     S: EngineStorage,
-    H: Host,
 {
     match lane {
         DueLane::HeldAnnounces => {
             engine.recover_held_announces(jitter, view, on_reaction);
-        }
-        DueLane::SelfAnnounce => {
-            engine.fire_due_self_announces(
-                now,
-                view,
-                &mut |entropy| host.fill_entropy(entropy),
-                on_reaction,
-            );
         }
         DueLane::Rebroadcast => {
             engine.fire_due_announce_rebroadcasts(now, view, on_reaction);

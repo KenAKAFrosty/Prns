@@ -96,15 +96,7 @@ pub async fn run<S, H>(
             }
             lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
-                fire_due_lane(
-                    &mut engine,
-                    lane,
-                    now,
-                    jitter,
-                    &view,
-                    &mut host,
-                    &mut on_reaction,
-                );
+                fire_due_lane(&mut engine, lane, now, jitter, &view, &mut on_reaction);
             }
         }
     }

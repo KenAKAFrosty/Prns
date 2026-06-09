@@ -90,9 +90,6 @@ pub enum DueLane {
     /// Retry the held announces against the now-unblocked arena
     /// ([`recover_held_announces`](EngineState::recover_held_announces)).
     HeldAnnounces,
-    /// Emit this node's due self-announce
-    /// ([`fire_due_self_announces`](EngineState::fire_due_self_announces)).
-    SelfAnnounce,
     /// Re-emit a learned announce whose jittered rebroadcast is due
     /// ([`fire_due_announce_rebroadcasts`](EngineState::fire_due_announce_rebroadcasts)).
     Rebroadcast,
@@ -234,33 +231,63 @@ impl<S: EngineStorage> EngineState<S> {
         self.pending_rebroadcasts.pending_count()
     }
 
+    /// The legacy runtime's coarse wake: the soonest of every scheduled deadline, including
+    /// the periodic self-announce the runtime still drives. The reactor does *not* use this
+    /// — self-announce is the application's to schedule there (an `AnnounceNow` command),
+    /// not a lane. This stays standalone until the runtime is retired.
     pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
-        match self.next_scheduled_wake(now) {
-            ScheduledWake::Idle => NextScheduledEngineWork::Idle,
-            ScheduledWake::Due(_) => NextScheduledEngineWork::Immediate,
-            ScheduledWake::At { at, .. } => NextScheduledEngineWork::At(at),
+        if self.held_announce_count() > 0 {
+            return NextScheduledEngineWork::Immediate;
+        }
+
+        let mut earliest: Option<InstantMillis> = None;
+
+        if self.self_announces.due_announce(now).is_some() {
+            return NextScheduledEngineWork::Immediate;
+        }
+        if let Some(deadline) = self.self_announces.next_due_at() {
+            earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
+        }
+
+        if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
+            if due_at <= now {
+                return NextScheduledEngineWork::Immediate;
+            }
+            earliest = Some(earliest.map_or(due_at, |e| e.min(due_at)));
+        }
+
+        if let Some(timeout_at) = self.receipts.earliest_timeout_at() {
+            if timeout_at <= now {
+                return NextScheduledEngineWork::Immediate;
+            }
+            earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
+        }
+
+        if let Some(timeout_at) = self.pending_path_requests.earliest_timeout_at() {
+            if timeout_at <= now {
+                return NextScheduledEngineWork::Immediate;
+            }
+            earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
+        }
+
+        match earliest {
+            Some(instant) => NextScheduledEngineWork::At(instant),
+            None => NextScheduledEngineWork::Idle,
         }
     }
 
-    /// The next scheduled wake, named by lane: the first lane already due (in priority
-    /// order — held, self-announce, rebroadcast, send-timeout, path-timeout), else the
-    /// lane owning the earliest future deadline, else `Idle`. Ties at the same instant go
-    /// to the higher-priority lane. The reactor drives its timer edge off this; the
-    /// lane-less [`next_wakeup`](Self::next_wakeup) is the same answer for the legacy
-    /// runtime.
+    /// The reactor's next scheduled wake, named by lane: the first lane already due (in
+    /// priority order — held, rebroadcast, send-timeout, path-timeout), else the lane
+    /// owning the earliest future deadline, else `Idle`. Ties at the same instant go to the
+    /// higher-priority lane. Self-announce is deliberately absent — it is the application's
+    /// to schedule, fired immediately through an `AnnounceNow` command, never a lingering
+    /// deadline the engine holds.
     pub fn next_scheduled_wake(&self, now: InstantMillis) -> ScheduledWake {
         if self.held_announce_count() > 0 {
             return ScheduledWake::Due(DueLane::HeldAnnounces);
         }
 
         let mut earliest: Option<(InstantMillis, DueLane)> = None;
-
-        if self.self_announces.due_announce(now).is_some() {
-            return ScheduledWake::Due(DueLane::SelfAnnounce);
-        }
-        if let Some(deadline) = self.self_announces.next_due_at() {
-            earliest = merge_earliest(earliest, deadline, DueLane::SelfAnnounce);
-        }
 
         if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
             if due_at <= now {
@@ -390,38 +417,6 @@ mod tests {
     }
 
     #[test]
-    fn next_scheduled_wake_names_the_self_announce_lane_when_due() {
-        let state = personal_node_announcer();
-        assert_eq!(
-            state.next_scheduled_wake(InstantMillis(0)),
-            ScheduledWake::Due(DueLane::SelfAnnounce),
-        );
-    }
-
-    #[test]
-    fn next_scheduled_wake_carries_the_reannounce_deadline_and_its_lane() {
-        let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
-        let _ = state
-            .write_due_self_announce(
-                InstantMillis(1_000),
-                TEST_SELF_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
-                &mut buf,
-            )
-            .written_len();
-
-        let interval = ReannounceSchedule::default().interval_millis();
-        assert_eq!(
-            state.next_scheduled_wake(InstantMillis(2_000)),
-            ScheduledWake::At {
-                at: InstantMillis(1_000 + interval),
-                lane: DueLane::SelfAnnounce,
-            },
-        );
-    }
-
-    #[test]
     fn next_scheduled_wake_names_the_rebroadcast_lane_future_then_due() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
@@ -451,28 +446,6 @@ mod tests {
         assert_eq!(
             state.next_scheduled_wake(InstantMillis(1_000_000)),
             ScheduledWake::Due(DueLane::Rebroadcast),
-        );
-    }
-
-    #[test]
-    fn next_scheduled_wake_prefers_the_higher_priority_due_lane() {
-        let mut state = personal_node_announcer();
-        let mut raw = hx(RAW_ANNOUNCE);
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut raw,
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
-
-        assert_eq!(
-            state.next_scheduled_wake(InstantMillis(1_000_000)),
-            ScheduledWake::Due(DueLane::SelfAnnounce),
-            "self-announce is checked before rebroadcast, so it names a shared wake",
         );
     }
 

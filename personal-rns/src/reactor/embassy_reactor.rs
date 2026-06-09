@@ -139,15 +139,7 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
             }
             Either3::Third(lane) => {
                 let now = host.now();
-                fire_due_lane(
-                    &mut engine,
-                    lane,
-                    now,
-                    jitter,
-                    view,
-                    &mut host,
-                    &mut on_reaction,
-                );
+                fire_due_lane(&mut engine, lane, now, jitter, view, &mut on_reaction);
             }
         }
     }
@@ -177,6 +169,8 @@ mod tests {
 
     const WATCHDOG: Duration = Duration::from_secs(5);
 
+    type SentLog = Rc<RefCell<Vec<(InterfaceId, Vec<u8>)>>>;
+
     fn descriptor(id: InterfaceId) -> InterfaceDescriptor {
         InterfaceDescriptor {
             id,
@@ -204,7 +198,7 @@ mod tests {
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
 
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
-        let sent: Rc<RefCell<Vec<(InterfaceId, Vec<u8>)>>> = Rc::new(RefCell::new(Vec::new()));
+        let sent: SentLog = Rc::new(RefCell::new(Vec::new()));
         let heard_sink = heard.clone();
         let sent_sink = sent.clone();
 
