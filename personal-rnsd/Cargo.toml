@@ -14,20 +14,22 @@ publish = false
 [[bin]]
 name = "personal-rnsd"
 path = "src/main.rs"
-required-features = ["std-sync-host"]
+required-features = ["tokio-host"]
 
 [features]
-default = ["std-sync-host"]
+default = ["tokio-host"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
-std-sync-host = ["std", "dep:serialport", "personal-rns/std-sync-host"]
+tokio-host = ["std", "personal-rns/tokio-host", "dep:tokio", "dep:tokio-serial"]
 fixture-identity = []
 
 [dependencies]
 personal-rns = { path = "../personal-rns", default-features = false }
-# USB-serial transport (std-sync-host only). default-features off drops the libudev
-# system dep — we open ports by path, never enumerate.
-serialport = { version = "4", default-features = false, optional = true }
+# The async runtime + async USB-serial transport (tokio-host only). tokio-serial wraps the
+# port as an AsyncRead+AsyncWrite stream for the reactor's serial interface; default-features
+# off drops the libudev enumeration dep — we open ports by path, never enumerate.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"], optional = true }
+tokio-serial = { version = "5", default-features = false, optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).
 getrandom = "0.2"
