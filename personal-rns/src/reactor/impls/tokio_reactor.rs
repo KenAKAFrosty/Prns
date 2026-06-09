@@ -129,38 +129,13 @@ struct StatusCell {
     tx: AtomicU64,
 }
 
-/// Encode a [`ConnectionState`] into the `u8` the status cell stores in its atomic. Paired
-/// exhaustively with [`decode_connection`] so the two can never drift.
-fn encode_connection(connection: ConnectionState) -> u8 {
-    match connection {
-        ConnectionState::Initializing => 0,
-        ConnectionState::Connected => 1,
-        ConnectionState::Degraded => 2,
-        ConnectionState::Reconnecting => 3,
-        ConnectionState::Failed => 4,
-        ConnectionState::Disconnected => 5,
-    }
-}
-
-/// Decode the `u8` from the status cell's atomic back into a [`ConnectionState`].
-fn decode_connection(code: u8) -> ConnectionState {
-    match code {
-        1 => ConnectionState::Connected,
-        2 => ConnectionState::Degraded,
-        3 => ConnectionState::Reconnecting,
-        4 => ConnectionState::Failed,
-        5 => ConnectionState::Disconnected,
-        _ => ConnectionState::Initializing,
-    }
-}
-
 impl TokioInterfaceStatus {
     #[must_use]
     pub fn new(id: InterfaceId, connection: ConnectionState) -> Self {
         Self {
             inner: Arc::new(StatusCell {
                 id,
-                connection: AtomicU8::new(encode_connection(connection)),
+                connection: AtomicU8::new(connection.as_u8()),
                 rx: AtomicU64::new(0),
                 tx: AtomicU64::new(0),
             }),
@@ -170,7 +145,7 @@ impl TokioInterfaceStatus {
     pub fn set_connection(&self, connection: ConnectionState) {
         self.inner
             .connection
-            .store(encode_connection(connection), Ordering::Relaxed);
+            .store(connection.as_u8(), Ordering::Relaxed);
     }
 
     pub fn add_rx(&self, bytes: u64) {
@@ -188,7 +163,7 @@ impl InterfaceStatus for TokioInterfaceStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        decode_connection(self.inner.connection.load(Ordering::Relaxed))
+        ConnectionState::from_u8(self.inner.connection.load(Ordering::Relaxed))
     }
 
     fn rx_bytes(&self) -> u64 {

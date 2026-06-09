@@ -36,7 +36,7 @@ use personal_rns::runtime::RuntimeSnapshot;
 fn liveness(connection: ConnectionState) -> Liveness {
     match connection {
         ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
-        ConnectionState::Failed => Liveness::Offline,
+        ConnectionState::Failed | ConnectionState::Unknown => Liveness::Offline,
         ConnectionState::Initializing
         | ConnectionState::Reconnecting
         | ConnectionState::Disconnected => Liveness::Dormant,
