@@ -1,4 +1,4 @@
-package com.personal.hopspot
+package org.personal.hopspot
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -220,7 +220,7 @@ class UsbLink(private val context: Context) {
 
     companion object {
         private const val TAG = "HopspotUsb"
-        private const val ACTION_USB_PERMISSION = "com.personal.hopspot.USB_PERMISSION"
+        private const val ACTION_USB_PERMISSION = "org.personal.hopspot.USB_PERMISSION"
         private const val BAUD = 115200
         private const val RX_CAPACITY = 16 * 1024
         private const val TX_CAPACITY = 4 * 1024

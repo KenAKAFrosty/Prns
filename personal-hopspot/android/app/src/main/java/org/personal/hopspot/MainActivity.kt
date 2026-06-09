@@ -1,4 +1,4 @@
-package com.personal.hopspot
+package org.personal.hopspot
 
 import android.graphics.Bitmap
 import android.os.Bundle

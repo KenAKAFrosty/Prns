@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.personal.hopspot"
+    namespace = "org.personal.hopspot"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.personal.hopspot"
+        applicationId = "org.personal.hopspot"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

@@ -35,7 +35,7 @@ fn init_logging() {
 fn init_logging() {}
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeInit(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeInit(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
@@ -44,7 +44,7 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeInit(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeFree(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeFree(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -59,7 +59,7 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeFree(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativePostInput(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -83,7 +83,7 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativePostInput(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeRender(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRender(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -112,7 +112,7 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeRender(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbConnected(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbConnected(
     _env: JNIEnv,
     _class: JClass,
     connected: jboolean,
@@ -121,7 +121,7 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbConnected
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbRx(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbRx(
     env: JNIEnv,
     _class: JClass,
     buffer: JByteBuffer,
@@ -144,7 +144,7 @@ pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbRx(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_personal_hopspot_NativeBridge_nativeUsbTx(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeUsbTx(
     env: JNIEnv,
     _class: JClass,
     buffer: JByteBuffer,
