@@ -21,8 +21,11 @@ pub trait Host {
     fn fill_entropy(&mut self, bytes: &mut [u8]);
 }
 
-#[cfg(feature = "tokio-host")]
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 mod driver;
 
 #[cfg(feature = "tokio-host")]
 pub mod tokio_reactor;
+
+#[cfg(feature = "embassy-contract")]
+pub mod embassy_reactor;
