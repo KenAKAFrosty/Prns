@@ -3,10 +3,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
+use super::driver::{fire_due_lane, wait_for_due_lane};
 use super::Host;
-use crate::engine::{
-    EngineReaction, EngineState, InstantMillis, IssuedCommand, NextScheduledEngineWork,
-};
+use crate::engine::{EngineReaction, EngineState, InstantMillis, IssuedCommand};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::storage::EngineStorage;
@@ -65,7 +64,7 @@ pub async fn run<S, H>(
         let mut jitter_bytes = [0u8; core::mem::size_of::<u64>()];
         host.fill_entropy(&mut jitter_bytes);
         let jitter = JitterSeed(u64::from_le_bytes(jitter_bytes));
-        let wake = engine.next_wakeup(host.now());
+        let wake = engine.next_scheduled_wake(host.now());
         tokio::select! {
             arrived = inbound.recv() => {
                 let Some((id, mut bytes)) = arrived else { return };
@@ -95,28 +94,19 @@ pub async fn run<S, H>(
                     &mut on_reaction,
                 );
             }
-            () = wait_for_deadline(&host, wake) => {
+            lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
-                engine.settle_timed_out_send_singles(now, &mut on_reaction);
-                engine.settle_timed_out_path_requests(now, &mut on_reaction);
-                engine.recover_held_announces(jitter, &view, &mut on_reaction);
-                engine.fire_due_announce_rebroadcasts(now, &view, &mut on_reaction);
-                engine.fire_due_self_announces(
+                fire_due_lane(
+                    &mut engine,
+                    lane,
                     now,
+                    jitter,
                     &view,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut host,
                     &mut on_reaction,
                 );
             }
         }
-    }
-}
-
-async fn wait_for_deadline<H: Host>(host: &H, wake: NextScheduledEngineWork) {
-    match wake {
-        NextScheduledEngineWork::Idle => std::future::pending::<()>().await,
-        NextScheduledEngineWork::Immediate => {}
-        NextScheduledEngineWork::At(at) => host.sleep_until(at).await,
     }
 }
 

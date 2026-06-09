@@ -22,6 +22,7 @@ pub trait Host {
 }
 
 #[cfg(feature = "tokio-host")]
-mod tokio_reactor;
+mod driver;
+
 #[cfg(feature = "tokio-host")]
-pub use tokio_reactor::{run, TokioHost};
+pub mod tokio_reactor;
