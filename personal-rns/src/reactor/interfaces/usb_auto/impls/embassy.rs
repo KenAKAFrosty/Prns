@@ -11,8 +11,8 @@
 //! host's decoder the moment it connects. Before a host links, outbound frames are drained and
 //! dropped (there is no peer to hear them), not streamed into nothing.
 
-use embassy_futures::select::{select, Either};
-use embassy_time::{with_timeout, Duration};
+use embassy_futures::select::{select3, Either3};
+use embassy_time::{with_timeout, Duration, Timer};
 use embedded_io_async::{Read, Write};
 
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
@@ -27,34 +27,47 @@ use crate::reactor::interfaces::usb_auto::core::{
 /// can retry.
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
 
+const PRESENCE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+
+const PRESENCE_STRIKES_TO_DORMANT: u8 = 2;
+
 /// A USB-auto device link over an async byte stream pair (the board's USB-Serial-JTAG rx/tx). It
 /// holds a `&'a` status handle the firmware shares with its display task; the link writes it as
 /// the wire moves, the display reads it lock-free.
-pub struct UsbAutoDevice<'a, R, W> {
+pub struct UsbAutoDevice<'a, R, W, P> {
     id: InterfaceId,
     rx: R,
     tx: W,
     node_tag: NodeTag,
     status: &'a EmbassyInterfaceStatus,
+    presence: P,
 }
 
-impl<'a, R, W> UsbAutoDevice<'a, R, W> {
+impl<'a, R, W, P> UsbAutoDevice<'a, R, W, P> {
     #[must_use]
-    pub fn new(id: InterfaceId, rx: R, tx: W, status: &'a EmbassyInterfaceStatus) -> Self {
+    pub fn new(
+        id: InterfaceId,
+        rx: R,
+        tx: W,
+        status: &'a EmbassyInterfaceStatus,
+        presence: P,
+    ) -> Self {
         Self {
             id,
             rx,
             tx,
             node_tag: core::node_tag_for(id),
             status,
+            presence,
         }
     }
 }
 
-impl<R, W> Interface for UsbAutoDevice<'_, R, W>
+impl<R, W, P> Interface for UsbAutoDevice<'_, R, W, P>
 where
     R: Read,
     W: Write,
+    P: FnMut() -> bool,
 {
     fn descriptor(&self) -> InterfaceConfig {
         core::device_descriptor(self.id)
@@ -67,15 +80,24 @@ where
             mut tx,
             node_tag,
             status,
+            mut presence,
         } = self;
         let mut decoder = core::Decoder::new();
         let mut read_buf = [0u8; core::READ_CHUNK_BYTES];
         let mut frame_buf = [0u8; core::MAX_FRAMED_BYTES];
         let mut linked = false;
+        let mut absent_probes = 0u8;
 
         loop {
-            match select(rx.read(&mut read_buf), seam.next_outbound()).await {
-                Either::First(result) => {
+            match select3(
+                rx.read(&mut read_buf),
+                seam.next_outbound(),
+                Timer::after(PRESENCE_PROBE_INTERVAL),
+            )
+            .await
+            {
+                Either3::First(result) => {
+                    absent_probes = 0;
                     let n = result.unwrap_or(0);
                     if n > 0 {
                         status.add_rx(n as u64);
@@ -108,15 +130,30 @@ where
                         }
                     }
                 }
-                Either::Second(out) => {
+                Either3::Second(out) => {
                     if linked {
                         let data = Message::Data(out.bytes());
                         write_message(&mut tx, &data, &mut frame_buf, status).await;
                     }
                 }
+                Either3::Third(()) => {
+                    if let Some(connection) = presence_verdict(presence(), &mut absent_probes) {
+                        linked = false;
+                        status.set_connection(connection);
+                    }
+                }
             }
         }
     }
+}
+
+fn presence_verdict(present: bool, absent_probes: &mut u8) -> Option<ConnectionState> {
+    if present {
+        *absent_probes = 0;
+        return None;
+    }
+    *absent_probes = absent_probes.saturating_add(1);
+    (*absent_probes >= PRESENCE_STRIKES_TO_DORMANT).then_some(ConnectionState::Disconnected)
 }
 
 async fn write_message<W: Write>(
@@ -239,6 +276,7 @@ mod tests {
                     buf: &device_to_host,
                 },
                 &status,
+                || true,
             );
             let seam = EmbassyInterfaceSeam::new(device_id(), funnel.sender(), outbound.receiver());
             let device_run = device.run(seam);
@@ -287,5 +325,31 @@ mod tests {
                 Either::First(()) => unreachable!("the device loop never returns"),
             }
         });
+    }
+
+    #[test]
+    fn presence_present_clears_strikes_and_holds_the_link() {
+        let mut absent = 0u8;
+        assert_eq!(presence_verdict(true, &mut absent), None);
+        assert_eq!(absent, 0);
+
+        absent = 1;
+        assert_eq!(presence_verdict(true, &mut absent), None);
+        assert_eq!(absent, 0);
+    }
+
+    #[test]
+    fn presence_absent_drops_to_dormant_only_after_the_strike_threshold() {
+        let mut absent = 0u8;
+        assert_eq!(presence_verdict(false, &mut absent), None);
+        assert_eq!(absent, 1);
+        assert_eq!(
+            presence_verdict(false, &mut absent),
+            Some(ConnectionState::Disconnected)
+        );
+
+        let mut recovered = 1u8;
+        assert_eq!(presence_verdict(true, &mut recovered), None);
+        assert_eq!(presence_verdict(false, &mut recovered), None);
     }
 }

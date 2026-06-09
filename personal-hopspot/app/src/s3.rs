@@ -11,6 +11,7 @@ use esp_hal::rtc_cntl::Rtc;
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
+use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use esp_println::println;
@@ -440,7 +441,14 @@ async fn engine_task(
 /// writing the broadcasts it drains.
 #[embassy_executor::task]
 async fn usb_device_task(rx: UsbSerialJtagRx<'static, Async>, tx: UsbSerialJtagTx<'static, Async>) {
-    let device = UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS);
+    let mut last_sof = 0u16;
+    let host_present = move || {
+        let frame = USB_DEVICE::regs().fram_num().read().sof_frame_index().bits();
+        let advanced = frame != last_sof;
+        last_sof = frame;
+        advanced
+    };
+    let device = UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present);
     let seam = EmbassyInterfaceSeam::new(USB_INTERFACE_ID, FUNNEL.sender(), OUTBOUND.receiver());
     device.run(seam).await
 }
