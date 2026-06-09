@@ -1,8 +1,8 @@
 use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
     AnnounceIngest, CachedPathResponseOutcome, Directive, EngineReaction, EngineState,
-    IngestPacketOutcome, InstantMillis, Journaled, PathFound, PathResponseWriteOutcome,
-    ProofIngest, Settlement,
+    IngestPacketOutcome, InstantMillis, Journaled, LaneWake, PathFound, PathResponseWriteOutcome,
+    ProofIngest, Settlement, WakeOutlook,
 };
 use crate::interfaces::{ConnectionState, InboundPacket, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
@@ -17,6 +17,9 @@ impl<S: EngineStorage> EngineState<S> {
     /// a path response. This is the sink-shaped inbound edge: it folds in the follow-up the
     /// legacy runtime ran after `ingest_packet`, so the reactor's inbound arm just forwards
     /// the stream. `fill_entropy` is pulled only when a path response is actually minted.
+    /// Returns a [`WakeOutlook`] delta for the scheduled lanes this packet moved — a learned
+    /// announce can schedule a rebroadcast and settle waiting path requests, a hold arms the
+    /// held lane, an arriving proof retires a send-timeout; everything else is `Unchanged`.
     pub fn ingest_packet_into<F>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -25,10 +28,12 @@ impl<S: EngineStorage> EngineState<S> {
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) where
+    ) -> WakeOutlook
+    where
         F: FnMut(&mut [u8]),
     {
         let source = packet.source_interface;
+        let mut delta = WakeOutlook::UNCHANGED;
         match self.ingest_packet(packet, jitter, view) {
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
                 sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
@@ -45,10 +50,13 @@ impl<S: EngineStorage> EngineState<S> {
                         })),
                     }));
                 }
+                delta.rebroadcast = self.rebroadcast_lane();
+                delta.path_request_timeout = self.path_timeout_lane();
             }
-            IngestPacketOutcome::Announce(
-                AnnounceIngest::HeldForRetry | AnnounceIngest::Ignored,
-            ) => {}
+            IngestPacketOutcome::Announce(AnnounceIngest::HeldForRetry) => {
+                delta.held = LaneWake::Due;
+            }
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
             IngestPacketOutcome::Delivery {
                 delivery,
                 maybe_owed_proof,
@@ -71,6 +79,7 @@ impl<S: EngineStorage> EngineState<S> {
                     id,
                     settlement: Settlement::SendSingle(Ok(delivered)),
                 }));
+                delta.send_single_timeout = self.send_timeout_lane();
             }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::Forward(forward) => {
@@ -115,6 +124,7 @@ impl<S: EngineStorage> EngineState<S> {
             }
             IngestPacketOutcome::Ignored => {}
         }
+        delta
     }
 }
 

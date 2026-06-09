@@ -1,6 +1,7 @@
 use crate::engine::egress::firable_on;
 use crate::engine::{
-    Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, Journaled,
+    Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, Journaled, LaneWake,
+    WakeOutlook,
 };
 use crate::interfaces::InterfaceDescriptor;
 use crate::routing::announce::defaults::{
@@ -71,8 +72,15 @@ impl<S: EngineStorage> EngineState<S> {
         interfaces: &[InterfaceDescriptor],
     ) -> TickOutput<'_, S> {
         self.tick_count = self.tick_count.saturating_add(1);
-        let recovered_from_held_count =
-            self.recover_held_announces(jitter, interfaces, &mut |_| {});
+        let mut recovered_from_held_count = 0;
+        let _ = self.recover_held_announces(jitter, interfaces, &mut |reaction| {
+            if matches!(
+                reaction,
+                EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
+            ) {
+                recovered_from_held_count += 1;
+            }
+        });
         TickOutput {
             state: self,
             now,
@@ -82,16 +90,16 @@ impl<S: EngineStorage> EngineState<S> {
 
     /// Retry every held announce against the now-unblocked routing arena. Each that lands
     /// is journaled `AnnounceHeard` — a hold defers the hearing, it never drops it — and,
-    /// if we transport and an interface can carry it, scheduled for rebroadcast. Returns
-    /// how many recovered, which [`tick`](Self::tick) reports as its held-recovery count.
+    /// if we transport and an interface can carry it, scheduled for rebroadcast. Drains the
+    /// whole cache, so the held lane ends `Idle`; returns that and the rebroadcast lane's
+    /// new soonest deadline as a [`WakeOutlook`] delta.
     pub fn recover_held_announces(
         &mut self,
         jitter: JitterSeed,
         interfaces: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> usize {
+    ) -> WakeOutlook {
         use crate::routing::announce::held_cache::HoldReason;
-        let mut recovered = 0;
         while let Some(held) = self.held_announces_cache.take_next() {
             match held.reason() {
                 HoldReason::RoutingArenaPressure => {
@@ -124,7 +132,6 @@ impl<S: EngineStorage> EngineState<S> {
                             outcome,
                             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
                         ) {
-                            recovered += 1;
                             sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
                                 destination: announce.destination,
                                 hops: received_hops,
@@ -151,7 +158,11 @@ impl<S: EngineStorage> EngineState<S> {
                 }
             }
         }
-        recovered
+        WakeOutlook {
+            held: LaneWake::Idle,
+            rebroadcast: self.rebroadcast_lane(),
+            ..WakeOutlook::UNCHANGED
+        }
     }
 
     /// One [`EgressDirective`] per (rebroadcast due at `now` × interface the engine elects
@@ -195,13 +206,14 @@ impl<S: EngineStorage> EngineState<S> {
     /// Fire every announce rebroadcast due at `now`: serialize each onto a scratch buffer
     /// lent to `sink` as a [`Directive::Send`], then clear the fired entries. The
     /// sink-shaped face of a rebroadcast tick — the reactor's timer edge drains it here,
-    /// the legacy runtime drains the same work through [`TickOutput`].
+    /// the legacy runtime drains the same work through [`TickOutput`]. Returns the
+    /// rebroadcast lane's new soonest deadline as a [`WakeOutlook`] delta.
     pub fn fire_due_announce_rebroadcasts(
         &mut self,
         now: InstantMillis,
         view: &[InterfaceDescriptor],
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
+    ) -> WakeOutlook {
         for egress in self.due_rebroadcast_directives(now, view) {
             let mut buf = [0u8; MTU];
             if let Ok(written) = egress.to_wire(&mut buf) {
@@ -212,6 +224,10 @@ impl<S: EngineStorage> EngineState<S> {
             }
         }
         self.pending_rebroadcasts.drain_due(now);
+        WakeOutlook {
+            rebroadcast: self.rebroadcast_lane(),
+            ..WakeOutlook::UNCHANGED
+        }
     }
 }
 
@@ -583,7 +599,7 @@ mod tests {
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
         let mut sent: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)> = std::vec::Vec::new();
-        state.fire_due_announce_rebroadcasts(
+        let delta = state.fire_due_announce_rebroadcasts(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             &view,
             &mut |reaction| {
@@ -597,6 +613,11 @@ mod tests {
             state.pending_announce_rebroadcast_count(),
             0,
             "firing clears the due entry",
+        );
+        assert_eq!(
+            delta.rebroadcast,
+            LaneWake::Idle,
+            "the only rebroadcast fired, so the lane delta reports it clear",
         );
         assert_eq!(
             sent.len(),
@@ -634,17 +655,26 @@ mod tests {
         assert_eq!(state.held_announce_count(), 1);
 
         let mut journaled = 0usize;
-        let recovered =
+        let delta =
             state.recover_held_announces(TEST_ENTROPY, &transporting_view(), &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::AnnounceHeard { .. }) = reaction {
                     journaled += 1;
                 }
             });
 
-        assert_eq!(recovered, 0, "the arena is still full, nothing recovers");
         assert_eq!(
             journaled, 0,
             "a hold that fails to recover journals nothing"
+        );
+        assert_eq!(
+            delta.held,
+            LaneWake::Idle,
+            "draining the cache leaves the held lane idle",
+        );
+        assert_eq!(
+            delta.rebroadcast,
+            LaneWake::Idle,
+            "nothing recovered, so nothing was scheduled to rebroadcast",
         );
         assert_eq!(
             state.held_announce_count(),

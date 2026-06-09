@@ -366,22 +366,41 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    /// Probe every reactor-scheduled lane fresh: held presence and the earliest rebroadcast
-    /// and timeout deadlines, gathered into a [`WakeOutlook`]. This is the full re-derive —
-    /// the reactor seeds from it once and then advances incrementally, and it stands as the
-    /// oracle the incremental outlook is checked against.
+    /// The held lane's state: `Due` while any announce waits on the arena, else `Idle`.
+    pub(crate) fn held_lane(&self) -> LaneWake {
+        if self.held_announce_count() > 0 {
+            LaneWake::Due
+        } else {
+            LaneWake::Idle
+        }
+    }
+
+    /// The rebroadcast lane's state from the soonest scheduled re-emit.
+    pub(crate) fn rebroadcast_lane(&self) -> LaneWake {
+        LaneWake::from_deadline(self.pending_rebroadcasts.earliest_due_at())
+    }
+
+    /// The send-single-timeout lane's state from the soonest receipt deadline.
+    pub(crate) fn send_timeout_lane(&self) -> LaneWake {
+        LaneWake::from_deadline(self.receipts.earliest_timeout_at())
+    }
+
+    /// The path-request-timeout lane's state from the soonest pending-request deadline.
+    pub(crate) fn path_timeout_lane(&self) -> LaneWake {
+        LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
+    }
+
+    /// Probe every reactor-scheduled lane fresh into a [`WakeOutlook`]. This is the full
+    /// re-derive — the reactor seeds from it once and then advances incrementally, and it
+    /// stands as the oracle the incremental outlook is checked against. Each method's delta
+    /// recomputes the same per-lane helpers, so the two can only diverge if a method forgets
+    /// a lane it moved (which the oracle catches).
     pub fn wake_outlook(&self) -> WakeOutlook {
         WakeOutlook {
-            held: if self.held_announce_count() > 0 {
-                LaneWake::Due
-            } else {
-                LaneWake::Idle
-            },
-            rebroadcast: LaneWake::from_deadline(self.pending_rebroadcasts.earliest_due_at()),
-            send_single_timeout: LaneWake::from_deadline(self.receipts.earliest_timeout_at()),
-            path_request_timeout: LaneWake::from_deadline(
-                self.pending_path_requests.earliest_timeout_at(),
-            ),
+            held: self.held_lane(),
+            rebroadcast: self.rebroadcast_lane(),
+            send_single_timeout: self.send_timeout_lane(),
+            path_request_timeout: self.path_timeout_lane(),
         }
     }
 
@@ -638,6 +657,84 @@ mod tests {
         );
         assert_eq!(live.held, LaneWake::Idle);
         assert_eq!(live.path_request_timeout, LaneWake::Idle);
+    }
+
+    #[test]
+    fn wake_outlook_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
+        let mut state = transporting_node();
+        let mut outlook = state.wake_outlook();
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            InstantMillis(1_000),
+            &mut |bytes| bytes.fill(0),
+            &mut |_| {},
+        );
+        outlook.merge(delta);
+        assert_eq!(
+            outlook,
+            state.wake_outlook(),
+            "an accepted announce arms the rebroadcast lane; the delta tracks the recompute",
+        );
+
+        let delta = state.fire_due_announce_rebroadcasts(
+            InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
+            &transporting_view(),
+            &mut |_| {},
+        );
+        outlook.merge(delta);
+        assert_eq!(
+            outlook,
+            state.wake_outlook(),
+            "firing the rebroadcast clears the lane; the delta still tracks",
+        );
+    }
+
+    #[test]
+    fn wake_outlook_delta_tracks_a_recompute_across_a_path_request_lifecycle() {
+        use crate::wire::DestinationHash;
+
+        let mut state = EngineState::<Cap>::default();
+        let mut outlook = state.wake_outlook();
+        let issued_at = InstantMillis(1_000);
+
+        let delta = state.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(1),
+                command: EngineCommand::RequestPath(RequestPath {
+                    destination: DestinationHash::new([0x44; 16]),
+                    id: PathRequestId::new([0x55; 16]),
+                }),
+            },
+            &[],
+            issued_at,
+            &mut |bytes| bytes.fill(0),
+            &mut |_| {},
+        );
+        outlook.merge(delta);
+        assert_eq!(
+            outlook,
+            state.wake_outlook(),
+            "a fresh path request arms the path-timeout lane",
+        );
+
+        let delta = state.settle_timed_out_path_requests(
+            InstantMillis(issued_at.0 + PATH_REQUEST_TIMEOUT_MS + 1),
+            &mut |_| {},
+        );
+        outlook.merge(delta);
+        assert_eq!(
+            outlook,
+            state.wake_outlook(),
+            "settling the timeout clears the lane; the delta still tracks",
+        );
     }
 
     #[test]

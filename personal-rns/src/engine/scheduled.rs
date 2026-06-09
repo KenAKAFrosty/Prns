@@ -1,37 +1,45 @@
 use crate::engine::{
     EngineReaction, EngineState, InstantMillis, Journaled, RequestPathFailure, SendSingleFailure,
-    Settlement,
+    Settlement, WakeOutlook,
 };
 use crate::routing::storage::EngineStorage;
 
 impl<S: EngineStorage> EngineState<S> {
     /// Settle every send-single whose proof deadline has passed: each gives up and closes
-    /// `SendSingle(Timeout)`.
+    /// `SendSingle(Timeout)`. Returns the send-timeout lane's new soonest deadline.
     pub fn settle_timed_out_send_singles(
         &mut self,
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
+    ) -> WakeOutlook {
         while let Some(expired) = self.pop_timed_out_send_single(now) {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: expired.command_id,
                 settlement: Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
             }));
         }
+        WakeOutlook {
+            send_single_timeout: self.send_timeout_lane(),
+            ..WakeOutlook::UNCHANGED
+        }
     }
 
     /// Settle every path request whose answer never arrived in time: each closes
-    /// `RequestPath(Timeout)`.
+    /// `RequestPath(Timeout)`. Returns the path-timeout lane's new soonest deadline.
     pub fn settle_timed_out_path_requests(
         &mut self,
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) {
+    ) -> WakeOutlook {
         while let Some(expired) = self.pop_timed_out_path_request(now) {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: expired.command_id,
                 settlement: Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
             }));
+        }
+        WakeOutlook {
+            path_request_timeout: self.path_timeout_lane(),
+            ..WakeOutlook::UNCHANGED
         }
     }
 }

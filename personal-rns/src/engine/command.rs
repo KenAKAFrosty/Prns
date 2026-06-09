@@ -2,7 +2,7 @@ use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
     EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, PathFound,
     PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendSingleEntropy,
-    SendSingleFailure, SendSingleWriteOutcome, Settlement, WriteSendSingleError,
+    SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeOutlook, WriteSendSingleError,
 };
 use crate::interfaces::{ConnectionState, InterfaceDescriptor, InterfaceId};
 use crate::routing::announce::SelfAnnounceEntropy;
@@ -16,7 +16,9 @@ impl<S: EngineStorage> EngineState<S> {
     /// rejection, an already-known route, or a command the table culled to make room. A
     /// send or a fresh path request that resolves later settles through the inbound or
     /// timer edge instead. `fill_entropy` is pulled only when an announce or a send is
-    /// actually sealed.
+    /// actually sealed. Returns a [`WakeOutlook`] delta: a send arms the send-timeout lane,
+    /// a fresh path request the path-timeout lane; an announce tunnels straight through and
+    /// moves nothing the reactor schedules.
     pub fn ingest_command_into<F>(
         &mut self,
         issued: IssuedCommand,
@@ -24,9 +26,11 @@ impl<S: EngineStorage> EngineState<S> {
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) where
+    ) -> WakeOutlook
+    where
         F: FnMut(&mut [u8]),
     {
+        let mut delta = WakeOutlook::UNCHANGED;
         match self.ingest_command(issued, view) {
             CommandOutcome::OwesAnnounce { id, announce } => {
                 let mut self_announce_bytes = [0u8; SelfAnnounceEntropy::LEN];
@@ -112,6 +116,7 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
+                delta.send_single_timeout = self.send_timeout_lane();
             }
             CommandOutcome::SendSingleRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -148,8 +153,10 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
+                delta.path_request_timeout = self.path_timeout_lane();
             }
         }
+        delta
     }
 }
 

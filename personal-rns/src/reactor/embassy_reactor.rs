@@ -10,12 +10,11 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use embassy_time::{Duration, Timer};
 
-use super::driver::{fire_due_lane, wait_for_due_lane};
+use super::driver::{advance, draw_jitter, fire_due_lane, wait_for_due_lane};
 use super::Host;
 use crate::engine::{EngineReaction, EngineState, InstantMillis, IssuedCommand};
 use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
-use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
@@ -98,11 +97,9 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
     H: Host,
     M: RawMutex,
 {
+    let mut outlook = engine.wake_outlook();
     loop {
-        let mut jitter_bytes = [0u8; core::mem::size_of::<u64>()];
-        host.fill_entropy(&mut jitter_bytes);
-        let jitter = JitterSeed(u64::from_le_bytes(jitter_bytes));
-        let wake = engine.next_scheduled_wake(host.now());
+        let wake = outlook.soonest(host.now());
 
         match select3(
             inbound.receive(),
@@ -113,12 +110,13 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
         {
             Either3::First(mut frame) => {
                 let now = host.now();
+                let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: frame.source,
                     bytes: &mut frame.bytes[..frame.len],
                 };
-                engine.ingest_packet_into(
+                let delta = engine.ingest_packet_into(
                     packet,
                     jitter,
                     view,
@@ -126,20 +124,24 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize>(
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
+                advance(&mut outlook, delta, &engine);
             }
             Either3::Second(issued) => {
                 let now = host.now();
-                engine.ingest_command_into(
+                let delta = engine.ingest_command_into(
                     issued,
                     view,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
+                advance(&mut outlook, delta, &engine);
             }
             Either3::Third(lane) => {
                 let now = host.now();
-                fire_due_lane(&mut engine, lane, now, jitter, view, &mut on_reaction);
+                let delta =
+                    fire_due_lane(&mut engine, lane, now, view, &mut host, &mut on_reaction);
+                advance(&mut outlook, delta, &engine);
             }
         }
     }

@@ -3,11 +3,10 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
-use super::driver::{fire_due_lane, wait_for_due_lane};
+use super::driver::{advance, draw_jitter, fire_due_lane, wait_for_due_lane};
 use super::Host;
 use crate::engine::{EngineReaction, EngineState, InstantMillis, IssuedCommand};
 use crate::interfaces::{InboundPacket, InterfaceDescriptor, InterfaceId};
-use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::storage::EngineStorage;
 
 /// A [`Host`] backed by tokio's clock and the OS CSPRNG.
@@ -60,21 +59,20 @@ pub async fn run<S, H>(
     S: EngineStorage,
     H: Host,
 {
+    let mut outlook = engine.wake_outlook();
     loop {
-        let mut jitter_bytes = [0u8; core::mem::size_of::<u64>()];
-        host.fill_entropy(&mut jitter_bytes);
-        let jitter = JitterSeed(u64::from_le_bytes(jitter_bytes));
-        let wake = engine.next_scheduled_wake(host.now());
+        let wake = outlook.soonest(host.now());
         tokio::select! {
             arrived = inbound.recv() => {
                 let Some((id, mut bytes)) = arrived else { return };
                 let now = host.now();
+                let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: id,
                     bytes: &mut bytes,
                 };
-                engine.ingest_packet_into(
+                let delta = engine.ingest_packet_into(
                     packet,
                     jitter,
                     &view,
@@ -82,21 +80,24 @@ pub async fn run<S, H>(
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
+                advance(&mut outlook, delta, &engine);
             }
             issued = commands.recv() => {
                 let Some(issued) = issued else { return };
                 let now = host.now();
-                engine.ingest_command_into(
+                let delta = engine.ingest_command_into(
                     issued,
                     &view,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut on_reaction,
                 );
+                advance(&mut outlook, delta, &engine);
             }
             lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
-                fire_due_lane(&mut engine, lane, now, jitter, &view, &mut on_reaction);
+                let delta = fire_due_lane(&mut engine, lane, now, &view, &mut host, &mut on_reaction);
+                advance(&mut outlook, delta, &engine);
             }
         }
     }
