@@ -1,16 +1,18 @@
 //! The Linux debug face of the Personal Hopspot — one of the app's two targets.
 //!
-//! Runs the *same* announcing `Runtime` the S3 firmware does — over the plug-and-play
-//! USB-auto interface — and renders the *same* Hopspot status screen the OLED shows, in
-//! an `embedded-graphics-simulator` window. Run `cargo desktop` (no arguments), plug in
-//! a Personal board, and watch the cards tick as announces cross the link.
+//! Runs the *same* announcing engine the S3 firmware does — here on the async reactor, over a
+//! USB-serial interface that reconnects on its own — and renders the *same* Hopspot status
+//! screen the OLED shows, in an `embedded-graphics-simulator` window. Run `cargo desktop`
+//! (defaults to `/dev/ttyACM0`; pass another with `cargo desktop -- /dev/ttyACM1`), plug in a
+//! Personal board, and watch the cards tick as announces cross the link.
 //!
-//! The engine runs on its own thread; the SDL2 window owns the main thread (SDL
-//! requires it) and repaints the latest runtime snapshot at ~30 fps.
+//! The reactor runs on its own thread inside a tokio runtime; the SDL2 window owns the main
+//! thread (SDL requires it) and repaints the interface's live status handle at ~30 fps — read
+//! straight off the interface, never laundered through the engine.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::cell::Cell;
+use std::io;
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant};
 
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -20,28 +22,23 @@ use embedded_graphics_simulator::{
 };
 use heapless::Vec as HVec;
 
-use personal_rns::engine::self_announce::AnnounceConfig;
-use personal_rns::engine::ReannounceSchedule;
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
-    RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
+    IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-// use personal_rns::interfaces::impls::rns_parity::auto_interface::wifi_lan_auto_interface;
-use personal_rns::interfaces::impls::usb_auto::usb_auto_interface;
-use personal_rns::interfaces::storage::{GrowableInterfaceSet, InterfaceSet};
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::routing::announce::{derive_destination_hash, expand_name};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
+use personal_rns::reactor::impls::tokio_reactor::{
+    run as run_reactor, Egress, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
+};
+use personal_rns::reactor::interface_seam::{InboundFrame, Interface, OutboundFrame};
+use personal_rns::reactor::interfaces::serial::impls::tokio::SerialInterface;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::host::impls::{LinuxSync, WakeHandle};
-use personal_rns::runtime::{
-    block_on, Prns, PrnsEvent, Recipe, RuntimeSnapshot, StartingDestinationConfig,
-};
 use personal_rns::wire::DestinationHash;
-use personal_rns::wire::TransportId;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio_serial::SerialPortBuilderExt;
 
 use personal_hopspot_ui::{
     self as screen, BatteryState, Card, CardKind, InputEvent, UiAction, UiState,
@@ -49,29 +46,32 @@ use personal_hopspot_ui::{
 
 /// Stable id for this node's USB-serial interface (opaque to the engine).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
-const WIFI_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD1; 16]);
 
-/// The destination this node announces itself as (`personal.node`).
+/// The serial device opened when no path is given on the command line.
+const DEFAULT_SERIAL_PATH: &str = "/dev/ttyACM0";
+/// CDC-ACM nominal baud (USB ignores it, but the port builder wants a value).
+const USB_BAUD: u32 = 115_200;
+/// How long to wait before re-opening the port after an open failure or unplug.
+const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The destination this node announces itself as: `lxmf.delivery`, the aspect LXMF apps
+/// message — so the hopspot surfaces as a real, messageable peer.
 const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
 const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
-
-/// In-flight capacity of each of the interface's data rings.
-const MAX_BUFFERED_PACKETS: usize = 64;
+/// How often the desktop re-announces itself.
+const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
-/// UI repaint cadence. The engine pushes snapshots event-driven; this just keeps
-/// the window responsive and repaints between snapshots.
+/// UI repaint cadence — keeps the window responsive and re-reads the live status each frame.
 const FRAME: Duration = Duration::from_millis(33);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
-const ANNOUNCE_EVERY_MS: u64 = 60_000;
-
-/// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519
-/// private keys). Handed to the engine through a [`Zeroizing`] buffer so it is
-/// wiped from this stack frame once construction copies it in.
+/// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
+/// keys). Handed to the engine through a [`Zeroizing`] buffer so it is wiped from this stack
+/// frame once construction copies it in.
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
 
@@ -95,213 +95,186 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 fn interface_label(id: InterfaceId) -> &'static str {
     if id == USB_INTERFACE_ID {
         "USB"
-    } else if id == WIFI_INTERFACE_ID {
-        "WiFi"
     } else {
         "Unknown"
     }
 }
 
-fn snapshot_connectivity_changed(
-    previous: Option<&RuntimeSnapshot>,
-    next: &RuntimeSnapshot,
-) -> bool {
-    let Some(previous) = previous else {
-        return true;
-    };
-    previous.interfaces.len() != next.interfaces.len()
-        || previous
-            .interfaces
-            .iter()
-            .zip(next.interfaces.iter())
-            .any(|(left, right)| {
-                left.id != right.id
-                    || left.connection_state != right.connection_state
-                    || left.tracked_destinations != right.tracked_destinations
-            })
+fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
+    if id == USB_INTERFACE_ID {
+        Some((CardKind::Usb, "USB"))
+    } else {
+        None
+    }
 }
 
-fn log_snapshot(snapshot: &RuntimeSnapshot) {
-    for view in &snapshot.interfaces {
+/// What the engine thread hands the window once the reactor is assembled: the command lane the
+/// UI issues announces on, the live status handle it renders, and the destination its announces
+/// name. The reactor owns everything else.
+struct EngineHandles {
+    command_tx: UnboundedSender<IssuedCommand>,
+    status: TokioInterfaceStatus,
+    destination: DestinationHash,
+}
+
+/// Spawn the reactor on its own thread, then own the SDL2 window on this (the main) thread: SDL
+/// requires it. The engine thread hands the window its command lane and status handle back
+/// before the reactor starts running.
+pub fn run() {
+    let identity_secret_key = load_identity_secret_key();
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| DEFAULT_SERIAL_PATH.to_string());
+
+    let (ready_tx, ready_rx) = mpsc::channel::<EngineHandles>();
+    std::thread::Builder::new()
+        .name("hopspot-engine".into())
+        .spawn(move || run_engine(ready_tx, identity_secret_key, path))
+        .expect("spawn engine thread");
+
+    let handles = ready_rx
+        .recv()
+        .expect("the engine hands the window its handles before the reactor runs");
+    run_window(handles);
+}
+
+fn run_engine(
+    ready_tx: Sender<EngineHandles>,
+    identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    path: String,
+) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the engine thread builds its tokio runtime");
+
+    runtime.block_on(async move {
+        let mut engine = EngineState::<GrowableHeap>::new(identity_secret_key);
+        let node = engine.held_identity_hashes()[0];
+        engine
+            .set_transport_identity(&node)
+            .expect("the held identity takes the transport role");
+        let destination = engine
+            .register_single_destination(
+                &node,
+                SELF_ANNOUNCE_APP_NAME,
+                SELF_ANNOUNCE_ASPECTS,
+                ProofStrategy::ProveAll,
+                RatchetPolicy::Ratcheted,
+            )
+            .expect("registers the lxmf.delivery destination");
+
+        let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
+        let (funnel_tx, funnel_rx) = unbounded_channel::<InboundFrame>();
+        let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
+
+        let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, funnel_tx, outbound_rx);
+        let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
+
+        let interface = SerialInterface::new(
+            USB_INTERFACE_ID,
+            move || {
+                let path = path.clone();
+                async move {
+                    tokio_serial::new(&path, USB_BAUD)
+                        .open_native_async()
+                        .map_err(io::Error::other)
+                }
+            },
+            RECONNECT_INTERVAL,
+        );
+        let status = interface.status();
+        let interfaces = std::vec![interface.descriptor()];
+
+        let _ = ready_tx.send(EngineHandles {
+            command_tx: command_tx.clone(),
+            status,
+            destination,
+        });
+
+        let app_data = SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA)
+            .expect("the lxmf app_data fits");
+        tokio::spawn(announce_loop(command_tx, destination, app_data));
+        tokio::spawn(interface.run(seam));
+
+        run_reactor(
+            engine,
+            interfaces,
+            TokioHost::new(),
+            funnel_rx,
+            command_rx,
+            egress,
+            log_journaled,
+        )
+        .await;
+    });
+}
+
+/// The desktop's own announce cadence: the engine no longer self-announces, so the app fires a
+/// scheduled `lxmf.delivery` announce on its own timer (the manual "Announce" menu item fires
+/// the same command on demand).
+async fn announce_loop(
+    commands: UnboundedSender<IssuedCommand>,
+    destination: DestinationHash,
+    app_data: SelfAnnounceAppData,
+) {
+    let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
+    let mut next_id = 0u64;
+    loop {
+        interval.tick().await;
+        next_id += 1;
+        let command = IssuedCommand {
+            id: CommandId(next_id),
+            command: EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Data(app_data.clone()),
+            }),
+        };
+        if commands.send(command).is_err() {
+            return;
+        }
         println!(
-            "HOPSPOT_SNAPSHOT interface={} id={:02x?} state={:?} destinations={} rx={} tx={}",
-            interface_label(view.id),
-            view.id.as_bytes(),
-            view.connection_state,
-            view.tracked_destinations,
-            view.reticulum_rx_byte_count,
-            view.reticulum_tx_byte_count,
+            "HOPSPOT_TX_ANNOUNCE_NOW id={next_id} kind=scheduled destination={:02x?}",
+            destination.as_bytes(),
         );
     }
 }
 
-/// Spawn the engine on its own thread, then own the SDL2 window on this (the main) thread: SDL requires it.
-pub fn run() {
-    // Loaded once: the engine answers as this identity, and the UI derives the
-    // destination its Announce commands name from the same key.
-    let identity_secret_key = load_identity_secret_key();
-    let identity = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key);
-    let name = expand_name(SELF_ANNOUNCE_APP_NAME, SELF_ANNOUNCE_ASPECTS)
-        .expect("the self-announce name is valid");
-    let self_destination = derive_destination_hash(&identity.identity_hash(), &name);
-
-    // Two lanes between the threads: snapshots flow engine -> UI, commands flow
-    // UI -> engine. The wake handle lets a button press cut the engine's sleep
-    // short so its command is picked up on the next cycle.
-    let (snap_tx, snap_rx) = mpsc::channel::<RuntimeSnapshot>();
-    let (command_tx, command_rx) = mpsc::channel::<IssuedCommand>();
-    let host = LinuxSync::new();
-    let wake = host.wake_handle();
-    let next_command_id = Arc::new(AtomicU64::new(0));
-
-    std::thread::Builder::new()
-        .name("hopspot-engine".into())
-        .spawn(move || run_engine(host, identity_secret_key, snap_tx, command_rx))
-        .expect("spawn engine thread");
-
-    run_window(snap_rx, command_tx, wake, next_command_id, self_destination);
-}
-
-fn run_engine(
-    host: LinuxSync,
-    identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    snap_tx: Sender<RuntimeSnapshot>,
-    command_rx: Receiver<IssuedCommand>,
-) {
-    let mut interfaces = GrowableInterfaceSet::new();
-    let _ =
-        interfaces.push(host.attach(usb_auto_interface(USB_INTERFACE_ID), MAX_BUFFERED_PACKETS));
-    // WiFi interface deliberately unregistered for now: the working rig is
-    // USB-only, so every routed byte is attributable to the cable. Re-enable by
-    // restoring this push when the rig needs WiFi again.
-    // let _ = interfaces.push(host.attach(
-    //     wifi_lan_auto_interface(WIFI_INTERFACE_ID),
-    //     MAX_BUFFERED_PACKETS,
-    // ));
-    //WIP NEEDS REVIEW
-    let transport_id = TransportId::new(
-        *InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key)
-            .identity_hash()
-            .as_bytes(),
-    );
-    block_on(Prns::run(
-        Recipe {
-            engine_storage: GrowableHeap,
-            transport_id: Some(transport_id),
-            starting_destinations: [StartingDestinationConfig::Single {
-                app_name: SELF_ANNOUNCE_APP_NAME,
-                aspects: SELF_ANNOUNCE_ASPECTS,
-                identity_secret_key,
-                proof_strategy: ProofStrategy::ProveAll,
-                ratchet_policy: RatchetPolicy::Ratcheted,
-                announce: Some(AnnounceConfig {
-                    app_data: SELF_ANNOUNCE_APP_DATA,
-                    schedule: ReannounceSchedule::every(ANNOUNCE_EVERY_MS),
-                }),
-            }],
-            interfaces,
-            host,
-        },
-        {
-            let mut last_logged_snapshot: Option<RuntimeSnapshot> = None;
-            move |event: PrnsEvent<'_>| match event {
-                PrnsEvent::SnapshotUpdated(snapshot) => {
-                    if snapshot_connectivity_changed(last_logged_snapshot.as_ref(), snapshot) {
-                        log_snapshot(snapshot);
-                        last_logged_snapshot = Some(snapshot.clone());
-                    }
-                    let _ = snap_tx.send(snapshot.clone());
-                }
-                PrnsEvent::Delivered(Delivery::Plain(delivery)) => {
-                    println!(
-                        "HOPSPOT_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
-                        delivery.destination.as_bytes(),
-                        delivery.payload.len(),
-                    );
-                }
-                PrnsEvent::Delivered(Delivery::Single(delivery)) => {
-                    println!(
-                        "HOPSPOT_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
-                        delivery.destination.as_bytes(),
-                        delivery.plaintext.len(),
-                    );
-                }
-                PrnsEvent::AnnounceHeard {
-                    destination,
-                    hops,
-                    source_interface,
-                } => {
-                    println!(
-                        "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
-                        destination.as_bytes(),
-                        source_interface.as_bytes(),
-                    );
-                }
-                PrnsEvent::CommandSettled { id, settlement } => {
-                    println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
-                }
-            }
-        },
-        // The engine's tap into the UI's command queue: every cycle sips until
-        // the queue is dry that cycle (one command per cycle, then an Immediate
-        // re-wake drains any burst).
-        move || command_rx.try_recv().ok(),
-    ));
-}
-
-/// Desktop-only stand-ins so the single-button selection and pagination path can
-/// be exercised before the runtime grows multiple real interfaces. Parked while we
-/// drive real boards — re-add the call in `run_window` to bring them back.
-#[allow(dead_code)]
-fn append_desktop_dummy_cards(cards: &mut HVec<Card, 8>) {
-    let _ = cards.push(Card {
-        kind: CardKind::Wifi,
-        label: "WiFi",
-        selected: false,
-        online: true,
-        tx_bytes: 1_830,
-        rx_bytes: 0,
-        links: 1_234,
-        destinations: 56_789,
-        rate_bytes_per_sec: 12_400,
-        last_activity_secs: Some(3),
-    });
-    let _ = cards.push(Card {
-        kind: CardKind::EspNow,
-        label: "ESP-NOW",
-        selected: false,
-        online: true,
-        tx_bytes: 0,
-        rx_bytes: 0,
-        links: 999_999,
-        destinations: 1_234_567,
-        rate_bytes_per_sec: 987_000,
-        last_activity_secs: Some(0),
-    });
-    let _ = cards.push(Card {
-        kind: CardKind::Ble,
-        label: "BLE",
-        selected: false,
-        online: true,
-        tx_bytes: 42,
-        rx_bytes: 12_340,
-        links: 7,
-        destinations: 12,
-        rate_bytes_per_sec: 1_200,
-        last_activity_secs: Some(42),
-    });
-    let _ = cards.push(Card {
-        kind: CardKind::LoRa,
-        label: "LoRa",
-        selected: false,
-        online: false,
-        tx_bytes: 0,
-        rx_bytes: 0,
-        links: 0,
-        destinations: 0,
-        rate_bytes_per_sec: 0,
-        last_activity_secs: None,
-    });
+/// What the desktop observes — `Journaled` is the only thing the reactor hands the app (it
+/// carries out the `Directive`s itself). Logs heard announces and inbound deliveries; command
+/// settlements report the outcome of an issued announce.
+fn log_journaled(journaled: Journaled<'_>) {
+    match journaled {
+        Journaled::AnnounceHeard {
+            destination,
+            hops,
+            source_interface,
+        } => {
+            println!(
+                "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
+                destination.as_bytes(),
+                source_interface.as_bytes(),
+            );
+        }
+        Journaled::Delivered(Delivery::Plain(delivery)) => {
+            println!(
+                "HOPSPOT_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
+                delivery.destination.as_bytes(),
+                delivery.payload.len(),
+            );
+        }
+        Journaled::Delivered(Delivery::Single(delivery)) => {
+            println!(
+                "HOPSPOT_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
+                delivery.destination.as_bytes(),
+                delivery.plaintext.len(),
+            );
+        }
+        Journaled::CommandSettled { id, settlement } => {
+            println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -372,15 +345,15 @@ fn finish_press(
     ui_state.handle_input(event, card_count)
 }
 
-/// Own the SDL2 window: repaint the latest snapshot as the Hopspot screen until
-/// the window is closed.
-fn run_window(
-    snap_rx: Receiver<RuntimeSnapshot>,
-    command_tx: Sender<IssuedCommand>,
-    wake: WakeHandle,
-    next_command_id: Arc<AtomicU64>,
-    self_destination: DestinationHash,
-) {
+/// Own the SDL2 window: repaint the interface's live status as the Hopspot screen until the
+/// window is closed, and funnel the menu's "Announce" item into the reactor's command lane.
+fn run_window(handles: EngineHandles) {
+    let EngineHandles {
+        command_tx,
+        status,
+        destination,
+    } = handles;
+
     let output = OutputSettingsBuilder::new()
         .theme(BinaryColorTheme::OledBlue)
         .scale(4)
@@ -388,78 +361,66 @@ fn run_window(
     let mut window = Window::new("Personal Hopspot", &output);
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
 
-    // Every input path funnels its UiAction here: selecting "Announce" in the
-    // global menu queues the command for the engine thread and pokes its wake.
+    let statuses = std::vec![status];
+    let app_data =
+        SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
+    let next_command_id = Cell::new(0u64);
+
     let apply_action = move |action: UiAction| match action {
         UiAction::None => {}
         UiAction::Announce => {
-            let id = CommandId(next_command_id.fetch_add(1, Ordering::Relaxed));
+            let id = next_command_id.get() + 1;
+            next_command_id.set(id);
             let _ = command_tx.send(IssuedCommand {
-                id,
+                id: CommandId(id),
                 command: EngineCommand::AnnounceNow(AnnounceNow {
-                    destination: self_destination,
+                    destination,
                     target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Scheduled,
+                    app_data: AnnounceAppData::Data(app_data.clone()),
                 }),
             });
-            wake.poke();
             println!(
-                "HOPSPOT_TX_ANNOUNCE_NOW id={} destination={:02x?}",
-                id.0,
-                self_destination.as_bytes(),
+                "HOPSPOT_TX_ANNOUNCE_NOW id={id} kind=manual destination={:02x?}",
+                destination.as_bytes(),
             );
         }
     };
 
-    let mut snapshot: Option<RuntimeSnapshot> = None;
     let mut ui_state = UiState::new();
     let mut active_press: Option<PressStart> = None;
+    let mut last_logged_connection: Option<ConnectionState> = None;
     loop {
-        // Coalesce to the most recent snapshot the engine has produced.
-        let mut latest = None;
-        while let Ok(snap) = snap_rx.try_recv() {
-            latest = Some(snap);
-        }
-        if latest.is_some() {
-            snapshot = latest;
+        if let Some(status) = statuses.first() {
+            let connection = status.connection();
+            if last_logged_connection != Some(connection) {
+                println!(
+                    "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
+                    interface_label(status.id()),
+                    status.rx_bytes(),
+                    status.tx_bytes(),
+                );
+                last_logged_connection = Some(connection);
+            }
         }
 
-        let card_count = match &snapshot {
-            Some(snap) => {
-                // Only the real interfaces from the runtime snapshot — the dummy
-                // stand-ins (`append_desktop_dummy_cards`) stay parked for now.
-                let cards: HVec<Card, 8> = screen::snapshot_to_cards(snap, |id| {
-                    if id == USB_INTERFACE_ID {
-                        Some((CardKind::Usb, "USB"))
-                    } else if id == WIFI_INTERFACE_ID {
-                        Some((CardKind::Wifi, "WiFi"))
-                    } else {
-                        None
-                    }
-                });
-                let card_count = cards.len();
-                ui_state.sync_card_count(card_count);
-                apply_action(dispatch_long_press_if_ready(
-                    &mut active_press,
-                    Instant::now(),
-                    card_count,
-                    &mut ui_state,
-                ));
-                screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
-                card_count
-            }
-            None => {
-                ui_state.sync_card_count(0);
-                apply_action(dispatch_long_press_if_ready(
-                    &mut active_press,
-                    Instant::now(),
-                    0,
-                    &mut ui_state,
-                ));
-                screen::splash(&mut display, "connecting");
-                0
-            }
-        };
+        let cards: HVec<Card, 8> = screen::statuses_to_cards(&statuses, classify);
+        let card_count = cards.len();
+        ui_state.sync_card_count(card_count);
+        apply_action(dispatch_long_press_if_ready(
+            &mut active_press,
+            Instant::now(),
+            card_count,
+            &mut ui_state,
+        ));
+
+        let connecting = statuses
+            .iter()
+            .all(|status| status.connection() == ConnectionState::Initializing);
+        if connecting {
+            screen::splash(&mut display, "connecting");
+        } else {
+            screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
+        }
 
         window.update(&display);
         for event in window.events() {
