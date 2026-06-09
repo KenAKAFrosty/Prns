@@ -14,12 +14,16 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 personal-hopspot-ui = { path = "../../ui", default-features = false }
-personal-rns = { path = "../../../personal-rns", default-features = false, features = ["std-sync-host", "usb-auto", "wifi-lan-auto"] }
+personal-rns = { path = "../../../personal-rns", default-features = false, features = ["tokio-host"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 jni = "0.21"
 getrandom = "0.2"
 log = "0.4"
+# The async runtime + the channels/IO traits the JNI-bridged USB stream rides; the reactor's
+# USB-auto host multiplexes it like any other stream (USB-only — the WiFi-auto interface the
+# legacy face also ran is its own reactor arc, deferred).
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "io-util"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.14"

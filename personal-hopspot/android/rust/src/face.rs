@@ -1,10 +1,10 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, snapshot_to_cards, splash, BatteryState, Card, InputEvent, Liveness, UiAction,
-    UiState,
+    draw_with_state, splash, statuses_to_cards, BatteryState, Card, InputEvent, UiAction, UiState,
 };
+use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
-use crate::engine::{classify, shared_snapshot, SharedSnapshot};
+use crate::engine::{classify, shared_status};
 use crate::framebuffer::FrameBuffer;
 
 const MAX_CARDS: usize = 8;
@@ -12,7 +12,7 @@ const MAX_CARDS: usize = 8;
 pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
-    snapshot: SharedSnapshot,
+    statuses: Vec<TokioInterfaceStatus>,
 }
 
 impl HopspotFace {
@@ -20,7 +20,7 @@ impl HopspotFace {
         Self {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
-            snapshot: shared_snapshot(),
+            statuses: std::vec![shared_status()],
         }
     }
 
@@ -36,11 +36,7 @@ impl HopspotFace {
     }
 
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        let guard = self.snapshot.lock().expect("snapshot mutex poisoned");
-        match &*guard {
-            Some(snapshot) => snapshot_to_cards(snapshot, classify),
-            None => HVec::new(),
-        }
+        statuses_to_cards(&self.statuses, classify)
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
@@ -70,15 +66,14 @@ impl Default for HopspotFace {
 mod tests {
     use super::*;
     use crate::framebuffer::{ARGB_BYTES, DARK_RGBA};
-    use personal_hopspot_ui::CardKind;
-    use std::sync::{Arc, Mutex};
+    use personal_hopspot_ui::{CardKind, Liveness};
 
     impl HopspotFace {
         fn detached() -> Self {
             Self {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
-                snapshot: Arc::new(Mutex::new(None)),
+                statuses: Vec::new(),
             }
         }
     }
@@ -126,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_snapshot_renders_the_starting_splash() {
+    fn an_empty_status_set_renders_the_starting_splash() {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render(&mut out);

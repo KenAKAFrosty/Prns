@@ -1,3 +1,4 @@
+mod bridge;
 mod engine;
 mod face;
 mod framebuffer;
