@@ -10,12 +10,12 @@ Hopspot has 4 roles:
 
 For interfaces, we want to continue to expand real functionality on multi-platform, with genuine production-grade impls ready to go. 
 
-Right now we're still tightening up the USB auto-interface, which is yet again a dogfooding & bootstrapping priority, like Hopspot as a whole is. That's because USB is one the simplest, cleanest ways to connect devices on the desk as we build. 
+Right now we're still tightening up the WiFi auto-interface, which is yet again a dogfooding & bootstrapping priority, like Hopspot as a whole is. That's shared local WiFi is one the simplest, cleanest ways to connect devices on the desk as we build, alongside auto-USB. 
 
 Following that trend, the next few I expect will be (not necessarily in this order):
 - WiFi LAN auto-interface (parity): **done** — std-host (desktop) + S3 embassy drivers are built and verified peering/announcing cross-platform. Wants a deeper review pass at some point (API/organization, reliability, perf), same as the USB one below. The remaining WiFi work is the extension layer: mesh-AP / BSSID handling (our BSSID issues from before), host-as-AP (mobile-hotspot style; desktops do it too), and connecting to an AP that *is* a Reticulum node host (the inverse).
 - FIx and refine our USB auto-interface
-    - It was the first built under the more clear multi-platform re-usable model. Overall it's a great start, but probably needs some refinement, both for API/organization, but even more so for reliability and performance as an actual target interface to use in the wild.
+    - **done** but worth one or two more passes for final quality and performance
 - Bluetooth, which is incredibly strong but has multiple things to handle:
     - Honor RNode format; this could be tricky but would be VERY powerful. Less important than the following two in terms of our long-term Bluetooth goals; however this is table stakes for release. So, what does that mean? It means we can skip it when doing focused bluetooth work if that helps, but we'll just have to come back to it
     - Honor Columba's format; check Sideband & MeshChat if they have their own
@@ -28,25 +28,17 @@ Following that trend, the next few I expect will be (not necessarily in this ord
     - Possibly work to brand this system something internal, either Personal or Bramble related, but bramble is more awkward because it's not really cohesive as a "thing" yet
     - Most importantly, work on the perf side, make sure this is ROCK solid.
     - Nice thing is, this is only on embedded, so the scope is different from the others above
+    - However we should look at reverse engineering these action frames so that hosts that allow direct wifi control can still participate, while ESP hosts just get it for free without the extra effort.
 - LoRa vs GMSK @ 300kbps
     - We've done exploratory work in the past on using the sx1262's alternate mode for faster speed. 
     - Allowing for swapping here is the key piece: LoRa vs Speed mode (or whatever better name we give it)
     - Force-functions a lot of things: hot-changing interfaces, doing so from the Hopspot menu.
     - Related, just allowing for adjusting the LoRa settings from the Hopspot menu
-    - This one is also Heltc-only; very scoped single target.
 
 (Other interfaces will be needed, but aren't the high-priority, top-of-mind ones, for now)
 
-
-Control API: this should feel unavoidable as we pursue the above two. Our Hopspot app will need ways to apply commands (I suspect a simple .ingest_commands() function on our EngineState, a sibling to .ingest_packets()), and also get events or updates or read-only functions to call, etc.  A simple starting example is the ability to announce (tying in to our aspirational/dummy menus on the Hopspot right now). It's a genuine API need, but also helps bootstrap our continued work once we have those tools available (Sensing a pattern here?).
-
-This control API needs to be carefully designed; use all the forcing functions we have for this (top-lvel API, every platform has to pass; it should work despite sync/async, despite desktop vs mobile vs embedded). This is the API that will inform *every* consumer, including all of our target languages (see Principles & Ethos section about aspirational-website-as-target)
-
-
 Pure engine work: 
 There's still plenty more to go, but after we have some multi-platform devices running Hopspot with a few good interfaces, we'll be able to see and feel this work so much faster. However, we can use it, at any point in the process, as a relief valve on the pressure of doing the other three above. Those are unbounded problems we're trying to wrangle in, which can take a lot of focus and energy. Continuing reference-parity-matching work in our deterministic isolated no_std core should feel relatively sane and easy by comparison.
-
-
 
 
 Principles & Ethos
