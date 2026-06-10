@@ -23,6 +23,9 @@ pub trait Host {
 
 pub mod airtime;
 pub mod announce_pacer;
+pub mod duty_gate;
+pub mod throughput;
+pub(crate) mod window_ring;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 mod driver;

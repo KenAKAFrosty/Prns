@@ -10,6 +10,7 @@ use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::interfaces::serial::core;
+use crate::reactor::throughput::ThroughputLedger;
 
 /// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async
 /// byte stream (the consumer supplies it, e.g. a reopened `tokio_serial::SerialStream`), and
@@ -53,7 +54,8 @@ where
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
         let bitrate_bps = core::descriptor(self.id).bitrate_bps;
-        let mut ledger = AirtimeLedger::new();
+        let mut airtime = AirtimeLedger::new();
+        let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         loop {
             if let Ok(stream) = (self.open)().await {
@@ -62,7 +64,8 @@ where
                     stream,
                     &mut seam,
                     &self.status,
-                    &mut ledger,
+                    &mut airtime,
+                    &mut throughput,
                     bitrate_bps,
                     started,
                 )
@@ -81,7 +84,8 @@ async fn serve<S, Seam>(
     mut stream: S,
     seam: &mut Seam,
     status: &TokioInterfaceStatus,
-    ledger: &mut AirtimeLedger,
+    airtime: &mut AirtimeLedger,
+    throughput: &mut ThroughputLedger,
     bitrate_bps: Option<u32>,
     started: tokio::time::Instant,
 ) where
@@ -99,6 +103,9 @@ async fn serve<S, Seam>(
                     Ok(read) => read,
                 };
                 status.add_rx(read as u64);
+                let now = InstantMillis(started.elapsed().as_millis() as u64);
+                throughput.record_rx(now, read as u64);
+                status.set_transfer_rates(throughput.rates(now));
                 core::deframe_to_seam(&mut decoder, &read_buf[..read], seam).await;
             }
             outbound = seam.next_outbound() => {
@@ -108,10 +115,12 @@ async fn serve<S, Seam>(
                         return;
                     }
                     status.add_tx(framed as u64);
+                    let now = InstantMillis(started.elapsed().as_millis() as u64);
+                    throughput.record_tx(now, framed as u64);
+                    status.set_transfer_rates(throughput.rates(now));
                     if let Some(bitrate_bps) = bitrate_bps {
-                        let now = InstantMillis(started.elapsed().as_millis() as u64);
-                        let airtime = frame_airtime_us(framed, bitrate_bps);
-                        status.set_airtime(ledger.record_tx(now, airtime));
+                        let frame_airtime = frame_airtime_us(framed, bitrate_bps);
+                        status.set_airtime(airtime.record_tx(now, frame_airtime));
                     }
                 }
             }
@@ -228,6 +237,7 @@ mod tests {
                     && status.rx_bytes() > 0
                     && status.tx_bytes() > 0
                     && status.airtime().is_some()
+                    && status.transfer_rates().is_some()
                 {
                     return;
                 }

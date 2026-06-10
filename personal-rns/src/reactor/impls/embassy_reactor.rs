@@ -21,7 +21,7 @@ use crate::engine::{
 use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
-    InterfaceStatus,
+    InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
@@ -86,9 +86,11 @@ pub struct EmbassyInterfaceStatus {
     rx: AtomicU64,
     tx: AtomicU64,
     airtime: AtomicU32,
+    transfer_rates: AtomicU64,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
+const RATES_UNPUBLISHED: u64 = u64::MAX;
 
 impl EmbassyInterfaceStatus {
     #[must_use]
@@ -99,6 +101,7 @@ impl EmbassyInterfaceStatus {
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
             airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
+            transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
         }
     }
 
@@ -118,6 +121,11 @@ impl EmbassyInterfaceStatus {
         let packed =
             (u32::from(utilization.short_per_mille) << 16) | u32::from(utilization.long_per_mille);
         self.airtime.store(packed, Ordering::Relaxed);
+    }
+
+    pub fn set_transfer_rates(&self, rates: TransferRates) {
+        let packed = (u64::from(rates.rx_bps) << 32) | u64::from(rates.tx_bps);
+        self.transfer_rates.store(packed, Ordering::Relaxed);
     }
 }
 
@@ -146,6 +154,17 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
         Some(AirtimeUtilization {
             short_per_mille: (packed >> 16) as u16,
             long_per_mille: packed as u16,
+        })
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
+        let packed = self.transfer_rates.load(Ordering::Relaxed);
+        if packed == RATES_UNPUBLISHED {
+            return None;
+        }
+        Some(TransferRates {
+            rx_bps: (packed >> 32) as u32,
+            tx_bps: packed as u32,
         })
     }
 }
@@ -395,6 +414,7 @@ mod tests {
             bitrate_bps: None,
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
+            airtime_duty_cycle: None,
         }
     }
 

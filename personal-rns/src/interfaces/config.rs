@@ -8,6 +8,26 @@ pub struct InterfaceConfig {
     pub bitrate_bps: Option<u32>,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
     pub announce_bandwidth_cap: AnnounceBandwidthCap,
+    pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
+}
+
+/// RNS 1.3.1 RNodeInterface `airtime_limit_short`/`airtime_limit_long`, enforced
+/// host-side instead of by radio firmware.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AirtimeDutyCycle {
+    pub limit_short_per_mille: Option<u16>,
+    pub limit_long_per_mille: Option<u16>,
+    pub max_queued_airtime_ms: u32,
+}
+
+impl AirtimeDutyCycle {
+    pub fn exceeded_by(&self, utilization: crate::interfaces::AirtimeUtilization) -> bool {
+        self.limit_short_per_mille
+            .is_some_and(|limit| utilization.short_per_mille >= limit)
+            || self
+                .limit_long_per_mille
+                .is_some_and(|limit| utilization.long_per_mille >= limit)
+    }
 }
 
 /// Per-interface announce rebroadcast rate policy; RNS 1.3.1's

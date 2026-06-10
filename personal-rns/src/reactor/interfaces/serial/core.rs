@@ -26,6 +26,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
         announce_rate_limit: None,
         bitrate_bps: Some(1_000_000),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
     }
 }
 

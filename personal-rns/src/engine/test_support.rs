@@ -230,6 +230,7 @@ pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceConfig {
         bitrate_bps: None,
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
+        airtime_duty_cycle: None,
     }
 }
 

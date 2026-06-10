@@ -233,6 +233,7 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
         announce_rate_limit: None,
         bitrate_bps: Some(HOST_USB_BITRATE_BPS),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
     }
 }
 
@@ -247,6 +248,7 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
         announce_rate_limit: None,
         bitrate_bps: Some(DEVICE_USB_BITRATE_BPS),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
     }
 }
 

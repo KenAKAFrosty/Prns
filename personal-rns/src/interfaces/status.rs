@@ -17,6 +17,12 @@ pub struct AirtimeUtilization {
     pub long_per_mille: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferRates {
+    pub rx_bps: u32,
+    pub tx_bps: u32,
+}
+
 pub trait InterfaceStatus {
     fn id(&self) -> InterfaceId;
     fn connection(&self) -> ConnectionState;
@@ -24,6 +30,10 @@ pub trait InterfaceStatus {
     fn tx_bytes(&self) -> u64;
     /// `None` until the interface publishes — a link with no declared bitrate never does.
     fn airtime(&self) -> Option<AirtimeUtilization> {
+        None
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
         None
     }
 }
@@ -50,5 +60,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn airtime(&self) -> Option<AirtimeUtilization> {
         (**self).airtime()
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
+        (**self).transfer_rates()
     }
 }

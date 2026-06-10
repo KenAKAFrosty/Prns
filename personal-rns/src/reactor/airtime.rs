@@ -1,5 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::AirtimeUtilization;
+use crate::reactor::window_ring::WindowRing;
 
 pub const AIRTIME_SHORT_WINDOW_MS: u64 = 15_000;
 pub const AIRTIME_LONG_WINDOW_MS: u64 = 3_600_000;
@@ -16,7 +17,6 @@ pub fn frame_airtime_us(frame_bytes: usize, bitrate_bps: u32) -> u64 {
     (frame_bytes as u64).saturating_mul(8_000_000) / u64::from(bitrate_bps)
 }
 
-#[derive(Debug, Clone)]
 pub struct AirtimeLedger {
     short: WindowRing<SHORT_BUCKETS>,
     long: WindowRing<LONG_BUCKETS>,
@@ -45,56 +45,15 @@ impl AirtimeLedger {
 
     pub fn utilization(&mut self, now: InstantMillis) -> AirtimeUtilization {
         AirtimeUtilization {
-            short_per_mille: self.short.per_mille(now),
-            long_per_mille: self.long.per_mille(now),
+            short_per_mille: per_mille(self.short.total(now), AIRTIME_SHORT_WINDOW_MS),
+            long_per_mille: per_mille(self.long.total(now), AIRTIME_LONG_WINDOW_MS),
         }
     }
 }
 
-#[derive(Debug, Clone)]
-struct WindowRing<const BUCKETS: usize> {
-    bucket_us: [u32; BUCKETS],
-    bucket_ms: u64,
-    head_ordinal: u64,
-}
-
-impl<const BUCKETS: usize> WindowRing<BUCKETS> {
-    const fn new(bucket_ms: u64) -> Self {
-        Self {
-            bucket_us: [0; BUCKETS],
-            bucket_ms,
-            head_ordinal: 0,
-        }
-    }
-
-    fn advance(&mut self, now: InstantMillis) {
-        let ordinal = now.0 / self.bucket_ms;
-        let skipped = ordinal.saturating_sub(self.head_ordinal);
-        if skipped >= BUCKETS as u64 {
-            self.bucket_us = [0; BUCKETS];
-        } else {
-            for stale in 1..=skipped {
-                let slot = ((self.head_ordinal + stale) % BUCKETS as u64) as usize;
-                self.bucket_us[slot] = 0;
-            }
-        }
-        self.head_ordinal = ordinal.max(self.head_ordinal);
-    }
-
-    fn record(&mut self, now: InstantMillis, airtime_us: u64) {
-        self.advance(now);
-        let slot = (self.head_ordinal % BUCKETS as u64) as usize;
-        let capped = u32::try_from(airtime_us).unwrap_or(u32::MAX);
-        self.bucket_us[slot] = self.bucket_us[slot].saturating_add(capped);
-    }
-
-    fn per_mille(&mut self, now: InstantMillis) -> u16 {
-        self.advance(now);
-        let total_us: u64 = self.bucket_us.iter().map(|&us| u64::from(us)).sum();
-        let window_us = BUCKETS as u64 * self.bucket_ms * 1_000;
-        let per_mille = total_us.saturating_mul(1_000) / window_us;
-        per_mille.min(1_000) as u16
-    }
+fn per_mille(total_us: u64, window_ms: u64) -> u16 {
+    let window_us = window_ms * 1_000;
+    (total_us.saturating_mul(1_000) / window_us).min(1_000) as u16
 }
 
 #[cfg(test)]
