@@ -19,8 +19,8 @@ use storage::{
     RetainedAppData, RouteColumns, RouteEntry,
 };
 pub use types::{
-    DropCause, ExistingRoute, ForwardingRoute, NextHop, RetainedAnnounce, RouteResponsiveness,
-    UpsertRouteOutcome,
+    DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RetainedAnnounce,
+    RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
 };
 pub use upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination, UpstreamAppDestinationColumns,
@@ -96,14 +96,30 @@ where
         receiving_interface: InterfaceId,
         next_hop: NextHop,
         announce: &Announce<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
         let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             None => {
                 if self.routes.len() >= self.routes.capacity() {
-                    self.cull_expired_routes(arrived_at, &mut |_| {});
+                    self.cull_expired_routes(arrived_at, &mut |destination| {
+                        on_removed(RemovedRoute {
+                            destination,
+                            cause: RouteRemovalCause::Expired,
+                        });
+                    });
+                    if self.routes.len() >= self.routes.capacity() {
+                        self.evict_route_nearest_expiry(on_removed);
+                    }
                 }
-                self.insert_new_route(hops, expires_at, receiving_interface, next_hop, announce)
+                self.insert_new_route(
+                    hops,
+                    expires_at,
+                    receiving_interface,
+                    next_hop,
+                    announce,
+                    on_removed,
+                )
             }
             Some(i) => self.refresh_existing_route(
                 i,
@@ -116,6 +132,25 @@ where
         }
     }
 
+    fn evict_route_nearest_expiry(&mut self, on_removed: &mut impl FnMut(RemovedRoute)) -> bool {
+        let Some((i, _)) = self
+            .routes
+            .expires()
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, expires)| **expires)
+        else {
+            return false;
+        };
+        on_removed(RemovedRoute {
+            destination: self.routes.destinations()[i],
+            cause: RouteRemovalCause::Evicted,
+        });
+        self.remove_route(i);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn insert_new_route(
         &mut self,
         hops: u8,
@@ -123,12 +158,22 @@ where
         receiving_interface: InterfaceId,
         next_hop: NextHop,
         announce: &Announce<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
         if self.routes.len() >= self.routes.capacity() {
             return UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull);
         }
-        let Ok(handle) = self.retained_app_data.insert(announce.app_data) else {
-            return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
+        let handle = match self.retained_app_data.insert(announce.app_data) {
+            Ok(handle) => handle,
+            Err(_) => {
+                if !self.evict_route_nearest_expiry(on_removed) {
+                    return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
+                }
+                match self.retained_app_data.insert(announce.app_data) {
+                    Ok(handle) => handle,
+                    Err(_) => return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull),
+                }
+            }
         };
         let route_entry = RouteEntry {
             hops,
@@ -358,6 +403,7 @@ mod tests {
             source(),
             NextHop::Direct,
             &announce_for(destination, announce_id, None, app_data),
+            &mut |_| {},
         )
     }
 
@@ -402,6 +448,7 @@ mod tests {
                         None,
                         &app_data(id_byte)
                     ),
+                    &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
             );
@@ -419,6 +466,7 @@ mod tests {
                 usb,
                 NextHop::Direct,
                 &announce_for(dest(1), announce_id(0xB1, 2), None, &app_data(0xB1)),
+                &mut |_| {},
             ),
             UpsertRouteOutcome::Updated
         );
@@ -505,16 +553,16 @@ mod tests {
     }
 
     #[test]
-    fn new_destinations_past_capacity_are_dropped() {
+    fn a_full_table_of_fresh_routes_evicts_the_one_nearest_expiry_for_a_newcomer() {
         const MAX: usize = 8;
         let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
-        for n in 0..MAX {
+        for n in 1..=MAX {
             assert_eq!(
                 record(
                     &mut table,
                     dest(n as u8),
                     1,
-                    InstantMillis(0),
+                    InstantMillis(n as u64 * 10),
                     announce_id(0, n as u64),
                     &app_data(n as u8)
                 ),
@@ -522,28 +570,42 @@ mod tests {
             );
         }
         assert_eq!(table.route_count(), MAX);
+
+        let mut removed = std::vec::Vec::new();
         assert_eq!(
-            record(
-                &mut table,
-                dest(0xFF),
+            table.upsert_route(
                 1,
-                InstantMillis(0),
-                announce_id(0, 999),
-                &app_data(0xFF)
+                InstantMillis(100),
+                source(),
+                NextHop::Direct,
+                &announce_for(dest(0xFF), announce_id(0, 999), None, &app_data(0xFF)),
+                &mut |removal| removed.push(removal),
             ),
-            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull)
+            UpsertRouteOutcome::Inserted,
+            "a full table of fresh routes admits the newcomer by eviction",
+        );
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(1),
+                cause: RouteRemovalCause::Evicted,
+            }],
+            "the victim is the earliest arrival — the route nearest its expiry",
         );
         assert_eq!(table.route_count(), MAX);
+        assert_eq!(table.hop_count_to(&dest(1)), None);
+        assert_eq!(table.hop_count_to(&dest(0xFF)), Some(1));
         assert_eq!(
             record(
                 &mut table,
-                dest(0),
+                dest(2),
                 1,
-                InstantMillis(1),
+                InstantMillis(101),
                 announce_id(1, 1),
-                &app_data(0)
+                &app_data(2)
             ),
-            UpsertRouteOutcome::Updated
+            UpsertRouteOutcome::Updated,
+            "refreshing a survivor needs no slot",
         );
     }
 
@@ -605,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_path_whose_payload_overflows_the_arena_is_dropped() {
+    fn a_new_path_that_overflows_the_arena_evicts_the_route_nearest_expiry() {
         let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
         assert_eq!(
             record(
@@ -618,19 +680,96 @@ mod tests {
             ),
             UpsertRouteOutcome::Inserted
         );
+
+        let mut removed = std::vec::Vec::new();
         assert_eq!(
-            record(
-                &mut table,
-                dest(2),
+            table.upsert_route(
                 1,
-                InstantMillis(0),
-                announce_id(2, 1),
-                &[0xBB; 1]
+                InstantMillis(10),
+                source(),
+                NextHop::Direct,
+                &announce_for(dest(2), announce_id(2, 1), None, &[0xBB; 1]),
+                &mut |removal| removed.push(removal),
             ),
-            UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull)
+            UpsertRouteOutcome::Inserted,
+            "arena pressure evicts to admit the newcomer",
+        );
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(1),
+                cause: RouteRemovalCause::Evicted,
+            }],
         );
         assert_eq!(table.route_count(), 1);
-        assert_eq!(table.hop_count_to(&dest(2)), None);
+        assert_eq!(table.hop_count_to(&dest(1)), None);
+        assert_eq!(table.app_data_for(&dest(2)), Some(&[0xBB; 1][..]));
+    }
+
+    #[test]
+    fn an_oversized_newcomer_takes_one_eviction_per_attempt_until_it_fits() {
+        let mut table: TestRoutingTable<4, 8, 8, 4, 512> = TestRoutingTable::default();
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(10),
+            announce_id(1, 1),
+            &[0xA1; 3],
+        );
+        record(
+            &mut table,
+            dest(2),
+            1,
+            InstantMillis(20),
+            announce_id(2, 1),
+            &[0xB2; 3],
+        );
+
+        let mut removed = std::vec::Vec::new();
+        assert_eq!(
+            table.upsert_route(
+                1,
+                InstantMillis(30),
+                source(),
+                NextHop::Direct,
+                &announce_for(dest(3), announce_id(3, 1), None, &[0xC3; 8]),
+                &mut |removal| removed.push(removal),
+            ),
+            UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull),
+            "one eviction was not enough, so this attempt drops",
+        );
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(1),
+                cause: RouteRemovalCause::Evicted,
+            }],
+            "each attempt evicts at most one victim",
+        );
+
+        let mut removed = std::vec::Vec::new();
+        assert_eq!(
+            table.upsert_route(
+                1,
+                InstantMillis(40),
+                source(),
+                NextHop::Direct,
+                &announce_for(dest(3), announce_id(3, 2), None, &[0xC3; 8]),
+                &mut |removal| removed.push(removal),
+            ),
+            UpsertRouteOutcome::Inserted,
+            "the retransmitted announce finds the room the first attempt made",
+        );
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(2),
+                cause: RouteRemovalCause::Evicted,
+            }],
+        );
+        assert_eq!(table.route_count(), 1);
+        assert_eq!(table.app_data_for(&dest(3)), Some(&[0xC3; 8][..]));
     }
 
     #[test]
@@ -673,6 +812,7 @@ mod tests {
             source(),
             NextHop::Direct,
             &announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
+            &mut |_| {},
         );
         let retained = table.retained_announce_for(&dest(1)).unwrap();
         assert_eq!(retained.announce.maybe_ratchet, ratchet);
@@ -781,6 +921,7 @@ mod tests {
                         None,
                         &[dest_byte; 4]
                     ),
+                    &mut |_| {},
                 ),
                 UpsertRouteOutcome::Inserted
             );
@@ -878,47 +1019,50 @@ mod tests {
     }
 
     #[test]
-    fn a_rejected_destination_is_admitted_after_the_occupants_expire() {
-        const MAX: usize = 2;
+    fn expired_occupants_are_culled_before_any_fresh_route_is_evicted() {
+        const MAX: usize = 4;
         let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
-        for dest_byte in [1u8, 2] {
+        for (dest_byte, arrival) in [(1u8, 0u64), (2, 0), (3, 1_000), (4, 1_000)] {
             record(
                 &mut table,
                 dest(dest_byte),
                 1,
-                InstantMillis(0),
+                InstantMillis(arrival),
                 announce_id(dest_byte, 1),
                 &app_data(dest_byte),
             );
         }
-        assert_eq!(
-            record(
-                &mut table,
-                dest(3),
-                1,
-                InstantMillis(1),
-                announce_id(3, 1),
-                &app_data(3)
-            ),
-            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull),
-            "a table full of fresh routes never evicts for a newcomer"
-        );
-        assert_eq!(table.route_count(), MAX);
 
+        let mut removed = std::vec::Vec::new();
         assert_eq!(
-            record(
-                &mut table,
-                dest(3),
+            table.upsert_route(
                 1,
                 InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
-                announce_id(3, 2),
-                &app_data(3)
+                source(),
+                NextHop::Direct,
+                &announce_for(dest(5), announce_id(5, 1), None, &app_data(5)),
+                &mut |removal| removed.push(removal),
             ),
-            UpsertRouteOutcome::Inserted
+            UpsertRouteOutcome::Inserted,
         );
+        assert_eq!(
+            removed,
+            std::vec![
+                RemovedRoute {
+                    destination: dest(1),
+                    cause: RouteRemovalCause::Expired,
+                },
+                RemovedRoute {
+                    destination: dest(2),
+                    cause: RouteRemovalCause::Expired,
+                },
+            ],
+            "the expired occupants go as expirations; no fresh route is evicted",
+        );
+        assert_eq!(table.route_count(), 3);
         assert_eq!(table.hop_count_to(&dest(3)), Some(1));
-        assert_eq!(table.hop_count_to(&dest(1)), None);
-        assert_eq!(table.route_count(), 1);
+        assert_eq!(table.hop_count_to(&dest(4)), Some(1));
+        assert_eq!(table.hop_count_to(&dest(5)), Some(1));
     }
 
     #[test]

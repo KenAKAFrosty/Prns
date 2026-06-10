@@ -656,6 +656,83 @@ mod tests {
     }
 
     #[test]
+    fn a_full_table_journals_the_eviction_then_the_new_hearing() {
+        use crate::wire::DestinationHash;
+        type OneSlot = FixedInline<1, 8, 64, 4, 32, 4, 4, 4, 32, 4, 4, 4, 4, 8>;
+        let mut state: EngineState<OneSlot> = EngineState::default();
+        let mut schedules = state.wake_schedules();
+
+        let mut first = hx(RAW_ANNOUNCE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut first,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            InstantMillis(1_000),
+            &mut |bytes| bytes.fill(0),
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(state.route_count(), 1);
+
+        let mut journal = std::vec::Vec::new();
+        let mut second = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut second,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            InstantMillis(2_000),
+            &mut |bytes| bytes.fill(0),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(journaled) = reaction {
+                    match journaled {
+                        Journaled::RouteEvicted { destination } => {
+                            journal.push(("evicted", destination));
+                        }
+                        Journaled::AnnounceHeard { destination, .. } => {
+                            journal.push(("heard", destination));
+                        }
+                        _ => {}
+                    }
+                }
+            },
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(),
+            "the evict-then-insert delta tracks the recompute",
+        );
+
+        assert_eq!(
+            journal,
+            std::vec![
+                (
+                    "evicted",
+                    DestinationHash::new(
+                        hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+                    ),
+                ),
+                (
+                    "heard",
+                    DestinationHash::new(
+                        hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
+                    ),
+                ),
+            ],
+            "the victim's eviction is journaled before the newcomer's hearing",
+        );
+        assert_eq!(state.route_count(), 1);
+    }
+
+    #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<

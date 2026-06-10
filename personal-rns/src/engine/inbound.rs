@@ -8,7 +8,19 @@ use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::storage::EngineStorage;
+use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::wire::MTU;
+
+pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
+    match removed.cause {
+        RouteRemovalCause::Expired => Journaled::RouteExpired {
+            destination: removed.destination,
+        },
+        RouteRemovalCause::Evicted => Journaled::RouteEvicted {
+            destination: removed.destination,
+        },
+    }
+}
 
 impl<S: EngineStorage> EngineState<S> {
     /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
@@ -35,7 +47,10 @@ impl<S: EngineStorage> EngineState<S> {
     {
         let source = packet.source_interface;
         let mut delta = WakeSchedules::UNCHANGED;
-        match self.ingest_packet(packet, jitter, view) {
+        let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
+            sink(EngineReaction::Journaled(journal_removal(removed)));
+        });
+        match outcome {
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
                 sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
                     destination: accepted.destination,

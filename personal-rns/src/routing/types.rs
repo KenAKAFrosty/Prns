@@ -53,3 +53,15 @@ pub enum UpsertRouteOutcome {
     Updated,
     Dropped(DropCause),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteRemovalCause {
+    Expired,
+    Evicted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemovedRoute {
+    pub destination: crate::wire::DestinationHash,
+    pub cause: RouteRemovalCause,
+}

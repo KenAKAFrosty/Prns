@@ -448,7 +448,8 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. } => {}
+            | Journaled::RouteExpired { .. }
+            | Journaled::RouteEvicted { .. } => {}
         };
 
         tokio::spawn(run(
@@ -760,7 +761,8 @@ mod tests {
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::CommandSettled { .. }
-            | Journaled::RouteExpired { .. } => {}
+            | Journaled::RouteExpired { .. }
+            | Journaled::RouteEvicted { .. } => {}
         };
 
         tokio::spawn(run(
@@ -833,7 +835,7 @@ mod tests {
             Journaled::CommandSettled { id, settlement } => {
                 let _ = settled_tx.send((id, settlement));
             }
-            Journaled::Delivered(_) => {}
+            Journaled::Delivered(_) | Journaled::RouteEvicted { .. } => {}
         };
 
         tokio::spawn(run(
@@ -933,7 +935,8 @@ mod tests {
             }
             Journaled::AnnounceHeard { .. }
             | Journaled::Delivered(_)
-            | Journaled::RouteExpired { .. } => {}
+            | Journaled::RouteExpired { .. }
+            | Journaled::RouteEvicted { .. } => {}
         };
 
         tokio::spawn(run(

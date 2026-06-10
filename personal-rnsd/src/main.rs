@@ -132,6 +132,12 @@ fn log_journaled(journaled: Journaled<'_>) {
                 destination.as_bytes(),
             );
         }
+        Journaled::RouteEvicted { destination } => {
+            println!(
+                "RNSD_ROUTE_EVICTED destination={:02x?}",
+                destination.as_bytes(),
+            );
+        }
         Journaled::CommandSettled { .. } => {}
     }
 }

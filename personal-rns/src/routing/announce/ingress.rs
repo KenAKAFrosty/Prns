@@ -20,7 +20,7 @@ use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TI
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
-use crate::routing::{DropCause, UpsertRouteOutcome};
+use crate::routing::{DropCause, RemovedRoute, UpsertRouteOutcome};
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
@@ -229,6 +229,17 @@ impl<S: EngineStorage> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'p> {
+        self.ingest_packet_with(packet, jitter, interfaces, &mut |_| {})
+    }
+
+    #[must_use]
+    pub(crate) fn ingest_packet_with<'p>(
+        &mut self,
+        packet: InboundPacket<'p>,
+        jitter: JitterSeed,
+        interfaces: &[InterfaceConfig],
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
 
         match Ingress::classify(packet) {
@@ -248,6 +259,7 @@ impl<S: EngineStorage> EngineState<S> {
                 is_path_response,
                 jitter,
                 interfaces,
+                on_removed,
             )),
 
             Ingress::Data {
@@ -565,6 +577,7 @@ impl<S: EngineStorage> EngineState<S> {
         is_path_response: bool,
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
+        on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
         if self.transport_id.is_some() {
             self.pending_rebroadcasts.absorb_echo(
@@ -597,6 +610,7 @@ impl<S: EngineStorage> EngineState<S> {
             source_interface,
             next_hop,
             &announce,
+            on_removed,
         );
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {

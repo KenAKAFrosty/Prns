@@ -32,6 +32,8 @@ pub enum Journaled<'a> {
     },
     /// A route outlived its expiry and the cull removed it.
     RouteExpired { destination: DestinationHash },
+    /// A full table or arena evicted the route nearest its expiry to admit a newcomer.
+    RouteEvicted { destination: DestinationHash },
 }
 
 /// An edict for the I/O edge — still unhandled, ready to be carried out. Bytes are lent

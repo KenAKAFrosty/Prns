@@ -55,6 +55,11 @@ impl<S: EngineStorage> EngineState<S> {
                             source_interface,
                             held.next_hop(),
                             &announce,
+                            &mut |removed| {
+                                sink(EngineReaction::Journaled(
+                                    crate::engine::inbound::journal_removal(removed),
+                                ));
+                            },
                         );
                         if matches!(
                             outcome,
