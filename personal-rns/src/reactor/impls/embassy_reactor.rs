@@ -214,6 +214,9 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
             egress.enqueue(target, bytes);
         }
+        EngineReaction::Directive(Directive::SendAnnounce { target, bytes }) => {
+            egress.enqueue(target, bytes);
+        }
         EngineReaction::Journaled(journaled) => app(journaled),
     };
     loop {

@@ -40,4 +40,8 @@ pub enum Directive<'a> {
         target: InterfaceId,
         bytes: &'a [u8],
     },
+    SendAnnounce {
+        target: InterfaceId,
+        bytes: &'a [u8],
+    },
 }

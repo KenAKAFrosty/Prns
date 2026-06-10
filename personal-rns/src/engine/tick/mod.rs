@@ -204,7 +204,7 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     /// Fire every announce rebroadcast due at `now`: serialize each onto a scratch buffer
-    /// lent to `sink` as a [`Directive::Send`], then clear the fired entries. The
+    /// lent to `sink` as a [`Directive::SendAnnounce`], then clear the fired entries. The
     /// sink-shaped face of a rebroadcast tick — the reactor's timer edge drains it here,
     /// the legacy runtime drains the same work through [`TickOutput`]. Returns the
     /// rebroadcast lane's new soonest deadline as a [`WakeSchedules`] delta.
@@ -217,7 +217,7 @@ impl<S: EngineStorage> EngineState<S> {
         for egress in self.due_rebroadcast_directives(now, view) {
             let mut buf = [0u8; MTU];
             if let Ok(written) = egress.to_wire(&mut buf) {
-                sink(EngineReaction::Directive(Directive::Send {
+                sink(EngineReaction::Directive(Directive::SendAnnounce {
                     target: egress.target(),
                     bytes: &buf[..written],
                 }));
@@ -601,7 +601,9 @@ mod tests {
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             &view,
             &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, bytes }) =
+                    reaction
+                {
                     sent.push((target, bytes.to_vec()));
                 }
             },
