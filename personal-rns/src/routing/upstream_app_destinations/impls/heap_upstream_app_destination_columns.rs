@@ -37,13 +37,23 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
         self.app_data.get(index).map(|data| data.as_slice())
     }
 
-    fn push(
+    fn upsert(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
         app_data: AnnounceAppDataBytes,
     ) -> Result<usize, ColumnsFull> {
+        if let Some(i) = self
+            .destination
+            .iter()
+            .position(|candidate| *candidate == destination)
+        {
+            self.kind[i] = kind;
+            self.name_hash[i] = name_hash;
+            self.app_data[i] = app_data;
+            return Ok(i);
+        }
         let i = self.destination.len();
         self.destination.push(destination);
         self.kind.push(kind);
@@ -66,7 +76,7 @@ mod tests {
         assert_eq!(columns.capacity(), usize::MAX);
 
         for n in 0..100u8 {
-            let pushed = columns.push(
+            let upserted = columns.upsert(
                 DestinationHash::new([n; TRUNCATED_HASH_BYTE_LEN]),
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([n; 16]),
@@ -75,7 +85,7 @@ mod tests {
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
                 AnnounceAppDataBytes::new(),
             );
-            assert_eq!(pushed, Ok(n as usize));
+            assert_eq!(upserted, Ok(n as usize));
         }
         assert_eq!(columns.len(), 100);
         assert_eq!(columns.destinations().len(), 100);

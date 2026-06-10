@@ -56,13 +56,22 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
         self.app_data.get(index).map(|data| data.as_slice())
     }
 
-    fn push(
+    fn upsert(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
         app_data: AnnounceAppDataBytes,
     ) -> Result<usize, ColumnsFull> {
+        if let Some(i) = self.destination[..self.len]
+            .iter()
+            .position(|candidate| *candidate == destination)
+        {
+            self.kind[i] = kind;
+            self.name_hash[i] = name_hash;
+            self.app_data[i] = app_data;
+            return Ok(i);
+        }
         if self.len >= MAX_UPSTREAM_APP_DESTINATIONS {
             return Err(ColumnsFull);
         }
@@ -90,14 +99,14 @@ mod tests {
     }
 
     #[test]
-    fn exposes_only_pushed_rows_and_reports_a_full_table() {
+    fn exposes_only_upserted_rows_and_reports_a_full_table() {
         let mut columns = FixedUpstreamAppDestinationColumns::<2>::default();
         assert_eq!(columns.capacity(), 2);
         assert!(columns.is_empty());
         assert!(columns.destinations().is_empty());
 
         assert_eq!(
-            columns.push(
+            columns.upsert(
                 dest(1),
                 UpstreamAppDestinationKind::Plain,
                 name(1),
@@ -106,7 +115,7 @@ mod tests {
             Ok(0)
         );
         assert_eq!(
-            columns.push(
+            columns.upsert(
                 dest(2),
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([2; 16]),
@@ -118,7 +127,7 @@ mod tests {
             Ok(1)
         );
         assert_eq!(
-            columns.push(
+            columns.upsert(
                 dest(3),
                 UpstreamAppDestinationKind::Plain,
                 name(3),
@@ -140,5 +149,44 @@ mod tests {
             ]
         );
         assert_eq!(columns.name_hashes(), &[name(1), name(2)]);
+    }
+
+    #[test]
+    fn upserting_a_known_destination_overwrites_its_row_in_place() {
+        let mut columns = FixedUpstreamAppDestinationColumns::<2>::default();
+        columns
+            .upsert(
+                dest(1),
+                UpstreamAppDestinationKind::Single {
+                    identity: IdentityHash::new([1; 16]),
+                    proof_strategy: ProofStrategy::ProveNone,
+                },
+                name(1),
+                AnnounceAppDataBytes::new(),
+            )
+            .unwrap();
+        assert_eq!(
+            columns.upsert(
+                dest(1),
+                UpstreamAppDestinationKind::Single {
+                    identity: IdentityHash::new([1; 16]),
+                    proof_strategy: ProofStrategy::ProveAll,
+                },
+                name(1),
+                AnnounceAppDataBytes::from_slice(b"new").unwrap(),
+            ),
+            Ok(0),
+            "a known destination keeps its slot",
+        );
+
+        assert_eq!(columns.len(), 1);
+        assert_eq!(
+            columns.kinds(),
+            &[UpstreamAppDestinationKind::Single {
+                identity: IdentityHash::new([1; 16]),
+                proof_strategy: ProofStrategy::ProveAll,
+            }],
+        );
+        assert_eq!(columns.app_data_at(0), Some(b"new".as_slice()));
     }
 }

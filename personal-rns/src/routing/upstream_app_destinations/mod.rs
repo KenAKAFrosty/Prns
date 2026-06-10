@@ -60,7 +60,7 @@ pub trait UpstreamAppDestinationColumns {
     fn name_hashes(&self) -> &[DottedNameHash];
     fn app_data_at(&self, index: usize) -> Option<&[u8]>;
 
-    fn push(
+    fn upsert(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
@@ -92,7 +92,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
         let destination = derive_plain_destination_hash(&name_hash);
-        self.insert(
+        self.upsert(
             destination,
             UpstreamAppDestinationKind::Plain,
             name_hash,
@@ -112,7 +112,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         let app_data = AnnounceAppDataBytes::from_slice(app_data)
             .map_err(|()| RegisterDestinationError::AppDataTooLong)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
-        self.insert(
+        self.upsert(
             destination,
             UpstreamAppDestinationKind::Single {
                 identity: *identity_hash,
@@ -131,7 +131,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
-        self.insert(
+        self.upsert(
             destination,
             UpstreamAppDestinationKind::Group,
             name_hash,
@@ -139,18 +139,15 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         )
     }
 
-    fn insert(
+    fn upsert(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
         app_data: AnnounceAppDataBytes,
     ) -> Result<DestinationHash, RegisterDestinationError> {
-        if self.columns.destinations().contains(&destination) {
-            return Ok(destination);
-        }
         self.columns
-            .push(destination, kind, name_hash, app_data)
+            .upsert(destination, kind, name_hash, app_data)
             .map_err(|ColumnsFull| RegisterDestinationError::RegistryFull)?;
         Ok(destination)
     }
@@ -270,12 +267,41 @@ mod tests {
     }
 
     #[test]
-    fn reregistration_is_idempotent() {
+    fn reregistration_keeps_one_row_and_takes_the_new_params() {
+        let identity_hash = IdentityHash::new(hx("4cd0cc45a7405dbd5cf9b5be1ef92f10"));
         let mut destinations = TestDestinations::default();
-        let first = destinations.register_plain("personal", &["node"]).unwrap();
-        let second = destinations.register_plain("personal", &["node"]).unwrap();
+        let first = destinations
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["node"],
+                b"",
+                ProofStrategy::ProveNone,
+            )
+            .unwrap();
+        let second = destinations
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["node"],
+                b"app",
+                ProofStrategy::ProveAll,
+            )
+            .unwrap();
+
         assert_eq!(first, second);
         assert_eq!(destinations.len(), 1);
+        assert_eq!(
+            destinations
+                .lookup(&first, DestinationType::Single)
+                .map(|found| found.kind),
+            Some(UpstreamAppDestinationKind::Single {
+                identity: identity_hash,
+                proof_strategy: ProofStrategy::ProveAll,
+            }),
+            "re-registration overwrites the proof strategy in place",
+        );
+        assert_eq!(destinations.app_data_for(&first), Some(b"app".as_slice()));
     }
 
     #[test]
