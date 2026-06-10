@@ -343,7 +343,7 @@ mod tests {
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0xEE; 16]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -373,16 +373,18 @@ mod tests {
     fn next_scheduled_wake_names_the_route_expiry_for_a_leaf_future_then_due() {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 
+        let source = InterfaceId::new([0u8; 16]);
+        let view = [routable_descriptor(source)];
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: source,
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &transporting_view(),
+            &view,
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
@@ -393,14 +395,14 @@ mod tests {
 
         let expiry = InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS);
         assert_eq!(
-            state.next_scheduled_wake(InstantMillis(2_000), &transporting_view()),
+            state.next_scheduled_wake(InstantMillis(2_000), &view),
             ScheduledWake::At {
                 at: expiry,
                 lane: DueLane::ExpiredRoutes,
             },
         );
         assert_eq!(
-            state.next_scheduled_wake(expiry, &transporting_view()),
+            state.next_scheduled_wake(expiry, &view),
             ScheduledWake::Due(DueLane::ExpiredRoutes),
             "the expiry instant itself is actionable",
         );
@@ -678,7 +680,7 @@ mod tests {
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0xEE; 16]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -720,7 +722,7 @@ mod tests {
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0xEE; 16]),
                 bytes: &mut first,
             },
             TEST_ENTROPY,
@@ -737,7 +739,7 @@ mod tests {
         let delta = state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0xEE; 16]),
                 bytes: &mut second,
             },
             TEST_ENTROPY,

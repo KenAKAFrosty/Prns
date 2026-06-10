@@ -138,6 +138,12 @@ fn log_journaled(journaled: Journaled<'_>) {
                 destination.as_bytes(),
             );
         }
+        Journaled::RouteInterfaceGone { destination } => {
+            println!(
+                "RNSD_ROUTE_INTERFACE_GONE destination={:02x?}",
+                destination.as_bytes(),
+            );
+        }
         Journaled::CommandSettled { .. } => {}
     }
 }

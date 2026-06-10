@@ -46,8 +46,9 @@ impl<S: EngineStorage> EngineState<S> {
 
     /// Cull every route past its expiry — the reactor's timer edge for the
     /// expired-routes lane, the same removal the at-capacity insert runs inline.
-    /// Each removal is journaled `RouteExpired`, the reference's own cull log
-    /// (Transport.py:781). Returns the lane's new soonest expiry.
+    /// Each removal journals its cause — `RouteExpired` for the aged,
+    /// `RouteInterfaceGone` for the orphaned — the reference's two cull arms
+    /// (Transport.py:778-785). Returns the lane's new soonest expiry.
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
@@ -55,10 +56,10 @@ impl<S: EngineStorage> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         self.routing_table
-            .cull_expired_routes(now, view, &mut |destination| {
-                sink(EngineReaction::Journaled(Journaled::RouteExpired {
-                    destination,
-                }));
+            .cull_expired_routes(now, view, &mut |removed| {
+                sink(EngineReaction::Journaled(
+                    crate::engine::inbound::journal_removal(removed),
+                ));
             });
         WakeSchedules {
             expired_routes: self.route_expiry_lane(view),
@@ -75,6 +76,51 @@ mod tests {
         CommandId, PathRequestId, PathRequestWriteOutcome, RequestPath, PATH_REQUEST_TIMEOUT_MS,
     };
     use crate::wire::{DestinationHash, MTU};
+
+    #[test]
+    fn the_cull_journals_an_orphan_as_route_interface_gone() {
+        use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::interfaces::{InboundPacket, InterfaceId};
+        use crate::wire::DestinationHash;
+
+        let source = InterfaceId::new([0u8; 16]);
+        let mut engine = EngineState::<Cap>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &[routable_descriptor(source)],
+        );
+        assert_eq!(engine.route_count(), 1);
+
+        let without_source = [routable_descriptor(InterfaceId::new([0xEE; 16]))];
+        let mut journal = std::vec::Vec::new();
+        let delta =
+            engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::RouteInterfaceGone { destination }) =
+                    reaction
+                {
+                    journal.push(destination);
+                }
+            });
+        assert_eq!(
+            journal,
+            std::vec![DestinationHash::new(
+                hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+            )],
+            "the orphan's removal names its cause",
+        );
+        assert_eq!(engine.route_count(), 0);
+        assert_eq!(
+            delta.expired_routes,
+            crate::engine::LaneWake::Idle,
+            "nothing is left to wake for",
+        );
+    }
 
     #[test]
     fn settle_timed_out_path_requests_closes_each_expired_request_once_past_its_deadline() {

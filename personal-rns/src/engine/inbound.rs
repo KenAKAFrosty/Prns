@@ -19,6 +19,9 @@ pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
         RouteRemovalCause::Evicted => Journaled::RouteEvicted {
             destination: removed.destination,
         },
+        RouteRemovalCause::InterfaceGone => Journaled::RouteInterfaceGone {
+            destination: removed.destination,
+        },
     }
 }
 

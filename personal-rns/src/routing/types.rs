@@ -58,6 +58,7 @@ pub enum UpsertRouteOutcome {
 pub enum RouteRemovalCause {
     Expired,
     Evicted,
+    InterfaceGone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

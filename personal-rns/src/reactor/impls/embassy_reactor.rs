@@ -438,7 +438,8 @@ mod tests {
             Journaled::Delivered(_)
             | Journaled::CommandSettled { .. }
             | Journaled::RouteExpired { .. }
-            | Journaled::RouteEvicted { .. } => {}
+            | Journaled::RouteEvicted { .. }
+            | Journaled::RouteInterfaceGone { .. } => {}
         };
 
         let outcome = block_on(async {

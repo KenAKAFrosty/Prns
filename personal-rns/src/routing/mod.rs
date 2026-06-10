@@ -9,7 +9,7 @@ pub mod types;
 pub mod upstream_app_destinations;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceMode};
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
 use announce::Announce;
@@ -86,17 +86,22 @@ where
 
     /// A route's expiry is derived at evaluation, never stored: its learned-at instant
     /// plus the lifetime its receiving interface's mode keys *in the current view* —
-    /// so a hot-changed mode re-keys every route it carries at the next evaluation.
+    /// so a hot-changed mode re-keys every route it carries at the next evaluation. A
+    /// route whose interface left the view earns no lifetime at all: it is already due,
+    /// which arms the wake lane and lets the next cull remove it as interface-gone.
     fn expiry_of(&self, i: usize, view: &[InterfaceConfig]) -> InstantMillis {
-        let mode = view
+        let learned_at = self.routes.learned_at()[i];
+        match view
             .iter()
             .find(|config| config.id == self.routes.receiving_interfaces()[i])
-            .map_or(InterfaceMode::Full, |config| config.mode);
-        InstantMillis(
-            self.routes.learned_at()[i]
-                .0
-                .saturating_add(route_expiry_millis(mode)),
-        )
+        {
+            Some(config) => InstantMillis(
+                learned_at
+                    .0
+                    .saturating_add(route_expiry_millis(config.mode)),
+            ),
+            None => learned_at,
+        }
     }
 
     pub fn forwarding_route_for(&self, destination: &DestinationHash) -> Option<ForwardingRoute> {
@@ -122,12 +127,7 @@ where
         match self.index_of(&announce.destination) {
             None => {
                 if self.routes.len() >= self.routes.capacity() {
-                    self.cull_expired_routes(arrived_at, view, &mut |destination| {
-                        on_removed(RemovedRoute {
-                            destination,
-                            cause: RouteRemovalCause::Expired,
-                        });
-                    });
+                    self.cull_expired_routes(arrived_at, view, on_removed);
                     if self.routes.len() >= self.routes.capacity() {
                         self.evict_route_nearest_expiry(view, on_removed);
                     }
@@ -283,18 +283,30 @@ where
     /// Boundary-inclusive: a deadline must be actionable at its own instant or a
     /// reactor waking exactly at `expires` busy-spins. The reference culls on a
     /// 5s poll with float time (Transport.py:662), so the boundary is unobservable
-    /// to parity; inclusivity matches every other wake-lane deadline store.
+    /// to parity; inclusivity matches every other wake-lane deadline store. Each
+    /// removal carries its cause — `Expired` for the aged, `InterfaceGone` for a
+    /// route whose receiving interface left the view (the reference's two cull
+    /// arms, Transport.py:778-785).
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
         view: &[InterfaceConfig],
-        on_culled: &mut impl FnMut(DestinationHash),
+        on_removed: &mut impl FnMut(RemovedRoute),
     ) -> usize {
         let mut culled = 0;
         let mut i = 0;
         while i < self.routes.len() {
             if now >= self.expiry_of(i, view) {
-                on_culled(self.routes.destinations()[i]);
+                let receiving_interface = self.routes.receiving_interfaces()[i];
+                let cause = if view.iter().any(|config| config.id == receiving_interface) {
+                    RouteRemovalCause::Expired
+                } else {
+                    RouteRemovalCause::InterfaceGone
+                };
+                on_removed(RemovedRoute {
+                    destination: self.routes.destinations()[i],
+                    cause,
+                });
                 self.remove_route(i);
                 culled += 1;
             } else {
@@ -344,6 +356,7 @@ mod tests {
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
     use crate::engine::test_support::routable_descriptor;
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
+    use crate::interfaces::InterfaceMode;
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
     use crate::routing::storage::{
         FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
@@ -1111,7 +1124,7 @@ mod tests {
         let culled = table.cull_expired_routes(
             InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
             &full_view(),
-            &mut |destination| culled_destinations.push(destination),
+            &mut |removed| culled_destinations.push(removed),
         );
         assert_eq!(
             culled, 3,
@@ -1119,8 +1132,21 @@ mod tests {
         );
         assert_eq!(
             culled_destinations,
-            std::vec![dest(1), dest(2), dest(4)],
-            "each removal reports the destination it dropped",
+            std::vec![
+                RemovedRoute {
+                    destination: dest(1),
+                    cause: RouteRemovalCause::Expired,
+                },
+                RemovedRoute {
+                    destination: dest(2),
+                    cause: RouteRemovalCause::Expired,
+                },
+                RemovedRoute {
+                    destination: dest(4),
+                    cause: RouteRemovalCause::Expired,
+                },
+            ],
+            "each removal reports the destination it dropped and why",
         );
         assert_eq!(table.route_count(), 2);
         for gone in [1u8, 2, 4] {
@@ -1191,6 +1217,112 @@ mod tests {
         assert_eq!(table.hop_count_to(&dest(3)), Some(1));
         assert_eq!(table.hop_count_to(&dest(4)), Some(1));
         assert_eq!(table.app_data_for(&dest(5)), Some(&app_data(5)[..]));
+    }
+
+    #[test]
+    fn a_route_whose_interface_left_the_view_is_culled_as_interface_gone() {
+        let mut table: Rt = Rt::default();
+        let surviving_interface = iface(0xA1);
+        let vanishing_interface = iface(0xB2);
+        let both = [
+            routable_descriptor(surviving_interface),
+            routable_descriptor(vanishing_interface),
+        ];
+        for (dest_byte, learned_on) in [(1u8, surviving_interface), (2, vanishing_interface)] {
+            table.upsert_route(
+                1,
+                InstantMillis(1_000),
+                learned_on,
+                &both,
+                NextHop::Direct,
+                &announce_for(
+                    dest(dest_byte),
+                    announce_id(dest_byte, 1),
+                    None,
+                    &app_data(dest_byte),
+                ),
+                &mut |_| {},
+            );
+        }
+
+        let shrunk = [routable_descriptor(surviving_interface)];
+        assert_eq!(
+            table.soonest_route_expiry(&shrunk),
+            Some(InstantMillis(1_000)),
+            "the orphan earns no lifetime, so the lane is due the moment the view shrinks",
+        );
+
+        let mut removed = std::vec::Vec::new();
+        let culled = table.cull_expired_routes(InstantMillis(2_000), &shrunk, &mut |removal| {
+            removed.push(removal);
+        });
+        assert_eq!(culled, 1);
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(2),
+                cause: RouteRemovalCause::InterfaceGone,
+            }],
+        );
+        assert_eq!(table.hop_count_to(&dest(2)), None);
+        assert_eq!(
+            table.hop_count_to(&dest(1)),
+            Some(1),
+            "the route on the surviving interface is untouched",
+        );
+    }
+
+    #[test]
+    fn at_capacity_an_orphan_goes_as_interface_gone_before_any_fresh_eviction() {
+        const MAX: usize = 2;
+        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let surviving_interface = iface(0xA1);
+        let vanishing_interface = iface(0xB2);
+        let both = [
+            routable_descriptor(surviving_interface),
+            routable_descriptor(vanishing_interface),
+        ];
+        for (dest_byte, learned_on) in [(1u8, surviving_interface), (2, vanishing_interface)] {
+            table.upsert_route(
+                1,
+                InstantMillis(1_000),
+                learned_on,
+                &both,
+                NextHop::Direct,
+                &announce_for(
+                    dest(dest_byte),
+                    announce_id(dest_byte, 1),
+                    None,
+                    &app_data(dest_byte),
+                ),
+                &mut |_| {},
+            );
+        }
+
+        let shrunk = [routable_descriptor(surviving_interface)];
+        let mut removed = std::vec::Vec::new();
+        assert_eq!(
+            table.upsert_route(
+                1,
+                InstantMillis(2_000),
+                surviving_interface,
+                &shrunk,
+                NextHop::Direct,
+                &announce_for(dest(3), announce_id(3, 1), None, &app_data(3)),
+                &mut |removal| removed.push(removal),
+            ),
+            UpsertRouteOutcome::Inserted,
+        );
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(2),
+                cause: RouteRemovalCause::InterfaceGone,
+            }],
+            "the orphan is already due, so the inline cull takes it before eviction is consulted",
+        );
+        assert_eq!(table.hop_count_to(&dest(1)), Some(1));
+        assert_eq!(table.hop_count_to(&dest(3)), Some(1));
     }
 
     #[test]
