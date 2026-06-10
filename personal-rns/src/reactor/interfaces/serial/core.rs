@@ -8,12 +8,11 @@ use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
-use crate::reactor::interface_seam::InterfaceSeam;
-use crate::wire::MTU;
+use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
 
 pub const READ_BUF_LEN: usize = 256;
-pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(MTU);
-pub type Decoder = RnsSerialDecoder<MTU>;
+pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(MAX_WIRE_FRAME_LEN);
+pub type Decoder = RnsSerialDecoder<MAX_WIRE_FRAME_LEN>;
 
 pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
     InterfaceConfig {

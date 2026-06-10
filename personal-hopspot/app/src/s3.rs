@@ -426,6 +426,7 @@ async fn engine_task(
     run_reactor(
         engine,
         &interfaces,
+        &[],
         host,
         FUNNEL.receiver(),
         COMMANDS.receiver(),

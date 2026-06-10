@@ -18,6 +18,7 @@ use portable_atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
+use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
@@ -27,7 +28,9 @@ use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
-use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
+use crate::reactor::interface_seam::{
+    InboundFrame, InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN,
+};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -237,14 +240,16 @@ impl<'a, M: RawMutex, const OUT: usize> EmbassyEgress<'a, M, OUT> {
 /// every `Directive` through `egress` and pushing every `Journaled` to `app`. `Idle` arms no
 /// timer, so the select rests on the two channels and the core truly sleeps — the dormancy
 /// an MCU is built for.
+#[allow(clippy::too_many_arguments)]
 pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT: usize>(
     mut engine: EngineState<S>,
     interfaces: &[InterfaceConfig],
+    ifacs: &[InterfaceIfac],
     mut host: H,
     inbound: Receiver<'_, M, InboundFrame, INBOUND>,
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
     egress: EmbassyEgress<'_, M, OUT>,
-    mut app: impl FnMut(Journaled<'_>),
+    mut on_journaled: impl FnMut(Journaled<'_>),
 ) where
     S: EngineStorage,
     H: Host,
@@ -271,12 +276,25 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
         .await
         {
             Either4::First(mut frame) => {
+                let mut unmasked = [0u8; MAX_WIRE_FRAME_LEN];
+                let bytes = match ifac_for(ifacs, frame.source) {
+                    Some(entry) => {
+                        let Some(clean_len) = entry
+                            .context
+                            .unmask_inbound(&frame.bytes[..frame.len], &mut unmasked)
+                        else {
+                            continue;
+                        };
+                        &mut unmasked[..clean_len]
+                    }
+                    None => &mut frame.bytes[..frame.len],
+                };
                 let now = host.now();
                 let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: frame.source,
-                    bytes: &mut frame.bytes[..frame.len],
+                    bytes,
                 };
                 let delta = engine.ingest_packet_into(
                     packet,
@@ -284,7 +302,16 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
                     interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    },
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
@@ -295,20 +322,36 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
                     interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    },
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Third(lane) => {
                 let now = host.now();
                 let delta = fire_due_lane(&mut engine, lane, now, interfaces, &mut |reaction| {
-                    route_reaction(reaction, &egress, &mut pacers, now, &mut app)
+                    route_reaction(
+                        reaction,
+                        &egress,
+                        ifacs,
+                        &mut pacers,
+                        now,
+                        &mut on_journaled,
+                    )
                 });
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Fourth(()) => {
                 let now = host.now();
-                flush_due_pacers(&mut pacers, now, &egress);
+                flush_due_pacers(&mut pacers, now, &egress, ifacs);
             }
         }
     }
@@ -325,22 +368,47 @@ struct InterfacePacer {
 fn route_reaction<M: RawMutex, const OUT: usize>(
     reaction: EngineReaction<'_>,
     egress: &EmbassyEgress<'_, M, OUT>,
+    ifacs: &[InterfaceIfac],
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
     app: &mut impl FnMut(Journaled<'_>),
 ) {
     match reaction {
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            egress.enqueue(target, bytes);
+            enqueue_for_wire(egress, ifacs, target, bytes);
         }
         EngineReaction::Directive(Directive::SendAnnounce {
             target,
             bytes,
             hops,
         }) => {
-            offer_to_pacer(pacers, target, bytes, hops, now, egress);
+            offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> {
+    if ifacs.is_empty() {
+        return None;
+    }
+    ifacs.iter().find(|entry| entry.id == id)
+}
+
+fn enqueue_for_wire<M: RawMutex, const OUT: usize>(
+    egress: &EmbassyEgress<'_, M, OUT>,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+) {
+    match ifac_for(ifacs, target) {
+        Some(entry) => {
+            let mut wire = [0u8; MAX_WIRE_FRAME_LEN];
+            if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
+                egress.enqueue(target, &wire[..masked_len]);
+            }
+        }
+        None => egress.enqueue(target, bytes),
     }
 }
 
@@ -351,12 +419,13 @@ fn offer_to_pacer<M: RawMutex, const OUT: usize>(
     hops: u8,
     now: InstantMillis,
     egress: &EmbassyEgress<'_, M, OUT>,
+    ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
-        Some(entry) => entry
-            .pacer
-            .offer(bytes, hops, now, |frame| egress.enqueue(target, frame)),
-        None => egress.enqueue(target, bytes),
+        Some(entry) => entry.pacer.offer(bytes, hops, now, |frame| {
+            enqueue_for_wire(egress, ifacs, target, frame)
+        }),
+        None => enqueue_for_wire(egress, ifacs, target, bytes),
     }
 }
 
@@ -364,12 +433,13 @@ fn flush_due_pacers<M: RawMutex, const OUT: usize>(
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
     egress: &EmbassyEgress<'_, M, OUT>,
+    ifacs: &[InterfaceIfac],
 ) {
     for entry in pacers.iter_mut() {
         let target = entry.id;
         entry
             .pacer
-            .release_due(now, |frame| egress.enqueue(target, frame));
+            .release_due(now, |frame| enqueue_for_wire(egress, ifacs, target, frame));
     }
 }
 
@@ -492,6 +562,7 @@ mod tests {
             let reactor = run(
                 engine,
                 &view,
+                &[],
                 EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
                 funnel.receiver(),
                 commands.receiver(),

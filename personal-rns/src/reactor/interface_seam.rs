@@ -6,20 +6,24 @@
 //! `tokio` and `embassy` each supply the concrete channels behind it, so one
 //! interface body can be driven under either executor.
 
+use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::wire::MTU;
+
+/// An IFAC'd wire frame carries the engine's full MTU plus the access tag.
+pub const MAX_WIRE_FRAME_LEN: usize = MTU + IFAC_MAX_SIZE;
 
 pub struct InboundFrame {
     pub source: InterfaceId,
     pub len: usize,
-    pub bytes: [u8; MTU],
+    pub bytes: [u8; MAX_WIRE_FRAME_LEN],
 }
 
 impl InboundFrame {
     #[must_use]
     pub fn new(source: InterfaceId, wire: &[u8]) -> Self {
-        let len = wire.len().min(MTU);
-        let mut bytes = [0u8; MTU];
+        let len = wire.len().min(MAX_WIRE_FRAME_LEN);
+        let mut bytes = [0u8; MAX_WIRE_FRAME_LEN];
         bytes[..len].copy_from_slice(&wire[..len]);
         Self { source, len, bytes }
     }
@@ -27,14 +31,14 @@ impl InboundFrame {
 
 pub struct OutboundFrame {
     pub len: usize,
-    pub bytes: [u8; MTU],
+    pub bytes: [u8; MAX_WIRE_FRAME_LEN],
 }
 
 impl OutboundFrame {
     #[must_use]
     pub fn new(wire: &[u8]) -> Self {
-        let len = wire.len().min(MTU);
-        let mut bytes = [0u8; MTU];
+        let len = wire.len().min(MAX_WIRE_FRAME_LEN);
+        let mut bytes = [0u8; MAX_WIRE_FRAME_LEN];
         bytes[..len].copy_from_slice(&wire[..len]);
         Self { len, bytes }
     }

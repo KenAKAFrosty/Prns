@@ -11,9 +11,16 @@ pub const IFAC_SALT: [u8; 32] = [
 
 pub const DEFAULT_IFAC_SIZE: usize = 8;
 
+pub const IFAC_MAX_SIZE: usize = 64;
+
 const IFAC_FLAG: u8 = 0x80;
 const SIGNATURE_LEN: usize = 64;
-const MAX_MASK_LEN: usize = MTU + SIGNATURE_LEN;
+const MAX_MASK_LEN: usize = MTU + IFAC_MAX_SIZE;
+
+pub struct InterfaceIfac {
+    pub id: crate::interfaces::InterfaceId,
+    pub context: IfacContext,
+}
 
 pub struct IfacContext {
     key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,

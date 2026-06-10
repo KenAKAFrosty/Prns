@@ -185,6 +185,7 @@ fn run_engine(
         run_reactor(
             engine,
             interfaces,
+            std::vec::Vec::new(),
             TokioHost::new(),
             funnel_rx,
             command_rx,

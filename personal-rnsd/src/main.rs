@@ -200,6 +200,7 @@ async fn main() {
     run(
         engine,
         interfaces,
+        std::vec::Vec::new(),
         TokioHost::new(),
         funnel_rx,
         command_rx,

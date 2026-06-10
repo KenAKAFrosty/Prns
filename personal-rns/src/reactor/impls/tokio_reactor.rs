@@ -8,6 +8,7 @@ use tokio::time::Instant;
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
+use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
     InterfaceStatus, TransferRates,
@@ -16,7 +17,9 @@ use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
-use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
+use crate::reactor::interface_seam::{
+    InboundFrame, InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN,
+};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -224,18 +227,20 @@ impl InterfaceStatus for TokioInterfaceStatus {
     }
 }
 
-pub async fn run<S, H, A>(
+#[allow(clippy::too_many_arguments)]
+pub async fn run<S, H, J>(
     mut engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,
+    ifacs: std::vec::Vec<InterfaceIfac>,
     mut host: H,
     mut inbound: UnboundedReceiver<InboundFrame>,
     mut commands: UnboundedReceiver<IssuedCommand>,
     egress: Egress,
-    mut app: A,
+    mut on_journaled: J,
 ) where
     S: EngineStorage,
     H: Host,
-    A: FnMut(Journaled<'_>),
+    J: FnMut(Journaled<'_>),
 {
     let mut wake_schedules = engine.wake_schedules(&interfaces);
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
@@ -251,12 +256,24 @@ pub async fn run<S, H, A>(
         tokio::select! {
             arrived = inbound.recv() => {
                 let Some(mut frame) = arrived else { return };
+                let mut unmasked = [0u8; MAX_WIRE_FRAME_LEN];
+                let bytes = match ifac_for(&ifacs, frame.source) {
+                    Some(entry) => {
+                        let Some(clean_len) =
+                            entry.context.unmask_inbound(&frame.bytes[..frame.len], &mut unmasked)
+                        else {
+                            continue;
+                        };
+                        &mut unmasked[..clean_len]
+                    }
+                    None => &mut frame.bytes[..frame.len],
+                };
                 let now = host.now();
                 let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: frame.source,
-                    bytes: &mut frame.bytes[..frame.len],
+                    bytes,
                 };
                 let wake_schedules_delta = engine.ingest_packet_into(
                     packet,
@@ -264,7 +281,7 @@ pub async fn run<S, H, A>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
@@ -276,7 +293,7 @@ pub async fn run<S, H, A>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
@@ -287,13 +304,13 @@ pub async fn run<S, H, A>(
                     lane,
                     now,
                     &interfaces,
-                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
             _ = wait_for_pacer(&host, pacer_wake) => {
                 let now = host.now();
-                flush_due_pacers(&mut pacers, now, &egress);
+                flush_due_pacers(&mut pacers, now, &egress, &ifacs);
             }
         }
     }
@@ -307,22 +324,44 @@ struct InterfacePacer {
 fn route_reaction<A: FnMut(Journaled<'_>)>(
     reaction: EngineReaction<'_>,
     egress: &Egress,
+    ifacs: &[InterfaceIfac],
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
     app: &mut A,
 ) {
     match reaction {
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            egress.enqueue(target, bytes);
+            enqueue_for_wire(egress, ifacs, target, bytes);
         }
         EngineReaction::Directive(Directive::SendAnnounce {
             target,
             bytes,
             hops,
         }) => {
-            offer_to_pacer(pacers, target, bytes, hops, now, egress);
+            offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> {
+    if ifacs.is_empty() {
+        return None;
+    }
+    ifacs.iter().find(|entry| entry.id == id)
+}
+
+/// The one egress choke: a target with an access code never sees clean bytes on its
+/// wire, and a frame the mask refuses (oversize) is dropped rather than leaked open.
+fn enqueue_for_wire(egress: &Egress, ifacs: &[InterfaceIfac], target: InterfaceId, bytes: &[u8]) {
+    match ifac_for(ifacs, target) {
+        Some(entry) => {
+            let mut wire = [0u8; MAX_WIRE_FRAME_LEN];
+            if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
+                egress.enqueue(target, &wire[..masked_len]);
+            }
+        }
+        None => egress.enqueue(target, bytes),
     }
 }
 
@@ -333,21 +372,27 @@ fn offer_to_pacer(
     hops: u8,
     now: InstantMillis,
     egress: &Egress,
+    ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
-        Some(entry) => entry
-            .pacer
-            .offer(bytes, hops, now, |frame| egress.enqueue(target, frame)),
-        None => egress.enqueue(target, bytes),
+        Some(entry) => entry.pacer.offer(bytes, hops, now, |frame| {
+            enqueue_for_wire(egress, ifacs, target, frame)
+        }),
+        None => enqueue_for_wire(egress, ifacs, target, bytes),
     }
 }
 
-fn flush_due_pacers(pacers: &mut [InterfacePacer], now: InstantMillis, egress: &Egress) {
+fn flush_due_pacers(
+    pacers: &mut [InterfacePacer],
+    now: InstantMillis,
+    egress: &Egress,
+    ifacs: &[InterfaceIfac],
+) {
     for entry in pacers.iter_mut() {
         let target = entry.id;
         entry
             .pacer
-            .release_due(now, |frame| egress.enqueue(target, frame));
+            .release_due(now, |frame| enqueue_for_wire(egress, ifacs, target, frame));
     }
 }
 
@@ -419,17 +464,33 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let egress = Egress::new(std::vec![(id, tx)]);
 
-        offer_to_pacer(&mut pacers, id, &[1; 10], 1, InstantMillis(1_000), &egress);
+        offer_to_pacer(
+            &mut pacers,
+            id,
+            &[1; 10],
+            1,
+            InstantMillis(1_000),
+            &egress,
+            &[],
+        );
         assert_eq!(rx.try_recv().unwrap().bytes(), [1u8; 10].as_slice());
 
-        offer_to_pacer(&mut pacers, id, &[2; 10], 1, InstantMillis(1_200), &egress);
+        offer_to_pacer(
+            &mut pacers,
+            id,
+            &[2; 10],
+            1,
+            InstantMillis(1_200),
+            &egress,
+            &[],
+        );
         assert!(rx.try_recv().is_err(), "the second is held, not sent");
         assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
 
-        flush_due_pacers(&mut pacers, InstantMillis(1_799), &egress);
+        flush_due_pacers(&mut pacers, InstantMillis(1_799), &egress, &[]);
         assert!(rx.try_recv().is_err(), "nothing releases before the window");
 
-        flush_due_pacers(&mut pacers, InstantMillis(1_800), &egress);
+        flush_due_pacers(&mut pacers, InstantMillis(1_800), &egress, &[]);
         assert_eq!(rx.try_recv().unwrap().bytes(), [2u8; 10].as_slice());
         assert_eq!(soonest_pacer_release(&pacers), None);
     }
@@ -523,6 +584,7 @@ mod tests {
         tokio::spawn(run(
             engine,
             view,
+            std::vec![],
             TokioHost::new(),
             funnel_rx,
             command_rx,
@@ -619,6 +681,7 @@ mod tests {
         tokio::spawn(run(
             engine,
             view,
+            std::vec![],
             TokioHost::new(),
             funnel_rx,
             command_rx,
@@ -703,6 +766,7 @@ mod tests {
         tokio::spawn(run(
             engine,
             view,
+            std::vec![],
             TokioHost::new(),
             funnel_rx,
             command_rx,
@@ -835,6 +899,7 @@ mod tests {
         tokio::spawn(run(
             engine,
             view,
+            std::vec![],
             TokioHost::new(),
             inbound_rx,
             command_rx,
@@ -859,6 +924,127 @@ mod tests {
             frame.bytes(),
             expected_proof,
             "the proof is byte-identical to the RNS 1.3.1 implicit proof, on the arrival lane"
+        );
+    }
+
+    #[tokio::test]
+    async fn ifac_members_hear_each_other_and_strangers_stay_outside() {
+        use crate::interfaces::ifac::IfacContext;
+        use crate::wire::DestinationHash;
+
+        let source = InterfaceId::new([0xA1; 16]);
+        let peer = InterfaceId::new([0xB2; 16]);
+        let view = std::vec![descriptor(source), descriptor(peer)];
+        let mut engine = EngineState::<Cap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
+
+        let network = || IfacContext::derive(Some("testnet"), Some("s3cret"), 8).unwrap();
+        let ifacs = std::vec![
+            InterfaceIfac {
+                id: source,
+                context: network(),
+            },
+            InterfaceIfac {
+                id: peer,
+                context: network(),
+            },
+        ];
+
+        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_wire_out_tx, _source_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let source_iface = LoopbackInterface {
+            descriptor: descriptor(source),
+            wire_in: source_wire_in_rx,
+            wire_out: source_wire_out_tx,
+        };
+        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+
+        let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_wire_out_tx, mut peer_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let peer_iface = LoopbackInterface {
+            descriptor: descriptor(peer),
+            wire_in: peer_wire_in_rx,
+            wire_out: peer_wire_out_tx,
+        };
+        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+        drop(funnel_tx);
+
+        let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let app = move |journaled: Journaled<'_>| {
+            if let Journaled::AnnounceHeard { destination, .. } = journaled {
+                let _ = heard_tx.send(destination);
+            }
+        };
+
+        tokio::spawn(run(
+            engine,
+            view,
+            ifacs,
+            TokioHost::new(),
+            funnel_rx,
+            command_rx,
+            egress,
+            app,
+        ));
+        tokio::spawn(source_iface.run(source_seam));
+        tokio::spawn(peer_iface.run(peer_seam));
+
+        let clean = hx(RAW_ANNOUNCE);
+        let mut member_wire = [0u8; MAX_WIRE_FRAME_LEN];
+        let masked_len = network().mask_outbound(&clean, &mut member_wire).unwrap();
+        source_wire_in_tx
+            .send(member_wire[..masked_len].to_vec())
+            .expect("the source interface holds its wire");
+
+        let heard = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+            .await
+            .expect("a member's masked announce is heard")
+            .expect("the reactor task is alive");
+        assert_eq!(
+            heard.as_bytes(),
+            hx("16f8a6d3f7d7c5b6f106d293804d7314").as_slice(),
+        );
+
+        let rebroadcast = tokio::time::timeout(Duration::from_secs(2), peer_wire_out_rx.recv())
+            .await
+            .expect("the rebroadcast leaves through the peer")
+            .expect("the peer task is alive");
+        assert_eq!(
+            rebroadcast[0] & 0x80,
+            0x80,
+            "the peer's wire only ever carries flagged, masked frames",
+        );
+        let mut recovered = [0u8; MAX_WIRE_FRAME_LEN];
+        let clean_len = network()
+            .unmask_inbound(&rebroadcast, &mut recovered)
+            .expect("a member can open the rebroadcast");
+        let (header, _) = WirePacketHeader::parse(&recovered[..clean_len]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(
+            header.hops, 1,
+            "the relay bumped the hop count under the mask"
+        );
+
+        let stranger = IfacContext::derive(Some("testnet"), Some("wrong"), 8).unwrap();
+        let mut stranger_wire = [0u8; MAX_WIRE_FRAME_LEN];
+        let stranger_len = stranger
+            .mask_outbound(&hx(RATCHETED_ANNOUNCE_RNS_WIRE), &mut stranger_wire)
+            .unwrap();
+        source_wire_in_tx
+            .send(stranger_wire[..stranger_len].to_vec())
+            .expect("the source interface holds its wire");
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), heard_rx.recv())
+                .await
+                .is_err(),
+            "a stranger's code opens nothing",
         );
     }
 
@@ -910,6 +1096,7 @@ mod tests {
         tokio::spawn(run(
             engine,
             view,
+            std::vec![],
             TokioHost::new(),
             funnel_rx,
             command_rx,
@@ -1012,6 +1199,7 @@ mod tests {
         tokio::spawn(run(
             engine,
             view,
+            std::vec![],
             TokioHost::new(),
             inbound_rx,
             command_rx,

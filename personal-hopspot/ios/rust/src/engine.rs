@@ -133,6 +133,7 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
         run_reactor(
             engine,
             interfaces,
+            std::vec::Vec::new(),
             TokioHost::new(),
             funnel_rx,
             command_rx,
