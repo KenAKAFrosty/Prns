@@ -314,7 +314,9 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
+    use crate::engine::test_support::{
+        hx, Cap, RATCHETED_ANNOUNCE_RNS_WIRE, RAW_ANNOUNCE, TEST_TRANSPORT_ID,
+    };
     use crate::interfaces::{
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceMode, TransportCapability,
@@ -498,6 +500,97 @@ mod tests {
             original_hops + 1,
             "the rebroadcast bumps the hop count"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
+        let source = InterfaceId::new([0xA1; 16]);
+        let peer = InterfaceId::new([0xB2; 16]);
+        let slow_peer = InterfaceConfig {
+            announce_bandwidth_cap: AnnounceBandwidthCap::Limited {
+                bitrate_bps: 1_000,
+                cap_per_mille: 20,
+            },
+            ..descriptor(peer)
+        };
+        let view = std::vec![descriptor(source), slow_peer];
+
+        let mut engine = EngineState::<Cap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
+
+        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+
+        let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_wire_out_tx, _source_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let source_iface = LoopbackInterface {
+            descriptor: descriptor(source),
+            wire_in: source_wire_in_rx,
+            wire_out: source_wire_out_tx,
+        };
+        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+
+        let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_wire_out_tx, mut peer_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let peer_iface = LoopbackInterface {
+            descriptor: descriptor(peer),
+            wire_in: peer_wire_in_rx,
+            wire_out: peer_wire_out_tx,
+        };
+        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+
+        drop(funnel_tx);
+
+        let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+
+        tokio::spawn(run(
+            engine,
+            view,
+            TokioHost::new(),
+            funnel_rx,
+            command_rx,
+            egress,
+            |_journaled: Journaled<'_>| {},
+        ));
+        tokio::spawn(source_iface.run(source_seam));
+        tokio::spawn(peer_iface.run(peer_seam));
+
+        source_wire_in_tx
+            .send(hx(RAW_ANNOUNCE))
+            .expect("the source interface holds its wire");
+        source_wire_in_tx
+            .send(hx(RATCHETED_ANNOUNCE_RNS_WIRE))
+            .expect("the source interface holds its wire");
+
+        let first = tokio::time::timeout(Duration::from_secs(5), peer_wire_out_rx.recv())
+            .await
+            .expect("the first rebroadcast leaves the idle link within the window")
+            .expect("the peer task is alive");
+        assert_eq!(
+            WirePacketHeader::parse(&first).unwrap().0.packet_type,
+            PacketType::Announce
+        );
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), peer_wire_out_rx.recv())
+                .await
+                .is_err(),
+            "the cap holds the second rebroadcast far short of its spacing window",
+        );
+
+        let second = tokio::time::timeout(Duration::from_secs(120), peer_wire_out_rx.recv())
+            .await
+            .expect("the held rebroadcast drains once the spacing window passes")
+            .expect("the peer task is alive");
+        assert_eq!(
+            WirePacketHeader::parse(&second).unwrap().0.packet_type,
+            PacketType::Announce
+        );
+        assert_ne!(first, second, "the two rebroadcasts are distinct announces");
     }
 
     #[tokio::test]

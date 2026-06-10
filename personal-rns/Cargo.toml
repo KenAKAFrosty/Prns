@@ -143,7 +143,7 @@ proptest = "1"
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 # Executor + macros for the tokio seam's cross-task tests (`--features tokio-host`).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
 
 [lints]
 workspace = true
