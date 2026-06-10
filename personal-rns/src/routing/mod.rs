@@ -100,6 +100,9 @@ where
         let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             None => {
+                if self.routes.len() >= self.routes.capacity() {
+                    self.cull_expired_routes(arrived_at);
+                }
                 self.insert_new_route(hops, expires_at, receiving_interface, next_hop, announce)
             }
             Some(i) => self.refresh_existing_route(
@@ -210,6 +213,24 @@ where
         self.routes.swap_remove(i);
         self.retained_announces.swap_remove(i);
         self.announce_id_history.swap_remove(i, last);
+    }
+
+    /// Boundary-inclusive: a deadline must be actionable at its own instant or a
+    /// reactor waking exactly at `expires` busy-spins. The reference culls on a
+    /// 5s poll with float time (Transport.py:662), so the boundary is unobservable
+    /// to parity; inclusivity matches every other wake-lane deadline store.
+    pub fn cull_expired_routes(&mut self, now: InstantMillis) -> usize {
+        let mut culled = 0;
+        let mut i = 0;
+        while i < self.routes.len() {
+            if now >= self.routes.expires()[i] {
+                self.remove_route(i);
+                culled += 1;
+            } else {
+                i += 1;
+            }
+        }
+        culled
     }
 
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
@@ -721,6 +742,165 @@ mod tests {
             .unwrap()
             .announce_id_history
             .contains(&announce_id(0xA2, 1)));
+    }
+
+    fn cull_a_mixed_table<R, A, H, D>(table: &mut RoutingTable<R, A, H, D>)
+    where
+        R: RouteColumns,
+        A: RetainedAnnounceColumns,
+        H: AnnounceIdHistory,
+        D: RetainedAppData,
+    {
+        let stale_arrival = InstantMillis(0);
+        let fresh_arrival = InstantMillis(1);
+        for (dest_byte, arrival) in [
+            (1u8, stale_arrival),
+            (2, stale_arrival),
+            (3, fresh_arrival),
+            (4, stale_arrival),
+            (5, fresh_arrival),
+        ] {
+            assert_eq!(
+                table.upsert_route(
+                    dest_byte,
+                    arrival,
+                    source(),
+                    NextHop::Direct,
+                    &announce_for(
+                        dest(dest_byte),
+                        announce_id(dest_byte, 1),
+                        None,
+                        &[dest_byte; 4]
+                    ),
+                ),
+                UpsertRouteOutcome::Inserted
+            );
+        }
+        assert_eq!(
+            table.cull_expired_routes(fresh_arrival),
+            0,
+            "nothing has expired yet"
+        );
+        assert_eq!(table.route_count(), 5);
+
+        let culled = table.cull_expired_routes(InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS));
+        assert_eq!(
+            culled, 3,
+            "exactly the stale arrivals, expiry boundary inclusive"
+        );
+        assert_eq!(table.route_count(), 2);
+        for gone in [1u8, 2, 4] {
+            assert_eq!(table.hop_count_to(&dest(gone)), None);
+        }
+        for kept in [3u8, 5] {
+            assert_eq!(table.hop_count_to(&dest(kept)), Some(kept));
+            assert_eq!(table.app_data_for(&dest(kept)), Some(&[kept; 4][..]));
+            assert!(table
+                .existing_route_for(&dest(kept))
+                .unwrap()
+                .announce_id_history
+                .contains(&announce_id(kept, 1)));
+        }
+    }
+
+    #[test]
+    fn cull_expired_routes_removes_every_expired_route_and_keeps_survivors_intact() {
+        cull_a_mixed_table(&mut Rt::default());
+    }
+
+    #[test]
+    fn cull_expired_routes_behaves_identically_on_the_heap_backend() {
+        use crate::routing::storage::{
+            HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
+            HeapRouteColumns,
+        };
+        let mut table: RoutingTable<
+            HeapRouteColumns,
+            HeapRetainedAnnounceColumns,
+            HeapAnnounceIdHistory,
+            HeapRetainedAppData,
+        > = RoutingTable::default();
+        cull_a_mixed_table(&mut table);
+    }
+
+    #[test]
+    fn a_full_table_culls_expired_routes_to_admit_a_new_destination() {
+        const MAX: usize = 4;
+        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        for (dest_byte, arrival) in [(1u8, 0u64), (2, 0), (3, 1), (4, 1)] {
+            assert_eq!(
+                record(
+                    &mut table,
+                    dest(dest_byte),
+                    1,
+                    InstantMillis(arrival),
+                    announce_id(dest_byte, 1),
+                    &app_data(dest_byte)
+                ),
+                UpsertRouteOutcome::Inserted
+            );
+        }
+        assert_eq!(table.route_count(), MAX);
+
+        let now = InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS);
+        assert_eq!(
+            record(&mut table, dest(5), 1, now, announce_id(5, 1), &app_data(5)),
+            UpsertRouteOutcome::Inserted
+        );
+        assert_eq!(
+            table.route_count(),
+            3,
+            "both expired occupants culled, the newcomer admitted"
+        );
+        assert_eq!(table.hop_count_to(&dest(1)), None);
+        assert_eq!(table.hop_count_to(&dest(2)), None);
+        assert_eq!(table.hop_count_to(&dest(3)), Some(1));
+        assert_eq!(table.hop_count_to(&dest(4)), Some(1));
+        assert_eq!(table.app_data_for(&dest(5)), Some(&app_data(5)[..]));
+    }
+
+    #[test]
+    fn a_rejected_destination_is_admitted_after_the_occupants_expire() {
+        const MAX: usize = 2;
+        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        for dest_byte in [1u8, 2] {
+            record(
+                &mut table,
+                dest(dest_byte),
+                1,
+                InstantMillis(0),
+                announce_id(dest_byte, 1),
+                &app_data(dest_byte),
+            );
+        }
+        assert_eq!(
+            record(
+                &mut table,
+                dest(3),
+                1,
+                InstantMillis(1),
+                announce_id(3, 1),
+                &app_data(3)
+            ),
+            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull),
+            "a table full of fresh routes never evicts for a newcomer"
+        );
+        assert_eq!(table.route_count(), MAX);
+
+        assert_eq!(
+            record(
+                &mut table,
+                dest(3),
+                1,
+                InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
+                announce_id(3, 2),
+                &app_data(3)
+            ),
+            UpsertRouteOutcome::Inserted
+        );
+        assert_eq!(table.hop_count_to(&dest(3)), Some(1));
+        assert_eq!(table.hop_count_to(&dest(1)), None);
+        assert_eq!(table.route_count(), 1);
     }
 
     #[test]
