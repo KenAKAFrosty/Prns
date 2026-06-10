@@ -45,11 +45,15 @@ impl<S: EngineStorage> EngineState<S> {
             };
         }
 
-        let wire_len =
-            match write_path_request_wire_packet(request.destination, request.id.as_bytes(), buf) {
-                Ok(wire_len) => wire_len,
-                Err(error) => return PathRequestWriteOutcome::SerializeFailed(error),
-            };
+        let wire_len = match write_path_request_wire_packet(
+            request.destination,
+            self.transport_id,
+            request.id.as_bytes(),
+            buf,
+        ) {
+            Ok(wire_len) => wire_len,
+            Err(error) => return PathRequestWriteOutcome::SerializeFailed(error),
+        };
 
         let culled = self.pending_path_requests.track(PendingPathRequest {
             destination: request.destination,

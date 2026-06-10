@@ -222,19 +222,48 @@ impl PacketToForward<'_> {
     }
 }
 
-/// The tag of a path-request payload (RNS 1.3.1 `Transport.path_request_handler`)
-fn path_request_id_from(payload: &[u8]) -> Option<PathRequestIdBytes> {
-    let region = if payload.len() > TRUNCATED_HASH_BYTE_LEN * 2 {
-        &payload[TRUNCATED_HASH_BYTE_LEN * 2..]
-    } else if payload.len() > TRUNCATED_HASH_BYTE_LEN {
-        &payload[TRUNCATED_HASH_BYTE_LEN..]
-    } else {
-        return None;
-    };
-    let used = region.len().min(TRUNCATED_HASH_BYTE_LEN);
-    let mut tag = PathRequestIdBytes::default();
-    tag[..used].copy_from_slice(&region[..used]);
-    Some(tag)
+/// A parsed path-request payload (RNS 1.3.1 `Transport.path_request_handler`):
+/// the requested destination, the tag the network dedups on, and — only in the
+/// transport form — the requester's transport id. A bare destination is tagless
+/// and yields no request.
+struct PathRequest {
+    destination: DestinationHash,
+    requester_transport_id: Option<TransportId>,
+    tag: PathRequestIdBytes,
+}
+
+impl PathRequest {
+    fn parse(payload: &[u8]) -> Option<Self> {
+        let destination = payload
+            .get(..TRUNCATED_HASH_BYTE_LEN)
+            .and_then(DestinationHash::from_slice)?;
+        let (requester_transport_id, tag_region) = if payload.len() > TRUNCATED_HASH_BYTE_LEN * 2 {
+            (
+                TransportId::from_slice(
+                    &payload[TRUNCATED_HASH_BYTE_LEN..TRUNCATED_HASH_BYTE_LEN * 2],
+                ),
+                &payload[TRUNCATED_HASH_BYTE_LEN * 2..],
+            )
+        } else if payload.len() > TRUNCATED_HASH_BYTE_LEN {
+            (None, &payload[TRUNCATED_HASH_BYTE_LEN..])
+        } else {
+            return None;
+        };
+        let used = tag_region.len().min(TRUNCATED_HASH_BYTE_LEN);
+        let mut tag = PathRequestIdBytes::default();
+        tag[..used].copy_from_slice(&tag_region[..used]);
+        Some(Self {
+            destination,
+            requester_transport_id,
+            tag,
+        })
+    }
+
+    /// RNS 1.3.1 `Transport.path_request`: the path loops if the requester is the
+    /// very next hop we would answer with.
+    fn loops_back_through_requester(&self, next_hop: NextHop) -> bool {
+        matches!((next_hop, self.requester_transport_id), (NextHop::Via(via), Some(id)) if via == id)
+    }
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -441,47 +470,42 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Transport.path_request_handler`: the payload is the requested
-    /// destination hash, then a tag whose position depends on length — a bare
-    /// destination is tagless and ignored, a destination plus tag is the leaf
-    /// form, and a destination, requester transport id, and tag is the transport
-    /// form. We answer only requests for a destination of our own or a route we
-    /// hold; the requester transport id (response routing) is later work.
+    /// RNS 1.3.1 `Transport.path_request_handler`: we answer a request only for a
+    /// destination of our own or, as a transport node, a route we hold. We never
+    /// *forward* an unknown onward — that is opt-in recursive discovery (RNS
+    /// `DISCOVER_PATHS_FOR`), gated off and built later.
     fn ingest_path_request<'p>(&mut self, data: &DataPacket<'_>) -> IngestPacketOutcome<'p> {
-        let Some(destination) = data
-            .payload
-            .get(..TRUNCATED_HASH_BYTE_LEN)
-            .and_then(DestinationHash::from_slice)
-        else {
-            return IngestPacketOutcome::Ignored;
-        };
-        let Some(tag) = path_request_id_from(data.payload) else {
+        let Some(request) = PathRequest::parse(data.payload) else {
             return IngestPacketOutcome::Ignored;
         };
 
         // A request we have already seen (same destination and tag) is a loop or
         // a re-arrival — drop it before answering or forwarding again.
-        if self.seen_path_requests.observe(destination, tag) == PathRequestNovelty::Duplicate {
+        if self
+            .seen_path_requests
+            .observe(request.destination, request.tag)
+            == PathRequestNovelty::Duplicate
+        {
             return IngestPacketOutcome::Ignored;
         }
 
-        // We answer a path request we can satisfy — for one of our own
-        // destinations, or, as a transport node, for a route we hold. We never
-        // *forward* an unknown onward: that is opt-in recursive discovery
-        // (RNS `DISCOVER_PATHS_FOR`), gated off and built later.
         if self
             .upstream_app_destinations
-            .lookup(&destination, DestinationType::Single)
+            .lookup(&request.destination, DestinationType::Single)
             .is_some()
         {
-            IngestPacketOutcome::AnswerPathRequest { destination }
+            IngestPacketOutcome::AnswerPathRequest {
+                destination: request.destination,
+            }
         } else if self.transport_id.is_some()
             && self
                 .routing_table
-                .retained_announce_for(&destination)
-                .is_some()
+                .forwarding_route_for(&request.destination)
+                .is_some_and(|route| !request.loops_back_through_requester(route.next_hop))
         {
-            IngestPacketOutcome::AnswerPathRequestFromCache { destination }
+            IngestPacketOutcome::AnswerPathRequestFromCache {
+                destination: request.destination,
+            }
         } else {
             IngestPacketOutcome::Ignored
         }
@@ -892,8 +916,8 @@ mod tests {
         let local = personal_node_destination();
 
         let mut buf = [0u8; MTU];
-        let n =
-            crate::engine::write_path_request_wire_packet(local, &[0x55; 16], &mut buf).unwrap();
+        let n = crate::engine::write_path_request_wire_packet(local, None, &[0x55; 16], &mut buf)
+            .unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
             state.ingest_packet(
@@ -917,6 +941,7 @@ mod tests {
         let mut buf = [0u8; MTU];
         let n = crate::engine::write_path_request_wire_packet(
             DestinationHash::new([0x44; 16]),
+            None,
             &[0x55; 16],
             &mut buf,
         )
@@ -1019,8 +1044,9 @@ mod tests {
 
     fn path_request_wire(destination: DestinationHash) -> std::vec::Vec<u8> {
         let mut buf = [0u8; MTU];
-        let n = crate::engine::write_path_request_wire_packet(destination, &[0x55; 16], &mut buf)
-            .unwrap();
+        let n =
+            crate::engine::write_path_request_wire_packet(destination, None, &[0x55; 16], &mut buf)
+                .unwrap();
         buf[..n].to_vec()
     }
 
@@ -1086,6 +1112,63 @@ mod tests {
             ),
             IngestPacketOutcome::Ignored,
             "a different transport id but the same tag is the same request — deduped",
+        );
+    }
+
+    #[test]
+    fn a_request_whose_requester_is_our_next_hop_is_declined() {
+        let cached =
+            DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap());
+        let mut relay = transporting_node();
+        let mut announce = hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let request = |requester: [u8; 16], tag: u8| {
+            let mut body = std::vec::Vec::new();
+            body.extend_from_slice(cached.as_bytes());
+            body.extend_from_slice(&requester);
+            body.extend_from_slice(&[tag; 16]);
+            path_request_wire_with(&body)
+        };
+
+        let mut loops_back = request([0x7a; 16], 0x01);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut loops_back,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "the requester is the via we'd route through — answering would loop",
+        );
+
+        let mut other_requester = request([0xCC; 16], 0x02);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_100),
+                    source_interface: iface(0xA1),
+                    bytes: &mut other_requester,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::AnswerPathRequestFromCache {
+                destination: cached
+            },
+            "a different requester gets the cached path",
         );
     }
 
