@@ -593,6 +593,89 @@ mod tests {
         assert_ne!(first, second, "the two rebroadcasts are distinct announces");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn the_reactor_re_emits_a_rebroadcast_once_more_then_retires_it() {
+        let source = InterfaceId::new([0xA1; 16]);
+        let peer = InterfaceId::new([0xB2; 16]);
+        let view = std::vec![descriptor(source), descriptor(peer)];
+
+        let mut engine = EngineState::<Cap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
+
+        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+
+        let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_wire_out_tx, _source_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let source_iface = LoopbackInterface {
+            descriptor: descriptor(source),
+            wire_in: source_wire_in_rx,
+            wire_out: source_wire_out_tx,
+        };
+        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+
+        let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_wire_out_tx, mut peer_wire_out_rx) =
+            mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let peer_iface = LoopbackInterface {
+            descriptor: descriptor(peer),
+            wire_in: peer_wire_in_rx,
+            wire_out: peer_wire_out_tx,
+        };
+        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+
+        drop(funnel_tx);
+
+        let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+
+        tokio::spawn(run(
+            engine,
+            view,
+            TokioHost::new(),
+            funnel_rx,
+            command_rx,
+            egress,
+            |_journaled: Journaled<'_>| {},
+        ));
+        tokio::spawn(source_iface.run(source_seam));
+        tokio::spawn(peer_iface.run(peer_seam));
+
+        source_wire_in_tx
+            .send(hx(RAW_ANNOUNCE))
+            .expect("the source interface holds its wire");
+
+        let first = tokio::time::timeout(Duration::from_secs(2), peer_wire_out_rx.recv())
+            .await
+            .expect("the first emission leaves within the jitter window")
+            .expect("the peer task is alive");
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(4), peer_wire_out_rx.recv())
+                .await
+                .is_err(),
+            "the second emission waits the full retransmit interval",
+        );
+
+        let second = tokio::time::timeout(Duration::from_secs(120), peer_wire_out_rx.recv())
+            .await
+            .expect("the reactor re-emits once the retransmit interval passes")
+            .expect("the peer task is alive");
+        assert_eq!(
+            first, second,
+            "the retransmit re-emits the same pinned announce, byte for byte",
+        );
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(120), peer_wire_out_rx.recv())
+                .await
+                .is_err(),
+            "after two emissions the reactor retires the entry",
+        );
+    }
+
     #[tokio::test]
     async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         use crate::crypto::X25519SecretKey;
