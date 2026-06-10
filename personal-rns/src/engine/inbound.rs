@@ -18,8 +18,9 @@ impl<S: EngineStorage> EngineState<S> {
     /// legacy runtime ran after `ingest_packet`, so the reactor's inbound arm just forwards
     /// the stream. `fill_entropy` is pulled only when a path response is actually minted.
     /// Returns a [`WakeSchedules`] delta for the scheduled lanes this packet moved — a learned
-    /// announce can schedule a rebroadcast and settle waiting path requests, a hold arms the
-    /// held lane, an arriving proof retires a send-timeout; everything else is `Unchanged`.
+    /// announce can schedule a rebroadcast, settle waiting path requests, and move the route
+    /// expiry, a hold arms the held lane (its at-capacity cull attempt can move the expiry
+    /// too), an arriving proof retires a send-timeout; everything else is `Unchanged`.
     pub fn ingest_packet_into<F>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -52,9 +53,11 @@ impl<S: EngineStorage> EngineState<S> {
                 }
                 delta.rebroadcast_announces = self.rebroadcast_lane();
                 delta.path_request_timeout = self.path_timeout_lane();
+                delta.expired_routes = self.route_expiry_lane();
             }
             IngestPacketOutcome::Announce(AnnounceIngest::HeldForRetry) => {
                 delta.held_announces = LaneWake::Due;
+                delta.expired_routes = self.route_expiry_lane();
             }
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
             IngestPacketOutcome::Delivery {

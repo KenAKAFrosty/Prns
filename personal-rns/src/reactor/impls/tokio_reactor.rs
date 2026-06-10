@@ -446,7 +446,9 @@ mod tests {
             Journaled::AnnounceHeard { .. } => {
                 let _ = heard_tx.send(());
             }
-            Journaled::Delivered(_) | Journaled::CommandSettled { .. } => {}
+            Journaled::Delivered(_)
+            | Journaled::CommandSettled { .. }
+            | Journaled::RouteExpired { .. } => {}
         };
 
         tokio::spawn(run(
@@ -756,7 +758,9 @@ mod tests {
             Journaled::Delivered(_) => {
                 let _ = delivered_tx.send(());
             }
-            Journaled::AnnounceHeard { .. } | Journaled::CommandSettled { .. } => {}
+            Journaled::AnnounceHeard { .. }
+            | Journaled::CommandSettled { .. }
+            | Journaled::RouteExpired { .. } => {}
         };
 
         tokio::spawn(run(
@@ -786,6 +790,104 @@ mod tests {
             frame.bytes(),
             expected_proof,
             "the proof is byte-identical to the RNS 1.3.1 implicit proof, on the arrival lane"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_reactor_culls_an_expired_route_at_its_deadline() {
+        use crate::engine::{
+            CommandId, EngineCommand, SendSingle, SendSingleError, SendSingleFailure,
+            SendSinglePayload, Settlement,
+        };
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+        use crate::wire::DestinationHash;
+
+        let source = InterfaceId::new([0xA1; 16]);
+        let view = std::vec![descriptor(source)];
+        let engine = EngineState::<Cap>::default();
+
+        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (wire_in_tx, wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (wire_out_tx, _wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let iface = LoopbackInterface {
+            descriptor: descriptor(source),
+            wire_in: wire_in_rx,
+            wire_out: wire_out_tx,
+        };
+        let seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), out_rx);
+        drop(funnel_tx);
+        let egress = Egress::new(std::vec![(source, out_tx)]);
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::AnnounceHeard { destination, .. } => {
+                let _ = heard_tx.send(destination);
+            }
+            Journaled::RouteExpired { destination } => {
+                let _ = expired_tx.send(destination);
+            }
+            Journaled::CommandSettled { id, settlement } => {
+                let _ = settled_tx.send((id, settlement));
+            }
+            Journaled::Delivered(_) => {}
+        };
+
+        tokio::spawn(run(
+            engine,
+            view,
+            TokioHost::new(),
+            funnel_rx,
+            command_rx,
+            egress,
+            app,
+        ));
+        tokio::spawn(iface.run(seam));
+
+        wire_in_tx
+            .send(hx(RAW_ANNOUNCE))
+            .expect("the interface holds its wire");
+        let destination = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+            .await
+            .expect("the announce is heard, so the route exists before the deadline")
+            .expect("the reactor task is alive");
+
+        tokio::time::sleep(Duration::from_millis(DEFAULT_ROUTE_EXPIRY_MILLIS + 10_000)).await;
+
+        let expired = tokio::time::timeout(Duration::from_secs(2), expired_rx.recv())
+            .await
+            .expect("the cull journals the removal at the expiry deadline")
+            .expect("the reactor task is alive");
+        assert_eq!(
+            expired, destination,
+            "the expired route names its destination"
+        );
+
+        command_tx
+            .send(IssuedCommand {
+                id: CommandId(3),
+                command: EngineCommand::SendSingle(SendSingle {
+                    destination,
+                    payload: SendSinglePayload::from_slice(b"late").expect("fits the MDU"),
+                }),
+            })
+            .expect("the reactor task holds the receiver");
+
+        let (settled_id, settlement) =
+            tokio::time::timeout(Duration::from_secs(2), settled_rx.recv())
+                .await
+                .expect("the late send settles")
+                .expect("the reactor task is alive");
+        assert_eq!(settled_id, CommandId(3));
+        assert_eq!(
+            settlement,
+            Settlement::SendSingle(Err(SendSingleFailure::Rejected(
+                SendSingleError::NoRouteToDestination
+            ))),
+            "the reactor woke at the route's expiry and culled it",
         );
     }
 
@@ -829,7 +931,9 @@ mod tests {
             Journaled::CommandSettled { id, settlement } => {
                 let _ = settled_tx.send((id, settlement));
             }
-            Journaled::AnnounceHeard { .. } | Journaled::Delivered(_) => {}
+            Journaled::AnnounceHeard { .. }
+            | Journaled::Delivered(_)
+            | Journaled::RouteExpired { .. } => {}
         };
 
         tokio::spawn(run(

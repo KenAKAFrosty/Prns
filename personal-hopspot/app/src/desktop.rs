@@ -319,6 +319,12 @@ fn log_journaled(journaled: Journaled<'_>) {
                 delivery.plaintext.len(),
             );
         }
+        Journaled::RouteExpired { destination } => {
+            println!(
+                "HOPSPOT_ROUTE_EXPIRED destination={:02x?}",
+                destination.as_bytes(),
+            );
+        }
         Journaled::CommandSettled { id, settlement } => {
             println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
         }

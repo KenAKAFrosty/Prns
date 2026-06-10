@@ -440,7 +440,9 @@ mod tests {
             Journaled::AnnounceHeard { .. } => {
                 *heard_sink.borrow_mut() += 1;
             }
-            Journaled::Delivered(_) | Journaled::CommandSettled { .. } => {}
+            Journaled::Delivered(_)
+            | Journaled::CommandSettled { .. }
+            | Journaled::RouteExpired { .. } => {}
         };
 
         let outcome = block_on(async {

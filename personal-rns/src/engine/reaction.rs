@@ -30,6 +30,8 @@ pub enum Journaled<'a> {
         id: CommandId,
         settlement: Settlement,
     },
+    /// A route outlived its expiry and the cull removed it.
+    RouteExpired { destination: DestinationHash },
 }
 
 /// An edict for the I/O edge — still unhandled, ready to be carried out. Bytes are lent

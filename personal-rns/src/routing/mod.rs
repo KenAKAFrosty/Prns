@@ -101,7 +101,7 @@ where
         match self.index_of(&announce.destination) {
             None => {
                 if self.routes.len() >= self.routes.capacity() {
-                    self.cull_expired_routes(arrived_at);
+                    self.cull_expired_routes(arrived_at, &mut |_| {});
                 }
                 self.insert_new_route(hops, expires_at, receiving_interface, next_hop, announce)
             }
@@ -219,11 +219,16 @@ where
     /// reactor waking exactly at `expires` busy-spins. The reference culls on a
     /// 5s poll with float time (Transport.py:662), so the boundary is unobservable
     /// to parity; inclusivity matches every other wake-lane deadline store.
-    pub fn cull_expired_routes(&mut self, now: InstantMillis) -> usize {
+    pub fn cull_expired_routes(
+        &mut self,
+        now: InstantMillis,
+        on_culled: &mut impl FnMut(DestinationHash),
+    ) -> usize {
         let mut culled = 0;
         let mut i = 0;
         while i < self.routes.len() {
             if now >= self.routes.expires()[i] {
+                on_culled(self.routes.destinations()[i]);
                 self.remove_route(i);
                 culled += 1;
             } else {
@@ -231,6 +236,10 @@ where
             }
         }
         culled
+    }
+
+    pub fn soonest_route_expiry(&self) -> Option<InstantMillis> {
+        self.routes.expires().iter().min().copied()
     }
 
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
@@ -777,16 +786,25 @@ mod tests {
             );
         }
         assert_eq!(
-            table.cull_expired_routes(fresh_arrival),
+            table.cull_expired_routes(fresh_arrival, &mut |_| {}),
             0,
             "nothing has expired yet"
         );
         assert_eq!(table.route_count(), 5);
 
-        let culled = table.cull_expired_routes(InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS));
+        let mut culled_destinations = std::vec::Vec::new();
+        let culled = table.cull_expired_routes(
+            InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
+            &mut |destination| culled_destinations.push(destination),
+        );
         assert_eq!(
             culled, 3,
             "exactly the stale arrivals, expiry boundary inclusive"
+        );
+        assert_eq!(
+            culled_destinations,
+            std::vec![dest(1), dest(2), dest(4)],
+            "each removal reports the destination it dropped",
         );
         assert_eq!(table.route_count(), 2);
         for gone in [1u8, 2, 4] {

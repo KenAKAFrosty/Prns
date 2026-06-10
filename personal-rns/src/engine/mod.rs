@@ -70,6 +70,7 @@ pub enum DueLane {
     RebroadcastAnnounces,
     SendSingleTimeout,
     PathRequestTimeout,
+    ExpiredRoutes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +100,7 @@ pub struct WakeSchedules {
     pub rebroadcast_announces: LaneWake,
     pub send_single_timeout: LaneWake,
     pub path_request_timeout: LaneWake,
+    pub expired_routes: LaneWake,
 }
 
 impl WakeSchedules {
@@ -107,6 +109,7 @@ impl WakeSchedules {
         rebroadcast_announces: LaneWake::Unchanged,
         send_single_timeout: LaneWake::Unchanged,
         path_request_timeout: LaneWake::Unchanged,
+        expired_routes: LaneWake::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -115,6 +118,7 @@ impl WakeSchedules {
             (&mut self.rebroadcast_announces, delta.rebroadcast_announces),
             (&mut self.send_single_timeout, delta.send_single_timeout),
             (&mut self.path_request_timeout, delta.path_request_timeout),
+            (&mut self.expired_routes, delta.expired_routes),
         ] {
             if change != LaneWake::Unchanged {
                 *slot = change;
@@ -131,6 +135,7 @@ impl WakeSchedules {
             (self.rebroadcast_announces, DueLane::RebroadcastAnnounces),
             (self.send_single_timeout, DueLane::SendSingleTimeout),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
+            (self.expired_routes, DueLane::ExpiredRoutes),
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
@@ -281,6 +286,11 @@ impl<S: EngineStorage> EngineState<S> {
         LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
     }
 
+    /// The expired-routes lane's state from the soonest route expiry in the table.
+    pub(crate) fn route_expiry_lane(&self) -> LaneWake {
+        LaneWake::from_deadline(self.routing_table.soonest_route_expiry())
+    }
+
     /// Probe every reactor-scheduled lane fresh into a [`WakeSchedules`]. This is the full
     /// re-derive — the reactor seeds from it once and then advances incrementally, and it
     /// stands as the oracle the running schedules are checked against. Each method's delta
@@ -292,6 +302,7 @@ impl<S: EngineStorage> EngineState<S> {
             rebroadcast_announces: self.rebroadcast_lane(),
             send_single_timeout: self.send_timeout_lane(),
             path_request_timeout: self.path_timeout_lane(),
+            expired_routes: self.route_expiry_lane(),
         }
     }
 
@@ -367,23 +378,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn next_scheduled_wake_names_the_route_expiry_for_a_leaf_future_then_due() {
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(state.route_count(), 1);
+        assert_eq!(
+            state.pending_announce_rebroadcast_count(),
+            0,
+            "a leaf owes no rebroadcast, so the expiry is its only deadline",
+        );
+
+        let expiry = InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS);
+        assert_eq!(
+            state.next_scheduled_wake(InstantMillis(2_000)),
+            ScheduledWake::At {
+                at: expiry,
+                lane: DueLane::ExpiredRoutes,
+            },
+        );
+        assert_eq!(
+            state.next_scheduled_wake(expiry),
+            ScheduledWake::Due(DueLane::ExpiredRoutes),
+            "the expiry instant itself is actionable",
+        );
+    }
+
     fn schedules(
         held: LaneWake,
         rebroadcast: LaneWake,
         send: LaneWake,
         path: LaneWake,
+        expired: LaneWake,
     ) -> WakeSchedules {
         WakeSchedules {
             held_announces: held,
             rebroadcast_announces: rebroadcast,
             send_single_timeout: send,
             path_request_timeout: path,
+            expired_routes: expired,
         }
     }
 
     #[test]
     fn wake_schedules_soonest_is_idle_when_every_lane_is_clear() {
         let clear = schedules(
+            LaneWake::Idle,
             LaneWake::Idle,
             LaneWake::Idle,
             LaneWake::Idle,
@@ -399,6 +450,7 @@ mod tests {
             LaneWake::At(InstantMillis(10)),
             LaneWake::At(InstantMillis(5)),
             LaneWake::Idle,
+            LaneWake::At(InstantMillis(3)),
         );
         assert_eq!(
             pressed.soonest(InstantMillis(0)),
@@ -413,12 +465,13 @@ mod tests {
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
             LaneWake::At(InstantMillis(7_000)),
+            LaneWake::At(InstantMillis(2_000)),
         );
         assert_eq!(
             scheduled.soonest(InstantMillis(1_000)),
             ScheduledWake::At {
-                at: InstantMillis(3_000),
-                lane: DueLane::SendSingleTimeout,
+                at: InstantMillis(2_000),
+                lane: DueLane::ExpiredRoutes,
             },
         );
     }
@@ -429,6 +482,7 @@ mod tests {
             LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
+            LaneWake::Idle,
             LaneWake::Idle,
         );
         assert_eq!(
@@ -445,6 +499,7 @@ mod tests {
             LaneWake::At(InstantMillis(5_000)),
             LaneWake::At(InstantMillis(5_000)),
             LaneWake::Idle,
+            LaneWake::At(InstantMillis(5_000)),
         );
         assert_eq!(
             tied.soonest(InstantMillis(1_000)),
@@ -461,6 +516,7 @@ mod tests {
             LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
+            LaneWake::Idle,
             LaneWake::Idle,
         );
         live.merge(WakeSchedules {
@@ -557,6 +613,46 @@ mod tests {
             state.wake_schedules(),
             "settling the timeout clears the lane; the delta still tracks",
         );
+    }
+
+    #[test]
+    fn wake_schedules_delta_tracks_a_recompute_across_a_route_expiry_lifecycle() {
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let mut schedules = state.wake_schedules();
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let delta = state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            InstantMillis(1_000),
+            &mut |bytes| bytes.fill(0),
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(),
+            "a learned route arms the expired-routes lane; the delta tracks the recompute",
+        );
+
+        let delta = state.cull_expired_routes(
+            InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            &mut |_| {},
+        );
+        schedules.merge(delta);
+        assert_eq!(
+            schedules,
+            state.wake_schedules(),
+            "culling the route clears the lane; the delta still tracks",
+        );
+        assert_eq!(state.route_count(), 0);
     }
 
     #[test]

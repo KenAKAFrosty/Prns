@@ -19,8 +19,8 @@ impl<S: EngineStorage> EngineState<S> {
     /// Retry every held announce against the now-unblocked routing arena. Each that lands
     /// is journaled `AnnounceHeard` — a hold defers the hearing, it never drops it — and,
     /// if we transport and an interface can carry it, scheduled for rebroadcast. Drains the
-    /// whole cache, so the held lane ends `Idle`; returns that and the rebroadcast lane's
-    /// new soonest deadline as a [`WakeSchedules`] delta.
+    /// whole cache, so the held lane ends `Idle`; returns that plus the rebroadcast and
+    /// route-expiry lanes a recovered upsert moved, as a [`WakeSchedules`] delta.
     pub fn recover_held_announces(
         &mut self,
         jitter: JitterSeed,
@@ -90,6 +90,7 @@ impl<S: EngineStorage> EngineState<S> {
         WakeSchedules {
             held_announces: LaneWake::Idle,
             rebroadcast_announces: self.rebroadcast_lane(),
+            expired_routes: self.route_expiry_lane(),
             ..WakeSchedules::UNCHANGED
         }
     }

@@ -42,15 +42,41 @@ impl<S: EngineStorage> EngineState<S> {
             ..WakeSchedules::UNCHANGED
         }
     }
+
+    /// Cull every route past its expiry — the reactor's timer edge for the
+    /// expired-routes lane, the same removal the at-capacity insert runs inline.
+    /// Each removal is journaled `RouteExpired`, the reference's own cull log
+    /// (Transport.py:781). Returns the lane's new soonest expiry.
+    pub fn cull_expired_routes(
+        &mut self,
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        self.routing_table
+            .cull_expired_routes(now, &mut |destination| {
+                sink(EngineReaction::Journaled(Journaled::RouteExpired {
+                    destination,
+                }));
+            });
+        WakeSchedules {
+            expired_routes: self.route_expiry_lane(),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::Cap;
+    use crate::engine::test_support::{
+        hx, transporting_view, Cap, RATCHETED_ANNOUNCE_RNS_WIRE, RAW_ANNOUNCE, TEST_ENTROPY,
+    };
     use crate::engine::{
         CommandId, PathRequestId, PathRequestWriteOutcome, RequestPath, PATH_REQUEST_TIMEOUT_MS,
     };
+    use crate::interfaces::{InboundPacket, InterfaceId};
+    use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+    use crate::routing::storage::FixedInline;
     use crate::wire::{DestinationHash, MTU};
 
     #[test]
@@ -98,5 +124,83 @@ mod tests {
             )],
             "past the deadline the request settles Timeout, exactly once",
         );
+    }
+
+    #[test]
+    fn a_cull_frees_the_arena_and_a_held_announce_finally_recovers() {
+        type TinyArena = FixedInline<4, 8, 16, 4, 32, 4, 4, 4, 32, 4, 4, 4, 4, 8>;
+        let mut engine = EngineState::<TinyArena>::default();
+        let source_interface = InterfaceId::new([0u8; 16]);
+
+        let mut first = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface,
+                bytes: &mut first,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(
+            engine.route_count(),
+            1,
+            "the first announce fills the arena"
+        );
+
+        let mut second = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface,
+                bytes: &mut second,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(engine.route_count(), 1);
+        assert_eq!(
+            engine.held_announce_count(),
+            1,
+            "the second announce parks on arena pressure",
+        );
+
+        let mut expired = std::vec::Vec::new();
+        let _ = engine.cull_expired_routes(
+            InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::RouteExpired { destination }) = reaction
+                {
+                    expired.push(destination);
+                }
+            },
+        );
+        assert_eq!(engine.route_count(), 0, "the expired occupant is culled");
+        assert_eq!(
+            expired,
+            std::vec![DestinationHash::new(
+                hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap()
+            )],
+            "the cull journals the removed route",
+        );
+
+        let mut recovered = std::vec::Vec::new();
+        let _ =
+            engine.recover_held_announces(TEST_ENTROPY, &transporting_view(), &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::AnnounceHeard { destination, .. }) =
+                    reaction
+                {
+                    recovered.push(destination);
+                }
+            });
+        assert_eq!(
+            recovered,
+            std::vec![DestinationHash::new(
+                hx("c3cfae69b36bb6e3bbfd96a3b5867a59").try_into().unwrap()
+            )],
+            "the cull freed the arena, so the held announce lands and journals its hearing",
+        );
+        assert_eq!(engine.route_count(), 1);
+        assert_eq!(engine.held_announce_count(), 0);
     }
 }

@@ -51,6 +51,7 @@ where
         }
         DueLane::SendSingleTimeout => engine.settle_timed_out_send_singles(now, on_reaction),
         DueLane::PathRequestTimeout => engine.settle_timed_out_path_requests(now, on_reaction),
+        DueLane::ExpiredRoutes => engine.cull_expired_routes(now, on_reaction),
     }
 }
 
