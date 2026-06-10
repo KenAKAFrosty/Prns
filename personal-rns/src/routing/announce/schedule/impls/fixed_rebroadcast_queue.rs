@@ -2,23 +2,65 @@ use heapless::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::schedule::{RebroadcastQueue, ScheduledRebroadcast};
+use crate::routing::announce::schedule::{EchoOutcome, RebroadcastQueue, ScheduledRebroadcast};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FixedRebroadcastQueue<const MAX_PENDING: usize> {
-    pending: Vec<ScheduledRebroadcast, MAX_PENDING>,
+    destination: Vec<DestinationHash, MAX_PENDING>,
+    due_at: Vec<InstantMillis, MAX_PENDING>,
+    source_interface: Vec<InterfaceId, MAX_PENDING>,
+    hops: Vec<u8, MAX_PENDING>,
+    emission_count: Vec<u8, MAX_PENDING>,
+    peer_rebroadcast_count: Vec<u8, MAX_PENDING>,
 }
 
 impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
     pub const fn new() -> Self {
         Self {
-            pending: Vec::new(),
+            destination: Vec::new(),
+            due_at: Vec::new(),
+            source_interface: Vec::new(),
+            hops: Vec::new(),
+            emission_count: Vec::new(),
+            peer_rebroadcast_count: Vec::new(),
         }
     }
 
+    fn row(&self, i: usize) -> ScheduledRebroadcast {
+        ScheduledRebroadcast {
+            destination: self.destination[i],
+            due_at: self.due_at[i],
+            source_interface: self.source_interface[i],
+            hops: self.hops[i],
+            emission_count: self.emission_count[i],
+            peer_rebroadcast_count: self.peer_rebroadcast_count[i],
+        }
+    }
+
+    fn push_row(&mut self, entry: ScheduledRebroadcast) {
+        if self.destination.len() >= MAX_PENDING {
+            return;
+        }
+        let _ = self.destination.push(entry.destination);
+        let _ = self.due_at.push(entry.due_at);
+        let _ = self.source_interface.push(entry.source_interface);
+        let _ = self.hops.push(entry.hops);
+        let _ = self.emission_count.push(entry.emission_count);
+        let _ = self.peer_rebroadcast_count.push(entry.peer_rebroadcast_count);
+    }
+
+    fn swap_remove_row(&mut self, i: usize) {
+        self.destination.swap_remove(i);
+        self.due_at.swap_remove(i);
+        self.source_interface.swap_remove(i);
+        self.hops.swap_remove(i);
+        self.emission_count.swap_remove(i);
+        self.peer_rebroadcast_count.swap_remove(i);
+    }
+
     pub fn pending_count(&self) -> usize {
-        self.pending.len()
+        self.due_at.len()
     }
 
     pub fn schedule(
@@ -28,47 +70,49 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         source_interface: InterfaceId,
         hops: u8,
     ) {
-        if let Some(existing) = self
-            .pending
-            .iter_mut()
-            .find(|entry| entry.destination == destination)
+        if let Some(i) = self
+            .destination
+            .iter()
+            .position(|existing| *existing == destination)
         {
-            existing.due_at = due_at;
-            existing.source_interface = source_interface;
-            existing.hops = hops;
-            existing.emissions = 0;
-            existing.peer_rebroadcasts = 0;
+            self.due_at[i] = due_at;
+            self.source_interface[i] = source_interface;
+            self.hops[i] = hops;
+            self.emission_count[i] = 0;
+            self.peer_rebroadcast_count[i] = 0;
         } else {
-            let _ = self.pending.push(ScheduledRebroadcast {
+            self.push_row(ScheduledRebroadcast {
                 destination,
                 due_at,
                 source_interface,
                 hops,
-                emissions: 0,
-                peer_rebroadcasts: 0,
+                emission_count: 0,
+                peer_rebroadcast_count: 0,
             });
         }
     }
 
     pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledRebroadcast> {
-        let due = self.pending.iter().position(|entry| entry.due_at <= now)?;
-        Some(self.pending.swap_remove(due))
+        let i = self.due_at.iter().position(|due| *due <= now)?;
+        let row = self.row(i);
+        self.swap_remove_row(i);
+        Some(row)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &ScheduledRebroadcast> + '_ {
-        self.pending.iter()
+    pub fn iter(&self) -> impl Iterator<Item = ScheduledRebroadcast> + '_ {
+        (0..self.pending_count()).map(move |i| self.row(i))
     }
 
     pub fn earliest_due_at(&self) -> Option<InstantMillis> {
-        self.pending.iter().map(|entry| entry.due_at).min()
+        self.due_at.iter().copied().min()
     }
 
     pub fn drain_due(&mut self, now: InstantMillis) -> usize {
         let mut removed = 0;
         let mut i = 0;
-        while i < self.pending.len() {
-            if self.pending[i].due_at <= now {
-                self.pending.swap_remove(i);
+        while i < self.due_at.len() {
+            if self.due_at[i] <= now {
+                self.swap_remove_row(i);
                 removed += 1;
             } else {
                 i += 1;
@@ -78,10 +122,7 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
     }
 
     pub fn count_due(&self, now: InstantMillis) -> usize {
-        self.pending
-            .iter()
-            .filter(|entry| entry.due_at <= now)
-            .count()
+        self.due_at.iter().filter(|due| **due <= now).count()
     }
 }
 
@@ -101,11 +142,66 @@ impl<const MAX_PENDING: usize> RebroadcastQueue for FixedRebroadcastQueue<MAX_PE
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         FixedRebroadcastQueue::drain_due(self, now)
     }
+    fn advance_due_retransmits(
+        &mut self,
+        now: InstantMillis,
+        interval_ms: u64,
+        max_emission_count: u8,
+    ) -> usize {
+        let mut completed = 0;
+        let mut i = 0;
+        while i < self.due_at.len() {
+            if self.due_at[i].0 <= now.0 {
+                let count = self.emission_count[i].saturating_add(1);
+                self.emission_count[i] = count;
+                if count >= max_emission_count {
+                    self.swap_remove_row(i);
+                    completed += 1;
+                    continue;
+                }
+                self.due_at[i] = InstantMillis(now.0.saturating_add(interval_ms));
+            }
+            i += 1;
+        }
+        completed
+    }
+    fn absorb_echo(
+        &mut self,
+        destination: &DestinationHash,
+        received_hops: u8,
+        now: InstantMillis,
+        max_peer_rebroadcast_count: u8,
+    ) -> EchoOutcome {
+        let Some(i) = self
+            .destination
+            .iter()
+            .position(|existing| *existing == *destination)
+        else {
+            return EchoOutcome::NoPendingEntry;
+        };
+        let hops_below = received_hops.saturating_sub(1);
+        let entry_hops = self.hops[i];
+        let emitted = self.emission_count[i] > 0;
+        if hops_below == entry_hops {
+            let peers = self.peer_rebroadcast_count[i].saturating_add(1);
+            self.peer_rebroadcast_count[i] = peers;
+            if emitted && peers >= max_peer_rebroadcast_count {
+                self.swap_remove_row(i);
+                return EchoOutcome::RetransmitCancelled;
+            }
+            return EchoOutcome::PeerRebroadcastCounted;
+        }
+        if hops_below == entry_hops.saturating_add(1) && emitted && now.0 < self.due_at[i].0 {
+            self.swap_remove_row(i);
+            return EchoOutcome::RetransmitCancelled;
+        }
+        EchoOutcome::HopsUnrelated
+    }
     fn earliest_due_at(&self) -> Option<InstantMillis> {
         FixedRebroadcastQueue::earliest_due_at(self)
     }
-    fn as_slice(&self) -> &[ScheduledRebroadcast] {
-        &self.pending
+    fn iter(&self) -> impl Iterator<Item = ScheduledRebroadcast> + '_ {
+        FixedRebroadcastQueue::iter(self)
     }
 }
 
@@ -133,8 +229,8 @@ mod tests {
                 due_at: InstantMillis(100),
                 source_interface: iface(0xAA),
                 hops: 1,
-                emissions: 0,
-                peer_rebroadcasts: 0,
+                emission_count: 0,
+                peer_rebroadcast_count: 0,
             })
         );
         assert_eq!(pending.take_due(InstantMillis(100)), None);
@@ -221,5 +317,118 @@ mod tests {
         drained.sort_by_key(|d| *d.as_bytes());
         assert_eq!(drained, std::vec![dest(1), dest(2), dest(3)]);
         assert_eq!(pending.pending_count(), 0);
+    }
+
+    #[test]
+    fn advance_re_arms_a_due_entry_until_the_emission_cap() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(100), 5_500, 2),
+            0
+        );
+        let entry = pending.iter().next().unwrap();
+        assert_eq!(entry.emission_count, 1);
+        assert_eq!(entry.due_at, InstantMillis(5_600));
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(5_600), 5_500, 2),
+            1
+        );
+        assert_eq!(pending.pending_count(), 0);
+    }
+
+    #[test]
+    fn advance_leaves_entries_that_are_not_yet_due() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(500), iface(0xAA), 5);
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(100), 5_500, 2),
+            0
+        );
+        assert_eq!(pending.iter().next().unwrap().emission_count, 0);
+    }
+
+    #[test]
+    fn absorb_echo_with_no_pending_entry_is_a_no_op() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 6, InstantMillis(100), 2),
+            EchoOutcome::NoPendingEntry
+        );
+    }
+
+    #[test]
+    fn a_same_distance_echo_only_counts_until_we_have_emitted() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
+
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 6, InstantMillis(150), 2),
+            EchoOutcome::PeerRebroadcastCounted
+        );
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 6, InstantMillis(160), 2),
+            EchoOutcome::PeerRebroadcastCounted
+        );
+        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(pending.iter().next().unwrap().peer_rebroadcast_count, 2);
+    }
+
+    #[test]
+    fn a_same_distance_echo_cancels_after_we_emit_and_reach_the_cap() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
+        pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
+
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 6, InstantMillis(200), 2),
+            EchoOutcome::PeerRebroadcastCounted
+        );
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 6, InstantMillis(300), 2),
+            EchoOutcome::RetransmitCancelled
+        );
+        assert_eq!(pending.pending_count(), 0);
+    }
+
+    #[test]
+    fn an_onward_echo_cancels_the_pending_retransmit_before_its_deadline() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
+        pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
+
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 7, InstantMillis(200), 2),
+            EchoOutcome::RetransmitCancelled
+        );
+        assert_eq!(pending.pending_count(), 0);
+    }
+
+    #[test]
+    fn an_onward_echo_at_or_after_the_deadline_leaves_the_entry() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
+        pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
+
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 7, InstantMillis(5_600), 2),
+            EchoOutcome::HopsUnrelated
+        );
+        assert_eq!(pending.pending_count(), 1);
+    }
+
+    #[test]
+    fn an_unrelated_hop_count_touches_nothing() {
+        let mut pending = FixedRebroadcastQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
+
+        assert_eq!(
+            pending.absorb_echo(&dest(1), 10, InstantMillis(150), 2),
+            EchoOutcome::HopsUnrelated
+        );
+        assert_eq!(pending.iter().next().unwrap().peer_rebroadcast_count, 0);
     }
 }

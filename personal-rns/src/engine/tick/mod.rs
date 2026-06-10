@@ -104,7 +104,6 @@ impl<S: EngineStorage> EngineState<S> {
         view: &'v [InterfaceConfig],
     ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
         self.pending_rebroadcasts
-            .as_slice()
             .iter()
             .filter(move |scheduled| scheduled.due_at.0 <= now.0)
             .filter_map(move |scheduled| {
