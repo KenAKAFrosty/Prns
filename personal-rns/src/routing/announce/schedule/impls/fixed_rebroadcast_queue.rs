@@ -26,6 +26,7 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         destination: DestinationHash,
         due_at: InstantMillis,
         source_interface: InterfaceId,
+        hops: u8,
     ) {
         if let Some(existing) = self
             .pending
@@ -34,11 +35,17 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         {
             existing.due_at = due_at;
             existing.source_interface = source_interface;
+            existing.hops = hops;
+            existing.emissions = 0;
+            existing.peer_rebroadcasts = 0;
         } else {
             let _ = self.pending.push(ScheduledRebroadcast {
                 destination,
                 due_at,
                 source_interface,
+                hops,
+                emissions: 0,
+                peer_rebroadcasts: 0,
             });
         }
     }
@@ -87,8 +94,9 @@ impl<const MAX_PENDING: usize> RebroadcastQueue for FixedRebroadcastQueue<MAX_PE
         destination: DestinationHash,
         due_at: InstantMillis,
         source_interface: InterfaceId,
+        hops: u8,
     ) {
-        FixedRebroadcastQueue::schedule(self, destination, due_at, source_interface)
+        FixedRebroadcastQueue::schedule(self, destination, due_at, source_interface, hops)
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         FixedRebroadcastQueue::drain_due(self, now)
@@ -115,7 +123,7 @@ mod tests {
     #[test]
     fn nothing_is_due_before_its_time_then_it_drains_once() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
 
         assert_eq!(pending.take_due(InstantMillis(99)), None);
         assert_eq!(
@@ -124,6 +132,9 @@ mod tests {
                 destination: dest(1),
                 due_at: InstantMillis(100),
                 source_interface: iface(0xAA),
+                hops: 1,
+                emissions: 0,
+                peer_rebroadcasts: 0,
             })
         );
         assert_eq!(pending.take_due(InstantMillis(100)), None);
@@ -133,8 +144,8 @@ mod tests {
     #[test]
     fn rescheduling_a_destination_updates_time_and_source_without_duplicating() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(1), InstantMillis(200), iface(0xBB));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(1), InstantMillis(200), iface(0xBB), 1);
         assert_eq!(pending.pending_count(), 1);
 
         assert_eq!(pending.take_due(InstantMillis(150)), None);
@@ -146,8 +157,8 @@ mod tests {
     #[test]
     fn only_entries_whose_time_has_come_are_taken() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(2), InstantMillis(300), iface(0xAA));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(2), InstantMillis(300), iface(0xAA), 1);
 
         assert_eq!(
             pending.take_due(InstantMillis(200)).map(|e| e.destination),
@@ -163,8 +174,8 @@ mod tests {
     #[test]
     fn iter_exposes_pending_entries() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(2), InstantMillis(300), iface(0xBB));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(2), InstantMillis(300), iface(0xBB), 1);
 
         let destinations: std::vec::Vec<_> =
             pending.iter().map(|entry| entry.destination).collect();
@@ -174,9 +185,9 @@ mod tests {
     #[test]
     fn count_due_uses_the_due_boundary() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(99), iface(0xAA));
-        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(3), InstantMillis(101), iface(0xAA));
+        pending.schedule(dest(1), InstantMillis(99), iface(0xAA), 1);
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
         assert_eq!(pending.count_due(InstantMillis(100)), 2);
     }
@@ -184,9 +195,9 @@ mod tests {
     #[test]
     fn drain_due_returns_removed_count_and_keeps_future_entries() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(99), iface(0xAA));
-        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(3), InstantMillis(101), iface(0xAA));
+        pending.schedule(dest(1), InstantMillis(99), iface(0xAA), 1);
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
         assert_eq!(pending.drain_due(InstantMillis(100)), 2);
         assert_eq!(pending.pending_count(), 1);
@@ -199,9 +210,9 @@ mod tests {
     #[test]
     fn a_tick_drains_every_due_entry() {
         let mut pending = FixedRebroadcastQueue::<4>::new();
-        pending.schedule(dest(1), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(3), InstantMillis(100), iface(0xAA));
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(3), InstantMillis(100), iface(0xAA), 1);
 
         let mut drained = std::vec::Vec::new();
         while let Some(entry) = pending.take_due(InstantMillis(100)) {

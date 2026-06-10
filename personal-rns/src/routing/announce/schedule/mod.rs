@@ -21,6 +21,9 @@ pub struct ScheduledRebroadcast {
     pub destination: DestinationHash,
     pub due_at: InstantMillis,
     pub source_interface: InterfaceId,
+    pub hops: u8,
+    pub emissions: u8,
+    pub peer_rebroadcasts: u8,
 }
 
 pub trait RebroadcastQueue {
@@ -30,6 +33,7 @@ pub trait RebroadcastQueue {
         destination: DestinationHash,
         due_at: InstantMillis,
         source_interface: InterfaceId,
+        hops: u8,
     );
     fn drain_due(&mut self, now: InstantMillis) -> usize;
     fn earliest_due_at(&self) -> Option<InstantMillis>;

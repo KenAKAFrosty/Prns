@@ -19,6 +19,7 @@ impl RebroadcastQueue for HeapRebroadcastQueue {
         destination: DestinationHash,
         due_at: InstantMillis,
         source_interface: InterfaceId,
+        hops: u8,
     ) {
         if let Some(existing) = self
             .pending
@@ -27,11 +28,17 @@ impl RebroadcastQueue for HeapRebroadcastQueue {
         {
             existing.due_at = due_at;
             existing.source_interface = source_interface;
+            existing.hops = hops;
+            existing.emissions = 0;
+            existing.peer_rebroadcasts = 0;
         } else {
             self.pending.push(ScheduledRebroadcast {
                 destination,
                 due_at,
                 source_interface,
+                hops,
+                emissions: 0,
+                peer_rebroadcasts: 0,
             });
         }
     }
@@ -63,12 +70,12 @@ mod tests {
     fn grows_past_a_fixed_cap_upserts_and_drains() {
         let mut pending = HeapRebroadcastQueue::default();
         for n in 0..200u8 {
-            pending.schedule(dest(n), InstantMillis(100 + n as u64), iface(0xAA));
+            pending.schedule(dest(n), InstantMillis(100 + n as u64), iface(0xAA), 1);
         }
         assert_eq!(pending.pending_count(), 200);
         assert_eq!(pending.earliest_due_at(), Some(InstantMillis(100)));
 
-        pending.schedule(dest(0), InstantMillis(50), iface(0xBB));
+        pending.schedule(dest(0), InstantMillis(50), iface(0xBB), 1);
         assert_eq!(pending.pending_count(), 200);
         assert_eq!(pending.earliest_due_at(), Some(InstantMillis(50)));
 
@@ -79,9 +86,9 @@ mod tests {
     #[test]
     fn drain_due_uses_the_due_boundary_and_reports_removed_count() {
         let mut pending = HeapRebroadcastQueue::default();
-        pending.schedule(dest(1), InstantMillis(99), iface(0xAA));
-        pending.schedule(dest(2), InstantMillis(100), iface(0xAA));
-        pending.schedule(dest(3), InstantMillis(101), iface(0xAA));
+        pending.schedule(dest(1), InstantMillis(99), iface(0xAA), 1);
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
         assert_eq!(pending.drain_due(InstantMillis(100)), 2);
         assert_eq!(pending.as_slice().len(), 1);

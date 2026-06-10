@@ -617,6 +617,7 @@ impl<S: EngineStorage> EngineState<S> {
                         announce.destination,
                         InstantMillis(arrived_at.0.saturating_add(offset)),
                         source_interface,
+                        received_hops,
                     );
                     RebroadcastDecision::Scheduled
                 };

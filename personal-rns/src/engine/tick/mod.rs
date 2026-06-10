@@ -151,6 +151,7 @@ impl<S: EngineStorage> EngineState<S> {
                                     announce.destination,
                                     InstantMillis(arrival.0.saturating_add(offset)),
                                     source_interface,
+                                    received_hops,
                                 );
                             }
                         }
