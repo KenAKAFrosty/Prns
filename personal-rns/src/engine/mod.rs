@@ -29,9 +29,8 @@ pub use crate::routing::announce::ingress::{
     RebroadcastDecision,
 };
 pub use crate::routing::announce::self_announce::{
-    CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, PathResponseWriteOutcome,
-    ReannounceSchedule, SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure,
-    WriteSelfAnnounceError,
+    CommandedAnnounceWriteOutcome, PathResponseWriteOutcome, SelfAnnounceAppData,
+    SelfAnnounceRejection, SelfAnnounceWriteFailure, WriteSelfAnnounceError,
 };
 pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
@@ -53,7 +52,6 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::announce_rate::AnnounceRates;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
-use crate::routing::announce::self_announce::SelfAnnounces;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
@@ -164,7 +162,6 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
     pub(crate) transport_id: Option<TransportId>,
-    pub(crate) self_announces: SelfAnnounces<S::SelfAnnounces>,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
     pub(crate) reverse_routes: ReverseRoutes<S::ReverseRoutes>,
@@ -186,7 +183,6 @@ impl<S: EngineStorage> Default for EngineState<S> {
             packet_hash_history: Default::default(),
             held_identities: HeldIdentities::default(),
             transport_id: None,
-            self_announces: SelfAnnounces::default(),
             self_ratchets: SelfRatchets::default(),
             receipts: Receipts::default(),
             reverse_routes: ReverseRoutes::default(),
@@ -199,7 +195,6 @@ impl<S: EngineStorage> Default for EngineState<S> {
 
 impl<S: EngineStorage> core::fmt::Debug for EngineState<S>
 where
-    S::SelfAnnounces: core::fmt::Debug,
     S::Routes: core::fmt::Debug,
     S::Announces: core::fmt::Debug,
     S::History: core::fmt::Debug,
@@ -221,7 +216,6 @@ where
             .field("packet_hash_history", &self.packet_hash_history)
             .field("held_identities", &self.held_identities)
             .field("transport_id", &self.transport_id)
-            .field("self_announces", &self.self_announces)
             .field("self_ratchets", &self.self_ratchets)
             .finish()
     }
@@ -577,7 +571,7 @@ mod tests {
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = EngineState::<
-            FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16>,
+            FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>,
         >::default();
         state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(

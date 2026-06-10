@@ -3,7 +3,6 @@ use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::announce_rate::FixedAnnounceRateColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
-use crate::routing::announce::self_announce::FixedSelfAnnounceColumns;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
@@ -24,7 +23,6 @@ pub struct FixedInline<
     const HELD_CACHE_CAPACITY: usize,
     const MAX_UPSTREAM_APP_DESTINATIONS: usize,
     const MAX_HELD_IDENTITIES: usize,
-    const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
     const RETAINED_RATCHETS_PER_DESTINATION: usize,
     const MAX_OUTSTANDING_RECEIPTS: usize,
@@ -42,7 +40,6 @@ impl<
         const HELD_CACHE_CAPACITY: usize,
         const MAX_UPSTREAM_APP_DESTINATIONS: usize,
         const MAX_HELD_IDENTITIES: usize,
-        const MAX_SELF_ANNOUNCED_DESTINATIONS: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
         const RETAINED_RATCHETS_PER_DESTINATION: usize,
         const MAX_OUTSTANDING_RECEIPTS: usize,
@@ -59,7 +56,6 @@ impl<
         HELD_CACHE_CAPACITY,
         MAX_UPSTREAM_APP_DESTINATIONS,
         MAX_HELD_IDENTITIES,
-        MAX_SELF_ANNOUNCED_DESTINATIONS,
         PACKET_HASH_GENERATION_CAPACITY,
         RETAINED_RATCHETS_PER_DESTINATION,
         MAX_OUTSTANDING_RECEIPTS,
@@ -84,7 +80,6 @@ impl<
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
-    type SelfAnnounces = FixedSelfAnnounceColumns<MAX_SELF_ANNOUNCED_DESTINATIONS>;
     // Sized by the upstream registry: every registered Single may opt into
     // ratchets, and nothing else can.
     type SelfRatchets =
@@ -110,7 +105,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 2, 4, 3, 5, 8, 4, 8>;
+        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 4, 3, 5, 8, 4, 8>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();

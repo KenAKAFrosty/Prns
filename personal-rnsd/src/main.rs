@@ -88,7 +88,7 @@ async fn announce_loop(
             command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Data(app_data.clone()),
+                app_data: AnnounceAppData::Registered,
             }),
         };
         if commands.send(command).is_err() {
@@ -146,6 +146,7 @@ async fn main() {
             &node,
             SELF_ANNOUNCE_APP_NAME,
             SELF_ANNOUNCE_ASPECTS,
+            SELF_ANNOUNCE_APP_DATA,
             ProofStrategy::ProveAll,
             RatchetPolicy::Ratcheted,
         )

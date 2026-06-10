@@ -3,7 +3,6 @@ use crate::identity::held::HeapHeldIdentityColumns;
 use crate::routing::announce::announce_rate::HeapAnnounceRateColumns;
 use crate::routing::announce::held_cache::HeapHeldAnnounces;
 use crate::routing::announce::schedule::HeapRebroadcastQueue;
-use crate::routing::announce::self_announce::HeapSelfAnnounceColumns;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
 use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
@@ -26,7 +25,6 @@ impl EngineStorage for GrowableHeap {
     type Held = HeapHeldAnnounces;
     type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
     type HeldIdentities = HeapHeldIdentityColumns;
-    type SelfAnnounces = HeapSelfAnnounceColumns;
     type SelfRatchets = HeapSelfRatchetColumns;
     type Receipts = HeapReceiptColumns;
     type PacketHashes = HeapPacketHashHistory;

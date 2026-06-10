@@ -52,7 +52,7 @@ const INBOUND_CAP: usize = 8;
 const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8, 8, 8>;
+type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32, 8, 8, 8, 8, 8>;
 
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
@@ -121,6 +121,7 @@ async fn engine_task(
             &node,
             "lxmf",
             &["delivery"],
+            SELF_ANNOUNCE_APP_DATA,
             ProofStrategy::ProveAll,
             RatchetPolicy::Ratcheted,
         )
@@ -171,7 +172,7 @@ async fn announce_task(destination: DestinationHash, app_data: SelfAnnounceAppDa
             command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Data(app_data.clone()),
+                app_data: AnnounceAppData::Registered,
             }),
         });
         ticker.next().await;

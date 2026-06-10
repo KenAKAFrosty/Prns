@@ -425,6 +425,7 @@ mod tests {
                 &identity.identity_hash(),
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveAll,
                 RatchetPolicy::NoRatchets,
             )
@@ -531,6 +532,7 @@ mod tests {
                 &node,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -570,7 +572,7 @@ mod tests {
                 command: EngineCommand::AnnounceNow(AnnounceNow {
                     destination,
                     target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Scheduled,
+                    app_data: AnnounceAppData::Registered,
                 }),
             })
             .expect("the reactor task holds the receiver");

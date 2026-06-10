@@ -10,7 +10,6 @@ use crate::interfaces::InterfaceId;
 use crate::routing::announce::announce_rate::AnnounceRateColumns;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
-use crate::routing::announce::self_announce::SelfAnnounceColumns;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
@@ -169,7 +168,6 @@ pub trait EngineStorage {
     type Held: HeldAnnounces + Default;
     type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
     type HeldIdentities: HeldIdentityColumns + Default;
-    type SelfAnnounces: SelfAnnounceColumns + Default;
     type SelfRatchets: SelfRatchetColumns + Default;
     type Receipts: ReceiptColumns + Default;
     type PacketHashes: PacketHashHistory + Default;

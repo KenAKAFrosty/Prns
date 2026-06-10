@@ -848,8 +848,8 @@ mod tests {
     use crate::engine::test_support::*;
 
     use crate::engine::{
-        AnnounceIngest, EngineState, IngestPacketOutcome, RatchetEntropy, RatchetPolicy,
-        ReannounceSchedule,
+        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, EngineState,
+        IngestPacketOutcome, RatchetEntropy, RatchetPolicy,
     };
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentitySigner;
@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn a_path_request_for_a_local_destination_owes_an_answer() {
         let mut state = personal_node_announcer();
-        let local = state.self_announced_destinations()[0];
+        let local = personal_node_destination();
 
         let mut buf = [0u8; MTU];
         let n =
@@ -915,7 +915,7 @@ mod tests {
 
         // B answers for its own destination with a PATH_RESPONSE announce.
         let mut b = personal_node_announcer();
-        let local = b.self_announced_destinations()[0];
+        let local = personal_node_destination();
         let mut buf = [0u8; MTU];
         let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
             &local,
@@ -1141,11 +1141,11 @@ mod tests {
 
         // A peer mints two distinct announces for its own destination.
         let mut announcer = personal_node_announcer();
-        let destination = announcer.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let command = AnnounceNow {
             destination,
             target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Scheduled,
+            app_data: AnnounceAppData::Registered,
         };
         let mut buf_a = [0u8; MTU];
         let first_len = announcer
@@ -1230,11 +1230,11 @@ mod tests {
         use crate::routing::announce::SelfAnnounceEntropy;
 
         let mut announcer = personal_node_announcer();
-        let destination = announcer.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let command = AnnounceNow {
             destination,
             target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Scheduled,
+            app_data: AnnounceAppData::Registered,
         };
         let mut buf_a = [0u8; MTU];
         let first_len = announcer
@@ -1393,7 +1393,7 @@ mod tests {
     #[test]
     fn a_single_sealed_for_the_announced_destination_is_delivered() {
         let mut state = personal_node_announcer();
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let mut raw = sealed_single_packet(&identity, destination, b"hello-announced");
 
@@ -1419,7 +1419,7 @@ mod tests {
     #[test]
     fn a_single_sealed_to_the_announced_ratchet_is_delivered() {
         let mut state = ratcheted_personal_node_announcer();
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
 
         assert_eq!(
@@ -1444,10 +1444,15 @@ mod tests {
     #[test]
     fn an_earlier_announced_ratchet_still_opens_after_rotation() {
         let mut state = ratcheted_personal_node_announcer();
-        let interval = ReannounceSchedule::default().interval_millis();
+        let interval = 6 * 60 * 60 * 1000;
         let mut buf = [0u8; MTU];
         let _ = state
-            .write_due_self_announce(
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
                 InstantMillis(1_000 + interval),
                 TEST_SELF_ANNOUNCE_ENTROPY,
                 RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
@@ -1455,7 +1460,7 @@ mod tests {
             )
             .written_len();
 
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let mut raw = hx(RAW_SEALED_TO_RATCHET);
         assert_eq!(
             state.ingest_packet(
@@ -1479,7 +1484,7 @@ mod tests {
     #[test]
     fn a_ratcheted_destination_still_opens_identity_keyed_traffic() {
         let mut state = ratcheted_personal_node_announcer();
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
@@ -1577,6 +1582,7 @@ mod tests {
                 &node,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1677,6 +1683,7 @@ mod tests {
                 &identity.identity_hash(),
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1711,6 +1718,7 @@ mod tests {
                 &identity.identity_hash(),
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1750,6 +1758,7 @@ mod tests {
                 &identity.identity_hash(),
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1797,6 +1806,7 @@ mod tests {
                 &held_a,
                 "personal",
                 &["a"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1806,6 +1816,7 @@ mod tests {
                 &held_b,
                 "personal",
                 &["b"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1870,6 +1881,7 @@ mod tests {
                 &held,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1923,6 +1935,7 @@ mod tests {
                 &held,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveAll,
                 RatchetPolicy::NoRatchets,
             )
@@ -1961,6 +1974,7 @@ mod tests {
                 &identity.identity_hash(),
                 "personal",
                 &["other"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
@@ -1987,7 +2001,12 @@ mod tests {
         let mut state = personal_node_announcer();
         let mut announce_buf = [0u8; MTU];
         let announce_len = state
-            .write_due_self_announce(
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
                 InstantMillis(100),
                 TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
@@ -2452,9 +2471,8 @@ mod tests {
     #[test]
     fn arena_full_drops_park_the_inbound_bytes_for_retry() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<
-            FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16>,
-        >::default();
+        let mut state =
+            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {

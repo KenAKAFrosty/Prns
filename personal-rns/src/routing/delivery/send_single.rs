@@ -210,8 +210,8 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{
-        AnnounceIngest, CommandOutcome, EngineCommand, IngestPacketOutcome, IssuedCommand,
-        RatchetPolicy, SendSinglePayload,
+        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, CommandOutcome,
+        EngineCommand, IngestPacketOutcome, IssuedCommand, RatchetPolicy, SendSinglePayload,
     };
     use crate::interfaces::InboundPacket;
     use crate::routing::delivery::{Delivery, SingleDelivery};
@@ -311,7 +311,12 @@ mod tests {
         let mut announcer = personal_node_announcer();
         let mut announce_buf = [0u8; MTU];
         let announce_len = announcer
-            .write_due_self_announce(
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
                 InstantMillis(100),
                 TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
@@ -342,7 +347,12 @@ mod tests {
         let mut announcer = personal_node_announcer();
         let mut announce_buf = [0u8; MTU];
         let announce_len = announcer
-            .write_due_self_announce(
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
                 InstantMillis(100),
                 TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
@@ -447,7 +457,12 @@ mod tests {
         let mut announcer = personal_node_announcer();
         let mut announce_buf = [0u8; MTU];
         let announce_len = announcer
-            .write_due_self_announce(
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
                 InstantMillis(100),
                 TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
@@ -568,7 +583,12 @@ mod tests {
         let mut peer = personal_node_announcer_with(RatchetPolicy::Ratcheted);
         let mut announce_buf = [0u8; MTU];
         let announce_len = peer
-            .write_due_self_announce(
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
                 InstantMillis(100),
                 TEST_SELF_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,

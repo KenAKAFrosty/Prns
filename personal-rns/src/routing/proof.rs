@@ -116,6 +116,7 @@ mod tests {
                 &held,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveAll,
                 RatchetPolicy::NoRatchets,
             )

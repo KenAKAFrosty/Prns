@@ -11,7 +11,6 @@ use crate::interfaces::{
     MediumKind, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
-use crate::routing::announce::self_announce::AnnounceConfig;
 use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::FixedInline;
 use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -20,7 +19,7 @@ use crate::wire::{
     TransportId, WireContext, WirePacketHeader, MTU,
 };
 
-pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16>;
+pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>;
 
 pub(crate) const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
 pub(crate) const TEST_SELF_ANNOUNCE_ENTROPY: SelfAnnounceEntropy =
@@ -93,6 +92,12 @@ pub(crate) fn second_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new(bytes)
 }
 
+pub(crate) fn personal_node_destination() -> DestinationHash {
+    let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+    let name = crate::routing::announce::expand_name("personal", &["node"]).expect("valid name");
+    crate::routing::announce::derive_destination_hash(&identity.identity_hash(), &name)
+}
+
 pub(crate) fn personal_node_announcer() -> EngineState<Cap> {
     personal_node_announcer_with(RatchetPolicy::NoRatchets)
 }
@@ -100,22 +105,14 @@ pub(crate) fn personal_node_announcer() -> EngineState<Cap> {
 pub(crate) fn personal_node_announcer_with(ratchet_policy: RatchetPolicy) -> EngineState<Cap> {
     let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
     let node = state.held_identity_hashes()[0];
-    let destination = state
+    state
         .register_single_destination(
             &node,
             "personal",
             &["node"],
+            b"hello-personal",
             ProofStrategy::ProveNone,
             ratchet_policy,
-        )
-        .unwrap();
-    state
-        .schedule_announce(
-            &destination,
-            AnnounceConfig {
-                app_data: b"hello-personal",
-                schedule: ReannounceSchedule::default(),
-            },
         )
         .unwrap();
     state
@@ -124,14 +121,17 @@ pub(crate) fn personal_node_announcer_with(ratchet_policy: RatchetPolicy) -> Eng
 pub(crate) fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
     let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
     let mut buf = [0u8; MTU];
-    state
-        .write_due_self_announce(
-            InstantMillis(1_000),
-            TEST_SELF_ANNOUNCE_ENTROPY,
-            TEST_RATCHET_ENTROPY,
-            &mut buf,
-        )
-        .written_len();
+    let _ = state.write_commanded_announce(
+        &AnnounceNow {
+            destination: personal_node_destination(),
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        },
+        InstantMillis(1_000),
+        TEST_SELF_ANNOUNCE_ENTROPY,
+        TEST_RATCHET_ENTROPY,
+        &mut buf,
+    );
     state
 }
 

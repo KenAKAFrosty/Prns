@@ -1,3 +1,6 @@
+use heapless::Vec as HeaplessVec;
+
+use crate::routing::announce::self_announce::SelfAnnounceAppData;
 use crate::routing::announce::DottedNameHash;
 use crate::routing::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
@@ -11,6 +14,7 @@ pub struct FixedUpstreamAppDestinationColumns<const MAX_UPSTREAM_APP_DESTINATION
     destination: [DestinationHash; MAX_UPSTREAM_APP_DESTINATIONS],
     kind: [UpstreamAppDestinationKind; MAX_UPSTREAM_APP_DESTINATIONS],
     name_hash: [DottedNameHash; MAX_UPSTREAM_APP_DESTINATIONS],
+    app_data: HeaplessVec<SelfAnnounceAppData, MAX_UPSTREAM_APP_DESTINATIONS>,
 }
 
 impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> Default
@@ -24,6 +28,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> Default
             kind: [UpstreamAppDestinationKind::Plain; MAX_UPSTREAM_APP_DESTINATIONS],
             name_hash: [DottedNameHash::new([0u8; DOTTED_NAME_HASH_LEN]);
                 MAX_UPSTREAM_APP_DESTINATIONS],
+            app_data: HeaplessVec::new(),
         }
     }
 }
@@ -47,12 +52,16 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
     fn name_hashes(&self) -> &[DottedNameHash] {
         &self.name_hash[..self.len]
     }
+    fn app_data_at(&self, index: usize) -> Option<&[u8]> {
+        self.app_data.get(index).map(|data| data.as_slice())
+    }
 
     fn push(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
+        app_data: SelfAnnounceAppData,
     ) -> Result<usize, ColumnsFull> {
         if self.len >= MAX_UPSTREAM_APP_DESTINATIONS {
             return Err(ColumnsFull);
@@ -61,6 +70,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
         self.destination[i] = destination;
         self.kind[i] = kind;
         self.name_hash[i] = name_hash;
+        let _ = self.app_data.push(app_data);
         self.len += 1;
         Ok(i)
     }
@@ -87,7 +97,12 @@ mod tests {
         assert!(columns.destinations().is_empty());
 
         assert_eq!(
-            columns.push(dest(1), UpstreamAppDestinationKind::Plain, name(1)),
+            columns.push(
+                dest(1),
+                UpstreamAppDestinationKind::Plain,
+                name(1),
+                SelfAnnounceAppData::new()
+            ),
             Ok(0)
         );
         assert_eq!(
@@ -97,12 +112,18 @@ mod tests {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
                 },
-                name(2)
+                name(2),
+                SelfAnnounceAppData::new()
             ),
             Ok(1)
         );
         assert_eq!(
-            columns.push(dest(3), UpstreamAppDestinationKind::Plain, name(3)),
+            columns.push(
+                dest(3),
+                UpstreamAppDestinationKind::Plain,
+                name(3),
+                SelfAnnounceAppData::new()
+            ),
             Err(ColumnsFull)
         );
 

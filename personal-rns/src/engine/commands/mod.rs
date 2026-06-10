@@ -52,7 +52,7 @@ pub enum AnnounceTarget {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnounceAppData {
-    Scheduled,
+    Registered,
     Data(SelfAnnounceAppData),
 }
 
@@ -328,7 +328,7 @@ mod tests {
             command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Scheduled,
+                app_data: AnnounceAppData::Registered,
             }),
         }
     }
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn an_announce_now_for_a_registered_single_owes_the_announce() {
         let mut state = personal_node_announcer();
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
 
         assert_eq!(
             state.ingest_command(announce_now(destination), &[]),
@@ -345,7 +345,7 @@ mod tests {
                 announce: AnnounceNow {
                     destination,
                     target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Scheduled,
+                    app_data: AnnounceAppData::Registered,
                 },
             },
         );
@@ -385,14 +385,14 @@ mod tests {
     #[test]
     fn an_announce_now_targets_only_interfaces_the_view_offers() {
         let mut state = personal_node_announcer();
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let view = [routable_descriptor(InterfaceId::new([0xAA; 16]))];
         let on = |interface| IssuedCommand {
             id: TEST_COMMAND_ID,
             command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::Interface(interface),
-                app_data: AnnounceAppData::Scheduled,
+                app_data: AnnounceAppData::Registered,
             }),
         };
 
@@ -403,7 +403,7 @@ mod tests {
                 announce: AnnounceNow {
                     destination,
                     target: AnnounceTarget::Interface(InterfaceId::new([0xAA; 16])),
-                    app_data: AnnounceAppData::Scheduled,
+                    app_data: AnnounceAppData::Registered,
                 },
             },
         );
@@ -419,13 +419,13 @@ mod tests {
     #[test]
     fn each_outcome_echoes_its_own_command_id() {
         let mut state = personal_node_announcer();
-        let destination = state.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         let issued_as = |id| IssuedCommand {
             id,
             command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Scheduled,
+                app_data: AnnounceAppData::Registered,
             }),
         };
 
@@ -437,7 +437,7 @@ mod tests {
                     announce: AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Scheduled,
+                        app_data: AnnounceAppData::Registered,
                     },
                 },
             );
@@ -449,7 +449,7 @@ mod tests {
         let verb = AnnounceNow {
             destination: DestinationHash::new([0x11; 16]),
             target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Scheduled,
+            app_data: AnnounceAppData::Registered,
         };
 
         assert_eq!(
@@ -530,7 +530,7 @@ mod tests {
         };
 
         let mut ratcheted = personal_node_announcer_with(RatchetPolicy::Ratcheted);
-        let destination = ratcheted.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         assert_eq!(
             ratcheted.ingest_command(with_data(destination), &[]),
             CommandOutcome::AnnounceRejected {
@@ -540,7 +540,7 @@ mod tests {
         );
 
         let mut unratcheted = personal_node_announcer();
-        let destination = unratcheted.self_announced_destinations()[0];
+        let destination = personal_node_destination();
         assert_eq!(
             unratcheted.ingest_command(with_data(destination), &[]),
             CommandOutcome::OwesAnnounce {

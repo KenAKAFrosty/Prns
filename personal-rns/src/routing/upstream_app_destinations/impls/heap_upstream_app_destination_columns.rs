@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 
+use crate::routing::announce::self_announce::SelfAnnounceAppData;
 use crate::routing::announce::DottedNameHash;
 use crate::routing::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
@@ -12,6 +13,7 @@ pub struct HeapUpstreamAppDestinationColumns {
     destination: Vec<DestinationHash>,
     kind: Vec<UpstreamAppDestinationKind>,
     name_hash: Vec<DottedNameHash>,
+    app_data: Vec<SelfAnnounceAppData>,
 }
 
 impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
@@ -31,17 +33,22 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
     fn name_hashes(&self) -> &[DottedNameHash] {
         &self.name_hash
     }
+    fn app_data_at(&self, index: usize) -> Option<&[u8]> {
+        self.app_data.get(index).map(|data| data.as_slice())
+    }
 
     fn push(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
+        app_data: SelfAnnounceAppData,
     ) -> Result<usize, ColumnsFull> {
         let i = self.destination.len();
         self.destination.push(destination);
         self.kind.push(kind);
         self.name_hash.push(name_hash);
+        self.app_data.push(app_data);
         Ok(i)
     }
 }
@@ -66,6 +73,7 @@ mod tests {
                     proof_strategy: ProofStrategy::ProveNone,
                 },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
+                SelfAnnounceAppData::new(),
             );
             assert_eq!(pushed, Ok(n as usize));
         }

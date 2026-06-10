@@ -33,6 +33,7 @@ impl<S: EngineStorage> EngineState<S> {
         identity: &IdentityHash,
         app_name: &str,
         aspects: &[&str],
+        app_data: &[u8],
         proof_strategy: ProofStrategy,
         ratchet_policy: RatchetPolicy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
@@ -43,6 +44,7 @@ impl<S: EngineStorage> EngineState<S> {
             identity,
             app_name,
             aspects,
+            app_data,
             proof_strategy,
         )?;
         if matches!(ratchet_policy, RatchetPolicy::Ratcheted) {
@@ -108,11 +110,12 @@ mod tests {
                 &node,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             )
             .expect("re-registration of the announced name is idempotent");
-        assert_eq!(state.self_announced_destinations(), &[registered]);
+        assert_eq!(registered, personal_node_destination());
         assert_eq!(state.upstream_app_destinations().count(), 1);
     }
 
@@ -125,6 +128,7 @@ mod tests {
                 &unheld,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
                 RatchetPolicy::NoRatchets,
             ),

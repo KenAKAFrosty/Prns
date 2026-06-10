@@ -68,7 +68,7 @@ const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
 /// The engine's fixed inline storage (no heap): the same shape the firmware has always run.
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 4, 32, 8, 8, 8, 8, 8>;
+type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32, 8, 8, 8, 8, 8>;
 
 /// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
 /// painted stacks whenever the engine grows.
@@ -362,7 +362,7 @@ pub async fn run(spawner: Spawner) {
                         command: EngineCommand::AnnounceNow(AnnounceNow {
                             destination: self_destination,
                             target: AnnounceTarget::AllInterfaces,
-                            app_data: AnnounceAppData::Data(app_data.clone()),
+                            app_data: AnnounceAppData::Registered,
                         }),
                     });
                 }
@@ -407,6 +407,7 @@ async fn engine_task(
             &node,
             "lxmf",
             &["delivery"],
+            SELF_ANNOUNCE_APP_DATA,
             ProofStrategy::ProveAll,
             RatchetPolicy::Ratcheted,
         )
@@ -466,7 +467,7 @@ async fn announce_task(destination: DestinationHash, app_data: SelfAnnounceAppDa
             command: EngineCommand::AnnounceNow(AnnounceNow {
                 destination,
                 target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Data(app_data.clone()),
+                app_data: AnnounceAppData::Registered,
             }),
         });
         ticker.next().await;

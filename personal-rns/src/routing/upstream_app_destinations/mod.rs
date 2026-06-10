@@ -3,6 +3,7 @@ mod impls;
 pub use impls::*;
 
 use crate::identity::IdentityHash;
+use crate::routing::announce::self_announce::SelfAnnounceAppData;
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, DottedNameHash,
     ExpandNameError,
@@ -54,12 +55,14 @@ pub trait UpstreamAppDestinationColumns {
     fn destinations(&self) -> &[DestinationHash];
     fn kinds(&self) -> &[UpstreamAppDestinationKind];
     fn name_hashes(&self) -> &[DottedNameHash];
+    fn app_data_at(&self, index: usize) -> Option<&[u8]>;
 
     fn push(
         &mut self,
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
+        app_data: SelfAnnounceAppData,
     ) -> Result<usize, ColumnsFull>;
 }
 
@@ -69,6 +72,7 @@ pub enum RegisterDestinationError {
     RegistryFull,
     UnknownIdentity,
     RatchetTableFull,
+    AppDataTooLong,
 }
 
 #[derive(Debug, Default)]
@@ -84,7 +88,12 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
         let destination = derive_plain_destination_hash(&name_hash);
-        self.insert(destination, UpstreamAppDestinationKind::Plain, name_hash)
+        self.insert(
+            destination,
+            UpstreamAppDestinationKind::Plain,
+            name_hash,
+            SelfAnnounceAppData::new(),
+        )
     }
 
     pub fn register_single(
@@ -92,9 +101,12 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         identity_hash: &IdentityHash,
         app_name: &str,
         aspects: &[&str],
+        app_data: &[u8],
         proof_strategy: ProofStrategy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
+        let app_data = SelfAnnounceAppData::from_slice(app_data)
+            .map_err(|()| RegisterDestinationError::AppDataTooLong)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
         self.insert(
             destination,
@@ -103,6 +115,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
                 proof_strategy,
             },
             name_hash,
+            app_data,
         )
     }
 
@@ -111,14 +124,24 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
+        app_data: SelfAnnounceAppData,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         if self.columns.destinations().contains(&destination) {
             return Ok(destination);
         }
         self.columns
-            .push(destination, kind, name_hash)
+            .push(destination, kind, name_hash, app_data)
             .map_err(|ColumnsFull| RegisterDestinationError::RegistryFull)?;
         Ok(destination)
+    }
+
+    pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
+        let slot = self
+            .columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        self.columns.app_data_at(slot)
     }
 
     pub fn lookup(
@@ -200,6 +223,7 @@ mod tests {
                 &identity_hash,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone
             ),
             Ok(DestinationHash::new(hx("c3cfae69b36bb6e3bbfd96a3b5867a59"))),
@@ -269,6 +293,7 @@ mod tests {
                 &identity_hash,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveNone,
             )
             .unwrap();
@@ -293,6 +318,7 @@ mod tests {
                 &identity_hash,
                 "personal",
                 &["node"],
+                b"",
                 ProofStrategy::ProveAll,
             )
             .unwrap();
@@ -321,6 +347,7 @@ mod tests {
                 &identity_hash,
                 "personal",
                 &["proving"],
+                b"",
                 ProofStrategy::ProveAll,
             )
             .unwrap();
@@ -329,6 +356,7 @@ mod tests {
                 &identity_hash,
                 "personal",
                 &["silent"],
+                b"",
                 ProofStrategy::ProveNone,
             )
             .unwrap();
