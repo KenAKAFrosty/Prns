@@ -12,3 +12,12 @@ pub fn hkdf_sha256<const N: usize>(ikm: &[u8], salt: &[u8], info: &[u8]) -> [u8;
         .expect("HKDF output length is within RFC 5869 bounds");
     out
 }
+
+/// HKDF-SHA256 expanded to `out`'s full length (RNS masks derive a stream as long
+/// as the packet, so the length is runtime-sized).
+#[allow(clippy::expect_used)]
+pub fn hkdf_sha256_into(ikm: &[u8], salt: &[u8], info: &[u8], out: &mut [u8]) {
+    Hkdf::<Sha256>::new(Some(salt), ikm)
+        .expand(info, out)
+        .expect("HKDF output length is within RFC 5869 bounds");
+}

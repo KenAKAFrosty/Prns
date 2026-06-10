@@ -1,6 +1,7 @@
 pub mod capabilities;
 pub mod connection_state;
 pub mod id;
+pub mod ifac;
 pub mod mac;
 pub mod mode;
 pub mod substrate;

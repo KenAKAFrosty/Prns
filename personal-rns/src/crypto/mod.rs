@@ -18,7 +18,7 @@ pub use exchange::{
     x25519_diffie_hellman, x25519_public_key, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
 pub use hash::{sha256, sha256_chunks};
-pub use kdf::hkdf_sha256;
+pub use kdf::{hkdf_sha256, hkdf_sha256_into};
 pub use mac::{hmac_sha256, hmac_sha256_verify};
 pub use sign::{
     ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519PublicKey, Ed25519SecretKey,
