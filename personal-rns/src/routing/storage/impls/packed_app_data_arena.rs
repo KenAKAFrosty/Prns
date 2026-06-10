@@ -34,6 +34,7 @@ pub struct PackedAppDataArena<const ARENA_BYTES: usize, const MAX_ENTRIES: usize
     arena: [u8; ARENA_BYTES],
     used: usize,
     spans: Vec<Span, MAX_ENTRIES>,
+    free_slots: Vec<usize, MAX_ENTRIES>,
 }
 
 impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> Default
@@ -52,6 +53,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
             arena: [0u8; ARENA_BYTES],
             used: 0,
             spans: Vec::new(),
+            free_slots: Vec::new(),
         }
     }
 
@@ -61,7 +63,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
     }
 
     pub fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
-        if self.spans.is_full() {
+        if self.free_slots.is_empty() && self.spans.is_full() {
             return Err(RetainedAppDataError::TooManyEntries);
         }
         if bytes.len() > ARENA_BYTES - self.used {
@@ -71,11 +73,33 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize>
         let offset = self.used;
         self.arena[offset..offset + bytes.len()].copy_from_slice(bytes);
         self.used += bytes.len();
-        let _ = self.spans.push(Span {
+        let span = Span {
             offset,
             len: bytes.len(),
-        });
-        Ok(AppDataHandle::new(self.spans.len() - 1))
+        };
+        if let Some(slot) = self.free_slots.pop() {
+            self.spans[slot] = span;
+            Ok(AppDataHandle::new(slot))
+        } else {
+            let _ = self.spans.push(span);
+            Ok(AppDataHandle::new(self.spans.len() - 1))
+        }
+    }
+
+    pub fn free(&mut self, handle: AppDataHandle) {
+        let span = self.spans[handle.slot()];
+        let tail_start = span.offset + span.len;
+        let tail_len = self.used - tail_start;
+        self.arena
+            .copy_within(tail_start..tail_start + tail_len, span.offset);
+        for other in self.spans.iter_mut() {
+            if other.offset > span.offset {
+                other.offset -= span.len;
+            }
+        }
+        self.used -= span.len;
+        self.spans[handle.slot()] = Span { offset: 0, len: 0 };
+        let _ = self.free_slots.push(handle.slot());
     }
 
     pub fn replace(
@@ -134,6 +158,10 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize> RetainedAppData
     fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
         PackedAppDataArena::replace(self, handle, bytes)
     }
+
+    fn free(&mut self, handle: AppDataHandle) {
+        PackedAppDataArena::free(self, handle)
+    }
 }
 
 #[cfg(test)]
@@ -141,14 +169,26 @@ mod tests {
     use super::*;
 
     fn assert_packed<const A: usize, const M: usize>(store: &PackedAppDataArena<A, M>) {
-        let mut expected_offset = 0;
+        // Live spans (those not on the free list) must tile [0, used) with no gaps
+        // and no overlap. Free-slot reuse means spans are no longer offset-ordered,
+        // so coverage is checked directly rather than by a running offset.
+        let mut covered = std::vec![false; store.used];
         let mut total = 0;
-        for span in &store.spans {
-            assert_eq!(span.offset, expected_offset, "spans must be gap-free");
-            expected_offset += span.len;
+        for (slot, span) in store.spans.iter().enumerate() {
+            if store.free_slots.contains(&slot) {
+                continue;
+            }
             total += span.len;
+            for byte in &mut covered[span.offset..span.offset + span.len] {
+                assert!(!*byte, "live spans must not overlap");
+                *byte = true;
+            }
         }
-        assert_eq!(total, store.used, "used must equal the sum of span lengths");
+        assert_eq!(total, store.used, "used must equal the sum of live span lengths");
+        assert!(
+            covered.iter().all(|&c| c),
+            "live spans must cover [0, used) with no gaps"
+        );
     }
 
     #[test]
@@ -275,6 +315,57 @@ mod tests {
         assert_eq!(store.used, 8);
         assert_eq!(store.get(h), &[0x7; 8]);
         assert_eq!(store.insert(&[0x9]), Err(RetainedAppDataError::ArenaFull));
+        assert_packed(&store);
+    }
+
+    #[test]
+    fn free_reclaims_bytes_and_preserves_neighbors() {
+        let mut store = PackedAppDataArena::<64, 4>::new();
+        let a = store.insert(&[0xAA; 4]).unwrap();
+        let b = store.insert(&[0xBB; 6]).unwrap();
+        let c = store.insert(&[0xCC; 4]).unwrap();
+
+        store.free(b);
+
+        assert_eq!(store.get(a), &[0xAA; 4]);
+        assert_eq!(store.get(c), &[0xCC; 4]);
+        assert_eq!(store.used, 8);
+        assert_packed(&store);
+    }
+
+    #[test]
+    fn free_then_insert_reuses_the_freed_slot() {
+        let mut store = PackedAppDataArena::<64, 4>::new();
+        let a = store.insert(&[0xAA; 4]).unwrap();
+        let b = store.insert(&[0xBB; 6]).unwrap();
+
+        store.free(a);
+        let d = store.insert(&[0xDD; 3]).unwrap();
+
+        assert_eq!(d, a, "the freed slot index is reused, not appended");
+        assert_eq!(store.get(d), &[0xDD; 3]);
+        assert_eq!(store.get(b), &[0xBB; 6]);
+        assert_packed(&store);
+    }
+
+    #[test]
+    fn a_freed_slot_keeps_the_entry_cap_from_filling() {
+        let mut store = PackedAppDataArena::<64, 2>::new();
+        let a = store.insert(&[1]).unwrap();
+        store.insert(&[2]).unwrap();
+        assert_eq!(store.insert(&[3]), Err(RetainedAppDataError::TooManyEntries));
+
+        store.free(a);
+        assert!(store.insert(&[3]).is_ok(), "the freed slot admits a new entry");
+        assert_packed(&store);
+    }
+
+    #[test]
+    fn freeing_the_only_entry_empties_the_store() {
+        let mut store = PackedAppDataArena::<64, 4>::new();
+        let a = store.insert(&[0xAA; 5]).unwrap();
+        store.free(a);
+        assert_eq!(store.used, 0);
         assert_packed(&store);
     }
 

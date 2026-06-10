@@ -159,6 +159,7 @@ pub trait RetainedAppData {
     fn get(&self, handle: AppDataHandle) -> &[u8];
     fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError>;
     fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError>;
+    fn free(&mut self, handle: AppDataHandle);
 }
 
 /// A storage recipe: the bundle of column backends an engine runs on. One type

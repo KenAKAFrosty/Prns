@@ -13,6 +13,7 @@ use crate::routing::storage::{AppDataHandle, RetainedAppData, RetainedAppDataErr
 #[derive(Debug, Default)]
 pub struct HeapRetainedAppData {
     entries: Vec<Vec<u8>>,
+    free_slots: Vec<usize>,
 }
 
 impl RetainedAppData for HeapRetainedAppData {
@@ -21,14 +22,24 @@ impl RetainedAppData for HeapRetainedAppData {
     }
 
     fn insert(&mut self, bytes: &[u8]) -> Result<AppDataHandle, RetainedAppDataError> {
-        let slot = self.entries.len();
-        self.entries.push(bytes.to_vec());
-        Ok(AppDataHandle::new(slot))
+        if let Some(slot) = self.free_slots.pop() {
+            self.entries[slot] = bytes.to_vec();
+            Ok(AppDataHandle::new(slot))
+        } else {
+            let slot = self.entries.len();
+            self.entries.push(bytes.to_vec());
+            Ok(AppDataHandle::new(slot))
+        }
     }
 
     fn replace(&mut self, handle: AppDataHandle, bytes: &[u8]) -> Result<(), RetainedAppDataError> {
         self.entries[handle.slot()] = bytes.to_vec();
         Ok(())
+    }
+
+    fn free(&mut self, handle: AppDataHandle) {
+        self.entries[handle.slot()] = Vec::new();
+        self.free_slots.push(handle.slot());
     }
 }
 
@@ -54,5 +65,19 @@ mod tests {
             assert!(store.insert(&[n as u8; 200]).is_ok());
         }
         assert_eq!(store.get(a), &[0x11; 9]);
+    }
+
+    #[test]
+    fn free_then_insert_reuses_the_freed_slot() {
+        let mut store = HeapRetainedAppData::default();
+        let a = store.insert(&[0xAA; 3]).unwrap();
+        let b = store.insert(&[0xBB; 5]).unwrap();
+
+        store.free(a);
+        let d = store.insert(&[0xDD; 2]).unwrap();
+
+        assert_eq!(d, a, "the freed slot index is reused, not appended");
+        assert_eq!(store.get(d), &[0xDD; 2]);
+        assert_eq!(store.get(b), &[0xBB; 5]);
     }
 }
