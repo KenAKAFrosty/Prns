@@ -79,6 +79,9 @@ impl<'a> Ingress<'a> {
             Ok((header, payload)) => (header, bytes.len() - payload.len()),
             Err(_) => return Self::Unparseable,
         };
+        if header.ifac_flag == IfacFlag::Authenticated {
+            return Self::Unparseable;
+        }
         let (_, payload) = bytes.split_at_mut(payload_offset);
 
         let received_hops = header.hops.saturating_add(1);
@@ -2475,6 +2478,24 @@ mod tests {
             bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
         let out = state.ingest_packet(junk, TEST_ENTROPY, &transporting_view());
+        assert_eq!(out, IngestPacketOutcome::Ignored);
+        assert_eq!(state.route_count(), 0);
+    }
+
+    #[test]
+    fn an_ifac_flagged_packet_is_dropped_on_an_open_interface() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        raw[0] |= 0x80;
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let out = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0u8; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
         assert_eq!(out, IngestPacketOutcome::Ignored);
         assert_eq!(state.route_count(), 0);
     }
