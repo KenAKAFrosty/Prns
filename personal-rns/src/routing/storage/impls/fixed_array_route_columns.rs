@@ -85,6 +85,17 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
         self.len += 1;
         Ok(i)
     }
+
+    fn swap_remove(&mut self, i: usize) {
+        let last = self.len - 1;
+        self.destination[i] = self.destination[last];
+        self.hops[i] = self.hops[last];
+        self.expires[i] = self.expires[last];
+        self.responsiveness[i] = self.responsiveness[last];
+        self.receiving_interface[i] = self.receiving_interface[last];
+        self.next_hop[i] = self.next_hop[last];
+        self.len = last;
+    }
 }
 
 #[cfg(test)]
@@ -182,6 +193,60 @@ mod tests {
             ]
         );
         assert_eq!(columns.receiving_interfaces(), &[iface(0xE9), iface(0xE2)]);
+    }
+
+    #[test]
+    fn swap_remove_moves_the_last_row_into_the_hole() {
+        let mut columns: FixedArrayRouteColumns<3> = FixedArrayRouteColumns::default();
+        columns
+            .push(
+                dest(0xA1),
+                row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
+            )
+            .unwrap();
+        columns
+            .push(
+                dest(0xB2),
+                row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
+            )
+            .unwrap();
+        columns
+            .push(
+                dest(0xC3),
+                row(3, 30, RouteResponsiveness::Unresponsive, iface(0xE3)),
+            )
+            .unwrap();
+
+        columns.swap_remove(0);
+
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns.destinations(), &[dest(0xC3), dest(0xB2)]);
+        assert_eq!(columns.hops(), &[3, 2]);
+        assert_eq!(columns.expires(), &[InstantMillis(30), InstantMillis(20)]);
+        assert_eq!(columns.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
+    }
+
+    #[test]
+    fn swap_remove_of_the_last_row_just_shrinks() {
+        let mut columns: FixedArrayRouteColumns<3> = FixedArrayRouteColumns::default();
+        columns
+            .push(
+                dest(0xA1),
+                row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
+            )
+            .unwrap();
+        columns
+            .push(
+                dest(0xB2),
+                row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
+            )
+            .unwrap();
+
+        columns.swap_remove(1);
+
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns.destinations(), &[dest(0xA1)]);
+        assert_eq!(columns.hops(), &[1]);
     }
 
     #[test]

@@ -72,6 +72,15 @@ impl RouteColumns for HeapRouteColumns {
         self.next_hop.push(row.next_hop);
         Ok(i)
     }
+
+    fn swap_remove(&mut self, i: usize) {
+        self.destination.swap_remove(i);
+        self.hops.swap_remove(i);
+        self.expires.swap_remove(i);
+        self.responsiveness.swap_remove(i);
+        self.receiving_interface.swap_remove(i);
+        self.next_hop.swap_remove(i);
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +123,21 @@ mod tests {
         assert_eq!(columns.hops()[0], 9);
         assert_eq!(columns.receiving_interfaces()[0], iface(0xEE));
         assert_eq!(columns.destinations()[0], dest(0));
+    }
+
+    #[test]
+    fn swap_remove_moves_the_last_row_into_the_hole() {
+        let mut columns = HeapRouteColumns::default();
+        columns.push(dest(0xA1), row(1, 10, iface(0xE1))).unwrap();
+        columns.push(dest(0xB2), row(2, 20, iface(0xE2))).unwrap();
+        columns.push(dest(0xC3), row(3, 30, iface(0xE3))).unwrap();
+
+        columns.swap_remove(0);
+
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns.destinations(), &[dest(0xC3), dest(0xB2)]);
+        assert_eq!(columns.hops(), &[3, 2]);
+        assert_eq!(columns.expires(), &[InstantMillis(30), InstantMillis(20)]);
+        assert_eq!(columns.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
     }
 }

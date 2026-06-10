@@ -86,4 +86,15 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RetainedAnnounceColumns
         self.len += 1;
         Ok(i)
     }
+
+    fn swap_remove(&mut self, i: usize) {
+        let last = self.len - 1;
+        self.public_keys[i] = self.public_keys[last];
+        self.dotted_name_hash[i] = self.dotted_name_hash[last];
+        self.retained_announce_id[i] = self.retained_announce_id[last];
+        self.ratchet[i] = self.ratchet[last];
+        self.signature[i] = self.signature[last];
+        self.app_data_handle[i] = self.app_data_handle[last];
+        self.len = last;
+    }
 }

@@ -87,6 +87,8 @@ pub trait RouteColumns {
 
     fn push(&mut self, destination: DestinationHash, row: RouteEntry)
         -> Result<usize, ColumnsFull>;
+
+    fn swap_remove(&mut self, i: usize);
 }
 
 pub trait RetainedAnnounceColumns {
@@ -107,6 +109,8 @@ pub trait RetainedAnnounceColumns {
     fn set_row(&mut self, i: usize, row: RetainedAnnounceEntry);
 
     fn push(&mut self, row: RetainedAnnounceEntry) -> Result<usize, ColumnsFull>;
+
+    fn swap_remove(&mut self, i: usize);
 }
 
 pub trait AnnounceIdHistory {

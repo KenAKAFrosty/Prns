@@ -68,6 +68,15 @@ impl RetainedAnnounceColumns for HeapRetainedAnnounceColumns {
         self.app_data_handle.push(row.maybe_app_data_handle);
         Ok(i)
     }
+
+    fn swap_remove(&mut self, i: usize) {
+        self.public_keys.swap_remove(i);
+        self.dotted_name_hash.swap_remove(i);
+        self.retained_announce_id.swap_remove(i);
+        self.ratchet.swap_remove(i);
+        self.signature.swap_remove(i);
+        self.app_data_handle.swap_remove(i);
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +114,28 @@ mod tests {
         columns.set_row(0, entry(0xEE));
         assert_eq!(columns.signature()[0], Ed25519Signature([0xEE; 64]));
         assert_eq!(columns.retained_announce_id().len(), 1_000);
+    }
+
+    #[test]
+    fn swap_remove_moves_the_last_row_into_the_hole() {
+        let mut columns = HeapRetainedAnnounceColumns::default();
+        columns.push(entry(1)).unwrap();
+        columns.push(entry(2)).unwrap();
+        columns.push(entry(3)).unwrap();
+
+        columns.swap_remove(0);
+
+        assert_eq!(columns.len(), 2);
+        assert_eq!(
+            columns.signature(),
+            &[Ed25519Signature([3; 64]), Ed25519Signature([2; 64])]
+        );
+        assert_eq!(
+            columns.retained_announce_id(),
+            &[
+                AnnounceId::from_wire([3; 10]),
+                AnnounceId::from_wire([2; 10])
+            ]
+        );
     }
 }
