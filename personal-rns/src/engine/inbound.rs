@@ -92,7 +92,7 @@ impl<S: EngineStorage> EngineState<S> {
                             plaintext: single.plaintext,
                         })
                         .then_some(owed),
-                        Delivery::Plain(_) => None,
+                        Delivery::Plain(_) | Delivery::Group(_) => None,
                     },
                 };
                 if let Some(owed) = owed {

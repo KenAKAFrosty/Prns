@@ -127,6 +127,13 @@ fn log_journaled(journaled: Journaled<'_>) {
                 delivery.plaintext.len(),
             );
         }
+        Journaled::Delivered(Delivery::Group(delivery)) => {
+            println!(
+                "RNSD_USB_RX_DELIVERY kind=group destination={:02x?} bytes={}",
+                delivery.destination.as_bytes(),
+                delivery.plaintext.len(),
+            );
+        }
         Journaled::RouteExpired { destination } => {
             println!(
                 "RNSD_ROUTE_EXPIRED destination={:02x?}",

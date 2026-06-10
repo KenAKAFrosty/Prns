@@ -27,6 +27,7 @@ pub enum UpstreamAppDestinationKind {
         identity: IdentityHash,
         proof_strategy: ProofStrategy,
     },
+    Group,
 }
 
 impl UpstreamAppDestinationKind {
@@ -34,6 +35,7 @@ impl UpstreamAppDestinationKind {
         match self {
             Self::Plain => DestinationType::Plain,
             Self::Single { .. } => DestinationType::Single,
+            Self::Group => DestinationType::Group,
         }
     }
 }
@@ -74,6 +76,7 @@ pub enum RegisterDestinationError {
     UnknownIdentity,
     RatchetTableFull,
     AppDataTooLong,
+    InvalidGroupKey,
 }
 
 #[derive(Debug, Default)]
@@ -117,6 +120,22 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
             },
             name_hash,
             app_data,
+        )
+    }
+
+    pub fn register_group(
+        &mut self,
+        identity_hash: &IdentityHash,
+        app_name: &str,
+        aspects: &[&str],
+    ) -> Result<DestinationHash, RegisterDestinationError> {
+        let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
+        let destination = derive_destination_hash(identity_hash, &name_hash);
+        self.insert(
+            destination,
+            UpstreamAppDestinationKind::Group,
+            name_hash,
+            AnnounceAppDataBytes::new(),
         )
     }
 

@@ -31,7 +31,17 @@ pub struct SingleDelivery<'p> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupDelivery<'p> {
+    pub destination: DestinationHash,
+    pub context: WireContext,
+    pub plaintext: &'p [u8],
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery<'p> {
     Plain(PlainDelivery<'p>),
     Single(SingleDelivery<'p>),
+    Group(GroupDelivery<'p>),
 }

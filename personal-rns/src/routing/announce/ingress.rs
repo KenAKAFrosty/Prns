@@ -1,3 +1,4 @@
+use crate::crypto::{token_open_in_place, TokenKey};
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
@@ -11,7 +12,7 @@ use crate::routing::announce::Announce;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::{
-    Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
+    Delivery, GroupDelivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{ProofIngest, ProofObligation, ProofOwed};
@@ -479,7 +480,37 @@ impl<S: EngineStorage> EngineState<S> {
                     proof,
                 ))
             }
-            DestinationType::Group | DestinationType::Link => None,
+            DestinationType::Group => {
+                self.upstream_app_destinations
+                    .lookup(&data.destination, DestinationType::Group)?;
+
+                let packet_hash = PacketHash::of_data_fields(
+                    DestinationType::Group,
+                    &data.destination,
+                    data.context,
+                    data.payload,
+                );
+                match self.packet_hash_history.remember(packet_hash) {
+                    RememberPacketOutcome::AlreadyKnown => return None,
+                    RememberPacketOutcome::StoredFresh
+                    | RememberPacketOutcome::StoredAfterRotation => {}
+                }
+
+                let key = self.group_keys.key_for(&data.destination)?;
+                let token_key = TokenKey::from_derived(key).ok()?;
+                let plaintext = token_open_in_place(&token_key, data.payload).ok()?;
+                Some((
+                    Delivery::Group(GroupDelivery {
+                        destination: data.destination,
+                        context: data.context,
+                        plaintext,
+                        arrived_at,
+                        source_interface,
+                    }),
+                    ProofObligation::None,
+                ))
+            }
+            DestinationType::Link => None,
         }
     }
 
@@ -2156,6 +2187,98 @@ mod tests {
                 }),
                 proof: ProofObligation::None,
             },
+        );
+    }
+
+    #[test]
+    fn a_group_delivery_decrypts_with_the_shared_key_byte_for_byte_vs_rns_1_3_1() {
+        // Vector minted live against Python RNS 1.3.1: a GROUP destination held
+        // by identity 4cd0cc45… under the app name personal.group, carrying the
+        // fixed AES-256 key below, encrypting b"group-hello".
+        const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
+        const GROUP_TOKEN: &str = "614e1126ead06d77c97bdb042c1445d74288ac0645f40cdcdc67a949a0bce8212a4f3524305a78ae9cf89e9a8c302aa2b276c3914b9c3b60d8c41226a22aefcf";
+
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let destination = state
+            .register_group_destination(
+                &identity.identity_hash(),
+                "personal",
+                &["group"],
+                &hx(GROUP_KEY),
+            )
+            .unwrap();
+        assert_eq!(
+            destination,
+            DestinationHash::new(hx("4b31bea5e2b9b8f6ab79f8ae27a58319").try_into().unwrap()),
+            "our GROUP address derivation matches RNS Destination.hash",
+        );
+
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Group,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination,
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        let token = hx(GROUP_TOKEN);
+        wire[header_len..header_len + token.len()].copy_from_slice(&token);
+        let mut raw = wire[..header_len + token.len()].to_vec();
+
+        let IngestPacketOutcome::Delivery {
+            delivery: Delivery::Group(group),
+            proof: ProofObligation::None,
+        } = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: iface(0x07),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        )
+        else {
+            panic!("a GROUP packet for our registered group delivers, owing no proof");
+        };
+        assert_eq!(group.plaintext, b"group-hello");
+        assert_eq!(group.destination, destination);
+    }
+
+    #[test]
+    fn a_group_packet_for_an_unregistered_group_is_ignored() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Group,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination: DestinationHash::new([0x99; 16]),
+            context: WireContext::None,
+        };
+        let mut wire = [0u8; MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        wire[header_len..header_len + 64].fill(0xAB);
+        let mut raw = wire[..header_len + 64].to_vec();
+        assert_eq!(
+            state.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0x07),
+                    bytes: &mut raw,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
         );
     }
 

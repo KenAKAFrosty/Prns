@@ -6,7 +6,8 @@ use crate::crypto::ratchets::TrackRatchetsError;
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
-use crate::routing::storage::EngineStorage;
+use crate::routing::group_keys::{GroupKey, GroupKeyError};
+use crate::routing::storage::{ColumnsFull, EngineStorage};
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
@@ -54,6 +55,28 @@ impl<S: EngineStorage> EngineState<S> {
                     RegisterDestinationError::RatchetTableFull
                 })?;
         }
+        Ok(registered)
+    }
+
+    /// Register a GROUP destination (RNS 1.3.1 type `0x01`). The address derives
+    /// like a Single's, but `identity` is addressing material only; no keypair
+    /// is held for it. The shared symmetric key is what decrypts traffic; a GROUP
+    /// never announces, proves, or ratchets.
+    pub fn register_group_destination(
+        &mut self,
+        identity: &IdentityHash,
+        app_name: &str,
+        aspects: &[&str],
+        shared_key: &[u8],
+    ) -> Result<DestinationHash, RegisterDestinationError> {
+        let key = GroupKey::from_slice(shared_key)
+            .map_err(|GroupKeyError::InvalidLength| RegisterDestinationError::InvalidGroupKey)?;
+        let registered = self
+            .upstream_app_destinations
+            .register_group(identity, app_name, aspects)?;
+        self.group_keys
+            .insert(registered, key)
+            .map_err(|ColumnsFull| RegisterDestinationError::RegistryFull)?;
         Ok(registered)
     }
 
@@ -138,6 +161,32 @@ mod tests {
             .register_plain_destination("personal", &["node"])
             .is_ok());
         assert_eq!(state.upstream_app_destinations().count(), 1);
+    }
+
+    #[test]
+    fn a_group_registration_addresses_off_an_unheld_identity_and_is_idempotent() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        // A GROUP's identity is addressing material only — it need not be held.
+        let identity = IdentityHash::new([0x4c; 16]);
+        let group = state
+            .register_group_destination(&identity, "personal", &["group"], &[0x42; 64])
+            .expect("a group registers without holding its addressing identity");
+        let again = state
+            .register_group_destination(&identity, "personal", &["group"], &[0x42; 64])
+            .expect("re-registration is idempotent");
+        assert_eq!(group, again);
+        assert_eq!(state.upstream_app_destinations().count(), 1);
+    }
+
+    #[test]
+    fn a_group_key_that_is_neither_aes_128_nor_aes_256_is_rejected() {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity = IdentityHash::new([0x4c; 16]);
+        assert_eq!(
+            state.register_group_destination(&identity, "personal", &["group"], &[0x42; 48]),
+            Err(RegisterDestinationError::InvalidGroupKey),
+        );
+        assert!(state.upstream_app_destinations().next().is_none());
     }
 
     #[test]

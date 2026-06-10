@@ -53,6 +53,7 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::delivery::receipts::Receipts;
+use crate::routing::group_keys::GroupKeys;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::reverse_routes::ReverseRoutes;
@@ -176,6 +177,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
+    pub(crate) group_keys: GroupKeys<S::GroupKeys>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -195,6 +197,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             pending_path_requests: PendingPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
             announce_rates: AnnounceRates::default(),
+            group_keys: GroupKeys::default(),
         }
     }
 }

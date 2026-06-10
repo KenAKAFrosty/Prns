@@ -4,6 +4,7 @@ use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
+use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
@@ -87,6 +88,9 @@ impl<
     // One rate entry per tracked destination at most (we rate-check only what we
     // would rebroadcast), so sized by the routing table like Pending/Directives.
     type AnnounceRates = FixedAnnounceRateColumns<MAX_TRACKED_DESTINATIONS>;
+    // At most one key per registered GROUP destination, so sized by the upstream
+    // registry like SelfRatchets.
+    type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
 }
 
 #[cfg(test)]
