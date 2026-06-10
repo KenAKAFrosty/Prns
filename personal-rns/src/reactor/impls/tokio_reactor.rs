@@ -190,9 +190,12 @@ pub async fn run<S, H, A>(
     A: FnMut(Journaled<'_>),
 {
     let mut wake_schedules = engine.wake_schedules();
-    let mut pacers: std::vec::Vec<(InterfaceId, AnnouncePacer<HeapPacerQueue>)> = interfaces
+    let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
         .iter()
-        .map(|config| (config.id, AnnouncePacer::new(config.announce_bandwidth_cap)))
+        .map(|config| InterfacePacer {
+            id: config.id,
+            pacer: AnnouncePacer::new(config.announce_bandwidth_cap),
+        })
         .collect();
     loop {
         let wake = wake_schedules.soonest(host.now());
@@ -249,10 +252,15 @@ pub async fn run<S, H, A>(
     }
 }
 
+struct InterfacePacer {
+    id: InterfaceId,
+    pacer: AnnouncePacer<HeapPacerQueue>,
+}
+
 fn route_reaction<A: FnMut(Journaled<'_>)>(
     reaction: EngineReaction<'_>,
     egress: &Egress,
-    pacers: &mut [(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
+    pacers: &mut [InterfacePacer],
     now: InstantMillis,
     app: &mut A,
 ) {
@@ -260,43 +268,46 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
             egress.enqueue(target, bytes);
         }
-        EngineReaction::Directive(Directive::SendAnnounce { target, bytes }) => {
-            offer_to_pacer(pacers, target, bytes, now, egress);
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target,
+            bytes,
+            hops,
+        }) => {
+            offer_to_pacer(pacers, target, bytes, hops, now, egress);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
     }
 }
 
 fn offer_to_pacer(
-    pacers: &mut [(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
+    pacers: &mut [InterfacePacer],
     target: InterfaceId,
     bytes: &[u8],
+    hops: u8,
     now: InstantMillis,
     egress: &Egress,
 ) {
-    match pacers.iter_mut().find(|(id, _)| *id == target) {
-        Some((_, pacer)) => pacer.offer(bytes, now, |frame| egress.enqueue(target, frame)),
+    match pacers.iter_mut().find(|entry| entry.id == target) {
+        Some(entry) => entry
+            .pacer
+            .offer(bytes, hops, now, |frame| egress.enqueue(target, frame)),
         None => egress.enqueue(target, bytes),
     }
 }
 
-fn flush_due_pacers(
-    pacers: &mut [(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
-    now: InstantMillis,
-    egress: &Egress,
-) {
-    for (id, pacer) in pacers.iter_mut() {
-        let target = *id;
-        pacer.release_due(now, |frame| egress.enqueue(target, frame));
+fn flush_due_pacers(pacers: &mut [InterfacePacer], now: InstantMillis, egress: &Egress) {
+    for entry in pacers.iter_mut() {
+        let target = entry.id;
+        entry
+            .pacer
+            .release_due(now, |frame| egress.enqueue(target, frame));
     }
 }
 
-fn soonest_pacer_release(
-    pacers: &[(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
-) -> Option<InstantMillis> {
+fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
     pacers
         .iter()
-        .filter_map(|(_, pacer)| pacer.next_release())
+        .filter_map(|entry| entry.pacer.next_release())
         .min_by_key(|deadline| deadline.0)
 }
 
@@ -332,14 +343,17 @@ mod tests {
             bitrate_bps: 5_000,
             cap_per_mille: 20,
         };
-        let mut pacers = std::vec![(id, AnnouncePacer::<HeapPacerQueue>::new(cap))];
+        let mut pacers = std::vec![InterfacePacer {
+            id,
+            pacer: AnnouncePacer::<HeapPacerQueue>::new(cap),
+        }];
         let (tx, mut rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let egress = Egress::new(std::vec![(id, tx)]);
 
-        offer_to_pacer(&mut pacers, id, &[1; 10], InstantMillis(1_000), &egress);
+        offer_to_pacer(&mut pacers, id, &[1; 10], 1, InstantMillis(1_000), &egress);
         assert_eq!(rx.try_recv().unwrap().bytes(), [1u8; 10].as_slice());
 
-        offer_to_pacer(&mut pacers, id, &[2; 10], InstantMillis(1_200), &egress);
+        offer_to_pacer(&mut pacers, id, &[2; 10], 1, InstantMillis(1_200), &egress);
         assert!(rx.try_recv().is_err(), "the second is held, not sent");
         assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
 

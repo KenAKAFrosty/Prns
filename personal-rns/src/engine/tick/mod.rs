@@ -220,6 +220,7 @@ impl<S: EngineStorage> EngineState<S> {
                 sink(EngineReaction::Directive(Directive::SendAnnounce {
                     target: egress.target(),
                     bytes: &buf[..written],
+                    hops: egress.emit_hops(),
                 }));
             }
         }
@@ -601,8 +602,9 @@ mod tests {
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             &view,
             &mut |reaction| {
-                if let EngineReaction::Directive(Directive::SendAnnounce { target, bytes }) =
-                    reaction
+                if let EngineReaction::Directive(Directive::SendAnnounce {
+                    target, bytes, ..
+                }) = reaction
                 {
                     sent.push((target, bytes.to_vec()));
                 }

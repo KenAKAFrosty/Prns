@@ -227,6 +227,12 @@ impl EgressDirective<'_> {
             Self::ReemitAnnounce { target, .. } => *target,
         }
     }
+
+    pub fn emit_hops(&self) -> u8 {
+        match self {
+            Self::ReemitAnnounce { emit_hops, .. } => *emit_hops,
+        }
+    }
 }
 
 #[cfg(test)]
