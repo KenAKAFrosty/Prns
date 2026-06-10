@@ -11,8 +11,9 @@ use crate::engine::{
 use crate::interfaces::{
     ConnectionState, InboundPacket, InterfaceConfig, InterfaceId, InterfaceStatus,
 };
+use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
-    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
+    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
 use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
 use crate::reactor::Host;
@@ -189,19 +190,13 @@ pub async fn run<S, H, A>(
     A: FnMut(Journaled<'_>),
 {
     let mut wake_schedules = engine.wake_schedules();
-    // The reactor carries out every `Directive` itself (egress is IO, the reactor's job);
-    // the application only ever sees `Journaled` — what already happened.
-    let mut sink = move |reaction: EngineReaction<'_>| match reaction {
-        EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            egress.enqueue(target, bytes);
-        }
-        EngineReaction::Directive(Directive::SendAnnounce { target, bytes }) => {
-            egress.enqueue(target, bytes);
-        }
-        EngineReaction::Journaled(journaled) => app(journaled),
-    };
+    let mut pacers: std::vec::Vec<(InterfaceId, AnnouncePacer<HeapPacerQueue>)> = interfaces
+        .iter()
+        .map(|config| (config.id, AnnouncePacer::new(config.announce_bandwidth_cap)))
+        .collect();
     loop {
         let wake = wake_schedules.soonest(host.now());
+        let pacer_wake = soonest_pacer_release(&pacers);
         tokio::select! {
             arrived = inbound.recv() => {
                 let Some(mut frame) = arrived else { return };
@@ -218,7 +213,7 @@ pub async fn run<S, H, A>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut sink,
+                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
@@ -230,17 +225,79 @@ pub async fn run<S, H, A>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut sink,
+                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
             }
             lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
-                let wake_schedules_delta = fire_due_lane(&mut engine, lane, now, &interfaces, &mut host, &mut sink);
+                let wake_schedules_delta = fire_due_lane(
+                    &mut engine,
+                    lane,
+                    now,
+                    &interfaces,
+                    &mut host,
+                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
+            }
+            _ = wait_for_pacer(&host, pacer_wake) => {
+                let now = host.now();
+                flush_due_pacers(&mut pacers, now, &egress);
             }
         }
     }
+}
+
+fn route_reaction<A: FnMut(Journaled<'_>)>(
+    reaction: EngineReaction<'_>,
+    egress: &Egress,
+    pacers: &mut [(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
+    now: InstantMillis,
+    app: &mut A,
+) {
+    match reaction {
+        EngineReaction::Directive(Directive::Send { target, bytes }) => {
+            egress.enqueue(target, bytes);
+        }
+        EngineReaction::Directive(Directive::SendAnnounce { target, bytes }) => {
+            offer_to_pacer(pacers, target, bytes, now, egress);
+        }
+        EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+fn offer_to_pacer(
+    pacers: &mut [(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
+    target: InterfaceId,
+    bytes: &[u8],
+    now: InstantMillis,
+    egress: &Egress,
+) {
+    match pacers.iter_mut().find(|(id, _)| *id == target) {
+        Some((_, pacer)) => pacer.offer(bytes, now, |frame| egress.enqueue(target, frame)),
+        None => egress.enqueue(target, bytes),
+    }
+}
+
+fn flush_due_pacers(
+    pacers: &mut [(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
+    now: InstantMillis,
+    egress: &Egress,
+) {
+    for (id, pacer) in pacers.iter_mut() {
+        let target = *id;
+        pacer.release_due(now, |frame| egress.enqueue(target, frame));
+    }
+}
+
+fn soonest_pacer_release(
+    pacers: &[(InterfaceId, AnnouncePacer<HeapPacerQueue>)],
+) -> Option<InstantMillis> {
+    pacers
+        .iter()
+        .filter_map(|(_, pacer)| pacer.next_release())
+        .min_by_key(|deadline| deadline.0)
 }
 
 #[cfg(test)]
@@ -266,6 +323,32 @@ mod tests {
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         }
+    }
+
+    #[test]
+    fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
+        let id = InterfaceId::new([0x5a; 16]);
+        let cap = AnnounceBandwidthCap::Limited {
+            bitrate_bps: 5_000,
+            cap_per_mille: 20,
+        };
+        let mut pacers = std::vec![(id, AnnouncePacer::<HeapPacerQueue>::new(cap))];
+        let (tx, mut rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let egress = Egress::new(std::vec![(id, tx)]);
+
+        offer_to_pacer(&mut pacers, id, &[1; 10], InstantMillis(1_000), &egress);
+        assert_eq!(rx.try_recv().unwrap().bytes(), [1u8; 10].as_slice());
+
+        offer_to_pacer(&mut pacers, id, &[2; 10], InstantMillis(1_200), &egress);
+        assert!(rx.try_recv().is_err(), "the second is held, not sent");
+        assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
+
+        flush_due_pacers(&mut pacers, InstantMillis(1_799), &egress);
+        assert!(rx.try_recv().is_err(), "nothing releases before the window");
+
+        flush_due_pacers(&mut pacers, InstantMillis(1_800), &egress);
+        assert_eq!(rx.try_recv().unwrap().bytes(), [2u8; 10].as_slice());
+        assert_eq!(soonest_pacer_release(&pacers), None);
     }
 
     /// An interface whose "wire" is two in-memory channels: the test plays received
