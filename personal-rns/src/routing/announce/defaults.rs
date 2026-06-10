@@ -5,9 +5,13 @@
 
 use crate::wire::DestinationHash;
 
-pub(crate) const DEFAULT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
+pub const DEFAULT_ROUTE_EXPIRY_MILLIS: u64 = 60 * 60 * 24 * 7 * 1000;
 
 pub const DEFAULT_REBROADCAST_JITTER_WINDOW_MS: u64 = 500;
+
+pub const MAX_ANNOUNCE_REBROADCASTS: u8 = 2;
+
+pub const REBROADCAST_RETRANSMIT_INTERVAL_MS: u64 = 5_500;
 
 #[derive(Debug, Clone, Copy)]
 pub struct JitterSeed(pub u64);

@@ -3,7 +3,7 @@ use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::{
-    jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
+    jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
 };
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
@@ -566,6 +566,15 @@ impl<S: EngineStorage> EngineState<S> {
         jitter: JitterSeed,
         interfaces: &[InterfaceConfig],
     ) -> AnnounceIngest {
+        if self.transport_id.is_some() {
+            self.pending_rebroadcasts.absorb_echo(
+                &announce.destination,
+                received_hops,
+                arrived_at,
+                MAX_ANNOUNCE_REBROADCASTS,
+            );
+        }
+
         let decision = AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
