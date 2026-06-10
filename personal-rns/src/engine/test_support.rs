@@ -3,7 +3,6 @@
 //! fixtures more than one domain pins against.
 
 use super::*;
-use crate::engine::self_announce::AnnounceConfig;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IdentitySigner;
 use crate::interfaces::InboundPacket;
@@ -12,6 +11,7 @@ use crate::interfaces::{
     MediumKind, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
+use crate::routing::announce::self_announce::AnnounceConfig;
 use crate::routing::announce::SelfAnnounceEntropy;
 use crate::routing::storage::FixedInline;
 use crate::routing::upstream_app_destinations::ProofStrategy;

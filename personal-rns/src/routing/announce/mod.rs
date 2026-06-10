@@ -1,8 +1,11 @@
 pub mod acceptance;
+pub mod announce_rate;
 pub mod defaults;
 pub mod held_cache;
 mod id;
+pub mod ingress;
 pub mod schedule;
+pub mod self_announce;
 
 pub use acceptance::{
     AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, RejectReason,

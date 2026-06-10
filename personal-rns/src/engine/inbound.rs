@@ -1,4 +1,3 @@
-use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::engine::{
     AnnounceIngest, CachedPathResponseOutcome, Directive, EngineReaction, EngineState,
     IngestPacketOutcome, InstantMillis, Journaled, LaneWake, PathFound, PathResponseWriteOutcome,
@@ -7,6 +6,7 @@ use crate::engine::{
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::SelfAnnounceEntropy;
+use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 

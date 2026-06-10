@@ -1,6 +1,9 @@
 pub mod announce;
 pub mod dedup;
 pub mod delivery;
+pub mod path_requests;
+pub mod proof;
+pub mod reverse_routes;
 pub mod storage;
 pub mod types;
 pub mod upstream_app_destinations;

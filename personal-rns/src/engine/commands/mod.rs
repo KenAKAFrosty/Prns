@@ -8,10 +8,10 @@
 //! re-announce schedule is the extension built ahead of it.
 
 use crate::engine::egress::EgressSerializeError;
-use crate::engine::self_announce::SelfAnnounceAppData;
-use crate::engine::send_single::WriteSendSingleError;
 use crate::engine::WriteSelfAnnounceError;
 use crate::interfaces::InterfaceId;
+use crate::routing::announce::self_announce::SelfAnnounceAppData;
+use crate::routing::delivery::send_single::WriteSendSingleError;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
@@ -236,9 +236,9 @@ impl Settleable for RequestPath {
     }
 }
 
-use crate::engine::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;
 use crate::engine::EngineState;
 use crate::interfaces::InterfaceConfig;
+use crate::routing::announce::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::storage::EngineStorage;
 use crate::wire::DestinationType;
 

@@ -403,11 +403,11 @@ mod tests {
     #[tokio::test]
     async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         use crate::crypto::X25519SecretKey;
-        use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
         use crate::engine::RatchetPolicy;
         use crate::identity::in_memory::InMemoryNodeIdentity;
         use crate::identity::{IdentitySigner, RemoteIdentity, Zeroizing};
         use crate::routing::dedup::PacketHash;
+        use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
         use crate::routing::upstream_app_destinations::ProofStrategy;
         use crate::wire::{
             ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, MTU,

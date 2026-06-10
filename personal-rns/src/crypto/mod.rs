@@ -10,6 +10,7 @@ mod exchange;
 mod hash;
 mod kdf;
 mod mac;
+pub mod ratchets;
 mod sign;
 mod token;
 

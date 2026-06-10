@@ -1,8 +1,8 @@
 use crate::crypto::Ed25519Signature;
-use crate::engine::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
+use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WirePacketHeader, HEADER_MAX_LEN, HEADER_MIN_LEN,

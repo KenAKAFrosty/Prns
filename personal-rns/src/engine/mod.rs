@@ -1,21 +1,10 @@
-pub mod announce_rate;
 mod command;
 pub mod commands;
 pub mod egress;
 pub mod identity_registration;
 mod inbound;
-pub mod ingress;
-pub mod pending_path_requests;
-pub mod proof;
 pub mod reaction;
-pub mod receipts;
-pub mod request_path;
-pub mod reverse_routes;
 mod scheduled;
-pub mod seen_path_requests;
-pub mod self_announce;
-pub mod self_ratchets;
-pub mod send_single;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tick;
@@ -31,41 +20,44 @@ pub use egress::{
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use identity_registration::SetTransportIdentityError;
-pub use ingress::{
-    AcceptedAnnounce, AnnounceIngest, IngestPacketOutcome, PacketToForward, RebroadcastDecision,
-};
-pub use ingress::{DataPacket, Ingress};
-pub use pending_path_requests::{
-    CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
-};
-pub use proof::{ProofIngest, ProofOwed, WriteProofError};
 pub use reaction::{Directive, EngineReaction, Journaled};
-pub use request_path::{CachedPathResponseOutcome, PathRequestWriteOutcome};
-pub use seen_path_requests::PathRequestIdBytes;
-pub use self_announce::{
+pub use tick::TickOutput;
+
+pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
+pub use crate::routing::announce::ingress::{
+    AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
+    RebroadcastDecision,
+};
+pub use crate::routing::announce::self_announce::{
     CommandedAnnounceWriteOutcome, DueSelfAnnounceWriteOutcome, PathResponseWriteOutcome,
     ReannounceSchedule, SelfAnnounceAppData, SelfAnnounceRejection, SelfAnnounceWriteFailure,
     WriteSelfAnnounceError,
 };
-pub use self_ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
-pub use send_single::{
+pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
     WriteSendSingleError,
 };
-pub use tick::TickOutput;
+pub use crate::routing::path_requests::pending::{
+    CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
+};
+pub use crate::routing::path_requests::request_path::{
+    CachedPathResponseOutcome, PathRequestWriteOutcome,
+};
+pub use crate::routing::path_requests::seen::PathRequestIdBytes;
+pub use crate::routing::proof::{ProofIngest, ProofOwed, WriteProofError};
 
-use crate::engine::announce_rate::AnnounceRates;
-use crate::engine::pending_path_requests::PendingPathRequests;
-use crate::engine::receipts::Receipts;
-use crate::engine::reverse_routes::ReverseRoutes;
-use crate::engine::seen_path_requests::SeenPathRequests;
-use crate::engine::self_announce::SelfAnnounces;
-use crate::engine::self_ratchets::SelfRatchets;
+use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
+use crate::routing::announce::announce_rate::AnnounceRates;
 use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::schedule::RebroadcastQueue;
+use crate::routing::announce::self_announce::SelfAnnounces;
+use crate::routing::delivery::receipts::Receipts;
+use crate::routing::path_requests::pending::PendingPathRequests;
+use crate::routing::path_requests::seen::SeenPathRequests;
+use crate::routing::reverse_routes::ReverseRoutes;
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
@@ -169,23 +161,23 @@ impl WakeSchedules {
 }
 
 pub struct EngineState<S: EngineStorage> {
-    tick_count: u64,
-    ingested_packet_count: u64,
-    ingested_command_count: u64,
-    routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
-    held_announces_cache: S::Held,
-    pending_rebroadcasts: S::Pending,
-    upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
-    packet_hash_history: S::PacketHashes,
-    held_identities: HeldIdentities<S::HeldIdentities>,
-    transport_id: Option<TransportId>,
-    self_announces: SelfAnnounces<S::SelfAnnounces>,
-    self_ratchets: SelfRatchets<S::SelfRatchets>,
+    pub(crate) tick_count: u64,
+    pub(crate) ingested_packet_count: u64,
+    pub(crate) ingested_command_count: u64,
+    pub(crate) routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
+    pub(crate) held_announces_cache: S::Held,
+    pub(crate) pending_rebroadcasts: S::Pending,
+    pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
+    pub(crate) packet_hash_history: S::PacketHashes,
+    pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
+    pub(crate) transport_id: Option<TransportId>,
+    pub(crate) self_announces: SelfAnnounces<S::SelfAnnounces>,
+    pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
     pub(crate) receipts: Receipts<S::Receipts>,
-    reverse_routes: ReverseRoutes<S::ReverseRoutes>,
-    pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
-    seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
-    announce_rates: AnnounceRates<S::AnnounceRates>,
+    pub(crate) reverse_routes: ReverseRoutes<S::ReverseRoutes>,
+    pub(crate) pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
+    pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
+    pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {

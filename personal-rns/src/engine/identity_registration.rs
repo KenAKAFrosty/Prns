@@ -2,7 +2,7 @@
 //! identity-bound registration surface. Interface registration lives with the
 //! engine core; other registration kinds may earn their own homes later.
 
-use crate::engine::self_ratchets::TrackRatchetsError;
+use crate::crypto::ratchets::TrackRatchetsError;
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};

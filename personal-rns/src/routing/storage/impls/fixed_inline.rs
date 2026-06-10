@@ -1,14 +1,14 @@
-use crate::engine::announce_rate::FixedAnnounceRateColumns;
-use crate::engine::pending_path_requests::FixedPendingPathRequestColumns;
-use crate::engine::receipts::FixedReceiptColumns;
-use crate::engine::reverse_routes::FixedReverseRouteColumns;
-use crate::engine::seen_path_requests::FixedSeenPathRequestColumns;
-use crate::engine::self_announce::FixedSelfAnnounceColumns;
-use crate::engine::self_ratchets::FixedSelfRatchetColumns;
+use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
+use crate::routing::announce::announce_rate::FixedAnnounceRateColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
+use crate::routing::announce::self_announce::FixedSelfAnnounceColumns;
 use crate::routing::dedup::FixedPacketHashHistory;
+use crate::routing::delivery::receipts::FixedReceiptColumns;
+use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
+use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
+use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::storage::{
     EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
     TieredAnnounceIdHistory,
@@ -102,9 +102,9 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::receipts::ReceiptColumns;
-    use crate::engine::self_ratchets::SelfRatchetColumns;
+    use crate::crypto::ratchets::SelfRatchetColumns;
     use crate::routing::dedup::PacketHashHistory;
+    use crate::routing::delivery::receipts::ReceiptColumns;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
