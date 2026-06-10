@@ -1,4 +1,5 @@
 use crate::engine::InstantMillis;
+use crate::interfaces::AirtimeUtilization;
 
 pub const AIRTIME_SHORT_WINDOW_MS: u64 = 15_000;
 pub const AIRTIME_LONG_WINDOW_MS: u64 = 3_600_000;
@@ -13,12 +14,6 @@ pub fn frame_airtime_us(frame_bytes: usize, bitrate_bps: u32) -> u64 {
         return 0;
     }
     (frame_bytes as u64).saturating_mul(8_000_000) / u64::from(bitrate_bps)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AirtimeUtilization {
-    pub short_per_mille: u16,
-    pub long_per_mille: u16,
 }
 
 #[derive(Debug, Clone)]

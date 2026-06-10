@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +9,8 @@ use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
 use crate::interfaces::{
-    ConnectionState, InboundPacket, InterfaceConfig, InterfaceId, InterfaceStatus,
+    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
+    InterfaceStatus,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
@@ -128,6 +129,23 @@ struct StatusCell {
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
+    airtime: AtomicU32,
+}
+
+const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
+
+fn pack_airtime(utilization: AirtimeUtilization) -> u32 {
+    (u32::from(utilization.short_per_mille) << 16) | u32::from(utilization.long_per_mille)
+}
+
+fn unpack_airtime(packed: u32) -> Option<AirtimeUtilization> {
+    if packed == AIRTIME_UNPUBLISHED {
+        return None;
+    }
+    Some(AirtimeUtilization {
+        short_per_mille: (packed >> 16) as u16,
+        long_per_mille: packed as u16,
+    })
 }
 
 impl TokioInterfaceStatus {
@@ -139,6 +157,7 @@ impl TokioInterfaceStatus {
                 connection: AtomicU8::new(connection.as_u8()),
                 rx: AtomicU64::new(0),
                 tx: AtomicU64::new(0),
+                airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
             }),
         }
     }
@@ -155,6 +174,12 @@ impl TokioInterfaceStatus {
 
     pub fn add_tx(&self, bytes: u64) {
         self.inner.tx.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn set_airtime(&self, utilization: AirtimeUtilization) {
+        self.inner
+            .airtime
+            .store(pack_airtime(utilization), Ordering::Relaxed);
     }
 }
 
@@ -173,6 +198,10 @@ impl InterfaceStatus for TokioInterfaceStatus {
 
     fn tx_bytes(&self) -> u64 {
         self.inner.tx.load(Ordering::Relaxed)
+    }
+
+    fn airtime(&self) -> Option<AirtimeUtilization> {
+        unpack_airtime(self.inner.airtime.load(Ordering::Relaxed))
     }
 }
 
@@ -336,6 +365,25 @@ mod tests {
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         }
+    }
+
+    #[test]
+    fn airtime_reads_none_until_published_then_round_trips() {
+        let status =
+            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 16]), ConnectionState::Initializing);
+        assert_eq!(status.airtime(), None);
+
+        status.set_airtime(AirtimeUtilization {
+            short_per_mille: 137,
+            long_per_mille: 4,
+        });
+        assert_eq!(
+            status.airtime(),
+            Some(AirtimeUtilization {
+                short_per_mille: 137,
+                long_per_mille: 4,
+            }),
+        );
     }
 
     #[test]

@@ -13,14 +13,15 @@ use embassy_sync::channel::{Receiver, Sender};
 use embassy_time::{Duration, Timer};
 use heapless::Vec as HeaplessVec;
 
-use portable_atomic::{AtomicU64, AtomicU8, Ordering};
+use portable_atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
 };
 use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{
-    ConnectionState, InboundPacket, InterfaceConfig, InterfaceId, InterfaceStatus,
+    AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
+    InterfaceStatus,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
@@ -84,7 +85,10 @@ pub struct EmbassyInterfaceStatus {
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
+    airtime: AtomicU32,
 }
+
+const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
 
 impl EmbassyInterfaceStatus {
     #[must_use]
@@ -94,6 +98,7 @@ impl EmbassyInterfaceStatus {
             connection: AtomicU8::new(connection.as_u8()),
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
+            airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
         }
     }
 
@@ -107,6 +112,12 @@ impl EmbassyInterfaceStatus {
 
     pub fn add_tx(&self, bytes: u64) {
         self.tx.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    pub fn set_airtime(&self, utilization: AirtimeUtilization) {
+        let packed =
+            (u32::from(utilization.short_per_mille) << 16) | u32::from(utilization.long_per_mille);
+        self.airtime.store(packed, Ordering::Relaxed);
     }
 }
 
@@ -125,6 +136,17 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
 
     fn tx_bytes(&self) -> u64 {
         self.tx.load(Ordering::Relaxed)
+    }
+
+    fn airtime(&self) -> Option<AirtimeUtilization> {
+        let packed = self.airtime.load(Ordering::Relaxed);
+        if packed == AIRTIME_UNPUBLISHED {
+            return None;
+        }
+        Some(AirtimeUtilization {
+            short_per_mille: (packed >> 16) as u16,
+            long_per_mille: packed as u16,
+        })
     }
 }
 

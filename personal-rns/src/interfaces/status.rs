@@ -11,11 +11,21 @@
 
 use crate::interfaces::{ConnectionState, InterfaceId};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AirtimeUtilization {
+    pub short_per_mille: u16,
+    pub long_per_mille: u16,
+}
+
 pub trait InterfaceStatus {
     fn id(&self) -> InterfaceId;
     fn connection(&self) -> ConnectionState;
     fn rx_bytes(&self) -> u64;
     fn tx_bytes(&self) -> u64;
+    /// `None` until the interface publishes — a link with no declared bitrate never does.
+    fn airtime(&self) -> Option<AirtimeUtilization> {
+        None
+    }
 }
 
 /// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the
@@ -36,5 +46,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn tx_bytes(&self) -> u64 {
         (**self).tx_bytes()
+    }
+
+    fn airtime(&self) -> Option<AirtimeUtilization> {
+        (**self).airtime()
     }
 }

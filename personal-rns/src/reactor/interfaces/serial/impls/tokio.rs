@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::engine::InstantMillis;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::interfaces::serial::core;
@@ -50,10 +52,21 @@ where
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
+        let bitrate_bps = core::descriptor(self.id).bitrate_bps;
+        let mut ledger = AirtimeLedger::new();
+        let started = tokio::time::Instant::now();
         loop {
             if let Ok(stream) = (self.open)().await {
                 self.status.set_connection(ConnectionState::Connected);
-                serve(stream, &mut seam, &self.status).await;
+                serve(
+                    stream,
+                    &mut seam,
+                    &self.status,
+                    &mut ledger,
+                    bitrate_bps,
+                    started,
+                )
+                .await;
                 self.status.set_connection(ConnectionState::Disconnected);
             }
             tokio::time::sleep(self.reconnect).await;
@@ -64,8 +77,14 @@ where
 /// Serve one connection until the stream drops: read bytes and deframe them up to the seam,
 /// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller can
 /// reconnect; a fresh decoder per connection discards any half-frame the drop interrupted.
-async fn serve<S, Seam>(mut stream: S, seam: &mut Seam, status: &TokioInterfaceStatus)
-where
+async fn serve<S, Seam>(
+    mut stream: S,
+    seam: &mut Seam,
+    status: &TokioInterfaceStatus,
+    ledger: &mut AirtimeLedger,
+    bitrate_bps: Option<u32>,
+    started: tokio::time::Instant,
+) where
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
@@ -89,6 +108,11 @@ where
                         return;
                     }
                     status.add_tx(framed as u64);
+                    if let Some(bitrate_bps) = bitrate_bps {
+                        let now = InstantMillis(started.elapsed().as_millis() as u64);
+                        let airtime = frame_airtime_us(framed, bitrate_bps);
+                        status.set_airtime(ledger.record_tx(now, airtime));
+                    }
                 }
             }
         }
@@ -203,6 +227,7 @@ mod tests {
                 if status.connection() == ConnectionState::Connected
                     && status.rx_bytes() > 0
                     && status.tx_bytes() > 0
+                    && status.airtime().is_some()
                 {
                     return;
                 }

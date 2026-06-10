@@ -22,6 +22,6 @@ pub use mode::InterfaceMode;
 
 pub use config::{AnnounceBandwidthCap, AnnounceRateLimit, InterfaceConfig};
 pub use packet::{InboundPacket, OutboundPacket};
-pub use status::InterfaceStatus;
+pub use status::{AirtimeUtilization, InterfaceStatus};
 
 pub use framing::rns_serial_framing;
