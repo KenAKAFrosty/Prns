@@ -14,7 +14,7 @@ use crate::routing::delivery::{
     Delivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
-use crate::routing::proof::{ProofIngest, ProofOwed};
+use crate::routing::proof::{ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
@@ -183,7 +183,7 @@ pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
     Delivery {
         delivery: Delivery<'p>,
-        maybe_owed_proof: Option<ProofOwed>,
+        proof: ProofObligation,
     },
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
@@ -354,10 +354,7 @@ impl<S: EngineStorage> EngineState<S> {
                     source_interface,
                     arrived_at,
                 ) {
-                    Some((delivery, maybe_owed_proof)) => IngestPacketOutcome::Delivery {
-                        delivery,
-                        maybe_owed_proof,
-                    },
+                    Some((delivery, proof)) => IngestPacketOutcome::Delivery { delivery, proof },
                     None => IngestPacketOutcome::Ignored,
                 }
             }
@@ -405,7 +402,7 @@ impl<S: EngineStorage> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-    ) -> Option<(Delivery<'p>, Option<ProofOwed>)> {
+    ) -> Option<(Delivery<'p>, ProofObligation)> {
         if let Some(transport_id) = data.maybe_transport_id {
             if self.transport_id != Some(transport_id) {
                 return None;
@@ -427,7 +424,7 @@ impl<S: EngineStorage> EngineState<S> {
                         arrived_at,
                         source_interface,
                     }),
-                    None,
+                    ProofObligation::None,
                 ))
             }
             DestinationType::Single => {
@@ -459,12 +456,17 @@ impl<S: EngineStorage> EngineState<S> {
                 let plaintext = held
                     .decrypt_in_place_with_ratchets(ratchet_secrets, data.payload)
                     .ok()?;
-                let maybe_owed_proof = match proof_strategy {
-                    ProofStrategy::ProveAll => Some(ProofOwed {
+
+                let proof = match proof_strategy {
+                    ProofStrategy::ProveAll => ProofObligation::Owed(ProofOwed {
                         packet_hash,
                         identity,
                     }),
-                    ProofStrategy::ProveNone => None,
+                    ProofStrategy::ProveNone => ProofObligation::None,
+                    ProofStrategy::ProveIf => ProofObligation::OwedIfApp(ProofOwed {
+                        packet_hash,
+                        identity,
+                    }),
                 };
                 Some((
                     Delivery::Single(SingleDelivery {
@@ -474,7 +476,7 @@ impl<S: EngineStorage> EngineState<S> {
                         arrived_at,
                         source_interface,
                     }),
-                    maybe_owed_proof,
+                    proof,
                 ))
             }
             DestinationType::Group | DestinationType::Link => None,
@@ -1643,7 +1645,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -1668,7 +1670,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -1708,7 +1710,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -1734,7 +1736,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -1763,7 +1765,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -1936,7 +1938,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -2069,7 +2071,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
 
@@ -2088,7 +2090,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
 
@@ -2152,7 +2154,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: ProofObligation::None,
             },
         );
     }
@@ -2189,7 +2191,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: Some(ProofOwed {
+                proof: ProofObligation::Owed(ProofOwed {
                     packet_hash,
                     identity: held,
                 }),

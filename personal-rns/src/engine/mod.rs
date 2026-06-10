@@ -42,7 +42,9 @@ pub use crate::routing::path_requests::request_path::{
     CachedPathResponseOutcome, PathRequestWriteOutcome,
 };
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
-pub use crate::routing::proof::{ProofIngest, ProofOwed, WriteProofError};
+pub use crate::routing::proof::{
+    ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
+};
 
 use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
@@ -572,6 +574,7 @@ mod tests {
             &transporting_view(),
             InstantMillis(1_000),
             &mut |bytes| bytes.fill(0),
+            &mut |_: &ProofRequest| false,
             &mut |_| {},
         );
         schedules.merge(delta);
@@ -687,6 +690,7 @@ mod tests {
             &transporting_view(),
             InstantMillis(1_000),
             &mut |bytes| bytes.fill(0),
+            &mut |_: &ProofRequest| false,
             &mut |_| {},
         );
         schedules.merge(delta);
@@ -729,6 +733,7 @@ mod tests {
             &transporting_view(),
             InstantMillis(1_000),
             &mut |bytes| bytes.fill(0),
+            &mut |_: &ProofRequest| false,
             &mut |_| {},
         );
         schedules.merge(delta);
@@ -746,6 +751,7 @@ mod tests {
             &transporting_view(),
             InstantMillis(2_000),
             &mut |bytes| bytes.fill(0),
+            &mut |_: &ProofRequest| false,
             &mut |reaction| {
                 if let EngineReaction::Journaled(journaled) = reaction {
                     match journaled {

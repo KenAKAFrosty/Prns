@@ -630,7 +630,7 @@ mod tests {
                     arrived_at: InstantMillis(1_000),
                     source_interface: crate::interfaces::InterfaceId::new([0x07; 16]),
                 }),
-                maybe_owed_proof: None,
+                proof: crate::routing::proof::ProofObligation::None,
             },
         );
     }

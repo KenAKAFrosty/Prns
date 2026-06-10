@@ -11,12 +11,13 @@ use crate::routing::announce::{
 use crate::routing::storage::ColumnsFull;
 use crate::wire::{DestinationHash, DestinationType};
 
-/// RNS 1.3.1 `Destination.PROVE_NONE` / `PROVE_ALL`: whether a destination
-/// answers delivered packets with a signed proof of receipt.
+/// RNS 1.3.1 `Destination.PROVE_NONE` / `PROVE_ALL` / `PROVE_APP`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofStrategy {
     ProveNone,
     ProveAll,
+    /// RNS 1.3.1 `PROVE_APP`: the app decides per delivered packet.
+    ProveIf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

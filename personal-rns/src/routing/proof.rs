@@ -4,7 +4,7 @@ use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
-use crate::wire::{HEADER_MIN_LEN, SIGNATURE_LEN};
+use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
 
@@ -30,6 +30,18 @@ pub enum ProofIngest {
 pub struct ProofOwed {
     pub packet_hash: PacketHash,
     pub identity: IdentityHash,
+}
+
+pub struct ProofRequest<'a> {
+    pub destination: DestinationHash,
+    pub plaintext: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofObligation {
+    None,
+    Owed(ProofOwed),
+    OwedIfApp(ProofOwed),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,9 +112,13 @@ impl<S: EngineStorage> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::engine::{EngineState, IngestPacketOutcome, RatchetPolicy};
+    use crate::engine::{
+        Directive, EngineReaction, EngineState, IngestPacketOutcome, RatchetPolicy,
+    };
     use crate::identity::in_memory::InMemoryNodeIdentity;
+    use crate::interfaces::{InboundPacket, InterfaceId};
     use crate::routing::dedup::PacketHash;
+    use crate::routing::delivery::Delivery;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::MTU;
 
@@ -131,7 +147,7 @@ mod tests {
             &transporting_view(),
         );
         let IngestPacketOutcome::Delivery {
-            maybe_owed_proof: Some(owed),
+            proof: ProofObligation::Owed(owed),
             ..
         } = outcome
         else {
@@ -141,6 +157,89 @@ mod tests {
         let mut buf = [0u8; MTU];
         let written = state.write_proof(&owed, &mut buf).unwrap();
         assert_eq!(&buf[..written], hx(RNS_1_3_1_IMPLICIT_PROOF).as_slice());
+    }
+
+    fn prove_if_state() -> (
+        EngineState<Cap>,
+        InMemoryNodeIdentity,
+        crate::wire::DestinationHash,
+    ) {
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let held = state.hold_identity(fixed_secret_key()).unwrap();
+        let destination = state
+            .register_single_destination(
+                &held,
+                "personal",
+                &["node"],
+                b"",
+                ProofStrategy::ProveIf,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        (state, identity, destination)
+    }
+
+    #[test]
+    fn a_prove_if_delivery_defers_the_proof_to_the_app() {
+        let (mut state, identity, destination) = prove_if_state();
+        let mut raw = sealed_single_packet(&identity, destination, b"prove-if");
+        let IngestPacketOutcome::Delivery {
+            delivery: Delivery::Single(single),
+            proof: ProofObligation::OwedIfApp(_),
+        } = state.ingest_packet(
+            plain_data_packet(&mut raw),
+            TEST_ENTROPY,
+            &transporting_view(),
+        )
+        else {
+            panic!("a ProveIf delivery defers its proof to the app");
+        };
+        assert_eq!(
+            single.plaintext, b"prove-if",
+            "the deferred decision sees the decrypted content",
+        );
+    }
+
+    fn prove_if_proof_directive(
+        decide: impl FnMut(&ProofRequest) -> bool,
+    ) -> (bool, std::vec::Vec<u8>) {
+        let (mut state, identity, destination) = prove_if_state();
+        let mut raw = sealed_single_packet(&identity, destination, b"prove-if");
+        let mut decide = decide;
+        let mut seen = std::vec::Vec::new();
+        let mut proved = false;
+        state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: InterfaceId::new([0xEE; 16]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            InstantMillis(1_000),
+            &mut |bytes| bytes.fill(0),
+            &mut |request| {
+                seen = request.plaintext.to_vec();
+                decide(request)
+            },
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { .. }) = reaction {
+                    proved = true;
+                }
+            },
+        );
+        (proved, seen)
+    }
+
+    #[test]
+    fn the_app_decider_gates_the_prove_if_proof() {
+        let (proved, seen) = prove_if_proof_directive(|_| true);
+        assert!(proved, "the decider agreed, so the reactor answers a proof");
+        assert_eq!(seen, b"prove-if", "the decider sees the decrypted content");
+
+        let (proved, _) = prove_if_proof_directive(|_| false);
+        assert!(!proved, "the decider declined, so no proof goes out");
     }
 
     #[test]

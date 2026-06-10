@@ -6,7 +6,8 @@ use crate::engine::{
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
-use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
+use crate::routing::delivery::Delivery;
+use crate::routing::proof::{ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN};
 use crate::routing::storage::EngineStorage;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::wire::MTU;
@@ -37,6 +38,7 @@ impl<S: EngineStorage> EngineState<S> {
     /// route-expiry lane by the one route it touched (`AtMost`: never a whole-table scan on
     /// this path; removals only push the true deadline later, so a cached one stays early,
     /// never late), an arriving proof retires a send-timeout; everything else is `Unchanged`.
+    #[allow(clippy::too_many_arguments)]
     pub fn ingest_packet_into<F>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -44,6 +46,7 @@ impl<S: EngineStorage> EngineState<S> {
         view: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
+        should_prove: &mut impl FnMut(&ProofRequest) -> bool,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -52,7 +55,7 @@ impl<S: EngineStorage> EngineState<S> {
         let source = packet.source_interface;
         let mut delta = WakeSchedules::UNCHANGED;
         let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
-            sink(EngineReaction::Journaled(journal_removal(removed)));
+            sink(EngineReaction::Journaled(journal_removal(removed)))
         });
         match outcome {
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) => {
@@ -78,13 +81,22 @@ impl<S: EngineStorage> EngineState<S> {
                     .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
             }
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
-            IngestPacketOutcome::Delivery {
-                delivery,
-                maybe_owed_proof,
-            } => {
+            IngestPacketOutcome::Delivery { delivery, proof } => {
                 sink(EngineReaction::Journaled(Journaled::Delivered(delivery)));
-                if let Some(owed) = maybe_owed_proof {
-                    if directed_eligible(view, source, Egress::Transmit) {
+                let owed = match proof {
+                    ProofObligation::None => None,
+                    ProofObligation::Owed(owed) => Some(owed),
+                    ProofObligation::OwedIfApp(owed) => match delivery {
+                        Delivery::Single(single) => should_prove(&ProofRequest {
+                            destination: single.destination,
+                            plaintext: single.plaintext,
+                        })
+                        .then_some(owed),
+                        Delivery::Plain(_) => None,
+                    },
+                };
+                if let Some(owed) = owed {
+                    if is_egress_eligible(view, source, Egress::Transmit) {
                         let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
                         if let Ok(written) = self.write_proof(&owed, &mut proof) {
                             sink(EngineReaction::Directive(Directive::Send {
@@ -104,7 +116,7 @@ impl<S: EngineStorage> EngineState<S> {
             }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::Forward(forward) => {
-                if directed_eligible(view, forward.fire_on, Egress::Transport) {
+                if is_egress_eligible(view, forward.fire_on, Egress::Transport) {
                     let mut buf = [0u8; MTU];
                     if let Ok(written) = forward.to_wire(&mut buf) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -115,7 +127,7 @@ impl<S: EngineStorage> EngineState<S> {
                 }
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
-                if directed_eligible(view, source, Egress::Transmit) {
+                if is_egress_eligible(view, source, Egress::Transmit) {
                     let mut entropy_bytes = [0u8; AnnounceEntropy::LEN];
                     fill_entropy(&mut entropy_bytes);
                     let entropy = AnnounceEntropy::new(entropy_bytes);
@@ -131,7 +143,7 @@ impl<S: EngineStorage> EngineState<S> {
                 }
             }
             IngestPacketOutcome::AnswerPathRequestFromCache { destination } => {
-                if directed_eligible(view, source, Egress::Transport) {
+                if is_egress_eligible(view, source, Egress::Transport) {
                     let mut response = [0u8; MTU];
                     if let CachedPathResponseOutcome::Written { wire_len } =
                         self.write_cached_path_response(&destination, &mut response)
@@ -159,7 +171,7 @@ enum Egress {
     Transport,
 }
 
-fn directed_eligible(view: &[InterfaceConfig], target: InterfaceId, egress: Egress) -> bool {
+fn is_egress_eligible(view: &[InterfaceConfig], target: InterfaceId, egress: Egress) -> bool {
     view.iter()
         .find(|config| config.id == target)
         .is_some_and(|config| match egress {

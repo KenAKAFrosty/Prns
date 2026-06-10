@@ -16,7 +16,7 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
+    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::substrate::EmbassyTimebase;
@@ -242,6 +242,42 @@ impl<'a, M: RawMutex, const OUT: usize> EmbassyEgress<'a, M, OUT> {
 /// an MCU is built for.
 #[allow(clippy::too_many_arguments)]
 pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT: usize>(
+    engine: EngineState<S>,
+    interfaces: &[InterfaceConfig],
+    ifacs: &[InterfaceIfac],
+    host: H,
+    inbound: Receiver<'_, M, InboundFrame, INBOUND>,
+    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
+    egress: EmbassyEgress<'_, M, OUT>,
+    on_journaled: impl FnMut(Journaled<'_>),
+) where
+    S: EngineStorage,
+    H: Host,
+    M: RawMutex,
+{
+    run_with_proof_decider(
+        engine,
+        interfaces,
+        ifacs,
+        host,
+        inbound,
+        commands,
+        egress,
+        on_journaled,
+        |_: &ProofRequest| false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_proof_decider<
+    S,
+    H,
+    M,
+    const INBOUND: usize,
+    const COMMANDS: usize,
+    const OUT: usize,
+>(
     mut engine: EngineState<S>,
     interfaces: &[InterfaceConfig],
     ifacs: &[InterfaceIfac],
@@ -250,6 +286,7 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
     egress: EmbassyEgress<'_, M, OUT>,
     mut on_journaled: impl FnMut(Journaled<'_>),
+    mut should_prove: impl FnMut(&ProofRequest) -> bool,
 ) where
     S: EngineStorage,
     H: Host,
@@ -302,6 +339,7 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
                     interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
+                    &mut should_prove,
                     &mut |reaction| {
                         route_reaction(
                             reaction,

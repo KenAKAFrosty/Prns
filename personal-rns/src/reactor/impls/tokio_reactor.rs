@@ -6,7 +6,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
+    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -229,6 +229,35 @@ impl InterfaceStatus for TokioInterfaceStatus {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run<S, H, J>(
+    engine: EngineState<S>,
+    interfaces: std::vec::Vec<InterfaceConfig>,
+    ifacs: std::vec::Vec<InterfaceIfac>,
+    host: H,
+    inbound: UnboundedReceiver<InboundFrame>,
+    commands: UnboundedReceiver<IssuedCommand>,
+    egress: Egress,
+    on_journaled: J,
+) where
+    S: EngineStorage,
+    H: Host,
+    J: FnMut(Journaled<'_>),
+{
+    run_with_proof_decider(
+        engine,
+        interfaces,
+        ifacs,
+        host,
+        inbound,
+        commands,
+        egress,
+        on_journaled,
+        |_: &ProofRequest| false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_proof_decider<S, H, J, P>(
     mut engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,
     ifacs: std::vec::Vec<InterfaceIfac>,
@@ -237,10 +266,12 @@ pub async fn run<S, H, J>(
     mut commands: UnboundedReceiver<IssuedCommand>,
     egress: Egress,
     mut on_journaled: J,
+    mut should_prove: P,
 ) where
     S: EngineStorage,
     H: Host,
     J: FnMut(Journaled<'_>),
+    P: FnMut(&ProofRequest) -> bool,
 {
     let mut wake_schedules = engine.wake_schedules(&interfaces);
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
@@ -281,6 +312,7 @@ pub async fn run<S, H, J>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
+                    &mut should_prove,
                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
