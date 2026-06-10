@@ -258,10 +258,10 @@ async fn main(spawner: Spawner) -> ! {
                 let mut line: String<96> = String::new();
                 let _ = write!(
                     line,
-                    "techo eink={} btn={} tick={} route={} held={}\r\n",
+                    "techo eink={} btn={} pkts={} route={} held={}\r\n",
                     if eink_ok { "ok" } else { "err" },
                     BUTTON_COUNT.load(Ordering::Relaxed),
-                    state.tick_count(),
+                    state.ingested_packet_count(),
                     state.route_count(),
                     state.held_announce_count()
                 );

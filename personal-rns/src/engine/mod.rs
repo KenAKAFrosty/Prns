@@ -21,7 +21,6 @@ pub use egress::{
 };
 pub use identity_registration::SetTransportIdentityError;
 pub use reaction::{Directive, EngineReaction, Journaled};
-pub use tick::TickOutput;
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
 pub use crate::routing::announce::emit::{
@@ -152,7 +151,6 @@ impl WakeSchedules {
 }
 
 pub struct EngineState<S: EngineStorage> {
-    pub(crate) tick_count: u64,
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
     pub(crate) routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
@@ -173,7 +171,6 @@ pub struct EngineState<S: EngineStorage> {
 impl<S: EngineStorage> Default for EngineState<S> {
     fn default() -> Self {
         Self {
-            tick_count: 0,
             ingested_packet_count: 0,
             ingested_command_count: 0,
             routing_table: Default::default(),
@@ -206,7 +203,6 @@ where
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("EngineState")
-            .field("tick_count", &self.tick_count)
             .field("ingested_packet_count", &self.ingested_packet_count)
             .field("ingested_command_count", &self.ingested_command_count)
             .field("routing_table", &self.routing_table)
@@ -235,10 +231,6 @@ impl<S: EngineStorage> EngineState<S> {
             .expect("an empty store holds the first identity");
         state.transport_id = Some(TransportId::new(*identity.as_bytes()));
         state
-    }
-
-    pub const fn tick_count(&self) -> u64 {
-        self.tick_count
     }
 
     pub const fn ingested_packet_count(&self) -> u64 {

@@ -14,80 +14,7 @@ use crate::routing::storage::EngineStorage;
 use crate::routing::UpsertRouteOutcome;
 use crate::wire::{DestinationType, MTU};
 
-#[must_use]
-pub struct TickOutput<'a, S: EngineStorage> {
-    state: &'a mut EngineState<S>,
-    now: InstantMillis,
-    recovered_from_held_count: usize,
-}
-
-impl<'a, S: EngineStorage> TickOutput<'a, S> {
-    /// The number of announces this tick re-emits — one per destination whose
-    /// rebroadcast is due, independent of how many interfaces each fans to.
-    pub fn egress_directive_count(&self) -> usize {
-        let now = self.now;
-        self.state
-            .pending_rebroadcasts
-            .as_slice()
-            .iter()
-            .filter(|scheduled| scheduled.due_at.0 <= now.0)
-            .count()
-    }
-
-    pub const fn recovered_from_held_count(&self) -> usize {
-        self.recovered_from_held_count
-    }
-
-    /// Resolve this tick's rebroadcasts against the descriptor `view` the runtime
-    /// holds, yielding one [`EgressDirective`] per (due destination × interface the
-    /// engine decides to fire on). The fan-out call is the engine's alone
-    /// (`firable_on`); the runtime takes each named target to its handle and sends.
-    pub fn egress_directives<'v>(
-        &'v self,
-        view: &'v [InterfaceConfig],
-    ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
-        self.state.due_rebroadcast_directives(self.now, view)
-    }
-
-    pub fn commit(mut self) {
-        self.commit_in_place();
-    }
-
-    fn commit_in_place(&mut self) {
-        self.state.pending_rebroadcasts.drain_due(self.now);
-    }
-}
-
-impl<S: EngineStorage> Drop for TickOutput<'_, S> {
-    fn drop(&mut self) {
-        self.commit_in_place();
-    }
-}
-
 impl<S: EngineStorage> EngineState<S> {
-    pub fn tick(
-        &mut self,
-        now: InstantMillis,
-        jitter: JitterSeed,
-        interfaces: &[InterfaceConfig],
-    ) -> TickOutput<'_, S> {
-        self.tick_count = self.tick_count.saturating_add(1);
-        let mut recovered_from_held_count = 0;
-        let _ = self.recover_held_announces(jitter, interfaces, &mut |reaction| {
-            if matches!(
-                reaction,
-                EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-            ) {
-                recovered_from_held_count += 1;
-            }
-        });
-        TickOutput {
-            state: self,
-            now,
-            recovered_from_held_count,
-        }
-    }
-
     /// Retry every held announce against the now-unblocked routing arena. Each that lands
     /// is journaled `AnnounceHeard` — a hold defers the hearing, it never drops it — and,
     /// if we transport and an interface can carry it, scheduled for rebroadcast. Drains the
@@ -168,9 +95,9 @@ impl<S: EngineStorage> EngineState<S> {
 
     /// One [`EgressDirective`] per (rebroadcast due at `now` × interface the engine elects
     /// to fire it on). The fan-out decision is the engine's alone ([`firable_on`]); the
-    /// caller takes each named target to its handle. Shared by [`tick`](Self::tick)'s
-    /// [`TickOutput`] and the reactor's
-    /// [`fire_due_announce_rebroadcasts`](Self::fire_due_announce_rebroadcasts).
+    /// caller takes each named target to its handle. The reactor's
+    /// [`fire_due_announce_rebroadcasts`](Self::fire_due_announce_rebroadcasts) serializes
+    /// and drains it.
     fn due_rebroadcast_directives<'v>(
         &'v self,
         now: InstantMillis,
@@ -205,10 +132,9 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     /// Fire every announce rebroadcast due at `now`: serialize each onto a scratch buffer
-    /// lent to `sink` as a [`Directive::SendAnnounce`], then clear the fired entries. The
-    /// sink-shaped face of a rebroadcast tick — the reactor's timer edge drains it here,
-    /// the legacy runtime drains the same work through [`TickOutput`]. Returns the
-    /// rebroadcast lane's new soonest deadline as a [`WakeSchedules`] delta.
+    /// lent to `sink` as a [`Directive::SendAnnounce`], then clear the fired entries — the
+    /// reactor's timer edge drives this directly, reading and draining in the one pass.
+    /// Returns the rebroadcast lane's new soonest deadline as a [`WakeSchedules`] delta.
     pub fn fire_due_announce_rebroadcasts(
         &mut self,
         now: InstantMillis,
@@ -244,7 +170,7 @@ mod tests {
     use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader, MTU};
 
     #[test]
-    fn tick_advances_count_deterministically() {
+    fn a_fresh_drive_is_deterministic_and_emits_nothing() {
         let mut left: EngineState<Cap> = EngineState::<Cap>::default();
         let mut right: EngineState<Cap> = EngineState::<Cap>::default();
 
@@ -252,7 +178,6 @@ mod tests {
         let (right_out, right_bytes) = tick_capture(&mut right, InstantMillis(1_000), &[]);
 
         assert_eq!(observable_state(&left), observable_state(&right));
-        assert_eq!(left.tick_count(), 1);
         assert_eq!(left_out, right_out);
         assert_eq!(left_out.egress_directive_count, 0);
         assert!(left_bytes.is_empty());
@@ -425,15 +350,17 @@ mod tests {
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
-        let tick_out = state.tick(
+        let mut targets = std::vec::Vec::new();
+        let _ = state.fire_due_announce_rebroadcasts(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
-            TEST_ENTROPY,
             view,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
+                    targets.push(target);
+                }
+            },
         );
-        tick_out
-            .egress_directives(view)
-            .map(|directive| directive.target())
-            .collect()
+        targets
     }
 
     #[test]
