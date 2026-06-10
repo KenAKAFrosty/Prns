@@ -68,13 +68,6 @@ use zeroize::Zeroizing;
 pub struct InstantMillis(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NextScheduledEngineWork {
-    Immediate,
-    At(InstantMillis),
-    Idle,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DueLane {
     HeldAnnounces,
     RebroadcastAnnounces,
@@ -278,51 +271,6 @@ impl<S: EngineStorage> EngineState<S> {
         self.pending_rebroadcasts.pending_count()
     }
 
-    /// The legacy runtime's coarse wake: the soonest of every scheduled deadline, including
-    /// the periodic self-announce the runtime still drives. The reactor does *not* use this
-    /// — self-announce is the application's to schedule there (an `AnnounceNow` command),
-    /// not a lane. This stays standalone until the runtime is retired.
-    pub fn next_wakeup(&self, now: InstantMillis) -> NextScheduledEngineWork {
-        if self.held_announce_count() > 0 {
-            return NextScheduledEngineWork::Immediate;
-        }
-
-        let mut earliest: Option<InstantMillis> = None;
-
-        if self.self_announces.due_announce(now).is_some() {
-            return NextScheduledEngineWork::Immediate;
-        }
-        if let Some(deadline) = self.self_announces.next_due_at() {
-            earliest = Some(earliest.map_or(deadline, |e| e.min(deadline)));
-        }
-
-        if let Some(due_at) = self.pending_rebroadcasts.earliest_due_at() {
-            if due_at <= now {
-                return NextScheduledEngineWork::Immediate;
-            }
-            earliest = Some(earliest.map_or(due_at, |e| e.min(due_at)));
-        }
-
-        if let Some(timeout_at) = self.receipts.earliest_timeout_at() {
-            if timeout_at <= now {
-                return NextScheduledEngineWork::Immediate;
-            }
-            earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
-        }
-
-        if let Some(timeout_at) = self.pending_path_requests.earliest_timeout_at() {
-            if timeout_at <= now {
-                return NextScheduledEngineWork::Immediate;
-            }
-            earliest = Some(earliest.map_or(timeout_at, |e| e.min(timeout_at)));
-        }
-
-        match earliest {
-            Some(instant) => NextScheduledEngineWork::At(instant),
-            None => NextScheduledEngineWork::Idle,
-        }
-    }
-
     /// The held lane's state: `Due` while any announce waits on the arena, else `Idle`.
     pub(crate) fn held_lane(&self) -> LaneWake {
         if self.held_announce_count() > 0 {
@@ -390,75 +338,6 @@ mod tests {
     use crate::interfaces::InboundPacket;
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::routing::storage::FixedInline;
-    use crate::wire::MTU;
-
-    #[test]
-    fn next_wakeup_is_idle_for_a_relay_with_no_scheduled_work() {
-        let state: EngineState<Cap> = EngineState::<Cap>::default();
-        assert_eq!(
-            state.next_wakeup(InstantMillis(1_000)),
-            NextScheduledEngineWork::Idle
-        );
-    }
-
-    #[test]
-    fn next_wakeup_is_immediate_when_a_self_announce_is_due() {
-        let state = personal_node_announcer();
-        assert_eq!(
-            state.next_wakeup(InstantMillis(0)),
-            NextScheduledEngineWork::Immediate
-        );
-    }
-
-    #[test]
-    fn next_wakeup_reports_the_reannounce_deadline_once_we_have_announced() {
-        let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
-        let _ = state
-            .write_due_self_announce(
-                InstantMillis(1_000),
-                TEST_SELF_ANNOUNCE_ENTROPY,
-                TEST_RATCHET_ENTROPY,
-                &mut buf,
-            )
-            .written_len();
-
-        let interval = ReannounceSchedule::default().interval_millis();
-        assert_eq!(
-            state.next_wakeup(InstantMillis(2_000)),
-            NextScheduledEngineWork::At(InstantMillis(1_000 + interval)),
-        );
-    }
-
-    #[test]
-    fn next_wakeup_accounts_for_a_scheduled_rebroadcast() {
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = transporting_node();
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut raw,
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
-
-        match state.next_wakeup(InstantMillis(0)) {
-            NextScheduledEngineWork::At(t) => assert!(
-                t.0 >= 1_000 && t.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                "due_at {} should sit within the jitter window after arrival",
-                t.0,
-            ),
-            other => panic!("expected At(_), got {other:?}"),
-        }
-
-        assert_eq!(
-            state.next_wakeup(InstantMillis(1_000_000)),
-            NextScheduledEngineWork::Immediate,
-        );
-    }
 
     #[test]
     fn next_scheduled_wake_is_idle_with_no_scheduled_work() {

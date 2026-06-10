@@ -211,7 +211,7 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::engine::{
         AnnounceIngest, CommandOutcome, EngineCommand, IngestPacketOutcome, IssuedCommand,
-        NextScheduledEngineWork, RatchetPolicy, SendSinglePayload,
+        RatchetPolicy, SendSinglePayload,
     };
     use crate::interfaces::InboundPacket;
     use crate::routing::delivery::{Delivery, SingleDelivery};
@@ -612,35 +612,6 @@ mod tests {
                 }),
                 maybe_owed_proof: None,
             },
-        );
-    }
-
-    #[test]
-    fn a_send_schedules_the_receipt_timeout_into_next_wakeup() {
-        let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE), arrival());
-
-        let mut buf = [0u8; MTU];
-        let dispatch = state
-            .write_commanded_send_single(
-                CommandId(7),
-                &send_of(b"timed"),
-                InstantMillis(1_000),
-                vector_send_entropy(),
-                &mut buf,
-            )
-            .dispatched();
-        assert_eq!(dispatch.culled, None);
-
-        let _ = tick_capture(&mut state, InstantMillis(9_000), &[]);
-        assert_eq!(
-            state.next_wakeup(InstantMillis(9_500)),
-            NextScheduledEngineWork::At(InstantMillis(13_000)),
-            "one hop: 6s first-hop + 6s per-hop from sent_at 1_000",
-        );
-        assert_eq!(
-            state.next_wakeup(InstantMillis(13_000)),
-            NextScheduledEngineWork::Immediate,
         );
     }
 
