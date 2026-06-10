@@ -1,7 +1,7 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
-use crate::routing::announce::announce_rate::FixedAnnounceRateColumns;
 use crate::routing::announce::held_cache::FixedHeldAnnounces;
+use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;

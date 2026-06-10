@@ -2,11 +2,11 @@ use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
-use crate::routing::announce::announce_rate::AnnounceRateVerdict;
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
 };
 use crate::routing::announce::held_cache::HeldAnnounces;
+use crate::routing::announce::rate_limit::AnnounceRateVerdict;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::Announce;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};

@@ -1,7 +1,7 @@
 use crate::crypto::ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
-use crate::routing::announce::announce_rate::HeapAnnounceRateColumns;
 use crate::routing::announce::held_cache::HeapHeldAnnounces;
+use crate::routing::announce::rate_limit::HeapAnnounceRateColumns;
 use crate::routing::announce::schedule::HeapRebroadcastQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;

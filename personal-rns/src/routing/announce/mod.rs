@@ -1,10 +1,10 @@
 pub mod acceptance;
-pub mod announce_rate;
 pub mod defaults;
 pub mod emit;
 pub mod held_cache;
 mod id;
 pub mod ingress;
+pub mod rate_limit;
 pub mod schedule;
 
 pub use acceptance::{

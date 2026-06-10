@@ -1,4 +1,4 @@
-use crate::routing::announce::announce_rate::{
+use crate::routing::announce::rate_limit::{
     AnnounceRateColumns, AnnounceRateEntry, RateEntryAdmission,
 };
 use crate::wire::DestinationHash;
