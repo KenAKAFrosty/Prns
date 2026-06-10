@@ -26,15 +26,15 @@ impl AnnounceNonce {
     }
 }
 
-/// The 5-byte self-announce entropy, freshly drawn each cycle — the random
+/// The 5-byte announce entropy, freshly drawn each cycle — the random
 /// material an announce mints its [`AnnounceNonce`] from. Move-only (no
 /// `Copy`/`Clone`): it is a wire-exposed, must-be-unique draw, so the type
 /// enforces single-use — `AnnounceId::mint` consumes it, and there is no way to
 /// silently mint two announces from one draw.
 #[derive(Debug)]
-pub struct SelfAnnounceEntropy([u8; NONCE_LEN]);
+pub struct AnnounceEntropy([u8; NONCE_LEN]);
 
-impl SelfAnnounceEntropy {
+impl AnnounceEntropy {
     pub const LEN: usize = NONCE_LEN;
 
     pub const fn new(bytes: [u8; NONCE_LEN]) -> Self {
@@ -82,12 +82,12 @@ pub struct AnnounceId {
 }
 
 impl AnnounceId {
-    pub fn mint(self_announce_entropy: SelfAnnounceEntropy, now: InstantMillis) -> Self {
+    pub fn mint(announce_entropy: AnnounceEntropy, now: InstantMillis) -> Self {
         let emitted_seconds = now.0 / 1_000;
         let mut timebase = [0u8; TIMEBASE_LEN];
         timebase.copy_from_slice(&emitted_seconds.to_be_bytes()[8 - TIMEBASE_LEN..]);
         Self {
-            nonce: AnnounceNonce(self_announce_entropy.0),
+            nonce: AnnounceNonce(announce_entropy.0),
             timebase: MonotonicTimebase(timebase),
         }
     }
@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn mint_floors_milliseconds_to_whole_seconds() {
         let id = AnnounceId::mint(
-            SelfAnnounceEntropy::new([9, 8, 7, 6, 5]),
+            AnnounceEntropy::new([9, 8, 7, 6, 5]),
             InstantMillis(123_456),
         );
         assert_eq!(id.timebase.as_count(), 123);

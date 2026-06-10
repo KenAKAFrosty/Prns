@@ -920,7 +920,7 @@ mod tests {
         let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
             &local,
             InstantMillis(500),
-            TEST_SELF_ANNOUNCE_ENTROPY,
+            TEST_ANNOUNCE_ENTROPY,
             &mut buf,
         ) else {
             panic!("a local destination is answerable");
@@ -962,7 +962,7 @@ mod tests {
             b.write_path_response_announce(
                 &DestinationHash::new([0x44; 16]),
                 InstantMillis(500),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 &mut buf,
             ),
             PathResponseWriteOutcome::NotLocal,
@@ -1137,7 +1137,7 @@ mod tests {
     fn a_destination_announcing_faster_than_the_interface_target_is_rate_blocked() {
         use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
         use crate::interfaces::AnnounceRateLimit;
-        use crate::routing::announce::SelfAnnounceEntropy;
+        use crate::routing::announce::AnnounceEntropy;
 
         // A peer mints two distinct announces for its own destination.
         let mut announcer = personal_node_announcer();
@@ -1152,7 +1152,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(1_000),
-                SelfAnnounceEntropy::new([0x11; SelfAnnounceEntropy::LEN]),
+                AnnounceEntropy::new([0x11; AnnounceEntropy::LEN]),
                 TEST_RATCHET_ENTROPY,
                 &mut buf_a,
             )
@@ -1163,7 +1163,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(2_000),
-                SelfAnnounceEntropy::new([0x22; SelfAnnounceEntropy::LEN]),
+                AnnounceEntropy::new([0x22; AnnounceEntropy::LEN]),
                 TEST_RATCHET_ENTROPY,
                 &mut buf_b,
             )
@@ -1227,7 +1227,7 @@ mod tests {
     fn a_destination_within_the_interface_target_is_not_rate_blocked() {
         use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget};
         use crate::interfaces::AnnounceRateLimit;
-        use crate::routing::announce::SelfAnnounceEntropy;
+        use crate::routing::announce::AnnounceEntropy;
 
         let mut announcer = personal_node_announcer();
         let destination = personal_node_destination();
@@ -1241,7 +1241,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(1_000),
-                SelfAnnounceEntropy::new([0x11; SelfAnnounceEntropy::LEN]),
+                AnnounceEntropy::new([0x11; AnnounceEntropy::LEN]),
                 TEST_RATCHET_ENTROPY,
                 &mut buf_a,
             )
@@ -1252,7 +1252,7 @@ mod tests {
             .write_commanded_announce(
                 &command,
                 InstantMillis(2_000),
-                SelfAnnounceEntropy::new([0x22; SelfAnnounceEntropy::LEN]),
+                AnnounceEntropy::new([0x22; AnnounceEntropy::LEN]),
                 TEST_RATCHET_ENTROPY,
                 &mut buf_b,
             )
@@ -1454,7 +1454,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(1_000 + interval),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 RatchetEntropy::new([0x77; RatchetEntropy::LEN]),
                 &mut buf,
             )
@@ -2008,7 +2008,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -2068,7 +2068,7 @@ mod tests {
     #[test]
     fn a_final_hop_forward_strips_the_transport_header_back_to_the_direct_wire() {
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
@@ -2128,7 +2128,7 @@ mod tests {
         let next_relay = TransportId::new([0xBB; 16]);
         let mut relay = transporting_node();
 
-        let raw = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let raw = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let relayed_header = WirePacketHeader {
             transport_id: Some(next_relay),
@@ -2178,7 +2178,7 @@ mod tests {
     #[test]
     fn a_proof_rides_the_reverse_route_home_exactly_once() {
         let mut relay = transporting_node();
-        let mut announce = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),

@@ -5,7 +5,7 @@ use crate::engine::{
 };
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
-use crate::routing::announce::SelfAnnounceEntropy;
+use crate::routing::announce::AnnounceEntropy;
 use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
@@ -95,9 +95,9 @@ impl<S: EngineStorage> EngineState<S> {
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
                 if directed_eligible(view, source, Egress::Transmit) {
-                    let mut entropy_bytes = [0u8; SelfAnnounceEntropy::LEN];
+                    let mut entropy_bytes = [0u8; AnnounceEntropy::LEN];
                     fill_entropy(&mut entropy_bytes);
-                    let entropy = SelfAnnounceEntropy::new(entropy_bytes);
+                    let entropy = AnnounceEntropy::new(entropy_bytes);
                     let mut response = [0u8; MTU];
                     if let PathResponseWriteOutcome::Written { wire_len } =
                         self.write_path_response_announce(&destination, now, entropy, &mut response)

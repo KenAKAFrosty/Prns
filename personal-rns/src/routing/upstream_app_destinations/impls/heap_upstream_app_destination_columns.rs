@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::routing::announce::self_announce::SelfAnnounceAppData;
+use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::DottedNameHash;
 use crate::routing::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
@@ -13,7 +13,7 @@ pub struct HeapUpstreamAppDestinationColumns {
     destination: Vec<DestinationHash>,
     kind: Vec<UpstreamAppDestinationKind>,
     name_hash: Vec<DottedNameHash>,
-    app_data: Vec<SelfAnnounceAppData>,
+    app_data: Vec<AnnounceAppDataBytes>,
 }
 
 impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
@@ -42,7 +42,7 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
-        app_data: SelfAnnounceAppData,
+        app_data: AnnounceAppDataBytes,
     ) -> Result<usize, ColumnsFull> {
         let i = self.destination.len();
         self.destination.push(destination);
@@ -73,7 +73,7 @@ mod tests {
                     proof_strategy: ProofStrategy::ProveNone,
                 },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
-                SelfAnnounceAppData::new(),
+                AnnounceAppDataBytes::new(),
             );
             assert_eq!(pushed, Ok(n as usize));
         }

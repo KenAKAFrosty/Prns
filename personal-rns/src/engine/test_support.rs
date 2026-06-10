@@ -11,7 +11,7 @@ use crate::interfaces::{
     MediumKind, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
-use crate::routing::announce::SelfAnnounceEntropy;
+use crate::routing::announce::AnnounceEntropy;
 use crate::routing::storage::FixedInline;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{
@@ -22,8 +22,8 @@ use crate::wire::{
 pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>;
 
 pub(crate) const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
-pub(crate) const TEST_SELF_ANNOUNCE_ENTROPY: SelfAnnounceEntropy =
-    SelfAnnounceEntropy::new([0xAB; SelfAnnounceEntropy::LEN]);
+pub(crate) const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =
+    AnnounceEntropy::new([0xAB; AnnounceEntropy::LEN]);
 pub(crate) const TEST_RATCHET_ENTROPY: RatchetEntropy =
     RatchetEntropy::new([0x55; RatchetEntropy::LEN]);
 pub(crate) const TEST_TRANSPORT_ID: TransportId = TransportId::new([0x7A; 16]);
@@ -50,7 +50,7 @@ pub(crate) fn raw_announce_accepted(hops: u8) -> IngestPacketOutcome<'static> {
     }))
 }
 
-/// The reference's own retransmission of [`RATCHETED_SELF_ANNOUNCE_RNS_WIRE`]:
+/// The reference's own retransmission of [`RATCHETED_ANNOUNCE_RNS_WIRE`]:
 /// minted by RNS 1.3.1 `Transport.jobs()` packet construction (`HEADER_2`,
 /// `TRANSPORT`, transport_id `0x7A…` = [`TEST_TRANSPORT_ID`], hops 1) and
 /// self-checked through `Identity.validate_announce` before pinning.
@@ -128,7 +128,7 @@ pub(crate) fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
             app_data: AnnounceAppData::Registered,
         },
         InstantMillis(1_000),
-        TEST_SELF_ANNOUNCE_ENTROPY,
+        TEST_ANNOUNCE_ENTROPY,
         TEST_RATCHET_ENTROPY,
         &mut buf,
     );
@@ -252,7 +252,7 @@ pub(crate) fn transporting_view() -> [InterfaceConfig; 1] {
     [routable_descriptor(InterfaceId::new([0xEE; 16]))]
 }
 
-pub(crate) const RATCHETED_SELF_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\
+pub(crate) const RATCHETED_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\
          0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20\
          d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737\
          ab49baa826f122c1437f44444444444444444444\

@@ -318,7 +318,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -354,7 +354,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn a_send_to_a_ratcheted_neighbor_reproduces_the_rns_1_3_1_wire() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE), arrival());
+        hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
         let send = send_of(b"ratchet-parity");
 
         assert_eq!(
@@ -464,7 +464,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn a_multi_hop_route_with_no_relay_to_address_is_not_directly_reachable() {
         let mut state = hearer();
-        let mut relayed = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let mut relayed = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         relayed[1] = 1;
         hear_announce(&mut state, &relayed, arrival());
 
@@ -590,7 +590,7 @@ mod tests {
                     app_data: AnnounceAppData::Registered,
                 },
                 InstantMillis(100),
-                TEST_SELF_ANNOUNCE_ENTROPY,
+                TEST_ANNOUNCE_ENTROPY,
                 TEST_RATCHET_ENTROPY,
                 &mut announce_buf,
             )
@@ -638,7 +638,7 @@ mod tests {
     #[test]
     fn a_ninth_send_culls_the_stalest_receipt() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE), arrival());
+        hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
 
         let mut buf = [0u8; MTU];
         for i in 1..=8u64 {
@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn a_timed_out_send_pops_once_for_its_settlement() {
         let mut state = hearer();
-        hear_announce(&mut state, &hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE), arrival());
+        hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
         let mut buf = [0u8; MTU];
         state
             .write_commanded_send_single(

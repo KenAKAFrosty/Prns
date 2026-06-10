@@ -23,7 +23,7 @@ use embassy_time::{Duration, Ticker};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    InstantMillis, IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
+    InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -44,7 +44,7 @@ esp_app_desc!();
 
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-c6");
 
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
+const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
 
@@ -82,12 +82,10 @@ async fn main(spawner: Spawner) {
     let self_destination = {
         let secret_key = fixture_identity_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-        let name = expand_name("lxmf", &["delivery"]).expect("the self-announce name is valid");
+        let name = expand_name("lxmf", &["delivery"]).expect("the announce name is valid");
         derive_destination_hash(&identity.identity_hash(), &name)
     };
-    let app_data =
-        SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
-    spawner.spawn(announce_task(self_destination, app_data).expect("announce task fits"));
+    spawner.spawn(announce_task(self_destination).expect("announce task fits"));
 
     let secret_key = fixture_identity_secret_key();
     spawner.spawn(engine_task(secret_key, timebase).expect("engine task fits"));
@@ -121,7 +119,7 @@ async fn engine_task(
             &node,
             "lxmf",
             &["delivery"],
-            SELF_ANNOUNCE_APP_DATA,
+            ANNOUNCE_APP_DATA,
             ProofStrategy::ProveAll,
             RatchetPolicy::Ratcheted,
         )
@@ -162,7 +160,7 @@ async fn usb_device_task(rx: UsbSerialJtagRx<'static, Async>, tx: UsbSerialJtagT
 }
 
 #[embassy_executor::task]
-async fn announce_task(destination: DestinationHash, app_data: SelfAnnounceAppData) {
+async fn announce_task(destination: DestinationHash) {
     let mut ticker = Ticker::every(ANNOUNCE_INTERVAL);
     let mut next_id = 0u64;
     loop {

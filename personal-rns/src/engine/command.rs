@@ -5,7 +5,7 @@ use crate::engine::{
     SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
-use crate::routing::announce::SelfAnnounceEntropy;
+use crate::routing::announce::AnnounceEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
@@ -33,9 +33,9 @@ impl<S: EngineStorage> EngineState<S> {
         let mut delta = WakeSchedules::UNCHANGED;
         match self.ingest_command(issued, view) {
             CommandOutcome::OwesAnnounce { id, announce } => {
-                let mut self_announce_bytes = [0u8; SelfAnnounceEntropy::LEN];
-                fill_entropy(&mut self_announce_bytes);
-                let self_announce = SelfAnnounceEntropy::new(self_announce_bytes);
+                let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
+                fill_entropy(&mut announce_entropy_bytes);
+                let announce_entropy = AnnounceEntropy::new(announce_entropy_bytes);
                 let mut ratchet_bytes = [0u8; RatchetEntropy::LEN];
                 fill_entropy(&mut ratchet_bytes);
                 let ratchet = RatchetEntropy::new(ratchet_bytes);
@@ -44,7 +44,7 @@ impl<S: EngineStorage> EngineState<S> {
                 let settlement = match self.write_commanded_announce(
                     &announce,
                     now,
-                    self_announce,
+                    announce_entropy,
                     ratchet,
                     &mut buf,
                 ) {

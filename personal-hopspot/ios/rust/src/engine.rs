@@ -7,7 +7,7 @@ use std::time::Duration;
 use personal_hopspot_ui::CardKind;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
+    IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
@@ -25,9 +25,9 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 pub(crate) const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC0; 16]);
 const TCP_LOOPBACK_PORT: u16 = 4242;
 
-const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
-const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+const ANNOUNCE_APP_NAME: &str = "lxmf";
+const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
+const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
 /// How long the interface waits before accepting the next connection after one drops.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
@@ -87,9 +87,9 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
         let destination = engine
             .register_single_destination(
                 &node,
-                SELF_ANNOUNCE_APP_NAME,
-                SELF_ANNOUNCE_ASPECTS,
-                SELF_ANNOUNCE_APP_DATA,
+                ANNOUNCE_APP_NAME,
+                ANNOUNCE_ASPECTS,
+                ANNOUNCE_APP_DATA,
                 ProofStrategy::ProveAll,
                 RatchetPolicy::Ratcheted,
             )
@@ -127,9 +127,7 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
 
         let _ = ready_tx.send(status);
 
-        let app_data =
-            SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
-        tokio::spawn(announce_loop(command_tx, destination, app_data));
+        tokio::spawn(announce_loop(command_tx, destination));
         tokio::spawn(interface.run(seam));
 
         run_reactor(
@@ -145,13 +143,9 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
     });
 }
 
-/// The face's announce cadence: the engine no longer self-announces, so the app fires a scheduled
+/// The face's announce cadence: the engine does not originate announces, so the app fires a scheduled
 /// `lxmf.delivery` announce on its own timer.
-async fn announce_loop(
-    commands: UnboundedSender<IssuedCommand>,
-    destination: DestinationHash,
-    app_data: SelfAnnounceAppData,
-) {
+async fn announce_loop(commands: UnboundedSender<IssuedCommand>, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
     let mut next_id = 0u64;
     loop {

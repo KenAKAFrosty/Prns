@@ -8,9 +8,9 @@
 //! re-announce schedule is the extension built ahead of it.
 
 use crate::engine::egress::EgressSerializeError;
-use crate::engine::WriteSelfAnnounceError;
+use crate::engine::WriteAnnounceError;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::self_announce::SelfAnnounceAppData;
+use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::delivery::send_single::WriteSendSingleError;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
@@ -53,7 +53,7 @@ pub enum AnnounceTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnnounceAppData {
     Registered,
-    Data(SelfAnnounceAppData),
+    Data(AnnounceAppDataBytes),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -170,7 +170,7 @@ pub enum SendSingleFailure {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceNowFailure {
     Rejected(AnnounceNowError),
-    WriteFailed(WriteSelfAnnounceError),
+    WriteFailed(WriteAnnounceError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,7 +238,7 @@ impl Settleable for RequestPath {
 
 use crate::engine::EngineState;
 use crate::interfaces::InterfaceConfig;
-use crate::routing::announce::self_announce::MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN;
+use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::storage::EngineStorage;
 use crate::wire::DestinationType;
 
@@ -297,7 +297,7 @@ impl<S: EngineStorage> EngineState<S> {
         }
         if let AnnounceAppData::Data(data) = &announce_now.app_data {
             if self.self_ratchets.is_tracked(&announce_now.destination)
-                && data.len() > MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN
+                && data.len() > MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN
             {
                 return CommandOutcome::AnnounceRejected {
                     id,
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn commanded_app_data_reserves_announce_room_for_the_ratchet() {
         let oversized =
-            SelfAnnounceAppData::from_slice(&[0u8; MAX_RATCHETED_SELF_ANNOUNCE_APP_DATA_LEN + 1])
+            AnnounceAppDataBytes::from_slice(&[0u8; MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN + 1])
                 .unwrap();
         let with_data = |destination| IssuedCommand {
             id: TEST_COMMAND_ID,

@@ -1,6 +1,6 @@
 use heapless::Vec as HeaplessVec;
 
-use crate::routing::announce::self_announce::SelfAnnounceAppData;
+use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::DottedNameHash;
 use crate::routing::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
@@ -14,7 +14,7 @@ pub struct FixedUpstreamAppDestinationColumns<const MAX_UPSTREAM_APP_DESTINATION
     destination: [DestinationHash; MAX_UPSTREAM_APP_DESTINATIONS],
     kind: [UpstreamAppDestinationKind; MAX_UPSTREAM_APP_DESTINATIONS],
     name_hash: [DottedNameHash; MAX_UPSTREAM_APP_DESTINATIONS],
-    app_data: HeaplessVec<SelfAnnounceAppData, MAX_UPSTREAM_APP_DESTINATIONS>,
+    app_data: HeaplessVec<AnnounceAppDataBytes, MAX_UPSTREAM_APP_DESTINATIONS>,
 }
 
 impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> Default
@@ -61,7 +61,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
-        app_data: SelfAnnounceAppData,
+        app_data: AnnounceAppDataBytes,
     ) -> Result<usize, ColumnsFull> {
         if self.len >= MAX_UPSTREAM_APP_DESTINATIONS {
             return Err(ColumnsFull);
@@ -101,7 +101,7 @@ mod tests {
                 dest(1),
                 UpstreamAppDestinationKind::Plain,
                 name(1),
-                SelfAnnounceAppData::new()
+                AnnounceAppDataBytes::new()
             ),
             Ok(0)
         );
@@ -113,7 +113,7 @@ mod tests {
                     proof_strategy: ProofStrategy::ProveAll,
                 },
                 name(2),
-                SelfAnnounceAppData::new()
+                AnnounceAppDataBytes::new()
             ),
             Ok(1)
         );
@@ -122,7 +122,7 @@ mod tests {
                 dest(3),
                 UpstreamAppDestinationKind::Plain,
                 name(3),
-                SelfAnnounceAppData::new()
+                AnnounceAppDataBytes::new()
             ),
             Err(ColumnsFull)
         );

@@ -25,7 +25,7 @@ use heapless::Vec as HVec;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
+    IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
@@ -55,9 +55,9 @@ const USB_BAUD: u32 = 115_200;
 
 /// The destination this node announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// message — so the hopspot surfaces as a real, messageable peer.
-const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
-const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
+const ANNOUNCE_APP_NAME: &str = "lxmf";
+const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
+const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 /// How often the desktop re-announces itself.
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -152,9 +152,9 @@ fn run_engine(
         let destination = engine
             .register_single_destination(
                 &node,
-                SELF_ANNOUNCE_APP_NAME,
-                SELF_ANNOUNCE_ASPECTS,
-                SELF_ANNOUNCE_APP_DATA,
+                ANNOUNCE_APP_NAME,
+                ANNOUNCE_ASPECTS,
+                ANNOUNCE_APP_DATA,
                 ProofStrategy::ProveAll,
                 RatchetPolicy::Ratcheted,
             )
@@ -176,12 +176,10 @@ fn run_engine(
             destination,
         });
 
-        let app_data = SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA)
-            .expect("the lxmf app_data fits");
         let rescan = Arc::new(Notify::new());
         #[cfg(target_os = "linux")]
         spawn_hotplug_watcher(rescan.clone());
-        tokio::spawn(announce_loop(command_tx, destination, app_data));
+        tokio::spawn(announce_loop(command_tx, destination));
         tokio::spawn(interface.run(funnel_tx, outbound_rx, rescan));
 
         run_reactor(
@@ -264,14 +262,10 @@ async fn watch_hotplug(rescan: Arc<Notify>) {
     }
 }
 
-/// The desktop's own announce cadence: the engine no longer self-announces, so the app fires a
+/// The desktop's own announce cadence: the engine does not originate announces, so the app fires a
 /// scheduled `lxmf.delivery` announce on its own timer (the manual "Announce" menu item fires
 /// the same command on demand).
-async fn announce_loop(
-    commands: UnboundedSender<IssuedCommand>,
-    destination: DestinationHash,
-    app_data: SelfAnnounceAppData,
-) {
+async fn announce_loop(commands: UnboundedSender<IssuedCommand>, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
     let mut next_id = 0u64;
     loop {
@@ -416,8 +410,6 @@ fn run_window(handles: EngineHandles) {
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
 
     let statuses = std::vec![status];
-    let app_data =
-        SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
     let next_command_id = Cell::new(0u64);
 
     let apply_action = move |action: UiAction| match action {

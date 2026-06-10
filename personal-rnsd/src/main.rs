@@ -5,7 +5,7 @@
 //! The serial interface owns the port (reopening on unplug) and bridges it to the reactor
 //! through the seam: a one inbound funnel, the engine's `Directive::Send`s routed back out
 //! by an `Egress`. The daemon forwards others' announces and emits its own `lxmf.delivery`
-//! announce on its own timer (the engine no longer self-announces — cadence is app policy).
+//! announce on its own timer (the engine does not originate announces — cadence is app policy).
 
 // 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The daemon is
 // async glue around the engine; syscalls go through tokio/std, so no `unsafe`.
@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
+    IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
@@ -35,12 +35,12 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
 
 /// The destination this daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.
-const SELF_ANNOUNCE_APP_NAME: &str = "lxmf";
-const SELF_ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
+const ANNOUNCE_APP_NAME: &str = "lxmf";
+const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 /// The `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])` =
 /// `fixarray(2)` ‖ `bin8("Personal rnsd")` ‖ `nil` — the shape LXMF 0.9.9 emits, so apps
 /// surface the display name (the `\x0d` length byte = 13 = the name's length).
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0dPersonal rnsd\xc0";
+const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0dPersonal rnsd\xc0";
 
 /// CDC-ACM nominal baud (USB ignores it, but `serialport` wants a value).
 const USB_BAUD: u32 = 115_200;
@@ -76,7 +76,6 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 async fn announce_loop(
     commands: mpsc::UnboundedSender<IssuedCommand>,
     destination: DestinationHash,
-    app_data: SelfAnnounceAppData,
 ) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
     let mut next_id = 0u64;
@@ -144,9 +143,9 @@ async fn main() {
     let destination = engine
         .register_single_destination(
             &node,
-            SELF_ANNOUNCE_APP_NAME,
-            SELF_ANNOUNCE_ASPECTS,
-            SELF_ANNOUNCE_APP_DATA,
+            ANNOUNCE_APP_NAME,
+            ANNOUNCE_ASPECTS,
+            ANNOUNCE_APP_DATA,
             ProofStrategy::ProveAll,
             RatchetPolicy::Ratcheted,
         )
@@ -177,9 +176,7 @@ async fn main() {
     );
     let interfaces = std::vec![interface.descriptor()];
 
-    let app_data =
-        SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
-    tokio::spawn(announce_loop(command_tx, destination, app_data));
+    tokio::spawn(announce_loop(command_tx, destination));
     tokio::spawn(interface.run(seam));
 
     run(

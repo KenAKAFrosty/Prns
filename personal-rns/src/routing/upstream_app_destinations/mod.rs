@@ -3,7 +3,7 @@ mod impls;
 pub use impls::*;
 
 use crate::identity::IdentityHash;
-use crate::routing::announce::self_announce::SelfAnnounceAppData;
+use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, DottedNameHash,
     ExpandNameError,
@@ -62,7 +62,7 @@ pub trait UpstreamAppDestinationColumns {
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
-        app_data: SelfAnnounceAppData,
+        app_data: AnnounceAppDataBytes,
     ) -> Result<usize, ColumnsFull>;
 }
 
@@ -92,7 +92,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
             destination,
             UpstreamAppDestinationKind::Plain,
             name_hash,
-            SelfAnnounceAppData::new(),
+            AnnounceAppDataBytes::new(),
         )
     }
 
@@ -105,7 +105,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         proof_strategy: ProofStrategy,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         let name_hash = expand_name(app_name, aspects).map_err(RegisterDestinationError::Name)?;
-        let app_data = SelfAnnounceAppData::from_slice(app_data)
+        let app_data = AnnounceAppDataBytes::from_slice(app_data)
             .map_err(|()| RegisterDestinationError::AppDataTooLong)?;
         let destination = derive_destination_hash(identity_hash, &name_hash);
         self.insert(
@@ -124,7 +124,7 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
         destination: DestinationHash,
         kind: UpstreamAppDestinationKind,
         name_hash: DottedNameHash,
-        app_data: SelfAnnounceAppData,
+        app_data: AnnounceAppDataBytes,
     ) -> Result<DestinationHash, RegisterDestinationError> {
         if self.columns.destinations().contains(&destination) {
             return Ok(destination);

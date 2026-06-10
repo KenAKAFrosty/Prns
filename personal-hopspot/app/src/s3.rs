@@ -6,12 +6,12 @@ use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
+use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
 use esp_hal::rtc_cntl::Rtc;
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use esp_println::println;
@@ -30,7 +30,7 @@ use static_cell::StaticCell;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    InstantMillis, IssuedCommand, Journaled, RatchetPolicy, SelfAnnounceAppData,
+    InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -57,8 +57,8 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse
 /// (`\x13` = 19 = the name's length), so they surface the display name.
-const SELF_ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
-/// How often the board re-announces itself: the engine no longer self-announces, so the app
+const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
+/// How often the board re-announces itself: the engine does not originate announces, so the app
 /// owns the cadence (the button fires the same announce on demand).
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -250,12 +250,10 @@ pub async fn run(spawner: Spawner) {
     let self_destination = {
         let secret_key = fixture_identity_secret_key();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-        let name = expand_name("lxmf", &["delivery"]).expect("the self-announce name is valid");
+        let name = expand_name("lxmf", &["delivery"]).expect("the announce name is valid");
         derive_destination_hash(&identity.identity_hash(), &name)
     };
-    let app_data =
-        SelfAnnounceAppData::from_slice(SELF_ANNOUNCE_APP_DATA).expect("the lxmf app_data fits");
-    spawner.spawn(announce_task(self_destination, app_data.clone()).expect("announce task fits"));
+    spawner.spawn(announce_task(self_destination).expect("announce task fits"));
 
     // The engine gets core 1 to itself: its own scheduler, its own explicitly sized stack, and no
     // I/O task ever preempts a cycle. Device, render, and input stay here on core 0 — true
@@ -407,7 +405,7 @@ async fn engine_task(
             &node,
             "lxmf",
             &["delivery"],
-            SELF_ANNOUNCE_APP_DATA,
+            ANNOUNCE_APP_DATA,
             ProofStrategy::ProveAll,
             RatchetPolicy::Ratcheted,
         )
@@ -444,7 +442,11 @@ async fn engine_task(
 async fn usb_device_task(rx: UsbSerialJtagRx<'static, Async>, tx: UsbSerialJtagTx<'static, Async>) {
     let mut last_sof = 0u16;
     let host_present = move || {
-        let frame = USB_DEVICE::regs().fram_num().read().sof_frame_index().bits();
+        let frame = USB_DEVICE::regs()
+            .fram_num()
+            .read()
+            .sof_frame_index()
+            .bits();
         let advanced = frame != last_sof;
         last_sof = frame;
         advanced
@@ -454,10 +456,10 @@ async fn usb_device_task(rx: UsbSerialJtagRx<'static, Async>, tx: UsbSerialJtagT
     device.run(seam).await
 }
 
-/// The board's announce cadence: the engine no longer self-announces, so this fires a scheduled
+/// The board's announce cadence: the engine does not originate announces, so this fires a scheduled
 /// `lxmf.delivery` announce on its own timer (the button fires the same on demand).
 #[embassy_executor::task]
-async fn announce_task(destination: DestinationHash, app_data: SelfAnnounceAppData) {
+async fn announce_task(destination: DestinationHash) {
     let mut ticker = Ticker::every(ANNOUNCE_INTERVAL);
     let mut next_id = 0u64;
     loop {

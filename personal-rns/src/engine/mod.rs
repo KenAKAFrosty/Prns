@@ -24,13 +24,13 @@ pub use reaction::{Directive, EngineReaction, Journaled};
 pub use tick::TickOutput;
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
+pub use crate::routing::announce::emit::{
+    AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
+    PathResponseWriteOutcome, WriteAnnounceError,
+};
 pub use crate::routing::announce::ingress::{
     AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
     RebroadcastDecision,
-};
-pub use crate::routing::announce::self_announce::{
-    CommandedAnnounceWriteOutcome, PathResponseWriteOutcome, SelfAnnounceAppData,
-    SelfAnnounceRejection, SelfAnnounceWriteFailure, WriteSelfAnnounceError,
 };
 pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
@@ -304,8 +304,8 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     /// The reactor's next scheduled wake, named by lane. Equivalent to
-    /// [`wake_schedules`](Self::wake_schedules) resolved at `now`; self-announce is deliberately
-    /// absent — it is the application's to schedule, fired immediately through an
+    /// [`wake_schedules`](Self::wake_schedules) resolved at `now`; announce scheduling is
+    /// deliberately absent — it is the application's to schedule, fired immediately through an
     /// `AnnounceNow` command, never a lingering deadline the engine holds.
     pub fn next_scheduled_wake(&self, now: InstantMillis) -> ScheduledWake {
         self.wake_schedules().soonest(now)

@@ -1,18 +1,16 @@
 pub mod acceptance;
 pub mod announce_rate;
 pub mod defaults;
+pub mod emit;
 pub mod held_cache;
 mod id;
 pub mod ingress;
 pub mod schedule;
-pub mod self_announce;
 
 pub use acceptance::{
     AcceptReason, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, RejectReason,
 };
-pub use id::{
-    AnnounceId, AnnounceNonce, MonotonicTimebase, SelfAnnounceEntropy, ANNOUNCE_ID_WIRE_LEN,
-};
+pub use id::{AnnounceEntropy, AnnounceId, AnnounceNonce, MonotonicTimebase, ANNOUNCE_ID_WIRE_LEN};
 
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{

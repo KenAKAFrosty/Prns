@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn a_rebroadcast_reproduces_the_rns_1_3_1_retransmitted_wire() {
-        let mut heard = hx(RATCHETED_SELF_ANNOUNCE_RNS_WIRE);
+        let mut heard = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(

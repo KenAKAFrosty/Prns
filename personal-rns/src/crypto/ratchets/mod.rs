@@ -24,7 +24,7 @@ const RATCHET_SECRET_LEN: usize = 32;
 /// One rotation's worth of key material, freshly drawn each cycle: a minted
 /// ratchet *is* 32 CSPRNG bytes used as an X25519 secret (RNS 1.3.1
 /// `Identity._generate_ratchet`). Move-only like
-/// [`SelfAnnounceEntropy`](crate::routing::announce::SelfAnnounceEntropy), and
+/// [`AnnounceEntropy`](crate::routing::announce::AnnounceEntropy), and
 /// deliberately without `Debug`: consuming it mints a private key.
 pub struct RatchetEntropy([u8; RATCHET_SECRET_LEN]);
 
