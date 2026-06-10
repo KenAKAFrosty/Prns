@@ -28,7 +28,7 @@ const MIN_BUCKETS: usize = 8;
 pub struct HeapRouteColumns {
     destination: Vec<DestinationHash>,
     hops: Vec<u8>,
-    expires: Vec<InstantMillis>,
+    learned_at: Vec<InstantMillis>,
     responsiveness: Vec<RouteResponsiveness>,
     receiving_interface: Vec<InterfaceId>,
     next_hop: Vec<NextHop>,
@@ -42,7 +42,7 @@ impl Default for HeapRouteColumns {
         Self {
             destination: Vec::new(),
             hops: Vec::new(),
-            expires: Vec::new(),
+            learned_at: Vec::new(),
             responsiveness: Vec::new(),
             receiving_interface: Vec::new(),
             next_hop: Vec::new(),
@@ -150,8 +150,8 @@ impl RouteColumns for HeapRouteColumns {
     fn hops(&self) -> &[u8] {
         &self.hops
     }
-    fn expires(&self) -> &[InstantMillis] {
-        &self.expires
+    fn learned_at(&self) -> &[InstantMillis] {
+        &self.learned_at
     }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness
@@ -165,7 +165,7 @@ impl RouteColumns for HeapRouteColumns {
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
-        self.expires[i] = row.expires;
+        self.learned_at[i] = row.learned_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
@@ -180,7 +180,7 @@ impl RouteColumns for HeapRouteColumns {
         let i = self.destination.len();
         self.destination.push(destination);
         self.hops.push(row.hops);
-        self.expires.push(row.expires);
+        self.learned_at.push(row.learned_at);
         self.responsiveness.push(row.responsiveness);
         self.receiving_interface.push(row.receiving_interface);
         self.next_hop.push(row.next_hop);
@@ -198,7 +198,7 @@ impl RouteColumns for HeapRouteColumns {
         }
         self.destination.swap_remove(i);
         self.hops.swap_remove(i);
-        self.expires.swap_remove(i);
+        self.learned_at.swap_remove(i);
         self.responsiveness.swap_remove(i);
         self.receiving_interface.swap_remove(i);
         self.next_hop.swap_remove(i);
@@ -215,10 +215,10 @@ mod tests {
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 16])
     }
-    fn row(hops: u8, expires: u64, receiving_interface: InterfaceId) -> RouteEntry {
+    fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {
             hops,
-            expires: InstantMillis(expires),
+            learned_at: InstantMillis(learned_at),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,
@@ -265,7 +265,10 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xC3), dest(0xB2)]);
         assert_eq!(columns.hops(), &[3, 2]);
-        assert_eq!(columns.expires(), &[InstantMillis(30), InstantMillis(20)]);
+        assert_eq!(
+            columns.learned_at(),
+            &[InstantMillis(30), InstantMillis(20)]
+        );
         assert_eq!(columns.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
     }
 

@@ -12,7 +12,7 @@ pub struct FixedArrayRouteColumns<const MAX_TRACKED_DESTINATIONS: usize> {
     len: usize,
     destination: [DestinationHash; MAX_TRACKED_DESTINATIONS],
     hops: [u8; MAX_TRACKED_DESTINATIONS],
-    expires: [InstantMillis; MAX_TRACKED_DESTINATIONS],
+    learned_at: [InstantMillis; MAX_TRACKED_DESTINATIONS],
     responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
     receiving_interface: [InterfaceId; MAX_TRACKED_DESTINATIONS],
     next_hop: [NextHop; MAX_TRACKED_DESTINATIONS],
@@ -26,7 +26,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             len: 0,
             destination: [DestinationHash::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
             hops: [0u8; MAX_TRACKED_DESTINATIONS],
-            expires: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
+            learned_at: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
             receiving_interface: [InterfaceId::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
             next_hop: [NextHop::Direct; MAX_TRACKED_DESTINATIONS],
@@ -50,8 +50,8 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
     fn hops(&self) -> &[u8] {
         &self.hops[..self.len]
     }
-    fn expires(&self) -> &[InstantMillis] {
-        &self.expires[..self.len]
+    fn learned_at(&self) -> &[InstantMillis] {
+        &self.learned_at[..self.len]
     }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness[..self.len]
@@ -65,7 +65,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
-        self.expires[i] = row.expires;
+        self.learned_at[i] = row.learned_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
@@ -90,7 +90,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteColumns
         let last = self.len - 1;
         self.destination[i] = self.destination[last];
         self.hops[i] = self.hops[last];
-        self.expires[i] = self.expires[last];
+        self.learned_at[i] = self.learned_at[last];
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
@@ -112,13 +112,13 @@ mod tests {
 
     fn row(
         hops: u8,
-        expires: u64,
+        learned_at: u64,
         responsiveness: RouteResponsiveness,
         receiving_interface: InterfaceId,
     ) -> RouteEntry {
         RouteEntry {
             hops,
-            expires: InstantMillis(expires),
+            learned_at: InstantMillis(learned_at),
             responsiveness,
             receiving_interface,
             next_hop: NextHop::Direct,
@@ -149,7 +149,10 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xA1), dest(0xB2)]);
         assert_eq!(columns.hops(), &[1, 2]);
-        assert_eq!(columns.expires(), &[InstantMillis(10), InstantMillis(20)]);
+        assert_eq!(
+            columns.learned_at(),
+            &[InstantMillis(10), InstantMillis(20)]
+        );
         assert_eq!(
             columns.responsiveness(),
             &[
@@ -184,7 +187,10 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xA1), dest(0xB2)]);
         assert_eq!(columns.hops(), &[7, 2]);
-        assert_eq!(columns.expires(), &[InstantMillis(70), InstantMillis(20)]);
+        assert_eq!(
+            columns.learned_at(),
+            &[InstantMillis(70), InstantMillis(20)]
+        );
         assert_eq!(
             columns.responsiveness(),
             &[
@@ -243,7 +249,10 @@ mod tests {
         assert_eq!(columns.len(), 2);
         assert_eq!(columns.destinations(), &[dest(0xC3), dest(0xB2)]);
         assert_eq!(columns.hops(), &[3, 2]);
-        assert_eq!(columns.expires(), &[InstantMillis(30), InstantMillis(20)]);
+        assert_eq!(
+            columns.learned_at(),
+            &[InstantMillis(30), InstantMillis(20)]
+        );
         assert_eq!(columns.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
     }
 
@@ -284,7 +293,7 @@ mod tests {
         assert_eq!(columns.len(), 0);
         assert!(columns.destinations().is_empty());
         assert!(columns.hops().is_empty());
-        assert!(columns.expires().is_empty());
+        assert!(columns.learned_at().is_empty());
         assert!(columns.responsiveness().is_empty());
         assert!(columns.receiving_interfaces().is_empty());
     }

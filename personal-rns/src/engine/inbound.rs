@@ -47,7 +47,9 @@ impl<S: EngineStorage> EngineState<S> {
     {
         let source = packet.source_interface;
         let mut delta = WakeSchedules::UNCHANGED;
+        let mut routes_removed = false;
         let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
+            routes_removed = true;
             sink(EngineReaction::Journaled(journal_removal(removed)));
         });
         match outcome {
@@ -68,10 +70,12 @@ impl<S: EngineStorage> EngineState<S> {
                 }
                 delta.rebroadcast_announces = self.rebroadcast_lane();
                 delta.path_request_timeout = self.path_timeout_lane();
-                delta.expired_routes = self.route_expiry_lane();
+                delta.expired_routes = self.route_expiry_lane(view);
             }
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {
-                delta.expired_routes = self.route_expiry_lane();
+                if routes_removed {
+                    delta.expired_routes = self.route_expiry_lane(view);
+                }
             }
             IngestPacketOutcome::Delivery {
                 delivery,

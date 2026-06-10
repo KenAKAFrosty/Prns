@@ -9,9 +9,9 @@ pub mod types;
 pub mod upstream_app_destinations;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceMode};
 use crate::wire::DestinationHash;
-use announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+use announce::defaults::route_expiry_millis;
 use announce::Announce;
 pub use storage::AnnounceIdHistoryView;
 use storage::{
@@ -70,14 +70,33 @@ where
         self.routes.index_of(destination)
     }
 
-    pub fn existing_route_for(&self, destination: &DestinationHash) -> Option<ExistingRoute<'_>> {
+    pub fn existing_route_for(
+        &self,
+        destination: &DestinationHash,
+        view: &[InterfaceConfig],
+    ) -> Option<ExistingRoute<'_>> {
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
             hops: self.routes.hops()[i],
-            expires: self.routes.expires()[i],
+            expires: self.expiry_of(i, view),
             announce_id_history: self.announce_id_history.history(i),
             responsiveness: self.routes.responsiveness()[i],
         })
+    }
+
+    /// A route's expiry is derived at evaluation, never stored: its learned-at instant
+    /// plus the lifetime its receiving interface's mode keys *in the current view* —
+    /// so a hot-changed mode re-keys every route it carries at the next evaluation.
+    fn expiry_of(&self, i: usize, view: &[InterfaceConfig]) -> InstantMillis {
+        let mode = view
+            .iter()
+            .find(|config| config.id == self.routes.receiving_interfaces()[i])
+            .map_or(InterfaceMode::Full, |config| config.mode);
+        InstantMillis(
+            self.routes.learned_at()[i]
+                .0
+                .saturating_add(route_expiry_millis(mode)),
+        )
     }
 
     pub fn forwarding_route_for(&self, destination: &DestinationHash) -> Option<ForwardingRoute> {
@@ -89,33 +108,35 @@ where
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_route(
         &mut self,
         hops: u8,
         arrived_at: InstantMillis,
         receiving_interface: InterfaceId,
+        view: &[InterfaceConfig],
         next_hop: NextHop,
         announce: &Announce<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
-        let expires_at = InstantMillis(arrived_at.0.saturating_add(DEFAULT_ROUTE_EXPIRY_MILLIS));
         match self.index_of(&announce.destination) {
             None => {
                 if self.routes.len() >= self.routes.capacity() {
-                    self.cull_expired_routes(arrived_at, &mut |destination| {
+                    self.cull_expired_routes(arrived_at, view, &mut |destination| {
                         on_removed(RemovedRoute {
                             destination,
                             cause: RouteRemovalCause::Expired,
                         });
                     });
                     if self.routes.len() >= self.routes.capacity() {
-                        self.evict_route_nearest_expiry(on_removed);
+                        self.evict_route_nearest_expiry(view, on_removed);
                     }
                 }
                 self.insert_new_route(
                     hops,
-                    expires_at,
+                    arrived_at,
                     receiving_interface,
+                    view,
                     next_hop,
                     announce,
                     on_removed,
@@ -124,7 +145,7 @@ where
             Some(i) => self.refresh_existing_route(
                 i,
                 hops,
-                expires_at,
+                arrived_at,
                 receiving_interface,
                 next_hop,
                 announce,
@@ -132,14 +153,12 @@ where
         }
     }
 
-    fn evict_route_nearest_expiry(&mut self, on_removed: &mut impl FnMut(RemovedRoute)) -> bool {
-        let Some((i, _)) = self
-            .routes
-            .expires()
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, expires)| **expires)
-        else {
+    fn evict_route_nearest_expiry(
+        &mut self,
+        view: &[InterfaceConfig],
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> bool {
+        let Some(i) = (0..self.routes.len()).min_by_key(|&i| self.expiry_of(i, view)) else {
             return false;
         };
         on_removed(RemovedRoute {
@@ -154,8 +173,9 @@ where
     fn insert_new_route(
         &mut self,
         hops: u8,
-        expires_at: InstantMillis,
+        arrived_at: InstantMillis,
         receiving_interface: InterfaceId,
+        view: &[InterfaceConfig],
         next_hop: NextHop,
         announce: &Announce<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
@@ -166,7 +186,7 @@ where
         let handle = match self.retained_app_data.insert(announce.app_data) {
             Ok(handle) => handle,
             Err(_) => {
-                if !self.evict_route_nearest_expiry(on_removed) {
+                if !self.evict_route_nearest_expiry(view, on_removed) {
                     return UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull);
                 }
                 match self.retained_app_data.insert(announce.app_data) {
@@ -177,7 +197,7 @@ where
         };
         let route_entry = RouteEntry {
             hops,
-            expires: expires_at,
+            learned_at: arrived_at,
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop,
@@ -207,7 +227,7 @@ where
         &mut self,
         i: usize,
         hops: u8,
-        expires_at: InstantMillis,
+        arrived_at: InstantMillis,
         receiving_interface: InterfaceId,
         next_hop: NextHop,
         announce: &Announce<'_>,
@@ -228,7 +248,7 @@ where
             i,
             RouteEntry {
                 hops,
-                expires: expires_at,
+                learned_at: arrived_at,
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface,
                 next_hop,
@@ -267,12 +287,13 @@ where
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
+        view: &[InterfaceConfig],
         on_culled: &mut impl FnMut(DestinationHash),
     ) -> usize {
         let mut culled = 0;
         let mut i = 0;
         while i < self.routes.len() {
-            if now >= self.routes.expires()[i] {
+            if now >= self.expiry_of(i, view) {
                 on_culled(self.routes.destinations()[i]);
                 self.remove_route(i);
                 culled += 1;
@@ -283,8 +304,10 @@ where
         culled
     }
 
-    pub fn soonest_route_expiry(&self) -> Option<InstantMillis> {
-        self.routes.expires().iter().min().copied()
+    pub fn soonest_route_expiry(&self, view: &[InterfaceConfig]) -> Option<InstantMillis> {
+        (0..self.routes.len())
+            .map(|i| self.expiry_of(i, view))
+            .min()
     }
 
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
@@ -319,7 +342,9 @@ where
 mod tests {
     use super::*;
     use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
+    use crate::engine::test_support::routable_descriptor;
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
+    use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
     use crate::routing::storage::{
         FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
         TieredAnnounceIdHistory,
@@ -389,6 +414,17 @@ mod tests {
         }
     }
 
+    fn full_view() -> [InterfaceConfig; 1] {
+        [routable_descriptor(source())]
+    }
+
+    fn view_with(mode: InterfaceMode) -> [InterfaceConfig; 1] {
+        [InterfaceConfig {
+            mode,
+            ..routable_descriptor(source())
+        }]
+    }
+
     fn record<const D: usize, const S: usize, const A: usize, const F: usize, const O: usize>(
         table: &mut TestRoutingTable<D, S, A, F, O>,
         destination: DestinationHash,
@@ -401,10 +437,140 @@ mod tests {
             hops,
             arrival,
             source(),
+            &full_view(),
             NextHop::Direct,
             &announce_for(destination, announce_id, None, app_data),
             &mut |_| {},
         )
+    }
+
+    #[test]
+    fn route_expiry_is_derived_from_the_mode_the_view_carries_now() {
+        use crate::routing::announce::defaults::{
+            ACCESS_POINT_ROUTE_EXPIRY_MILLIS, ROAMING_ROUTE_EXPIRY_MILLIS,
+        };
+        let mut table: Rt = Rt::default();
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(1_000),
+            announce_id(1, 1),
+            &app_data(1),
+        );
+
+        for (mode, lifetime) in [
+            (InterfaceMode::Full, DEFAULT_ROUTE_EXPIRY_MILLIS),
+            (InterfaceMode::AccessPoint, ACCESS_POINT_ROUTE_EXPIRY_MILLIS),
+            (InterfaceMode::Roaming, ROAMING_ROUTE_EXPIRY_MILLIS),
+        ] {
+            assert_eq!(
+                table
+                    .existing_route_for(&dest(1), &view_with(mode))
+                    .unwrap()
+                    .expires,
+                InstantMillis(1_000 + lifetime),
+                "the same stored route re-keys to {mode:?} the moment the view says so",
+            );
+        }
+    }
+
+    #[test]
+    fn a_refresh_restarts_the_lifetime_from_its_own_arrival() {
+        use crate::routing::announce::defaults::ROAMING_ROUTE_EXPIRY_MILLIS;
+        let mut table: Rt = Rt::default();
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(1_000),
+            announce_id(1, 1),
+            &app_data(1),
+        );
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(2_000),
+            announce_id(1, 2),
+            &app_data(1),
+        );
+        assert_eq!(
+            table
+                .existing_route_for(&dest(1), &full_view())
+                .unwrap()
+                .expires,
+            InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            "the refresh restarts the clock",
+        );
+        assert_eq!(
+            table
+                .existing_route_for(&dest(1), &view_with(InterfaceMode::Roaming))
+                .unwrap()
+                .expires,
+            InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+            "and the lifetime still follows whatever mode the view carries",
+        );
+    }
+
+    #[test]
+    fn eviction_prefers_a_newer_roaming_route_over_an_older_full_one() {
+        const MAX: usize = 2;
+        let mut table: TestRoutingTable<MAX, 8, 256, 4, 512> = TestRoutingTable::default();
+        let full_interface = iface(0xA1);
+        let roaming_interface = iface(0xB2);
+        let two_mode_view = [
+            routable_descriptor(full_interface),
+            InterfaceConfig {
+                mode: InterfaceMode::Roaming,
+                ..routable_descriptor(roaming_interface)
+            },
+        ];
+        for (dest_byte, arrival, learned_on) in
+            [(1u8, 0u64, full_interface), (2, 1_000, roaming_interface)]
+        {
+            assert_eq!(
+                table.upsert_route(
+                    1,
+                    InstantMillis(arrival),
+                    learned_on,
+                    &two_mode_view,
+                    NextHop::Direct,
+                    &announce_for(
+                        dest(dest_byte),
+                        announce_id(dest_byte, 1),
+                        None,
+                        &app_data(dest_byte)
+                    ),
+                    &mut |_| {},
+                ),
+                UpsertRouteOutcome::Inserted
+            );
+        }
+
+        let mut removed = std::vec::Vec::new();
+        assert_eq!(
+            table.upsert_route(
+                1,
+                InstantMillis(2_000),
+                full_interface,
+                &two_mode_view,
+                NextHop::Direct,
+                &announce_for(dest(3), announce_id(3, 1), None, &app_data(3)),
+                &mut |removal| removed.push(removal),
+            ),
+            UpsertRouteOutcome::Inserted,
+        );
+        assert_eq!(
+            removed,
+            std::vec![RemovedRoute {
+                destination: dest(2),
+                cause: RouteRemovalCause::Evicted,
+            }],
+            "the roaming route expires in six hours, nearer death than the full one with a week to live",
+        );
+        assert_eq!(table.hop_count_to(&dest(1)), Some(1));
+        assert_eq!(table.hop_count_to(&dest(3)), Some(1));
     }
 
     #[test]
@@ -441,6 +607,7 @@ mod tests {
                     1,
                     InstantMillis(100),
                     learned_on,
+                    &full_view(),
                     NextHop::Direct,
                     &announce_for(
                         dest(dest_byte),
@@ -464,6 +631,7 @@ mod tests {
                 1,
                 InstantMillis(200),
                 usb,
+                &full_view(),
                 NextHop::Direct,
                 &announce_for(dest(1), announce_id(0xB1, 2), None, &app_data(0xB1)),
                 &mut |_| {},
@@ -497,7 +665,7 @@ mod tests {
         assert_eq!(table.route_count(), 1);
         assert_eq!(table.hop_count_to(&dest(1)), Some(2));
 
-        let view = table.existing_route_for(&dest(1)).unwrap();
+        let view = table.existing_route_for(&dest(1), &full_view()).unwrap();
         assert_eq!(view.announce_id_history.len(), 2);
     }
 
@@ -523,7 +691,7 @@ mod tests {
         );
         assert_eq!(
             table
-                .existing_route_for(&dest(1))
+                .existing_route_for(&dest(1), &full_view())
                 .unwrap()
                 .announce_id_history
                 .len(),
@@ -544,7 +712,7 @@ mod tests {
                 &app_data(0),
             );
         }
-        let view = table.existing_route_for(&dest(1)).unwrap();
+        let view = table.existing_route_for(&dest(1), &full_view()).unwrap();
         assert_eq!(view.announce_id_history.len(), RT_HISTORY_CAP);
         assert!(!view.announce_id_history.contains(&announce_id(0, 0)));
         assert!(view
@@ -577,6 +745,7 @@ mod tests {
                 1,
                 InstantMillis(100),
                 source(),
+                &full_view(),
                 NextHop::Direct,
                 &announce_for(dest(0xFF), announce_id(0, 999), None, &app_data(0xFF)),
                 &mut |removal| removed.push(removal),
@@ -687,6 +856,7 @@ mod tests {
                 1,
                 InstantMillis(10),
                 source(),
+                &full_view(),
                 NextHop::Direct,
                 &announce_for(dest(2), announce_id(2, 1), None, &[0xBB; 1]),
                 &mut |removal| removed.push(removal),
@@ -732,6 +902,7 @@ mod tests {
                 1,
                 InstantMillis(30),
                 source(),
+                &full_view(),
                 NextHop::Direct,
                 &announce_for(dest(3), announce_id(3, 1), None, &[0xC3; 8]),
                 &mut |removal| removed.push(removal),
@@ -754,6 +925,7 @@ mod tests {
                 1,
                 InstantMillis(40),
                 source(),
+                &full_view(),
                 NextHop::Direct,
                 &announce_for(dest(3), announce_id(3, 2), None, &[0xC3; 8]),
                 &mut |removal| removed.push(removal),
@@ -810,6 +982,7 @@ mod tests {
             3,
             InstantMillis(0),
             source(),
+            &full_view(),
             NextHop::Direct,
             &announce_for(dest(1), announce_id(0xAA, 1), ratchet, &body),
             &mut |_| {},
@@ -880,14 +1053,14 @@ mod tests {
         );
         assert!(
             table
-                .existing_route_for(&dest(3))
+                .existing_route_for(&dest(3), &full_view())
                 .unwrap()
                 .announce_id_history
                 .contains(&announce_id(0xA3, 1)),
             "dest 3's announce-id history moved into the hole intact",
         );
         assert!(table
-            .existing_route_for(&dest(2))
+            .existing_route_for(&dest(2), &full_view())
             .unwrap()
             .announce_id_history
             .contains(&announce_id(0xA2, 1)));
@@ -914,6 +1087,7 @@ mod tests {
                     dest_byte,
                     arrival,
                     source(),
+                    &full_view(),
                     NextHop::Direct,
                     &announce_for(
                         dest(dest_byte),
@@ -927,7 +1101,7 @@ mod tests {
             );
         }
         assert_eq!(
-            table.cull_expired_routes(fresh_arrival, &mut |_| {}),
+            table.cull_expired_routes(fresh_arrival, &full_view(), &mut |_| {}),
             0,
             "nothing has expired yet"
         );
@@ -936,6 +1110,7 @@ mod tests {
         let mut culled_destinations = std::vec::Vec::new();
         let culled = table.cull_expired_routes(
             InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
+            &full_view(),
             &mut |destination| culled_destinations.push(destination),
         );
         assert_eq!(
@@ -955,7 +1130,7 @@ mod tests {
             assert_eq!(table.hop_count_to(&dest(kept)), Some(kept));
             assert_eq!(table.app_data_for(&dest(kept)), Some(&[kept; 4][..]));
             assert!(table
-                .existing_route_for(&dest(kept))
+                .existing_route_for(&dest(kept), &full_view())
                 .unwrap()
                 .announce_id_history
                 .contains(&announce_id(kept, 1)));
@@ -1039,6 +1214,7 @@ mod tests {
                 1,
                 InstantMillis(DEFAULT_ROUTE_EXPIRY_MILLIS),
                 source(),
+                &full_view(),
                 NextHop::Direct,
                 &announce_for(dest(5), announce_id(5, 1), None, &app_data(5)),
                 &mut |removal| removed.push(removal),

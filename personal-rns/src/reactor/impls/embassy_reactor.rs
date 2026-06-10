@@ -209,7 +209,7 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
     H: Host,
     M: RawMutex,
 {
-    let mut wake_schedules = engine.wake_schedules();
+    let mut wake_schedules = engine.wake_schedules(interfaces);
     let mut pacers: HeaplessVec<InterfacePacer, MAX_PACED_INTERFACES> = HeaplessVec::new();
     for config in interfaces {
         let _ = pacers.push(InterfacePacer {
@@ -245,7 +245,7 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Second(issued) => {
                 let now = host.now();
@@ -256,14 +256,14 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Third(lane) => {
                 let now = host.now();
                 let delta = fire_due_lane(&mut engine, lane, now, interfaces, &mut |reaction| {
                     route_reaction(reaction, &egress, &mut pacers, now, &mut app)
                 });
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Fourth(()) => {
                 let now = host.now();

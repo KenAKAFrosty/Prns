@@ -2,6 +2,7 @@ use crate::engine::{
     EngineReaction, EngineState, InstantMillis, Journaled, RequestPathFailure, SendSingleFailure,
     Settlement, WakeSchedules,
 };
+use crate::interfaces::InterfaceConfig;
 use crate::routing::storage::EngineStorage;
 
 impl<S: EngineStorage> EngineState<S> {
@@ -50,16 +51,17 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn cull_expired_routes(
         &mut self,
         now: InstantMillis,
+        view: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         self.routing_table
-            .cull_expired_routes(now, &mut |destination| {
+            .cull_expired_routes(now, view, &mut |destination| {
                 sink(EngineReaction::Journaled(Journaled::RouteExpired {
                     destination,
                 }));
             });
         WakeSchedules {
-            expired_routes: self.route_expiry_lane(),
+            expired_routes: self.route_expiry_lane(view),
             ..WakeSchedules::UNCHANGED
         }
     }

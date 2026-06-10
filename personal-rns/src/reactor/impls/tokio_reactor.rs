@@ -189,7 +189,7 @@ pub async fn run<S, H, A>(
     H: Host,
     A: FnMut(Journaled<'_>),
 {
-    let mut wake_schedules = engine.wake_schedules();
+    let mut wake_schedules = engine.wake_schedules(&interfaces);
     let mut pacers: std::vec::Vec<InterfacePacer> = interfaces
         .iter()
         .map(|config| InterfacePacer {
@@ -218,7 +218,7 @@ pub async fn run<S, H, A>(
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
             issued = commands.recv() => {
                 let Some(issued) = issued else { return };
@@ -230,7 +230,7 @@ pub async fn run<S, H, A>(
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
             lane = wait_for_due_lane(&host, wake) => {
                 let now = host.now();
@@ -241,7 +241,7 @@ pub async fn run<S, H, A>(
                     &interfaces,
                     &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);
+                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
             _ = wait_for_pacer(&host, pacer_wake) => {
                 let now = host.now();

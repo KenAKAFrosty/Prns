@@ -22,7 +22,7 @@ use crate::wire::DestinationHash;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteEntry {
     pub hops: u8,
-    pub expires: InstantMillis,
+    pub learned_at: InstantMillis,
     pub responsiveness: RouteResponsiveness,
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
@@ -83,7 +83,7 @@ pub trait RouteColumns {
 
     fn destinations(&self) -> &[DestinationHash];
     fn hops(&self) -> &[u8];
-    fn expires(&self) -> &[InstantMillis];
+    fn learned_at(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
     fn next_hops(&self) -> &[NextHop];

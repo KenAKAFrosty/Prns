@@ -46,7 +46,7 @@ where
         }
         DueLane::SendSingleTimeout => engine.settle_timed_out_send_singles(now, on_reaction),
         DueLane::PathRequestTimeout => engine.settle_timed_out_path_requests(now, on_reaction),
-        DueLane::ExpiredRoutes => engine.cull_expired_routes(now, on_reaction),
+        DueLane::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
     }
 }
 
@@ -60,11 +60,12 @@ pub fn merge_wake_schedules_delta<S: EngineStorage>(
     source_wake_schedules: &mut WakeSchedules,
     delta: WakeSchedules,
     engine: &EngineState<S>,
+    view: &[InterfaceConfig],
 ) {
     source_wake_schedules.merge(delta);
     debug_assert_eq!(
         *source_wake_schedules,
-        engine.wake_schedules(),
+        engine.wake_schedules(view),
         "the incremental wake schedules drifted from a full recompute",
     );
 }

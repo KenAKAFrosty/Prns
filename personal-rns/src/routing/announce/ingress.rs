@@ -593,7 +593,9 @@ impl<S: EngineStorage> EngineState<S> {
                 .upstream_app_destinations
                 .lookup(&announce.destination, DestinationType::Single)
                 .is_some(),
-            existing_route: self.routing_table.existing_route_for(&announce.destination),
+            existing_route: self
+                .routing_table
+                .existing_route_for(&announce.destination, interfaces),
             arrived_at,
         }
         .determine_acceptance();
@@ -606,6 +608,7 @@ impl<S: EngineStorage> EngineState<S> {
             received_hops,
             arrived_at,
             source_interface,
+            interfaces,
             next_hop,
             &announce,
             on_removed,

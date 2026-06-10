@@ -47,7 +47,7 @@ pub use crate::routing::proof::{ProofIngest, ProofOwed, WriteProofError};
 use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::delivery::receipts::Receipts;
@@ -261,9 +261,10 @@ impl<S: EngineStorage> EngineState<S> {
         LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
     }
 
-    /// The expired-routes lane's state from the soonest route expiry in the table.
-    pub(crate) fn route_expiry_lane(&self) -> LaneWake {
-        LaneWake::from_deadline(self.routing_table.soonest_route_expiry())
+    /// The expired-routes lane's state from the soonest route expiry in the table,
+    /// derived against the current view (a hot-changed mode moves the deadline).
+    pub(crate) fn route_expiry_lane(&self, view: &[InterfaceConfig]) -> LaneWake {
+        LaneWake::from_deadline(self.routing_table.soonest_route_expiry(view))
     }
 
     /// Probe every reactor-scheduled lane fresh into a [`WakeSchedules`]. This is the full
@@ -271,12 +272,12 @@ impl<S: EngineStorage> EngineState<S> {
     /// stands as the oracle the running schedules are checked against. Each method's delta
     /// recomputes the same per-lane helpers, so the two can only diverge if a method forgets
     /// a lane it moved (which the oracle catches).
-    pub fn wake_schedules(&self) -> WakeSchedules {
+    pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
         WakeSchedules {
             rebroadcast_announces: self.rebroadcast_lane(),
             send_single_timeout: self.send_timeout_lane(),
             path_request_timeout: self.path_timeout_lane(),
-            expired_routes: self.route_expiry_lane(),
+            expired_routes: self.route_expiry_lane(view),
         }
     }
 
@@ -284,8 +285,12 @@ impl<S: EngineStorage> EngineState<S> {
     /// [`wake_schedules`](Self::wake_schedules) resolved at `now`; announce scheduling is
     /// deliberately absent — it is the application's to schedule, fired immediately through an
     /// `AnnounceNow` command, never a lingering deadline the engine holds.
-    pub fn next_scheduled_wake(&self, now: InstantMillis) -> ScheduledWake {
-        self.wake_schedules().soonest(now)
+    pub fn next_scheduled_wake(
+        &self,
+        now: InstantMillis,
+        view: &[InterfaceConfig],
+    ) -> ScheduledWake {
+        self.wake_schedules(view).soonest(now)
     }
 }
 
@@ -314,7 +319,7 @@ mod tests {
     fn next_scheduled_wake_is_idle_with_no_scheduled_work() {
         let state: EngineState<Cap> = EngineState::<Cap>::default();
         assert_eq!(
-            state.next_scheduled_wake(InstantMillis(1_000)),
+            state.next_scheduled_wake(InstantMillis(1_000), &transporting_view()),
             ScheduledWake::Idle,
         );
     }
@@ -334,7 +339,7 @@ mod tests {
         );
         assert_eq!(state.pending_announce_rebroadcast_count(), 1);
 
-        match state.next_scheduled_wake(InstantMillis(0)) {
+        match state.next_scheduled_wake(InstantMillis(0), &transporting_view()) {
             ScheduledWake::At { at, lane } => {
                 assert_eq!(lane, DueLane::RebroadcastAnnounces);
                 assert!(
@@ -347,7 +352,7 @@ mod tests {
         }
 
         assert_eq!(
-            state.next_scheduled_wake(InstantMillis(1_000_000)),
+            state.next_scheduled_wake(InstantMillis(1_000_000), &transporting_view()),
             ScheduledWake::Due(DueLane::RebroadcastAnnounces),
         );
     }
@@ -376,14 +381,14 @@ mod tests {
 
         let expiry = InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS);
         assert_eq!(
-            state.next_scheduled_wake(InstantMillis(2_000)),
+            state.next_scheduled_wake(InstantMillis(2_000), &transporting_view()),
             ScheduledWake::At {
                 at: expiry,
                 lane: DueLane::ExpiredRoutes,
             },
         );
         assert_eq!(
-            state.next_scheduled_wake(expiry),
+            state.next_scheduled_wake(expiry, &transporting_view()),
             ScheduledWake::Due(DueLane::ExpiredRoutes),
             "the expiry instant itself is actionable",
         );
@@ -491,7 +496,8 @@ mod tests {
     #[test]
     fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
-        let mut schedules = state.wake_schedules();
+        let view = &transporting_view();
+        let mut schedules = state.wake_schedules(view);
 
         let mut raw = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -509,7 +515,7 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "an accepted announce arms the rebroadcast lane; the delta tracks the recompute",
         );
 
@@ -521,7 +527,7 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "firing the rebroadcast clears the lane; the delta still tracks",
         );
     }
@@ -531,7 +537,8 @@ mod tests {
         use crate::wire::DestinationHash;
 
         let mut state = EngineState::<Cap>::default();
-        let mut schedules = state.wake_schedules();
+        let view: &[InterfaceConfig] = &[];
+        let mut schedules = state.wake_schedules(view);
         let issued_at = InstantMillis(1_000);
 
         let delta = state.ingest_command_into(
@@ -550,7 +557,7 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "a fresh path request arms the path-timeout lane",
         );
 
@@ -561,8 +568,41 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "settling the timeout clears the lane; the delta still tracks",
+        );
+    }
+
+    #[test]
+    fn a_route_learned_on_a_roaming_interface_arms_the_expiry_lane_at_six_hours() {
+        use crate::interfaces::{InterfaceConfig, InterfaceMode};
+        use crate::routing::announce::defaults::ROAMING_ROUTE_EXPIRY_MILLIS;
+
+        let source = InterfaceId::new([0u8; 16]);
+        let roaming_view = [InterfaceConfig {
+            mode: InterfaceMode::Roaming,
+            ..routable_descriptor(source)
+        }];
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state: EngineState<Cap> = EngineState::<Cap>::default();
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &roaming_view,
+        );
+        assert_eq!(state.route_count(), 1);
+
+        assert_eq!(
+            state.next_scheduled_wake(InstantMillis(2_000), &roaming_view),
+            ScheduledWake::At {
+                at: InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+                lane: DueLane::ExpiredRoutes,
+            },
+            "a roaming-learned route owes its cull six hours out, not a week",
         );
     }
 
@@ -571,7 +611,8 @@ mod tests {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
-        let mut schedules = state.wake_schedules();
+        let view = &transporting_view();
+        let mut schedules = state.wake_schedules(view);
 
         let mut raw = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -589,18 +630,19 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "a learned route arms the expired-routes lane; the delta tracks the recompute",
         );
 
         let delta = state.cull_expired_routes(
             InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            view,
             &mut |_| {},
         );
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "culling the route clears the lane; the delta still tracks",
         );
         assert_eq!(state.route_count(), 0);
@@ -611,7 +653,8 @@ mod tests {
         use crate::wire::DestinationHash;
         type OneSlot = FixedInline<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8>;
         let mut state: EngineState<OneSlot> = EngineState::default();
-        let mut schedules = state.wake_schedules();
+        let view = &transporting_view();
+        let mut schedules = state.wake_schedules(view);
 
         let mut first = hx(RAW_ANNOUNCE);
         let delta = state.ingest_packet_into(
@@ -658,7 +701,7 @@ mod tests {
         schedules.merge(delta);
         assert_eq!(
             schedules,
-            state.wake_schedules(),
+            state.wake_schedules(view),
             "the evict-then-insert delta tracks the recompute",
         );
 
