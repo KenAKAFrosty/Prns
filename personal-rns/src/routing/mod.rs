@@ -201,6 +201,17 @@ where
         UpsertRouteOutcome::Updated
     }
 
+    pub fn remove_route(&mut self, i: usize) {
+        let last = self.routes.len() - 1;
+        let freed = self.retained_announces.app_data_handle()[i];
+        if let Some(handle) = freed {
+            self.retained_app_data.free(handle);
+        }
+        self.routes.swap_remove(i);
+        self.retained_announces.swap_remove(i);
+        self.announce_id_history.swap_remove(i, last);
+    }
+
     pub fn app_data_for(&self, destination: &DestinationHash) -> Option<&[u8]> {
         Some(self.retained_announce_for(destination)?.announce.app_data)
     }
@@ -651,5 +662,59 @@ mod tests {
         assert_eq!(retained.hops, 2);
 
         assert!(table.retained_announce_for(&dest(2)).is_none());
+    }
+
+    #[test]
+    fn remove_route_drops_a_destination_and_keeps_the_rest_aligned() {
+        let mut table: Rt = Rt::default();
+        record(&mut table, dest(1), 1, InstantMillis(100), announce_id(0xA1, 1), &app_data(0x11));
+        record(&mut table, dest(2), 2, InstantMillis(100), announce_id(0xA2, 1), &app_data(0x22));
+        record(&mut table, dest(3), 3, InstantMillis(100), announce_id(0xA3, 1), &app_data(0x33));
+        assert_eq!(table.route_count(), 3);
+
+        let slot = table.index_of(&dest(1)).unwrap();
+        table.remove_route(slot);
+
+        assert_eq!(table.route_count(), 2);
+        assert_eq!(table.hop_count_to(&dest(1)), None);
+        assert!(table.retained_announce_for(&dest(1)).is_none());
+
+        assert_eq!(table.hop_count_to(&dest(2)), Some(2));
+        assert_eq!(table.hop_count_to(&dest(3)), Some(3));
+        assert_eq!(table.app_data_for(&dest(2)), Some(&app_data(0x22)[..]));
+        assert_eq!(
+            table.app_data_for(&dest(3)),
+            Some(&app_data(0x33)[..]),
+            "the moved row's app-data handle survives the free of the removed row's",
+        );
+        assert!(
+            table
+                .existing_route_for(&dest(3))
+                .unwrap()
+                .announce_id_history
+                .contains(&announce_id(0xA3, 1)),
+            "dest 3's announce-id history moved into the hole intact",
+        );
+        assert!(table
+            .existing_route_for(&dest(2))
+            .unwrap()
+            .announce_id_history
+            .contains(&announce_id(0xA2, 1)));
+    }
+
+    #[test]
+    fn remove_route_of_the_only_route_empties_the_table() {
+        let mut table: Rt = Rt::default();
+        record(&mut table, dest(1), 1, InstantMillis(100), announce_id(0xA1, 1), &app_data(0x11));
+        assert_eq!(table.route_count(), 1);
+
+        table.remove_route(0);
+
+        assert_eq!(table.route_count(), 0);
+        assert_eq!(table.hop_count_to(&dest(1)), None);
+
+        record(&mut table, dest(2), 2, InstantMillis(200), announce_id(0xA2, 1), &app_data(0x22));
+        assert_eq!(table.route_count(), 1);
+        assert_eq!(table.app_data_for(&dest(2)), Some(&app_data(0x22)[..]));
     }
 }
