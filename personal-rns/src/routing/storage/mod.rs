@@ -116,6 +116,7 @@ pub trait RetainedAnnounceColumns {
 pub trait AnnounceIdHistory {
     fn history(&self, slot: usize) -> AnnounceIdHistoryView<'_>;
     fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome;
+    fn swap_remove(&mut self, i: usize, last: usize);
 }
 
 #[derive(Debug, Clone, Copy)]

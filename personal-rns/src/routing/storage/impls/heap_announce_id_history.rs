@@ -35,6 +35,11 @@ impl AnnounceIdHistory for HeapAnnounceIdHistory {
             RememberOutcome::StoredFresh
         }
     }
+
+    fn swap_remove(&mut self, i: usize, last: usize) {
+        self.per_slot.swap(i, last);
+        self.per_slot.truncate(last);
+    }
 }
 
 #[cfg(test)]
@@ -62,5 +67,22 @@ mod tests {
         assert_eq!(history.remember(2, aid(99)), RememberOutcome::StoredFresh);
         assert_eq!(history.history(2).len(), 1);
         assert!(history.history(1).is_empty());
+    }
+
+    #[test]
+    fn swap_remove_moves_the_last_slots_ids_into_the_hole() {
+        let mut history = HeapAnnounceIdHistory::default();
+        history.remember(0, aid(1));
+        history.remember(1, aid(10));
+        history.remember(2, aid(20));
+        history.remember(2, aid(21));
+
+        history.swap_remove(0, 2);
+
+        assert!(history.history(0).contains(&aid(20)));
+        assert!(history.history(0).contains(&aid(21)));
+        assert!(!history.history(0).contains(&aid(1)));
+        assert!(history.history(1).contains(&aid(10)));
+        assert!(history.history(2).is_empty());
     }
 }

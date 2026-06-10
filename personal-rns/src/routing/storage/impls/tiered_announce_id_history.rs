@@ -185,6 +185,33 @@ impl<
     fn remember(&mut self, slot: usize, id: AnnounceId) -> RememberOutcome {
         TieredAnnounceIdHistory::remember(self, slot, id)
     }
+
+    fn swap_remove(&mut self, i: usize, last: usize) {
+        if i == last {
+            self.floor_len[i] = 0;
+            self.overflow_len[i] = 0;
+            return;
+        }
+
+        let last_floor = self.floor[last];
+        let last_floor_len = self.floor_len[last];
+        let last_ovlen = self.overflow_len[last] as usize;
+        let last_off = self.overflow_offset(last);
+        let mut moved = [AnnounceId::from_wire([0u8; 10]); MAX_PER_DESTINATION];
+        moved[..last_ovlen].copy_from_slice(&self.overflow[last_off..last_off + last_ovlen]);
+
+        let off_i = self.overflow_offset(i);
+        let ovlen_i = self.overflow_len[i] as usize;
+        self.overflow
+            .copy_within(off_i + ovlen_i..last_off, off_i + last_ovlen);
+        self.overflow[off_i..off_i + last_ovlen].copy_from_slice(&moved[..last_ovlen]);
+        self.overflow_len[i] = last_ovlen as u8;
+
+        self.floor[i] = last_floor;
+        self.floor_len[i] = last_floor_len;
+        self.floor_len[last] = 0;
+        self.overflow_len[last] = 0;
+    }
 }
 
 #[cfg(test)]
@@ -372,5 +399,67 @@ mod tests {
         let store: TieredAnnounceIdHistory<4, 16, 4, 64> = TieredAnnounceIdHistory::new();
         assert!(store.history(2).is_empty());
         assert_eq!(store.history(2).len(), 0);
+    }
+
+    #[test]
+    fn swap_remove_moves_a_floor_only_slot_into_the_hole() {
+        let mut store: TieredAnnounceIdHistory<2, 16, 4, 64> = TieredAnnounceIdHistory::new();
+        store.remember(0, aid(1));
+        store.remember(1, aid(10));
+        store.remember(2, aid(20));
+        store.remember(2, aid(21));
+
+        store.swap_remove(0, 2);
+
+        assert!(store.history(0).contains(&aid(20)));
+        assert!(store.history(0).contains(&aid(21)));
+        assert!(!store.history(0).contains(&aid(1)));
+        assert!(store.history(1).contains(&aid(10)));
+        assert_eq!(tier_lens(&store, 0), (2, 0));
+        assert_eq!(tier_lens(&store, 1), (1, 0));
+    }
+
+    #[test]
+    fn swap_remove_repacks_overflow_when_the_middle_carries_some() {
+        let mut store: TieredAnnounceIdHistory<2, 16, 4, 64> = TieredAnnounceIdHistory::new();
+        for id in [1u8, 2, 3] {
+            store.remember(0, aid(id));
+        }
+        for id in [10u8, 11, 12] {
+            store.remember(1, aid(id));
+        }
+        for id in [20u8, 21, 22, 23] {
+            store.remember(2, aid(id));
+        }
+
+        store.swap_remove(0, 2);
+
+        for id in [20u8, 21, 22, 23] {
+            assert!(store.history(0).contains(&aid(id)));
+        }
+        assert!(!store.history(0).contains(&aid(1)));
+        assert_eq!(tier_lens(&store, 0), (2, 2));
+        for id in [10u8, 11, 12] {
+            assert!(
+                store.history(1).contains(&aid(id)),
+                "the middle slot's overflow must survive the repack"
+            );
+        }
+        assert_eq!(tier_lens(&store, 1), (2, 1));
+    }
+
+    #[test]
+    fn swap_remove_of_the_last_slot_just_clears_it() {
+        let mut store: TieredAnnounceIdHistory<2, 16, 4, 64> = TieredAnnounceIdHistory::new();
+        store.remember(0, aid(1));
+        for id in [10u8, 11, 12] {
+            store.remember(1, aid(id));
+        }
+
+        store.swap_remove(1, 1);
+
+        assert_eq!(tier_lens(&store, 1), (0, 0));
+        assert!(!store.history(1).contains(&aid(10)));
+        assert!(store.history(0).contains(&aid(1)));
     }
 }
