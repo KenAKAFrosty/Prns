@@ -98,14 +98,16 @@ mod heap {
 
 pub struct AnnouncePacer<Q: PacerQueue> {
     cap: AnnounceBandwidthCap,
+    bitrate_bps: Option<u32>,
     allowed_at: InstantMillis,
     queue: Q,
 }
 
 impl<Q: PacerQueue> AnnouncePacer<Q> {
-    pub fn new(cap: AnnounceBandwidthCap) -> Self {
+    pub fn new(cap: AnnounceBandwidthCap, bitrate_bps: Option<u32>) -> Self {
         Self {
             cap,
+            bitrate_bps,
             allowed_at: InstantMillis(0),
             queue: Q::default(),
         }
@@ -114,7 +116,12 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
     pub fn offer(&mut self, bytes: &[u8], hops: u8, now: InstantMillis, send: impl FnOnce(&[u8])) {
         if self.queue.is_empty() && self.allowed_at.0 <= now.0 {
             send(bytes);
-            self.allowed_at = InstantMillis(now.0.saturating_add(self.cap.spacing_ms(bytes.len())));
+            self.allowed_at = InstantMillis(
+                now.0.saturating_add(
+                    self.cap
+                        .cooldown_after_send_ms(self.bitrate_bps, bytes.len()),
+                ),
+            );
         } else {
             self.queue.insert(bytes, hops);
         }
@@ -125,9 +132,10 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
             return false;
         }
         let cap = self.cap;
+        let bitrate_bps = self.bitrate_bps;
         match self.queue.pop_priority_with(|bytes| {
             send(bytes);
-            cap.spacing_ms(bytes.len())
+            cap.cooldown_after_send_ms(bitrate_bps, bytes.len())
         }) {
             Some(spacing) => {
                 self.allowed_at = InstantMillis(now.0.saturating_add(spacing));
@@ -150,10 +158,8 @@ impl<Q: PacerQueue> AnnouncePacer<Q> {
 mod tests {
     use super::*;
 
-    const SLOW: AnnounceBandwidthCap = AnnounceBandwidthCap::Limited {
-        bitrate_bps: 5_000,
-        cap_per_mille: 20,
-    };
+    const SLOW: AnnounceBandwidthCap = AnnounceBandwidthCap::RNS_DEFAULT;
+    const SLOW_BITRATE: Option<u32> = Some(5_000);
     const SPACING_MS: u64 = 800;
 
     fn frame(tag: u8) -> [u8; 10] {
@@ -166,7 +172,8 @@ mod tests {
 
     #[test]
     fn an_unlimited_link_emits_immediately_and_never_queues() {
-        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(AnnounceBandwidthCap::Unlimited);
+        let mut pacer =
+            AnnouncePacer::<FixedPacerQueue<4>>::new(AnnounceBandwidthCap::Unlimited, None);
         let mut sent = capture();
         for at in [0, 1, 2, 3] {
             pacer.offer(&frame(at as u8), 1, InstantMillis(at), |b| {
@@ -180,7 +187,7 @@ mod tests {
 
     #[test]
     fn an_idle_pacer_emits_the_first_announce_now() {
-        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(SLOW);
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(SLOW, SLOW_BITRATE);
         let mut sent = capture();
         pacer.offer(&frame(0), 1, InstantMillis(1_000), |b| {
             sent.push(b.to_vec())
@@ -191,7 +198,7 @@ mod tests {
 
     #[test]
     fn a_second_announce_within_the_window_queues() {
-        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(SLOW);
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<4>>::new(SLOW, SLOW_BITRATE);
         let mut sent = capture();
         pacer.offer(&frame(0), 1, InstantMillis(1_000), |b| {
             sent.push(b.to_vec())
@@ -208,7 +215,7 @@ mod tests {
 
     #[test]
     fn the_queue_releases_lowest_hops_first() {
-        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW);
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW, SLOW_BITRATE);
         let mut sent = capture();
         pacer.offer(&frame(9), 9, InstantMillis(0), |b| sent.push(b.to_vec()));
         pacer.offer(&frame(5), 5, InstantMillis(0), |b| sent.push(b.to_vec()));
@@ -227,7 +234,7 @@ mod tests {
 
     #[test]
     fn a_burst_drains_one_per_spacing_interval() {
-        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW);
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<8>>::new(SLOW, SLOW_BITRATE);
         let mut sent = capture();
         for n in 0..4 {
             pacer.offer(&frame(n), 1, InstantMillis(0), |b| sent.push(b.to_vec()));
@@ -249,7 +256,7 @@ mod tests {
 
     #[test]
     fn a_full_fixed_queue_evicts_the_worst_hops() {
-        let mut pacer = AnnouncePacer::<FixedPacerQueue<2>>::new(SLOW);
+        let mut pacer = AnnouncePacer::<FixedPacerQueue<2>>::new(SLOW, SLOW_BITRATE);
         let mut sent = capture();
         pacer.offer(&frame(5), 5, InstantMillis(0), |b| sent.push(b.to_vec()));
         pacer.offer(&frame(5), 5, InstantMillis(0), |b| sent.push(b.to_vec()));
@@ -277,7 +284,7 @@ mod tests {
 
     #[test]
     fn a_heap_queue_grows_without_dropping() {
-        let mut pacer = AnnouncePacer::<HeapPacerQueue>::new(SLOW);
+        let mut pacer = AnnouncePacer::<HeapPacerQueue>::new(SLOW, SLOW_BITRATE);
         let mut sent = capture();
         for n in 0..64u8 {
             pacer.offer(&frame(n), 1, InstantMillis(0), |b| sent.push(b.to_vec()));

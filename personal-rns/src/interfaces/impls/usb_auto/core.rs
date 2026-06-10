@@ -231,7 +231,8 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
         },
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::from_bitrate(HOST_USB_BITRATE_BPS),
+        bitrate_bps: Some(HOST_USB_BITRATE_BPS),
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
     }
 }
 
@@ -244,7 +245,8 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
         },
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::from_bitrate(DEVICE_USB_BITRATE_BPS),
+        bitrate_bps: Some(DEVICE_USB_BITRATE_BPS),
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
     }
 }
 

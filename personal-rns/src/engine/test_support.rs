@@ -227,6 +227,7 @@ pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceConfig {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
+        bitrate_bps: None,
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
     }

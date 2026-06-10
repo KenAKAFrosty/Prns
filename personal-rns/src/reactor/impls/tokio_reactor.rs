@@ -194,7 +194,7 @@ pub async fn run<S, H, A>(
         .iter()
         .map(|config| InterfacePacer {
             id: config.id,
-            pacer: AnnouncePacer::new(config.announce_bandwidth_cap),
+            pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
         })
         .collect();
     loop {
@@ -332,6 +332,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
+            bitrate_bps: None,
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         }
@@ -340,13 +341,12 @@ mod tests {
     #[test]
     fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
         let id = InterfaceId::new([0x5a; 16]);
-        let cap = AnnounceBandwidthCap::Limited {
-            bitrate_bps: 5_000,
-            cap_per_mille: 20,
-        };
         let mut pacers = std::vec![InterfacePacer {
             id,
-            pacer: AnnouncePacer::<HeapPacerQueue>::new(cap),
+            pacer: AnnouncePacer::<HeapPacerQueue>::new(
+                AnnounceBandwidthCap::RNS_DEFAULT,
+                Some(5_000),
+            ),
         }];
         let (tx, mut rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let egress = Egress::new(std::vec![(id, tx)]);
@@ -510,10 +510,8 @@ mod tests {
         let source = InterfaceId::new([0xA1; 16]);
         let peer = InterfaceId::new([0xB2; 16]);
         let slow_peer = InterfaceConfig {
-            announce_bandwidth_cap: AnnounceBandwidthCap::Limited {
-                bitrate_bps: 1_000,
-                cap_per_mille: 20,
-            },
+            bitrate_bps: Some(1_000),
+            announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
             ..descriptor(peer)
         };
         let view = std::vec![descriptor(source), slow_peer];

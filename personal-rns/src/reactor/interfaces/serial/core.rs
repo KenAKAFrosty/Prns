@@ -24,7 +24,8 @@ pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
         },
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
-        announce_bandwidth_cap: AnnounceBandwidthCap::from_bitrate(1_000_000),
+        bitrate_bps: Some(1_000_000),
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
     }
 }
 

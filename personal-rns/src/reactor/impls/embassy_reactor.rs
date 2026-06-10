@@ -214,7 +214,7 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
     for config in interfaces {
         let _ = pacers.push(InterfacePacer {
             id: config.id,
-            pacer: AnnouncePacer::new(config.announce_bandwidth_cap),
+            pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
         });
     }
     loop {
@@ -370,6 +370,7 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
+            bitrate_bps: None,
             announce_rate_limit: None,
             announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         }
