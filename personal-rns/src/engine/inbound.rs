@@ -1,6 +1,6 @@
 use crate::engine::{
     AnnounceIngest, CachedPathResponseOutcome, Directive, EngineReaction, EngineState,
-    IngestPacketOutcome, InstantMillis, Journaled, LaneWake, PathFound, PathResponseWriteOutcome,
+    IngestPacketOutcome, InstantMillis, Journaled, PathFound, PathResponseWriteOutcome,
     ProofIngest, Settlement, WakeSchedules,
 };
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
@@ -31,8 +31,8 @@ impl<S: EngineStorage> EngineState<S> {
     /// the stream. `fill_entropy` is pulled only when a path response is actually minted.
     /// Returns a [`WakeSchedules`] delta for the scheduled lanes this packet moved — a learned
     /// announce can schedule a rebroadcast, settle waiting path requests, and move the route
-    /// expiry, a hold arms the held lane (its at-capacity cull attempt can move the expiry
-    /// too), an arriving proof retires a send-timeout; everything else is `Unchanged`.
+    /// expiry (as can an ignored one whose insert attempt culled or evicted before dropping),
+    /// an arriving proof retires a send-timeout; everything else is `Unchanged`.
     pub fn ingest_packet_into<F>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -70,11 +70,9 @@ impl<S: EngineStorage> EngineState<S> {
                 delta.path_request_timeout = self.path_timeout_lane();
                 delta.expired_routes = self.route_expiry_lane();
             }
-            IngestPacketOutcome::Announce(AnnounceIngest::HeldForRetry) => {
-                delta.held_announces = LaneWake::Due;
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {
                 delta.expired_routes = self.route_expiry_lane();
             }
-            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
             IngestPacketOutcome::Delivery {
                 delivery,
                 maybe_owed_proof,

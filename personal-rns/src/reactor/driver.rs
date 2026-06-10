@@ -30,22 +30,17 @@ pub async fn wait_for_pacer<H: Host>(host: &H, deadline: Option<InstantMillis>) 
     }
 }
 
-pub fn fire_due_lane<S, H>(
+pub fn fire_due_lane<S>(
     engine: &mut EngineState<S>,
     lane: DueLane,
     now: InstantMillis,
     interfaces: &[InterfaceConfig],
-    host: &mut H,
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) -> WakeSchedules
 where
     S: EngineStorage,
-    H: Host,
 {
     match lane {
-        DueLane::HeldAnnounces => {
-            engine.recover_held_announces(draw_jitter(host), interfaces, on_reaction)
-        }
         DueLane::RebroadcastAnnounces => {
             engine.fire_due_announce_rebroadcasts(now, interfaces, on_reaction)
         }

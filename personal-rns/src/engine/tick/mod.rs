@@ -1,105 +1,16 @@
 use crate::engine::egress::firable_on;
 use crate::engine::{
-    Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, Journaled, LaneWake,
-    WakeSchedules,
+    Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, WakeSchedules,
 };
 use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::{
-    jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
-    REBROADCAST_RETRANSMIT_INTERVAL_MS,
+    MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
 };
-use crate::routing::announce::held_cache::HeldAnnounces as _;
 use crate::routing::announce::schedule::RebroadcastQueue as _;
-use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::storage::EngineStorage;
-use crate::routing::UpsertRouteOutcome;
-use crate::wire::{DestinationType, MTU};
+use crate::wire::MTU;
 
 impl<S: EngineStorage> EngineState<S> {
-    /// Retry every held announce against the now-unblocked routing arena. Each that lands
-    /// is journaled `AnnounceHeard` — a hold defers the hearing, it never drops it — and,
-    /// if we transport and an interface can carry it, scheduled for rebroadcast. Drains the
-    /// whole cache, so the held lane ends `Idle`; returns that plus the rebroadcast and
-    /// route-expiry lanes a recovered upsert moved, as a [`WakeSchedules`] delta.
-    pub fn recover_held_announces(
-        &mut self,
-        jitter: JitterSeed,
-        interfaces: &[InterfaceConfig],
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedules {
-        use crate::routing::announce::held_cache::HoldReason;
-        while let Some(held) = self.held_announces_cache.take_next() {
-            match held.reason() {
-                HoldReason::RoutingArenaPressure => {
-                    let announce = held.announce();
-                    let arrival = held.arrived_at();
-                    let received_hops = held.received_hops();
-                    let source_interface = held.source_interface();
-                    let decision = AnnounceAcceptanceInput {
-                        packet_hops: received_hops,
-                        announce_id: announce.announce_id,
-                        destination_is_self_or_upstream: self
-                            .upstream_app_destinations
-                            .lookup(&announce.destination, DestinationType::Single)
-                            .is_some(),
-                        existing_route: self
-                            .routing_table
-                            .existing_route_for(&announce.destination),
-                        arrived_at: arrival,
-                    }
-                    .determine_acceptance();
-                    if matches!(decision, AnnounceAcceptanceDecision::Accept(_)) {
-                        let outcome = self.routing_table.upsert_route(
-                            received_hops,
-                            arrival,
-                            source_interface,
-                            held.next_hop(),
-                            &announce,
-                            &mut |removed| {
-                                sink(EngineReaction::Journaled(
-                                    crate::engine::inbound::journal_removal(removed),
-                                ));
-                            },
-                        );
-                        if matches!(
-                            outcome,
-                            UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated
-                        ) {
-                            sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
-                                destination: announce.destination,
-                                hops: received_hops,
-                                source_interface,
-                            }));
-                            if self.transport_id.is_some()
-                                && interfaces
-                                    .iter()
-                                    .any(|descriptor| descriptor.capabilities.allows_transport())
-                            {
-                                let offset = jitter_offset_for(
-                                    jitter,
-                                    &announce.destination,
-                                    DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
-                                );
-                                self.pending_rebroadcasts.schedule(
-                                    announce.destination,
-                                    InstantMillis(arrival.0.saturating_add(offset)),
-                                    source_interface,
-                                    received_hops,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        WakeSchedules {
-            held_announces: LaneWake::Idle,
-            rebroadcast_announces: self.rebroadcast_lane(),
-            expired_routes: self.route_expiry_lane(),
-            ..WakeSchedules::UNCHANGED
-        }
-    }
-
     /// One [`EgressDirective`] per (rebroadcast due at `now` × interface the engine elects
     /// to fire it on). The fan-out decision is the engine's alone ([`firable_on`]); the
     /// caller takes each named target to its handle. The reactor's
@@ -175,11 +86,10 @@ impl<S: EngineStorage> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
-    use crate::identity::in_memory::InMemoryNodeIdentity;
+    use crate::engine::LaneWake;
     use crate::interfaces::{InboundPacket, InterfaceId};
-    use crate::routing::announce::{Announce, AnnounceId};
-    use crate::routing::storage::FixedInline;
-    use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader, MTU};
+    use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
+    use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader};
 
     #[test]
     fn a_fresh_drive_is_deterministic_and_emits_nothing() {
@@ -194,86 +104,6 @@ mod tests {
         assert_eq!(left_out.egress_directive_count, 0);
         assert!(left_bytes.is_empty());
         assert_eq!(left_bytes, right_bytes);
-    }
-
-    #[test]
-    fn tick_retries_a_held_entry_and_discards_it_when_the_arena_is_still_full() {
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut raw,
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        assert_eq!(state.held_announce_count(), 1);
-
-        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000), &[]);
-        assert_eq!(out.recovered_from_held_count, 0);
-        assert_eq!(state.held_announce_count(), 0);
-        assert_eq!(state.route_count(), 0);
-    }
-
-    #[test]
-    fn tick_drains_the_entire_held_cache_in_one_pass() {
-        use crate::engine::egress::write_announce_wire_packet;
-        use crate::routing::announce::expand_name;
-
-        let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
-
-        let key = fixed_secret_key();
-        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&key);
-        let announce2 = Announce::build_signed(
-            &identity,
-            expand_name("personal", &["other"]).unwrap(),
-            AnnounceId::from_wire([0x55; 10]),
-            None,
-            b"hello-personal",
-        )
-        .unwrap();
-        let mut buf2 = [0u8; MTU];
-        let n2 = write_announce_wire_packet(&announce2, 0, &mut buf2).unwrap();
-
-        let mut raw1 = hx(RAW_ANNOUNCE);
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut raw1,
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_001),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut buf2[..n2],
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        assert_eq!(
-            state.held_announce_count(),
-            2,
-            "both distinct destinations parked under arena pressure"
-        );
-
-        let (out, _bytes) = tick_capture(&mut state, InstantMillis(2_000), &[]);
-        assert_eq!(
-            state.held_announce_count(),
-            0,
-            "one tick drains the entire held cache, not just one entry"
-        );
-        assert_eq!(
-            out.recovered_from_held_count, 0,
-            "arena still full → both discard"
-        );
     }
 
     #[test]
@@ -535,30 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn held_retry_that_fails_does_not_schedule_a_rebroadcast() {
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut raw,
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        assert_eq!(state.held_announce_count(), 1);
-        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
-
-        let (tick_out, bytes) = tick_capture(&mut state, InstantMillis(2_000), &[]);
-        assert_eq!(tick_out.recovered_from_held_count, 0);
-        assert_eq!(tick_out.egress_directive_count, 0);
-        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
-        assert!(bytes.is_empty());
-    }
-
-    #[test]
     fn fire_due_announce_rebroadcasts_emits_then_re_arms_until_the_cap() {
         fn fire(
             state: &mut EngineState<Cap>,
@@ -636,50 +442,5 @@ mod tests {
             "reaching the rebroadcast cap drops the entry",
         );
         assert_eq!(lane, LaneWake::Idle, "no rebroadcasts remain after the cap");
-    }
-
-    #[test]
-    fn recover_held_announces_is_silent_when_nothing_recovers() {
-        let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 16, 4, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
-        let _ = state.ingest_packet(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
-                bytes: &mut raw,
-            },
-            TEST_ENTROPY,
-            &transporting_view(),
-        );
-        assert_eq!(state.held_announce_count(), 1);
-
-        let mut journaled = 0usize;
-        let delta =
-            state.recover_held_announces(TEST_ENTROPY, &transporting_view(), &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::AnnounceHeard { .. }) = reaction {
-                    journaled += 1;
-                }
-            });
-
-        assert_eq!(
-            journaled, 0,
-            "a hold that fails to recover journals nothing"
-        );
-        assert_eq!(
-            delta.held_announces,
-            LaneWake::Idle,
-            "draining the cache leaves the held lane idle",
-        );
-        assert_eq!(
-            delta.rebroadcast_announces,
-            LaneWake::Idle,
-            "nothing recovered, so nothing was scheduled to rebroadcast",
-        );
-        assert_eq!(
-            state.held_announce_count(),
-            0,
-            "the retry still drains the held cache",
-        );
     }
 }

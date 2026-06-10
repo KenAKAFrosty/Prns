@@ -239,7 +239,6 @@ pub async fn run<S, H, A>(
                     lane,
                     now,
                     &interfaces,
-                    &mut host,
                     &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine);

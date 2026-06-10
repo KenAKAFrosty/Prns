@@ -52,7 +52,7 @@ const INBOUND_CAP: usize = 8;
 const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32, 8, 8, 8, 8, 8>;
+type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8>;
 
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);

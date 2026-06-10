@@ -19,7 +19,7 @@ use crate::wire::{
     TransportId, WireContext, WirePacketHeader, MTU,
 };
 
-pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>;
+pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16>;
 
 pub(crate) const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
 pub(crate) const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =
@@ -191,7 +191,6 @@ pub(crate) fn sealed_single_packet_routed(
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct TickSnapshot {
     pub(crate) egress_directive_count: usize,
-    pub(crate) recovered_from_held_count: usize,
 }
 
 pub(crate) fn tick_capture<S: EngineStorage>(
@@ -199,16 +198,6 @@ pub(crate) fn tick_capture<S: EngineStorage>(
     now: InstantMillis,
     interfaces: &[InterfaceConfig],
 ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
-    let mut recovered_from_held_count = 0;
-    let _ = state.recover_held_announces(TEST_ENTROPY, interfaces, &mut |reaction| {
-        if matches!(
-            reaction,
-            EngineReaction::Journaled(Journaled::AnnounceHeard { .. })
-        ) {
-            recovered_from_held_count += 1;
-        }
-    });
-
     let mut emitted = std::vec::Vec::new();
     let _ = state.fire_due_announce_rebroadcasts(now, interfaces, &mut |reaction| {
         if let EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) = reaction {
@@ -218,18 +207,14 @@ pub(crate) fn tick_capture<S: EngineStorage>(
 
     let snapshot = TickSnapshot {
         egress_directive_count: emitted.len(),
-        recovered_from_held_count,
     };
     (snapshot, emitted)
 }
 
-pub(crate) fn observable_state<S: EngineStorage>(
-    state: &EngineState<S>,
-) -> (u64, usize, usize, usize) {
+pub(crate) fn observable_state<S: EngineStorage>(state: &EngineState<S>) -> (u64, usize, usize) {
     (
         state.ingested_packet_count(),
         state.route_count(),
-        state.held_announce_count(),
         state.pending_announce_rebroadcast_count(),
     )
 }

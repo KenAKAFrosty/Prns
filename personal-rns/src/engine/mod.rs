@@ -48,7 +48,6 @@ use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::delivery::receipts::Receipts;
@@ -66,7 +65,6 @@ pub struct InstantMillis(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DueLane {
-    HeldAnnounces,
     RebroadcastAnnounces,
     SendSingleTimeout,
     PathRequestTimeout,
@@ -84,7 +82,6 @@ pub enum ScheduledWake {
 pub enum LaneWake {
     Unchanged,
     Idle,
-    Due,
     At(InstantMillis),
 }
 
@@ -96,7 +93,6 @@ impl LaneWake {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeSchedules {
-    pub held_announces: LaneWake,
     pub rebroadcast_announces: LaneWake,
     pub send_single_timeout: LaneWake,
     pub path_request_timeout: LaneWake,
@@ -105,7 +101,6 @@ pub struct WakeSchedules {
 
 impl WakeSchedules {
     pub const UNCHANGED: Self = Self {
-        held_announces: LaneWake::Unchanged,
         rebroadcast_announces: LaneWake::Unchanged,
         send_single_timeout: LaneWake::Unchanged,
         path_request_timeout: LaneWake::Unchanged,
@@ -114,7 +109,6 @@ impl WakeSchedules {
 
     pub fn merge(&mut self, delta: WakeSchedules) {
         for (slot, change) in [
-            (&mut self.held_announces, delta.held_announces),
             (&mut self.rebroadcast_announces, delta.rebroadcast_announces),
             (&mut self.send_single_timeout, delta.send_single_timeout),
             (&mut self.path_request_timeout, delta.path_request_timeout),
@@ -131,7 +125,6 @@ impl WakeSchedules {
         for (wake, lane) in [
             //An implicit priority is here. Items higher in this list will trigger their 'due' before the later items
             //If we need to manage this, the WakeSchedules might need some more light bookkeeping to better distribute that. Marked here for later REVIEW
-            (self.held_announces, DueLane::HeldAnnounces),
             (self.rebroadcast_announces, DueLane::RebroadcastAnnounces),
             (self.send_single_timeout, DueLane::SendSingleTimeout),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
@@ -139,7 +132,6 @@ impl WakeSchedules {
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
-                LaneWake::Due => return ScheduledWake::Due(lane),
                 LaneWake::At(at) => {
                     if at <= now {
                         return ScheduledWake::Due(lane);
@@ -159,7 +151,6 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
     pub(crate) routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
-    pub(crate) held_announces_cache: S::Held,
     pub(crate) pending_rebroadcasts: S::Pending,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     pub(crate) packet_hash_history: S::PacketHashes,
@@ -179,7 +170,6 @@ impl<S: EngineStorage> Default for EngineState<S> {
             ingested_packet_count: 0,
             ingested_command_count: 0,
             routing_table: Default::default(),
-            held_announces_cache: Default::default(),
             pending_rebroadcasts: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
@@ -201,7 +191,6 @@ where
     S::Announces: core::fmt::Debug,
     S::History: core::fmt::Debug,
     S::AppData: core::fmt::Debug,
-    S::Held: core::fmt::Debug,
     S::Pending: core::fmt::Debug,
     S::UpstreamAppDestinations: core::fmt::Debug,
     S::PacketHashes: core::fmt::Debug,
@@ -211,7 +200,6 @@ where
             .field("ingested_packet_count", &self.ingested_packet_count)
             .field("ingested_command_count", &self.ingested_command_count)
             .field("routing_table", &self.routing_table)
-            .field("held_announces_cache", &self.held_announces_cache)
             .field("pending_rebroadcasts", &self.pending_rebroadcasts)
             .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
@@ -254,21 +242,8 @@ impl<S: EngineStorage> EngineState<S> {
         self.routing_table.route_count_via(interface)
     }
 
-    pub fn held_announce_count(&self) -> usize {
-        self.held_announces_cache.len()
-    }
-
     pub fn pending_announce_rebroadcast_count(&self) -> usize {
         self.pending_rebroadcasts.pending_count()
-    }
-
-    /// The held lane's state: `Due` while any announce waits on the arena, else `Idle`.
-    pub(crate) fn held_lane(&self) -> LaneWake {
-        if self.held_announce_count() > 0 {
-            LaneWake::Due
-        } else {
-            LaneWake::Idle
-        }
     }
 
     /// The rebroadcast lane's state from the soonest scheduled re-emit.
@@ -298,7 +273,6 @@ impl<S: EngineStorage> EngineState<S> {
     /// a lane it moved (which the oracle catches).
     pub fn wake_schedules(&self) -> WakeSchedules {
         WakeSchedules {
-            held_announces: self.held_lane(),
             rebroadcast_announces: self.rebroadcast_lane(),
             send_single_timeout: self.send_timeout_lane(),
             path_request_timeout: self.path_timeout_lane(),
@@ -416,14 +390,12 @@ mod tests {
     }
 
     fn schedules(
-        held: LaneWake,
         rebroadcast: LaneWake,
         send: LaneWake,
         path: LaneWake,
         expired: LaneWake,
     ) -> WakeSchedules {
         WakeSchedules {
-            held_announces: held,
             rebroadcast_announces: rebroadcast,
             send_single_timeout: send,
             path_request_timeout: path,
@@ -438,30 +410,13 @@ mod tests {
             LaneWake::Idle,
             LaneWake::Idle,
             LaneWake::Idle,
-            LaneWake::Idle,
         );
         assert_eq!(clear.soonest(InstantMillis(1_000)), ScheduledWake::Idle);
     }
 
     #[test]
-    fn wake_schedules_soonest_lets_held_preempt_every_deadline() {
-        let pressed = schedules(
-            LaneWake::Due,
-            LaneWake::At(InstantMillis(10)),
-            LaneWake::At(InstantMillis(5)),
-            LaneWake::Idle,
-            LaneWake::At(InstantMillis(3)),
-        );
-        assert_eq!(
-            pressed.soonest(InstantMillis(0)),
-            ScheduledWake::Due(DueLane::HeldAnnounces),
-        );
-    }
-
-    #[test]
     fn wake_schedules_soonest_names_the_earliest_future_deadline() {
         let scheduled = schedules(
-            LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
             LaneWake::At(InstantMillis(7_000)),
@@ -479,7 +434,6 @@ mod tests {
     #[test]
     fn wake_schedules_soonest_fires_a_deadline_already_passed() {
         let scheduled = schedules(
-            LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
             LaneWake::Idle,
@@ -495,7 +449,6 @@ mod tests {
     #[test]
     fn wake_schedules_soonest_breaks_a_tie_toward_the_higher_priority_lane() {
         let tied = schedules(
-            LaneWake::Idle,
             LaneWake::At(InstantMillis(5_000)),
             LaneWake::At(InstantMillis(5_000)),
             LaneWake::Idle,
@@ -513,7 +466,6 @@ mod tests {
     #[test]
     fn wake_schedules_merge_replaces_named_lanes_and_keeps_the_rest() {
         let mut live = schedules(
-            LaneWake::Idle,
             LaneWake::At(InstantMillis(9_000)),
             LaneWake::At(InstantMillis(3_000)),
             LaneWake::Idle,
@@ -533,7 +485,6 @@ mod tests {
             LaneWake::At(InstantMillis(3_000)),
             "an untouched lane keeps its cached deadline",
         );
-        assert_eq!(live.held_announces, LaneWake::Idle);
         assert_eq!(live.path_request_timeout, LaneWake::Idle);
     }
 
@@ -658,7 +609,7 @@ mod tests {
     #[test]
     fn a_full_table_journals_the_eviction_then_the_new_hearing() {
         use crate::wire::DestinationHash;
-        type OneSlot = FixedInline<1, 8, 64, 4, 32, 4, 4, 4, 32, 4, 4, 4, 4, 8>;
+        type OneSlot = FixedInline<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8>;
         let mut state: EngineState<OneSlot> = EngineState::default();
         let mut schedules = state.wake_schedules();
 
@@ -735,9 +686,8 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state = EngineState::<
-            FixedInline<64, 128, 4096, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>,
-        >::default();
+        let mut state =
+            EngineState::<FixedInline<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
         state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
             InboundPacket {

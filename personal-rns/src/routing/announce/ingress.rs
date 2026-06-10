@@ -5,7 +5,6 @@ use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
 };
-use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::Announce;
@@ -150,7 +149,6 @@ impl<'a> Ingress<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnounceIngest {
     Accepted(AcceptedAnnounce),
-    HeldForRetry,
     Ignored,
 }
 
@@ -650,23 +648,9 @@ impl<S: EngineStorage> EngineState<S> {
                     rebroadcast,
                 })
             }
-            UpsertRouteOutcome::Dropped(DropCause::PayloadArenaFull) => {
-                use crate::routing::announce::held_cache::{HoldReason, ParkOutcome};
-                match self.held_announces_cache.park(
-                    &announce,
-                    arrived_at,
-                    received_hops,
-                    HoldReason::RoutingArenaPressure,
-                    source_interface,
-                    next_hop,
-                ) {
-                    ParkOutcome::Parked | ParkOutcome::Overwrote => AnnounceIngest::HeldForRetry,
-                    ParkOutcome::CacheFull | ParkOutcome::AppDataTooLarge => {
-                        AnnounceIngest::Ignored
-                    }
-                }
-            }
-            UpsertRouteOutcome::Dropped(DropCause::RoutingTableFull) => AnnounceIngest::Ignored,
+            UpsertRouteOutcome::Dropped(
+                DropCause::PayloadArenaFull | DropCause::RoutingTableFull,
+            ) => AnnounceIngest::Ignored,
         }
     }
 }
@@ -2493,10 +2477,10 @@ mod tests {
     }
 
     #[test]
-    fn arena_full_drops_park_the_inbound_bytes_for_retry() {
+    fn an_announce_whose_app_data_can_never_fit_is_ignored() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 64, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
+            EngineState::<FixedInline<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {
@@ -2510,9 +2494,9 @@ mod tests {
 
         assert_eq!(
             out,
-            IngestPacketOutcome::Announce(AnnounceIngest::HeldForRetry)
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
+            "an app_data larger than the whole arena has no eviction that can admit it",
         );
         assert_eq!(state.route_count(), 0);
-        assert_eq!(state.held_announce_count(), 1);
     }
 }

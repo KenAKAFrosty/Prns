@@ -7,7 +7,6 @@ use crate::crypto::Ed25519Signature;
 use crate::engine::InstantMillis;
 use crate::identity::held::HeldIdentityColumns;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::held_cache::HeldAnnounces;
 use crate::routing::announce::rate_limit::AnnounceRateColumns;
 use crate::routing::announce::schedule::RebroadcastQueue;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
@@ -177,7 +176,6 @@ pub trait EngineStorage {
     type History: AnnounceIdHistory + Default;
     type AppData: RetainedAppData + Default;
     type Pending: RebroadcastQueue + Default;
-    type Held: HeldAnnounces + Default;
     type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
     type HeldIdentities: HeldIdentityColumns + Default;
     type SelfRatchets: SelfRatchetColumns + Default;

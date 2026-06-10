@@ -260,14 +260,9 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
             }
             Either4::Third(lane) => {
                 let now = host.now();
-                let delta = fire_due_lane(
-                    &mut engine,
-                    lane,
-                    now,
-                    interfaces,
-                    &mut host,
-                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
-                );
+                let delta = fire_due_lane(&mut engine, lane, now, interfaces, &mut |reaction| {
+                    route_reaction(reaction, &egress, &mut pacers, now, &mut app)
+                });
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
             }
             Either4::Fourth(()) => {

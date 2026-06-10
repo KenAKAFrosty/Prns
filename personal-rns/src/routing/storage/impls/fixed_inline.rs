@@ -1,6 +1,5 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
-use crate::routing::announce::held_cache::FixedHeldAnnounces;
 use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
 use crate::routing::announce::schedule::FixedRebroadcastQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
@@ -20,7 +19,6 @@ pub struct FixedInline<
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
     const HISTORY_FLOOR_PER_DESTINATION: usize,
     const HISTORY_OVERFLOW_CAPACITY: usize,
-    const HELD_CACHE_CAPACITY: usize,
     const MAX_UPSTREAM_APP_DESTINATIONS: usize,
     const MAX_HELD_IDENTITIES: usize,
     const PACKET_HASH_GENERATION_CAPACITY: usize,
@@ -37,7 +35,6 @@ impl<
         const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
         const HISTORY_FLOOR_PER_DESTINATION: usize,
         const HISTORY_OVERFLOW_CAPACITY: usize,
-        const HELD_CACHE_CAPACITY: usize,
         const MAX_UPSTREAM_APP_DESTINATIONS: usize,
         const MAX_HELD_IDENTITIES: usize,
         const PACKET_HASH_GENERATION_CAPACITY: usize,
@@ -53,7 +50,6 @@ impl<
         ANNOUNCE_APP_DATA_ARENA_BYTES,
         HISTORY_FLOOR_PER_DESTINATION,
         HISTORY_OVERFLOW_CAPACITY,
-        HELD_CACHE_CAPACITY,
         MAX_UPSTREAM_APP_DESTINATIONS,
         MAX_HELD_IDENTITIES,
         PACKET_HASH_GENERATION_CAPACITY,
@@ -76,7 +72,6 @@ impl<
     // Sized by the routing table (one pending per tracked route), not the held
     // cache — there is never more than one pending rebroadcast per destination.
     type Pending = FixedRebroadcastQueue<MAX_TRACKED_DESTINATIONS>;
-    type Held = FixedHeldAnnounces<HELD_CACHE_CAPACITY>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
@@ -105,13 +100,12 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 4, 2, 2, 4, 3, 5, 8, 4, 8>;
+        type S = FixedInline<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
         let _app_data = <S as EngineStorage>::AppData::default();
         let _pending = <S as EngineStorage>::Pending::default();
-        let _held = <S as EngineStorage>::Held::default();
         let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <S as EngineStorage>::PacketHashes::default();
         let self_ratchets = <S as EngineStorage>::SelfRatchets::default();

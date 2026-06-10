@@ -38,7 +38,7 @@ use personal_rns::routing::storage::FixedInline;
 mod ssd1681;
 use ssd1681::Ssd1681;
 
-type TEchoEngineState = EngineState<FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32, 8, 8, 8, 8, 8>>;
+type TEchoEngineState = EngineState<FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8>>;
 
 const PANEL_SIZE: i32 = 200;
 const SCREEN_WIDTH: i32 = 64;
@@ -258,12 +258,11 @@ async fn main(spawner: Spawner) -> ! {
                 let mut line: String<96> = String::new();
                 let _ = write!(
                     line,
-                    "techo eink={} btn={} pkts={} route={} held={}\r\n",
+                    "techo eink={} btn={} pkts={} route={}\r\n",
                     if eink_ok { "ok" } else { "err" },
                     BUTTON_COUNT.load(Ordering::Relaxed),
                     state.ingested_packet_count(),
-                    state.route_count(),
-                    state.held_announce_count()
+                    state.route_count()
                 );
                 if class.write_packet(line.as_bytes()).await.is_err() {
                     break;

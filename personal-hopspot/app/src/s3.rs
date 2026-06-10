@@ -68,7 +68,7 @@ const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
 /// The engine's fixed inline storage (no heap): the same shape the firmware has always run.
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 4, 32, 8, 8, 8, 8, 8>;
+type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8>;
 
 /// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
 /// painted stacks whenever the engine grows.
