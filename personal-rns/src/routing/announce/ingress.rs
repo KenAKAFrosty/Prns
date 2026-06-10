@@ -222,6 +222,21 @@ impl PacketToForward<'_> {
     }
 }
 
+/// The tag of a path-request payload (RNS 1.3.1 `Transport.path_request_handler`)
+fn path_request_id_from(payload: &[u8]) -> Option<PathRequestIdBytes> {
+    let region = if payload.len() > TRUNCATED_HASH_BYTE_LEN * 2 {
+        &payload[TRUNCATED_HASH_BYTE_LEN * 2..]
+    } else if payload.len() > TRUNCATED_HASH_BYTE_LEN {
+        &payload[TRUNCATED_HASH_BYTE_LEN..]
+    } else {
+        return None;
+    };
+    let used = region.len().min(TRUNCATED_HASH_BYTE_LEN);
+    let mut tag = PathRequestIdBytes::default();
+    tag[..used].copy_from_slice(&region[..used]);
+    Some(tag)
+}
+
 impl<S: EngineStorage> EngineState<S> {
     #[must_use]
     pub fn ingest_packet<'p>(
@@ -426,28 +441,27 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Transport.path_request_handler`: the payload opens with the
-    /// requested destination hash (an optional requester transport id and tag
-    /// follow, both deferred to the relay/forward work). We answer only requests
-    /// for a destination of our own; relaying a request we can't answer is later
-    /// work.
+    /// RNS 1.3.1 `Transport.path_request_handler`: the payload is the requested
+    /// destination hash, then a tag whose position depends on length — a bare
+    /// destination is tagless and ignored, a destination plus tag is the leaf
+    /// form, and a destination, requester transport id, and tag is the transport
+    /// form. We answer only requests for a destination of our own or a route we
+    /// hold; the requester transport id (response routing) is later work.
     fn ingest_path_request<'p>(&mut self, data: &DataPacket<'_>) -> IngestPacketOutcome<'p> {
-        // The leaf form: the requested destination then a random id (the
-        // optional requester transport id is deferred to a later slice).
-        let (Some(destination), Some(id)) = (
-            data.payload
-                .get(..TRUNCATED_HASH_BYTE_LEN)
-                .and_then(DestinationHash::from_slice),
-            data.payload
-                .get(TRUNCATED_HASH_BYTE_LEN..TRUNCATED_HASH_BYTE_LEN * 2)
-                .and_then(|bytes| PathRequestIdBytes::try_from(bytes).ok()),
-        ) else {
+        let Some(destination) = data
+            .payload
+            .get(..TRUNCATED_HASH_BYTE_LEN)
+            .and_then(DestinationHash::from_slice)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(tag) = path_request_id_from(data.payload) else {
             return IngestPacketOutcome::Ignored;
         };
 
-        // A request we have already seen (same destination and id) is a loop or
+        // A request we have already seen (same destination and tag) is a loop or
         // a re-arrival — drop it before answering or forwarding again.
-        if self.seen_path_requests.observe(destination, id) == PathRequestNovelty::Duplicate {
+        if self.seen_path_requests.observe(destination, tag) == PathRequestNovelty::Duplicate {
             return IngestPacketOutcome::Ignored;
         }
 
@@ -1008,6 +1022,90 @@ mod tests {
         let n = crate::engine::write_path_request_wire_packet(destination, &[0x55; 16], &mut buf)
             .unwrap();
         buf[..n].to_vec()
+    }
+
+    fn path_request_wire_with(body: &[u8]) -> std::vec::Vec<u8> {
+        let header = WirePacketHeader {
+            ifac_flag: IfacFlag::Open,
+            context_flag: ContextFlag::Unset,
+            propagation: PropagationType::Broadcast,
+            destination_type: DestinationType::Plain,
+            packet_type: PacketType::Data,
+            hops: 0,
+            transport_id: None,
+            destination: PATH_REQUEST_DESTINATION,
+            context: WireContext::None,
+        };
+        let mut wire = std::vec![0u8; HEADER_MIN_LEN];
+        header.write(&mut wire).unwrap();
+        wire.extend_from_slice(body);
+        wire
+    }
+
+    #[test]
+    fn a_transport_form_request_answers_and_dedups_on_the_tag_not_the_transport_id() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let transport_id = [0x7a; 16];
+        let tag = [0x55; 16];
+        let mut body = std::vec::Vec::new();
+        body.extend_from_slice(cached.as_bytes());
+        body.extend_from_slice(&transport_id);
+        body.extend_from_slice(&tag);
+
+        let mut wire = path_request_wire_with(&body);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::AnswerPathRequestFromCache {
+                destination: cached
+            },
+            "the 48-byte transport form is parsed and answered",
+        );
+
+        let mut same_tag_other_id = std::vec::Vec::new();
+        same_tag_other_id.extend_from_slice(cached.as_bytes());
+        same_tag_other_id.extend_from_slice(&[0xCC; 16]);
+        same_tag_other_id.extend_from_slice(&tag);
+        let mut wire = path_request_wire_with(&same_tag_other_id);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_100),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "a different transport id but the same tag is the same request — deduped",
+        );
+    }
+
+    #[test]
+    fn a_tagless_path_request_is_ignored() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let mut wire = path_request_wire_with(cached.as_bytes());
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "a bare destination carries no tag — the reference ignores it",
+        );
     }
 
     #[test]
