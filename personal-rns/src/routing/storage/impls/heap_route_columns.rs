@@ -289,7 +289,11 @@ mod tests {
 
         columns.swap_remove(0);
 
-        assert_eq!(columns.index_of(&dest_n(1)), None, "the removed dest is gone");
+        assert_eq!(
+            columns.index_of(&dest_n(1)),
+            None,
+            "the removed dest is gone"
+        );
         assert_eq!(
             columns.index_of(&dest_n(3)),
             Some(0),
@@ -313,7 +317,9 @@ mod tests {
             if insert {
                 let id = next_id;
                 next_id += 1;
-                let slot = columns.push(dest_n(id), row(1, id as u64, iface(0))).unwrap();
+                let slot = columns
+                    .push(dest_n(id), row(1, id as u64, iface(0)))
+                    .unwrap();
                 assert_eq!(slot, live.len());
                 live.push(id);
             } else {
@@ -331,6 +337,9 @@ mod tests {
             }
             assert_eq!(columns.index_of(&dest_n(next_id + 7)), None);
         }
-        assert!(live.len() > 50, "the run must grow enough to force reindexing");
+        assert!(
+            live.len() > 50,
+            "the run must grow enough to force reindexing"
+        );
     }
 }

@@ -184,7 +184,10 @@ mod tests {
                 *byte = true;
             }
         }
-        assert_eq!(total, store.used, "used must equal the sum of live span lengths");
+        assert_eq!(
+            total, store.used,
+            "used must equal the sum of live span lengths"
+        );
         assert!(
             covered.iter().all(|&c| c),
             "live spans must cover [0, used) with no gaps"
@@ -353,10 +356,16 @@ mod tests {
         let mut store = PackedAppDataArena::<64, 2>::new();
         let a = store.insert(&[1]).unwrap();
         store.insert(&[2]).unwrap();
-        assert_eq!(store.insert(&[3]), Err(RetainedAppDataError::TooManyEntries));
+        assert_eq!(
+            store.insert(&[3]),
+            Err(RetainedAppDataError::TooManyEntries)
+        );
 
         store.free(a);
-        assert!(store.insert(&[3]).is_ok(), "the freed slot admits a new entry");
+        assert!(
+            store.insert(&[3]).is_ok(),
+            "the freed slot admits a new entry"
+        );
         assert_packed(&store);
     }
 

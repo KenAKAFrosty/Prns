@@ -365,7 +365,8 @@ mod tests {
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             view,
             &mut |reaction| {
-                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
+                {
                     targets.push(target);
                 }
             },
@@ -590,7 +591,10 @@ mod tests {
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
         let (sent, lane) = fire(&mut state, first_due, &view);
         assert_eq!(sent.len(), 1, "one directive for the lone interface");
-        assert_eq!(sent[0].0, target, "the rebroadcast names the firable interface");
+        assert_eq!(
+            sent[0].0, target,
+            "the rebroadcast names the firable interface"
+        );
         assert_eq!(
             state.pending_announce_rebroadcast_count(),
             1,
@@ -598,13 +602,19 @@ mod tests {
         );
         assert_eq!(
             lane,
-            LaneWake::At(InstantMillis(first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS)),
+            LaneWake::At(InstantMillis(
+                first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS
+            )),
             "the lane is re-armed one retransmit interval out",
         );
         let (header, _) = WirePacketHeader::parse(&sent[0].1).unwrap();
         assert_eq!(header.packet_type, PacketType::Announce);
         let original = WirePacketHeader::parse(&hx(RAW_ANNOUNCE)).unwrap().0;
-        assert_eq!(header.hops, original.hops + 1, "the rebroadcast bumps the hop count");
+        assert_eq!(
+            header.hops,
+            original.hops + 1,
+            "the rebroadcast bumps the hop count"
+        );
         let first_bytes = sent[0].1.clone();
 
         let second_due = InstantMillis(first_due.0 + REBROADCAST_RETRANSMIT_INTERVAL_MS);

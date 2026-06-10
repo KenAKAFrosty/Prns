@@ -47,7 +47,9 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         let _ = self.source_interface.push(entry.source_interface);
         let _ = self.hops.push(entry.hops);
         let _ = self.emission_count.push(entry.emission_count);
-        let _ = self.peer_rebroadcast_count.push(entry.peer_rebroadcast_count);
+        let _ = self
+            .peer_rebroadcast_count
+            .push(entry.peer_rebroadcast_count);
     }
 
     fn swap_remove_row(&mut self, i: usize) {

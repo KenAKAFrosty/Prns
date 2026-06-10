@@ -33,7 +33,8 @@ impl HeapRebroadcastQueue {
         self.source_interface.push(entry.source_interface);
         self.hops.push(entry.hops);
         self.emission_count.push(entry.emission_count);
-        self.peer_rebroadcast_count.push(entry.peer_rebroadcast_count);
+        self.peer_rebroadcast_count
+            .push(entry.peer_rebroadcast_count);
     }
 
     fn swap_remove_row(&mut self, i: usize) {
