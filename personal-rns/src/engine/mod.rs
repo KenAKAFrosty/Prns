@@ -83,6 +83,11 @@ pub enum LaneWake {
     Unchanged,
     Idle,
     At(InstantMillis),
+    /// The deadline is no later than this instant; a sooner cached one stands. An
+    /// emitter uses this when it knows the one entry it touched but not the whole
+    /// lane — the cached deadline may end up early, never late, and the premature
+    /// wake's full recompute resyncs it exactly.
+    AtMost(InstantMillis),
 }
 
 impl LaneWake {
@@ -114,8 +119,15 @@ impl WakeSchedules {
             (&mut self.path_request_timeout, delta.path_request_timeout),
             (&mut self.expired_routes, delta.expired_routes),
         ] {
-            if change != LaneWake::Unchanged {
-                *slot = change;
+            match change {
+                LaneWake::Unchanged => {}
+                LaneWake::AtMost(ceiling) => {
+                    *slot = match *slot {
+                        LaneWake::At(cached) if cached <= ceiling => LaneWake::At(cached),
+                        _ => LaneWake::At(ceiling),
+                    };
+                }
+                replacement => *slot = replacement,
             }
         }
     }
@@ -132,7 +144,7 @@ impl WakeSchedules {
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
-                LaneWake::At(at) => {
+                LaneWake::At(at) | LaneWake::AtMost(at) => {
                     if at <= now {
                         return ScheduledWake::Due(lane);
                     }
@@ -494,6 +506,54 @@ mod tests {
     }
 
     #[test]
+    fn merge_at_most_keeps_a_sooner_cached_deadline_and_lowers_a_later_one() {
+        let mut live = schedules(
+            LaneWake::Idle,
+            LaneWake::Idle,
+            LaneWake::Idle,
+            LaneWake::At(InstantMillis(3_000)),
+        );
+        live.merge(WakeSchedules {
+            expired_routes: LaneWake::AtMost(InstantMillis(5_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.expired_routes,
+            LaneWake::At(InstantMillis(3_000)),
+            "a sooner cached deadline stands",
+        );
+
+        live.merge(WakeSchedules {
+            expired_routes: LaneWake::AtMost(InstantMillis(2_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.expired_routes,
+            LaneWake::At(InstantMillis(2_000)),
+            "a sooner ceiling pulls the deadline earlier",
+        );
+    }
+
+    #[test]
+    fn merge_at_most_arms_an_idle_lane() {
+        let mut live = schedules(
+            LaneWake::Idle,
+            LaneWake::Idle,
+            LaneWake::Idle,
+            LaneWake::Idle,
+        );
+        live.merge(WakeSchedules {
+            expired_routes: LaneWake::AtMost(InstantMillis(7_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            live.expired_routes,
+            LaneWake::At(InstantMillis(7_000)),
+            "the first route arms the idle lane at its own expiry",
+        );
+    }
+
+    #[test]
     fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
         let view = &transporting_view();
@@ -699,10 +759,33 @@ mod tests {
             },
         );
         schedules.merge(delta);
+        use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
+        assert_eq!(
+            schedules.expired_routes,
+            LaneWake::At(InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS)),
+            "the eviction leaves the cached deadline at the victim's old expiry — early, never late",
+        );
+        assert_eq!(
+            state.wake_schedules(view).expired_routes,
+            LaneWake::At(InstantMillis(2_000 + DEFAULT_ROUTE_EXPIRY_MILLIS)),
+            "the truth sits later: only the newcomer remains",
+        );
+
+        let resync = state.cull_expired_routes(
+            InstantMillis(1_000 + DEFAULT_ROUTE_EXPIRY_MILLIS),
+            view,
+            &mut |_| {},
+        );
+        schedules.merge(resync);
         assert_eq!(
             schedules,
             state.wake_schedules(view),
-            "the evict-then-insert delta tracks the recompute",
+            "the premature wake culls nothing and its full recompute resyncs the lane exactly",
+        );
+        assert_eq!(
+            state.route_count(),
+            1,
+            "the newcomer survived the no-op cull"
         );
 
         assert_eq!(
@@ -723,7 +806,6 @@ mod tests {
             ],
             "the victim's eviction is journaled before the newcomer's hearing",
         );
-        assert_eq!(state.route_count(), 1);
     }
 
     #[test]

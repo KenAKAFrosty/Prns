@@ -1,6 +1,6 @@
 use crate::engine::{
     AnnounceIngest, CachedPathResponseOutcome, Directive, EngineReaction, EngineState,
-    IngestPacketOutcome, InstantMillis, Journaled, PathFound, PathResponseWriteOutcome,
+    IngestPacketOutcome, InstantMillis, Journaled, LaneWake, PathFound, PathResponseWriteOutcome,
     ProofIngest, Settlement, WakeSchedules,
 };
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
@@ -30,9 +30,10 @@ impl<S: EngineStorage> EngineState<S> {
     /// legacy runtime ran after `ingest_packet`, so the reactor's inbound arm just forwards
     /// the stream. `fill_entropy` is pulled only when a path response is actually minted.
     /// Returns a [`WakeSchedules`] delta for the scheduled lanes this packet moved — a learned
-    /// announce can schedule a rebroadcast, settle waiting path requests, and move the route
-    /// expiry (as can an ignored one whose insert attempt culled or evicted before dropping),
-    /// an arriving proof retires a send-timeout; everything else is `Unchanged`.
+    /// announce can schedule a rebroadcast, settle waiting path requests, and bound the
+    /// route-expiry lane by the one route it touched (`AtMost`: never a whole-table scan on
+    /// this path; removals only push the true deadline later, so a cached one stays early,
+    /// never late), an arriving proof retires a send-timeout; everything else is `Unchanged`.
     pub fn ingest_packet_into<F>(
         &mut self,
         packet: InboundPacket<'_>,
@@ -47,9 +48,7 @@ impl<S: EngineStorage> EngineState<S> {
     {
         let source = packet.source_interface;
         let mut delta = WakeSchedules::UNCHANGED;
-        let mut routes_removed = false;
         let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
-            routes_removed = true;
             sink(EngineReaction::Journaled(journal_removal(removed)));
         });
         match outcome {
@@ -70,13 +69,12 @@ impl<S: EngineStorage> EngineState<S> {
                 }
                 delta.rebroadcast_announces = self.rebroadcast_lane();
                 delta.path_request_timeout = self.path_timeout_lane();
-                delta.expired_routes = self.route_expiry_lane(view);
+                delta.expired_routes = self
+                    .routing_table
+                    .existing_route_for(&accepted.destination, view)
+                    .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
             }
-            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {
-                if routes_removed {
-                    delta.expired_routes = self.route_expiry_lane(view);
-                }
-            }
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
             IngestPacketOutcome::Delivery {
                 delivery,
                 maybe_owed_proof,

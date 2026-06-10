@@ -63,9 +63,43 @@ pub fn merge_wake_schedules_delta<S: EngineStorage>(
     view: &[InterfaceConfig],
 ) {
     source_wake_schedules.merge(delta);
-    debug_assert_eq!(
-        *source_wake_schedules,
-        engine.wake_schedules(view),
-        "the incremental wake schedules drifted from a full recompute",
-    );
+    #[cfg(debug_assertions)]
+    {
+        let truth = engine.wake_schedules(view);
+        debug_assert_eq!(
+            source_wake_schedules.rebroadcast_announces, truth.rebroadcast_announces,
+            "the rebroadcast lane drifted from a full recompute",
+        );
+        debug_assert_eq!(
+            source_wake_schedules.send_single_timeout, truth.send_single_timeout,
+            "the send-timeout lane drifted from a full recompute",
+        );
+        debug_assert_eq!(
+            source_wake_schedules.path_request_timeout, truth.path_request_timeout,
+            "the path-timeout lane drifted from a full recompute",
+        );
+        debug_assert!(
+            never_late(source_wake_schedules.expired_routes, truth.expired_routes),
+            "the expired-routes lane must never sit later than the truth: cached {:?}, truth {:?}",
+            source_wake_schedules.expired_routes,
+            truth.expired_routes,
+        );
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = (engine, view);
+}
+
+/// The expired-routes lane runs on `AtMost` deltas, so its cached deadline may sit
+/// EARLY of the truth (a removal or refresh pushed the true deadline later) but never
+/// late — a premature wake costs one no-op cull whose full recompute resyncs the lane;
+/// a late one would miss a deadline.
+#[cfg(debug_assertions)]
+fn never_late(cached: crate::engine::LaneWake, truth: crate::engine::LaneWake) -> bool {
+    use crate::engine::LaneWake::{At, Idle};
+    match (cached, truth) {
+        (At(cached_at), At(truth_at)) => cached_at <= truth_at,
+        (At(_), Idle) => true,
+        (Idle, Idle) => true,
+        _ => cached == truth,
+    }
 }
