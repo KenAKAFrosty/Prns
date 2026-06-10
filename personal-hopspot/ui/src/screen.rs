@@ -1852,10 +1852,10 @@ mod tests {
 
         assert_eq!(compact_numeric_width("999K"), 20);
         assert_eq!(compact_numeric_width("1.2B"), 17);
-        assert!(STAT_TEXT_X + compact_numeric_width("999K") <= WIDTH - 1);
+        assert!(STAT_TEXT_X + compact_numeric_width("999K") < WIDTH);
         assert!(8 + compact_numeric_width("99M/s") < STAT_ICON_X);
         assert!(8 + compact_numeric_width("999Ms") < STAT_ICON_X);
-        assert!(ACTIVITY_TEXT_X + compact_numeric_width("-") <= WIDTH - 1);
+        assert!(ACTIVITY_TEXT_X + compact_numeric_width("-") < WIDTH);
     }
 
     #[test]
