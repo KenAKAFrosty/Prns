@@ -21,6 +21,7 @@ pub trait Host {
     fn fill_entropy(&mut self, bytes: &mut [u8]);
 }
 
+pub mod airtime;
 pub mod announce_pacer;
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
