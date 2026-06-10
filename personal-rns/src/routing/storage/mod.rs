@@ -76,6 +76,12 @@ pub trait RouteColumns {
         self.len() == 0
     }
 
+    fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
+        self.destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+    }
+
     fn destinations(&self) -> &[DestinationHash];
     fn hops(&self) -> &[u8];
     fn expires(&self) -> &[InstantMillis];

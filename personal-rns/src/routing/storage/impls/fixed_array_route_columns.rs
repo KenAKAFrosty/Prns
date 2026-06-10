@@ -196,6 +196,27 @@ mod tests {
     }
 
     #[test]
+    fn index_of_finds_a_present_destination_and_misses_an_absent_one() {
+        let mut columns: FixedArrayRouteColumns<3> = FixedArrayRouteColumns::default();
+        columns
+            .push(
+                dest(0xA1),
+                row(1, 10, RouteResponsiveness::Responsive, iface(0xE1)),
+            )
+            .unwrap();
+        columns
+            .push(
+                dest(0xB2),
+                row(2, 20, RouteResponsiveness::Responsive, iface(0xE2)),
+            )
+            .unwrap();
+
+        assert_eq!(columns.index_of(&dest(0xB2)), Some(1));
+        assert_eq!(columns.index_of(&dest(0xA1)), Some(0));
+        assert_eq!(columns.index_of(&dest(0xFF)), None);
+    }
+
+    #[test]
     fn swap_remove_moves_the_last_row_into_the_hole() {
         let mut columns: FixedArrayRouteColumns<3> = FixedArrayRouteColumns::default();
         columns

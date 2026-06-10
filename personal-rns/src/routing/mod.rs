@@ -67,10 +67,7 @@ where
     }
 
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
-        self.routes
-            .destinations()
-            .iter()
-            .position(|candidate| candidate == destination)
+        self.routes.index_of(destination)
     }
 
     pub fn existing_route_for(&self, destination: &DestinationHash) -> Option<ExistingRoute<'_>> {
