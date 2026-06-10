@@ -7,10 +7,11 @@
 //! That the dispatch *and* the seam are shared is the point: the sync core's shape holds
 //! across std and no_std.
 
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_time::{Duration, Timer};
+use heapless::Vec as HeaplessVec;
 
 use portable_atomic::{AtomicU64, AtomicU8, Ordering};
 
@@ -21,8 +22,9 @@ use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{
     ConnectionState, InboundPacket, InterfaceConfig, InterfaceId, InterfaceStatus,
 };
+use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
-    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane,
+    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
 use crate::reactor::interface_seam::{InboundFrame, InterfaceSeam, OutboundFrame};
 use crate::reactor::Host;
@@ -208,28 +210,26 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
     M: RawMutex,
 {
     let mut wake_schedules = engine.wake_schedules();
-    // The reactor carries out every `Directive` itself (egress is IO, the reactor's job);
-    // the application only ever sees `Journaled` — what already happened.
-    let mut sink = move |reaction: EngineReaction<'_>| match reaction {
-        EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            egress.enqueue(target, bytes);
-        }
-        EngineReaction::Directive(Directive::SendAnnounce { target, bytes, .. }) => {
-            egress.enqueue(target, bytes);
-        }
-        EngineReaction::Journaled(journaled) => app(journaled),
-    };
+    let mut pacers: HeaplessVec<InterfacePacer, MAX_PACED_INTERFACES> = HeaplessVec::new();
+    for config in interfaces {
+        let _ = pacers.push(InterfacePacer {
+            id: config.id,
+            pacer: AnnouncePacer::new(config.announce_bandwidth_cap),
+        });
+    }
     loop {
         let wake = wake_schedules.soonest(host.now());
+        let pacer_wake = soonest_pacer_release(&pacers);
 
-        match select3(
+        match select4(
             inbound.receive(),
             commands.receive(),
             wait_for_due_lane(&host, wake),
+            wait_for_pacer(&host, pacer_wake),
         )
         .await
         {
-            Either3::First(mut frame) => {
+            Either4::First(mut frame) => {
                 let now = host.now();
                 let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
@@ -243,28 +243,105 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
                     interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut sink,
+                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
             }
-            Either3::Second(issued) => {
+            Either4::Second(issued) => {
                 let now = host.now();
                 let delta = engine.ingest_command_into(
                     issued,
                     interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut sink,
+                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
             }
-            Either3::Third(lane) => {
+            Either4::Third(lane) => {
                 let now = host.now();
-                let delta = fire_due_lane(&mut engine, lane, now, interfaces, &mut host, &mut sink);
+                let delta = fire_due_lane(
+                    &mut engine,
+                    lane,
+                    now,
+                    interfaces,
+                    &mut host,
+                    &mut |reaction| route_reaction(reaction, &egress, &mut pacers, now, &mut app),
+                );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine);
+            }
+            Either4::Fourth(()) => {
+                let now = host.now();
+                flush_due_pacers(&mut pacers, now, &egress);
             }
         }
     }
+}
+
+const MAX_PACED_INTERFACES: usize = 2;
+const PACER_DEPTH: usize = 2;
+
+struct InterfacePacer {
+    id: InterfaceId,
+    pacer: AnnouncePacer<FixedPacerQueue<PACER_DEPTH>>,
+}
+
+fn route_reaction<M: RawMutex, const OUT: usize>(
+    reaction: EngineReaction<'_>,
+    egress: &EmbassyEgress<'_, M, OUT>,
+    pacers: &mut [InterfacePacer],
+    now: InstantMillis,
+    app: &mut impl FnMut(Journaled<'_>),
+) {
+    match reaction {
+        EngineReaction::Directive(Directive::Send { target, bytes }) => {
+            egress.enqueue(target, bytes);
+        }
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target,
+            bytes,
+            hops,
+        }) => {
+            offer_to_pacer(pacers, target, bytes, hops, now, egress);
+        }
+        EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+fn offer_to_pacer<M: RawMutex, const OUT: usize>(
+    pacers: &mut [InterfacePacer],
+    target: InterfaceId,
+    bytes: &[u8],
+    hops: u8,
+    now: InstantMillis,
+    egress: &EmbassyEgress<'_, M, OUT>,
+) {
+    match pacers.iter_mut().find(|entry| entry.id == target) {
+        Some(entry) => entry
+            .pacer
+            .offer(bytes, hops, now, |frame| egress.enqueue(target, frame)),
+        None => egress.enqueue(target, bytes),
+    }
+}
+
+fn flush_due_pacers<M: RawMutex, const OUT: usize>(
+    pacers: &mut [InterfacePacer],
+    now: InstantMillis,
+    egress: &EmbassyEgress<'_, M, OUT>,
+) {
+    for entry in pacers.iter_mut() {
+        let target = entry.id;
+        entry
+            .pacer
+            .release_due(now, |frame| egress.enqueue(target, frame));
+    }
+}
+
+fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
+    pacers
+        .iter()
+        .filter_map(|entry| entry.pacer.next_release())
+        .min_by_key(|deadline| deadline.0)
 }
 
 #[cfg(test)]
