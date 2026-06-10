@@ -5,8 +5,8 @@
 
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
-    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceId,
-    InterfaceMode, MediumKind, TransportCapability,
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::reactor::interface_seam::InterfaceSeam;
 use crate::wire::MTU;
@@ -23,8 +23,8 @@ pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
-        medium: MediumKind::DirectPeer,
         announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::from_bitrate(1_000_000),
     }
 }
 

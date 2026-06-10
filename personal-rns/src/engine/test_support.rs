@@ -7,8 +7,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IdentitySigner;
 use crate::interfaces::InboundPacket;
 use crate::interfaces::{
-    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceMode,
-    MediumKind, TransportCapability,
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceMode, TransportCapability,
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
@@ -233,8 +233,8 @@ pub(crate) fn routable_descriptor(id: InterfaceId) -> InterfaceConfig {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::Full,
-        medium: MediumKind::Loopback,
         announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
     }
 }
 

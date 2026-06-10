@@ -245,8 +245,8 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{hx, Cap, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
     use crate::interfaces::{
-        EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceMode, MediumKind,
-        TransportCapability,
+        AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+        InterfaceMode, TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
@@ -260,8 +260,8 @@ mod tests {
                 egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
             },
             mode: InterfaceMode::Full,
-            medium: MediumKind::Loopback,
             announce_rate_limit: None,
+            announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
         }
     }
 

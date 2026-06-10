@@ -2,7 +2,6 @@ pub mod capabilities;
 pub mod connection_state;
 pub mod id;
 pub mod mac;
-pub mod medium;
 pub mod mode;
 pub mod substrate;
 
@@ -19,10 +18,9 @@ pub use capabilities::{
 pub use connection_state::ConnectionState;
 pub use id::InterfaceId;
 pub use mac::MacAddress;
-pub use medium::MediumKind;
 pub use mode::InterfaceMode;
 
-pub use config::{AnnounceRateLimit, InterfaceConfig};
+pub use config::{AnnounceBandwidthCap, AnnounceRateLimit, InterfaceConfig};
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::InterfaceStatus;
 

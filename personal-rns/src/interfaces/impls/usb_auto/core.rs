@@ -1,7 +1,7 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::{
-    EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceConfig, InterfaceId,
-    InterfaceMode, MediumKind, TransportCapability,
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::wire::MTU;
 
@@ -218,6 +218,10 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
     }
 }
 
+pub const HOST_USB_BITRATE_BPS: u32 = 1_000_000_000;
+/// The measured throughput ceiling of the ESP USB-Serial-JTAG peripheral.
+pub const DEVICE_USB_BITRATE_BPS: u32 = 6_000_000;
+
 pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
     InterfaceConfig {
         id,
@@ -226,8 +230,8 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
             egress: EgressCapability::Enabled(TransportCapability::SameInterfaceRepeat),
         },
         mode: InterfaceMode::PointToPoint,
-        medium: MediumKind::DirectPeer,
         announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::from_bitrate(HOST_USB_BITRATE_BPS),
     }
 }
 
@@ -239,8 +243,8 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
-        medium: MediumKind::DirectPeer,
         announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::from_bitrate(DEVICE_USB_BITRATE_BPS),
     }
 }
 
