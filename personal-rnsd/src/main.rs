@@ -19,6 +19,7 @@ use personal_rns::engine::{
     IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::ifac::{IfacContext, InterfaceIfac, DEFAULT_IFAC_SIZE};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{run, Egress, TokioHost, TokioInterfaceSeam};
 use personal_rns::reactor::interface_seam::{InboundFrame, Interface, OutboundFrame};
@@ -148,11 +149,60 @@ fn log_journaled(journaled: Journaled<'_>) {
     }
 }
 
+struct Args {
+    path: String,
+    ifac_netname: Option<String>,
+    ifac_netkey: Option<String>,
+    ifac_size: usize,
+}
+
+fn parse_args() -> Option<Args> {
+    let mut path = None;
+    let mut ifac_netname = None;
+    let mut ifac_netkey = None;
+    let mut ifac_size = DEFAULT_IFAC_SIZE;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--ifac-netname" => ifac_netname = Some(args.next()?),
+            "--ifac-netkey" => ifac_netkey = Some(args.next()?),
+            "--ifac-size" => ifac_size = args.next()?.parse().ok()?,
+            _ if arg.starts_with("--") => return None,
+            _ => path = Some(arg),
+        }
+    }
+    Some(Args {
+        path: path?,
+        ifac_netname,
+        ifac_netkey,
+        ifac_size,
+    })
+}
+
 #[tokio::main]
 async fn main() {
-    let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: personal-rnsd <serial-device>   (e.g. /dev/ttyACM0)");
+    let Some(args) = parse_args() else {
+        eprintln!(
+            "usage: personal-rnsd <serial-device> \
+             [--ifac-netname <name>] [--ifac-netkey <key>] [--ifac-size <bytes>]"
+        );
         std::process::exit(2);
+    };
+    let path = args.path;
+
+    let ifacs = match IfacContext::derive(
+        args.ifac_netname.as_deref(),
+        args.ifac_netkey.as_deref(),
+        args.ifac_size,
+    ) {
+        Some(context) => {
+            println!("RNSD_IFAC_ENABLED size={}", context.ifac_size());
+            std::vec![InterfaceIfac {
+                id: USB_INTERFACE_ID,
+                context,
+            }]
+        }
+        None => std::vec::Vec::new(),
     };
 
     // A mains-powered std host: unbounded heap storage, no fixed cap.
@@ -200,7 +250,7 @@ async fn main() {
     run(
         engine,
         interfaces,
-        std::vec::Vec::new(),
+        ifacs,
         TokioHost::new(),
         funnel_rx,
         command_rx,
