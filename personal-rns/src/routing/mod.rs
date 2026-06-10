@@ -1,6 +1,7 @@
 pub mod announce;
 pub mod dedup;
 pub mod delivery;
+pub mod group_keys;
 pub mod path_requests;
 pub mod proof;
 pub mod reverse_routes;
