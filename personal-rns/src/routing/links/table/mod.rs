@@ -6,18 +6,24 @@ mod impls;
 
 pub use impls::*;
 
-use crate::crypto::X25519SecretKey;
+use crate::crypto::{Ed25519PublicKey, X25519SecretKey};
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
+use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from};
 use crate::routing::links::{LinkId, LinkKey};
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkRole {
     Initiator,
-    Responder,
+    Responder {
+        destination: DestinationHash,
+        identity: IdentityHash,
+        proof_strategy: ProofStrategy,
+    },
 }
 
 pub enum LinkPhase {
@@ -31,6 +37,10 @@ pub enum LinkPhase {
         key: LinkKey,
         requested_at: InstantMillis,
         mtu: usize,
+        initiator_signing: Ed25519PublicKey,
+        destination: DestinationHash,
+        identity: IdentityHash,
+        proof_strategy: ProofStrategy,
     },
     Active {
         key: LinkKey,
@@ -41,6 +51,7 @@ pub enum LinkPhase {
         last_inbound: InstantMillis,
         last_keepalive_sent: InstantMillis,
         keepalive_ms: u64,
+        peer_signing: Ed25519PublicKey,
     },
 }
 
@@ -77,6 +88,7 @@ impl core::fmt::Debug for LinkPhase {
                 key,
                 requested_at,
                 mtu,
+                ..
             } => f
                 .debug_struct("Handshake")
                 .field("key", key)
@@ -92,6 +104,7 @@ impl core::fmt::Debug for LinkPhase {
                 last_inbound,
                 last_keepalive_sent,
                 keepalive_ms,
+                ..
             } => f
                 .debug_struct("Active")
                 .field("key", key)
@@ -122,6 +135,10 @@ pub struct RespondingLink {
     pub requested_at: InstantMillis,
     pub timeout_at: InstantMillis,
     pub mtu: usize,
+    pub initiator_signing: Ed25519PublicKey,
+    pub destination: DestinationHash,
+    pub identity: IdentityHash,
+    pub proof_strategy: ProofStrategy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +155,7 @@ fn active_deadline(
 ) -> InstantMillis {
     let stale_at = last_inbound.0.saturating_add(stale_ms_from(keepalive_ms));
     match role {
-        LinkRole::Responder => InstantMillis(stale_at),
+        LinkRole::Responder { .. } => InstantMillis(stale_at),
         LinkRole::Initiator => {
             let send_at = last_inbound
                 .0
@@ -228,6 +245,10 @@ impl<C: LinkColumns> Links<C> {
                 key: link.key,
                 requested_at: link.requested_at,
                 mtu: link.mtu,
+                initiator_signing: link.initiator_signing,
+                destination: link.destination,
+                identity: link.identity,
+                proof_strategy: link.proof_strategy,
             },
             Some(link.timeout_at),
         )?;
@@ -239,6 +260,7 @@ impl<C: LinkColumns> Links<C> {
         self.columns.phases().get(index)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn activate_initiated(
         &mut self,
         link_id: &LinkId,
@@ -247,6 +269,7 @@ impl<C: LinkColumns> Links<C> {
         mtu: usize,
         attached_interface: InterfaceId,
         now: InstantMillis,
+        peer_signing: Ed25519PublicKey,
     ) -> Result<(), LinkActivationError> {
         let index = self
             .index_of(link_id)
@@ -264,6 +287,7 @@ impl<C: LinkColumns> Links<C> {
             last_inbound: now,
             last_keepalive_sent: now,
             keepalive_ms,
+            peer_signing,
         };
         self.columns.set_timeout_at(
             index,
@@ -284,22 +308,34 @@ impl<C: LinkColumns> Links<C> {
             .ok_or(LinkActivationError::UnknownLink)?;
         let phase = self.columns.phase_mut(index);
         match core::mem::replace(phase, LinkPhase::vacant()) {
-            LinkPhase::Handshake { key, mtu, .. } => {
+            LinkPhase::Handshake {
+                key,
+                mtu,
+                initiator_signing,
+                destination,
+                identity,
+                proof_strategy,
+                ..
+            } => {
                 let keepalive_ms = keepalive_ms_from(rtt_ms);
+                let role = LinkRole::Responder {
+                    destination,
+                    identity,
+                    proof_strategy,
+                };
                 *phase = LinkPhase::Active {
                     key,
-                    role: LinkRole::Responder,
+                    role,
                     rtt_ms,
                     mtu,
                     attached_interface,
                     last_inbound: now,
                     last_keepalive_sent: now,
                     keepalive_ms,
+                    peer_signing: initiator_signing,
                 };
-                self.columns.set_timeout_at(
-                    index,
-                    Some(active_deadline(LinkRole::Responder, now, now, keepalive_ms)),
-                );
+                self.columns
+                    .set_timeout_at(index, Some(active_deadline(role, now, now, keepalive_ms)));
                 Ok(())
             }
             other => {
@@ -479,6 +515,10 @@ mod tests {
             requested_at: InstantMillis(1_000),
             timeout_at: InstantMillis(timeout_at),
             mtu: 500,
+            initiator_signing: Ed25519PublicKey([id; 32]),
+            destination: dest(id),
+            identity: IdentityHash::new([id; 16]),
+            proof_strategy: ProofStrategy::ProveNone,
         }
     }
 
@@ -517,6 +557,7 @@ mod tests {
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 
@@ -547,7 +588,7 @@ mod tests {
 
         let Some(LinkPhase::Active {
             key: stored,
-            role: LinkRole::Responder,
+            role: LinkRole::Responder { .. },
             rtt_ms,
             ..
         }) = links.phase_for(&link_id(2))
@@ -580,7 +621,8 @@ mod tests {
                 100,
                 500,
                 iface(0xEE),
-                InstantMillis(2_000)
+                InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32])
             ),
             Err(LinkActivationError::UnknownLink),
         );
@@ -607,7 +649,8 @@ mod tests {
                 100,
                 500,
                 iface(0xEE),
-                InstantMillis(2_000)
+                InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32])
             ),
             Err(LinkActivationError::WrongPhase),
         );
@@ -620,6 +663,7 @@ mod tests {
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         assert_eq!(
@@ -629,7 +673,8 @@ mod tests {
                 100,
                 500,
                 iface(0xEE),
-                InstantMillis(2_000)
+                InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32])
             ),
             Err(LinkActivationError::WrongPhase),
         );
@@ -680,6 +725,7 @@ mod tests {
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
 
@@ -718,6 +764,7 @@ mod tests {
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         assert_eq!(links.earliest_timeout_at(), Some(InstantMillis(5_000)));
@@ -730,6 +777,7 @@ mod tests {
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
             )
             .unwrap();
         assert_eq!(

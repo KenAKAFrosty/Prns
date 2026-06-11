@@ -154,6 +154,7 @@ impl<S: EngineStorage> EngineState<S> {
             IngestPacketOutcome::OwesLinkRtt {
                 link_id,
                 responder_encryption,
+                responder_signing,
                 command_id,
                 rtt_ms,
                 mtu,
@@ -169,6 +170,7 @@ impl<S: EngineStorage> EngineState<S> {
                         mtu.min(link_mtu_ceiling(view, source)),
                         source,
                         now,
+                        responder_signing,
                         &iv,
                         &mut buf,
                     ) {
@@ -196,6 +198,7 @@ impl<S: EngineStorage> EngineState<S> {
             IngestPacketOutcome::OwesLinkProof {
                 request,
                 identity,
+                proof_strategy,
                 received_hops,
                 arrived_at,
             } => {
@@ -206,6 +209,7 @@ impl<S: EngineStorage> EngineState<S> {
                     if let Ok(written) = self.write_owed_link_proof(
                         &request,
                         &identity,
+                        proof_strategy,
                         received_hops,
                         arrived_at,
                         X25519SecretKey::new(secret_bytes),

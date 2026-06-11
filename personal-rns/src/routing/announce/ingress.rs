@@ -1,5 +1,5 @@
-use crate::crypto::X25519PublicKey;
 use crate::crypto::{token_open_in_place, TokenKey};
+use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
 use crate::engine::commands::CommandId;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::reaction::LinkClosedReason;
@@ -228,6 +228,7 @@ pub enum IngestPacketOutcome<'p> {
     OwesLinkProof {
         request: LinkRequest,
         identity: IdentityHash,
+        proof_strategy: ProofStrategy,
         received_hops: u8,
         arrived_at: InstantMillis,
     },
@@ -236,6 +237,7 @@ pub enum IngestPacketOutcome<'p> {
     OwesLinkRtt {
         link_id: LinkId,
         responder_encryption: X25519PublicKey,
+        responder_signing: Ed25519PublicKey,
         command_id: CommandId,
         rtt_ms: u64,
         mtu: usize,
@@ -522,16 +524,14 @@ impl<S: EngineStorage> EngineState<S> {
         let Some(retained) = self.routing_table.retained_announce_for(link_destination) else {
             return IngestPacketOutcome::Ignored;
         };
-        let Ok(proof) = link_proof_from(
-            &link_id,
-            payload,
-            retained.announce.public_keys.signing.as_ed25519(),
-        ) else {
+        let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
+        let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
             return IngestPacketOutcome::Ignored;
         };
         IngestPacketOutcome::OwesLinkRtt {
             link_id,
             responder_encryption: proof.responder_encryption,
+            responder_signing,
             command_id: *command_id,
             rtt_ms: arrived_at.0.saturating_sub(requested_at.0),
             mtu: if proof.mtu == 0 {
@@ -636,11 +636,11 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         match (role, byte) {
-            (LinkRole::Responder, KEEPALIVE_REQUEST) => {
+            (LinkRole::Responder { .. }, KEEPALIVE_REQUEST) => {
                 self.links.note_inbound(&link_id, arrived_at);
                 IngestPacketOutcome::OwesKeepaliveEcho { link_id }
             }
-            (LinkRole::Initiator | LinkRole::Responder, KEEPALIVE_ECHO) => {
+            (LinkRole::Initiator | LinkRole::Responder { .. }, KEEPALIVE_ECHO) => {
                 self.links.note_inbound(&link_id, arrived_at);
                 IngestPacketOutcome::Ignored
             }
@@ -683,7 +683,11 @@ impl<S: EngineStorage> EngineState<S> {
         else {
             return IngestPacketOutcome::Ignored;
         };
-        let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
+        let UpstreamAppDestinationKind::Single {
+            identity,
+            proof_strategy,
+        } = registered.kind
+        else {
             return IngestPacketOutcome::Ignored;
         };
         if self.held_identities.get(&identity).is_none() {
@@ -705,6 +709,7 @@ impl<S: EngineStorage> EngineState<S> {
         IngestPacketOutcome::OwesLinkProof {
             request,
             identity,
+            proof_strategy,
             received_hops,
             arrived_at,
         }

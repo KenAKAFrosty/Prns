@@ -1,4 +1,6 @@
-use crate::crypto::{x25519_diffie_hellman, x25519_public_key, X25519PublicKey, X25519SecretKey};
+use crate::crypto::{
+    x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+};
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
@@ -15,6 +17,7 @@ use crate::routing::links::table::{
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
 use crate::routing::storage::EngineStorage;
+use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::NextHop;
 use crate::wire::BROADCAST_MTU;
 
@@ -197,6 +200,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         request: &LinkRequest,
         identity: &IdentityHash,
+        proof_strategy: ProofStrategy,
         received_hops: u8,
         arrived_at: InstantMillis,
         ephemeral_secret: X25519SecretKey,
@@ -241,6 +245,10 @@ impl<S: EngineStorage> EngineState<S> {
             requested_at: arrived_at,
             timeout_at,
             mtu,
+            initiator_signing: request.initiator_signing,
+            destination: request.destination,
+            identity: *identity,
+            proof_strategy,
         }) {
             Ok(()) => Ok(written),
             Err(TrackLinkError::TableFull) => Err(WriteLinkProofError::LinkTableFull),
@@ -261,6 +269,7 @@ impl<S: EngineStorage> EngineState<S> {
         mtu: usize,
         attached_interface: InterfaceId,
         now: InstantMillis,
+        peer_signing: Ed25519PublicKey,
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
@@ -275,7 +284,15 @@ impl<S: EngineStorage> EngineState<S> {
         let written = write_link_rtt(link_id, &key, rtt_ms, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
-            .activate_initiated(link_id, key, rtt_ms, mtu, attached_interface, now)
+            .activate_initiated(
+                link_id,
+                key,
+                rtt_ms,
+                mtu,
+                attached_interface,
+                now,
+                peer_signing,
+            )
             .map_err(|_| WriteLinkRttError::NotPending)?;
         Ok(written)
     }
@@ -588,6 +605,7 @@ mod tests {
             IngestPacketOutcome::OwesLinkProof {
                 request: parse_link_request(&buf[..dispatch.wire_len]).unwrap(),
                 identity,
+                proof_strategy: crate::routing::upstream_app_destinations::ProofStrategy::ProveNone,
                 received_hops: 1,
                 arrived_at: InstantMillis(2_000),
             },
@@ -880,7 +898,7 @@ mod tests {
         };
         let Some(LinkPhase::Active {
             key: responder_key,
-            role: LinkRole::Responder,
+            role: LinkRole::Responder { .. },
             rtt_ms: 500,
             ..
         }) = responder.links.phase_for(&link_id)
