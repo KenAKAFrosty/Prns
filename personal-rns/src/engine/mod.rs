@@ -12,8 +12,9 @@ pub mod tick;
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
     CommandOutcome, Delivered, EngineCommand, IssuedCommand, PathFound, PathRequestId, RequestPath,
-    RequestPathFailure, SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
-    Settleable, Settlement, MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
+    RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendSingle, SendSingleError,
+    SendSingleFailure, SendSinglePayload, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -31,6 +32,7 @@ pub use crate::routing::announce::ingress::{
     AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
     RebroadcastDecision,
 };
+pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
     WriteSendSingleError,

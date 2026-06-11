@@ -31,6 +31,7 @@ pub struct IssuedCommand {
 pub enum EngineCommand {
     AnnounceNow(AnnounceNow),
     SendSingle(SendSingle),
+    SendGroup(SendGroup),
     RequestPath(RequestPath),
 }
 
@@ -75,6 +76,13 @@ pub enum CommandOutcome {
         id: CommandId,
         error: SendSingleError,
     },
+    OwesSendGroup {
+        id: CommandId,
+        send: SendGroup,
+    },
+    SendGroupRejected {
+        id: CommandId,
+    },
     OwesPathRequest {
         id: CommandId,
         request: RequestPath,
@@ -102,6 +110,23 @@ pub type SendSinglePayload = HeaplessVec<u8, MAX_SEND_SINGLE_PLAINTEXT_LEN>;
 pub struct SendSingle {
     pub destination: DestinationHash,
     pub payload: SendSinglePayload,
+}
+
+/// A GROUP destination shares the encrypted MDU; it carries no ephemeral key,
+/// so this is conservative — the wire affords more, but RNS chunks every
+/// encrypted destination at one size.
+pub const MAX_SEND_GROUP_PLAINTEXT_LEN: usize = MAX_SEND_SINGLE_PLAINTEXT_LEN;
+
+pub type SendGroupPayload = HeaplessVec<u8, MAX_SEND_GROUP_PLAINTEXT_LEN>;
+
+/// One GROUP data packet, sealed with the destination's shared symmetric key and
+/// broadcast to direct neighbors — RNS 1.3.1 `Packet(group_destination, data)`.
+/// A GROUP cannot prove, so the send is fire-and-forget: it settles the moment it
+/// is sealed and emitted, never on a delivery confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendGroup {
+    pub destination: DestinationHash,
+    pub payload: SendGroupPayload,
 }
 
 pub const PATH_REQUEST_ID_LEN: usize = TRUNCATED_HASH_BYTE_LEN;
@@ -145,6 +170,7 @@ pub enum AnnounceNowError {
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
     SendSingle(Result<Delivered, SendSingleFailure>),
+    SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
 }
 
@@ -174,6 +200,12 @@ pub enum AnnounceNowFailure {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendGroupFailure {
+    NoGroupKey,
+    WriteFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestPathFailure {
     WriteFailed(EgressSerializeError),
     Timeout,
@@ -199,7 +231,27 @@ impl Settleable for AnnounceNow {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
         match settlement {
             Settlement::AnnounceNow(result) => Some(result),
-            Settlement::SendSingle(_) | Settlement::RequestPath(_) => None,
+            Settlement::SendSingle(_) | Settlement::SendGroup(_) | Settlement::RequestPath(_) => {
+                None
+            }
+        }
+    }
+}
+
+impl Settleable for SendGroup {
+    type Success = ();
+    type Failure = SendGroupFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::SendGroup(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), SendGroupFailure>> {
+        match settlement {
+            Settlement::SendGroup(result) => Some(result),
+            Settlement::AnnounceNow(_) | Settlement::SendSingle(_) | Settlement::RequestPath(_) => {
+                None
+            }
         }
     }
 }
@@ -215,7 +267,9 @@ impl Settleable for SendSingle {
     fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendSingleFailure>> {
         match settlement {
             Settlement::SendSingle(result) => Some(result),
-            Settlement::AnnounceNow(_) | Settlement::RequestPath(_) => None,
+            Settlement::AnnounceNow(_) | Settlement::SendGroup(_) | Settlement::RequestPath(_) => {
+                None
+            }
         }
     }
 }
@@ -231,7 +285,9 @@ impl Settleable for RequestPath {
     fn from_settlement(settlement: Settlement) -> Option<Result<PathFound, RequestPathFailure>> {
         match settlement {
             Settlement::RequestPath(result) => Some(result),
-            Settlement::AnnounceNow(_) | Settlement::SendSingle(_) => None,
+            Settlement::AnnounceNow(_) | Settlement::SendSingle(_) | Settlement::SendGroup(_) => {
+                None
+            }
         }
     }
 }
@@ -256,6 +312,7 @@ impl<S: EngineStorage> EngineState<S> {
                 self.ingest_announce_now(id, announce_now, interfaces)
             }
             EngineCommand::SendSingle(send) => self.ingest_send_single(id, send),
+            EngineCommand::SendGroup(send) => self.ingest_send_group(id, send),
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
         }
     }

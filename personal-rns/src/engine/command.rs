@@ -1,9 +1,11 @@
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
     EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, PathFound,
-    PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendSingleEntropy,
-    SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
+    PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendGroupFailure,
+    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules,
+    WriteSendSingleError,
 };
+use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::storage::EngineStorage;
@@ -122,6 +124,29 @@ impl<S: EngineStorage> EngineState<S> {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::SendSingle(Err(SendSingleFailure::Rejected(error))),
+                }));
+            }
+            CommandOutcome::OwesSendGroup { id, send } => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_entropy(&mut iv);
+
+                let mut buf = [0u8; MTU];
+                let settlement = match self.write_commanded_send_group(&send, &iv, &mut buf) {
+                    Ok(wire_len) => {
+                        fan_self_originated(view, None, &buf[..wire_len], sink);
+                        Settlement::SendGroup(Ok(()))
+                    }
+                    Err(_) => Settlement::SendGroup(Err(SendGroupFailure::WriteFailed)),
+                };
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement,
+                }));
+            }
+            CommandOutcome::SendGroupRejected { id } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendGroup(Err(SendGroupFailure::NoGroupKey)),
                 }));
             }
             CommandOutcome::OwesPathRequest { id, request } => {
