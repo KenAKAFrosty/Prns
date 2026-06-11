@@ -1,7 +1,7 @@
 use crate::engine::{
-    AnnounceIngest, CachedPathResponseOutcome, Directive, EngineReaction, EngineState,
-    IngestPacketOutcome, InstantMillis, Journaled, LaneWake, PathFound, PathResponseWriteOutcome,
-    ProofIngest, Settlement, WakeSchedules,
+    AnnounceIngest, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
+    Journaled, LaneWake, PathFound, PathResponseWriteOutcome, ProofIngest, Settlement,
+    WakeSchedules,
 };
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
@@ -53,7 +53,7 @@ impl<S: EngineStorage> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         let source = packet.source_interface;
-        let mut delta = WakeSchedules::UNCHANGED;
+        let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let outcome = self.ingest_packet_with(packet, jitter, view, &mut |removed| {
             sink(EngineReaction::Journaled(journal_removal(removed)))
         });
@@ -73,9 +73,9 @@ impl<S: EngineStorage> EngineState<S> {
                         })),
                     }));
                 }
-                delta.scheduled_announces = self.scheduled_announce_lane();
-                delta.path_request_timeout = self.path_timeout_lane();
-                delta.expired_routes = self
+                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
+                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
+                wake_schedule_changes.expired_routes = self
                     .routing_table
                     .existing_route_for(&accepted.destination, view)
                     .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
@@ -112,7 +112,8 @@ impl<S: EngineStorage> EngineState<S> {
                     id,
                     settlement: Settlement::SendSingle(Ok(delivered)),
                 }));
-                delta.send_single_timeout = self.send_timeout_lane();
+                wake_schedule_changes.send_single_timeout =
+                    self.send_single_receipts_timeout_wake();
             }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::Forward(forward) => {
@@ -142,22 +143,12 @@ impl<S: EngineStorage> EngineState<S> {
                     }
                 }
             }
-            IngestPacketOutcome::AnswerPathRequestFromCache { destination } => {
-                if is_egress_eligible(view, source, Egress::Transport) {
-                    let mut response = [0u8; MTU];
-                    if let CachedPathResponseOutcome::Written { wire_len } =
-                        self.write_cached_path_response(&destination, &mut response)
-                    {
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &response[..wire_len],
-                        }));
-                    }
-                }
+            IngestPacketOutcome::ScheduledPathResponse { .. } => {
+                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
             }
             IngestPacketOutcome::Ignored => {}
         }
-        delta
+        wake_schedule_changes
     }
 }
 

@@ -118,7 +118,7 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
-                delta.send_single_timeout = self.send_timeout_lane();
+                delta.send_single_timeout = self.send_single_receipts_timeout_wake();
             }
             CommandOutcome::SendSingleRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -178,7 +178,7 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
-                delta.path_request_timeout = self.path_timeout_lane();
+                delta.path_request_timeout = self.path_request_timeout_wake();
             }
         }
         delta

@@ -2,9 +2,10 @@ use crate::crypto::{token_open_in_place, TokenKey};
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
-use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceMode};
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
+    PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS,
 };
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
@@ -194,8 +195,9 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
     },
     /// A path request arrived for a destination we relay but do not own — the
-    /// runtime owes a re-emission of the announce we cached for it.
-    AnswerPathRequestFromCache {
+    /// cached announce is scheduled as a directed answer after the request grace,
+    /// letting directly reachable peers respond first.
+    ScheduledPathResponse {
         destination: DestinationHash,
     },
     Ignored,
@@ -278,6 +280,18 @@ impl PathRequest {
     }
 }
 
+fn path_response_grace_ms(source_interface: InterfaceId, view: &[InterfaceConfig]) -> u64 {
+    let roaming = view
+        .iter()
+        .find(|config| config.id == source_interface)
+        .is_some_and(|config| config.mode == InterfaceMode::Roaming);
+    if roaming {
+        PATH_REQUEST_GRACE_MS + PATH_REQUEST_ROAMING_GRACE_MS
+    } else {
+        PATH_REQUEST_GRACE_MS
+    }
+}
+
 impl<S: EngineStorage> EngineState<S> {
     #[must_use]
     pub fn ingest_packet<'p>(
@@ -329,7 +343,12 @@ impl<S: EngineStorage> EngineState<S> {
                 if data.destination == PATH_REQUEST_DESTINATION
                     && data.destination_type == DestinationType::Plain
                 {
-                    return self.ingest_path_request(&data);
+                    return self.ingest_path_request(
+                        &data,
+                        source_interface,
+                        arrived_at,
+                        interfaces,
+                    );
                 }
                 let in_transport_through_us = self.transport_id.is_some()
                     && header.transport_id == self.transport_id
@@ -518,7 +537,13 @@ impl<S: EngineStorage> EngineState<S> {
     /// destination of our own or, as a transport node, a route we hold. We never
     /// *forward* an unknown onward — that is opt-in recursive discovery (RNS
     /// `DISCOVER_PATHS_FOR`), gated off and built later.
-    fn ingest_path_request<'p>(&mut self, data: &DataPacket<'_>) -> IngestPacketOutcome<'p> {
+    fn ingest_path_request<'p>(
+        &mut self,
+        data: &DataPacket<'_>,
+        source_interface: InterfaceId,
+        now: InstantMillis,
+        view: &[InterfaceConfig],
+    ) -> IngestPacketOutcome<'p> {
         let Ok(request) = PathRequest::parse(data.payload) else {
             return IngestPacketOutcome::Ignored;
         };
@@ -538,20 +563,31 @@ impl<S: EngineStorage> EngineState<S> {
             .lookup(&request.destination, DestinationType::Single)
             .is_some()
         {
-            IngestPacketOutcome::AnswerPathRequest {
+            return IngestPacketOutcome::AnswerPathRequest {
                 destination: request.destination,
-            }
-        } else if self.transport_id.is_some()
-            && self
-                .routing_table
-                .forwarding_route_for(&request.destination)
-                .is_some_and(|route| !request.loops_back_through_requester(route.next_hop))
-        {
-            IngestPacketOutcome::AnswerPathRequestFromCache {
-                destination: request.destination,
-            }
-        } else {
-            IngestPacketOutcome::Ignored
+            };
+        }
+
+        let cached_route = self
+            .transport_id
+            .and(
+                self.routing_table
+                    .forwarding_route_for(&request.destination),
+            )
+            .filter(|route| !request.loops_back_through_requester(route.next_hop));
+        let Some(route) = cached_route else {
+            return IngestPacketOutcome::Ignored;
+        };
+
+        let due_at = InstantMillis(now.0 + path_response_grace_ms(source_interface, view));
+        self.scheduled_announces.schedule_directed(
+            request.destination,
+            due_at,
+            source_interface,
+            route.hops,
+        );
+        IngestPacketOutcome::ScheduledPathResponse {
+            destination: request.destination,
         }
     }
 
@@ -1159,7 +1195,7 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::AnswerPathRequestFromCache {
+            IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
             },
             "the 48-byte transport form is parsed and answered",
@@ -1235,7 +1271,7 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::AnswerPathRequestFromCache {
+            IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
             },
             "a different requester gets the cached path",
@@ -1275,9 +1311,136 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::AnswerPathRequestFromCache {
+            IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
             },
+        );
+
+        let scheduled = relay.scheduled_announces.iter().next().unwrap();
+        assert_eq!(scheduled.destination, cached);
+        assert_eq!(
+            scheduled.due_at,
+            InstantMillis(1_000 + PATH_REQUEST_GRACE_MS),
+            "the cache answer waits out the grace before firing",
+        );
+        assert_eq!(
+            scheduled.directed_to,
+            Some(iface(0xA1)),
+            "it is directed at the requester, not flooded",
+        );
+    }
+
+    #[test]
+    fn a_roaming_requester_earns_the_extra_grace() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let requester = iface(0xA1);
+        let roaming_view = [InterfaceConfig {
+            mode: InterfaceMode::Roaming,
+            ..routable_descriptor(requester)
+        }];
+        let mut wire = path_request_wire(cached);
+        relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: requester,
+                bytes: &mut wire,
+            },
+            TEST_ENTROPY,
+            &roaming_view,
+        );
+        assert_eq!(
+            relay.scheduled_announces.iter().next().unwrap().due_at,
+            InstantMillis(1_000 + PATH_REQUEST_GRACE_MS + PATH_REQUEST_ROAMING_GRACE_MS),
+        );
+    }
+
+    #[test]
+    fn a_flood_schedule_supersedes_a_directed_answer_for_the_same_destination() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let mut wire = path_request_wire(cached);
+        relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: iface(0xA1),
+                bytes: &mut wire,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(
+            relay.scheduled_announces.iter().next().unwrap().directed_to,
+            Some(iface(0xA1)),
+        );
+
+        relay
+            .scheduled_announces
+            .schedule(cached, InstantMillis(1_100), iface(0xEE), 2);
+        assert_eq!(relay.scheduled_announces.scheduled_count(), 1);
+        assert_eq!(
+            relay.scheduled_announces.iter().next().unwrap().directed_to,
+            None,
+            "a fresher announce reclaims the entry as a flood — the grace answer is cancelled",
+        );
+    }
+
+    #[test]
+    fn the_cache_answer_fires_to_the_requester_only_after_the_grace_deadline() {
+        use crate::engine::{Directive, EngineReaction};
+        use crate::wire::PropagationType;
+
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let requester = iface(0xA1);
+        let view = [
+            routable_descriptor(requester),
+            routable_descriptor(iface(0xEE)),
+        ];
+
+        let mut wire = path_request_wire(cached);
+        relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: requester,
+                bytes: &mut wire,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+
+        let mut early = std::vec::Vec::new();
+        relay.fire_due_scheduled_announces(
+            InstantMillis(1_000 + PATH_REQUEST_GRACE_MS - 1),
+            &view,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction
+                {
+                    early.push(target);
+                }
+            },
+        );
+        assert!(early.is_empty(), "nothing fires before the grace deadline");
+
+        let mut fired = std::vec::Vec::new();
+        relay.fire_due_scheduled_announces(
+            InstantMillis(1_000 + PATH_REQUEST_GRACE_MS),
+            &view,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::SendAnnounce {
+                    target, bytes, ..
+                }) = reaction
+                {
+                    fired.push((target, bytes.to_vec()));
+                }
+            },
+        );
+        assert_eq!(fired.len(), 1, "exactly one answer, to the one requester");
+        assert_eq!(fired[0].0, requester);
+        let (header, _) = WirePacketHeader::parse(&fired[0].1).unwrap();
+        assert_eq!(header.destination, cached);
+        assert_eq!(header.packet_type, PacketType::Announce);
+        assert_eq!(
+            header.propagation,
+            PropagationType::Transport,
+            "a transport retransmission of the cached announce, directed at the asker",
         );
     }
 
@@ -1311,36 +1474,6 @@ mod tests {
             IngestPacketOutcome::Ignored,
             "without a transport role a node never answers from cache, even holding the route",
         );
-    }
-
-    #[test]
-    fn a_cached_path_response_re_emits_the_retained_announce_stamped_for_transport() {
-        use crate::engine::CachedPathResponseOutcome;
-        use crate::wire::PropagationType;
-
-        let (relay, cached) = relay_holding_a_cached_route();
-        let mut buf = [0u8; MTU];
-        let CachedPathResponseOutcome::Written { wire_len } =
-            relay.write_cached_path_response(&cached, &mut buf)
-        else {
-            panic!("the relay holds a route to re-emit");
-        };
-
-        let (header, _) = WirePacketHeader::parse(&buf[..wire_len]).unwrap();
-        assert_eq!(header.packet_type, PacketType::Announce);
-        assert_eq!(header.propagation, PropagationType::Transport);
-        assert_eq!(header.transport_id, Some(TEST_TRANSPORT_ID));
-        assert_eq!(header.destination, cached);
-        assert_eq!(
-            header.context,
-            WireContext::None,
-            "a relay's answer is a plain transport retransmission, not a PATH_RESPONSE",
-        );
-
-        assert!(matches!(
-            relay.write_cached_path_response(&DestinationHash::new([0x44; 16]), &mut buf),
-            CachedPathResponseOutcome::Unavailable,
-        ));
     }
 
     #[test]
@@ -1605,7 +1738,7 @@ mod tests {
                 TEST_ENTROPY,
                 &transporting_view(),
             ),
-            IngestPacketOutcome::AnswerPathRequestFromCache {
+            IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
             },
         );

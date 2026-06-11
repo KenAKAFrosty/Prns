@@ -29,6 +29,12 @@ pub const MAX_ANNOUNCE_REBROADCASTS: u8 = 2;
 
 pub const REBROADCAST_RETRANSMIT_INTERVAL_MS: u64 = 5_500;
 
+/// RNS 1.3.1 `Transport.PATH_REQUEST_GRACE` (0.4s): a transport node waits this
+/// long before answering a path request from cache, so directly reachable peers
+/// respond first; `..._RG` is the extra delay when the answering interface roams.
+pub const PATH_REQUEST_GRACE_MS: u64 = 400;
+pub const PATH_REQUEST_ROAMING_GRACE_MS: u64 = 1_500;
+
 #[derive(Debug, Clone, Copy)]
 pub struct JitterSeed(pub u64);
 

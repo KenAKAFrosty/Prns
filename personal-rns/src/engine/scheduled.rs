@@ -20,7 +20,7 @@ impl<S: EngineStorage> EngineState<S> {
             }));
         }
         WakeSchedules {
-            send_single_timeout: self.send_timeout_lane(),
+            send_single_timeout: self.send_single_receipts_timeout_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -39,7 +39,7 @@ impl<S: EngineStorage> EngineState<S> {
             }));
         }
         WakeSchedules {
-            path_request_timeout: self.path_timeout_lane(),
+            path_request_timeout: self.path_request_timeout_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -62,7 +62,7 @@ impl<S: EngineStorage> EngineState<S> {
                 ));
             });
         WakeSchedules {
-            expired_routes: self.route_expiry_lane(view),
+            expired_routes: self.route_expiry_wake(view),
             ..WakeSchedules::UNCHANGED
         }
     }

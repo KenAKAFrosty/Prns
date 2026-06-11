@@ -82,7 +82,7 @@ impl<S: EngineStorage> EngineState<S> {
             MAX_ANNOUNCE_REBROADCASTS,
         );
         WakeSchedules {
-            scheduled_announces: self.scheduled_announce_lane(),
+            scheduled_announces: self.scheduled_announces_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

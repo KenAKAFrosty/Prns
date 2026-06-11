@@ -40,9 +40,7 @@ pub use crate::routing::delivery::send_single::{
 pub use crate::routing::path_requests::pending::{
     CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
 };
-pub use crate::routing::path_requests::request_path::{
-    CachedPathResponseOutcome, PathRequestWriteOutcome,
-};
+pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
     ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
@@ -265,24 +263,19 @@ impl<S: EngineStorage> EngineState<S> {
         self.scheduled_announces.scheduled_count()
     }
 
-    /// The rebroadcast lane's state from the soonest scheduled re-emit.
-    pub(crate) fn scheduled_announce_lane(&self) -> LaneWake {
+    pub fn scheduled_announces_wake(&self) -> LaneWake {
         LaneWake::from_deadline(self.scheduled_announces.earliest_due_at())
     }
 
-    /// The send-single-timeout lane's state from the soonest receipt deadline.
-    pub(crate) fn send_timeout_lane(&self) -> LaneWake {
+    pub fn send_single_receipts_timeout_wake(&self) -> LaneWake {
         LaneWake::from_deadline(self.receipts.earliest_timeout_at())
     }
 
-    /// The path-request-timeout lane's state from the soonest pending-request deadline.
-    pub(crate) fn path_timeout_lane(&self) -> LaneWake {
+    pub fn path_request_timeout_wake(&self) -> LaneWake {
         LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
     }
 
-    /// The expired-routes lane's state from the soonest route expiry in the table,
-    /// derived against the current view (a hot-changed mode moves the deadline).
-    pub(crate) fn route_expiry_lane(&self, view: &[InterfaceConfig]) -> LaneWake {
+    pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {
         LaneWake::from_deadline(self.routing_table.soonest_route_expiry(view))
     }
 
@@ -293,10 +286,10 @@ impl<S: EngineStorage> EngineState<S> {
     /// a lane it moved (which the oracle catches).
     pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
         WakeSchedules {
-            scheduled_announces: self.scheduled_announce_lane(),
-            send_single_timeout: self.send_timeout_lane(),
-            path_request_timeout: self.path_timeout_lane(),
-            expired_routes: self.route_expiry_lane(view),
+            scheduled_announces: self.scheduled_announces_wake(),
+            send_single_timeout: self.send_single_receipts_timeout_wake(),
+            path_request_timeout: self.path_request_timeout_wake(),
+            expired_routes: self.route_expiry_wake(view),
         }
     }
 
