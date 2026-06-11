@@ -13,9 +13,10 @@ pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
     CommandOutcome, Delivered, EngineCommand, EstablishLink, EstablishLinkError,
     EstablishLinkFailure, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
-    RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendSingle, SendSingleError,
-    SendSingleFailure, SendSinglePayload, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
-    MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
+    RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendLink, SendLinkError,
+    SendLinkFailure, SendLinkPayload, SendSingle, SendSingleError, SendSingleFailure,
+    SendSinglePayload, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -37,6 +38,9 @@ pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
     WriteSendSingleError,
+};
+pub use crate::routing::links::data::{
+    link_mdu, LinkDataError, SendLinkDispatch, SendLinkWriteError, LINK_MDU,
 };
 pub use crate::routing::links::establish::{
     EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch, WriteEstablishLinkError,

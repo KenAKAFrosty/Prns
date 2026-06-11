@@ -16,7 +16,8 @@ use crate::routing::announce::Announce;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::delivery::{
-    Delivery, GroupDelivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
+    Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
+    PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::links::handshake::{
     link_proof_from, link_request_from, link_rtt_from, LinkRequest,
@@ -235,6 +236,7 @@ pub enum IngestPacketOutcome<'p> {
         responder_encryption: X25519PublicKey,
         command_id: CommandId,
         rtt_ms: u64,
+        mtu: usize,
     },
     /// The LRRTT for a handshake we answered opened under the session key —
     /// the link is ACTIVE.
@@ -384,7 +386,15 @@ impl<S: EngineStorage> EngineState<S> {
             } => {
                 if data.destination_type == DestinationType::Link {
                     if data.context == WireContext::LinkRtt {
-                        return self.classify_link_rtt(&data.destination, data.payload, arrived_at);
+                        return self.classify_link_rtt(
+                            &data.destination,
+                            data.payload,
+                            source_interface,
+                            arrived_at,
+                        );
+                    }
+                    if data.context == WireContext::None {
+                        return self.classify_link_data(data, source_interface, arrived_at);
                     }
                     return IngestPacketOutcome::Ignored;
                 }
@@ -504,6 +514,11 @@ impl<S: EngineStorage> EngineState<S> {
             responder_encryption: proof.responder_encryption,
             command_id: *command_id,
             rtt_ms: arrived_at.0.saturating_sub(requested_at.0),
+            mtu: if proof.mtu == 0 {
+                BROADCAST_MTU
+            } else {
+                proof.mtu.min(BROADCAST_MTU)
+            },
         }
     }
 
@@ -511,10 +526,13 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         destination: &DestinationHash,
         payload: &[u8],
+        source_interface: InterfaceId,
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::new(*destination.as_bytes());
-        let Some(LinkPhase::Handshake { key, requested_at }) = self.links.phase_for(&link_id)
+        let Some(LinkPhase::Handshake {
+            key, requested_at, ..
+        }) = self.links.phase_for(&link_id)
         else {
             return IngestPacketOutcome::Ignored;
         };
@@ -523,10 +541,57 @@ impl<S: EngineStorage> EngineState<S> {
         };
         let measured_ms = arrived_at.0.saturating_sub(requested_at.0);
         let rtt_ms = measured_ms.max(reported.rtt_ms);
-        if self.links.activate_responding(&link_id, rtt_ms).is_err() {
+        if self
+            .links
+            .activate_responding(&link_id, rtt_ms, source_interface)
+            .is_err()
+        {
             return IngestPacketOutcome::Ignored;
         }
         IngestPacketOutcome::LinkActivated { link_id, rtt_ms }
+    }
+
+    fn classify_link_data<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        if !matches!(
+            self.links.phase_for(&link_id),
+            Some(LinkPhase::Active { .. }),
+        ) {
+            return IngestPacketOutcome::Ignored;
+        }
+
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        IngestPacketOutcome::Delivery {
+            delivery: Delivery::Link(LinkDelivery {
+                link_id,
+                plaintext,
+                arrived_at,
+                source_interface,
+            }),
+            proof: ProofObligation::None,
+        }
     }
 
     fn classify_link_request(

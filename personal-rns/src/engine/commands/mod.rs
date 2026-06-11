@@ -12,6 +12,7 @@ use crate::engine::WriteAnnounceError;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::delivery::send_single::WriteSendSingleError;
+use crate::routing::links::data::LinkDataError;
 use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
@@ -36,6 +37,7 @@ pub enum EngineCommand {
     SendGroup(SendGroup),
     RequestPath(RequestPath),
     EstablishLink(EstablishLink),
+    SendLink(SendLink),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -98,6 +100,14 @@ pub enum CommandOutcome {
         id: CommandId,
         error: EstablishLinkError,
     },
+    OwesSendLink {
+        id: CommandId,
+        send: SendLink,
+    },
+    SendLinkRejected {
+        id: CommandId,
+        error: SendLinkError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +128,26 @@ pub struct EstablishLink {
 pub enum EstablishLinkError {
     NoRouteToDestination,
     NotDirectlyReachable,
+}
+
+pub const MAX_SEND_LINK_PLAINTEXT_LEN: usize = 431;
+
+pub type SendLinkPayload = HeaplessVec<u8, MAX_SEND_LINK_PLAINTEXT_LEN>;
+
+/// One data packet sealed under an ACTIVE link's session key, fired on the
+/// interface the link rides — RNS 1.3.1 `Packet(link, data)`. A link packet
+/// carries no proof yet, so the send settles the moment it is sealed and
+/// emitted (receipts over links arrive with the proving arc).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendLink {
+    pub link_id: LinkId,
+    pub payload: SendLinkPayload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendLinkError {
+    NoSuchLink,
+    LinkNotActive,
 }
 
 /// RNS 1.3.1 `Packet.ENCRYPTED_MDU` (383): the most plaintext one encrypted
@@ -198,6 +228,7 @@ pub enum Settlement {
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
     EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
+    SendLink(Result<(), SendLinkFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +282,12 @@ pub enum EstablishLinkFailure {
     Timeout,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendLinkFailure {
+    Rejected(SendLinkError),
+    WriteFailed(LinkDataError),
+}
+
 pub trait Settleable {
     type Success;
     type Failure;
@@ -273,7 +310,8 @@ impl Settleable for AnnounceNow {
             Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
-            | Settlement::EstablishLink(_) => None,
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_) => None,
         }
     }
 }
@@ -292,7 +330,8 @@ impl Settleable for SendGroup {
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::RequestPath(_)
-            | Settlement::EstablishLink(_) => None,
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_) => None,
         }
     }
 }
@@ -311,7 +350,8 @@ impl Settleable for SendSingle {
             Settlement::AnnounceNow(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
-            | Settlement::EstablishLink(_) => None,
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_) => None,
         }
     }
 }
@@ -330,7 +370,8 @@ impl Settleable for RequestPath {
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
-            | Settlement::EstablishLink(_) => None,
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_) => None,
         }
     }
 }
@@ -351,7 +392,28 @@ impl Settleable for EstablishLink {
             Settlement::AnnounceNow(_)
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
-            | Settlement::RequestPath(_) => None,
+            | Settlement::RequestPath(_)
+            | Settlement::SendLink(_) => None,
+        }
+    }
+}
+
+impl Settleable for SendLink {
+    type Success = ();
+    type Failure = SendLinkFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::SendLink(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), SendLinkFailure>> {
+        match settlement {
+            Settlement::SendLink(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_) => None,
         }
     }
 }
@@ -379,6 +441,7 @@ impl<S: EngineStorage> EngineState<S> {
             EngineCommand::SendGroup(send) => self.ingest_send_group(id, send),
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
+            EngineCommand::SendLink(send) => self.ingest_send_link(id, send),
         }
     }
 

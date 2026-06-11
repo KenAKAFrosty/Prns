@@ -1,4 +1,9 @@
+use crate::engine::commands::{CommandId, CommandOutcome, SendLink, SendLinkError};
+use crate::engine::EngineState;
+use crate::interfaces::InterfaceId;
+use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
+use crate::routing::storage::EngineStorage;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
@@ -26,11 +31,12 @@ pub enum LinkDataError {
 pub fn write_link_data(
     link_id: &LinkId,
     link_key: &LinkKey,
+    mtu: usize,
     plaintext: &[u8],
     iv: &[u8; 16],
     buf: &mut [u8],
 ) -> Result<usize, LinkDataError> {
-    if plaintext.len() > LINK_MDU {
+    if plaintext.len() > link_mdu(mtu) {
         return Err(LinkDataError::PayloadTooLong);
     }
     let header = WirePacketHeader {
@@ -51,6 +57,62 @@ pub fn write_link_data(
         .seal(iv, plaintext, &mut buf[header_len..])
         .map_err(|_| LinkDataError::BufferTooShort)?;
     Ok(header_len + sealed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SendLinkDispatch {
+    pub wire_len: usize,
+    pub fire_on: InterfaceId,
+}
+
+impl<S: EngineStorage> EngineState<S> {
+    pub fn ingest_send_link(&self, id: CommandId, send: SendLink) -> CommandOutcome {
+        match self.links.phase_for(&send.link_id) {
+            None => CommandOutcome::SendLinkRejected {
+                id,
+                error: SendLinkError::NoSuchLink,
+            },
+            Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
+                CommandOutcome::SendLinkRejected {
+                    id,
+                    error: SendLinkError::LinkNotActive,
+                }
+            }
+            Some(LinkPhase::Active { .. }) => CommandOutcome::OwesSendLink { id, send },
+        }
+    }
+
+    /// Seal `send`'s payload under the link's session key, bounded by the
+    /// link's negotiated MDU, framed directly into `buf` and owed to the
+    /// interface the link rides — RNS 1.3.1 `Packet(link, data).send()`.
+    pub fn write_commanded_send_link(
+        &mut self,
+        send: &SendLink,
+        iv: &[u8; 16],
+        buf: &mut [u8],
+    ) -> Result<SendLinkDispatch, SendLinkWriteError> {
+        let Some(LinkPhase::Active {
+            key,
+            mtu,
+            attached_interface,
+            ..
+        }) = self.links.phase_for(&send.link_id)
+        else {
+            return Err(SendLinkWriteError::LinkVanished);
+        };
+        let wire_len = write_link_data(&send.link_id, key, *mtu, &send.payload, iv, buf)
+            .map_err(SendLinkWriteError::Frame)?;
+        Ok(SendLinkDispatch {
+            wire_len,
+            fire_on: *attached_interface,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendLinkWriteError {
+    LinkVanished,
+    Frame(LinkDataError),
 }
 
 #[cfg(test)]
@@ -103,6 +165,7 @@ mod tests {
         let n = write_link_data(
             &LinkId::new(a16(LINK_ID)),
             &link_key(),
+            BROADCAST_MTU,
             PLAINTEXT,
             &a16(CIPHER_IV),
             &mut buf,
@@ -118,6 +181,7 @@ mod tests {
         let n = write_link_data(
             &LinkId::new(a16(LINK_ID)),
             &key,
+            BROADCAST_MTU,
             PLAINTEXT,
             &a16(CIPHER_IV),
             &mut buf,
@@ -138,6 +202,7 @@ mod tests {
             write_link_data(
                 &LinkId::new(a16(LINK_ID)),
                 &link_key(),
+                BROADCAST_MTU,
                 &[0u8; LINK_MDU + 1],
                 &a16(CIPHER_IV),
                 &mut buf,
@@ -147,6 +212,7 @@ mod tests {
         assert!(write_link_data(
             &LinkId::new(a16(LINK_ID)),
             &link_key(),
+            BROADCAST_MTU,
             &[0u8; LINK_MDU],
             &a16(CIPHER_IV),
             &mut buf,

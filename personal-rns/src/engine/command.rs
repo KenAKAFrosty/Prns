@@ -5,9 +5,11 @@ use crate::engine::{
     RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
+use crate::engine::{SendLinkError, SendLinkFailure};
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
+use crate::routing::links::data::SendLinkWriteError;
 use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::wire::BROADCAST_MTU;
@@ -208,6 +210,38 @@ impl<S: EngineStorage> EngineState<S> {
                 }
                 wake_schedule_changes.link_establishment_timeout =
                     self.link_establishment_timeout_wake();
+            }
+            CommandOutcome::OwesSendLink { id, send } => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_entropy(&mut iv);
+                let mut buf = [0u8; BROADCAST_MTU];
+                let settlement = match self.write_commanded_send_link(&send, &iv, &mut buf) {
+                    Ok(dispatch) => {
+                        fan_self_originated(
+                            interfaces,
+                            Some(dispatch.fire_on),
+                            &buf[..dispatch.wire_len],
+                            sink,
+                        );
+                        Settlement::SendLink(Ok(()))
+                    }
+                    Err(SendLinkWriteError::LinkVanished) => Settlement::SendLink(Err(
+                        SendLinkFailure::Rejected(SendLinkError::NoSuchLink),
+                    )),
+                    Err(SendLinkWriteError::Frame(error)) => {
+                        Settlement::SendLink(Err(SendLinkFailure::WriteFailed(error)))
+                    }
+                };
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement,
+                }));
+            }
+            CommandOutcome::SendLinkRejected { id, error } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(error))),
+                }));
             }
             CommandOutcome::EstablishLinkRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {

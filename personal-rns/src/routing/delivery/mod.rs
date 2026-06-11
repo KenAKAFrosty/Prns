@@ -5,6 +5,7 @@ pub mod send_single;
 use crate::{
     engine::InstantMillis,
     interfaces::InterfaceId,
+    routing::links::LinkId,
     wire::{DestinationHash, WireContext},
 };
 
@@ -45,4 +46,13 @@ pub enum Delivery<'p> {
     Plain(PlainDelivery<'p>),
     Single(SingleDelivery<'p>),
     Group(GroupDelivery<'p>),
+    Link(LinkDelivery<'p>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkDelivery<'p> {
+    pub link_id: LinkId,
+    pub plaintext: &'p [u8],
+    pub arrived_at: InstantMillis,
+    pub source_interface: InterfaceId,
 }

@@ -202,7 +202,7 @@ impl<S: EngineStorage> EngineState<S> {
         let mtu = if request.mtu == 0 {
             BROADCAST_MTU
         } else {
-            request.mtu
+            request.mtu.min(BROADCAST_MTU)
         };
         let written = write_link_proof(
             &request.link_id,
@@ -227,6 +227,7 @@ impl<S: EngineStorage> EngineState<S> {
             key,
             requested_at: arrived_at,
             timeout_at,
+            mtu,
         }) {
             Ok(()) => Ok(written),
             Err(TrackLinkError::TableFull) => Err(WriteLinkProofError::LinkTableFull),
@@ -238,11 +239,14 @@ impl<S: EngineStorage> EngineState<S> {
     /// finishes: the pending secret's ECDH against the responder's ephemeral
     /// derives the session key, the measured RTT rides out encrypted under it,
     /// and the link flips ACTIVE as initiator.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_owed_link_rtt(
         &mut self,
         link_id: &LinkId,
         responder_encryption: &X25519PublicKey,
         rtt_ms: u64,
+        mtu: usize,
+        attached_interface: InterfaceId,
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
@@ -257,7 +261,7 @@ impl<S: EngineStorage> EngineState<S> {
         let written = write_link_rtt(link_id, &key, rtt_ms, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
-            .activate_initiated(link_id, key, rtt_ms)
+            .activate_initiated(link_id, key, rtt_ms, mtu, attached_interface)
             .map_err(|_| WriteLinkRttError::NotPending)?;
         Ok(written)
     }
@@ -844,6 +848,7 @@ mod tests {
             key: responder_key,
             role: LinkRole::Responder,
             rtt_ms: 500,
+            ..
         }) = responder.links.phase_for(&link_id)
         else {
             panic!("the responder must be active at the measured rtt");
@@ -968,6 +973,150 @@ mod tests {
             ),
             "only the establishment deadline forgets a half-open link; \
              revisit for exact parity when the teardown arc lands",
+        );
+    }
+
+    #[test]
+    fn link_data_crosses_the_active_link_and_journals_the_delivery() {
+        use crate::engine::{SendLink, SendLinkPayload};
+        use crate::routing::delivery::Delivery;
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let mut sent = std::vec::Vec::new();
+        let mut settled = std::vec::Vec::new();
+        let _ = initiator.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(9),
+                command: EngineCommand::SendLink(SendLink {
+                    link_id,
+                    payload: SendLinkPayload::from_slice(b"hello over the link").unwrap(),
+                }),
+            },
+            &arrival_view(),
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xD1),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    assert_eq!(target, arrival(), "the data fires on the link's interface");
+                    sent.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settled.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            settled,
+            std::vec![(CommandId(9), Settlement::SendLink(Ok(())))],
+            "a link send settles the moment it is sealed and emitted",
+        );
+
+        let mut delivered = std::vec::Vec::new();
+        let mut raw = sent[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_100),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_100),
+            &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) =
+                    reaction
+                {
+                    delivered.push((link.link_id, link.plaintext.to_vec()));
+                }
+            },
+        );
+        assert_eq!(
+            delivered,
+            std::vec![(link_id, b"hello over the link".to_vec())],
+            "the responder opens the frame under the session key and journals it",
+        );
+
+        let mut replay = sent[0].clone();
+        let mut replayed = std::vec::Vec::new();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: arrival(),
+                bytes: &mut replay,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_200),
+            &mut |bytes: &mut [u8]| bytes.fill(0xD3),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::Delivered(_)) = reaction {
+                    replayed.push(());
+                }
+            },
+        );
+        assert!(replayed.is_empty(), "a replayed frame deduplicates away");
+    }
+
+    #[test]
+    fn a_send_link_demands_an_active_link() {
+        use crate::engine::{SendLink, SendLinkError, SendLinkPayload};
+
+        let mut initiator = neighbor_with_a_route();
+        let send = |link_id| IssuedCommand {
+            id: CommandId(9),
+            command: EngineCommand::SendLink(SendLink {
+                link_id,
+                payload: SendLinkPayload::from_slice(b"too early").unwrap(),
+            }),
+        };
+
+        assert_eq!(
+            initiator.ingest_command(send(LinkId::new([0x77; 16])), &arrival_view()),
+            CommandOutcome::SendLinkRejected {
+                id: CommandId(9),
+                error: SendLinkError::NoSuchLink,
+            },
+        );
+
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+        assert_eq!(
+            initiator.ingest_command(send(dispatch.link_id), &arrival_view()),
+            CommandOutcome::SendLinkRejected {
+                id: CommandId(9),
+                error: SendLinkError::LinkNotActive,
+            },
         );
     }
 

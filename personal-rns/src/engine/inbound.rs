@@ -94,7 +94,7 @@ impl<S: EngineStorage> EngineState<S> {
                             plaintext: single.plaintext,
                         })
                         .then_some(owed),
-                        Delivery::Plain(_) | Delivery::Group(_) => None,
+                        Delivery::Plain(_) | Delivery::Group(_) | Delivery::Link(_) => None,
                     },
                 };
                 if let Some(owed) = owed {
@@ -153,6 +153,7 @@ impl<S: EngineStorage> EngineState<S> {
                 responder_encryption,
                 command_id,
                 rtt_ms,
+                mtu,
             } => {
                 if is_egress_eligible(view, source, Egress::Transmit) {
                     let mut iv = [0u8; ENCRYPTION_IV_LEN];
@@ -162,6 +163,8 @@ impl<S: EngineStorage> EngineState<S> {
                         &link_id,
                         &responder_encryption,
                         rtt_ms,
+                        mtu,
+                        source,
                         &iv,
                         &mut buf,
                     ) {
