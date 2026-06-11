@@ -2,7 +2,7 @@
 //! trade to bring a link up, over the [`LinkId`]/[`LinkMode`] primitives. The
 //! ECDH, the [`super::LinkKey`] derivation, and the state machine compose them.
 
-use super::{LinkId, LinkMode};
+use super::{LinkId, LinkKey, LinkMode};
 use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::IdentitySigner;
 use crate::wire::{
@@ -242,9 +242,81 @@ pub fn validate_link_proof(
     })
 }
 
+const MSGPACK_FLOAT64: u8 = 0xcb;
+const LINK_RTT_PLAINTEXT_LEN: usize = 9;
+
+fn pack_rtt(rtt: f64) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
+    let mut out = [0u8; LINK_RTT_PLAINTEXT_LEN];
+    out[0] = MSGPACK_FLOAT64;
+    out[1..].copy_from_slice(&rtt.to_be_bytes());
+    out
+}
+
+fn unpack_rtt(bytes: &[u8]) -> Option<f64> {
+    if bytes.len() != LINK_RTT_PLAINTEXT_LEN || bytes[0] != MSGPACK_FLOAT64 {
+        return None;
+    }
+    let mut be = [0u8; 8];
+    be.copy_from_slice(&bytes[1..]);
+    Some(f64::from_be_bytes(be))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkRttError {
+    Malformed,
+    InvalidToken,
+    BufferTooShort,
+}
+
+pub fn write_link_rtt(
+    link_id: &LinkId,
+    link_key: &LinkKey,
+    rtt: f64,
+    iv: &[u8; 16],
+    buf: &mut [u8],
+) -> Result<usize, LinkRttError> {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Link,
+        packet_type: PacketType::Data,
+        hops: 0,
+        transport_id: None,
+        destination: DestinationHash::new(*link_id.as_bytes()),
+        context: WireContext::LinkRtt,
+    };
+    let header_len = header
+        .write(buf)
+        .map_err(|_| LinkRttError::BufferTooShort)?;
+    let plaintext = pack_rtt(rtt);
+    let sealed = link_key
+        .seal(iv, &plaintext, &mut buf[header_len..])
+        .map_err(|_| LinkRttError::BufferTooShort)?;
+    Ok(header_len + sealed)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinkRtt {
+    pub link_id: LinkId,
+    pub rtt: f64,
+}
+
+pub fn parse_link_rtt(raw: &[u8], link_key: &LinkKey) -> Result<LinkRtt, LinkRttError> {
+    let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkRttError::Malformed)?;
+    let link_id = LinkId::new(*header.destination.as_bytes());
+    let mut out = [0u8; 16];
+    let n = link_key
+        .open(payload, &mut out)
+        .map_err(|_| LinkRttError::InvalidToken)?;
+    let rtt = unpack_rtt(&out[..n]).ok_or(LinkRttError::Malformed)?;
+    Ok(LinkRtt { link_id, rtt })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::{x25519_diffie_hellman, X25519SecretKey};
     use crate::identity::in_memory::InMemoryNodeIdentity;
 
     fn hx(s: &str) -> Vec<u8> {
@@ -278,6 +350,17 @@ mod tests {
                                      b3fb123c9e5280a5d08e5c0ebee0b02b7ea57d3f5791a99ab69f9cf102dd5002\
                                      bf18d33e4d3400ea2c4307296b89dd85da180ca81b1590be97f26d34d45cc26f\
                                      2001f4";
+    const RTT_LINK_ID: &str = "000102030405060708090a0b0c0d0e0f";
+    const RTT_INITIATOR_SCALAR: &str =
+        "3333333333333333333333333333333333333333333333333333333333333333";
+    const RTT_RESPONDER_PUBLIC: &str =
+        "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b";
+    const RTT_IV: &str = "a1a2a3a4a5a6a7a8a9aaabacadaeafb0";
+    const RTT_VALUE: f64 = 0.125;
+    const LRRTT_PACKET: &str = "0c00000102030405060708090a0b0c0d0e0ffe\
+                                a1a2a3a4a5a6a7a8a9aaabacadaeafb0\
+                                dc2a04eab8c13d78dc9d02510d587a56\
+                                b7134599d34b153468f2618d9b4893ca759fef9170eee3908949ad759ecd380a";
 
     fn responder_identity() -> InMemoryNodeIdentity {
         let mut secret = [0u8; 64];
@@ -500,6 +583,77 @@ mod tests {
                 other.signing_public_key().as_ed25519()
             ),
             Err(LinkProofError::InvalidSignature),
+        );
+    }
+
+    fn rtt_link_key() -> LinkKey {
+        let shared = x25519_diffie_hellman(
+            &X25519SecretKey::new(a32(RTT_INITIATOR_SCALAR)),
+            &X25519PublicKey(a32(RTT_RESPONDER_PUBLIC)),
+        );
+        LinkKey::derive(&LinkId::new(a16(RTT_LINK_ID)), &shared)
+    }
+
+    #[test]
+    fn write_link_rtt_matches_the_reference_packet() {
+        let mut buf = [0u8; 128];
+        let n = write_link_rtt(
+            &LinkId::new(a16(RTT_LINK_ID)),
+            &rtt_link_key(),
+            RTT_VALUE,
+            &a16(RTT_IV),
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(&buf[..n], &hx(LRRTT_PACKET)[..]);
+    }
+
+    #[test]
+    fn parse_link_rtt_recovers_the_reference_rtt() {
+        let parsed = parse_link_rtt(&hx(LRRTT_PACKET), &rtt_link_key()).unwrap();
+        assert_eq!(parsed.link_id, LinkId::new(a16(RTT_LINK_ID)));
+        assert_eq!(parsed.rtt.to_bits(), RTT_VALUE.to_bits());
+    }
+
+    #[test]
+    fn write_then_parse_round_trips_a_messy_rtt() {
+        let key = rtt_link_key();
+        let mut buf = [0u8; 128];
+        let n = write_link_rtt(
+            &LinkId::new(a16(RTT_LINK_ID)),
+            &key,
+            0.073_115_926_535,
+            &a16(RTT_IV),
+            &mut buf,
+        )
+        .unwrap();
+        let parsed = parse_link_rtt(&buf[..n], &key).unwrap();
+        assert_eq!(parsed.rtt.to_bits(), 0.073_115_926_535_f64.to_bits());
+    }
+
+    #[test]
+    fn parse_link_rtt_rejects_a_tampered_token() {
+        let mut bytes = hx(LRRTT_PACKET);
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+        assert_eq!(
+            parse_link_rtt(&bytes, &rtt_link_key()),
+            Err(LinkRttError::InvalidToken),
+        );
+    }
+
+    #[test]
+    fn write_link_rtt_rejects_a_buffer_too_small_for_the_frame() {
+        let mut tiny = [0u8; 40];
+        assert_eq!(
+            write_link_rtt(
+                &LinkId::new(a16(RTT_LINK_ID)),
+                &rtt_link_key(),
+                RTT_VALUE,
+                &a16(RTT_IV),
+                &mut tiny,
+            ),
+            Err(LinkRttError::BufferTooShort),
         );
     }
 }
