@@ -1,9 +1,10 @@
 use crate::crypto::X25519SecretKey;
 use crate::engine::{
     AnnounceIngest, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LaneWake, PathFound, PathResponseWriteOutcome, ProofIngest, Settlement,
-    WakeSchedules,
+    Journaled, LaneWake, LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest,
+    Settlement, WakeSchedules,
 };
+use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
@@ -146,6 +147,46 @@ impl<S: EngineStorage> EngineState<S> {
             }
             IngestPacketOutcome::ScheduledPathResponse { .. } => {
                 wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
+            }
+            IngestPacketOutcome::OwesLinkRtt {
+                link_id,
+                responder_encryption,
+                command_id,
+                rtt_ms,
+            } => {
+                if is_egress_eligible(view, source, Egress::Transmit) {
+                    let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                    fill_entropy(&mut iv);
+                    let mut buf = [0u8; BROADCAST_MTU];
+                    if let Ok(written) = self.write_owed_link_rtt(
+                        &link_id,
+                        &responder_encryption,
+                        rtt_ms,
+                        &iv,
+                        &mut buf,
+                    ) {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: source,
+                            bytes: &buf[..written],
+                        }));
+                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                            id: command_id,
+                            settlement: Settlement::EstablishLink(Ok(LinkEstablished {
+                                link_id,
+                                rtt_ms,
+                            })),
+                        }));
+                    }
+                    wake_schedule_changes.link_establishment_timeout =
+                        self.link_establishment_timeout_wake();
+                }
+            }
+            IngestPacketOutcome::LinkActivated { link_id, rtt_ms } => {
+                sink(EngineReaction::Journaled(Journaled::LinkEstablished(
+                    LinkEstablished { link_id, rtt_ms },
+                )));
+                wake_schedule_changes.link_establishment_timeout =
+                    self.link_establishment_timeout_wake();
             }
             IngestPacketOutcome::OwesLinkProof {
                 request,

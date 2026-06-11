@@ -590,7 +590,8 @@ mod tests {
             | Journaled::CommandSettled { .. }
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. } => {}
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_) => {}
         };
 
         let outcome = block_on(async {

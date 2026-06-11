@@ -1,4 +1,4 @@
-use crate::crypto::{x25519_diffie_hellman, x25519_public_key, X25519SecretKey};
+use crate::crypto::{x25519_diffie_hellman, x25519_public_key, X25519PublicKey, X25519SecretKey};
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
@@ -7,8 +7,12 @@ use crate::interfaces::InterfaceId;
 use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
-use crate::routing::links::handshake::{write_link_proof, write_link_request, LinkRequest};
-use crate::routing::links::table::{InitiatedLink, OverdueLink, RespondingLink, TrackLinkError};
+use crate::routing::links::handshake::{
+    write_link_proof, write_link_request, write_link_rtt, LinkRequest,
+};
+use crate::routing::links::table::{
+    InitiatedLink, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
+};
 use crate::routing::links::{LinkId, LinkKey, LinkMode};
 use crate::routing::storage::EngineStorage;
 use crate::routing::NextHop;
@@ -78,6 +82,12 @@ pub enum WriteLinkProofError {
     Serialize,
     LinkTableFull,
     DuplicateLinkId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteLinkRttError {
+    NotPending,
+    Serialize,
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -224,6 +234,34 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
+    /// Pay the validated LRPROOF the way RNS 1.3.1 `Link.validate_proof`
+    /// finishes: the pending secret's ECDH against the responder's ephemeral
+    /// derives the session key, the measured RTT rides out encrypted under it,
+    /// and the link flips ACTIVE as initiator.
+    pub fn write_owed_link_rtt(
+        &mut self,
+        link_id: &LinkId,
+        responder_encryption: &X25519PublicKey,
+        rtt_ms: u64,
+        iv: &[u8; 16],
+        buf: &mut [u8],
+    ) -> Result<usize, WriteLinkRttError> {
+        let Some(LinkPhase::Pending {
+            initiator_secret, ..
+        }) = self.links.phase_for(link_id)
+        else {
+            return Err(WriteLinkRttError::NotPending);
+        };
+        let shared = x25519_diffie_hellman(initiator_secret, responder_encryption);
+        let key = LinkKey::derive(link_id, &shared);
+        let written = write_link_rtt(link_id, &key, rtt_ms, iv, buf)
+            .map_err(|_| WriteLinkRttError::Serialize)?;
+        self.links
+            .activate_initiated(link_id, key, rtt_ms)
+            .map_err(|_| WriteLinkRttError::NotPending)?;
+        Ok(written)
+    }
+
     /// Drain one establishment whose handshake never completed. Call
     /// repeatedly until `None` to fully drain. An initiated pop is that
     /// command's timeout settlement.
@@ -239,12 +277,13 @@ mod tests {
     use crate::engine::{
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
         EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled, LaneWake,
-        Settlement,
+        LinkEstablished, Settlement,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
     use crate::interfaces::{InboundPacket, InterfaceConfig};
     use crate::routing::links::handshake::parse_link_request;
     use crate::routing::links::table::LinkPhase;
+    use crate::routing::links::table::LinkRole;
     use crate::wire::DestinationHash;
 
     impl EstablishLinkWriteOutcome {
@@ -674,6 +713,261 @@ mod tests {
         assert_eq!(
             delta.link_establishment_timeout,
             LaneWake::At(InstantMillis(368_000)),
+        );
+    }
+
+    fn reactions_of(
+        engine: &mut EngineState<Cap>,
+        bytes: &[u8],
+        arrived_at: u64,
+        iv_fill: u8,
+    ) -> (
+        std::vec::Vec<std::vec::Vec<u8>>,
+        std::vec::Vec<(CommandId, Settlement)>,
+        WakeSchedules,
+    ) {
+        let mut sent = std::vec::Vec::new();
+        let mut journaled = std::vec::Vec::new();
+        let mut raw = bytes.to_vec();
+        let delta = engine.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(arrived_at),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(arrived_at),
+            &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    assert_eq!(
+                        target,
+                        arrival(),
+                        "every answer rides the arrival interface"
+                    );
+                    sent.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    journaled.push((id, settlement));
+                }
+                EngineReaction::Journaled(Journaled::LinkEstablished(established)) => {
+                    journaled.push((
+                        CommandId(u64::MAX),
+                        Settlement::EstablishLink(Ok(established)),
+                    ));
+                }
+                _ => {}
+            },
+        );
+        (sent, journaled, delta)
+    }
+
+    #[test]
+    fn the_full_handshake_activates_both_ends() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = personal_node_announcer();
+        let (proofs, journaled, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        assert_eq!(proofs.len(), 1);
+        assert!(journaled.is_empty());
+
+        let (rtts, settled, delta) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        assert_eq!(rtts.len(), 1, "the validated proof owes exactly one LRRTT");
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::EstablishLink(Ok(LinkEstablished {
+                    link_id,
+                    rtt_ms: 250,
+                })),
+            )],
+            "the command settles established with the measured round trip",
+        );
+        assert!(matches!(
+            initiator.links.phase_for(&link_id),
+            Some(LinkPhase::Active {
+                role: LinkRole::Initiator,
+                rtt_ms: 250,
+                ..
+            }),
+        ));
+        assert_eq!(
+            delta.link_establishment_timeout,
+            LaneWake::Idle,
+            "activation clears the initiator's establishment deadline",
+        );
+
+        let (replay_sent, replay_journaled, _) =
+            reactions_of(&mut initiator, &proofs[0], 1_300, 0xA5);
+        assert!(replay_sent.is_empty() && replay_journaled.is_empty());
+
+        let (responder_sent, established, delta) =
+            reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+        assert!(responder_sent.is_empty(), "activation answers nothing back");
+        assert_eq!(
+            established,
+            std::vec![(
+                CommandId(u64::MAX),
+                Settlement::EstablishLink(Ok(LinkEstablished {
+                    link_id,
+                    rtt_ms: 500,
+                })),
+            )],
+            "the responder journals the link up at max(measured, reported)",
+        );
+        assert_eq!(delta.link_establishment_timeout, LaneWake::Idle);
+
+        let Some(LinkPhase::Active {
+            key: initiator_key,
+            role: LinkRole::Initiator,
+            ..
+        }) = initiator.links.phase_for(&link_id)
+        else {
+            panic!("the initiator must be active");
+        };
+        let Some(LinkPhase::Active {
+            key: responder_key,
+            role: LinkRole::Responder,
+            rtt_ms: 500,
+        }) = responder.links.phase_for(&link_id)
+        else {
+            panic!("the responder must be active at the measured rtt");
+        };
+        let iv = [0xC7u8; 16];
+        let mut by_initiator = [0u8; 96];
+        let mut by_responder = [0u8; 96];
+        let n = initiator_key
+            .seal(&iv, b"the link is real", &mut by_initiator)
+            .unwrap();
+        let m = responder_key
+            .seal(&iv, b"the link is real", &mut by_responder)
+            .unwrap();
+        assert_eq!(
+            &by_initiator[..n],
+            &by_responder[..m],
+            "both active ends hold the same session key",
+        );
+    }
+
+    #[test]
+    fn a_proof_for_an_unknown_link_is_ignored() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+
+        let mut bystander = EngineState::<Cap>::new(second_secret_key());
+        let mut raw = proofs[0].clone();
+        let outcome = bystander.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_250),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+        );
+        assert_eq!(outcome, IngestPacketOutcome::Ignored);
+    }
+
+    #[test]
+    fn a_tampered_lrrtt_keeps_the_handshake_pending() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+
+        let mut tampered = rtts[0].clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        let (sent, journaled, _) = reactions_of(&mut responder, &tampered, 1_600, 0xB5);
+        assert!(sent.is_empty() && journaled.is_empty());
+        assert!(
+            matches!(
+                responder.links.phase_for(&dispatch.link_id),
+                Some(LinkPhase::Handshake { .. }),
+            ),
+            "an unauthenticated LRRTT never moves the link; the genuine one still can",
+        );
+    }
+
+    #[test]
+    fn an_authenticated_but_malformed_lrrtt_keeps_waiting_where_the_reference_tears_down() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+
+        let mut responder = personal_node_announcer();
+        let (_, _, _) = reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+
+        let mut frame = std::vec![0x0Cu8, 0x00];
+        frame.extend_from_slice(dispatch.link_id.as_bytes());
+        frame.push(0xFE);
+        let Some(LinkPhase::Handshake { key, .. }) = responder.links.phase_for(&dispatch.link_id)
+        else {
+            panic!("the responder must be awaiting its LRRTT");
+        };
+        let mut not_msgpack = [0xC1u8; 9];
+        not_msgpack[1..].fill(0x55);
+        let mut sealed = [0u8; 64];
+        let n = key.seal(&[0xB5; 16], &not_msgpack, &mut sealed).unwrap();
+        frame.extend_from_slice(&sealed[..n]);
+
+        let (sent, journaled, _) = reactions_of(&mut responder, &frame, 1_600, 0xB6);
+        assert!(sent.is_empty() && journaled.is_empty());
+        assert!(
+            matches!(
+                responder.links.phase_for(&dispatch.link_id),
+                Some(LinkPhase::Handshake { .. }),
+            ),
+            "only the establishment deadline forgets a half-open link; \
+             revisit for exact parity when the teardown arc lands",
         );
     }
 

@@ -152,6 +152,13 @@ fn log_journaled(journaled: Journaled<'_>) {
                 destination.as_bytes(),
             );
         }
+        Journaled::LinkEstablished(established) => {
+            println!(
+                "RNSD_LINK_ESTABLISHED link_id={:02x?} rtt_ms={}",
+                established.link_id.as_bytes(),
+                established.rtt_ms,
+            );
+        }
         Journaled::CommandSettled { .. } => {}
     }
 }

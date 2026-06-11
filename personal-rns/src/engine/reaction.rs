@@ -1,4 +1,4 @@
-use crate::engine::commands::{CommandId, Settlement};
+use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
 use crate::wire::DestinationHash;
@@ -22,6 +22,9 @@ pub enum Journaled<'a> {
         id: CommandId,
         settlement: Settlement,
     },
+    /// A link another node initiated to one of our destinations went ACTIVE on
+    /// its LRRTT. Our own initiations settle through `CommandSettled` instead.
+    LinkEstablished(LinkEstablished),
     RouteExpired {
         destination: DestinationHash,
     },

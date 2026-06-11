@@ -610,7 +610,8 @@ mod tests {
             | Journaled::CommandSettled { .. }
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. } => {}
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_) => {}
         };
 
         tokio::spawn(run(
@@ -925,7 +926,8 @@ mod tests {
             | Journaled::CommandSettled { .. }
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. } => {}
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_) => {}
         };
 
         tokio::spawn(run(
@@ -1122,7 +1124,8 @@ mod tests {
             }
             Journaled::Delivered(_)
             | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. } => {}
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_) => {}
         };
 
         tokio::spawn(run(
@@ -1225,7 +1228,8 @@ mod tests {
             | Journaled::Delivered(_)
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
-            | Journaled::RouteInterfaceGone { .. } => {}
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_) => {}
         };
 
         tokio::spawn(run(

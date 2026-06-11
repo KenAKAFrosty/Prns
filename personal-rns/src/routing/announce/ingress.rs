@@ -1,4 +1,6 @@
+use crate::crypto::X25519PublicKey;
 use crate::crypto::{token_open_in_place, TokenKey};
+use crate::engine::commands::CommandId;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
@@ -16,7 +18,11 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::delivery::{
     Delivery, GroupDelivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
-use crate::routing::links::handshake::{link_request_from, LinkRequest};
+use crate::routing::links::handshake::{
+    link_proof_from, link_request_from, link_rtt_from, LinkRequest,
+};
+use crate::routing::links::table::LinkPhase;
+use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
@@ -69,6 +75,7 @@ pub enum Ingress<'a> {
     Proof {
         payload: &'a [u8],
         destination: DestinationHash,
+        context: WireContext,
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
@@ -155,6 +162,7 @@ impl<'a> Ingress<'a> {
             PacketType::Proof => Self::Proof {
                 payload,
                 destination: header.destination,
+                context: header.context,
                 received_hops,
                 source_interface,
                 arrived_at,
@@ -219,6 +227,20 @@ pub enum IngestPacketOutcome<'p> {
         identity: IdentityHash,
         received_hops: u8,
         arrived_at: InstantMillis,
+    },
+    /// The LRPROOF for a link we initiated validated against the announced
+    /// identity — the engine owes the encrypted LRRTT that activates both ends.
+    OwesLinkRtt {
+        link_id: LinkId,
+        responder_encryption: X25519PublicKey,
+        command_id: CommandId,
+        rtt_ms: u64,
+    },
+    /// The LRRTT for a handshake we answered opened under the session key —
+    /// the link is ACTIVE.
+    LinkActivated {
+        link_id: LinkId,
+        rtt_ms: u64,
     },
     Ignored,
 }
@@ -360,6 +382,12 @@ impl<S: EngineStorage> EngineState<S> {
                 source_interface,
                 arrived_at,
             } => {
+                if data.destination_type == DestinationType::Link {
+                    if data.context == WireContext::LinkRtt {
+                        return self.classify_link_rtt(&data.destination, data.payload, arrived_at);
+                    }
+                    return IngestPacketOutcome::Ignored;
+                }
                 if data.destination == PATH_REQUEST_DESTINATION
                     && data.destination_type == DestinationType::Plain
                 {
@@ -402,10 +430,14 @@ impl<S: EngineStorage> EngineState<S> {
             Ingress::Proof {
                 payload,
                 destination,
+                context,
                 received_hops,
                 source_interface,
                 arrived_at,
             } => {
+                if context == WireContext::LinkRequestProof {
+                    return self.classify_link_proof(&destination, payload, arrived_at);
+                }
                 if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
                     // The proof must arrive back over the interface we forwarded
                     // toward; anything else is dropped (Transport.py:2256).
@@ -439,6 +471,62 @@ impl<S: EngineStorage> EngineState<S> {
             } => self.classify_link_request(&header, payload, received_hops, arrived_at),
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
         }
+    }
+
+    fn classify_link_proof(
+        &self,
+        destination: &DestinationHash,
+        payload: &[u8],
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*destination.as_bytes());
+        let Some(LinkPhase::Pending {
+            destination: link_destination,
+            requested_at,
+            command_id,
+            ..
+        }) = self.links.phase_for(&link_id)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(retained) = self.routing_table.retained_announce_for(link_destination) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(proof) = link_proof_from(
+            &link_id,
+            payload,
+            retained.announce.public_keys.signing.as_ed25519(),
+        ) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        IngestPacketOutcome::OwesLinkRtt {
+            link_id,
+            responder_encryption: proof.responder_encryption,
+            command_id: *command_id,
+            rtt_ms: arrived_at.0.saturating_sub(requested_at.0),
+        }
+    }
+
+    fn classify_link_rtt(
+        &mut self,
+        destination: &DestinationHash,
+        payload: &[u8],
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*destination.as_bytes());
+        let Some(LinkPhase::Handshake { key, requested_at }) = self.links.phase_for(&link_id)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(reported) = link_rtt_from(&link_id, payload, key) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let measured_ms = arrived_at.0.saturating_sub(requested_at.0);
+        let rtt_ms = measured_ms.max(reported.rtt_ms);
+        if self.links.activate_responding(&link_id, rtt_ms).is_err() {
+            return IngestPacketOutcome::Ignored;
+        }
+        IngestPacketOutcome::LinkActivated { link_id, rtt_ms }
     }
 
     fn classify_link_request(

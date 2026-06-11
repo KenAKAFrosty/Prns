@@ -197,7 +197,18 @@ pub fn validate_link_proof(
     responder_signing: &Ed25519PublicKey,
 ) -> Result<LinkProof, LinkProofError> {
     let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkProofError::Malformed)?;
+    link_proof_from(
+        &LinkId::new(*header.destination.as_bytes()),
+        payload,
+        responder_signing,
+    )
+}
 
+pub fn link_proof_from(
+    link_id: &LinkId,
+    payload: &[u8],
+    responder_signing: &Ed25519PublicKey,
+) -> Result<LinkProof, LinkProofError> {
     let (body, signalling, mtu, mode): (&[u8], &[u8], usize, LinkMode) = match payload.len() {
         LINK_PROOF_BODY_LEN => (payload, &[], BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_PROOF_LEN => {
@@ -215,7 +226,6 @@ pub fn validate_link_proof(
         _ => return Err(LinkProofError::Malformed),
     };
 
-    let link_id = LinkId::new(*header.destination.as_bytes());
     let mut signature = [0u8; 64];
     signature.copy_from_slice(&body[..64]);
     let mut responder = [0u8; 32];
@@ -241,7 +251,7 @@ pub fn validate_link_proof(
     .map_err(|_| LinkProofError::InvalidSignature)?;
 
     Ok(LinkProof {
-        link_id,
+        link_id: *link_id,
         responder_encryption,
         mtu,
         mode,
@@ -310,13 +320,27 @@ pub struct LinkRtt {
 
 pub fn parse_link_rtt(raw: &[u8], link_key: &LinkKey) -> Result<LinkRtt, LinkRttError> {
     let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkRttError::Malformed)?;
-    let link_id = LinkId::new(*header.destination.as_bytes());
+    link_rtt_from(
+        &LinkId::new(*header.destination.as_bytes()),
+        payload,
+        link_key,
+    )
+}
+
+pub fn link_rtt_from(
+    link_id: &LinkId,
+    payload: &[u8],
+    link_key: &LinkKey,
+) -> Result<LinkRtt, LinkRttError> {
     let mut out = [0u8; 16];
     let n = link_key
         .open(payload, &mut out)
         .map_err(|_| LinkRttError::InvalidToken)?;
     let rtt_ms = unpack_rtt(&out[..n]).ok_or(LinkRttError::Malformed)?;
-    Ok(LinkRtt { link_id, rtt_ms })
+    Ok(LinkRtt {
+        link_id: *link_id,
+        rtt_ms,
+    })
 }
 
 #[cfg(test)]
