@@ -243,7 +243,7 @@ mod tests {
     }
 
     async fn read_deframed(socket: &mut TcpStream) -> std::vec::Vec<u8> {
-        let mut decoder = RnsSerialDecoder::<{ core::FRAME_CAP }>::new();
+        let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<{ core::FRAME_CAP }>::new());
         let mut buf = [0u8; 256];
         loop {
             let n = socket.read(&mut buf).await.expect("reads from the wire");

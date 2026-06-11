@@ -35,9 +35,9 @@ pub async fn serve<
     S: AsyncRead + AsyncWrite + Unpin,
     Seam: InterfaceSeam,
 {
-    let mut decoder = RnsSerialDecoder::<FRAME_CAP>::new();
+    let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<FRAME_CAP>::new());
     let mut read_buf = [0u8; READ_LEN];
-    let mut frame_buf = [0u8; FRAMED_LEN];
+    let mut frame_buf = std::vec![0u8; FRAMED_LEN].into_boxed_slice();
 
     loop {
         tokio::select! {

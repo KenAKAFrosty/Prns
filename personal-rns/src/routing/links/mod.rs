@@ -26,12 +26,16 @@ pub const LINK_KEY_LEN: usize = 64;
 
 /// The engine's one ceiling on a negotiated link MTU; the seam's frame is
 /// sized from it, so every queue slot pays it — a per-target memory decision,
-/// never a silent side effect. Hosts carry the fleet's fat tier (8192, the
-/// USB device tier); a no_std target turns `fat-links` on when its own RAM
-/// budget says so.
-#[cfg(feature = "fat-links")]
+/// never a silent side effect. Three tiers: `giga-links` is the reference's
+/// top `optimise_mtu` tier (what a ≥1 Gbps wire wants), the tier std hosts
+/// carry; `fat-links` is the USB device tier (8192) an embedded target turns
+/// on when its own RAM budget says so; everything else stays at the
+/// broadcast MTU.
+#[cfg(feature = "giga-links")]
+pub const MAX_LINK_MTU: usize = 524_288;
+#[cfg(all(feature = "fat-links", not(feature = "giga-links")))]
 pub const MAX_LINK_MTU: usize = 8_192;
-#[cfg(not(feature = "fat-links"))]
+#[cfg(not(any(feature = "fat-links", feature = "giga-links")))]
 pub const MAX_LINK_MTU: usize = crate::wire::BROADCAST_MTU;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
