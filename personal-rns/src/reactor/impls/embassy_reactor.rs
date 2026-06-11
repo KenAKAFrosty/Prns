@@ -636,7 +636,7 @@ mod tests {
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceMode, TransportCapability,
     };
-    use crate::reactor::interface_seam::{Interface, OutboundFrame};
+    use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
 
     use embassy_futures::block_on;
@@ -667,19 +667,16 @@ mod tests {
         }
     }
 
-    /// An interface whose "wire" is two embassy channels: the test plays received frames
-    /// onto `wire_in` (the medium delivering one) and reads transmitted frames off
-    /// `wire_out`. It exercises the [`InterfaceSeam`] in isolation on the no_std host — no
-    /// real I/O, just the boundary.
-    struct EmbassyLoopbackInterface<'a, M: RawMutex, const IN: usize, const OUT: usize> {
+    /// An interface whose "wire" is two grant lanes: the test fills `wire_in` (the medium
+    /// delivering a frame) and drains transmitted frames off `wire_out`. It exercises the
+    /// [`InterfaceSeam`] in isolation on the no_std host — no real I/O, just the boundary.
+    struct EmbassyLoopbackInterface<'a, M: RawMutex, const SLOT: usize> {
         descriptor: InterfaceConfig,
-        wire_in: Receiver<'a, M, OutboundFrame, IN>,
-        wire_out: Sender<'a, M, OutboundFrame, OUT>,
+        wire_in: EmbassyGrantConsumer<'a, M, SLOT>,
+        wire_out: EmbassyGrantProducer<'a, M, SLOT>,
     }
 
-    impl<M: RawMutex, const IN: usize, const OUT: usize> Interface
-        for EmbassyLoopbackInterface<'_, M, IN, OUT>
-    {
+    impl<M: RawMutex, const SLOT: usize> Interface for EmbassyLoopbackInterface<'_, M, SLOT> {
         const HW_MTU: usize = crate::wire::BROADCAST_MTU;
 
         fn descriptor(&self) -> InterfaceConfig {
@@ -687,10 +684,18 @@ mod tests {
         }
 
         async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
+            let mut wire_in = self.wire_in;
+            let mut wire_out = self.wire_out;
             loop {
-                match select(self.wire_in.receive(), seam.next_outbound()).await {
-                    Either::First(frame) => seam.next_inbound(frame.bytes()).await,
-                    Either::Second(out) => self.wire_out.send(OutboundFrame::new(out)).await,
+                match select(wire_in.peek(), seam.next_outbound()).await {
+                    Either::First(slot) => {
+                        seam.next_inbound(slot.frame()).await;
+                        wire_in.release();
+                    }
+                    Either::Second(out) => {
+                        wire_out.grant().await.fill(out);
+                        wire_out.commit();
+                    }
                 }
             }
         }
@@ -709,11 +714,11 @@ mod tests {
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
 
-        // Each interface's "wire" (the medium).
-        let source_wire_in: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
-        let source_wire_out: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
-        let peer_wire_in: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
-        let peer_wire_out: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
+        // Each interface's "wire" (the medium), grant lanes like everything else.
+        let (mut source_wire_in_tx, source_wire_in_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
+        let (source_wire_out_tx, _source_wire_out_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
+        let (_peer_wire_in_tx, peer_wire_in_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
+        let (peer_wire_out_tx, mut peer_wire_out_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
 
         // The grant lanes are deliberately sized apart: erasure carries both
         // through one reactor, each paying only its own slot size.
@@ -770,8 +775,8 @@ mod tests {
                 EmbassyInterfaceSeam::new(source, source_in_tx, notify.sender(), source_out_rx);
             let source_iface = EmbassyLoopbackInterface {
                 descriptor: descriptor(source),
-                wire_in: source_wire_in.receiver(),
-                wire_out: source_wire_out.sender(),
+                wire_in: source_wire_in_rx,
+                wire_out: source_wire_out_tx,
             };
             let source_run = source_iface.run(source_seam);
 
@@ -780,8 +785,8 @@ mod tests {
                 EmbassyInterfaceSeam::new(peer, peer_in_tx, notify.sender(), peer_out_rx);
             let peer_iface = EmbassyLoopbackInterface {
                 descriptor: descriptor(peer),
-                wire_in: peer_wire_in.receiver(),
-                wire_out: peer_wire_out.sender(),
+                wire_in: peer_wire_in_rx,
+                wire_out: peer_wire_out_tx,
             };
             let peer_run = peer_iface.run(peer_seam);
 
@@ -790,17 +795,20 @@ mod tests {
                 Timer::after(Duration::from_millis(50)).await;
                 assert_eq!(*heard.borrow(), 0, "an idle reactor journals nothing");
                 assert!(
-                    peer_wire_out.try_receive().is_err(),
+                    peer_wire_out_rx.try_peek().is_none(),
                     "an idle interface transmits nothing"
                 );
 
                 // Play the announce onto the source interface's wire — it crosses the seam.
-                source_wire_in.send(OutboundFrame::new(&raw)).await;
+                source_wire_in_tx.grant().await.fill(&raw);
+                source_wire_in_tx.commit();
 
                 loop {
                     if *heard.borrow() >= 1 {
-                        if let Ok(frame) = peer_wire_out.try_receive() {
-                            break frame;
+                        if let Some(slot) = peer_wire_out_rx.try_peek() {
+                            let rebroadcast = slot.frame().to_vec();
+                            peer_wire_out_rx.release();
+                            break rebroadcast;
                         }
                     }
                     yield_now().await;
@@ -822,7 +830,7 @@ mod tests {
             }
         });
 
-        let (header, _) = WirePacketHeader::parse(outcome.bytes()).expect("valid rebroadcast wire");
+        let (header, _) = WirePacketHeader::parse(&outcome).expect("valid rebroadcast wire");
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(
             header.hops,

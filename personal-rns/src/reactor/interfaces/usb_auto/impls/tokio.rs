@@ -6,9 +6,10 @@
 //! Discovery itself is event-driven too: the consumer pokes a rescan signal the instant the OS
 //! reports a hot-plug, so a board appears the moment it is plugged, not on the next poll.
 //!
-//! Inbound fans IN: every confirmed port writes its data frames directly to the shared inbound
-//! funnel (alloc-free, tagged with the host's id). Outbound fans OUT: the run loop drains the
-//! reactor's egress queue and broadcasts each frame to every confirmed port — the hub repeat the
+//! Inbound fans IN: every confirmed port fills its own grant lane and announces the commit on
+//! the hub's port-notify funnel; the hub drains the named lane across the seam — the reactor's
+//! own id-funnel pattern, one level down. Outbound fans OUT: the run loop borrows each frame
+//! from the seam and write-grants it into every confirmed port's lane — the hub repeat the
 //! `host_descriptor`'s `SameInterfaceRepeat` capability already accounts for.
 
 use std::future::Future;
@@ -18,13 +19,16 @@ use std::time::Duration;
 use std::vec::Vec;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
-use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use crate::reactor::interface_seam::{InboundFrame, OutboundFrame};
+use crate::reactor::grant::{GrantConsumer, GrantProducer};
+use crate::reactor::impls::tokio_reactor::{
+    tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
+};
+use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::reactor::interfaces::usb_auto::core::{
     self, Capabilities, HostInbound, Message, NodeTag,
 };
@@ -39,8 +43,10 @@ const PROBE_INTERVAL: Duration = Duration::from_millis(500);
 
 struct Port {
     id: String,
+    key: u64,
     confirmed: bool,
-    outbound: UnboundedSender<OutboundFrame>,
+    outbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
+    inbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
     task: JoinHandle<()>,
 }
 
@@ -51,12 +57,15 @@ enum PortEvent {
 
 #[derive(Clone)]
 struct PortContext {
-    host_id: InterfaceId,
     node_tag: NodeTag,
-    inbound: UnboundedSender<InboundFrame>,
     status: TokioInterfaceStatus,
     events: UnboundedSender<PortEvent>,
 }
+
+/// How many frames a port's lane holds in each direction before the hub (inbound) or
+/// the wire (outbound) is behind: backpressure for the port's own reads, drop-on-full
+/// for the broadcast fan-out, mirroring the reactor's egress posture.
+const PORT_LANE_DEPTH: usize = 8;
 
 pub struct UsbAutoHost<Scan, Open> {
     id: InterfaceId,
@@ -64,27 +73,24 @@ pub struct UsbAutoHost<Scan, Open> {
     scan: Scan,
     open: Open,
     status: TokioInterfaceStatus,
+    rescan: Arc<Notify>,
 }
 
 impl<Scan, Open> UsbAutoHost<Scan, Open> {
     #[must_use]
-    pub fn new(id: InterfaceId, scan: Scan, open: Open) -> Self {
+    pub fn new(id: InterfaceId, scan: Scan, open: Open, rescan: Arc<Notify>) -> Self {
         Self {
             id,
             node_tag: core::node_tag_for(id),
             scan,
             open,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            rescan,
         }
     }
 
-    #[must_use]
-    pub fn descriptor(&self) -> InterfaceConfig {
-        core::host_descriptor(self.id)
-    }
-
     /// A clone of the live-status handle for the app to read on its own render cadence. Call
-    /// before [`run`](Self::run) consumes the interface.
+    /// before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
@@ -102,38 +108,50 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
     }
 }
 
-impl<Scan, Open, Fut, S> UsbAutoHost<Scan, Open>
+impl<Scan, Open, Fut, S> Interface for UsbAutoHost<Scan, Open>
 where
     Scan: FnMut() -> Vec<String> + Send + 'static,
     Open: FnMut(String) -> Fut + Send + 'static,
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    /// Multiplex every discovered, confirmed port behind this one interface: funnel their inbound
-    /// into `inbound`, broadcast `outbound` out to all of them, and re-enumerate ports whenever
-    /// `rescan` is poked (the consumer's hot-plug signal) or the fallback timer fires. Runs until
-    /// the reactor drops the outbound lane.
-    pub async fn run(
-        mut self,
-        inbound: UnboundedSender<InboundFrame>,
-        mut outbound: UnboundedReceiver<OutboundFrame>,
-        rescan: Arc<Notify>,
-    ) {
+    const HW_MTU: usize = crate::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU;
+
+    fn descriptor(&self) -> InterfaceConfig {
+        core::host_descriptor(self.id)
+    }
+
+    /// Multiplex every discovered, confirmed port behind this one interface: drain each port's
+    /// inbound lane across the seam as its notify names it, broadcast every seam outbound to all
+    /// of them, and re-enumerate ports whenever `rescan` is poked (the consumer's hot-plug
+    /// signal) or the fallback timer fires.
+    async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
         let (events_tx, mut events_rx) = mpsc::unbounded_channel::<PortEvent>();
+        let (port_notify_tx, mut port_notify_rx) = mpsc::unbounded_channel::<u64>();
         let context = PortContext {
-            host_id: self.id,
             node_tag: self.node_tag,
-            inbound,
             status: self.status.clone(),
             events: events_tx,
         };
+        let rescan = self.rescan.clone();
         let mut ports: Vec<Port> = Vec::new();
+        let mut next_port_key: u64 = 0;
         let mut fallback = tokio::time::interval(FALLBACK_SCAN_INTERVAL);
 
         loop {
-            tokio::select! {
-                _ = fallback.tick() => self.reconcile(&mut ports, &context).await,
-                () = rescan.notified() => self.reconcile(&mut ports, &context).await,
+            // The arrived key crosses the select so the seam is free again before the
+            // inbound handoff borrows it; every other arm completes in place.
+            let arrived = tokio::select! {
+                _ = fallback.tick() => {
+                    self.reconcile(&mut ports, &context, &port_notify_tx, &mut next_port_key)
+                        .await;
+                    None
+                }
+                () = rescan.notified() => {
+                    self.reconcile(&mut ports, &context, &port_notify_tx, &mut next_port_key)
+                        .await;
+                    None
+                }
                 Some(event) = events_rx.recv() => {
                     match event {
                         PortEvent::Confirmed { id } => {
@@ -146,21 +164,51 @@ where
                         }
                     }
                     self.refresh_connection(&ports);
+                    None
                 }
-                Some(frame) = outbound.recv() => {
-                    for port in &ports {
+                Some(key) = port_notify_rx.recv() => Some(key),
+                out = seam.next_outbound() => {
+                    for port in &mut ports {
                         if port.confirmed {
-                            let _ = port.outbound.send(OutboundFrame::new(frame.bytes()));
+                            if let Some(slot) = port.outbound.try_grant() {
+                                slot.fill(out);
+                                port.outbound.commit();
+                            }
                         }
                     }
+                    None
                 }
+            };
+            if let Some(key) = arrived {
+                let Some(port) = ports.iter_mut().find(|port| port.key == key) else {
+                    continue;
+                };
+                let Some(slot) = port.inbound.try_peek() else {
+                    continue;
+                };
+                seam.next_inbound(slot.frame()).await;
+                port.inbound.release();
             }
         }
     }
+}
 
+impl<Scan, Open, Fut, S> UsbAutoHost<Scan, Open>
+where
+    Scan: FnMut() -> Vec<String> + Send + 'static,
+    Open: FnMut(String) -> Fut + Send + 'static,
+    Fut: Future<Output = io::Result<S>>,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     /// Re-enumerate the present CDC ports: drop (and abort) the tasks of any that vanished, spawn
     /// a fresh task for any newly present, and refresh the connection state.
-    async fn reconcile(&mut self, ports: &mut Vec<Port>, context: &PortContext) {
+    async fn reconcile(
+        &mut self,
+        ports: &mut Vec<Port>,
+        context: &PortContext,
+        port_notify: &UnboundedSender<u64>,
+        next_port_key: &mut u64,
+    ) {
         let present = (self.scan)();
         ports.retain(|port| {
             if present.iter().any(|name| name == &port.id) {
@@ -175,12 +223,25 @@ where
                 continue;
             }
             if let Ok(stream) = (self.open)(name.clone()).await {
-                let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
-                let task = tokio::spawn(serve_port(name.clone(), stream, context.clone(), out_rx));
+                let key = *next_port_key;
+                *next_port_key += 1;
+                let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(PORT_LANE_DEPTH);
+                let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(PORT_LANE_DEPTH);
+                let task = tokio::spawn(serve_port(
+                    name.clone(),
+                    stream,
+                    context.clone(),
+                    in_tx,
+                    port_notify.clone(),
+                    key,
+                    out_rx,
+                ));
                 ports.push(Port {
                     id: name,
+                    key,
                     confirmed: false,
                     outbound: out_tx,
+                    inbound: in_rx,
                     task,
                 });
             }
@@ -189,14 +250,25 @@ where
     }
 }
 
+/// The next frame owed to this port's wire, borrowed in place from its lane; the borrow
+/// releases on the following call — the seam's own outbound discipline, one level down.
+async fn next_from_lane<const SLOT: usize>(lane: &mut TokioGrantConsumer<SLOT>) -> &[u8] {
+    lane.release();
+    lane.peek().await.frame()
+}
+
 /// Serve one CDC port: probe it with `Hello` until it answers, then deframe its inbound data
-/// straight to the shared funnel and write any broadcast outbound onto its wire. Returns on any
-/// IO error so the run loop prunes it; the run loop's outbound lane closing (a prune) ends it too.
+/// into the port's own grant lane (announcing each commit on the hub's notify funnel) and write
+/// any broadcast outbound onto its wire. Returns on any IO error so the run loop prunes it.
+#[allow(clippy::too_many_arguments)]
 async fn serve_port<S>(
     id: String,
     mut stream: S,
     context: PortContext,
-    mut outbound: UnboundedReceiver<OutboundFrame>,
+    mut inbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
+    notify: UnboundedSender<u64>,
+    key: u64,
+    mut outbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -249,9 +321,9 @@ async fn serve_port<S>(
                         HostInbound::Confirmed(_) => confirm(&mut confirmed, &id, &context.events),
                         HostInbound::Data(packet) => {
                             if confirmed && !packet.is_empty() {
-                                let _ = context
-                                    .inbound
-                                    .send(InboundFrame::new(context.host_id, packet));
+                                inbound.grant().await.fill(packet);
+                                inbound.commit();
+                                let _ = notify.send(key);
                             }
                         }
                         HostInbound::Ignore => {}
@@ -261,11 +333,8 @@ async fn serve_port<S>(
                     break;
                 }
             }
-            frame = outbound.recv() => {
-                let Some(frame) = frame else {
-                    break;
-                };
-                let data = Message::Data(frame.bytes());
+            out = next_from_lane(&mut outbound) => {
+                let data = Message::Data(out);
                 if write_message(&mut stream, &data, &mut frame_buf, &context.status)
                     .await
                     .is_err()
@@ -306,6 +375,7 @@ where
 mod tests {
     use super::*;
     use crate::interfaces::InterfaceStatus;
+    use crate::reactor::impls::tokio_reactor::TokioInterfaceSeam;
     use std::time::Duration;
     use tokio::io::AsyncRead;
     use tokio::sync::mpsc::unbounded_channel;
@@ -355,12 +425,14 @@ mod tests {
         };
         let scan = || std::vec![String::from("loopback")];
 
-        let host = UsbAutoHost::new(host_id(), scan, open);
+        let host = UsbAutoHost::new(host_id(), scan, open, Arc::new(Notify::new()));
         let status = host.status();
 
-        let (funnel_tx, mut funnel_rx) = unbounded_channel::<InboundFrame>();
-        let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
-        tokio::spawn(host.run(funnel_tx, outbound_rx, Arc::new(Notify::new())));
+        let (notify_tx, mut notify_rx) = unbounded_channel::<InterfaceId>();
+        let (in_tx, mut in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (mut out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let seam = TokioInterfaceSeam::new(host_id(), in_tx, notify_tx, out_rx);
+        tokio::spawn(host.run(seam));
 
         // The host probes the newly discovered port with a Hello; the device answers HelloAck and
         // the host confirms the link (its status turns Connected).
@@ -386,11 +458,14 @@ mod tests {
         .await
         .expect("the host confirms the link within the window");
 
-        // Outbound fans out: a packet on the egress lane reaches the confirmed port as a Data frame.
+        // Outbound fans out: a frame granted into the egress lane reaches the confirmed port
+        // as a Data frame.
         let outbound_packet = [0x11u8, 0x22, 0x33];
-        outbound_tx
-            .send(OutboundFrame::new(&outbound_packet))
-            .expect("the host holds the egress receiver");
+        out_tx
+            .try_grant()
+            .expect("the egress lane has a free slot")
+            .fill(&outbound_packet);
+        out_tx.commit();
         let delivered = read_until(&mut device, &mut decoder, |message| match message {
             Message::Data(packet) => Some(packet.to_vec()),
             _ => None,
@@ -398,18 +473,22 @@ mod tests {
         .await;
         assert_eq!(delivered, outbound_packet);
 
-        // Inbound fans in: a Data frame from the device reaches the reactor's inbound funnel,
-        // tagged with the host's id.
+        // Inbound fans in: a Data frame from the device lands in the host's grant lane,
+        // announced on the notify funnel with the host's id.
         let inbound_packet = [0xAAu8, 0xBB, 0xCC, 0xDD];
         let n = Message::Data(&inbound_packet)
             .write_framed(&mut frame)
             .expect("frames the data");
         device.write_all(&frame[..n]).await.expect("the host reads");
-        let received = tokio::time::timeout(Duration::from_secs(2), funnel_rx.recv())
+        let announced = tokio::time::timeout(Duration::from_secs(2), notify_rx.recv())
             .await
             .expect("the inbound frame funnels within the window")
             .expect("the host task is alive");
-        assert_eq!(received.source, host_id());
-        assert_eq!(&received.bytes[..received.len], &inbound_packet);
+        assert_eq!(announced, host_id());
+        let received = in_rx
+            .try_peek()
+            .expect("the announced frame is in the lane");
+        assert_eq!(received.frame(), &inbound_packet);
+        in_rx.release();
     }
 }

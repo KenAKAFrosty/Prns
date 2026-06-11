@@ -135,15 +135,15 @@ mod tests {
     use super::*;
     use crate::interfaces::rns_serial_framing::{self, ESC, FLAG};
     use crate::interfaces::InterfaceStatus;
-    use crate::reactor::interface_seam::OutboundFrame;
-    use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+    use crate::reactor::grant::{GrantConsumer, GrantProducer};
+    use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
-    /// queue the test fills — so the interface's framing can be exercised in isolation.
+    /// grant lane the test fills — so the interface's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
-        outbound: UnboundedReceiver<OutboundFrame>,
-        held: Option<OutboundFrame>,
+        outbound: TokioGrantConsumer<{ core::SERIAL_FRAME_LEN }>,
     }
 
     impl InterfaceSeam for MockSeam {
@@ -152,16 +152,8 @@ mod tests {
         }
 
         async fn next_outbound(&mut self) -> &[u8] {
-            match self.outbound.recv().await {
-                Some(frame) => {
-                    self.held = Some(frame);
-                    match &self.held {
-                        Some(frame) => frame.bytes(),
-                        None => &[],
-                    }
-                }
-                None => ::core::future::pending().await,
-            }
+            self.outbound.release();
+            self.outbound.peek().await.frame()
         }
     }
 
@@ -181,11 +173,10 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (mut out_tx, out_rx) = tokio_grant_lane::<{ core::SERIAL_FRAME_LEN }>(2);
         let seam = MockSeam {
             inbound: in_tx,
             outbound: out_rx,
-            held: None,
         };
 
         let interface = SerialInterface::new(test_id(), open, Duration::from_millis(10));
@@ -215,8 +206,10 @@ mod tests {
         // reads it back and deframes to the original.
         let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
-            .send(OutboundFrame::new(&out_payload))
-            .expect("the interface holds the outbound queue");
+            .try_grant()
+            .expect("the outbound lane has a free slot")
+            .fill(&out_payload);
+        out_tx.commit();
 
         let mut decoder = core::Decoder::new();
         let mut buf = [0u8; 64];

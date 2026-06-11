@@ -7,46 +7,13 @@
 //! interface body can be driven under either executor.
 
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::InterfaceConfig;
 
-/// An IFAC'd wire frame carries the engine's full link ceiling plus the access tag.
+/// An IFAC'd wire frame carries the engine's full link ceiling plus the access tag —
+/// the ceiling a uniform-slot host sizes its lanes and scratch buffers by. No frame
+/// *type* is bound to it: frames live in grant-lane slots sized per lane and move as
+/// grants, never by value.
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
-
-pub struct InboundFrame {
-    pub source: InterfaceId,
-    pub len: usize,
-    pub bytes: [u8; MAX_WIRE_FRAME_LEN],
-}
-
-impl InboundFrame {
-    #[must_use]
-    pub fn new(source: InterfaceId, wire: &[u8]) -> Self {
-        let len = wire.len().min(MAX_WIRE_FRAME_LEN);
-        let mut bytes = [0u8; MAX_WIRE_FRAME_LEN];
-        bytes[..len].copy_from_slice(&wire[..len]);
-        Self { source, len, bytes }
-    }
-}
-
-pub struct OutboundFrame {
-    pub len: usize,
-    pub bytes: [u8; MAX_WIRE_FRAME_LEN],
-}
-
-impl OutboundFrame {
-    #[must_use]
-    pub fn new(wire: &[u8]) -> Self {
-        let len = wire.len().min(MAX_WIRE_FRAME_LEN);
-        let mut bytes = [0u8; MAX_WIRE_FRAME_LEN];
-        bytes[..len].copy_from_slice(&wire[..len]);
-        Self { len, bytes }
-    }
-
-    #[must_use]
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes[..self.len]
-    }
-}
 
 /// The reactor's half of one interface, seen from inside the interface's run loop.
 /// Both directions are async here, and deliberately so: the interface awaits

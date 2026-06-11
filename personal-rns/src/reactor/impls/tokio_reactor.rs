@@ -96,14 +96,16 @@ impl<const SLOT: usize> GrantProducer<SLOT> for TokioGrantProducer<SLOT> {
     }
 
     async fn grant(&mut self) -> &mut FrameSlot<SLOT> {
-        if self.granted.is_none() {
+        loop {
+            if let Some(slot) = self.granted.take() {
+                return self.granted.insert(slot).as_mut();
+            }
             match self.free.recv().await {
                 Some(slot) => self.granted = Some(slot),
                 // The consumer hung up: park forever, like a seam whose lane closed.
                 None => core::future::pending().await,
             }
         }
-        self.granted.as_deref_mut().expect("just granted")
     }
 
     fn commit(&mut self) {
@@ -128,13 +130,15 @@ impl<const SLOT: usize> GrantConsumer<SLOT> for TokioGrantConsumer<SLOT> {
     }
 
     async fn peek(&mut self) -> &mut FrameSlot<SLOT> {
-        if self.peeked.is_none() {
+        loop {
+            if let Some(slot) = self.peeked.take() {
+                return self.peeked.insert(slot).as_mut();
+            }
             match self.filled.recv().await {
                 Some(slot) => self.peeked = Some(slot),
                 None => core::future::pending().await,
             }
         }
-        self.peeked.as_deref_mut().expect("just peeked")
     }
 
     fn release(&mut self) {
