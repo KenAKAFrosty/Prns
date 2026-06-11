@@ -40,6 +40,7 @@ pub use crate::routing::delivery::send_single::{
 };
 pub use crate::routing::links::establish::{
     EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch, WriteEstablishLinkError,
+    WriteLinkProofError, LINK_KEEPALIVE_MS,
 };
 pub use crate::routing::path_requests::pending::{
     CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,

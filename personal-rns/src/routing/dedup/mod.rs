@@ -62,7 +62,23 @@ impl PacketHash {
         context: WireContext,
         payload: &[u8],
     ) -> Self {
-        let hashed_flags = ((destination_type as u8) << 2) | (PacketType::Data as u8);
+        Self::of_fields(
+            destination_type,
+            PacketType::Data,
+            destination,
+            context,
+            payload,
+        )
+    }
+
+    pub fn of_fields(
+        destination_type: DestinationType,
+        packet_type: PacketType,
+        destination: &DestinationHash,
+        context: WireContext,
+        payload: &[u8],
+    ) -> Self {
+        let hashed_flags = ((destination_type as u8) << 2) | (packet_type as u8);
         Self(sha256_chunks(&[
             &[hashed_flags],
             destination.as_bytes(),

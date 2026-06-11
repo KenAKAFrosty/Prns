@@ -1,20 +1,25 @@
-use crate::crypto::X25519SecretKey;
+use crate::crypto::{x25519_diffie_hellman, x25519_public_key, X25519SecretKey};
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
-use crate::routing::links::handshake::write_link_request;
-use crate::routing::links::table::{InitiatedLink, OverdueLink, TrackLinkError};
-use crate::routing::links::{LinkId, LinkMode};
+use crate::routing::links::handshake::{write_link_proof, write_link_request, LinkRequest};
+use crate::routing::links::table::{InitiatedLink, OverdueLink, RespondingLink, TrackLinkError};
+use crate::routing::links::{LinkId, LinkKey, LinkMode};
 use crate::routing::storage::EngineStorage;
 use crate::routing::NextHop;
 use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
+
+/// RNS 1.3.1 `Link.KEEPALIVE` (360s): the responder's establishment timeout
+/// rides on it (Link.py:207), and the keepalive cadence itself arrives with
+/// the link maintenance arc.
+pub const LINK_KEEPALIVE_MS: u64 = 360_000;
 
 /// One establishment's worth of ephemeral key material: a fresh X25519
 /// (encryption) secret followed by a fresh Ed25519 (signing) secret, the same
@@ -65,6 +70,14 @@ impl From<TrackLinkError> for WriteEstablishLinkError {
 pub enum EstablishLinkWriteOutcome {
     Written(LinkRequestDispatch),
     Failed { failure: WriteEstablishLinkError },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteLinkProofError {
+    IdentityNotHeld,
+    Serialize,
+    LinkTableFull,
+    DuplicateLinkId,
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -151,6 +164,63 @@ impl<S: EngineStorage> EngineState<S> {
             Err(error) => Failed {
                 failure: error.into(),
             },
+        }
+    }
+
+    /// Answer an inbound LINKREQUEST the way RNS 1.3.1 `Link.validate_request`
+    /// does: derive the session key from a fresh ephemeral against the
+    /// initiator's public, frame the identity-signed LRPROOF (echoing the
+    /// negotiated MTU and mode) directly into `buf`, and track the responding
+    /// link awaiting its LRRTT.
+    pub fn write_owed_link_proof(
+        &mut self,
+        request: &LinkRequest,
+        identity: &IdentityHash,
+        received_hops: u8,
+        arrived_at: InstantMillis,
+        ephemeral_secret: X25519SecretKey,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteLinkProofError> {
+        let held = self
+            .held_identities
+            .get(identity)
+            .ok_or(WriteLinkProofError::IdentityNotHeld)?;
+        let responder_encryption = x25519_public_key(&ephemeral_secret);
+        let shared = x25519_diffie_hellman(&ephemeral_secret, &request.initiator_encryption);
+        let key = LinkKey::derive(&request.link_id, &shared);
+
+        let mtu = if request.mtu == 0 {
+            BROADCAST_MTU
+        } else {
+            request.mtu
+        };
+        let written = write_link_proof(
+            &request.link_id,
+            &responder_encryption,
+            &held,
+            mtu,
+            request.mode,
+            buf,
+        )
+        .map_err(|_| WriteLinkProofError::Serialize)?;
+
+        let timeout_at = InstantMillis(
+            arrived_at
+                .0
+                .saturating_add(
+                    DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(received_hops.max(1))),
+                )
+                .saturating_add(LINK_KEEPALIVE_MS),
+        );
+        match self.links.track_responding(RespondingLink {
+            link_id: request.link_id,
+            key,
+            requested_at: arrived_at,
+            timeout_at,
+        }) {
+            Ok(()) => Ok(written),
+            Err(TrackLinkError::TableFull) => Err(WriteLinkProofError::LinkTableFull),
+            Err(TrackLinkError::AlreadyTracked) => Err(WriteLinkProofError::DuplicateLinkId),
         }
     }
 
@@ -425,6 +495,185 @@ mod tests {
             after.scheduled_announces,
             WakeSchedules::UNCHANGED.scheduled_announces,
             "only the link lane moves",
+        );
+    }
+
+    #[test]
+    fn a_link_request_for_a_held_destination_owes_its_proof() {
+        let mut initiator = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        let mut responder = personal_node_announcer();
+        let identity = responder.held_identity_hashes()[0];
+        let mut raw = buf[..dispatch.wire_len].to_vec();
+        let outcome = responder.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+        );
+        assert_eq!(
+            outcome,
+            IngestPacketOutcome::OwesLinkProof {
+                request: parse_link_request(&buf[..dispatch.wire_len]).unwrap(),
+                identity,
+                received_hops: 1,
+                arrived_at: InstantMillis(2_000),
+            },
+        );
+
+        let mut replay = buf[..dispatch.wire_len].to_vec();
+        let replayed = responder.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_100),
+                source_interface: arrival(),
+                bytes: &mut replay,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+        );
+        assert_eq!(
+            replayed,
+            IngestPacketOutcome::Ignored,
+            "a replayed request deduplicates away",
+        );
+    }
+
+    #[test]
+    fn a_link_request_for_an_unknown_destination_stays_ignored() {
+        let mut initiator = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        let mut bystander = EngineState::<Cap>::new(second_secret_key());
+        let mut raw = buf[..dispatch.wire_len].to_vec();
+        let outcome = bystander.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+        );
+        assert_eq!(outcome, IngestPacketOutcome::Ignored);
+        assert!(bystander.links.is_empty());
+    }
+
+    #[test]
+    fn the_two_ends_agree_on_the_session_key_through_the_proof() {
+        let mut initiator = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        let mut responder = personal_node_announcer();
+        let mut sent = std::vec::Vec::new();
+        let mut raw = buf[..dispatch.wire_len].to_vec();
+        let delta = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0x99),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
+                    sent.push((target, bytes.to_vec()));
+                }
+            },
+        );
+
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0].0,
+            arrival(),
+            "the proof answers back on the arrival interface",
+        );
+
+        let responder_identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let proof = crate::routing::links::handshake::validate_link_proof(
+            &sent[0].1,
+            responder_identity.signing_public_key().as_ed25519(),
+        )
+        .unwrap();
+        assert_eq!(proof.link_id, dispatch.link_id);
+        assert_eq!(
+            proof.mtu, BROADCAST_MTU,
+            "the proof echoes the request's mtu"
+        );
+        assert_eq!(proof.mode, LinkMode::Aes256Cbc);
+
+        let Some(LinkPhase::Pending {
+            initiator_secret, ..
+        }) = initiator.links.phase_for(&dispatch.link_id)
+        else {
+            panic!("the initiator must still hold its pending establishment");
+        };
+        let shared = x25519_diffie_hellman(initiator_secret, &proof.responder_encryption);
+        let initiator_key = LinkKey::derive(&dispatch.link_id, &shared);
+
+        let Some(LinkPhase::Handshake {
+            key: responder_key, ..
+        }) = responder.links.phase_for(&dispatch.link_id)
+        else {
+            panic!("the responder must be tracking the handshake");
+        };
+
+        let iv = [0xA5u8; 16];
+        let mut sealed_by_initiator = [0u8; 96];
+        let mut sealed_by_responder = [0u8; 96];
+        let n = initiator_key
+            .seal(&iv, b"two ends, one key", &mut sealed_by_initiator)
+            .unwrap();
+        let m = responder_key
+            .seal(&iv, b"two ends, one key", &mut sealed_by_responder)
+            .unwrap();
+        assert_eq!(
+            &sealed_by_initiator[..n],
+            &sealed_by_responder[..m],
+            "both ends derive the same session key",
+        );
+
+        assert_eq!(
+            responder.links.earliest_timeout_at(),
+            Some(InstantMillis(2_000 + 6_000 + 360_000)),
+            "the responder waits per-hop plus keepalive for the LRRTT",
+        );
+        assert_eq!(
+            delta.link_establishment_timeout,
+            LaneWake::At(InstantMillis(368_000)),
         );
     }
 

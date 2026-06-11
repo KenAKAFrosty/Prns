@@ -2,6 +2,7 @@ use crate::crypto::{token_open_in_place, TokenKey};
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
+use crate::identity::IdentityHash;
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceMode};
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
@@ -15,6 +16,7 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::delivery::{
     Delivery, GroupDelivery, PlainDelivery, SingleDelivery, PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
+use crate::routing::links::handshake::{link_request_from, LinkRequest};
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
@@ -57,7 +59,12 @@ pub enum Ingress<'a> {
         arrived_at: InstantMillis,
     },
 
-    LinkRequest,
+    LinkRequest {
+        payload: &'a [u8],
+        header: WirePacketHeader,
+        received_hops: u8,
+        arrived_at: InstantMillis,
+    },
 
     Proof {
         payload: &'a [u8],
@@ -139,7 +146,12 @@ impl<'a> Ingress<'a> {
                 source_interface,
                 arrived_at,
             },
-            PacketType::LinkRequest => Self::LinkRequest,
+            PacketType::LinkRequest => Self::LinkRequest {
+                payload,
+                header,
+                received_hops,
+                arrived_at,
+            },
             PacketType::Proof => Self::Proof {
                 payload,
                 destination: header.destination,
@@ -199,6 +211,14 @@ pub enum IngestPacketOutcome<'p> {
     /// letting directly reachable peers respond first.
     ScheduledPathResponse {
         destination: DestinationHash,
+    },
+    /// A link request arrived for one of our own destinations — the engine
+    /// owes the signed LRPROOF that brings the link up.
+    OwesLinkProof {
+        request: LinkRequest,
+        identity: IdentityHash,
+        received_hops: u8,
+        arrived_at: InstantMillis,
     },
     Ignored,
 }
@@ -411,8 +431,59 @@ impl<S: EngineStorage> EngineState<S> {
                 IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at))
             }
 
-            Ingress::LinkRequest => IngestPacketOutcome::Ignored,
+            Ingress::LinkRequest {
+                payload,
+                header,
+                received_hops,
+                arrived_at,
+            } => self.classify_link_request(&header, payload, received_hops, arrived_at),
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
+        }
+    }
+
+    fn classify_link_request(
+        &mut self,
+        header: &WirePacketHeader,
+        payload: &[u8],
+        received_hops: u8,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        if header.destination_type != DestinationType::Single {
+            return IngestPacketOutcome::Ignored;
+        }
+        let Ok(request) = link_request_from(header, payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(registered) = self
+            .upstream_app_destinations
+            .lookup(&request.destination, DestinationType::Single)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let UpstreamAppDestinationKind::Single { identity, .. } = registered.kind else {
+            return IngestPacketOutcome::Ignored;
+        };
+        if self.held_identities.get(&identity).is_none() {
+            return IngestPacketOutcome::Ignored;
+        }
+
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Single,
+            PacketType::LinkRequest,
+            &request.destination,
+            header.context,
+            payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+
+        IngestPacketOutcome::OwesLinkProof {
+            request,
+            identity,
+            received_hops,
+            arrived_at,
         }
     }
 
@@ -871,7 +942,9 @@ mod tests {
             let classified = Ingress::classify(packet);
             match packet_type {
                 PacketType::Data => assert!(matches!(classified, Ingress::Data { .. })),
-                PacketType::LinkRequest => assert!(matches!(classified, Ingress::LinkRequest)),
+                PacketType::LinkRequest => {
+                    assert!(matches!(classified, Ingress::LinkRequest { .. }))
+                }
                 PacketType::Proof => assert!(matches!(classified, Ingress::Proof { .. })),
                 PacketType::Announce => unreachable!(),
             }

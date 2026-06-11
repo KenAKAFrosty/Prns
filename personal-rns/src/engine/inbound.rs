@@ -1,3 +1,4 @@
+use crate::crypto::X25519SecretKey;
 use crate::engine::{
     AnnounceIngest, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
     Journaled, LaneWake, PathFound, PathResponseWriteOutcome, ProofIngest, Settlement,
@@ -145,6 +146,33 @@ impl<S: EngineStorage> EngineState<S> {
             }
             IngestPacketOutcome::ScheduledPathResponse { .. } => {
                 wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
+            }
+            IngestPacketOutcome::OwesLinkProof {
+                request,
+                identity,
+                received_hops,
+                arrived_at,
+            } => {
+                if is_egress_eligible(view, source, Egress::Transmit) {
+                    let mut secret_bytes = [0u8; 32];
+                    fill_entropy(&mut secret_bytes);
+                    let mut buf = [0u8; BROADCAST_MTU];
+                    if let Ok(written) = self.write_owed_link_proof(
+                        &request,
+                        &identity,
+                        received_hops,
+                        arrived_at,
+                        X25519SecretKey::new(secret_bytes),
+                        &mut buf,
+                    ) {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: source,
+                            bytes: &buf[..written],
+                        }));
+                    }
+                    wake_schedule_changes.link_establishment_timeout =
+                        self.link_establishment_timeout_wake();
+                }
             }
             IngestPacketOutcome::Ignored => {}
         }

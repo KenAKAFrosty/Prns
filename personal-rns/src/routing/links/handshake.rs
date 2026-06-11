@@ -86,7 +86,13 @@ pub enum LinkRequestError {
 pub fn parse_link_request(raw: &[u8]) -> Result<LinkRequest, LinkRequestError> {
     let (header, payload) =
         WirePacketHeader::parse(raw).map_err(|_| LinkRequestError::Malformed)?;
+    link_request_from(&header, payload)
+}
 
+pub fn link_request_from(
+    header: &WirePacketHeader,
+    payload: &[u8],
+) -> Result<LinkRequest, LinkRequestError> {
     let (keys, mtu, mode): (&[u8], usize, LinkMode) = match payload.len() {
         LINK_REQUEST_KEYS_LEN => (payload, BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_REQUEST_LEN => {
