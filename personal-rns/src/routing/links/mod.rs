@@ -4,10 +4,12 @@
 //! protect every link data packet with it (`iv ‖ AES-256-CBC ‖ HMAC-SHA256`).
 
 use crate::crypto::{
-    hkdf_sha256, token_open, token_open_in_place, token_seal, CryptoError, TokenKey,
-    X25519SharedSecret,
+    hkdf_sha256, sha256_chunks, token_open, token_open_in_place, token_seal, CryptoError,
+    Ed25519PublicKey, TokenKey, X25519PublicKey, X25519SharedSecret,
 };
-use crate::wire::TRUNCATED_HASH_BYTE_LEN;
+use crate::wire::{
+    DestinationHash, DestinationType, PacketType, WireContext, TRUNCATED_HASH_BYTE_LEN,
+};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const LINK_KEY_LEN: usize = 64;
@@ -18,6 +20,25 @@ pub struct LinkId([u8; TRUNCATED_HASH_BYTE_LEN]);
 impl LinkId {
     pub const fn new(bytes: [u8; TRUNCATED_HASH_BYTE_LEN]) -> Self {
         Self(bytes)
+    }
+
+    pub fn derive(
+        destination: &DestinationHash,
+        initiator_encryption: &X25519PublicKey,
+        initiator_signing: &Ed25519PublicKey,
+    ) -> Self {
+        const FLAGS_NIBBLE: u8 =
+            ((DestinationType::Single as u8) << 2) | (PacketType::LinkRequest as u8);
+        let digest = sha256_chunks(&[
+            &[FLAGS_NIBBLE],
+            destination.as_bytes(),
+            &[WireContext::None.to_byte()],
+            &initiator_encryption.0,
+            &initiator_signing.0,
+        ]);
+        let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
+        id.copy_from_slice(&digest[..TRUNCATED_HASH_BYTE_LEN]);
+        Self(id)
     }
 
     pub const fn as_bytes(&self) -> &[u8; TRUNCATED_HASH_BYTE_LEN] {
@@ -66,7 +87,7 @@ impl core::fmt::Debug for LinkKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
+    use crate::crypto::{x25519_diffie_hellman, X25519SecretKey};
 
     fn hx(s: &str) -> Vec<u8> {
         (0..s.len())
@@ -97,6 +118,12 @@ mod tests {
     const LINK_TOKEN: &str = "a1a2a3a4a5a6a7a8a9aaabacadaeafb012a31f7217fde987fbb8bab1ef73d3b3\
                               b63557757d0c3adea6b0e94e9d27f23ba732763cc4ed566de7c915bafe3e5467\
                               99a834e0e6579c62ccb6da661641040a56430127964af6eafdae462cd79e8ff0";
+    const LINK_DEST: &str = "50de0d856ad9ed3541af6d506e14d26f";
+    const INITIATOR_ENCRYPTION_PUBLIC: &str =
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf";
+    const INITIATOR_SIGNING_PUBLIC: &str =
+        "505152535455565758595a5b5c5d5e5f505152535455565758595a5b5c5d5e5f";
+    const REQUEST_LINK_ID: &str = "6923ae567bd1dba8db3f4b8d34f894e5";
 
     fn derived_link_key() -> LinkKey {
         let shared = x25519_diffie_hellman(
@@ -114,6 +141,16 @@ mod tests {
     #[test]
     fn derive_matches_the_reference_handshake() {
         assert_eq!(derived_link_key().material, a64(DERIVED_KEY));
+    }
+
+    #[test]
+    fn link_id_matches_the_reference_request_derivation() {
+        let id = LinkId::derive(
+            &DestinationHash::new(a16(LINK_DEST)),
+            &X25519PublicKey(a32(INITIATOR_ENCRYPTION_PUBLIC)),
+            &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
+        );
+        assert_eq!(id, LinkId::new(a16(REQUEST_LINK_ID)));
     }
 
     #[test]
