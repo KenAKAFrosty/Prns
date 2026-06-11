@@ -12,6 +12,25 @@ pub struct InterfaceConfig {
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,
 }
 
+/// RNS 1.3.1 `Interface.optimise_mtu`: the hardware MTU an interface declares
+/// for its bitrate tier. What a link actually negotiates is this clamped by
+/// the engine's `MAX_LINK_MTU`.
+pub const fn hardware_mtu_for_bitrate(bitrate_bps: u32) -> Option<usize> {
+    match bitrate_bps {
+        1_000_000_000.. => Some(524_288),
+        750_000_001.. => Some(262_144),
+        400_000_001.. => Some(131_072),
+        200_000_001.. => Some(65_536),
+        100_000_001.. => Some(32_768),
+        10_000_001.. => Some(16_384),
+        5_000_001.. => Some(8_192),
+        2_000_001.. => Some(4_096),
+        1_000_001.. => Some(2_048),
+        62_501.. => Some(1_024),
+        _ => None,
+    }
+}
+
 /// RNS 1.3.1 RNodeInterface `airtime_limit_short`/`airtime_limit_long`, enforced
 /// host-side instead of by radio firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

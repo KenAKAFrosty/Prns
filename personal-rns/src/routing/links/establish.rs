@@ -1573,6 +1573,62 @@ mod tests {
     }
 
     #[test]
+    fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
+        use crate::interfaces::impls::usb_auto::core::{device_descriptor, host_descriptor};
+        use crate::routing::links::MAX_LINK_MTU;
+
+        let host = host_descriptor(arrival());
+        let device = device_descriptor(arrival());
+        assert_eq!(host.hardware_mtu, Some(524_288), "1 Gbps host USB tier");
+        assert_eq!(device.hardware_mtu, Some(8_192), "6 Mbps device USB tier");
+
+        let expected = MAX_LINK_MTU
+            .min(host.hardware_mtu.unwrap())
+            .min(MAX_LINK_MTU.min(device.hardware_mtu.unwrap()));
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &[host],
+                &mut request,
+            )
+            .dispatched();
+        let parsed = parse_link_request(&request[..dispatch.wire_len]).unwrap();
+        assert_eq!(
+            parsed.mtu,
+            MAX_LINK_MTU.min(host.hardware_mtu.unwrap()),
+            "the host side signals its declared tier up to the engine ceiling",
+        );
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) = reactions_of_on(
+            &mut responder,
+            &request[..dispatch.wire_len],
+            1_100,
+            0x99,
+            &[device],
+        );
+        let (rtts, _, _) = reactions_of_on(&mut initiator, &proofs[0], 1_250, 0xA5, &[host]);
+        let (_, _, _) = reactions_of_on(&mut responder, &rtts[0], 1_600, 0xB5, &[device]);
+
+        for (name, engine) in [("initiator", &initiator), ("responder", &responder)] {
+            let Some(LinkPhase::Active { mtu, .. }) = engine.links.phase_for(&dispatch.link_id)
+            else {
+                panic!("the {name} must be active over the real descriptors");
+            };
+            assert_eq!(
+                *mtu, expected,
+                "the {name} settled at the min of both real ceilings and the knob",
+            );
+        }
+    }
+
+    #[test]
     fn a_repeated_entropy_draw_is_refused_as_a_duplicate_link() {
         let mut state = neighbor_with_a_route();
         let mut buf = [0u8; BROADCAST_MTU];

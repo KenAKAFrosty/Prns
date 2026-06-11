@@ -1,7 +1,7 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
+    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::wire::BROADCAST_MTU;
 
@@ -232,7 +232,7 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
         bitrate_bps: Some(HOST_USB_BITRATE_BPS),
-        hardware_mtu: None,
+        hardware_mtu: hardware_mtu_for_bitrate(HOST_USB_BITRATE_BPS),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }
@@ -248,7 +248,7 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
         bitrate_bps: Some(DEVICE_USB_BITRATE_BPS),
-        hardware_mtu: None,
+        hardware_mtu: hardware_mtu_for_bitrate(DEVICE_USB_BITRATE_BPS),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

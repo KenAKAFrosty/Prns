@@ -21,7 +21,10 @@ pub use id::InterfaceId;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;
 
-pub use config::{AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit, InterfaceConfig};
+pub use config::{
+    hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
+    InterfaceConfig,
+};
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::{AirtimeUtilization, InterfaceStatus, TransferRates};
 
