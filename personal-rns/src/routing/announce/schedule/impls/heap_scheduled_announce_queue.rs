@@ -13,6 +13,7 @@ pub struct HeapScheduledAnnounceQueue {
     hops: Vec<u8>,
     emission_count: Vec<u8>,
     peer_rebroadcast_count: Vec<u8>,
+    directed_to: Vec<Option<InterfaceId>>,
 }
 
 impl HeapScheduledAnnounceQueue {
@@ -24,6 +25,7 @@ impl HeapScheduledAnnounceQueue {
             hops: self.hops[i],
             emission_count: self.emission_count[i],
             peer_rebroadcast_count: self.peer_rebroadcast_count[i],
+            directed_to: self.directed_to[i],
         }
     }
 
@@ -35,6 +37,7 @@ impl HeapScheduledAnnounceQueue {
         self.emission_count.push(entry.emission_count);
         self.peer_rebroadcast_count
             .push(entry.peer_rebroadcast_count);
+        self.directed_to.push(entry.directed_to);
     }
 
     fn swap_remove_row(&mut self, i: usize) {
@@ -44,6 +47,39 @@ impl HeapScheduledAnnounceQueue {
         self.hops.swap_remove(i);
         self.emission_count.swap_remove(i);
         self.peer_rebroadcast_count.swap_remove(i);
+        self.directed_to.swap_remove(i);
+    }
+
+    fn upsert(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        source_interface: InterfaceId,
+        hops: u8,
+        directed_to: Option<InterfaceId>,
+    ) {
+        if let Some(i) = self
+            .destination
+            .iter()
+            .position(|existing| *existing == destination)
+        {
+            self.due_at[i] = due_at;
+            self.source_interface[i] = source_interface;
+            self.hops[i] = hops;
+            self.emission_count[i] = 0;
+            self.peer_rebroadcast_count[i] = 0;
+            self.directed_to[i] = directed_to;
+        } else {
+            self.push_row(ScheduledAnnounce {
+                destination,
+                due_at,
+                source_interface,
+                hops,
+                emission_count: 0,
+                peer_rebroadcast_count: 0,
+                directed_to,
+            });
+        }
     }
 }
 
@@ -58,26 +94,16 @@ impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
         source_interface: InterfaceId,
         hops: u8,
     ) {
-        if let Some(i) = self
-            .destination
-            .iter()
-            .position(|existing| *existing == destination)
-        {
-            self.due_at[i] = due_at;
-            self.source_interface[i] = source_interface;
-            self.hops[i] = hops;
-            self.emission_count[i] = 0;
-            self.peer_rebroadcast_count[i] = 0;
-        } else {
-            self.push_row(ScheduledAnnounce {
-                destination,
-                due_at,
-                source_interface,
-                hops,
-                emission_count: 0,
-                peer_rebroadcast_count: 0,
-            });
-        }
+        self.upsert(destination, due_at, source_interface, hops, None);
+    }
+    fn schedule_directed(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
+        hops: u8,
+    ) {
+        self.upsert(destination, due_at, target, hops, Some(target));
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         let mut removed = 0;

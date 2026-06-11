@@ -11,12 +11,12 @@ use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
 impl<S: EngineStorage> EngineState<S> {
-    /// One [`EgressDirective`] per (rebroadcast due at `now` × interface the engine elects
-    /// to fire it on). The fan-out decision is the engine's alone ([`firable_on`]); the
-    /// caller takes each named target to its handle. The reactor's
+    /// One [`EgressDirective`] per (scheduled announce due at `now` × interface it fires on):
+    /// a `directed_to` entry answers only its one target, else the engine's flood fan-out
+    /// ([`firable_on`]). The caller takes each named target to its handle. The reactor's
     /// [`fire_due_scheduled_announces`](Self::fire_due_scheduled_announces) serializes
     /// and drains it.
-    fn due_rebroadcast_directives<'v>(
+    fn due_scheduled_announce_directives<'v>(
         &'v self,
         now: InstantMillis,
         view: &'v [InterfaceConfig],
@@ -34,11 +34,17 @@ impl<S: EngineStorage> EngineState<S> {
                     retained.hops,
                     via,
                     scheduled.source_interface,
+                    scheduled.directed_to,
                 ))
             })
-            .flat_map(move |(announce, emit_hops, via, source)| {
+            .flat_map(move |(announce, emit_hops, via, source, directed_to)| {
                 view.iter()
-                    .filter(move |descriptor| firable_on(descriptor, source))
+                    .filter(move |descriptor| match directed_to {
+                        Some(target) => {
+                            descriptor.id == target && descriptor.capabilities.allows_transport()
+                        }
+                        None => firable_on(descriptor, source),
+                    })
                     .map(move |descriptor| EgressDirective::ReemitAnnounce {
                         announce: announce.clone(),
                         emit_hops,
@@ -48,19 +54,19 @@ impl<S: EngineStorage> EngineState<S> {
             })
     }
 
-    /// Fire every announce rebroadcast due at `now`: serialize each onto a scratch buffer
+    /// Fire every scheduled announce due at `now`: serialize each onto a scratch buffer
     /// lent to `sink` as a [`Directive::SendAnnounce`], then advance the fired entries — the
     /// reactor's timer edge drives this directly, reading and re-arming in the one pass. Each
     /// due entry re-emits until [`MAX_ANNOUNCE_REBROADCASTS`], re-armed
-    /// [`REBROADCAST_RETRANSMIT_INTERVAL_MS`] out, then drops. Returns the rebroadcast lane's
-    /// new soonest deadline as a [`WakeSchedules`] delta.
+    /// [`REBROADCAST_RETRANSMIT_INTERVAL_MS`] out, then drops. Returns the scheduled-announce
+    /// lane's new soonest deadline as a [`WakeSchedules`] delta.
     pub fn fire_due_scheduled_announces(
         &mut self,
         now: InstantMillis,
         view: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        for egress in self.due_rebroadcast_directives(now, view) {
+        for egress in self.due_scheduled_announce_directives(now, view) {
             let mut buf = [0u8; MTU];
             if let Ok(written) = egress.to_wire(&mut buf) {
                 sink(EngineReaction::Directive(Directive::SendAnnounce {
@@ -176,6 +182,51 @@ mod tests {
             emitted,
             std::vec![hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE)],
             "our retransmission must be byte-identical to the reference's own",
+        );
+    }
+
+    #[test]
+    fn a_directed_scheduled_announce_fires_only_to_its_target_interface() {
+        use crate::engine::{AnnounceIngest, IngestPacketOutcome};
+
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = state
+            .ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: InterfaceId::new([0u8; 16]),
+                    bytes: &mut raw,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            )
+        else {
+            panic!("the announce is accepted");
+        };
+
+        let target = InterfaceId::new([0xAA; 16]);
+        state.scheduled_announces.schedule_directed(
+            accepted.destination,
+            InstantMillis(2_000),
+            target,
+            accepted.hops,
+        );
+
+        let view = [
+            routable_descriptor(target),
+            routable_descriptor(InterfaceId::new([0xBB; 16])),
+        ];
+        let mut targets = std::vec::Vec::new();
+        state.fire_due_scheduled_announces(InstantMillis(2_000), &view, &mut |reaction| {
+            if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
+                targets.push(target);
+            }
+        });
+        assert_eq!(
+            targets,
+            std::vec![target],
+            "a directed answer reaches only its target, where a flood would reach both interfaces",
         );
     }
 

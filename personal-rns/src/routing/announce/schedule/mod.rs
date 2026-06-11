@@ -24,6 +24,7 @@ pub struct ScheduledAnnounce {
     pub hops: u8,
     pub emission_count: u8,
     pub peer_rebroadcast_count: u8,
+    pub directed_to: Option<InterfaceId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,13 @@ pub trait ScheduledAnnounceQueue {
         destination: DestinationHash,
         due_at: InstantMillis,
         source_interface: InterfaceId,
+        hops: u8,
+    );
+    fn schedule_directed(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
         hops: u8,
     );
     fn drain_due(&mut self, now: InstantMillis) -> usize;

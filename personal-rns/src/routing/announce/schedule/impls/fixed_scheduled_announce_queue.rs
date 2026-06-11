@@ -13,6 +13,7 @@ pub struct FixedScheduledAnnounceQueue<const MAX_PENDING: usize> {
     hops: Vec<u8, MAX_PENDING>,
     emission_count: Vec<u8, MAX_PENDING>,
     peer_rebroadcast_count: Vec<u8, MAX_PENDING>,
+    directed_to: Vec<Option<InterfaceId>, MAX_PENDING>,
 }
 
 impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
@@ -24,6 +25,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             hops: Vec::new(),
             emission_count: Vec::new(),
             peer_rebroadcast_count: Vec::new(),
+            directed_to: Vec::new(),
         }
     }
 
@@ -35,6 +37,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             hops: self.hops[i],
             emission_count: self.emission_count[i],
             peer_rebroadcast_count: self.peer_rebroadcast_count[i],
+            directed_to: self.directed_to[i],
         }
     }
 
@@ -50,6 +53,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         let _ = self
             .peer_rebroadcast_count
             .push(entry.peer_rebroadcast_count);
+        let _ = self.directed_to.push(entry.directed_to);
     }
 
     fn swap_remove_row(&mut self, i: usize) {
@@ -59,18 +63,20 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         self.hops.swap_remove(i);
         self.emission_count.swap_remove(i);
         self.peer_rebroadcast_count.swap_remove(i);
+        self.directed_to.swap_remove(i);
     }
 
     pub fn scheduled_count(&self) -> usize {
         self.due_at.len()
     }
 
-    pub fn schedule(
+    fn upsert(
         &mut self,
         destination: DestinationHash,
         due_at: InstantMillis,
         source_interface: InterfaceId,
         hops: u8,
+        directed_to: Option<InterfaceId>,
     ) {
         if let Some(i) = self
             .destination
@@ -82,6 +88,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             self.hops[i] = hops;
             self.emission_count[i] = 0;
             self.peer_rebroadcast_count[i] = 0;
+            self.directed_to[i] = directed_to;
         } else {
             self.push_row(ScheduledAnnounce {
                 destination,
@@ -90,8 +97,29 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
                 hops,
                 emission_count: 0,
                 peer_rebroadcast_count: 0,
+                directed_to,
             });
         }
+    }
+
+    pub fn schedule(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        source_interface: InterfaceId,
+        hops: u8,
+    ) {
+        self.upsert(destination, due_at, source_interface, hops, None);
+    }
+
+    pub fn schedule_directed(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
+        hops: u8,
+    ) {
+        self.upsert(destination, due_at, target, hops, Some(target));
     }
 
     pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledAnnounce> {
@@ -140,6 +168,15 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
         hops: u8,
     ) {
         FixedScheduledAnnounceQueue::schedule(self, destination, due_at, source_interface, hops)
+    }
+    fn schedule_directed(
+        &mut self,
+        destination: DestinationHash,
+        due_at: InstantMillis,
+        target: InterfaceId,
+        hops: u8,
+    ) {
+        FixedScheduledAnnounceQueue::schedule_directed(self, destination, due_at, target, hops)
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
         FixedScheduledAnnounceQueue::drain_due(self, now)
@@ -233,6 +270,7 @@ mod tests {
                 hops: 1,
                 emission_count: 0,
                 peer_rebroadcast_count: 0,
+                directed_to: None,
             })
         );
         assert_eq!(pending.take_due(InstantMillis(100)), None);
