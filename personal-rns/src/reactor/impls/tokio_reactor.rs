@@ -18,9 +18,7 @@ use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
 use crate::reactor::grant::{FrameSlot, GrantConsumer, GrantProducer};
-use crate::reactor::interface_seam::{
-    InboundFrame, InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN,
-};
+use crate::reactor::interface_seam::{InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -151,7 +149,8 @@ impl<const SLOT: usize> GrantConsumer<SLOT> for TokioGrantConsumer<SLOT> {
 /// interface's own outbound queue until the reactor enqueues a frame for it.
 pub struct TokioInterfaceSeam {
     id: InterfaceId,
-    inbound: UnboundedSender<InboundFrame>,
+    inbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
+    notify: UnboundedSender<InterfaceId>,
     outbound: UnboundedReceiver<OutboundFrame>,
 }
 
@@ -159,12 +158,14 @@ impl TokioInterfaceSeam {
     #[must_use]
     pub fn new(
         id: InterfaceId,
-        inbound: UnboundedSender<InboundFrame>,
+        inbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
+        notify: UnboundedSender<InterfaceId>,
         outbound: UnboundedReceiver<OutboundFrame>,
     ) -> Self {
         Self {
             id,
             inbound,
+            notify,
             outbound,
         }
     }
@@ -172,7 +173,9 @@ impl TokioInterfaceSeam {
 
 impl InterfaceSeam for TokioInterfaceSeam {
     async fn next_inbound(&mut self, frame: &[u8]) {
-        let _ = self.inbound.send(InboundFrame::new(self.id, frame));
+        self.inbound.grant().await.fill(frame);
+        self.inbound.commit();
+        let _ = self.notify.send(self.id);
     }
 
     async fn next_outbound(&mut self) -> OutboundFrame {
@@ -322,7 +325,8 @@ pub async fn run<S, H, J>(
     interfaces: std::vec::Vec<InterfaceConfig>,
     ifacs: std::vec::Vec<InterfaceIfac>,
     host: H,
-    inbound: UnboundedReceiver<InboundFrame>,
+    notify: UnboundedReceiver<InterfaceId>,
+    inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
     commands: UnboundedReceiver<IssuedCommand>,
     egress: Egress,
     on_journaled: J,
@@ -336,7 +340,8 @@ pub async fn run<S, H, J>(
         interfaces,
         ifacs,
         host,
-        inbound,
+        notify,
+        inbound_lanes,
         commands,
         egress,
         on_journaled,
@@ -351,7 +356,8 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     interfaces: std::vec::Vec<InterfaceConfig>,
     ifacs: std::vec::Vec<InterfaceIfac>,
     mut host: H,
-    mut inbound: UnboundedReceiver<InboundFrame>,
+    mut notify: UnboundedReceiver<InterfaceId>,
+    mut inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
     mut commands: UnboundedReceiver<IssuedCommand>,
     egress: Egress,
     mut on_journaled: J,
@@ -374,25 +380,31 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
         tokio::select! {
-            arrived = inbound.recv() => {
-                let Some(mut frame) = arrived else { return };
+            arrived = notify.recv() => {
+                let Some(source) = arrived else { return };
+                let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source)
+                else {
+                    continue;
+                };
+                let Some(slot) = lane.try_peek() else { continue };
                 let mut unmasked = [0u8; MAX_WIRE_FRAME_LEN];
-                let bytes = match ifac_for(&ifacs, frame.source) {
+                let bytes = match ifac_for(&ifacs, source) {
                     Some(entry) => {
                         let Some(clean_len) =
-                            entry.context.unmask_inbound(&frame.bytes[..frame.len], &mut unmasked)
+                            entry.context.unmask_inbound(slot.frame(), &mut unmasked)
                         else {
+                            lane.release();
                             continue;
                         };
                         &mut unmasked[..clean_len]
                     }
-                    None => &mut frame.bytes[..frame.len],
+                    None => slot.frame_mut(),
                 };
                 let now = host.now();
                 let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
-                    source_interface: frame.source,
+                    source_interface: source,
                     bytes,
                 };
                 let wake_schedules_delta = engine.ingest_packet_into(
@@ -404,6 +416,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     &mut should_prove,
                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
                 );
+                lane.release();
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
             issued = commands.recv() => {
@@ -702,7 +715,9 @@ mod tests {
         engine.set_transport_id(TEST_TRANSPORT_ID);
 
         // One inbound funnel shared by both interfaces.
-        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (peer_in_tx, peer_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
 
         // The source interface: the test plays an announce onto its wire; its seam
         // funnels the frame to the reactor.
@@ -715,7 +730,8 @@ mod tests {
             wire_in: source_wire_in_rx,
             wire_out: source_wire_out_tx,
         };
-        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+        let source_seam =
+            TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
 
         // The peer interface: the rebroadcast must leave through *its* wire.
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -727,9 +743,9 @@ mod tests {
             wire_in: peer_wire_in_rx,
             wire_out: peer_wire_out_tx,
         };
-        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+        let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
 
-        drop(funnel_tx);
+        drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
 
@@ -753,7 +769,8 @@ mod tests {
             view,
             std::vec![],
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             command_rx,
             egress,
             app,
@@ -816,7 +833,9 @@ mod tests {
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
 
-        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (peer_in_tx, peer_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
 
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
@@ -827,7 +846,8 @@ mod tests {
             wire_in: source_wire_in_rx,
             wire_out: source_wire_out_tx,
         };
-        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+        let source_seam =
+            TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
 
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
@@ -838,9 +858,9 @@ mod tests {
             wire_in: peer_wire_in_rx,
             wire_out: peer_wire_out_tx,
         };
-        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+        let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
 
-        drop(funnel_tx);
+        drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
@@ -850,7 +870,8 @@ mod tests {
             view,
             std::vec![],
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             command_rx,
             egress,
             |_journaled: Journaled<'_>| {},
@@ -901,7 +922,9 @@ mod tests {
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
 
-        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (peer_in_tx, peer_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
 
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
@@ -912,7 +935,8 @@ mod tests {
             wire_in: source_wire_in_rx,
             wire_out: source_wire_out_tx,
         };
-        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+        let source_seam =
+            TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
 
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
@@ -923,9 +947,9 @@ mod tests {
             wire_in: peer_wire_in_rx,
             wire_out: peer_wire_out_tx,
         };
-        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
+        let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
 
-        drop(funnel_tx);
+        drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
@@ -935,7 +959,8 @@ mod tests {
             view,
             std::vec![],
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             command_rx,
             egress,
             |_journaled: Journaled<'_>| {},
@@ -1046,7 +1071,8 @@ mod tests {
         let source = InterfaceId::new([0xA1; 16]);
         let view = std::vec![descriptor(source)];
 
-        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (mut source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (source_out_tx, mut source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let egress = Egress::new(std::vec![(source, source_out_tx)]);
@@ -1070,14 +1096,20 @@ mod tests {
             view,
             std::vec![],
             TokioHost::new(),
-            inbound_rx,
+            notify_rx,
+            std::vec![(source, source_in_rx)],
             command_rx,
             egress,
             app,
         ));
 
-        inbound_tx
-            .send(InboundFrame::new(source, &raw))
+        source_in_tx
+            .try_grant()
+            .expect("an empty lane grants")
+            .fill(&raw);
+        source_in_tx.commit();
+        notify_tx
+            .send(source)
             .expect("the reactor task holds the receiver");
 
         tokio::time::timeout(Duration::from_secs(2), delivered_rx.recv())
@@ -1119,7 +1151,9 @@ mod tests {
             },
         ];
 
-        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (peer_in_tx, peer_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -1129,7 +1163,8 @@ mod tests {
             wire_in: source_wire_in_rx,
             wire_out: source_wire_out_tx,
         };
-        let source_seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), source_out_rx);
+        let source_seam =
+            TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), source_out_rx);
 
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
@@ -1140,8 +1175,8 @@ mod tests {
             wire_in: peer_wire_in_rx,
             wire_out: peer_wire_out_tx,
         };
-        let peer_seam = TokioInterfaceSeam::new(peer, funnel_tx.clone(), peer_out_rx);
-        drop(funnel_tx);
+        let peer_seam = TokioInterfaceSeam::new(peer, peer_in_tx, notify_tx.clone(), peer_out_rx);
+        drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
@@ -1157,7 +1192,8 @@ mod tests {
             view,
             ifacs,
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(source, source_in_rx), (peer, peer_in_rx)],
             command_rx,
             egress,
             app,
@@ -1230,7 +1266,8 @@ mod tests {
         let view = std::vec![descriptor(source)];
         let engine = EngineState::<Cap>::default();
 
-        let (funnel_tx, funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (wire_in_tx, wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (wire_out_tx, _wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
@@ -1239,8 +1276,8 @@ mod tests {
             wire_in: wire_in_rx,
             wire_out: wire_out_tx,
         };
-        let seam = TokioInterfaceSeam::new(source, funnel_tx.clone(), out_rx);
-        drop(funnel_tx);
+        let seam = TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), out_rx);
+        drop(notify_tx);
         let egress = Egress::new(std::vec![(source, out_tx)]);
         let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
 
@@ -1269,7 +1306,8 @@ mod tests {
             view,
             std::vec![],
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(source, source_in_rx)],
             command_rx,
             egress,
             app,
@@ -1349,7 +1387,7 @@ mod tests {
         let second = InterfaceId::new([0xB2; 16]);
         let view = std::vec![descriptor(first), descriptor(second)];
 
-        let (_inbound_tx, inbound_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (first_out_tx, mut first_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let (second_out_tx, mut second_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
@@ -1374,7 +1412,8 @@ mod tests {
             view,
             std::vec![],
             TokioHost::new(),
-            inbound_rx,
+            notify_rx,
+            std::vec![],
             command_rx,
             egress,
             app,
@@ -1429,15 +1468,15 @@ mod tests {
         let (b_to_a_tx, b_to_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
 
         let initiator_engine = EngineState::<Cap>::new(second_secret_key());
-        let (a_funnel_tx, a_funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (a_in_tx, a_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (a_out_tx, a_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let a_iface = LoopbackInterface {
             descriptor: descriptor(initiator_iface),
             wire_in: b_to_a_rx,
             wire_out: a_to_b_tx,
         };
-        let a_seam = TokioInterfaceSeam::new(initiator_iface, a_funnel_tx.clone(), a_out_rx);
-        drop(a_funnel_tx);
+        let a_seam = TokioInterfaceSeam::new(initiator_iface, a_in_tx, a_notify_tx, a_out_rx);
         let a_egress = Egress::new(std::vec![(initiator_iface, a_out_tx)]);
         let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (a_heard_tx, mut a_heard_rx) = mpsc::unbounded_channel::<()>();
@@ -1458,15 +1497,15 @@ mod tests {
         };
 
         let responder_engine = personal_node_announcer();
-        let (b_funnel_tx, b_funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (b_notify_tx, b_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+        let (b_in_tx, b_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (b_out_tx, b_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
         let b_iface = LoopbackInterface {
             descriptor: descriptor(responder_iface),
             wire_in: a_to_b_rx,
             wire_out: b_to_a_tx,
         };
-        let b_seam = TokioInterfaceSeam::new(responder_iface, b_funnel_tx.clone(), b_out_rx);
-        drop(b_funnel_tx);
+        let b_seam = TokioInterfaceSeam::new(responder_iface, b_in_tx, b_notify_tx, b_out_rx);
         let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
         let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (b_established_tx, mut b_established_rx) = mpsc::unbounded_channel::<LinkEstablished>();
@@ -1491,7 +1530,8 @@ mod tests {
             std::vec![descriptor(initiator_iface)],
             std::vec![],
             TokioHost::new(),
-            a_funnel_rx,
+            a_notify_rx,
+            std::vec![(initiator_iface, a_in_rx)],
             a_command_rx,
             a_egress,
             a_app,
@@ -1501,7 +1541,8 @@ mod tests {
             std::vec![descriptor(responder_iface)],
             std::vec![],
             TokioHost::new(),
-            b_funnel_rx,
+            b_notify_rx,
+            std::vec![(responder_iface, b_in_rx)],
             b_command_rx,
             b_egress,
             b_app,

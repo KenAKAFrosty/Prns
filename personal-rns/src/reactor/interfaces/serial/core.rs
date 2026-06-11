@@ -5,10 +5,10 @@
 
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
-use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::InterfaceSeam;
 
 pub const READ_BUF_LEN: usize = 256;
 /// CDC-ACM behind a USB bridge: nominal line rate, conservative for tiering.
