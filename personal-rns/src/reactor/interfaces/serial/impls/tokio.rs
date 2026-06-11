@@ -48,6 +48,8 @@ where
     Fut: Future<Output = io::Result<S>>,
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    const HW_MTU: usize = super::super::core::SERIAL_HW_MTU;
+
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id)
     }

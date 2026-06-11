@@ -11,7 +11,7 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::wire::BROADCAST_MTU;
 
 /// An IFAC'd wire frame carries the engine's full BROADCAST_MTU plus the access tag.
-pub const MAX_WIRE_FRAME_LEN: usize = BROADCAST_MTU + IFAC_MAX_SIZE;
+pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
 pub struct InboundFrame {
     pub source: InterfaceId,
@@ -64,6 +64,10 @@ pub trait InterfaceSeam {
 
 #[allow(async_fn_in_trait)]
 pub trait Interface {
+    /// The largest wire packet this interface can carry in one frame — the
+    /// value its descriptor declares and its own buffers are sized by.
+    const HW_MTU: usize;
+
     fn descriptor(&self) -> InterfaceConfig;
     async fn run<S: InterfaceSeam>(self, seam: S);
 }

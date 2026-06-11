@@ -69,6 +69,8 @@ where
     W: Write,
     P: FnMut() -> bool,
 {
+    const HW_MTU: usize = crate::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU;
+
     fn descriptor(&self) -> InterfaceConfig {
         core::device_descriptor(self.id)
     }

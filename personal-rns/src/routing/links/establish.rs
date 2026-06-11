@@ -1592,13 +1592,15 @@ mod tests {
 
     #[test]
     fn the_real_usb_descriptors_negotiate_their_declared_ceilings() {
-        use crate::interfaces::impls::usb_auto::core::{device_descriptor, host_descriptor};
+        use crate::interfaces::impls::usb_auto::core::{
+            device_descriptor, host_descriptor, DEVICE_USB_HW_MTU, HOST_USB_HW_MTU,
+        };
         use crate::routing::links::MAX_LINK_MTU;
 
         let host = host_descriptor(arrival());
         let device = device_descriptor(arrival());
-        assert_eq!(host.hardware_mtu, Some(524_288), "1 Gbps host USB tier");
-        assert_eq!(device.hardware_mtu, Some(8_192), "6 Mbps device USB tier");
+        assert_eq!(host.hardware_mtu, Some(HOST_USB_HW_MTU));
+        assert_eq!(device.hardware_mtu, Some(DEVICE_USB_HW_MTU));
 
         let expected = MAX_LINK_MTU
             .min(host.hardware_mtu.unwrap())

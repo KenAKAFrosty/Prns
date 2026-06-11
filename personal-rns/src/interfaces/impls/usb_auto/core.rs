@@ -219,6 +219,8 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
 }
 
 pub const HOST_USB_BITRATE_BPS: u32 = 1_000_000_000;
+pub const HOST_USB_HW_MTU: usize = 8_192;
+pub const DEVICE_USB_HW_MTU: usize = 8_192;
 /// The measured throughput ceiling of the ESP USB-Serial-JTAG peripheral.
 pub const DEVICE_USB_BITRATE_BPS: u32 = 6_000_000;
 
@@ -232,7 +234,7 @@ pub fn host_descriptor(id: InterfaceId) -> InterfaceConfig {
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
         bitrate_bps: Some(HOST_USB_BITRATE_BPS),
-        hardware_mtu: hardware_mtu_for_bitrate(HOST_USB_BITRATE_BPS),
+        hardware_mtu: Some(HOST_USB_HW_MTU),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }
@@ -248,7 +250,7 @@ pub fn device_descriptor(id: InterfaceId) -> InterfaceConfig {
         mode: InterfaceMode::PointToPoint,
         announce_rate_limit: None,
         bitrate_bps: Some(DEVICE_USB_BITRATE_BPS),
-        hardware_mtu: hardware_mtu_for_bitrate(DEVICE_USB_BITRATE_BPS),
+        hardware_mtu: Some(DEVICE_USB_HW_MTU),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
         airtime_duty_cycle: None,
     }

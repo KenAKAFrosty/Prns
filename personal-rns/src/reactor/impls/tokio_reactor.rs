@@ -540,6 +540,8 @@ mod tests {
     }
 
     impl Interface for LoopbackInterface {
+        const HW_MTU: usize = crate::wire::BROADCAST_MTU;
+
         fn descriptor(&self) -> InterfaceConfig {
             self.descriptor
         }

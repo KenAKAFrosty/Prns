@@ -21,10 +21,14 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const LINK_KEY_LEN: usize = 64;
 
-/// The engine's one ceiling on a negotiated link MTU. Today it equals the
-/// broadcast MTU because the interface seam's frame is sized to it; raising
-/// fatter links means turning this knob alongside the seam's frame ceiling —
-/// a deliberate, per-target memory decision, never a silent side effect.
+/// The engine's one ceiling on a negotiated link MTU; the seam's frame is
+/// sized from it, so every queue slot pays it — a per-target memory decision,
+/// never a silent side effect. Hosts carry the fleet's fat tier (8192, the
+/// USB device tier); a no_std target turns `fat-links` on when its own RAM
+/// budget says so.
+#[cfg(feature = "fat-links")]
+pub const MAX_LINK_MTU: usize = 8_192;
+#[cfg(not(feature = "fat-links"))]
 pub const MAX_LINK_MTU: usize = crate::wire::BROADCAST_MTU;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

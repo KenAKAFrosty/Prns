@@ -547,6 +547,8 @@ mod tests {
     impl<M: RawMutex, const IN: usize, const OUT: usize> Interface
         for EmbassyLoopbackInterface<'_, M, IN, OUT>
     {
+        const HW_MTU: usize = crate::wire::BROADCAST_MTU;
+
         fn descriptor(&self) -> InterfaceConfig {
             self.descriptor
         }
