@@ -34,7 +34,10 @@ fn main() {
     write_host(&descriptor);
 
     println!("described host `{host}` -> results/{host}/host.json");
-    println!("  cpu     {}", descriptor.cpu_model.as_deref().unwrap_or("unknown"));
+    println!(
+        "  cpu     {}",
+        descriptor.cpu_model.as_deref().unwrap_or("unknown")
+    );
     println!(
         "  cores   {} physical / {} logical",
         opt(descriptor.physical_cores),
@@ -47,8 +50,14 @@ fn main() {
             .map(gib)
             .unwrap_or_else(|| "unknown".into()),
     );
-    println!("  os      {}", descriptor.os_version.as_deref().unwrap_or("unknown"));
-    println!("  kernel  {}", descriptor.kernel_version.as_deref().unwrap_or("unknown"));
+    println!(
+        "  os      {}",
+        descriptor.os_version.as_deref().unwrap_or("unknown")
+    );
+    println!(
+        "  kernel  {}",
+        descriptor.kernel_version.as_deref().unwrap_or("unknown")
+    );
 }
 
 fn nonzero(n: u32) -> Option<u32> {

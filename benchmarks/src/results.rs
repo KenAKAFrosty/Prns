@@ -33,9 +33,11 @@ pub enum Comparability {
 impl Axis {
     pub fn comparability(self) -> Comparability {
         match self {
-            Axis::Conformance | Axis::Throughput | Axis::Power | Axis::Energy | Axis::BinarySize => {
-                Comparability::CrossImpl
-            }
+            Axis::Conformance
+            | Axis::Throughput
+            | Axis::Power
+            | Axis::Energy
+            | Axis::BinarySize => Comparability::CrossImpl,
             Axis::Memory | Axis::Latency => Comparability::WithinImpl,
         }
     }
@@ -124,8 +126,7 @@ pub fn write_host(descriptor: &HostDescriptor) {
     let path = host_path(&descriptor.host);
     std::fs::create_dir_all(path.parent().expect("host dir")).expect("create host dir");
     let body = serde_json::to_string_pretty(descriptor).expect("serialize host descriptor");
-    std::fs::write(&path, body + "\n")
-        .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+    std::fs::write(&path, body + "\n").unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
 /// Load a host's machine descriptor, if one has been written (`None` when a host has figure

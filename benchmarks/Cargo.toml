@@ -5,7 +5,7 @@ publish = false
 edition = "2021"
 
 # Standalone, like `fuzz/`: an empty `[workspace]` detaches this from the root so
-# the engine `--workspace` gates never pull in dhat/criterion, and dev tooling can
+# the engine `--workspace` gates never pull in dev tooling, and it can
 # move at its own pace. Builds via its own manifest.
 [workspace]
 
@@ -14,42 +14,23 @@ name = "benchmarks"
 path = "src/lib.rs"
 bench = false
 
-# `cargo bench` should run only the criterion `[[bench]]` below — not the default
-# libtest harness on the lib/bins, which doesn't understand criterion's CLI flags.
-
 [dependencies]
-personal-rns = { path = "../personal-rns" }
-# Heap allocation profiler — the host route of the measurement seam (the bins set it
-# as the global allocator; the criterion benches deliberately don't).
-dhat = "0.3"
+personal-rns = { path = "../personal-rns", features = ["tcp"] }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The live-scenario participation binary rides the real tokio reactor over real TCP
+# (`scenario_node`); the orchestrator stays std (process spawn + line protocol).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
+# Fresh per-run identities for the scenario nodes (the corpus bins keep fixed ones).
+getrandom = "0.2"
 # Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
 # the per-host reproducibility descriptor that sits beside each host's result rows.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 # Timing harness for the throughput/latency benches (lean: no plotters/rayon).
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
-
-# --- Memory axis: peak footprint + allocation count (host route = dhat) ---
-[[bin]]
-name = "mem_profile"
-path = "src/bin/mem_profile.rs"
-bench = false
-
-[[bin]]
-name = "mem_soak"
-path = "src/bin/mem_soak.rs"
-bench = false
-
-# --- Scenario corpus tooling (regenerates the shared, language-neutral input) ---
-[[bin]]
-name = "gen_corpus"
-path = "src/bin/gen_corpus.rs"
-bench = false
 
 # --- Result substrate: our driver emits rows; the renderer turns rows into RESULTS.md ---
 [[bin]]
@@ -57,11 +38,15 @@ name = "describe_host"
 path = "src/bin/describe_host.rs"
 bench = false
 
-# Prns' sustained energy harness (prints CONFORMANCE + THROUGHPUT; energy/measure.sh wraps
-# powermetrics around it and files the rows).
+# --- Live scenarios: the pairing harness (one node binary, one orchestrator) ---
 [[bin]]
-name = "sustained"
-path = "src/bin/sustained.rs"
+name = "scenario_node"
+path = "src/bin/scenario_node.rs"
+bench = false
+
+[[bin]]
+name = "orchestrate"
+path = "src/bin/orchestrate.rs"
 bench = false
 
 [[bin]]
@@ -69,7 +54,3 @@ name = "render_results"
 path = "src/bin/render_results.rs"
 bench = false
 
-# --- Throughput + Latency axis (criterion) ---
-[[bench]]
-name = "throughput"
-harness = false

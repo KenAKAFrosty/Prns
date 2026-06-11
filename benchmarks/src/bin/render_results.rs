@@ -39,7 +39,10 @@ fn main() {
             .map(|(path, _)| path)
             .collect();
         if stale.is_empty() {
-            println!("results tables: IN SYNC with the substrate ({} files)", files.len());
+            println!(
+                "results tables: IN SYNC with the substrate ({} files)",
+                files.len()
+            );
             return;
         }
         eprintln!("results tables: STALE — run `cargo run --bin render_results` and commit:");
@@ -51,7 +54,11 @@ fn main() {
     for (path, body) in &files {
         std::fs::write(path, body).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
     }
-    eprintln!("wrote {} result files to {}", files.len(), bench_dir().display());
+    eprintln!(
+        "wrote {} result files to {}",
+        files.len(),
+        bench_dir().display()
+    );
 }
 
 fn bench_dir() -> PathBuf {
@@ -70,7 +77,10 @@ fn render_all() -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     let mut hosts = Vec::new();
     for (host, rows) in &by_host {
-        files.push((dir.join(format!("RESULTS-{host}.md")), render_host(host, rows, &impls)));
+        files.push((
+            dir.join(format!("RESULTS-{host}.md")),
+            render_host(host, rows, &impls),
+        ));
         hosts.push((host.clone(), measured(rows), machine_label(host)));
     }
     files.push((dir.join("RESULTS.md"), render_index(&hosts)));
@@ -90,10 +100,15 @@ fn render_index(hosts: &[(String, bool, String)]) -> String {
         out.push_str("\n_No hosts recorded yet — run the drivers, then `render_results`._\n");
         return out;
     }
-    out.push_str("\n| Host | Machine | Status | Results |\n|------|---------|--------|---------|\n");
+    out.push_str(
+        "\n| Host | Machine | Status | Results |\n|------|---------|--------|---------|\n",
+    );
     for (host, measured, machine) in hosts {
         let status = if *measured { "measured" } else { "pending" };
-        let _ = writeln!(out, "| `{host}` | {machine} | {status} | [view](RESULTS-{host}.md) |");
+        let _ = writeln!(
+            out,
+            "| `{host}` | {machine} | {status} | [view](RESULTS-{host}.md) |"
+        );
     }
     out.push_str(INDEX_FOOTER);
     out
@@ -101,12 +116,18 @@ fn render_index(hosts: &[(String, bool, String)]) -> String {
 
 fn render_host(host: &str, rows: &[ResultRow], impls: &[ImplementationDescriptor]) -> String {
     let mut out = String::new();
-    let _ = write!(out, "# Benchmark results — `{host}`\n\n[← All hosts](RESULTS.md)\n");
+    let _ = write!(
+        out,
+        "# Benchmark results — `{host}`\n\n[← All hosts](RESULTS.md)\n"
+    );
     render_machine(&mut out, host);
 
     let mut by_scenario: BTreeMap<String, Vec<&ResultRow>> = BTreeMap::new();
     for row in rows {
-        by_scenario.entry(row.scenario.clone()).or_default().push(row);
+        by_scenario
+            .entry(row.scenario.clone())
+            .or_default()
+            .push(row);
     }
     for (scenario, srows) in &by_scenario {
         render_scenario(&mut out, scenario, srows, impls);
@@ -124,7 +145,11 @@ fn render_machine(out: &mut String, host: &str) {
     };
     out.push_str("\n## Machine\n\n");
     let _ = writeln!(out, "- **CPU** — {}", spec(d.cpu_model.as_deref()));
-    let _ = writeln!(out, "- **Cores** — {}", cores(d.physical_cores, d.logical_cores));
+    let _ = writeln!(
+        out,
+        "- **Cores** — {}",
+        cores(d.physical_cores, d.logical_cores)
+    );
     let mem = d.total_memory_bytes.map(gib).unwrap_or_else(pending);
     let _ = writeln!(out, "- **Memory** — {mem}");
     let _ = writeln!(out, "- **OS** — {}", spec(d.os_version.as_deref()));
@@ -190,7 +215,9 @@ fn render_energy(
     entries.sort_by(|a, b| {
         let ka = a.energy_uj.unwrap_or(f64::INFINITY);
         let kb = b.energy_uj.unwrap_or(f64::INFINITY);
-        ka.partial_cmp(&kb).unwrap_or(Ordering::Equal).then_with(|| a.name.cmp(&b.name))
+        ka.partial_cmp(&kb)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.name.cmp(&b.name))
     });
 
     let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
@@ -217,7 +244,9 @@ fn render_energy(
     for entry in &entries {
         let language = entry.descriptor.map_or("—", |d| d.language.as_str());
         let backend = entry.descriptor.map_or("—", |d| d.crypto_backend.as_str());
-        let is_reference = entry.descriptor.is_some_and(|d| d.role == ImplementationRole::Reference);
+        let is_reference = entry
+            .descriptor
+            .is_some_and(|d| d.role == ImplementationRole::Reference);
         let partial = entry.descriptor.and_then(|d| d.maturity.as_deref()) == Some("partial");
         let verify_only = entry.conformance_metric.as_deref() == Some("announces_verified");
         any_partial |= partial;
@@ -235,7 +264,10 @@ fn render_energy(
         }
         let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
         let throughput = throughput_cell(entry.throughput);
-        let power = entry.power_watts.map(|w| format!("{w:.1} W")).unwrap_or_else(pending);
+        let power = entry
+            .power_watts
+            .map(|w| format!("{w:.1} W"))
+            .unwrap_or_else(pending);
         let energy = entry
             .energy_uj
             .map(|e| format!("{e:.0} µJ"))
@@ -346,7 +378,11 @@ fn conformance_cell(value: Option<f64>, expected: u64) -> String {
         None => pending(),
         Some(v) => {
             let got = v as u64;
-            let icon = if got == expected { PASS_ICON } else { FAIL_ICON };
+            let icon = if got == expected {
+                PASS_ICON
+            } else {
+                FAIL_ICON
+            };
             format!("{icon} {got} / {expected}")
         }
     }
