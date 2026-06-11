@@ -3,7 +3,7 @@
 //! ECDH, the [`super::LinkKey`] derivation, and the state machine compose them.
 
 use super::{LinkId, LinkMode};
-use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::IdentitySigner;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
@@ -166,6 +166,80 @@ pub fn write_link_proof(
     buf[offset..offset + signalling.len()].copy_from_slice(&signalling);
     offset += signalling.len();
     Ok(offset)
+}
+
+const LINK_PROOF_BODY_LEN: usize = 96;
+const SIGNALLED_LINK_PROOF_LEN: usize = LINK_PROOF_BODY_LEN + 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkProof {
+    pub link_id: LinkId,
+    pub responder_encryption: X25519PublicKey,
+    pub mtu: usize,
+    pub mode: LinkMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkProofError {
+    Malformed,
+    UnsupportedMode,
+    InvalidSignature,
+}
+
+pub fn validate_link_proof(
+    raw: &[u8],
+    responder_signing: &Ed25519PublicKey,
+) -> Result<LinkProof, LinkProofError> {
+    let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkProofError::Malformed)?;
+
+    let (body, signalling, mtu, mode): (&[u8], &[u8], usize, LinkMode) = match payload.len() {
+        LINK_PROOF_BODY_LEN => (payload, &[], MTU, LinkMode::Aes256Cbc),
+        SIGNALLED_LINK_PROOF_LEN => {
+            let mut bytes = [0u8; 3];
+            bytes.copy_from_slice(&payload[LINK_PROOF_BODY_LEN..]);
+            let (mtu, mode_bits) = decode_signalling_bytes(&bytes);
+            let mode = LinkMode::from_bits(mode_bits).ok_or(LinkProofError::UnsupportedMode)?;
+            (
+                &payload[..LINK_PROOF_BODY_LEN],
+                &payload[LINK_PROOF_BODY_LEN..],
+                mtu,
+                mode,
+            )
+        }
+        _ => return Err(LinkProofError::Malformed),
+    };
+
+    let link_id = LinkId::new(*header.destination.as_bytes());
+    let mut signature = [0u8; 64];
+    signature.copy_from_slice(&body[..64]);
+    let mut responder = [0u8; 32];
+    responder.copy_from_slice(&body[64..96]);
+    let responder_encryption = X25519PublicKey(responder);
+
+    let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 32 + 32 + 3];
+    let mut o = 0;
+    signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
+    o += TRUNCATED_HASH_BYTE_LEN;
+    signed_data[o..o + 32].copy_from_slice(&responder_encryption.0);
+    o += 32;
+    signed_data[o..o + 32].copy_from_slice(&responder_signing.0);
+    o += 32;
+    signed_data[o..o + signalling.len()].copy_from_slice(signalling);
+    o += signalling.len();
+
+    ed25519_verify(
+        responder_signing,
+        &signed_data[..o],
+        &Ed25519Signature(signature),
+    )
+    .map_err(|_| LinkProofError::InvalidSignature)?;
+
+    Ok(LinkProof {
+        link_id,
+        responder_encryption,
+        mtu,
+        mode,
+    })
 }
 
 #[cfg(test)]
@@ -361,6 +435,71 @@ mod tests {
                 &mut tiny,
             ),
             Err(WireError::BufferTooShort),
+        );
+    }
+
+    #[test]
+    fn validate_link_proof_recovers_the_responders_key() {
+        let proof = validate_link_proof(
+            &hx(LINK_PROOF_PACKET),
+            responder_identity().signing_public_key().as_ed25519(),
+        )
+        .unwrap();
+        assert_eq!(proof.link_id, LinkId::new(a16(PROOF_LINK_ID)));
+        assert_eq!(
+            proof.responder_encryption,
+            X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC))
+        );
+        assert_eq!(proof.mtu, 500);
+        assert_eq!(proof.mode, LinkMode::Aes256Cbc);
+    }
+
+    #[test]
+    fn a_written_proof_validates_against_its_signer() {
+        let mut buf = [0u8; 128];
+        let n = write_link_proof(
+            &LinkId::new(a16(PROOF_LINK_ID)),
+            &X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC)),
+            &responder_identity(),
+            500,
+            LinkMode::Aes256Cbc,
+            &mut buf,
+        )
+        .unwrap();
+        let proof = validate_link_proof(
+            &buf[..n],
+            responder_identity().signing_public_key().as_ed25519(),
+        )
+        .unwrap();
+        assert_eq!(proof.link_id, LinkId::new(a16(PROOF_LINK_ID)));
+        assert_eq!(
+            proof.responder_encryption,
+            X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC))
+        );
+    }
+
+    #[test]
+    fn validate_link_proof_rejects_a_tampered_signature() {
+        let mut bytes = hx(LINK_PROOF_PACKET);
+        bytes[20] ^= 0x01;
+        assert_eq!(
+            validate_link_proof(
+                &bytes,
+                responder_identity().signing_public_key().as_ed25519()
+            ),
+            Err(LinkProofError::InvalidSignature),
+        );
+    }
+
+    #[test]
+    fn validate_link_proof_rejects_the_wrong_signer() {
+        let other = InMemoryNodeIdentity::from_secret_key_bytes(&[0x05; 64]);
+        assert_eq!(
+            validate_link_proof(
+                &hx(LINK_PROOF_PACKET),
+                other.signing_public_key().as_ed25519()
+            ),
+            Err(LinkProofError::InvalidSignature),
         );
     }
 }
