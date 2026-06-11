@@ -78,6 +78,7 @@ impl<S: EngineStorage> EngineState<S> {
                 }));
             }
         }
+        while self.transported_links.pop_overdue(now).is_some() {}
         while let Some(link_id) = self.links.pop_stale(now) {
             let mut iv = [0u8; ENCRYPTION_IV_LEN];
             fill_entropy(&mut iv);

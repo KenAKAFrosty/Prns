@@ -11,6 +11,7 @@ pub mod identify;
 pub mod maintenance;
 pub mod request;
 pub mod table;
+pub mod transported;
 
 use crate::crypto::{
     hkdf_sha256, sha256_chunks, token_open, token_open_in_place, token_seal, CryptoError,

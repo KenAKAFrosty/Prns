@@ -104,19 +104,14 @@ pub enum WriteLinkRttError {
 
 impl<S: EngineStorage> EngineState<S> {
     pub fn ingest_establish_link(&self, id: CommandId, establish: EstablishLink) -> CommandOutcome {
-        let Some(retained) = self
+        if self
             .routing_table
             .retained_announce_for(&establish.destination)
-        else {
+            .is_none()
+        {
             return CommandOutcome::EstablishLinkRejected {
                 id,
                 error: EstablishLinkError::NoRouteToDestination,
-            };
-        };
-        if retained.hops > 1 || retained.next_hop != NextHop::Direct {
-            return CommandOutcome::EstablishLinkRejected {
-                id,
-                error: EstablishLinkError::NotDirectlyReachable,
             };
         }
         CommandOutcome::OwesLinkRequest { id, establish }
@@ -153,8 +148,13 @@ impl<S: EngineStorage> EngineState<S> {
         let signing_public = *ephemeral.signing_public_key().as_ed25519();
         let link_id = LinkId::derive(&establish.destination, &encryption_public, &signing_public);
 
+        let via = match retained.next_hop {
+            NextHop::Via(next) => Some(next),
+            NextHop::Direct => None,
+        };
         let Ok(wire_len) = write_link_request(
             &establish.destination,
+            via,
             &encryption_public,
             &signing_public,
             link_mtu_ceiling(view, fire_on),
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn an_establish_link_needs_a_known_direct_route() {
+    fn an_establish_link_needs_a_known_route_and_takes_relayed_ones() {
         let mut state = EngineState::<Cap>::new(second_secret_key());
         assert_eq!(
             state.ingest_command(
@@ -465,19 +465,16 @@ mod tests {
         );
 
         hear_announce(&mut state, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE));
-        assert_eq!(
-            state.ingest_command(
-                IssuedCommand {
-                    id: CommandId(8),
-                    command: EngineCommand::EstablishLink(establish()),
-                },
-                &arrival_view(),
-            ),
-            CommandOutcome::EstablishLinkRejected {
+        let outcome = state.ingest_command(
+            IssuedCommand {
                 id: CommandId(8),
-                error: EstablishLinkError::NotDirectlyReachable,
+                command: EngineCommand::EstablishLink(establish()),
             },
-            "a route through a relay is not yet linkable",
+            &arrival_view(),
+        );
+        assert!(
+            matches!(outcome, CommandOutcome::OwesLinkRequest { .. }),
+            "a route through a relay is linkable in transport, got {outcome:?}",
         );
     }
 
@@ -1481,6 +1478,282 @@ mod tests {
         assert!(
             answers.is_empty(),
             "the decider declined, so no proof goes out"
+        );
+    }
+
+    #[test]
+    fn a_link_establishes_and_carries_data_through_a_transport_node() {
+        use crate::routing::delivery::Delivery;
+
+        let iface_to_a = arrival();
+        let iface_to_b = InterfaceId::new([0xB7; 16]);
+        let relay_view = [
+            routable_descriptor(iface_to_a),
+            routable_descriptor(iface_to_b),
+        ];
+
+        // The relay: holds the transport identity A's route names, and heard
+        // B's announce one hop away on its B-side interface.
+        let mut relay = EngineState::<Cap>::new(fixed_secret_key());
+        relay.set_transport_id(TEST_TRANSPORT_ID);
+        let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
+        let mut announce_buf = [0u8; BROADCAST_MTU];
+        let announce_len = responder
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
+                InstantMillis(100),
+                TEST_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .written_len();
+        let ingest_via = |engine: &mut EngineState<Cap>,
+                          bytes: &[u8],
+                          iface: InterfaceId,
+                          now: u64,
+                          iv_fill: u8,
+                          view: &[InterfaceConfig]| {
+            let mut sent = std::vec::Vec::new();
+            let mut journaled = std::vec::Vec::new();
+            let mut settled = std::vec::Vec::new();
+            let mut closed = std::vec::Vec::new();
+            let mut raw = bytes.to_vec();
+            let _ = engine.ingest_packet_into(
+                InboundPacket {
+                    arrived_at: InstantMillis(now),
+                    source_interface: iface,
+                    bytes: &mut raw,
+                },
+                TEST_ENTROPY,
+                view,
+                InstantMillis(now),
+                &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+                &mut |_: &crate::engine::ProofRequest| false,
+                &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                        sent.push((target, bytes.to_vec()));
+                    }
+                    EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) => {
+                        journaled.push(link.plaintext.to_vec());
+                    }
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        settled.push((id, settlement));
+                    }
+                    EngineReaction::Journaled(Journaled::LinkClosed { reason, .. }) => {
+                        closed.push(reason);
+                    }
+                    _ => {}
+                },
+            );
+            (sent, journaled, settled, closed)
+        };
+        let _ = ingest_via(
+            &mut relay,
+            &announce_buf[..announce_len],
+            iface_to_b,
+            500,
+            0x10,
+            &relay_view,
+        );
+
+        // The initiator: knows B only through the relay's retransmitted announce.
+        let mut initiator = EngineState::<Cap>::new(second_secret_key());
+        hear_announce(&mut initiator, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE));
+
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        // The request crosses the relay: a transported row books, the final hop
+        // leaves re-headered for broadcast on the B side.
+        let (switched, _, _, _) = ingest_via(
+            &mut relay,
+            &request[..dispatch.wire_len],
+            iface_to_a,
+            1_100,
+            0x20,
+            &relay_view,
+        );
+        assert_eq!(switched.len(), 1, "the relay forwards the link request");
+        assert_eq!(switched[0].0, iface_to_b);
+        assert!(
+            relay.transported_links.entry_for(&link_id).is_some(),
+            "the relay carries the pending link",
+        );
+
+        // B answers; the relay validates the proof itself and returns it.
+        let (proofs, _, _) = reactions_of(&mut responder, &switched[0].1, 1_200, 0x99);
+        let (returned, _, _, _) =
+            ingest_via(&mut relay, &proofs[0], iface_to_b, 1_300, 0x30, &relay_view);
+        assert_eq!(returned.len(), 1, "the relay returns the validated proof");
+        assert_eq!(returned[0].0, iface_to_a);
+        assert!(
+            relay
+                .transported_links
+                .entry_for(&link_id)
+                .unwrap()
+                .validated,
+            "the proof validated the transported row",
+        );
+
+        // A activates and the LRRTT switches through to activate B.
+        let (rtts, _, _) = reactions_of(&mut initiator, &returned[0].1, 1_400, 0xA5);
+        let (switched_rtt, _, _, _) =
+            ingest_via(&mut relay, &rtts[0], iface_to_a, 1_500, 0x40, &relay_view);
+        assert_eq!(switched_rtt.len(), 1, "the relay switches the sealed LRRTT");
+        assert_eq!(switched_rtt[0].0, iface_to_b);
+        let (_, _, _) = reactions_of(&mut responder, &switched_rtt[0].1, 1_600, 0xB5);
+        assert!(matches!(
+            responder.links.phase_for(&link_id),
+            Some(LinkPhase::Active { .. }),
+        ));
+
+        // Data crosses the mesh: sealed at A, switched blind at the relay,
+        // opened at B.
+        let data = commanded_link_data(&mut initiator, link_id, b"across the mesh", 2_000, 0xD1);
+        let (switched_data, _, _, _) =
+            ingest_via(&mut relay, &data, iface_to_a, 2_100, 0x50, &relay_view);
+        assert_eq!(switched_data.len(), 1);
+        let (proof_answers, delivered, _, _) = ingest_via(
+            &mut responder,
+            &switched_data[0].1,
+            arrival(),
+            2_200,
+            0x60,
+            &arrival_view(),
+        );
+        assert_eq!(
+            delivered,
+            std::vec![b"across the mesh".to_vec()],
+            "the relay switched ciphertext it could never read",
+        );
+
+        // The receipt closes across the mesh: B's packet proof switches back
+        // through the relay and settles A's send Delivered.
+        assert_eq!(proof_answers.len(), 1, "the ProveAll responder proves");
+        let (switched_proof, _, _, _) = ingest_via(
+            &mut relay,
+            &proof_answers[0].1,
+            iface_to_b,
+            2_300,
+            0x61,
+            &relay_view,
+        );
+        assert_eq!(switched_proof.len(), 1);
+        assert_eq!(switched_proof[0].0, iface_to_a);
+        let (_, _, settled, _) = ingest_via(
+            &mut initiator,
+            &switched_proof[0].1,
+            arrival(),
+            2_400,
+            0x62,
+            &arrival_view(),
+        );
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(9),
+                Settlement::SendLink(Ok(crate::engine::Delivered { rtt_ms: 400 })),
+            )],
+            "the proof crossed two hops and settled the send",
+        );
+
+        // A keepalive and its echo switch through blind, like everything else.
+        let mut keepalive = [0u8; BROADCAST_MTU];
+        let n = crate::routing::links::maintenance::write_keepalive(
+            &link_id,
+            KEEPALIVE_REQUEST,
+            &mut keepalive,
+        )
+        .unwrap();
+        let (switched_keepalive, _, _, _) = ingest_via(
+            &mut relay,
+            &keepalive[..n],
+            iface_to_a,
+            2_500,
+            0x63,
+            &relay_view,
+        );
+        assert_eq!(switched_keepalive.len(), 1);
+        assert_eq!(switched_keepalive[0].0, iface_to_b);
+        let (echoes, _, _, _) = ingest_via(
+            &mut responder,
+            &switched_keepalive[0].1,
+            arrival(),
+            2_600,
+            0x64,
+            &arrival_view(),
+        );
+        assert_eq!(echoes.len(), 1, "the responder echoes the keepalive");
+        let (switched_echo, _, _, _) = ingest_via(
+            &mut relay,
+            &echoes[0].1,
+            iface_to_b,
+            2_700,
+            0x65,
+            &relay_view,
+        );
+        assert_eq!(switched_echo.len(), 1);
+        assert_eq!(
+            switched_echo[0].0, iface_to_a,
+            "the echo returns to A's side"
+        );
+
+        // And the close tears down across the mesh: A's sealed LINKCLOSE
+        // switches through, and B journals the peer's goodbye.
+        let mut close_frames = std::vec::Vec::new();
+        let _ = initiator.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(10),
+                command: EngineCommand::CloseLink(crate::engine::CloseLink { link_id }),
+            },
+            &arrival_view(),
+            InstantMillis(2_800),
+            &mut |bytes: &mut [u8]| bytes.fill(0x66),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    close_frames.push(bytes.to_vec());
+                }
+            },
+        );
+        let (switched_close, _, _, _) = ingest_via(
+            &mut relay,
+            &close_frames[0],
+            iface_to_a,
+            2_900,
+            0x67,
+            &relay_view,
+        );
+        assert_eq!(switched_close.len(), 1);
+        let (_, _, _, closed) = ingest_via(
+            &mut responder,
+            &switched_close[0].1,
+            arrival(),
+            3_000,
+            0x68,
+            &arrival_view(),
+        );
+        assert_eq!(
+            closed,
+            std::vec![crate::engine::reaction::LinkClosedReason::PeerClosed],
+            "the goodbye crossed the mesh",
+        );
+        assert!(
+            responder.links.phase_for(&link_id).is_none(),
+            "the responder's session is gone",
         );
     }
 

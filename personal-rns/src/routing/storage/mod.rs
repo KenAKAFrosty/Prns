@@ -14,6 +14,7 @@ use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
 use crate::routing::group_keys::GroupKeyColumns;
 use crate::routing::links::table::LinkColumns;
+use crate::routing::links::transported::TransportedLinkColumns;
 use crate::routing::path_requests::pending::PendingPathRequestColumns;
 use crate::routing::path_requests::seen::SeenPathRequestColumns;
 use crate::routing::request_handlers::RequestHandlerColumns;
@@ -190,5 +191,6 @@ pub trait EngineStorage {
     type AnnounceRates: AnnounceRateColumns + Default;
     type GroupKeys: GroupKeyColumns + Default;
     type RequestHandlers: RequestHandlerColumns + Default;
+    type TransportedLinks: TransportedLinkColumns + Default;
     type Links: LinkColumns + Default;
 }

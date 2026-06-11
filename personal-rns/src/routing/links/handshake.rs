@@ -7,7 +7,7 @@ use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519Pu
 use crate::identity::IdentitySigner;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WireError, WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
+    TransportId, WireContext, WireError, WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
 };
 
 const LINK_MTU_BYTEMASK: u32 = 0x1F_FFFF;
@@ -22,20 +22,26 @@ pub fn signalling_bytes_from(mtu: usize, mode: LinkMode) -> [u8; 3] {
 
 pub fn write_link_request(
     destination: &DestinationHash,
+    via: Option<TransportId>,
     initiator_encryption: &X25519PublicKey,
     initiator_signing: &Ed25519PublicKey,
     mtu: usize,
     mode: LinkMode,
     buf: &mut [u8],
 ) -> Result<usize, WireError> {
+    let propagation = if via.is_some() {
+        PropagationType::Transport
+    } else {
+        PropagationType::Broadcast
+    };
     let header = WirePacketHeader {
         ifac_flag: IfacFlag::Open,
         context_flag: ContextFlag::Unset,
-        propagation: PropagationType::Broadcast,
+        propagation,
         destination_type: DestinationType::Single,
         packet_type: PacketType::LinkRequest,
         hops: 0,
-        transport_id: None,
+        transport_id: via,
         destination: *destination,
         context: WireContext::None,
     };
@@ -57,8 +63,8 @@ pub fn write_link_request(
     Ok(offset)
 }
 
-const LINK_REQUEST_KEYS_LEN: usize = 64;
-const SIGNALLED_LINK_REQUEST_LEN: usize = LINK_REQUEST_KEYS_LEN + 3;
+pub const LINK_REQUEST_KEYS_LEN: usize = 64;
+pub const SIGNALLED_LINK_REQUEST_LEN: usize = LINK_REQUEST_KEYS_LEN + 3;
 
 fn decode_signalling_bytes(bytes: &[u8; 3]) -> (usize, u8) {
     let value = ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32);
@@ -75,6 +81,7 @@ pub struct LinkRequest {
     pub initiator_signing: Ed25519PublicKey,
     pub mtu: usize,
     pub mode: LinkMode,
+    pub signalled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,14 +100,14 @@ pub fn link_request_from(
     header: &WirePacketHeader,
     payload: &[u8],
 ) -> Result<LinkRequest, LinkRequestError> {
-    let (keys, mtu, mode): (&[u8], usize, LinkMode) = match payload.len() {
-        LINK_REQUEST_KEYS_LEN => (payload, BROADCAST_MTU, LinkMode::Aes256Cbc),
+    let (keys, mtu, mode, signalled): (&[u8], usize, LinkMode, bool) = match payload.len() {
+        LINK_REQUEST_KEYS_LEN => (payload, BROADCAST_MTU, LinkMode::Aes256Cbc, false),
         SIGNALLED_LINK_REQUEST_LEN => {
             let mut signalling = [0u8; 3];
             signalling.copy_from_slice(&payload[LINK_REQUEST_KEYS_LEN..]);
             let (mtu, mode_bits) = decode_signalling_bytes(&signalling);
             let mode = LinkMode::from_bits(mode_bits).ok_or(LinkRequestError::UnsupportedMode)?;
-            (&payload[..LINK_REQUEST_KEYS_LEN], mtu, mode)
+            (&payload[..LINK_REQUEST_KEYS_LEN], mtu, mode, true)
         }
         _ => return Err(LinkRequestError::Malformed),
     };
@@ -123,6 +130,7 @@ pub fn link_request_from(
         initiator_signing,
         mtu,
         mode,
+        signalled,
     })
 }
 
@@ -434,6 +442,7 @@ mod tests {
         let mut buf = [0u8; 128];
         let n = write_link_request(
             &DestinationHash::new(a16(LINK_DEST)),
+            None,
             &X25519PublicKey(a32(INITIATOR_ENCRYPTION_PUBLIC)),
             &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
             500,
@@ -450,6 +459,7 @@ mod tests {
         assert_eq!(
             write_link_request(
                 &DestinationHash::new(a16(LINK_DEST)),
+                None,
                 &X25519PublicKey(a32(INITIATOR_ENCRYPTION_PUBLIC)),
                 &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
                 500,

@@ -156,6 +156,24 @@ impl<S: EngineStorage> EngineState<S> {
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
+            IngestPacketOutcome::TransportedLinkRequest {
+                header,
+                body,
+                fire_on,
+            } => {
+                if is_egress_eligible(view, fire_on, Egress::Transport) {
+                    let mut buf = [0u8; BROADCAST_MTU];
+                    if let Ok(header_len) = header.write(&mut buf) {
+                        let wire_len = header_len + body.len;
+                        buf[header_len..wire_len].copy_from_slice(body.as_bytes());
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: fire_on,
+                            bytes: &buf[..wire_len],
+                        }));
+                    }
+                }
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+            }
             IngestPacketOutcome::Forward(forward) => {
                 if is_egress_eligible(view, forward.fire_on, Egress::Transport) {
                     let mut buf = [0u8; BROADCAST_MTU];
@@ -352,13 +370,14 @@ pub(crate) enum Egress {
 }
 
 pub(crate) fn is_egress_eligible(
-    view: &[InterfaceConfig],
+    interfaces: &[InterfaceConfig],
     target: InterfaceId,
-    egress: Egress,
+    egress_kind: Egress,
 ) -> bool {
-    view.iter()
+    interfaces
+        .iter()
         .find(|config| config.id == target)
-        .is_some_and(|config| match egress {
+        .is_some_and(|config| match egress_kind {
             Egress::Transmit => config.capabilities.allows_transmit(),
             Egress::Transport => config.capabilities.allows_transport(),
         })

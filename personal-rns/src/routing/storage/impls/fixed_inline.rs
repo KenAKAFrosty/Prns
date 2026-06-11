@@ -6,6 +6,7 @@ use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::links::table::FixedLinkColumns;
+use crate::routing::links::transported::FixedTransportedLinkColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
@@ -97,6 +98,7 @@ impl<
     // registry like SelfRatchets.
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type TransportedLinks = FixedTransportedLinkColumns<MAX_LINKS>;
     type Links = FixedLinkColumns<MAX_LINKS>;
 }
 

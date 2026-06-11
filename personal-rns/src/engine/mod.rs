@@ -71,6 +71,7 @@ use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::table::Links;
+use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
@@ -202,6 +203,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
     pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
+    pub(crate) transported_links: TransportedLinks<S::TransportedLinks>,
     pub(crate) links: Links<S::Links>,
 }
 
@@ -224,6 +226,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),
             request_handlers: RequestHandlers::default(),
+            transported_links: TransportedLinks::default(),
             links: Links::default(),
         }
     }
@@ -303,7 +306,16 @@ impl<S: EngineStorage> EngineState<S> {
     }
 
     pub fn link_deadlines_wake(&self) -> LaneWake {
-        LaneWake::from_deadline(self.links.earliest_timeout_at())
+        let own = self.links.earliest_timeout_at();
+        let transported = self.transported_links.earliest_deadline();
+        LaneWake::from_deadline(match (own, transported) {
+            (Some(own), Some(transported)) => Some(if own.0 <= transported.0 {
+                own
+            } else {
+                transported
+            }),
+            (deadline, None) | (None, deadline) => deadline,
+        })
     }
 
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {

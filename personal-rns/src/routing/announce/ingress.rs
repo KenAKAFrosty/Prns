@@ -17,12 +17,14 @@ use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::Announce;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
+use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
 use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
     PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::links::handshake::{
-    link_proof_from, link_request_from, link_rtt_from, LinkRequest, LinkRttError,
+    link_proof_from, link_request_from, link_rtt_from, signalling_bytes_from, LinkRequest,
+    LinkRttError, LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_REQUEST_LEN,
 };
 use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
@@ -30,6 +32,7 @@ use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
 use crate::routing::links::table::{LinkPhase, LinkRole};
+use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
@@ -78,6 +81,7 @@ pub enum Ingress<'a> {
         payload: &'a [u8],
         header: WirePacketHeader,
         received_hops: u8,
+        source_interface: InterfaceId,
         arrived_at: InstantMillis,
     },
 
@@ -166,6 +170,7 @@ impl<'a> Ingress<'a> {
                 payload,
                 header,
                 received_hops,
+                source_interface,
                 arrived_at,
             },
             PacketType::Proof => Self::Proof {
@@ -207,6 +212,21 @@ pub enum RebroadcastDecision {
     /// receiving interface's rate target allows, so its rebroadcast is suppressed
     /// for a penalty window (RNS Transport.py:1835-1887).
     RateBlocked,
+}
+
+/// One forwarded LINKREQUEST's payload, owned: at most the keys and the
+/// (possibly clamped, possibly stripped) signalling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForwardedLinkRequestBody {
+    pub bytes: [u8; SIGNALLED_LINK_REQUEST_LEN],
+    pub len: usize,
+}
+
+impl ForwardedLinkRequestBody {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,6 +273,14 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         request_id: RequestId,
         data: &'p [u8],
+    },
+    /// A link request in transport booked a transported row — the rewritten
+    /// request (re-headered, MTU signalling clamped to this path segment) is
+    /// owed to the next hop.
+    TransportedLinkRequest {
+        header: WirePacketHeader,
+        body: ForwardedLinkRequestBody,
+        fire_on: InterfaceId,
     },
     /// A link request arrived for one of our own destinations — the engine
     /// owes the signed LRPROOF that brings the link up.
@@ -434,6 +462,47 @@ impl<S: EngineStorage> EngineState<S> {
                 arrived_at,
             } => {
                 if data.destination_type == DestinationType::Link {
+                    let link_id = LinkId::new(*data.destination.as_bytes());
+                    if self.links.phase_for(&link_id).is_none()
+                        && data.context != WireContext::LinkRequestProof
+                    {
+                        if let Ok(switch) = self.transported_links.switch(
+                            &link_id,
+                            source_interface,
+                            received_hops,
+                            arrived_at,
+                        ) {
+                            let packet_hash = PacketHash::of_fields(
+                                DestinationType::Link,
+                                PacketType::Data,
+                                &data.destination,
+                                data.context,
+                                data.payload,
+                            );
+                            match self.packet_hash_history.remember(packet_hash) {
+                                RememberPacketOutcome::AlreadyKnown => {
+                                    return IngestPacketOutcome::Ignored
+                                }
+                                RememberPacketOutcome::StoredFresh
+                                | RememberPacketOutcome::StoredAfterRotation => {}
+                            }
+                            return IngestPacketOutcome::Forward(PacketToForward {
+                                header: WirePacketHeader {
+                                    ifac_flag: IfacFlag::Open,
+                                    context_flag: ContextFlag::Unset,
+                                    propagation: PropagationType::Broadcast,
+                                    destination_type: DestinationType::Link,
+                                    packet_type: PacketType::Data,
+                                    hops: received_hops,
+                                    transport_id: None,
+                                    destination: data.destination,
+                                    context: data.context,
+                                },
+                                payload: data.payload,
+                                fire_on: switch.fire_on,
+                            });
+                        }
+                    }
                     return match data.context {
                         WireContext::LinkRtt => self.classify_link_rtt(
                             &data.destination,
@@ -502,7 +571,52 @@ impl<S: EngineStorage> EngineState<S> {
                 arrived_at,
             } => {
                 if context == WireContext::LinkRequestProof {
-                    return self.classify_link_proof(&destination, payload, arrived_at);
+                    return self.classify_link_proof(
+                        &destination,
+                        payload,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                    );
+                }
+                let link_id = LinkId::new(*destination.as_bytes());
+                if self.links.phase_for(&link_id).is_none() {
+                    if let Ok(switch) = self.transported_links.switch(
+                        &link_id,
+                        source_interface,
+                        received_hops,
+                        arrived_at,
+                    ) {
+                        let packet_hash = PacketHash::of_fields(
+                            DestinationType::Link,
+                            PacketType::Proof,
+                            &destination,
+                            context,
+                            payload,
+                        );
+                        match self.packet_hash_history.remember(packet_hash) {
+                            RememberPacketOutcome::AlreadyKnown => {
+                                return IngestPacketOutcome::Ignored
+                            }
+                            RememberPacketOutcome::StoredFresh
+                            | RememberPacketOutcome::StoredAfterRotation => {}
+                        }
+                        return IngestPacketOutcome::Forward(PacketToForward {
+                            header: WirePacketHeader {
+                                ifac_flag: IfacFlag::Open,
+                                context_flag: ContextFlag::Unset,
+                                propagation: PropagationType::Broadcast,
+                                destination_type: DestinationType::Link,
+                                packet_type: PacketType::Proof,
+                                hops: received_hops,
+                                transport_id: None,
+                                destination,
+                                context,
+                            },
+                            payload,
+                            fire_on: switch.fire_on,
+                        });
+                    }
                 }
                 if let Some(reverse) = self.reverse_routes.take(&destination, arrived_at) {
                     // The proof must arrive back over the interface we forwarded
@@ -540,18 +654,182 @@ impl<S: EngineStorage> EngineState<S> {
                 payload,
                 header,
                 received_hops,
+                source_interface,
                 arrived_at,
-            } => self.classify_link_request(&header, payload, received_hops, arrived_at),
+            } => self.classify_link_request(
+                &header,
+                payload,
+                received_hops,
+                source_interface,
+                arrived_at,
+                interfaces,
+            ),
             Ingress::Unparseable => IngestPacketOutcome::Ignored,
         }
     }
 
-    fn classify_link_proof(
-        &self,
-        destination: &DestinationHash,
-        payload: &[u8],
+    /// RNS 1.3.1 Transport.inbound's LINKREQUEST-in-transport arm: a request
+    /// addressed through us toward a routed destination books a transported row
+    /// and forwards — re-headered for its remaining distance, its MTU
+    /// signalling clamped to what this path segment can actually carry.
+    /// RNS 1.3.1 Transport.inbound's LRPROOF arm: the relay validates the
+    /// proof itself against the announced identity it holds for the
+    /// destination — over the right side, at the right distance — then marks
+    /// the row live and sends the proof on toward the initiator.
+    fn classify_transported_link_proof<'p>(
+        &mut self,
+        link_id: &LinkId,
+        payload: &'p [u8],
+        received_hops: u8,
+        source_interface: InterfaceId,
         arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let Some(entry) = self.transported_links.entry_for(link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(retained) = self.routing_table.retained_announce_for(&entry.destination) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
+        if link_proof_from(link_id, payload, &responder_signing).is_err() {
+            return IngestPacketOutcome::Ignored;
+        }
+        let Ok(switch) = self.transported_links.validate_by_proof(
+            link_id,
+            source_interface,
+            received_hops,
+            arrived_at,
+        ) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        IngestPacketOutcome::Forward(PacketToForward {
+            header: WirePacketHeader {
+                ifac_flag: IfacFlag::Open,
+                context_flag: ContextFlag::Unset,
+                propagation: PropagationType::Broadcast,
+                destination_type: DestinationType::Link,
+                packet_type: PacketType::Proof,
+                hops: received_hops,
+                transport_id: None,
+                destination: DestinationHash::new(*link_id.as_bytes()),
+                context: WireContext::LinkRequestProof,
+            },
+            payload,
+            fire_on: switch.fire_on,
+        })
+    }
+
+    fn classify_transported_link_request(
+        &mut self,
+        header: &WirePacketHeader,
+        request: &LinkRequest,
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+        view: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'static> {
+        if self.transport_id.is_none() || header.transport_id != self.transport_id {
+            return IngestPacketOutcome::Ignored;
+        }
+        let Some(route) = self
+            .routing_table
+            .forwarding_route_for(&request.destination)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let fire_on = route.receiving_interface;
+        let forwarded_header = if route.hops > 1 {
+            let NextHop::Via(next) = route.next_hop else {
+                return IngestPacketOutcome::Ignored;
+            };
+            WirePacketHeader {
+                hops: received_hops,
+                transport_id: Some(next),
+                ..*header
+            }
+        } else {
+            WirePacketHeader {
+                ifac_flag: IfacFlag::Open,
+                context_flag: ContextFlag::Unset,
+                propagation: PropagationType::Broadcast,
+                destination_type: header.destination_type,
+                packet_type: header.packet_type,
+                hops: received_hops,
+                transport_id: None,
+                destination: header.destination,
+                context: header.context,
+            }
+        };
+
+        let maybe_arrival_hw_mtu =
+            iface_config(view, source_interface).and_then(|c| c.hardware_mtu);
+        let maybe_outbound_hw_mtu = iface_config(view, fire_on).and_then(|c| c.hardware_mtu);
+        let mut body = ForwardedLinkRequestBody {
+            bytes: [0u8; SIGNALLED_LINK_REQUEST_LEN],
+            len: LINK_REQUEST_KEYS_LEN,
+        };
+        body.bytes[..32].copy_from_slice(&request.initiator_encryption.0);
+        body.bytes[32..LINK_REQUEST_KEYS_LEN].copy_from_slice(&request.initiator_signing.0);
+        if request.signalled {
+            match maybe_outbound_hw_mtu {
+                None => {}
+                Some(outbound_hw) => {
+                    let clamped = request
+                        .mtu
+                        .min(outbound_hw)
+                        .min(maybe_arrival_hw_mtu.unwrap_or(usize::MAX));
+                    body.bytes[LINK_REQUEST_KEYS_LEN..SIGNALLED_LINK_REQUEST_LEN]
+                        .copy_from_slice(&signalling_bytes_from(clamped, request.mode));
+                    body.len = SIGNALLED_LINK_REQUEST_LEN;
+                }
+            }
+        }
+
+        let bitrate = iface_config(view, source_interface).and_then(|c| c.bitrate_bps);
+        let proof_timeout = InstantMillis(
+            arrived_at
+                .0
+                .saturating_add(extra_link_proof_timeout_ms(bitrate))
+                .saturating_add(
+                    DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(route.hops.max(1))),
+                ),
+        );
+        if self
+            .transported_links
+            .track(TransportedLink {
+                link_id: request.link_id,
+                destination: request.destination,
+                next_hop: match route.next_hop {
+                    NextHop::Via(next) => Some(next),
+                    NextHop::Direct => None,
+                },
+                next_hop_interface: fire_on,
+                received_interface: source_interface,
+                taken_hops: received_hops,
+                remaining_hops: route.hops,
+                validated: false,
+                last_active: arrived_at,
+                proof_timeout,
+            })
+            .is_err()
+        {
+            return IngestPacketOutcome::Ignored;
+        }
+        IngestPacketOutcome::TransportedLinkRequest {
+            header: forwarded_header,
+            body,
+            fire_on,
+        }
+    }
+
+    fn classify_link_proof<'p>(
+        &mut self,
+        destination: &DestinationHash,
+        payload: &'p [u8],
+        received_hops: u8,
+        source_interface: InterfaceId,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
         let link_id = LinkId::new(*destination.as_bytes());
         let Some(LinkPhase::Pending {
             destination: link_destination,
@@ -560,7 +838,13 @@ impl<S: EngineStorage> EngineState<S> {
             ..
         }) = self.links.phase_for(&link_id)
         else {
-            return IngestPacketOutcome::Ignored;
+            return self.classify_transported_link_proof(
+                &link_id,
+                payload,
+                received_hops,
+                source_interface,
+                arrived_at,
+            );
         };
         let Some(retained) = self.routing_table.retained_announce_for(link_destination) else {
             return IngestPacketOutcome::Ignored;
@@ -848,7 +1132,9 @@ impl<S: EngineStorage> EngineState<S> {
         header: &WirePacketHeader,
         payload: &[u8],
         received_hops: u8,
+        source_interface: InterfaceId,
         arrived_at: InstantMillis,
+        view: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'static> {
         if header.destination_type != DestinationType::Single {
             return IngestPacketOutcome::Ignored;
@@ -860,7 +1146,14 @@ impl<S: EngineStorage> EngineState<S> {
             .upstream_app_destinations
             .lookup(&request.destination, DestinationType::Single)
         else {
-            return IngestPacketOutcome::Ignored;
+            return self.classify_transported_link_request(
+                header,
+                &request,
+                received_hops,
+                source_interface,
+                arrived_at,
+                view,
+            );
         };
         let UpstreamAppDestinationKind::Single {
             identity,
@@ -1255,6 +1548,10 @@ impl<S: EngineStorage> EngineState<S> {
             ) => AnnounceIngest::Ignored,
         }
     }
+}
+
+fn iface_config(view: &[InterfaceConfig], id: InterfaceId) -> Option<&InterfaceConfig> {
+    view.iter().find(|config| config.id == id)
 }
 
 #[cfg(test)]
