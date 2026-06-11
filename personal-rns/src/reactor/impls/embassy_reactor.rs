@@ -10,6 +10,7 @@
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Receiver, Sender};
+use embassy_sync::zerocopy_channel;
 use embassy_time::{Duration, Timer};
 use heapless::Vec as HeaplessVec;
 
@@ -28,9 +29,10 @@ use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
-use crate::reactor::interface_seam::{
-    InboundFrame, InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN,
+use crate::reactor::grant::{
+    AnyGrantConsumer, AnyGrantProducer, FrameSlot, GrantConsumer, GrantProducer,
 };
+use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -172,69 +174,176 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
     }
 }
 
-/// The embassy side of one interface's seam: `next_inbound` frames funnel into the reactor's one
-/// inbound stream (a bounded channel, so `next_inbound` backpressures the wire when the reactor
-/// is behind), and `next_outbound` parks on this interface's own outbound channel until the
-/// reactor enqueues a frame for it.
-pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const INBOUND: usize, const OUT: usize> {
-    id: InterfaceId,
-    inbound: Sender<'a, M, InboundFrame, INBOUND>,
-    outbound: Receiver<'a, M, OutboundFrame, OUT>,
-    held: Option<OutboundFrame>,
+/// One interface's grant lane on embassy: the slots live in a caller-parked buffer
+/// (a `StaticCell` on firmware) and recycle through a `zerocopy_channel`, so granting,
+/// committing, and releasing move ring indices while the frame bytes stay where they
+/// were written — and each interface's buffer is sized to its own `HW_MTU`.
+pub fn embassy_grant_lane<'a, M: RawMutex, const SLOT: usize>(
+    channel: &'a mut zerocopy_channel::Channel<'a, M, FrameSlot<SLOT>>,
+) -> (
+    EmbassyGrantProducer<'a, M, SLOT>,
+    EmbassyGrantConsumer<'a, M, SLOT>,
+) {
+    let (sender, receiver) = channel.split();
+    (
+        EmbassyGrantProducer {
+            sender,
+            granted: false,
+        },
+        EmbassyGrantConsumer {
+            receiver,
+            peeked: false,
+        },
+    )
 }
 
-impl<'a, M: RawMutex, const INBOUND: usize, const OUT: usize>
-    EmbassyInterfaceSeam<'a, M, INBOUND, OUT>
+/// `granted`/`peeked` guard the ring's done-calls: the channel's `send_done`/
+/// `receive_done` assert an open grant, so a `commit` or `release` with nothing
+/// outstanding must be a no-op, exactly as it is on the tokio lanes.
+pub struct EmbassyGrantProducer<'a, M: RawMutex, const SLOT: usize> {
+    sender: zerocopy_channel::Sender<'a, M, FrameSlot<SLOT>>,
+    granted: bool,
+}
+
+impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProducer<'_, M, SLOT> {
+    fn try_grant(&mut self) -> Option<&mut FrameSlot<SLOT>> {
+        let granted = &mut self.granted;
+        let slot = self.sender.try_send()?;
+        *granted = true;
+        Some(slot)
+    }
+
+    async fn grant(&mut self) -> &mut FrameSlot<SLOT> {
+        let granted = &mut self.granted;
+        let slot = self.sender.send().await;
+        *granted = true;
+        slot
+    }
+
+    fn commit(&mut self) {
+        if self.granted {
+            self.granted = false;
+            self.sender.send_done();
+        }
+    }
+}
+
+impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'_, M, SLOT> {
+    fn try_fill_frame(&mut self, frame: &[u8]) -> bool {
+        if frame.len() > SLOT {
+            return false;
+        }
+        let Some(slot) = GrantProducer::try_grant(self) else {
+            return false;
+        };
+        slot.fill(frame);
+        GrantProducer::commit(self);
+        true
+    }
+}
+
+pub struct EmbassyGrantConsumer<'a, M: RawMutex, const SLOT: usize> {
+    receiver: zerocopy_channel::Receiver<'a, M, FrameSlot<SLOT>>,
+    peeked: bool,
+}
+
+impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsumer<'_, M, SLOT> {
+    fn try_peek(&mut self) -> Option<&mut FrameSlot<SLOT>> {
+        let peeked = &mut self.peeked;
+        let slot = self.receiver.try_receive()?;
+        *peeked = true;
+        Some(slot)
+    }
+
+    async fn peek(&mut self) -> &mut FrameSlot<SLOT> {
+        let peeked = &mut self.peeked;
+        let slot = self.receiver.receive().await;
+        *peeked = true;
+        slot
+    }
+
+    fn release(&mut self) {
+        if self.peeked {
+            self.peeked = false;
+            self.receiver.receive_done();
+        }
+    }
+}
+
+impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, SLOT> {
+    fn try_peek_frame(&mut self) -> Option<&mut [u8]> {
+        Some(GrantConsumer::try_peek(self)?.frame_mut())
+    }
+
+    fn release_frame(&mut self) {
+        GrantConsumer::release(self);
+    }
+}
+
+/// The embassy side of one interface's seam: `next_inbound` fills this interface's own
+/// inbound grant lane in place and announces the commit on the reactor's notify funnel,
+/// and `next_outbound` parks on its outbound lane until the reactor grants a frame in,
+/// lending it from the slot it was filled into.
+pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize> {
+    id: InterfaceId,
+    inbound: EmbassyGrantProducer<'a, M, SLOT>,
+    notify: Sender<'a, M, InterfaceId, NOTIFY>,
+    outbound: EmbassyGrantConsumer<'a, M, SLOT>,
+}
+
+impl<'a, M: RawMutex, const NOTIFY: usize, const SLOT: usize>
+    EmbassyInterfaceSeam<'a, M, NOTIFY, SLOT>
 {
     #[must_use]
     pub fn new(
         id: InterfaceId,
-        inbound: Sender<'a, M, InboundFrame, INBOUND>,
-        outbound: Receiver<'a, M, OutboundFrame, OUT>,
+        inbound: EmbassyGrantProducer<'a, M, SLOT>,
+        notify: Sender<'a, M, InterfaceId, NOTIFY>,
+        outbound: EmbassyGrantConsumer<'a, M, SLOT>,
     ) -> Self {
         Self {
             id,
             inbound,
+            notify,
             outbound,
-            held: None,
         }
     }
 }
 
-impl<M: RawMutex, const INBOUND: usize, const OUT: usize> InterfaceSeam
-    for EmbassyInterfaceSeam<'_, M, INBOUND, OUT>
+impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
+    for EmbassyInterfaceSeam<'_, M, NOTIFY, SLOT>
 {
     async fn next_inbound(&mut self, frame: &[u8]) {
-        self.inbound.send(InboundFrame::new(self.id, frame)).await;
+        self.inbound.grant().await.fill(frame);
+        self.inbound.commit();
+        self.notify.send(self.id).await;
     }
 
     async fn next_outbound(&mut self) -> &[u8] {
-        self.held = Some(self.outbound.receive().await);
-        match &self.held {
-            Some(frame) => frame.bytes(),
-            None => &[],
-        }
+        self.outbound.release();
+        self.outbound.peek().await.frame()
     }
 }
 
-/// The reactor's egress: it routes each engine `Directive::Send` to the target interface's
-/// outbound channel. The senders are `Copy` borrows of the channels, so `enqueue` is `&self`
-/// and the copy-into-frame is synchronous (`try_send`) — exactly what the lent-buffer borrow
-/// demands. No alloc: the lanes are a borrowed slice the caller owns.
-pub struct EmbassyEgress<'a, M: RawMutex, const OUT: usize> {
-    lanes: &'a [(InterfaceId, Sender<'a, M, OutboundFrame, OUT>)],
+/// The reactor's egress: it routes each engine `Directive::Send` into the target
+/// interface's outbound grant lane — granted, filled in place, committed — with each
+/// lane's slot size erased, so lanes sized to different interfaces share one slice.
+/// A full lane drops the frame rather than stalling the reactor. No alloc: the lanes
+/// are a borrowed slice the caller owns.
+pub struct EmbassyEgress<'a> {
+    lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)],
 }
 
-impl<'a, M: RawMutex, const OUT: usize> EmbassyEgress<'a, M, OUT> {
+impl<'a> EmbassyEgress<'a> {
     #[must_use]
-    pub fn new(lanes: &'a [(InterfaceId, Sender<'a, M, OutboundFrame, OUT>)]) -> Self {
+    pub fn new(lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)]) -> Self {
         Self { lanes }
     }
 
-    fn enqueue(&self, target: InterfaceId, bytes: &[u8]) {
-        for (id, sender) in self.lanes {
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
+        for (id, producer) in self.lanes.iter_mut() {
             if *id == target {
-                let _ = sender.try_send(OutboundFrame::new(bytes));
+                let _ = producer.try_fill_frame(bytes);
                 return;
             }
         }
@@ -247,14 +356,15 @@ impl<'a, M: RawMutex, const OUT: usize> EmbassyEgress<'a, M, OUT> {
 /// timer, so the select rests on the two channels and the core truly sleeps — the dormancy
 /// an MCU is built for.
 #[allow(clippy::too_many_arguments)]
-pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT: usize>(
+pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     engine: EngineState<S>,
     interfaces: &[InterfaceConfig],
     ifacs: &[InterfaceIfac],
     host: H,
-    inbound: Receiver<'_, M, InboundFrame, INBOUND>,
+    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
+    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    egress: EmbassyEgress<'_, M, OUT>,
+    egress: EmbassyEgress<'_>,
     on_journaled: impl FnMut(Journaled<'_>),
 ) where
     S: EngineStorage,
@@ -266,7 +376,8 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
         interfaces,
         ifacs,
         host,
-        inbound,
+        notify,
+        inbound_lanes,
         commands,
         egress,
         on_journaled,
@@ -276,21 +387,15 @@ pub async fn run<S, H, M, const INBOUND: usize, const COMMANDS: usize, const OUT
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run_with_proof_decider<
-    S,
-    H,
-    M,
-    const INBOUND: usize,
-    const COMMANDS: usize,
-    const OUT: usize,
->(
+pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
     interfaces: &[InterfaceConfig],
     ifacs: &[InterfaceIfac],
     mut host: H,
-    inbound: Receiver<'_, M, InboundFrame, INBOUND>,
+    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
+    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
-    egress: EmbassyEgress<'_, M, OUT>,
+    mut egress: EmbassyEgress<'_>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     mut should_prove: impl FnMut(&ProofRequest) -> bool,
 ) where
@@ -311,32 +416,37 @@ pub async fn run_with_proof_decider<
         let pacer_wake = soonest_pacer_release(&pacers);
 
         match select4(
-            inbound.receive(),
+            notify.receive(),
             commands.receive(),
             wait_for_due_lane(&host, wake),
             wait_for_pacer(&host, pacer_wake),
         )
         .await
         {
-            Either4::First(mut frame) => {
+            Either4::First(source) => {
+                let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source) else {
+                    continue;
+                };
+                let Some(frame) = lane.try_peek_frame() else {
+                    continue;
+                };
                 let mut unmasked = [0u8; MAX_WIRE_FRAME_LEN];
-                let bytes = match ifac_for(ifacs, frame.source) {
+                let bytes = match ifac_for(ifacs, source) {
                     Some(entry) => {
-                        let Some(clean_len) = entry
-                            .context
-                            .unmask_inbound(&frame.bytes[..frame.len], &mut unmasked)
+                        let Some(clean_len) = entry.context.unmask_inbound(frame, &mut unmasked)
                         else {
+                            lane.release_frame();
                             continue;
                         };
                         &mut unmasked[..clean_len]
                     }
-                    None => &mut frame.bytes[..frame.len],
+                    None => frame,
                 };
                 let now = host.now();
                 let jitter = draw_jitter(&mut host);
                 let packet = InboundPacket {
                     arrived_at: now,
-                    source_interface: frame.source,
+                    source_interface: source,
                     bytes,
                 };
                 let delta = engine.ingest_packet_into(
@@ -349,7 +459,7 @@ pub async fn run_with_proof_decider<
                     &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &egress,
+                            &mut egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -357,6 +467,7 @@ pub async fn run_with_proof_decider<
                         )
                     },
                 );
+                lane.release_frame();
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Second(issued) => {
@@ -369,7 +480,7 @@ pub async fn run_with_proof_decider<
                     &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &egress,
+                            &mut egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -390,7 +501,7 @@ pub async fn run_with_proof_decider<
                     &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &egress,
+                            &mut egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -402,7 +513,7 @@ pub async fn run_with_proof_decider<
             }
             Either4::Fourth(()) => {
                 let now = host.now();
-                flush_due_pacers(&mut pacers, now, &egress, ifacs);
+                flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
             }
         }
     }
@@ -416,9 +527,9 @@ struct InterfacePacer {
     pacer: AnnouncePacer<FixedPacerQueue<PACER_DEPTH>>,
 }
 
-fn route_reaction<M: RawMutex, const OUT: usize>(
+fn route_reaction(
     reaction: EngineReaction<'_>,
-    egress: &EmbassyEgress<'_, M, OUT>,
+    egress: &mut EmbassyEgress<'_>,
     ifacs: &[InterfaceIfac],
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
@@ -446,8 +557,8 @@ fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> 
     ifacs.iter().find(|entry| entry.id == id)
 }
 
-fn enqueue_for_wire<M: RawMutex, const OUT: usize>(
-    egress: &EmbassyEgress<'_, M, OUT>,
+fn enqueue_for_wire(
+    egress: &mut EmbassyEgress<'_>,
     ifacs: &[InterfaceIfac],
     target: InterfaceId,
     bytes: &[u8],
@@ -463,13 +574,13 @@ fn enqueue_for_wire<M: RawMutex, const OUT: usize>(
     }
 }
 
-fn offer_to_pacer<M: RawMutex, const OUT: usize>(
+fn offer_to_pacer(
     pacers: &mut [InterfacePacer],
     target: InterfaceId,
     bytes: &[u8],
     hops: u8,
     now: InstantMillis,
-    egress: &EmbassyEgress<'_, M, OUT>,
+    egress: &mut EmbassyEgress<'_>,
     ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
@@ -480,10 +591,10 @@ fn offer_to_pacer<M: RawMutex, const OUT: usize>(
     }
 }
 
-fn flush_due_pacers<M: RawMutex, const OUT: usize>(
+fn flush_due_pacers(
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
-    egress: &EmbassyEgress<'_, M, OUT>,
+    egress: &mut EmbassyEgress<'_>,
     ifacs: &[InterfaceIfac],
 ) {
     for entry in pacers.iter_mut() {
@@ -501,6 +612,22 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .min_by_key(|deadline| deadline.0)
 }
 
+/// A grant lane whose slots and channel live on the leaked heap — the test stand-in
+/// for the `StaticCell`s firmware parks them in.
+#[cfg(test)]
+pub fn leaked_grant_lane<const SLOT: usize>(
+    depth: usize,
+) -> (
+    EmbassyGrantProducer<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, SLOT>,
+    EmbassyGrantConsumer<'static, embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, SLOT>,
+) {
+    let slots: std::vec::Vec<FrameSlot<SLOT>> = (0..depth).map(|_| FrameSlot::empty()).collect();
+    let channel = std::boxed::Box::leak(std::boxed::Box::new(zerocopy_channel::Channel::new(
+        std::boxed::Box::leak(slots.into_boxed_slice()),
+    )));
+    embassy_grant_lane(channel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,7 +636,7 @@ mod tests {
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceMode, TransportCapability,
     };
-    use crate::reactor::interface_seam::Interface;
+    use crate::reactor::interface_seam::{Interface, OutboundFrame};
     use crate::wire::{PacketType, WirePacketHeader};
 
     use embassy_futures::block_on;
@@ -578,17 +705,24 @@ mod tests {
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
 
-        // One inbound funnel shared by both interfaces, plus a command lane.
-        let funnel: Channel<CriticalSectionRawMutex, InboundFrame, 2> = Channel::new();
+        // One notify funnel shared by both interfaces, plus a command lane.
+        let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
 
-        // Each interface's "wire" (the medium) and its reactor-facing outbound queue.
+        // Each interface's "wire" (the medium).
         let source_wire_in: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
         let source_wire_out: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
-        let source_out: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
         let peer_wire_in: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
         let peer_wire_out: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
-        let peer_out: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
+
+        // The grant lanes are deliberately sized apart: erasure carries both
+        // through one reactor, each paying only its own slot size.
+        const SOURCE_SLOT: usize = MAX_WIRE_FRAME_LEN;
+        const PEER_SLOT: usize = 256;
+        let (source_in_tx, mut source_in_rx) = leaked_grant_lane::<SOURCE_SLOT>(2);
+        let (mut source_out_tx, source_out_rx) = leaked_grant_lane::<SOURCE_SLOT>(2);
+        let (peer_in_tx, mut peer_in_rx) = leaked_grant_lane::<PEER_SLOT>(2);
+        let (mut peer_out_tx, peer_out_rx) = leaked_grant_lane::<PEER_SLOT>(2);
 
         let raw = hx(RAW_ANNOUNCE);
         let original_hops = WirePacketHeader::parse(&raw)
@@ -612,24 +746,28 @@ mod tests {
         };
 
         let outcome = block_on(async {
-            let lanes = [(source, source_out.sender()), (peer, peer_out.sender())];
-            let egress = EmbassyEgress::new(&lanes);
+            let mut egress_lanes: [(InterfaceId, &mut dyn AnyGrantProducer); 2] =
+                [(source, &mut source_out_tx), (peer, &mut peer_out_tx)];
+            let egress = EmbassyEgress::new(&mut egress_lanes);
+            let mut inbound_lanes: [(InterfaceId, &mut dyn AnyGrantConsumer); 2] =
+                [(source, &mut source_in_rx), (peer, &mut peer_in_rx)];
 
             let reactor = run(
                 engine,
                 &view,
                 &[],
                 EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
-                funnel.receiver(),
+                notify.receiver(),
+                &mut inbound_lanes,
                 commands.receiver(),
                 egress,
                 app,
             );
 
             // The source interface: the test plays the announce onto its wire; its seam
-            // funnels the frame into the reactor.
+            // fills the frame into its own lane and announces it on the notify funnel.
             let source_seam =
-                EmbassyInterfaceSeam::new(source, funnel.sender(), source_out.receiver());
+                EmbassyInterfaceSeam::new(source, source_in_tx, notify.sender(), source_out_rx);
             let source_iface = EmbassyLoopbackInterface {
                 descriptor: descriptor(source),
                 wire_in: source_wire_in.receiver(),
@@ -638,7 +776,8 @@ mod tests {
             let source_run = source_iface.run(source_seam);
 
             // The peer interface: the rebroadcast must leave through *its* wire.
-            let peer_seam = EmbassyInterfaceSeam::new(peer, funnel.sender(), peer_out.receiver());
+            let peer_seam =
+                EmbassyInterfaceSeam::new(peer, peer_in_tx, notify.sender(), peer_out_rx);
             let peer_iface = EmbassyLoopbackInterface {
                 descriptor: descriptor(peer),
                 wire_in: peer_wire_in.receiver(),

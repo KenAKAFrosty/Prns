@@ -178,9 +178,10 @@ async fn write_message<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interfaces::ifac::IFAC_MAX_SIZE;
     use crate::interfaces::InterfaceStatus;
-    use crate::reactor::impls::embassy_reactor::EmbassyInterfaceSeam;
-    use crate::reactor::interface_seam::{InboundFrame, OutboundFrame};
+    use crate::reactor::grant::{GrantConsumer, GrantProducer};
+    use crate::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyInterfaceSeam};
 
     use ::core::cell::RefCell;
     use ::core::convert::Infallible;
@@ -193,6 +194,11 @@ mod tests {
     use std::collections::VecDeque;
 
     const WATCHDOG: Duration = Duration::from_secs(5);
+
+    /// The slot this device's lanes are sized by: its own declared hardware MTU
+    /// plus the access tag — not the engine-wide ceiling.
+    const DEVICE_SLOT: usize =
+        crate::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
 
     /// An in-memory async byte stream over a shared queue: `read` parks (yields) until bytes are
     /// available, `write` appends. One queue is the host->device wire, another the device->host
@@ -265,8 +271,9 @@ mod tests {
         let device_to_host = RefCell::new(VecDeque::new());
         let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
 
-        let funnel: Channel<CriticalSectionRawMutex, InboundFrame, 2> = Channel::new();
-        let outbound: Channel<CriticalSectionRawMutex, OutboundFrame, 2> = Channel::new();
+        let notify: Channel<CriticalSectionRawMutex, InterfaceId, 2> = Channel::new();
+        let (in_tx, mut in_rx) = leaked_grant_lane::<DEVICE_SLOT>(2);
+        let (mut out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(2);
 
         block_on(async {
             let device = UsbAutoDevice::new(
@@ -280,7 +287,7 @@ mod tests {
                 &status,
                 || true,
             );
-            let seam = EmbassyInterfaceSeam::new(device_id(), funnel.sender(), outbound.receiver());
+            let seam = EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx);
             let device_run = device.run(seam);
 
             let driver = async {
@@ -300,19 +307,24 @@ mod tests {
                 .await;
                 assert_eq!(status.connection(), ConnectionState::Connected);
 
-                // Inbound: a Data frame from the host reaches the reactor funnel.
+                // Inbound: a Data frame from the host lands in the device's grant lane,
+                // announced on the notify funnel.
                 let inbound_packet = [0xAAu8, 0xBB, 0xCC, 0xDD];
                 let data = Message::Data(&inbound_packet);
                 let n = data.write_framed(&mut frame).expect("frames the data");
                 host_to_device
                     .borrow_mut()
                     .extend(frame[..n].iter().copied());
-                let received = funnel.receive().await;
-                assert_eq!(&received.bytes[..received.len], &inbound_packet);
+                assert_eq!(notify.receive().await, device_id());
+                let received = in_rx.peek().await;
+                assert_eq!(received.frame(), &inbound_packet);
+                in_rx.release();
 
-                // Outbound: a frame on the egress lane is framed onto the device->host wire.
+                // Outbound: a frame granted into the egress lane is framed onto the
+                // device->host wire.
                 let outbound_packet = [0x11u8, 0x22, 0x33];
-                outbound.send(OutboundFrame::new(&outbound_packet)).await;
+                out_tx.grant().await.fill(&outbound_packet);
+                out_tx.commit();
                 let delivered =
                     read_until(&device_to_host, &mut decoder, |message| match message {
                         Message::Data(packet) => Some(packet.to_vec()),
