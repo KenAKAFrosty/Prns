@@ -75,7 +75,7 @@ mod tests {
     use crate::engine::{
         CommandId, PathRequestId, PathRequestWriteOutcome, RequestPath, PATH_REQUEST_TIMEOUT_MS,
     };
-    use crate::wire::{DestinationHash, MTU};
+    use crate::wire::{DestinationHash, BROADCAST_MTU};
 
     #[test]
     fn the_cull_journals_an_orphan_as_route_interface_gone() {
@@ -126,7 +126,7 @@ mod tests {
     fn settle_timed_out_path_requests_closes_each_expired_request_once_past_its_deadline() {
         let mut engine = EngineState::<Cap>::default();
         let issued_at = InstantMillis(1_000);
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let outcome = engine.write_commanded_path_request(
             CommandId(9),
             &RequestPath {

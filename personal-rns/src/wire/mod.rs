@@ -4,10 +4,13 @@ pub const TRUNCATED_HASH_BYTE_LEN: usize = 16;
 /// outside reach. A wire-protocol invariant, not a sizing knob.
 pub const MAX_HOP_COUNT: u8 = 128;
 
-/// RNS's `RNS.Reticulum.MTU` — the maximum byte size of one Reticulum packet
-/// peers must agree on. A wire-protocol invariant; everything that allocates
-/// per-packet scratch (announce reassembly, payload buffers) bounds against it.
-pub const MTU: usize = 500;
+/// RNS's `RNS.Reticulum.MTU` — the maximum byte size of one packet on the
+/// broadcast plane (announces, path requests, un-linked Singles), which peers
+/// must agree on. A wire-protocol invariant, permanently 500 even on fat
+/// pipes; the per-link MTU a LINKREQUEST negotiates is a separate, future
+/// concept. Everything that allocates per-packet scratch (announce
+/// reassembly, payload buffers) bounds against it.
+pub const BROADCAST_MTU: usize = 500;
 
 pub const ANNOUNCE_PUBLIC_KEY_LEN: usize = 64;
 
@@ -33,7 +36,7 @@ pub const IFAC_MIN_LEN: usize = 1;
 
 /// RNS 1.3.1 `Reticulum.MDU` — the most payload bytes one packet may carry
 /// once the worst-case header and minimum IFAC are reserved.
-pub const MDU: usize = MTU - HEADER_MAX_LEN - IFAC_MIN_LEN;
+pub const MDU: usize = BROADCAST_MTU - HEADER_MAX_LEN - IFAC_MIN_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {

@@ -7,14 +7,14 @@ use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519Pu
 use crate::identity::IdentitySigner;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WireError, WirePacketHeader, MTU, TRUNCATED_HASH_BYTE_LEN,
+    WireContext, WireError, WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
 };
 
 const LINK_MTU_BYTEMASK: u32 = 0x1F_FFFF;
 
-/// RNS `Link.signalling_bytes`: the negotiated MTU (low 21 bits) and mode (top
-/// 3 bits) packed big-endian into 3 bytes. `link_id` excludes these, so a relay
-/// may clamp the MTU without moving the id.
+/// RNS `Link.signalling_bytes`: the negotiated link MTU (low 21 bits) and mode
+/// (top 3 bits) packed big-endian into 3 bytes. `link_id` excludes these, so a
+/// relay may clamp the MTU without moving the id.
 pub fn signalling_bytes_from(mtu: usize, mode: LinkMode) -> [u8; 3] {
     let value = ((mtu as u32) & LINK_MTU_BYTEMASK) | ((mode.to_bits() as u32) << 21);
     [(value >> 16) as u8, (value >> 8) as u8, value as u8]
@@ -88,7 +88,7 @@ pub fn parse_link_request(raw: &[u8]) -> Result<LinkRequest, LinkRequestError> {
         WirePacketHeader::parse(raw).map_err(|_| LinkRequestError::Malformed)?;
 
     let (keys, mtu, mode): (&[u8], usize, LinkMode) = match payload.len() {
-        LINK_REQUEST_KEYS_LEN => (payload, MTU, LinkMode::Aes256Cbc),
+        LINK_REQUEST_KEYS_LEN => (payload, BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_REQUEST_LEN => {
             let mut signalling = [0u8; 3];
             signalling.copy_from_slice(&payload[LINK_REQUEST_KEYS_LEN..]);
@@ -193,7 +193,7 @@ pub fn validate_link_proof(
     let (header, payload) = WirePacketHeader::parse(raw).map_err(|_| LinkProofError::Malformed)?;
 
     let (body, signalling, mtu, mode): (&[u8], &[u8], usize, LinkMode) = match payload.len() {
-        LINK_PROOF_BODY_LEN => (payload, &[], MTU, LinkMode::Aes256Cbc),
+        LINK_PROOF_BODY_LEN => (payload, &[], BROADCAST_MTU, LinkMode::Aes256Cbc),
         SIGNALLED_LINK_PROOF_LEN => {
             let mut bytes = [0u8; 3];
             bytes.copy_from_slice(&payload[LINK_PROOF_BODY_LEN..]);
@@ -451,7 +451,7 @@ mod tests {
     fn parse_link_request_without_signalling_defaults_mtu_and_mode() {
         let bytes = hx(REQUEST_PACKET);
         let parsed = parse_link_request(&bytes[..bytes.len() - 3]).unwrap();
-        assert_eq!(parsed.mtu, MTU);
+        assert_eq!(parsed.mtu, BROADCAST_MTU);
         assert_eq!(parsed.mode, LinkMode::Aes256Cbc);
         assert_eq!(
             parsed.link_id,

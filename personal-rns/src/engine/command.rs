@@ -9,7 +9,7 @@ use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::storage::EngineStorage;
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 
 impl<S: EngineStorage> EngineState<S> {
     /// Run one app command and stream its result to `sink`: the `Directive`s it fans (an
@@ -42,7 +42,7 @@ impl<S: EngineStorage> EngineState<S> {
                 fill_entropy(&mut ratchet_bytes);
                 let ratchet = RatchetEntropy::new(ratchet_bytes);
 
-                let mut buf = [0u8; MTU];
+                let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_announce(
                     &announce,
                     now,
@@ -85,7 +85,7 @@ impl<S: EngineStorage> EngineState<S> {
                 fill_entropy(&mut entropy_bytes);
                 let entropy = SendSingleEntropy::new(entropy_bytes);
 
-                let mut buf = [0u8; MTU];
+                let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_commanded_send_single(id, &send, now, entropy, &mut buf) {
                     SendSingleWriteOutcome::Written(dispatch) => {
                         fan_self_originated(
@@ -130,7 +130,7 @@ impl<S: EngineStorage> EngineState<S> {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
 
-                let mut buf = [0u8; MTU];
+                let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_send_group(&send, &iv, &mut buf) {
                     Ok(wire_len) => {
                         fan_self_originated(view, None, &buf[..wire_len], sink);
@@ -150,7 +150,7 @@ impl<S: EngineStorage> EngineState<S> {
                 }));
             }
             CommandOutcome::OwesPathRequest { id, request } => {
-                let mut buf = [0u8; MTU];
+                let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_commanded_path_request(id, &request, now, &mut buf) {
                     PathRequestWriteOutcome::AlreadyReachable { hops } => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {

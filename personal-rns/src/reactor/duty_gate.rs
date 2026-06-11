@@ -1,5 +1,5 @@
 use crate::interfaces::{AirtimeDutyCycle, AirtimeUtilization};
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 use heapless::Deque;
 use heapless::Vec as HeaplessVec;
 
@@ -17,7 +17,7 @@ struct Queued<F> {
 
 #[derive(Default)]
 pub struct FixedDutyQueue<const FRAMES: usize> {
-    entries: Deque<Queued<HeaplessVec<u8, MTU>>, FRAMES>,
+    entries: Deque<Queued<HeaplessVec<u8, BROADCAST_MTU>>, FRAMES>,
 }
 
 impl<const FRAMES: usize> DutyQueue for FixedDutyQueue<FRAMES> {

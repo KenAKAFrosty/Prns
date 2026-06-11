@@ -120,7 +120,7 @@ mod tests {
     use crate::routing::dedup::PacketHash;
     use crate::routing::delivery::Delivery;
     use crate::routing::upstream_app_destinations::ProofStrategy;
-    use crate::wire::MTU;
+    use crate::wire::BROADCAST_MTU;
 
     #[test]
     fn write_proof_is_byte_identical_to_the_rns_1_3_1_implicit_proof() {
@@ -154,7 +154,7 @@ mod tests {
             panic!("a ProveAll delivery owes a proof");
         };
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let written = state.write_proof(&owed, &mut buf).unwrap();
         assert_eq!(&buf[..written], hx(RNS_1_3_1_IMPLICIT_PROOF).as_slice());
     }
@@ -249,7 +249,7 @@ mod tests {
             packet_hash: PacketHash::new([0xAA; 32]),
             identity: IdentityHash::new([0x4c; 16]),
         };
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         assert_eq!(
             state.write_proof(&owed, &mut buf),
             Err(WriteProofError::IdentityNotHeld),

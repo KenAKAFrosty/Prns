@@ -10,7 +10,7 @@ use crate::routing::delivery::Delivery;
 use crate::routing::proof::{ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN};
 use crate::routing::storage::EngineStorage;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 
 pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
     match removed.cause {
@@ -118,7 +118,7 @@ impl<S: EngineStorage> EngineState<S> {
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::Forward(forward) => {
                 if is_egress_eligible(view, forward.fire_on, Egress::Transport) {
-                    let mut buf = [0u8; MTU];
+                    let mut buf = [0u8; BROADCAST_MTU];
                     if let Ok(written) = forward.to_wire(&mut buf) {
                         sink(EngineReaction::Directive(Directive::Send {
                             target: forward.fire_on,
@@ -132,7 +132,7 @@ impl<S: EngineStorage> EngineState<S> {
                     let mut entropy_bytes = [0u8; AnnounceEntropy::LEN];
                     fill_entropy(&mut entropy_bytes);
                     let entropy = AnnounceEntropy::new(entropy_bytes);
-                    let mut response = [0u8; MTU];
+                    let mut response = [0u8; BROADCAST_MTU];
                     if let PathResponseWriteOutcome::Written { wire_len } =
                         self.write_path_response_announce(&destination, now, entropy, &mut response)
                     {

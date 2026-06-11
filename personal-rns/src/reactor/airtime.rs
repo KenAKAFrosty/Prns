@@ -70,7 +70,7 @@ mod tests {
         assert_eq!(
             frame_airtime_us(500, 1_000_000_000),
             4,
-            "a full MTU frame on a gigabit link still registers, in microseconds",
+            "a full BROADCAST_MTU frame on a gigabit link still registers, in microseconds",
         );
         assert_eq!(frame_airtime_us(500, 0), 0, "no bitrate, no accounting");
     }

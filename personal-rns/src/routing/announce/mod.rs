@@ -17,7 +17,7 @@ use crate::identity::{
 };
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, PacketType, WirePacketHeader,
-    ANNOUNCE_PUBLIC_KEY_LEN, DOTTED_NAME_HASH_LEN, MTU, RATCHET_LEN, SIGNATURE_LEN,
+    ANNOUNCE_PUBLIC_KEY_LEN, BROADCAST_MTU, DOTTED_NAME_HASH_LEN, RATCHET_LEN, SIGNATURE_LEN,
     TRUNCATED_HASH_BYTE_LEN,
 };
 use heapless::Vec as HeaplessVec;
@@ -167,7 +167,7 @@ impl<'a> Announce<'a> {
         if header.destination_type != DestinationType::Single {
             return Err(AnnounceValidationError::NotSingleDestination);
         }
-        if payload.len() > MTU {
+        if payload.len() > BROADCAST_MTU {
             return Err(AnnounceValidationError::PayloadTooBig);
         }
 
@@ -230,8 +230,8 @@ impl<'a> Announce<'a> {
             app_data,
         };
 
-        // The scratch buffer (16 + MTU) always fits, since `payload.len() <= MTU`.
-        let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + MTU];
+        // The scratch buffer (16 + BROADCAST_MTU) always fits, since `payload.len() <= BROADCAST_MTU`.
+        let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
         let signed_len = announce
             .write_signed_material(&mut scratch)
             .map_err(|_| AnnounceValidationError::PayloadTooBig)?;
@@ -277,7 +277,7 @@ impl<'a> Announce<'a> {
             app_data,
         };
 
-        let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + MTU];
+        let mut scratch = [0u8; TRUNCATED_HASH_BYTE_LEN + BROADCAST_MTU];
         let signed_len = announce
             .write_signed_material(&mut scratch)
             .map_err(|err| match err {
@@ -419,7 +419,7 @@ mod tests {
         let (header, payload) = WirePacketHeader::parse(&raw).unwrap();
         let announce = Announce::from_wire(&header, payload).unwrap();
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let n = announce.to_wire(&mut buf).unwrap();
         assert_eq!(n, payload.len());
         assert_eq!(&buf[..n], payload);
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(announce.maybe_ratchet, Some(RatchetKey::new(ratchet)));
         assert_eq!(announce.app_data, b"ratchet-app");
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let n = announce.to_wire(&mut buf).unwrap();
         assert_eq!(n, payload.len());
         assert_eq!(&buf[..n], payload);
@@ -668,7 +668,7 @@ mod tests {
             announce.destination,
             DestinationHash::new(a("33d610d1d6a7f4f809ebfe62c0ce7d43")),
         );
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let n = announce.to_wire(&mut buf).unwrap();
         assert_eq!(
             &buf[..n],
@@ -702,7 +702,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut payload = [0u8; MTU];
+        let mut payload = [0u8; BROADCAST_MTU];
         let n = built.to_wire(&mut payload).unwrap();
         let mut raw = vec![0x21u8, 0x00];
         raw.extend_from_slice(built.destination.as_bytes());

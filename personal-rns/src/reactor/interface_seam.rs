@@ -8,10 +8,10 @@
 
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 
-/// An IFAC'd wire frame carries the engine's full MTU plus the access tag.
-pub const MAX_WIRE_FRAME_LEN: usize = MTU + IFAC_MAX_SIZE;
+/// An IFAC'd wire frame carries the engine's full BROADCAST_MTU plus the access tag.
+pub const MAX_WIRE_FRAME_LEN: usize = BROADCAST_MTU + IFAC_MAX_SIZE;
 
 pub struct InboundFrame {
     pub source: InterfaceId,

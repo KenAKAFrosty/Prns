@@ -25,7 +25,7 @@ use crate::routing::{DropCause, RemovedRoute, UpsertRouteOutcome};
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
-    WirePacketHeader, MTU, TRUNCATED_HASH_BYTE_LEN,
+    WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -104,11 +104,11 @@ impl<'a> Ingress<'a> {
                 // accepted announce. If `to_wire` ever drifts from
                 // `from_wire`, the engine would silently re-emit a
                 // signature-broken packet on rebroadcast. Cheap in
-                // debug (one MTU-sized scratch + compare), zero in
+                // debug (one BROADCAST_MTU-sized scratch + compare), zero in
                 // release.
                 debug_assert!(
                     {
-                        let mut scratch = [0u8; MTU];
+                        let mut scratch = [0u8; BROADCAST_MTU];
                         announce
                             .to_wire(&mut scratch)
                             .map(|n| &scratch[..n] == payload)
@@ -893,7 +893,7 @@ mod tests {
         };
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
         let mut expected_payload = payload;
-        let mut bytes = [0u8; MTU];
+        let mut bytes = [0u8; BROADCAST_MTU];
         let header_len = header.write(&mut bytes).unwrap();
         bytes[header_len..header_len + payload.len()].copy_from_slice(&payload);
 
@@ -1021,7 +1021,7 @@ mod tests {
         let mut state = personal_node_announcer();
         let local = personal_node_destination();
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let n = crate::engine::write_path_request_wire_packet(local, None, &[0x55; 16], &mut buf)
             .unwrap();
         let mut wire = buf[..n].to_vec();
@@ -1044,7 +1044,7 @@ mod tests {
         // A non-transport node with no route to the destination has nothing to
         // answer and nothing to forward.
         let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let n = crate::engine::write_path_request_wire_packet(
             DestinationHash::new([0x44; 16]),
             None,
@@ -1075,7 +1075,7 @@ mod tests {
         // B answers for its own destination with a PATH_RESPONSE announce.
         let mut b = personal_node_announcer();
         let local = personal_node_destination();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
             &local,
             InstantMillis(500),
@@ -1116,7 +1116,7 @@ mod tests {
     fn a_path_response_for_a_destination_we_do_not_hold_is_refused() {
         use crate::engine::PathResponseWriteOutcome;
         let mut b = personal_node_announcer();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         assert!(matches!(
             b.write_path_response_announce(
                 &DestinationHash::new([0x44; 16]),
@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     fn path_request_wire(destination: DestinationHash) -> std::vec::Vec<u8> {
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let n =
             crate::engine::write_path_request_wire_packet(destination, None, &[0x55; 16], &mut buf)
                 .unwrap();
@@ -1545,7 +1545,7 @@ mod tests {
             target: AnnounceTarget::AllInterfaces,
             app_data: AnnounceAppData::Registered,
         };
-        let mut buf_a = [0u8; MTU];
+        let mut buf_a = [0u8; BROADCAST_MTU];
         let first_len = announcer
             .write_commanded_announce(
                 &command,
@@ -1556,7 +1556,7 @@ mod tests {
             )
             .written_len();
         let mut first = buf_a[..first_len].to_vec();
-        let mut buf_b = [0u8; MTU];
+        let mut buf_b = [0u8; BROADCAST_MTU];
         let second_len = announcer
             .write_commanded_announce(
                 &command,
@@ -1634,7 +1634,7 @@ mod tests {
             target: AnnounceTarget::AllInterfaces,
             app_data: AnnounceAppData::Registered,
         };
-        let mut buf_a = [0u8; MTU];
+        let mut buf_a = [0u8; BROADCAST_MTU];
         let first_len = announcer
             .write_commanded_announce(
                 &command,
@@ -1645,7 +1645,7 @@ mod tests {
             )
             .written_len();
         let mut first = buf_a[..first_len].to_vec();
-        let mut buf_b = [0u8; MTU];
+        let mut buf_b = [0u8; BROADCAST_MTU];
         let second_len = announcer
             .write_commanded_announce(
                 &command,
@@ -1843,7 +1843,7 @@ mod tests {
     fn an_earlier_announced_ratchet_still_opens_after_rotation() {
         let mut state = ratcheted_personal_node_announcer();
         let interval = 6 * 60 * 60 * 1000;
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let _ = state
             .write_commanded_announce(
                 &AnnounceNow {
@@ -1997,7 +1997,7 @@ mod tests {
             destination: single,
             context: WireContext::None,
         };
-        let mut raw = [0u8; MTU];
+        let mut raw = [0u8; BROADCAST_MTU];
         let header_len = header.write(&mut raw).unwrap();
         raw[header_len] = 0xFF;
 
@@ -2358,7 +2358,7 @@ mod tests {
             destination,
             context: WireContext::None,
         };
-        let mut wire = [0u8; MTU];
+        let mut wire = [0u8; BROADCAST_MTU];
         let header_len = header.write(&mut wire).unwrap();
         let token = hx(GROUP_TOKEN);
         wire[header_len..header_len + token.len()].copy_from_slice(&token);
@@ -2397,7 +2397,7 @@ mod tests {
             destination: DestinationHash::new([0x99; 16]),
             context: WireContext::None,
         };
-        let mut wire = [0u8; MTU];
+        let mut wire = [0u8; BROADCAST_MTU];
         let header_len = header.write(&mut wire).unwrap();
         wire[header_len..header_len + 64].fill(0xAB);
         let mut raw = wire[..header_len + 64].to_vec();
@@ -2489,7 +2489,7 @@ mod tests {
     #[test]
     fn an_echo_of_our_own_announce_takes_no_route() {
         let mut state = personal_node_announcer();
-        let mut announce_buf = [0u8; MTU];
+        let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = state
             .write_commanded_announce(
                 &AnnounceNow {
@@ -2584,7 +2584,7 @@ mod tests {
             panic!("a transport-addressed packet with a one-hop route forwards, got {out:?}");
         };
         assert_eq!(forward.fire_on, InterfaceId::new([0xB2; 16]));
-        let mut wire = [0u8; MTU];
+        let mut wire = [0u8; BROADCAST_MTU];
         let n = forward.to_wire(&mut wire).unwrap();
         let mut expected = hx(RAW_SEALED_TO_RATCHET);
         expected[1] = 1;
@@ -2626,7 +2626,7 @@ mod tests {
             hops: 1,
             ..header
         };
-        let mut relayed = [0u8; MTU];
+        let mut relayed = [0u8; BROADCAST_MTU];
         let header_len = relayed_header.write(&mut relayed).unwrap();
         relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
         let _ = relay.ingest_packet(
@@ -2653,7 +2653,7 @@ mod tests {
         let IngestPacketOutcome::Forward(forward) = out else {
             panic!("a transport-addressed packet with a multi-hop route forwards, got {out:?}");
         };
-        let mut wire = [0u8; MTU];
+        let mut wire = [0u8; BROADCAST_MTU];
         let n = forward.to_wire(&mut wire).unwrap();
         let mut expected = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
         expected[1] = 1;
@@ -2710,7 +2710,7 @@ mod tests {
             destination: proof_destination,
             context: WireContext::None,
         };
-        let mut proof_wire = [0u8; MTU];
+        let mut proof_wire = [0u8; BROADCAST_MTU];
         let header_len = proof_header.write(&mut proof_wire).unwrap();
         proof_wire[header_len..header_len + 64].fill(0xAB);
         let proof_len = header_len + 64;
@@ -2735,7 +2735,7 @@ mod tests {
             InterfaceId::new([0xA1; 16]),
             "the proof leaves on the interface the data packet arrived from",
         );
-        let mut wire = [0u8; MTU];
+        let mut wire = [0u8; BROADCAST_MTU];
         let n = returned.to_wire(&mut wire).unwrap();
         let mut expected = std::vec::Vec::new();
         expected.extend_from_slice(&proof_wire[..proof_len]);
@@ -2898,7 +2898,7 @@ mod tests {
             hops: 1,
             ..header
         };
-        let mut relayed = [0u8; MTU];
+        let mut relayed = [0u8; BROADCAST_MTU];
         let header_len = relayed_header.write(&mut relayed).unwrap();
         relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
 

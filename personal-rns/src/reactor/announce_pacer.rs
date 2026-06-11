@@ -1,6 +1,6 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::AnnounceBandwidthCap;
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 use heapless::Vec as HeaplessVec;
 
 pub trait PacerQueue: Default {
@@ -16,7 +16,7 @@ struct Queued<F> {
 
 #[derive(Default)]
 pub struct FixedPacerQueue<const DEPTH: usize> {
-    entries: HeaplessVec<Queued<HeaplessVec<u8, MTU>>, DEPTH>,
+    entries: HeaplessVec<Queued<HeaplessVec<u8, BROADCAST_MTU>>, DEPTH>,
 }
 
 impl<const DEPTH: usize> PacerQueue for FixedPacerQueue<DEPTH> {

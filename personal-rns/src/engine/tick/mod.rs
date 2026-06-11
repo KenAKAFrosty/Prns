@@ -8,7 +8,7 @@ use crate::routing::announce::defaults::{
 };
 use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
 use crate::routing::storage::EngineStorage;
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 
 impl<S: EngineStorage> EngineState<S> {
     /// One [`EgressDirective`] per (scheduled announce due at `now` × interface it fires on):
@@ -67,7 +67,7 @@ impl<S: EngineStorage> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         for egress in self.due_scheduled_announce_directives(now, view) {
-            let mut buf = [0u8; MTU];
+            let mut buf = [0u8; BROADCAST_MTU];
             if let Ok(written) = egress.to_wire(&mut buf) {
                 sink(EngineReaction::Directive(Directive::SendAnnounce {
                     target: egress.target(),

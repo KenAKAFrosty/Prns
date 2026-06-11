@@ -215,7 +215,7 @@ mod tests {
     };
     use crate::interfaces::InboundPacket;
     use crate::routing::delivery::{Delivery, SingleDelivery};
-    use crate::wire::{DestinationHash, MTU};
+    use crate::wire::{DestinationHash, BROADCAST_MTU};
 
     impl SendSingleWriteOutcome {
         #[track_caller]
@@ -309,7 +309,7 @@ mod tests {
         sent_at: u64,
     ) -> (EngineState<Cap>, std::vec::Vec<u8>) {
         let mut announcer = personal_node_announcer();
-        let mut announce_buf = [0u8; MTU];
+        let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = announcer
             .write_commanded_announce(
                 &AnnounceNow {
@@ -327,7 +327,7 @@ mod tests {
         let mut state = hearer();
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
             .write_commanded_send_single(
                 CommandId(7),
@@ -345,7 +345,7 @@ mod tests {
         let (_, expected_wire) = unratcheted_neighbor_with_a_tracked_send(b"retry-me", 1_000);
 
         let mut announcer = personal_node_announcer();
-        let mut announce_buf = [0u8; MTU];
+        let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = announcer
             .write_commanded_announce(
                 &AnnounceNow {
@@ -366,7 +366,7 @@ mod tests {
             destination: DestinationHash::new([0xEE; 16]),
             payload: SendSinglePayload::from_slice(b"retry-me").unwrap(),
         };
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let (error, came_home) = state
             .write_commanded_send_single(
                 CommandId(6),
@@ -432,7 +432,7 @@ mod tests {
             },
         );
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
             .write_commanded_send_single(
                 CommandId(7),
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn a_send_to_an_unratcheted_neighbor_seals_to_the_identity_key() {
         let mut announcer = personal_node_announcer();
-        let mut announce_buf = [0u8; MTU];
+        let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = announcer
             .write_commanded_announce(
                 &AnnounceNow {
@@ -474,7 +474,7 @@ mod tests {
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
         let send = send_of(b"hello-by-key");
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
             .write_commanded_send_single(
                 CommandId(7),
@@ -557,7 +557,7 @@ mod tests {
             },
         );
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
             .write_commanded_send_single(
                 CommandId(7),
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn a_sent_packet_round_trips_into_the_peer_engine() {
         let mut peer = personal_node_announcer_with(RatchetPolicy::Ratcheted);
-        let mut announce_buf = [0u8; MTU];
+        let mut announce_buf = [0u8; BROADCAST_MTU];
         let announce_len = peer
             .write_commanded_announce(
                 &AnnounceNow {
@@ -600,7 +600,7 @@ mod tests {
         hear_announce(&mut state, &announce_buf[..announce_len], arrival());
         let send = send_of(b"loopback-hello");
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let dispatch = state
             .write_commanded_send_single(
                 CommandId(7),
@@ -640,7 +640,7 @@ mod tests {
         let mut state = hearer();
         hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         for i in 1..=8u64 {
             let dispatch = state
                 .write_commanded_send_single(
@@ -795,7 +795,7 @@ mod tests {
     fn a_timed_out_send_pops_once_for_its_settlement() {
         let mut state = hearer();
         hear_announce(&mut state, &hx(RATCHETED_ANNOUNCE_RNS_WIRE), arrival());
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         state
             .write_commanded_send_single(
                 CommandId(7),

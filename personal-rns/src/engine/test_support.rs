@@ -16,7 +16,7 @@ use crate::routing::storage::FixedInline;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    TransportId, WireContext, WirePacketHeader, MTU,
+    TransportId, WireContext, WirePacketHeader, BROADCAST_MTU,
 };
 
 pub(crate) type Cap = FixedInline<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>;
@@ -120,7 +120,7 @@ pub(crate) fn personal_node_announcer_with(ratchet_policy: RatchetPolicy) -> Eng
 
 pub(crate) fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
     let mut state = personal_node_announcer_with(RatchetPolicy::Ratcheted);
-    let mut buf = [0u8; MTU];
+    let mut buf = [0u8; BROADCAST_MTU];
     let _ = state.write_commanded_announce(
         &AnnounceNow {
             destination: personal_node_destination(),
@@ -175,7 +175,7 @@ pub(crate) fn sealed_single_packet_routed(
         destination,
         context: WireContext::None,
     };
-    let mut buf = [0u8; MTU];
+    let mut buf = [0u8; BROADCAST_MTU];
     let header_len = header.write(&mut buf).unwrap();
     let sealed = remote
         .encrypt(

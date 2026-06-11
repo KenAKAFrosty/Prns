@@ -67,7 +67,7 @@ mod tests {
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::IdentitySigner;
     use crate::routing::delivery::Delivery;
-    use crate::wire::{DestinationHash, MTU};
+    use crate::wire::{DestinationHash, BROADCAST_MTU};
 
     const GROUP_KEY: &str = "42424242424242424242424242424242424242424242424242424242424242422424242424242424242424242424242424242424242424242424242424242424";
 
@@ -139,7 +139,7 @@ mod tests {
             payload,
         };
 
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let iv = [0x44u8; ENCRYPTION_IV_LEN];
         let len = state
             .write_commanded_send_group(&send, &iv, &mut buf)

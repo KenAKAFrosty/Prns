@@ -3,12 +3,12 @@ use crate::interfaces::{
     AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 
 const PROTOCOL_VERSION_LEN: usize = 1;
 const MESSAGE_KIND_LEN: usize = 1;
 pub const NODE_TAG_LEN: usize = 8;
-pub const MAX_DATA_BYTES: usize = crate::interfaces::ifac::IFAC_MAX_SIZE + MTU;
+pub const MAX_DATA_BYTES: usize = crate::interfaces::ifac::IFAC_MAX_SIZE + BROADCAST_MTU;
 pub const MAX_MESSAGE_BYTES: usize = MESSAGE_KIND_LEN + MAX_DATA_BYTES;
 pub const MAX_FRAMED_BYTES: usize = rns_serial_framing::max_encoded_len(MAX_MESSAGE_BYTES);
 pub const READ_CHUNK_BYTES: usize = MAX_FRAMED_BYTES;

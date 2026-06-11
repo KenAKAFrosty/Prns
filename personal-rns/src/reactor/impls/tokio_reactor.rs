@@ -851,7 +851,7 @@ mod tests {
         use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
         use crate::routing::upstream_app_destinations::ProofStrategy;
         use crate::wire::{
-            ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, MTU,
+            ContextFlag, DestinationType, IfacFlag, PropagationType, WireContext, BROADCAST_MTU,
         };
 
         let mut secret = [0u8; 64];
@@ -887,7 +887,7 @@ mod tests {
             destination,
             context: WireContext::None,
         };
-        let mut wire = [0u8; MTU];
+        let mut wire = [0u8; BROADCAST_MTU];
         let header_len = header.write(&mut wire).expect("writes the header");
         let sealed = remote
             .encrypt(

@@ -258,7 +258,7 @@ mod tests {
         personal_node_announcer, personal_node_destination, TEST_ANNOUNCE_ENTROPY,
         TEST_RATCHET_ENTROPY,
     };
-    use crate::wire::{DestinationHash, MTU};
+    use crate::wire::{DestinationHash, BROADCAST_MTU};
 
     const REGISTERED_APP_DATA: &[u8] = b"hello-personal";
 
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn a_commanded_announce_carries_the_registered_app_data() {
         let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let len = state
             .write_commanded_announce(
                 &commanded(personal_node_destination(), AnnounceAppData::Registered),
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn a_commanded_data_payload_overrides_the_registered_app_data() {
         let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let override_data = AnnounceAppDataBytes::from_slice(b"override-data").unwrap();
         let len = state
             .write_commanded_announce(
@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn a_commanded_announce_for_an_unregistered_destination_is_rejected() {
         let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let outcome = state.write_commanded_announce(
             &commanded(
                 DestinationHash::new([0x9e; 16]),
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn a_path_response_answers_with_the_registered_app_data() {
         let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let outcome = state.write_path_response_announce(
             &personal_node_destination(),
             InstantMillis(1_000),
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn a_path_response_for_a_foreign_destination_is_not_local() {
         let mut state = personal_node_announcer();
-        let mut buf = [0u8; MTU];
+        let mut buf = [0u8; BROADCAST_MTU];
         let outcome = state.write_path_response_announce(
             &DestinationHash::new([0x9e; 16]),
             InstantMillis(1_000),

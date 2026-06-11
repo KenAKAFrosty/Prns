@@ -1,7 +1,7 @@
 use crate::crypto::{hkdf_sha256, hkdf_sha256_into, sha256, sha256_chunks};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::wire::MTU;
+use crate::wire::BROADCAST_MTU;
 
 /// RNS 1.3.1 `Reticulum.IFAC_SALT`.
 pub const IFAC_SALT: [u8; 32] = [
@@ -15,7 +15,7 @@ pub const IFAC_MAX_SIZE: usize = 64;
 
 const IFAC_FLAG: u8 = 0x80;
 const SIGNATURE_LEN: usize = 64;
-const MAX_MASK_LEN: usize = MTU + IFAC_MAX_SIZE;
+const MAX_MASK_LEN: usize = BROADCAST_MTU + IFAC_MAX_SIZE;
 
 pub struct InterfaceIfac {
     pub id: crate::interfaces::InterfaceId,
@@ -60,7 +60,7 @@ impl IfacContext {
 
     pub fn mask_outbound(&self, clean: &[u8], out: &mut [u8]) -> Option<usize> {
         let total = clean.len().checked_add(self.size)?;
-        if clean.len() < 2 || clean.len() > MTU || out.len() < total {
+        if clean.len() < 2 || clean.len() > BROADCAST_MTU || out.len() < total {
             return None;
         }
         let signature = self.identity.sign(clean);
