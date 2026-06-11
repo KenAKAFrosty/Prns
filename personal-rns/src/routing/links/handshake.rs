@@ -4,9 +4,10 @@
 
 use super::{LinkId, LinkMode};
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+use crate::identity::IdentitySigner;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
-    WireContext, WireError, WirePacketHeader, MTU,
+    WireContext, WireError, WirePacketHeader, MTU, TRUNCATED_HASH_BYTE_LEN,
 };
 
 const LINK_MTU_BYTEMASK: u32 = 0x1F_FFFF;
@@ -119,9 +120,58 @@ pub fn parse_link_request(raw: &[u8]) -> Result<LinkRequest, LinkRequestError> {
     })
 }
 
+pub fn write_link_proof(
+    link_id: &LinkId,
+    responder_encryption: &X25519PublicKey,
+    signer: &impl IdentitySigner,
+    mtu: usize,
+    mode: LinkMode,
+    buf: &mut [u8],
+) -> Result<usize, WireError> {
+    let signalling = signalling_bytes_from(mtu, mode);
+    let responder_signing = signer.signing_public_key();
+
+    let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 32 + 32 + 3];
+    let mut o = 0;
+    signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
+    o += TRUNCATED_HASH_BYTE_LEN;
+    signed_data[o..o + 32].copy_from_slice(&responder_encryption.0);
+    o += 32;
+    signed_data[o..o + 32].copy_from_slice(responder_signing.as_bytes());
+    o += 32;
+    signed_data[o..o + 3].copy_from_slice(&signalling);
+    let signature = signer.sign(&signed_data);
+
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Link,
+        packet_type: PacketType::Proof,
+        hops: 0,
+        transport_id: None,
+        destination: DestinationHash::new(*link_id.as_bytes()),
+        context: WireContext::LinkRequestProof,
+    };
+    let header_len = header.write(buf)?;
+    let total = header_len + signature.0.len() + responder_encryption.0.len() + signalling.len();
+    if buf.len() < total {
+        return Err(WireError::BufferTooShort);
+    }
+    let mut offset = header_len;
+    buf[offset..offset + signature.0.len()].copy_from_slice(&signature.0);
+    offset += signature.0.len();
+    buf[offset..offset + responder_encryption.0.len()].copy_from_slice(&responder_encryption.0);
+    offset += responder_encryption.0.len();
+    buf[offset..offset + signalling.len()].copy_from_slice(&signalling);
+    offset += signalling.len();
+    Ok(offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::in_memory::InMemoryNodeIdentity;
 
     fn hx(s: &str) -> Vec<u8> {
         (0..s.len())
@@ -146,6 +196,21 @@ mod tests {
                                   a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf\
                                   505152535455565758595a5b5c5d5e5f505152535455565758595a5b5c5d5e5f\
                                   2001f4";
+    const PROOF_LINK_ID: &str = "8dcf19fbdf2597e8676bf16aede3421a";
+    const RESPONDER_ENCRYPTION_PUBLIC: &str =
+        "bf18d33e4d3400ea2c4307296b89dd85da180ca81b1590be97f26d34d45cc26f";
+    const LINK_PROOF_PACKET: &str = "0f008dcf19fbdf2597e8676bf16aede3421aff\
+                                     7f06d5f969f40b53002b1e22c47db479bcd421dc7fc79ea526b06250e358bc1c\
+                                     b3fb123c9e5280a5d08e5c0ebee0b02b7ea57d3f5791a99ab69f9cf102dd5002\
+                                     bf18d33e4d3400ea2c4307296b89dd85da180ca81b1590be97f26d34d45cc26f\
+                                     2001f4";
+
+    fn responder_identity() -> InMemoryNodeIdentity {
+        let mut secret = [0u8; 64];
+        secret[..32].fill(0x22);
+        secret[32..].fill(0x11);
+        InMemoryNodeIdentity::from_secret_key_bytes(&secret)
+    }
 
     #[test]
     fn link_id_matches_the_reference_request_derivation() {
@@ -266,5 +331,36 @@ mod tests {
             assert_eq!(decoded_mtu, mtu);
             assert_eq!(LinkMode::from_bits(mode_bits), Some(LinkMode::Aes256Cbc));
         }
+    }
+
+    #[test]
+    fn write_link_proof_matches_the_reference_packet() {
+        let mut buf = [0u8; 128];
+        let n = write_link_proof(
+            &LinkId::new(a16(PROOF_LINK_ID)),
+            &X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC)),
+            &responder_identity(),
+            500,
+            LinkMode::Aes256Cbc,
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(&buf[..n], &hx(LINK_PROOF_PACKET)[..]);
+    }
+
+    #[test]
+    fn write_link_proof_rejects_a_buffer_too_small_for_the_proof() {
+        let mut tiny = [0u8; 40];
+        assert_eq!(
+            write_link_proof(
+                &LinkId::new(a16(PROOF_LINK_ID)),
+                &X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC)),
+                &responder_identity(),
+                500,
+                LinkMode::Aes256Cbc,
+                &mut tiny,
+            ),
+            Err(WireError::BufferTooShort),
+        );
     }
 }
