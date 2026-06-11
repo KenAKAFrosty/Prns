@@ -2,6 +2,7 @@ use crate::crypto::X25519PublicKey;
 use crate::crypto::{token_open_in_place, TokenKey};
 use crate::engine::commands::CommandId;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
+use crate::engine::reaction::LinkClosedReason;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
@@ -20,9 +21,10 @@ use crate::routing::delivery::{
     PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
 use crate::routing::links::handshake::{
-    link_proof_from, link_request_from, link_rtt_from, LinkRequest,
+    link_proof_from, link_request_from, link_rtt_from, LinkRequest, LinkRttError,
 };
-use crate::routing::links::table::LinkPhase;
+use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
+use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{ProofIngest, ProofObligation, ProofOwed};
@@ -244,6 +246,20 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         rtt_ms: u64,
     },
+    /// A keepalive request arrived on a link we answer for — the engine owes
+    /// the echo back on the arrival lane.
+    OwesKeepaliveEcho {
+        link_id: LinkId,
+    },
+    /// The peer closed the link with its sealed LINKCLOSE; the row is gone.
+    LinkClosedByPeer {
+        link_id: LinkId,
+    },
+    /// The engine owes the peer a sealed LINKCLOSE for a link it is dropping.
+    OwesLinkClose {
+        link_id: LinkId,
+        reason: LinkClosedReason,
+    },
     Ignored,
 }
 
@@ -385,18 +401,22 @@ impl<S: EngineStorage> EngineState<S> {
                 arrived_at,
             } => {
                 if data.destination_type == DestinationType::Link {
-                    if data.context == WireContext::LinkRtt {
-                        return self.classify_link_rtt(
+                    return match data.context {
+                        WireContext::LinkRtt => self.classify_link_rtt(
                             &data.destination,
                             data.payload,
                             source_interface,
                             arrived_at,
-                        );
-                    }
-                    if data.context == WireContext::None {
-                        return self.classify_link_data(data, source_interface, arrived_at);
-                    }
-                    return IngestPacketOutcome::Ignored;
+                        ),
+                        WireContext::None => {
+                            self.classify_link_data(data, source_interface, arrived_at)
+                        }
+                        WireContext::KeepAlive => {
+                            self.classify_keepalive(&data.destination, data.payload, arrived_at)
+                        }
+                        WireContext::LinkClose => self.classify_link_close(data),
+                        _ => IngestPacketOutcome::Ignored,
+                    };
                 }
                 if data.destination == PATH_REQUEST_DESTINATION
                     && data.destination_type == DestinationType::Plain
@@ -536,14 +556,21 @@ impl<S: EngineStorage> EngineState<S> {
         else {
             return IngestPacketOutcome::Ignored;
         };
-        let Ok(reported) = link_rtt_from(&link_id, payload, key) else {
-            return IngestPacketOutcome::Ignored;
+        let reported = match link_rtt_from(&link_id, payload, key) {
+            Ok(reported) => reported,
+            Err(LinkRttError::Malformed) => {
+                return IngestPacketOutcome::OwesLinkClose {
+                    link_id,
+                    reason: LinkClosedReason::Protocol,
+                };
+            }
+            Err(_) => return IngestPacketOutcome::Ignored,
         };
         let measured_ms = arrived_at.0.saturating_sub(requested_at.0);
         let rtt_ms = measured_ms.max(reported.rtt_ms);
         if self
             .links
-            .activate_responding(&link_id, rtt_ms, source_interface)
+            .activate_responding(&link_id, rtt_ms, source_interface, arrived_at)
             .is_err()
         {
             return IngestPacketOutcome::Ignored;
@@ -583,6 +610,7 @@ impl<S: EngineStorage> EngineState<S> {
         let Ok(plaintext) = key.open_in_place(data.payload) else {
             return IngestPacketOutcome::Ignored;
         };
+        self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::Delivery {
             delivery: Delivery::Link(LinkDelivery {
                 link_id,
@@ -592,6 +620,48 @@ impl<S: EngineStorage> EngineState<S> {
             }),
             proof: ProofObligation::None,
         }
+    }
+
+    fn classify_keepalive(
+        &mut self,
+        destination: &DestinationHash,
+        payload: &[u8],
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*destination.as_bytes());
+        let &[byte] = payload else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(LinkPhase::Active { role, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        match (role, byte) {
+            (LinkRole::Responder, KEEPALIVE_REQUEST) => {
+                self.links.note_inbound(&link_id, arrived_at);
+                IngestPacketOutcome::OwesKeepaliveEcho { link_id }
+            }
+            (LinkRole::Initiator | LinkRole::Responder, KEEPALIVE_ECHO) => {
+                self.links.note_inbound(&link_id, arrived_at);
+                IngestPacketOutcome::Ignored
+            }
+            _ => IngestPacketOutcome::Ignored,
+        }
+    }
+
+    fn classify_link_close(&mut self, data: DataPacket<'_>) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let key = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Active { key, .. } | LinkPhase::Handshake { key, .. }) => key,
+            Some(LinkPhase::Pending { .. }) | None => return IngestPacketOutcome::Ignored,
+        };
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        if plaintext != link_id.as_bytes() {
+            return IngestPacketOutcome::Ignored;
+        }
+        self.links.remove(&link_id);
+        IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 
     fn classify_link_request(

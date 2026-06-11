@@ -7,6 +7,7 @@
 pub mod data;
 pub mod establish;
 pub mod handshake;
+pub mod maintenance;
 pub mod table;
 
 use crate::crypto::{

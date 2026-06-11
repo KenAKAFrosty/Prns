@@ -5,7 +5,7 @@ use crate::engine::{
     RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
-use crate::engine::{SendLinkError, SendLinkFailure};
+use crate::engine::{CloseLinkFailure, SendLinkError, SendLinkFailure};
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
@@ -208,8 +208,7 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
-                wake_schedule_changes.link_establishment_timeout =
-                    self.link_establishment_timeout_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             CommandOutcome::OwesSendLink { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
@@ -241,6 +240,36 @@ impl<S: EngineStorage> EngineState<S> {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(error))),
+                }));
+            }
+            CommandOutcome::OwesLinkClose { id, close } => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_entropy(&mut iv);
+                let mut buf = [0u8; BROADCAST_MTU];
+                let settlement = match self.write_owed_link_close(&close.link_id, &iv, &mut buf) {
+                    Ok(dispatch) => {
+                        if let Some(fire_on) = dispatch.fire_on {
+                            fan_self_originated(
+                                interfaces,
+                                Some(fire_on),
+                                &buf[..dispatch.wire_len],
+                                sink,
+                            );
+                        }
+                        Settlement::CloseLink(Ok(()))
+                    }
+                    Err(_) => Settlement::CloseLink(Err(CloseLinkFailure::WriteFailed)),
+                };
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement,
+                }));
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+            }
+            CommandOutcome::CloseLinkRejected { id, error } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::CloseLink(Err(CloseLinkFailure::Rejected(error))),
                 }));
             }
             CommandOutcome::EstablishLinkRejected { id, error } => {

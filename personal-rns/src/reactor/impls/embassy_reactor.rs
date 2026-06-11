@@ -375,16 +375,23 @@ pub async fn run_with_proof_decider<
             }
             Either4::Third(lane) => {
                 let now = host.now();
-                let delta = fire_due_lane(&mut engine, lane, now, interfaces, &mut |reaction| {
-                    route_reaction(
-                        reaction,
-                        &egress,
-                        ifacs,
-                        &mut pacers,
-                        now,
-                        &mut on_journaled,
-                    )
-                });
+                let delta = fire_due_lane(
+                    &mut engine,
+                    lane,
+                    now,
+                    interfaces,
+                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    },
+                );
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Fourth(()) => {
@@ -591,7 +598,8 @@ mod tests {
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
-            | Journaled::LinkEstablished(_) => {}
+            | Journaled::LinkEstablished(_)
+            | Journaled::LinkClosed { .. } => {}
         };
 
         let outcome = block_on(async {

@@ -1,10 +1,15 @@
+use crate::engine::inbound::{is_egress_eligible, Egress};
+use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
-    EngineReaction, EngineState, EstablishLinkFailure, InstantMillis, Journaled,
+    Directive, EngineReaction, EngineState, EstablishLinkFailure, InstantMillis, Journaled,
     RequestPathFailure, SendSingleFailure, Settlement, WakeSchedules,
 };
+use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::InterfaceConfig;
+use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
 use crate::routing::storage::EngineStorage;
+use crate::wire::BROADCAST_MTU;
 
 impl<S: EngineStorage> EngineState<S> {
     /// Settle every send-single whose proof deadline has passed: each gives up and closes
@@ -45,11 +50,16 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
-    pub fn settle_timed_out_link_establishments(
+    pub fn fire_due_link_deadlines<F>(
         &mut self,
         now: InstantMillis,
+        view: &[InterfaceConfig],
+        fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> WakeSchedules {
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
         while let Some(overdue) = self.pop_timed_out_link(now) {
             if let OverdueLink::Initiated { command_id, .. } = overdue {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -58,8 +68,38 @@ impl<S: EngineStorage> EngineState<S> {
                 }));
             }
         }
+        while let Some(link_id) = self.links.pop_stale(now) {
+            let mut iv = [0u8; ENCRYPTION_IV_LEN];
+            fill_entropy(&mut iv);
+            let mut buf = [0u8; BROADCAST_MTU];
+            if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+                if let Some(target) = dispatch.fire_on {
+                    if is_egress_eligible(view, target, Egress::Transmit) {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target,
+                            bytes: &buf[..dispatch.wire_len],
+                        }));
+                    }
+                }
+                sink(EngineReaction::Journaled(Journaled::LinkClosed {
+                    link_id,
+                    reason: LinkClosedReason::Timeout,
+                }));
+            }
+        }
+        while let Some(due) = self.links.pop_due_keepalive(now) {
+            if is_egress_eligible(view, due.attached_interface, Egress::Transmit) {
+                let mut buf = [0u8; BROADCAST_MTU];
+                if let Ok(written) = write_keepalive(&due.link_id, KEEPALIVE_REQUEST, &mut buf) {
+                    sink(EngineReaction::Directive(Directive::Send {
+                        target: due.attached_interface,
+                        bytes: &buf[..written],
+                    }));
+                }
+            }
+        }
         WakeSchedules {
-            link_establishment_timeout: self.link_establishment_timeout_wake(),
+            link_deadlines: self.link_deadlines_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

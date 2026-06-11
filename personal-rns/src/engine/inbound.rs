@@ -1,4 +1,5 @@
 use crate::crypto::X25519SecretKey;
+use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     AnnounceIngest, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
     Journaled, LaneWake, LinkEstablished, PathFound, PathResponseWriteOutcome, ProofIngest,
@@ -9,6 +10,7 @@ use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::proof::{ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN};
 use crate::routing::storage::EngineStorage;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
@@ -165,6 +167,7 @@ impl<S: EngineStorage> EngineState<S> {
                         rtt_ms,
                         mtu,
                         source,
+                        now,
                         &iv,
                         &mut buf,
                     ) {
@@ -180,16 +183,14 @@ impl<S: EngineStorage> EngineState<S> {
                             })),
                         }));
                     }
-                    wake_schedule_changes.link_establishment_timeout =
-                        self.link_establishment_timeout_wake();
+                    wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 }
             }
             IngestPacketOutcome::LinkActivated { link_id, rtt_ms } => {
                 sink(EngineReaction::Journaled(Journaled::LinkEstablished(
                     LinkEstablished { link_id, rtt_ms },
                 )));
-                wake_schedule_changes.link_establishment_timeout =
-                    self.link_establishment_timeout_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             IngestPacketOutcome::OwesLinkProof {
                 request,
@@ -214,9 +215,45 @@ impl<S: EngineStorage> EngineState<S> {
                             bytes: &buf[..written],
                         }));
                     }
-                    wake_schedule_changes.link_establishment_timeout =
-                        self.link_establishment_timeout_wake();
+                    wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 }
+            }
+            IngestPacketOutcome::OwesKeepaliveEcho { link_id } => {
+                if is_egress_eligible(view, source, Egress::Transmit) {
+                    let mut buf = [0u8; BROADCAST_MTU];
+                    if let Ok(written) = write_keepalive(&link_id, KEEPALIVE_ECHO, &mut buf) {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: source,
+                            bytes: &buf[..written],
+                        }));
+                    }
+                }
+            }
+            IngestPacketOutcome::LinkClosedByPeer { link_id } => {
+                sink(EngineReaction::Journaled(Journaled::LinkClosed {
+                    link_id,
+                    reason: LinkClosedReason::PeerClosed,
+                }));
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+            }
+            IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_entropy(&mut iv);
+                let mut buf = [0u8; BROADCAST_MTU];
+                if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+                    let target = dispatch.fire_on.unwrap_or(source);
+                    if is_egress_eligible(view, target, Egress::Transmit) {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target,
+                            bytes: &buf[..dispatch.wire_len],
+                        }));
+                    }
+                    sink(EngineReaction::Journaled(Journaled::LinkClosed {
+                        link_id,
+                        reason,
+                    }));
+                }
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
             IngestPacketOutcome::Ignored => {}
         }
@@ -227,14 +264,18 @@ impl<S: EngineStorage> EngineState<S> {
 /// Which capability a directed emit needs from its target interface — the same gate the
 /// legacy runtime's `fan_to_handles` applied to a single listed target.
 #[derive(Clone, Copy)]
-enum Egress {
+pub(crate) enum Egress {
     /// Self-originated traffic (a proof, our own path response).
     Transmit,
     /// Relayed traffic (a forward, a cached path response).
     Transport,
 }
 
-fn is_egress_eligible(view: &[InterfaceConfig], target: InterfaceId, egress: Egress) -> bool {
+pub(crate) fn is_egress_eligible(
+    view: &[InterfaceConfig],
+    target: InterfaceId,
+    egress: Egress,
+) -> bool {
     view.iter()
         .find(|config| config.id == target)
         .is_some_and(|config| match egress {

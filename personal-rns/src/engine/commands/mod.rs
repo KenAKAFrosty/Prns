@@ -38,6 +38,7 @@ pub enum EngineCommand {
     RequestPath(RequestPath),
     EstablishLink(EstablishLink),
     SendLink(SendLink),
+    CloseLink(CloseLink),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -108,6 +109,14 @@ pub enum CommandOutcome {
         id: CommandId,
         error: SendLinkError,
     },
+    OwesLinkClose {
+        id: CommandId,
+        close: CloseLink,
+    },
+    CloseLinkRejected {
+        id: CommandId,
+        error: CloseLinkError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +155,19 @@ pub struct SendLink {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendLinkError {
+    NoSuchLink,
+    LinkNotActive,
+}
+
+/// RNS 1.3.1 `Link.teardown`: close an ACTIVE link deliberately, telling the
+/// peer with the sealed LINKCLOSE and purging the session key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CloseLink {
+    pub link_id: LinkId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseLinkError {
     NoSuchLink,
     LinkNotActive,
 }
@@ -229,6 +251,7 @@ pub enum Settlement {
     RequestPath(Result<PathFound, RequestPathFailure>),
     EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
     SendLink(Result<(), SendLinkFailure>),
+    CloseLink(Result<(), CloseLinkFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,6 +311,12 @@ pub enum SendLinkFailure {
     WriteFailed(LinkDataError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseLinkFailure {
+    Rejected(CloseLinkError),
+    WriteFailed,
+}
+
 pub trait Settleable {
     type Success;
     type Failure;
@@ -311,7 +340,8 @@ impl Settleable for AnnounceNow {
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_) => None,
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_) => None,
         }
     }
 }
@@ -331,7 +361,8 @@ impl Settleable for SendGroup {
             | Settlement::SendSingle(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_) => None,
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_) => None,
         }
     }
 }
@@ -351,7 +382,8 @@ impl Settleable for SendSingle {
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_) => None,
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_) => None,
         }
     }
 }
@@ -371,7 +403,8 @@ impl Settleable for RequestPath {
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
             | Settlement::EstablishLink(_)
-            | Settlement::SendLink(_) => None,
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_) => None,
         }
     }
 }
@@ -393,7 +426,8 @@ impl Settleable for EstablishLink {
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
-            | Settlement::SendLink(_) => None,
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_) => None,
         }
     }
 }
@@ -413,7 +447,29 @@ impl Settleable for SendLink {
             | Settlement::SendSingle(_)
             | Settlement::SendGroup(_)
             | Settlement::RequestPath(_)
-            | Settlement::EstablishLink(_) => None,
+            | Settlement::EstablishLink(_)
+            | Settlement::CloseLink(_) => None,
+        }
+    }
+}
+
+impl Settleable for CloseLink {
+    type Success = ();
+    type Failure = CloseLinkFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::CloseLink(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), CloseLinkFailure>> {
+        match settlement {
+            Settlement::CloseLink(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_) => None,
         }
     }
 }
@@ -442,6 +498,7 @@ impl<S: EngineStorage> EngineState<S> {
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
             EngineCommand::SendLink(send) => self.ingest_send_link(id, send),
+            EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
         }
     }
 

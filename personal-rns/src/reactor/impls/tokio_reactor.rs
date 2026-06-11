@@ -336,6 +336,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     lane,
                     now,
                     &interfaces,
+                    &mut |bytes| host.fill_entropy(bytes),
                     &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
@@ -611,7 +612,8 @@ mod tests {
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
-            | Journaled::LinkEstablished(_) => {}
+            | Journaled::LinkEstablished(_)
+            | Journaled::LinkClosed { .. } => {}
         };
 
         tokio::spawn(run(
@@ -927,7 +929,8 @@ mod tests {
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
-            | Journaled::LinkEstablished(_) => {}
+            | Journaled::LinkEstablished(_)
+            | Journaled::LinkClosed { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1125,7 +1128,8 @@ mod tests {
             Journaled::Delivered(_)
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
-            | Journaled::LinkEstablished(_) => {}
+            | Journaled::LinkEstablished(_)
+            | Journaled::LinkClosed { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1229,7 +1233,8 @@ mod tests {
             | Journaled::RouteExpired { .. }
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
-            | Journaled::LinkEstablished(_) => {}
+            | Journaled::LinkEstablished(_)
+            | Journaled::LinkClosed { .. } => {}
         };
 
         tokio::spawn(run(

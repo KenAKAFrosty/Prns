@@ -166,6 +166,12 @@ fn log_journaled(journaled: Journaled<'_>) {
                 established.rtt_ms,
             );
         }
+        Journaled::LinkClosed { link_id, reason } => {
+            println!(
+                "RNSD_LINK_CLOSED link_id={:02x?} reason={reason:?}",
+                link_id.as_bytes(),
+            );
+        }
         Journaled::CommandSettled { .. } => {}
     }
 }

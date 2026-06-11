@@ -1,6 +1,7 @@
 use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
 pub enum EngineReaction<'a> {
@@ -25,6 +26,10 @@ pub enum Journaled<'a> {
     /// A link another node initiated to one of our destinations went ACTIVE on
     /// its LRRTT. Our own initiations settle through `CommandSettled` instead.
     LinkEstablished(LinkEstablished),
+    LinkClosed {
+        link_id: LinkId,
+        reason: LinkClosedReason,
+    },
     RouteExpired {
         destination: DestinationHash,
     },
@@ -46,4 +51,11 @@ pub enum Directive<'a> {
         bytes: &'a [u8],
         hops: u8,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkClosedReason {
+    Timeout,
+    PeerClosed,
+    Protocol,
 }

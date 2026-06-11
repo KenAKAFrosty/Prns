@@ -10,6 +10,7 @@ use crate::crypto::X25519SecretKey;
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
+use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from};
 use crate::routing::links::{LinkId, LinkKey};
 use crate::wire::DestinationHash;
 
@@ -37,6 +38,9 @@ pub enum LinkPhase {
         rtt_ms: u64,
         mtu: usize,
         attached_interface: InterfaceId,
+        last_inbound: InstantMillis,
+        last_keepalive_sent: InstantMillis,
+        keepalive_ms: u64,
     },
 }
 
@@ -85,6 +89,9 @@ impl core::fmt::Debug for LinkPhase {
                 rtt_ms,
                 mtu,
                 attached_interface,
+                last_inbound,
+                last_keepalive_sent,
+                keepalive_ms,
             } => f
                 .debug_struct("Active")
                 .field("key", key)
@@ -92,6 +99,9 @@ impl core::fmt::Debug for LinkPhase {
                 .field("rtt_ms", rtt_ms)
                 .field("mtu", mtu)
                 .field("attached_interface", attached_interface)
+                .field("last_inbound", last_inbound)
+                .field("last_keepalive_sent", last_keepalive_sent)
+                .field("keepalive_ms", keepalive_ms)
                 .finish(),
         }
     }
@@ -112,6 +122,31 @@ pub struct RespondingLink {
     pub requested_at: InstantMillis,
     pub timeout_at: InstantMillis,
     pub mtu: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DueKeepalive {
+    pub link_id: LinkId,
+    pub attached_interface: InterfaceId,
+}
+
+fn active_deadline(
+    role: LinkRole,
+    last_inbound: InstantMillis,
+    last_keepalive_sent: InstantMillis,
+    keepalive_ms: u64,
+) -> InstantMillis {
+    let stale_at = last_inbound.0.saturating_add(stale_ms_from(keepalive_ms));
+    match role {
+        LinkRole::Responder => InstantMillis(stale_at),
+        LinkRole::Initiator => {
+            let send_at = last_inbound
+                .0
+                .max(last_keepalive_sent.0)
+                .saturating_add(keepalive_ms);
+            InstantMillis(stale_at.min(send_at))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +246,7 @@ impl<C: LinkColumns> Links<C> {
         rtt_ms: u64,
         mtu: usize,
         attached_interface: InterfaceId,
+        now: InstantMillis,
     ) -> Result<(), LinkActivationError> {
         let index = self
             .index_of(link_id)
@@ -218,14 +254,21 @@ impl<C: LinkColumns> Links<C> {
         if !matches!(&self.columns.phases()[index], LinkPhase::Pending { .. }) {
             return Err(LinkActivationError::WrongPhase);
         }
+        let keepalive_ms = keepalive_ms_from(rtt_ms);
         *self.columns.phase_mut(index) = LinkPhase::Active {
             key,
             role: LinkRole::Initiator,
             rtt_ms,
             mtu,
             attached_interface,
+            last_inbound: now,
+            last_keepalive_sent: now,
+            keepalive_ms,
         };
-        self.columns.set_timeout_at(index, None);
+        self.columns.set_timeout_at(
+            index,
+            Some(active_deadline(LinkRole::Initiator, now, now, keepalive_ms)),
+        );
         Ok(())
     }
 
@@ -234,6 +277,7 @@ impl<C: LinkColumns> Links<C> {
         link_id: &LinkId,
         rtt_ms: u64,
         attached_interface: InterfaceId,
+        now: InstantMillis,
     ) -> Result<(), LinkActivationError> {
         let index = self
             .index_of(link_id)
@@ -241,14 +285,21 @@ impl<C: LinkColumns> Links<C> {
         let phase = self.columns.phase_mut(index);
         match core::mem::replace(phase, LinkPhase::vacant()) {
             LinkPhase::Handshake { key, mtu, .. } => {
+                let keepalive_ms = keepalive_ms_from(rtt_ms);
                 *phase = LinkPhase::Active {
                     key,
                     role: LinkRole::Responder,
                     rtt_ms,
                     mtu,
                     attached_interface,
+                    last_inbound: now,
+                    last_keepalive_sent: now,
+                    keepalive_ms,
                 };
-                self.columns.set_timeout_at(index, None);
+                self.columns.set_timeout_at(
+                    index,
+                    Some(active_deadline(LinkRole::Responder, now, now, keepalive_ms)),
+                );
                 Ok(())
             }
             other => {
@@ -258,24 +309,109 @@ impl<C: LinkColumns> Links<C> {
         }
     }
 
-    pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<OverdueLink> {
-        let index = self
-            .columns
-            .timeout_ats()
-            .iter()
-            .position(|timeout_at| timeout_at.is_some_and(|at| at <= now))?;
-        let link_id = self.columns.link_ids()[index];
-        let overdue = match &self.columns.phases()[index] {
-            LinkPhase::Pending { command_id, .. } => OverdueLink::Initiated {
-                link_id,
-                command_id: *command_id,
-            },
-            LinkPhase::Handshake { .. } | LinkPhase::Active { .. } => {
-                OverdueLink::Responding { link_id }
-            }
+    pub fn note_inbound(&mut self, link_id: &LinkId, now: InstantMillis) {
+        let Some(index) = self.index_of(link_id) else {
+            return;
         };
-        self.columns.swap_remove(index);
-        Some(overdue)
+        if let LinkPhase::Active {
+            role,
+            last_inbound,
+            last_keepalive_sent,
+            keepalive_ms,
+            ..
+        } = self.columns.phase_mut(index)
+        {
+            *last_inbound = now;
+            let deadline = active_deadline(*role, now, *last_keepalive_sent, *keepalive_ms);
+            self.columns.set_timeout_at(index, Some(deadline));
+        }
+    }
+
+    pub fn remove(&mut self, link_id: &LinkId) -> bool {
+        match self.index_of(link_id) {
+            Some(index) => {
+                self.columns.swap_remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn pop_stale(&mut self, now: InstantMillis) -> Option<LinkId> {
+        for index in 0..self.columns.len() {
+            let due = self.columns.timeout_ats()[index].is_some_and(|at| at <= now);
+            if !due {
+                continue;
+            }
+            if let LinkPhase::Active {
+                last_inbound,
+                keepalive_ms,
+                ..
+            } = &self.columns.phases()[index]
+            {
+                if now.0 >= last_inbound.0.saturating_add(stale_ms_from(*keepalive_ms)) {
+                    return Some(self.columns.link_ids()[index]);
+                }
+            }
+        }
+        None
+    }
+
+    pub fn pop_due_keepalive(&mut self, now: InstantMillis) -> Option<DueKeepalive> {
+        for index in 0..self.columns.len() {
+            let due = self.columns.timeout_ats()[index].is_some_and(|at| at <= now);
+            if !due {
+                continue;
+            }
+            let link_id = self.columns.link_ids()[index];
+            if let LinkPhase::Active {
+                role: LinkRole::Initiator,
+                attached_interface,
+                last_inbound,
+                last_keepalive_sent,
+                keepalive_ms,
+                ..
+            } = self.columns.phase_mut(index)
+            {
+                let send_at = last_inbound
+                    .0
+                    .max(last_keepalive_sent.0)
+                    .saturating_add(*keepalive_ms);
+                if now.0 >= send_at {
+                    *last_keepalive_sent = now;
+                    let attached_interface = *attached_interface;
+                    let deadline =
+                        active_deadline(LinkRole::Initiator, *last_inbound, now, *keepalive_ms);
+                    self.columns.set_timeout_at(index, Some(deadline));
+                    return Some(DueKeepalive {
+                        link_id,
+                        attached_interface,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    pub fn pop_overdue(&mut self, now: InstantMillis) -> Option<OverdueLink> {
+        for index in 0..self.columns.len() {
+            let due = self.columns.timeout_ats()[index].is_some_and(|at| at <= now);
+            if !due {
+                continue;
+            }
+            let link_id = self.columns.link_ids()[index];
+            let overdue = match &self.columns.phases()[index] {
+                LinkPhase::Pending { command_id, .. } => OverdueLink::Initiated {
+                    link_id,
+                    command_id: *command_id,
+                },
+                LinkPhase::Handshake { .. } => OverdueLink::Responding { link_id },
+                LinkPhase::Active { .. } => continue,
+            };
+            self.columns.swap_remove(index);
+            return Some(overdue);
+        }
+        None
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
@@ -374,7 +510,14 @@ mod tests {
         links.track_initiated(initiated(1, 5_000)).unwrap();
 
         links
-            .activate_initiated(&link_id(1), key(1, 9), 250, 500, iface(0xEE))
+            .activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                250,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
 
         let Some(LinkPhase::Active {
@@ -386,7 +529,11 @@ mod tests {
             panic!("a proven link must be active as initiator");
         };
         assert_eq!(*rtt_ms, 250);
-        assert_eq!(links.earliest_timeout_at(), None);
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(2_000 + 51_428)),
+            "activation arms the initiator's keepalive deadline from its rtt",
+        );
     }
 
     #[test]
@@ -395,7 +542,7 @@ mod tests {
         links.track_responding(responding(2, 5_000)).unwrap();
 
         links
-            .activate_responding(&link_id(2), 500, iface(0xEE))
+            .activate_responding(&link_id(2), 500, iface(0xEE), InstantMillis(2_000))
             .unwrap();
 
         let Some(LinkPhase::Active {
@@ -427,11 +574,18 @@ mod tests {
     fn activation_demands_the_matching_phase() {
         let mut links = TestLinks::default();
         assert_eq!(
-            links.activate_initiated(&link_id(9), key(9, 9), 100, 500, iface(0xEE)),
+            links.activate_initiated(
+                &link_id(9),
+                key(9, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000)
+            ),
             Err(LinkActivationError::UnknownLink),
         );
         assert_eq!(
-            links.activate_responding(&link_id(9), 100, iface(0xEE)),
+            links.activate_responding(&link_id(9), 100, iface(0xEE), InstantMillis(2_000)),
             Err(LinkActivationError::UnknownLink),
         );
 
@@ -439,7 +593,7 @@ mod tests {
         links.track_responding(responding(2, 5_000)).unwrap();
 
         assert_eq!(
-            links.activate_responding(&link_id(1), 100, iface(0xEE)),
+            links.activate_responding(&link_id(1), 100, iface(0xEE), InstantMillis(2_000)),
             Err(LinkActivationError::WrongPhase),
         );
         assert!(matches!(
@@ -447,15 +601,36 @@ mod tests {
             Some(LinkPhase::Pending { .. }),
         ));
         assert_eq!(
-            links.activate_initiated(&link_id(2), key(2, 9), 100, 500, iface(0xEE)),
+            links.activate_initiated(
+                &link_id(2),
+                key(2, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000)
+            ),
             Err(LinkActivationError::WrongPhase),
         );
 
         links
-            .activate_initiated(&link_id(1), key(1, 9), 100, 500, iface(0xEE))
+            .activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
         assert_eq!(
-            links.activate_initiated(&link_id(1), key(1, 9), 100, 500, iface(0xEE)),
+            links.activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000)
+            ),
             Err(LinkActivationError::WrongPhase),
         );
     }
@@ -498,7 +673,14 @@ mod tests {
         links.track_responding(responding(2, 3_000)).unwrap();
         links.track_initiated(initiated(3, 9_000)).unwrap();
         links
-            .activate_initiated(&link_id(3), key(3, 9), 100, 500, iface(0xEE))
+            .activate_initiated(
+                &link_id(3),
+                key(3, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
 
         assert_eq!(links.pop_overdue(InstantMillis(2_999)), None);
@@ -529,14 +711,32 @@ mod tests {
         assert_eq!(links.earliest_timeout_at(), Some(InstantMillis(3_000)));
 
         links
-            .activate_initiated(&link_id(2), key(2, 9), 100, 500, iface(0xEE))
+            .activate_initiated(
+                &link_id(2),
+                key(2, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
         assert_eq!(links.earliest_timeout_at(), Some(InstantMillis(5_000)));
 
         links
-            .activate_initiated(&link_id(1), key(1, 9), 100, 500, iface(0xEE))
+            .activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                100,
+                500,
+                iface(0xEE),
+                InstantMillis(2_000),
+            )
             .unwrap();
-        assert_eq!(links.earliest_timeout_at(), None);
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(2_000 + 20_571)),
+            "active links keep a maintenance deadline armed",
+        );
     }
 
     #[test]

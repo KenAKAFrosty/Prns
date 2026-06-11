@@ -30,15 +30,17 @@ pub async fn wait_for_pacer<H: Host>(host: &H, deadline: Option<InstantMillis>) 
     }
 }
 
-pub fn fire_due_lane<S>(
+pub fn fire_due_lane<S, F>(
     engine: &mut EngineState<S>,
     lane: DueLane,
     now: InstantMillis,
     interfaces: &[InterfaceConfig],
+    fill_entropy: &mut F,
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) -> WakeSchedules
 where
     S: EngineStorage,
+    F: FnMut(&mut [u8]),
 {
     match lane {
         DueLane::ScheduledAnnounces => {
@@ -47,8 +49,8 @@ where
         DueLane::SendSingleTimeout => engine.settle_timed_out_send_singles(now, on_reaction),
         DueLane::PathRequestTimeout => engine.settle_timed_out_path_requests(now, on_reaction),
         DueLane::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
-        DueLane::LinkEstablishmentTimeout => {
-            engine.settle_timed_out_link_establishments(now, on_reaction)
+        DueLane::LinkDeadlines => {
+            engine.fire_due_link_deadlines(now, interfaces, fill_entropy, on_reaction)
         }
     }
 }

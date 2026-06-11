@@ -247,6 +247,7 @@ impl<S: EngineStorage> EngineState<S> {
         rtt_ms: u64,
         mtu: usize,
         attached_interface: InterfaceId,
+        now: InstantMillis,
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
@@ -261,7 +262,7 @@ impl<S: EngineStorage> EngineState<S> {
         let written = write_link_rtt(link_id, &key, rtt_ms, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
-            .activate_initiated(link_id, key, rtt_ms, mtu, attached_interface)
+            .activate_initiated(link_id, key, rtt_ms, mtu, attached_interface, now)
             .map_err(|_| WriteLinkRttError::NotPending)?;
         Ok(written)
     }
@@ -286,6 +287,7 @@ mod tests {
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
     use crate::interfaces::{InboundPacket, InterfaceConfig};
     use crate::routing::links::handshake::parse_link_request;
+    use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
     use crate::routing::links::table::LinkPhase;
     use crate::routing::links::table::LinkRole;
     use crate::wire::DestinationHash;
@@ -408,7 +410,7 @@ mod tests {
             }),
         ));
         assert_eq!(
-            state.link_establishment_timeout_wake(),
+            state.link_deadlines_wake(),
             LaneWake::At(InstantMillis(13_000)),
             "one direct hop arms first-hop + one per-hop increment",
         );
@@ -481,10 +483,7 @@ mod tests {
             settled.is_empty(),
             "an in-flight establishment settles later, not in its own cycle",
         );
-        assert_eq!(
-            delta.link_establishment_timeout,
-            LaneWake::At(InstantMillis(13_000)),
-        );
+        assert_eq!(delta.link_deadlines, LaneWake::At(InstantMillis(13_000)),);
     }
 
     #[test]
@@ -511,20 +510,21 @@ mod tests {
         }
 
         let mut settled = std::vec::Vec::new();
-        let early = state
-            .settle_timed_out_link_establishments(InstantMillis(12_999), &mut |reaction| {
-                settled.extend(settled_of(reaction))
-            });
-        assert!(settled.is_empty(), "the deadline has not passed yet");
-        assert_eq!(
-            early.link_establishment_timeout,
-            LaneWake::At(InstantMillis(13_000)),
+        let early = state.fire_due_link_deadlines(
+            InstantMillis(12_999),
+            &arrival_view(),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE1),
+            &mut |reaction| settled.extend(settled_of(reaction)),
         );
+        assert!(settled.is_empty(), "the deadline has not passed yet");
+        assert_eq!(early.link_deadlines, LaneWake::At(InstantMillis(13_000)),);
 
-        let after = state
-            .settle_timed_out_link_establishments(InstantMillis(13_000), &mut |reaction| {
-                settled.extend(settled_of(reaction))
-            });
+        let after = state.fire_due_link_deadlines(
+            InstantMillis(13_000),
+            &arrival_view(),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE1),
+            &mut |reaction| settled.extend(settled_of(reaction)),
+        );
         assert_eq!(
             settled,
             std::vec![(
@@ -532,7 +532,7 @@ mod tests {
                 Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
             )],
         );
-        assert_eq!(after.link_establishment_timeout, LaneWake::Idle);
+        assert_eq!(after.link_deadlines, LaneWake::Idle);
         assert!(state.links.is_empty());
         assert_eq!(
             after.scheduled_announces,
@@ -714,10 +714,7 @@ mod tests {
             Some(InstantMillis(2_000 + 6_000 + 360_000)),
             "the responder waits per-hop plus keepalive for the LRRTT",
         );
-        assert_eq!(
-            delta.link_establishment_timeout,
-            LaneWake::At(InstantMillis(368_000)),
-        );
+        assert_eq!(delta.link_deadlines, LaneWake::At(InstantMillis(368_000)),);
     }
 
     fn reactions_of(
@@ -811,9 +808,9 @@ mod tests {
             }),
         ));
         assert_eq!(
-            delta.link_establishment_timeout,
-            LaneWake::Idle,
-            "activation clears the initiator's establishment deadline",
+            delta.link_deadlines,
+            LaneWake::At(InstantMillis(1_250 + 51_428)),
+            "activation swaps the establishment deadline for the keepalive one",
         );
 
         let (replay_sent, replay_journaled, _) =
@@ -834,7 +831,11 @@ mod tests {
             )],
             "the responder journals the link up at max(measured, reported)",
         );
-        assert_eq!(delta.link_establishment_timeout, LaneWake::Idle);
+        assert_eq!(
+            delta.link_deadlines,
+            LaneWake::At(InstantMillis(1_600 + 205_714)),
+            "the responder arms its stale deadline at twice the keepalive",
+        );
 
         let Some(LinkPhase::Active {
             key: initiator_key,
@@ -935,7 +936,10 @@ mod tests {
     }
 
     #[test]
-    fn an_authenticated_but_malformed_lrrtt_keeps_waiting_where_the_reference_tears_down() {
+    fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
+        use crate::engine::reaction::LinkClosedReason;
+        use crate::wire::WirePacketHeader;
+
         let mut initiator = neighbor_with_a_route();
         let mut request = [0u8; BROADCAST_MTU];
         let dispatch = initiator
@@ -964,16 +968,46 @@ mod tests {
         let n = key.seal(&[0xB5; 16], &not_msgpack, &mut sealed).unwrap();
         frame.extend_from_slice(&sealed[..n]);
 
-        let (sent, journaled, _) = reactions_of(&mut responder, &frame, 1_600, 0xB6);
-        assert!(sent.is_empty() && journaled.is_empty());
-        assert!(
-            matches!(
-                responder.links.phase_for(&dispatch.link_id),
-                Some(LinkPhase::Handshake { .. }),
-            ),
-            "only the establishment deadline forgets a half-open link; \
-             revisit for exact parity when the teardown arc lands",
+        let mut closes = std::vec::Vec::new();
+        let mut journaled = std::vec::Vec::new();
+        let mut raw = frame.clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(1_600),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(1_600),
+            &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    assert_eq!(target, arrival());
+                    closes.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                    journaled.push((link_id, reason));
+                }
+                _ => {}
+            },
         );
+
+        assert_eq!(
+            journaled,
+            std::vec![(dispatch.link_id, LinkClosedReason::Protocol)],
+            "the reference tears down here; with teardown vocabulary, so do we",
+        );
+        assert!(responder.links.phase_for(&dispatch.link_id).is_none());
+        assert_eq!(
+            closes.len(),
+            1,
+            "the peer is told with the sealed LINKCLOSE"
+        );
+        let (header, _) = WirePacketHeader::parse(&closes[0]).unwrap();
+        assert_eq!(header.context, crate::wire::WireContext::LinkClose);
+        assert_eq!(header.destination.as_bytes(), dispatch.link_id.as_bytes());
     }
 
     #[test]
@@ -1118,6 +1152,228 @@ mod tests {
                 error: SendLinkError::LinkNotActive,
             },
         );
+    }
+
+    fn established_pair() -> (EngineState<Cap>, EngineState<Cap>, LinkId) {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut request,
+            )
+            .dispatched();
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+        (initiator, responder, dispatch.link_id)
+    }
+
+    fn fire_deadlines(
+        state: &mut EngineState<Cap>,
+        now: u64,
+    ) -> (
+        std::vec::Vec<std::vec::Vec<u8>>,
+        std::vec::Vec<(LinkId, crate::engine::reaction::LinkClosedReason)>,
+    ) {
+        let mut sent = std::vec::Vec::new();
+        let mut closed = std::vec::Vec::new();
+        let _ = state.fire_due_link_deadlines(
+            InstantMillis(now),
+            &arrival_view(),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE7),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    assert_eq!(target, arrival());
+                    sent.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                    closed.push((link_id, reason));
+                }
+                _ => {}
+            },
+        );
+        (sent, closed)
+    }
+
+    #[test]
+    fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
+        use crate::engine::reaction::LinkClosedReason;
+        use crate::wire::{WireContext, WirePacketHeader};
+
+        let (mut initiator, mut responder, link_id) = established_pair();
+
+        let (sent, closed) = fire_deadlines(&mut initiator, 52_677);
+        assert!(sent.is_empty() && closed.is_empty(), "nothing fires early");
+
+        let (sent, closed) = fire_deadlines(&mut initiator, 52_678);
+        assert!(closed.is_empty());
+        assert_eq!(sent.len(), 1, "the rtt-paced keepalive fires");
+        let (header, payload) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.context, WireContext::KeepAlive);
+        assert_eq!(payload, &[KEEPALIVE_REQUEST]);
+
+        let mut echoes = std::vec::Vec::new();
+        let mut raw = sent[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(52_690),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(52_690),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    echoes.push(bytes.to_vec());
+                }
+            },
+        );
+        assert_eq!(echoes.len(), 1, "the responder answers the keepalive");
+        let (header, payload) = WirePacketHeader::parse(&echoes[0]).unwrap();
+        assert_eq!(header.context, WireContext::KeepAlive);
+        assert_eq!(payload, &[KEEPALIVE_ECHO]);
+
+        let mut raw = echoes[0].clone();
+        let _ = initiator.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(52_700),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(52_700),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE9),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |_| {},
+        );
+
+        let (sent, closed) = fire_deadlines(&mut initiator, 104_128);
+        assert!(closed.is_empty(), "the echo postponed staleness");
+        assert_eq!(sent.len(), 1, "a second keepalive rides the new cadence");
+
+        let (sent, closed) = fire_deadlines(&mut initiator, 52_700 + 102_856);
+        assert_eq!(sent.len(), 1, "the stale link tells its peer");
+        let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.context, WireContext::LinkClose);
+        assert_eq!(closed, std::vec![(link_id, LinkClosedReason::Timeout)]);
+        assert!(initiator.links.is_empty(), "the closed link is forgotten");
+    }
+
+    #[test]
+    fn a_close_link_command_settles_and_closes_the_peer() {
+        use crate::engine::reaction::LinkClosedReason;
+        use crate::engine::{CloseLink, CloseLinkError};
+
+        let (mut initiator, mut responder, link_id) = established_pair();
+
+        assert_eq!(
+            initiator.ingest_command(
+                IssuedCommand {
+                    id: CommandId(11),
+                    command: EngineCommand::CloseLink(CloseLink {
+                        link_id: LinkId::new([0x77; 16]),
+                    }),
+                },
+                &arrival_view(),
+            ),
+            CommandOutcome::CloseLinkRejected {
+                id: CommandId(11),
+                error: CloseLinkError::NoSuchLink,
+            },
+        );
+
+        let mut sent = std::vec::Vec::new();
+        let mut settled = std::vec::Vec::new();
+        let _ = initiator.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(12),
+                command: EngineCommand::CloseLink(CloseLink { link_id }),
+            },
+            &arrival_view(),
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xEA),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { bytes, .. }) => {
+                    sent.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settled.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(
+            settled,
+            std::vec![(CommandId(12), Settlement::CloseLink(Ok(())))],
+        );
+        assert_eq!(sent.len(), 1);
+        assert!(initiator.links.is_empty());
+
+        let mut tampered = sent[0].clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        let mut journaled = std::vec::Vec::new();
+        let mut raw = tampered;
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_100),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_100),
+            &mut |bytes: &mut [u8]| bytes.fill(0xEB),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
+                    reaction
+                {
+                    journaled.push((link_id, reason));
+                }
+            },
+        );
+        assert!(
+            journaled.is_empty(),
+            "an unauthenticated close never drops the link",
+        );
+        assert!(responder.links.phase_for(&link_id).is_some());
+
+        let mut raw = sent[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_200),
+            &mut |bytes: &mut [u8]| bytes.fill(0xEC),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
+                    reaction
+                {
+                    journaled.push((link_id, reason));
+                }
+            },
+        );
+        assert_eq!(
+            journaled,
+            std::vec![(link_id, LinkClosedReason::PeerClosed)],
+        );
+        assert!(responder.links.is_empty());
     }
 
     #[test]
