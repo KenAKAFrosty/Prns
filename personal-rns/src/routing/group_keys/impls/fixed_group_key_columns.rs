@@ -14,7 +14,7 @@ impl<const MAX_GROUP_KEYS: usize> Default for FixedGroupKeyColumns<MAX_GROUP_KEY
         Self {
             len: 0,
             destinations: [DestinationHash::new([0u8; 16]); MAX_GROUP_KEYS],
-            keys: [GroupKey::default(); MAX_GROUP_KEYS],
+            keys: core::array::from_fn(|_| GroupKey::default()),
         }
     }
 }

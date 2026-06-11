@@ -8,6 +8,7 @@ pub use impls::*;
 
 use crate::routing::storage::ColumnsFull;
 use crate::wire::DestinationHash;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// RNS `Token.generate_key()` defaults to an AES-256 key (32-byte signing half
 /// ‖ 32-byte encryption half); the AES-128 form is 32 bytes. Both are valid.
@@ -20,7 +21,7 @@ pub enum GroupKeyError {
 
 /// A GROUP destination's shared symmetric key, sized to the AES-256 ceiling and
 /// carrying its true length so a 32-byte AES-128 key round-trips too.
-#[derive(Clone, Copy)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct GroupKey {
     material: [u8; GROUP_KEY_MAX_LEN],
     len: usize,
