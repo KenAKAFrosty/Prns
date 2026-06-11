@@ -4,7 +4,9 @@ use crate::engine::{EngineState, InstantMillis};
 use crate::identity::{EncryptError, RemoteIdentity, ENCRYPTION_IV_LEN};
 use crate::interfaces::InterfaceId;
 use crate::routing::dedup::PacketHash;
-use crate::routing::delivery::receipts::{CulledReceipt, ExpiredReceipt, OutstandingReceipt};
+use crate::routing::delivery::receipts::{
+    CulledReceipt, ExpiredReceipt, OutstandingReceipt, ReceiptKind,
+};
 use crate::routing::storage::EngineStorage;
 use crate::routing::NextHop;
 use crate::wire::{
@@ -186,6 +188,7 @@ impl<S: EngineStorage> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: id,
+            kind: ReceiptKind::SendSingle,
             peer_signing_key: public_keys.signing,
             sent_at: now,
             timeout_at,
@@ -200,7 +203,7 @@ impl<S: EngineStorage> EngineState<S> {
 
     /// Drain one sent SINGLE whose proof never arrived. Call repeatedly until `None` to fully drain.
     /// Every pop is that command's timeout settlement.
-    pub fn pop_timed_out_send_single(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
+    pub fn pop_timed_out_receipt(&mut self, now: InstantMillis) -> Option<ExpiredReceipt> {
         self.receipts.pop_expired(now)
     }
 }
@@ -667,6 +670,7 @@ mod tests {
             dispatch.culled,
             Some(crate::routing::delivery::receipts::CulledReceipt {
                 command_id: CommandId(1),
+                kind: ReceiptKind::SendSingle,
             }),
         );
         assert_eq!(state.receipts.len(), 8);
@@ -806,14 +810,15 @@ mod tests {
             )
             .dispatched();
 
-        assert_eq!(state.pop_timed_out_send_single(InstantMillis(12_999)), None);
+        assert_eq!(state.pop_timed_out_receipt(InstantMillis(12_999)), None);
         assert_eq!(
-            state.pop_timed_out_send_single(InstantMillis(13_000)),
+            state.pop_timed_out_receipt(InstantMillis(13_000)),
             Some(ExpiredReceipt {
                 command_id: CommandId(7),
+                kind: ReceiptKind::SendSingle,
             }),
         );
-        assert_eq!(state.pop_timed_out_send_single(InstantMillis(13_000)), None);
+        assert_eq!(state.pop_timed_out_receipt(InstantMillis(13_000)), None);
         assert_eq!(state.receipts.len(), 0);
     }
 }

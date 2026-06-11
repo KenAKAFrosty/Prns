@@ -310,9 +310,9 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{
-        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
-        EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled, LaneWake,
-        LinkEstablished, Settlement,
+        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Delivered, Directive,
+        EngineCommand, EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled,
+        LaneWake, LinkEstablished, SendLinkFailure, Settlement,
     };
     use crate::engine::{EstablishLinkFailure, WakeSchedules};
     use crate::interfaces::{InboundPacket, InterfaceConfig};
@@ -1114,10 +1114,9 @@ mod tests {
             },
         );
         assert_eq!(sent.len(), 1);
-        assert_eq!(
-            settled,
-            std::vec![(CommandId(9), Settlement::SendLink(Ok(())))],
-            "a link send settles the moment it is sealed and emitted",
+        assert!(
+            settled.is_empty(),
+            "a link send settles through its receipt now, never at emission",
         );
 
         let mut delivered = std::vec::Vec::new();
@@ -1279,6 +1278,110 @@ mod tests {
         signature.copy_from_slice(&payload[32..]);
         ed25519_verify(peer_signing, &payload[..32], &Ed25519Signature(signature)).expect(
             "the proof validates against the announced identity the initiator already holds",
+        );
+
+        // The proof crosses back: the initiator's receipt validates it and the
+        // send settles Delivered with the measured round trip.
+        let proof_frame = answers[0].clone();
+        let (echoes, journaled, _) = reactions_of(&mut initiator, &proof_frame, 2_200, 0xF1);
+        assert!(echoes.is_empty(), "a proof is an ending, not a beginning");
+        assert_eq!(
+            journaled,
+            std::vec![(
+                CommandId(9),
+                Settlement::SendLink(Ok(Delivered { rtt_ms: 200 })),
+            )],
+            "the receipt settles the send with the proof's round trip",
+        );
+        assert!(
+            initiator.receipts.is_empty(),
+            "settlement removes the receipt — a replayed proof finds nothing",
+        );
+    }
+
+    #[test]
+    fn a_forged_link_proof_settles_nothing() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let data = commanded_link_data(&mut initiator, link_id, b"prove this", 2_000, 0xD1);
+        let (answers, _, _) = reactions_of(&mut responder, &data, 2_100, 0xD2);
+        let mut forged = answers[0].clone();
+        let last = forged.len() - 1;
+        forged[last] ^= 0x01;
+
+        let (_, journaled, _) = reactions_of(&mut initiator, &forged, 2_200, 0xF1);
+        assert!(journaled.is_empty(), "a forged signature settles nothing");
+        assert_eq!(
+            initiator.receipts.len(),
+            1,
+            "the receipt stays outstanding for its timeout",
+        );
+    }
+
+    #[test]
+    fn an_unproven_link_send_times_out_at_the_traffic_deadline() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let _ = commanded_link_data(&mut initiator, link_id, b"never proven", 2_000, 0xD1);
+        assert_eq!(
+            initiator.receipt_timeouts_wake(),
+            LaneWake::At(InstantMillis(3_500)),
+            "the deadline is max(rtt × 6, 5 ms) past the send: 2_000 + 250 × 6",
+        );
+
+        let mut settled = std::vec::Vec::new();
+        let mut collect = |reaction: EngineReaction<'_>| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                reaction
+            {
+                settled.push((id, settlement));
+            }
+        };
+        let _ = initiator.settle_timed_out_receipts(InstantMillis(3_499), &mut collect);
+        let _ = initiator.settle_timed_out_receipts(InstantMillis(3_500), &mut collect);
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(9),
+                Settlement::SendLink(Err(SendLinkFailure::Timeout)),
+            )],
+            "past the deadline the send settles Timeout, exactly once",
         );
     }
 

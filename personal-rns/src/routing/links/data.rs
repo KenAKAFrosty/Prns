@@ -1,6 +1,9 @@
 use crate::engine::commands::{CommandId, CommandOutcome, SendLink, SendLinkError};
-use crate::engine::EngineState;
+use crate::engine::{EngineState, InstantMillis};
+use crate::identity::IdentitySigningPublicKey;
 use crate::interfaces::InterfaceId;
+use crate::routing::dedup::PacketHash;
+use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, ReceiptKind};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::storage::EngineStorage;
@@ -12,6 +15,11 @@ use crate::wire::{
 /// RNS 1.3.1 `Identity.TOKEN_OVERHEAD`: the 16-byte IV and 32-byte HMAC around
 /// every sealed link payload.
 pub const LINK_TOKEN_OVERHEAD: usize = 48;
+
+/// RNS 1.3.1 `Link.TRAFFIC_TIMEOUT_FACTOR` / `TRAFFIC_TIMEOUT_MIN_MS`: how long
+/// a link send waits for its proof before giving up.
+pub const LINK_TRAFFIC_TIMEOUT_FACTOR: u64 = 6;
+pub const LINK_TRAFFIC_TIMEOUT_MIN_MS: u64 = 5;
 
 /// RNS 1.3.1 `Link.update_mdu`: the most plaintext one link data packet can
 /// carry: the link MTU less the type-1 header, minimum IFAC, and token
@@ -63,6 +71,7 @@ pub fn write_link_data(
 pub struct SendLinkDispatch {
     pub wire_len: usize,
     pub fire_on: InterfaceId,
+    pub culled: Option<CulledReceipt>,
 }
 
 impl<S: EngineStorage> EngineState<S> {
@@ -84,10 +93,15 @@ impl<S: EngineStorage> EngineState<S> {
 
     /// Seal `send`'s payload under the link's session key, bounded by the
     /// link's negotiated MDU, framed directly into `buf` and owed to the
-    /// interface the link rides — RNS 1.3.1 `Packet(link, data).send()`.
+    /// interface the link rides — RNS 1.3.1 `Packet(link, data).send()`. The
+    /// send is tracked as an outstanding receipt: it settles when the
+    /// responder's proof validates, or times out at the link's traffic
+    /// deadline (`max(rtt × 6, 5 ms)`).
     pub fn write_commanded_send_link(
         &mut self,
+        id: CommandId,
         send: &SendLink,
+        now: InstantMillis,
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<SendLinkDispatch, SendLinkWriteError> {
@@ -95,16 +109,40 @@ impl<S: EngineStorage> EngineState<S> {
             key,
             mtu,
             attached_interface,
+            rtt_ms,
+            peer_signing,
             ..
         }) = self.links.phase_for(&send.link_id)
         else {
             return Err(SendLinkWriteError::LinkVanished);
         };
+        let fire_on = *attached_interface;
+        let peer_signing = *peer_signing;
+        let traffic_timeout_ms = rtt_ms
+            .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
+            .max(LINK_TRAFFIC_TIMEOUT_MIN_MS);
         let wire_len = write_link_data(&send.link_id, key, *mtu, &send.payload, iv, buf)
             .map_err(SendLinkWriteError::Frame)?;
+
+        let packet_hash = PacketHash::of_data_fields(
+            DestinationType::Link,
+            &DestinationHash::new(*send.link_id.as_bytes()),
+            WireContext::None,
+            &buf[HEADER_MIN_LEN..wire_len],
+        );
+        let culled = self.receipts.track(OutstandingReceipt {
+            packet_hash,
+            command_id: id,
+            kind: ReceiptKind::SendLink,
+            peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
+            sent_at: now,
+            timeout_at: InstantMillis(now.0.saturating_add(traffic_timeout_ms)),
+        });
+
         Ok(SendLinkDispatch {
             wire_len,
-            fire_on: *attached_interface,
+            fire_on,
+            culled,
         })
     }
 }

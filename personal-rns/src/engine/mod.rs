@@ -84,7 +84,7 @@ pub struct InstantMillis(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DueLane {
     ScheduledAnnounces,
-    SendSingleTimeout,
+    ReceiptTimeouts,
     PathRequestTimeout,
     ExpiredRoutes,
     LinkDeadlines,
@@ -118,7 +118,7 @@ impl LaneWake {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeSchedules {
     pub scheduled_announces: LaneWake,
-    pub send_single_timeout: LaneWake,
+    pub receipt_timeouts: LaneWake,
     pub path_request_timeout: LaneWake,
     pub expired_routes: LaneWake,
     pub link_deadlines: LaneWake,
@@ -127,7 +127,7 @@ pub struct WakeSchedules {
 impl WakeSchedules {
     pub const UNCHANGED: Self = Self {
         scheduled_announces: LaneWake::Unchanged,
-        send_single_timeout: LaneWake::Unchanged,
+        receipt_timeouts: LaneWake::Unchanged,
         path_request_timeout: LaneWake::Unchanged,
         expired_routes: LaneWake::Unchanged,
         link_deadlines: LaneWake::Unchanged,
@@ -136,7 +136,7 @@ impl WakeSchedules {
     pub fn merge(&mut self, delta: WakeSchedules) {
         for (slot, change) in [
             (&mut self.scheduled_announces, delta.scheduled_announces),
-            (&mut self.send_single_timeout, delta.send_single_timeout),
+            (&mut self.receipt_timeouts, delta.receipt_timeouts),
             (&mut self.path_request_timeout, delta.path_request_timeout),
             (&mut self.expired_routes, delta.expired_routes),
             (&mut self.link_deadlines, delta.link_deadlines),
@@ -160,7 +160,7 @@ impl WakeSchedules {
             //An implicit priority is here. Items higher in this list will trigger their 'due' before the later items
             //If we need to manage this, the WakeSchedules might need some more light bookkeeping to better distribute that. Marked here for later REVIEW
             (self.scheduled_announces, DueLane::ScheduledAnnounces),
-            (self.send_single_timeout, DueLane::SendSingleTimeout),
+            (self.receipt_timeouts, DueLane::ReceiptTimeouts),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
             (self.expired_routes, DueLane::ExpiredRoutes),
             (self.link_deadlines, DueLane::LinkDeadlines),
@@ -289,7 +289,7 @@ impl<S: EngineStorage> EngineState<S> {
         LaneWake::from_deadline(self.scheduled_announces.earliest_due_at())
     }
 
-    pub fn send_single_receipts_timeout_wake(&self) -> LaneWake {
+    pub fn receipt_timeouts_wake(&self) -> LaneWake {
         LaneWake::from_deadline(self.receipts.earliest_timeout_at())
     }
 
@@ -313,7 +313,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
         WakeSchedules {
             scheduled_announces: self.scheduled_announces_wake(),
-            send_single_timeout: self.send_single_receipts_timeout_wake(),
+            receipt_timeouts: self.receipt_timeouts_wake(),
             path_request_timeout: self.path_request_timeout_wake(),
             expired_routes: self.route_expiry_wake(view),
             link_deadlines: self.link_deadlines_wake(),
@@ -443,7 +443,7 @@ mod tests {
     ) -> WakeSchedules {
         WakeSchedules {
             scheduled_announces: rebroadcast,
-            send_single_timeout: send,
+            receipt_timeouts: send,
             path_request_timeout: path,
             expired_routes: expired,
             link_deadlines: LaneWake::Unchanged,
@@ -488,7 +488,7 @@ mod tests {
         );
         assert_eq!(
             scheduled.soonest(InstantMillis(5_000)),
-            ScheduledWake::Due(DueLane::SendSingleTimeout),
+            ScheduledWake::Due(DueLane::ReceiptTimeouts),
             "now is past the send-timeout, so it fires before the future rebroadcast",
         );
     }
@@ -528,7 +528,7 @@ mod tests {
             "the fired lane is cleared"
         );
         assert_eq!(
-            live.send_single_timeout,
+            live.receipt_timeouts,
             LaneWake::At(InstantMillis(3_000)),
             "an untouched lane keeps its cached deadline",
         );

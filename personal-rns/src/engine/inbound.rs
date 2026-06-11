@@ -146,8 +146,14 @@ impl<S: EngineStorage> EngineState<S> {
                     id,
                     settlement: Settlement::SendSingle(Ok(delivered)),
                 }));
-                wake_schedule_changes.send_single_timeout =
-                    self.send_single_receipts_timeout_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            }
+            IngestPacketOutcome::Proof(ProofIngest::SendLinkDelivered { id, delivered }) => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendLink(Ok(delivered)),
+                }));
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::Forward(forward) => {

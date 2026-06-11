@@ -4,7 +4,9 @@ use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
-use crate::routing::delivery::receipts::{OutstandingReceipt, ReceiptColumns, TrackReceiptError};
+use crate::routing::delivery::receipts::{
+    OutstandingReceipt, ReceiptColumns, ReceiptKind, TrackReceiptError,
+};
 
 /// RNS 1.3.1 `Transport.MAX_RECEIPTS`: past this, the wrapper culls the
 /// stalest receipt so the new send always proceeds — and the culled command
@@ -15,6 +17,7 @@ pub const DEFAULT_MAX_OUTSTANDING_RECEIPTS: usize = 1024;
 pub struct HeapReceiptColumns {
     packet_hashes: Vec<PacketHash>,
     command_ids: Vec<CommandId>,
+    kinds: Vec<ReceiptKind>,
     signing_keys: Vec<IdentitySigningPublicKey>,
     sent_ats: Vec<InstantMillis>,
     timeout_ats: Vec<InstantMillis>,
@@ -34,6 +37,9 @@ impl ReceiptColumns for HeapReceiptColumns {
     fn command_ids(&self) -> &[CommandId] {
         &self.command_ids
     }
+    fn kinds(&self) -> &[ReceiptKind] {
+        &self.kinds
+    }
     fn signing_keys(&self) -> &[IdentitySigningPublicKey] {
         &self.signing_keys
     }
@@ -51,6 +57,7 @@ impl ReceiptColumns for HeapReceiptColumns {
         let index = self.packet_hashes.len();
         self.packet_hashes.push(receipt.packet_hash);
         self.command_ids.push(receipt.command_id);
+        self.kinds.push(receipt.kind);
         self.signing_keys.push(receipt.peer_signing_key);
         self.sent_ats.push(receipt.sent_at);
         self.timeout_ats.push(receipt.timeout_at);
@@ -63,6 +70,7 @@ impl ReceiptColumns for HeapReceiptColumns {
         }
         self.packet_hashes.swap_remove(index);
         self.command_ids.swap_remove(index);
+        self.kinds.swap_remove(index);
         self.signing_keys.swap_remove(index);
         self.sent_ats.swap_remove(index);
         self.timeout_ats.swap_remove(index);
@@ -83,6 +91,7 @@ mod tests {
             let receipt = OutstandingReceipt {
                 packet_hash: PacketHash::new([(i % 251) as u8; 32]),
                 command_id: CommandId(i as u64),
+                kind: ReceiptKind::SendSingle,
                 peer_signing_key: key,
                 sent_at: InstantMillis(0),
                 timeout_at: InstantMillis(7_000),
@@ -92,6 +101,7 @@ mod tests {
         let overflow = OutstandingReceipt {
             packet_hash: PacketHash::new([0xFF; 32]),
             command_id: CommandId(9_999),
+            kind: ReceiptKind::SendSingle,
             peer_signing_key: key,
             sent_at: InstantMillis(0),
             timeout_at: InstantMillis(7_000),

@@ -250,7 +250,7 @@ pub enum Settlement {
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
     EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
-    SendLink(Result<(), SendLinkFailure>),
+    SendLink(Result<Delivered, SendLinkFailure>),
     CloseLink(Result<(), CloseLinkFailure>),
 }
 
@@ -309,6 +309,8 @@ pub enum EstablishLinkFailure {
 pub enum SendLinkFailure {
     Rejected(SendLinkError),
     WriteFailed(LinkDataError),
+    Culled,
+    Timeout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,14 +435,14 @@ impl Settleable for EstablishLink {
 }
 
 impl Settleable for SendLink {
-    type Success = ();
+    type Success = Delivered;
     type Failure = SendLinkFailure;
 
     fn into_command(self) -> EngineCommand {
         EngineCommand::SendLink(self)
     }
 
-    fn from_settlement(settlement: Settlement) -> Option<Result<(), SendLinkFailure>> {
+    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendLinkFailure>> {
         match settlement {
             Settlement::SendLink(result) => Some(result),
             Settlement::AnnounceNow(_)

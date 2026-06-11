@@ -46,7 +46,7 @@ where
         DueLane::ScheduledAnnounces => {
             engine.fire_due_scheduled_announces(now, interfaces, on_reaction)
         }
-        DueLane::SendSingleTimeout => engine.settle_timed_out_send_singles(now, on_reaction),
+        DueLane::ReceiptTimeouts => engine.settle_timed_out_receipts(now, on_reaction),
         DueLane::PathRequestTimeout => engine.settle_timed_out_path_requests(now, on_reaction),
         DueLane::ExpiredRoutes => engine.cull_expired_routes(now, interfaces, on_reaction),
         DueLane::LinkDeadlines => {
@@ -76,7 +76,7 @@ pub fn merge_wake_schedules_delta<S: EngineStorage>(
             "the rebroadcast lane drifted from a full recompute",
         );
         debug_assert_eq!(
-            source_wake_schedules.send_single_timeout, truth.send_single_timeout,
+            source_wake_schedules.receipt_timeouts, truth.receipt_timeouts,
             "the send-timeout lane drifted from a full recompute",
         );
         debug_assert_eq!(

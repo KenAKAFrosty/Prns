@@ -9,6 +9,7 @@ use crate::engine::{CloseLinkFailure, SendLinkError, SendLinkFailure};
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
+use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
 use crate::routing::links::data::SendLinkWriteError;
 use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::links::MAX_LINK_MTU;
@@ -101,7 +102,7 @@ impl<S: EngineStorage> EngineState<S> {
                         if let Some(culled) = dispatch.culled {
                             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                 id: culled.command_id,
-                                settlement: Settlement::SendSingle(Err(SendSingleFailure::Culled)),
+                                settlement: culled_settlement(culled),
                             }));
                         }
                     }
@@ -122,8 +123,7 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
-                wake_schedule_changes.send_single_timeout =
-                    self.send_single_receipts_timeout_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             CommandOutcome::SendSingleRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -217,7 +217,7 @@ impl<S: EngineStorage> EngineState<S> {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 let mut buf = [0u8; MAX_LINK_MTU];
-                let settlement = match self.write_commanded_send_link(&send, &iv, &mut buf) {
+                match self.write_commanded_send_link(id, &send, now, &iv, &mut buf) {
                     Ok(dispatch) => {
                         fan_self_originated(
                             interfaces,
@@ -225,19 +225,31 @@ impl<S: EngineStorage> EngineState<S> {
                             &buf[..dispatch.wire_len],
                             sink,
                         );
-                        Settlement::SendLink(Ok(()))
+                        if let Some(culled) = dispatch.culled {
+                            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                id: culled.command_id,
+                                settlement: culled_settlement(culled),
+                            }));
+                        }
                     }
-                    Err(SendLinkWriteError::LinkVanished) => Settlement::SendLink(Err(
-                        SendLinkFailure::Rejected(SendLinkError::NoSuchLink),
-                    )),
+                    Err(SendLinkWriteError::LinkVanished) => {
+                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(
+                                SendLinkError::NoSuchLink,
+                            ))),
+                        }));
+                    }
                     Err(SendLinkWriteError::Frame(error)) => {
-                        Settlement::SendLink(Err(SendLinkFailure::WriteFailed(error)))
+                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendLink(Err(SendLinkFailure::WriteFailed(
+                                error,
+                            ))),
+                        }));
                     }
-                };
-                sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id,
-                    settlement,
-                }));
+                }
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             CommandOutcome::SendLinkRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -292,6 +304,15 @@ impl<S: EngineStorage> EngineState<S> {
 /// single named one, taking each that is live and may transmit. The same gate the legacy
 /// runtime's `fan_to_handles` applied with `FanoutClass::SelfOriginated`; the bytes are
 /// lent to each `Send` in turn, never copied into a staging buffer.
+/// A culled receipt settles as the kind of send that tracked it — a full table
+/// can evict one kind's stalest send to admit another kind's fresh one.
+fn culled_settlement(culled: CulledReceipt) -> Settlement {
+    match culled.kind {
+        ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Culled)),
+        ReceiptKind::SendLink => Settlement::SendLink(Err(SendLinkFailure::Culled)),
+    }
+}
+
 fn fan_self_originated(
     interfaces: &[InterfaceConfig],
     only: Option<InterfaceId>,

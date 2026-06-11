@@ -21,6 +21,7 @@ pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_L
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofIngest {
     SendSingleDelivered { id: CommandId, delivered: Delivered },
+    SendLinkDelivered { id: CommandId, delivered: Delivered },
     Ignored,
 }
 
@@ -74,6 +75,7 @@ pub enum WriteProofError {
 use crate::engine::egress::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
 use crate::engine::EngineState;
 use crate::identity::IdentitySigner;
+use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::storage::EngineStorage;
 
 impl<S: EngineStorage> EngineState<S> {
@@ -136,12 +138,21 @@ impl<S: EngineStorage> EngineState<S> {
             _ => return ProofIngest::Ignored,
         };
         match proven {
-            Some(receipt) => ProofIngest::SendSingleDelivered {
-                id: receipt.command_id,
-                delivered: Delivered {
+            Some(receipt) => {
+                let delivered = Delivered {
                     rtt_ms: arrived_at.0.saturating_sub(receipt.sent_at.0),
-                },
-            },
+                };
+                match receipt.kind {
+                    ReceiptKind::SendSingle => ProofIngest::SendSingleDelivered {
+                        id: receipt.command_id,
+                        delivered,
+                    },
+                    ReceiptKind::SendLink => ProofIngest::SendLinkDelivered {
+                        id: receipt.command_id,
+                        delivered,
+                    },
+                }
+            }
             None => ProofIngest::Ignored,
         }
     }

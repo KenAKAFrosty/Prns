@@ -492,7 +492,14 @@ impl<S: EngineStorage> EngineState<S> {
                         fire_on: reverse.received_interface,
                     });
                 }
-                IngestPacketOutcome::Proof(self.ingest_proof(payload, arrived_at))
+                let outcome = self.ingest_proof(payload, arrived_at);
+                if matches!(outcome, ProofIngest::SendLinkDelivered { .. }) {
+                    // The validated proof is link traffic: it extends the link's
+                    // liveness exactly as RNS 1.3.1's `link.last_proof` does.
+                    self.links
+                        .note_inbound(&LinkId::new(*destination.as_bytes()), arrived_at);
+                }
+                IngestPacketOutcome::Proof(outcome)
             }
 
             Ingress::LinkRequest {

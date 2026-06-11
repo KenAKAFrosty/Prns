@@ -14,10 +14,20 @@ use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 
+/// Which command a receipt settles as when it concludes — the store tracks
+/// more than one kind of send in one table (RNS 1.3.1 keeps every
+/// `PacketReceipt` in the one `Transport.receipts` list the same way).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptKind {
+    SendSingle,
+    SendLink,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutstandingReceipt {
     pub packet_hash: PacketHash,
     pub command_id: CommandId,
+    pub kind: ReceiptKind,
     pub peer_signing_key: IdentitySigningPublicKey,
     pub sent_at: InstantMillis,
     pub timeout_at: InstantMillis,
@@ -26,17 +36,20 @@ pub struct OutstandingReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProvenReceipt {
     pub command_id: CommandId,
+    pub kind: ReceiptKind,
     pub sent_at: InstantMillis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExpiredReceipt {
     pub command_id: CommandId,
+    pub kind: ReceiptKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CulledReceipt {
     pub command_id: CommandId,
+    pub kind: ReceiptKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +67,7 @@ pub trait ReceiptColumns {
 
     fn packet_hashes(&self) -> &[PacketHash];
     fn command_ids(&self) -> &[CommandId];
+    fn kinds(&self) -> &[ReceiptKind];
     fn signing_keys(&self) -> &[IdentitySigningPublicKey];
     fn sent_ats(&self) -> &[InstantMillis];
     fn timeout_ats(&self) -> &[InstantMillis];
@@ -81,6 +95,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             Ok(_) => culled,
             Err(TrackReceiptError::TableFull) => Some(CulledReceipt {
                 command_id: receipt.command_id,
+                kind: receipt.kind,
             }),
         }
     }
@@ -95,6 +110,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             .map(|(index, _)| index)?;
         let culled = CulledReceipt {
             command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
         };
         self.columns.swap_remove(index);
         Some(culled)
@@ -112,6 +128,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             .position(|timeout_at| *timeout_at <= now)?;
         let expired = ExpiredReceipt {
             command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
         };
         self.columns.swap_remove(index);
         Some(expired)
@@ -143,6 +160,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             (0..self.columns.len()).find(|index| self.row_signature_valid(*index, signature))?;
         let proven = ProvenReceipt {
             command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
             sent_at: *self.columns.sent_ats().get(index)?,
         };
         self.columns.swap_remove(index);
@@ -167,6 +185,7 @@ impl<C: ReceiptColumns> Receipts<C> {
         }
         let proven = ProvenReceipt {
             command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
             sent_at: *self.columns.sent_ats().get(index)?,
         };
         self.columns.swap_remove(index);
@@ -207,6 +226,7 @@ mod tests {
         OutstandingReceipt {
             packet_hash: PacketHash::new([hash_fill; 32]),
             command_id: CommandId(command_id),
+            kind: ReceiptKind::SendSingle,
             peer_signing_key: key,
             sent_at: InstantMillis(sent_at),
             timeout_at: InstantMillis(timeout_at),
@@ -225,6 +245,7 @@ mod tests {
             receipts.track(outstanding(4, 4, key, 400, 7_000)),
             Some(CulledReceipt {
                 command_id: CommandId(2),
+                kind: ReceiptKind::SendSingle,
             }),
             "the stalest send (earliest sent_at) is culled, not the newest",
         );
@@ -278,6 +299,7 @@ mod tests {
             receipts.settle_by_explicit_proof(&named, &signature),
             Some(ProvenReceipt {
                 command_id: CommandId(2),
+                kind: ReceiptKind::SendSingle,
                 sent_at: InstantMillis(250),
             }),
         );
@@ -321,6 +343,7 @@ mod tests {
             receipts.settle_by_implicit_proof(&signature),
             Some(ProvenReceipt {
                 command_id: CommandId(2),
+                kind: ReceiptKind::SendSingle,
                 sent_at: InstantMillis(300),
             }),
         );

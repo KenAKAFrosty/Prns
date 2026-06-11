@@ -2,31 +2,37 @@ use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     Directive, EngineReaction, EngineState, EstablishLinkFailure, InstantMillis, Journaled,
-    RequestPathFailure, SendSingleFailure, Settlement, WakeSchedules,
+    RequestPathFailure, SendLinkFailure, SendSingleFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::InterfaceConfig;
+use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
 use crate::routing::storage::EngineStorage;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: EngineStorage> EngineState<S> {
-    /// Settle every send-single whose proof deadline has passed: each gives up and closes
-    /// `SendSingle(Timeout)`. Returns the send-timeout lane's new soonest deadline.
-    pub fn settle_timed_out_send_singles(
+    /// Settle every tracked send whose proof deadline has passed: each gives up
+    /// and closes its own kind's `Timeout`. Returns the receipt-timeout lane's
+    /// new soonest deadline.
+    pub fn settle_timed_out_receipts(
         &mut self,
         now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        while let Some(expired) = self.pop_timed_out_send_single(now) {
+        while let Some(expired) = self.pop_timed_out_receipt(now) {
+            let settlement = match expired.kind {
+                ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
+                ReceiptKind::SendLink => Settlement::SendLink(Err(SendLinkFailure::Timeout)),
+            };
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: expired.command_id,
-                settlement: Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
+                settlement,
             }));
         }
         WakeSchedules {
-            send_single_timeout: self.send_single_receipts_timeout_wake(),
+            receipt_timeouts: self.receipt_timeouts_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

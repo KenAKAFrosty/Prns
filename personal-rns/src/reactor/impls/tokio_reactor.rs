@@ -1470,15 +1470,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_link_establishes_and_carries_data_across_two_live_reactors() {
-        use crate::engine::test_support::{
-            personal_node_announcer, personal_node_destination, second_secret_key,
-        };
+        use crate::engine::test_support::{personal_node_destination, second_secret_key};
         use crate::engine::{
             AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-            LinkEstablished, SendLink, SendLinkPayload, Settlement,
+            LinkEstablished, RatchetPolicy, SendLink, SendLinkFailure, SendLinkPayload, Settlement,
         };
         use crate::routing::delivery::Delivery;
         use crate::routing::links::LinkId;
+        use crate::routing::upstream_app_destinations::ProofStrategy;
 
         let initiator_iface = InterfaceId::new([0xA1; 16]);
         let responder_iface = InterfaceId::new([0xB2; 16]);
@@ -1515,7 +1514,22 @@ mod tests {
             _ => {}
         };
 
-        let responder_engine = personal_node_announcer();
+        let responder_engine = {
+            use crate::engine::test_support::fixed_secret_key;
+            let mut engine: EngineState<Cap> = EngineState::new(fixed_secret_key());
+            let node = engine.held_identity_hashes()[0];
+            engine
+                .register_single_destination(
+                    &node,
+                    "personal",
+                    &["node"],
+                    b"hello-personal",
+                    ProofStrategy::ProveAll,
+                    RatchetPolicy::NoRatchets,
+                )
+                .expect("registers the proving destination");
+            engine
+        };
         let (b_notify_tx, b_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (b_in_tx, b_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (b_out_tx, b_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
@@ -1625,14 +1639,6 @@ mod tests {
                 }),
             })
             .unwrap();
-        let (sent_id, sent) = tokio::time::timeout(Duration::from_secs(5), a_settled_rx.recv())
-            .await
-            .expect("the initiator's send settles")
-            .expect("the initiator reactor is alive");
-        assert_eq!(
-            (sent_id, sent),
-            (CommandId(8), Settlement::SendLink(Ok(())))
-        );
         let delivered = tokio::time::timeout(Duration::from_secs(5), b_delivered_rx.recv())
             .await
             .expect("the responder journals the delivery")
@@ -1641,6 +1647,14 @@ mod tests {
             delivered,
             (established.link_id, b"ping over the live link".to_vec()),
         );
+        let (sent_id, sent) = tokio::time::timeout(Duration::from_secs(5), a_settled_rx.recv())
+            .await
+            .expect("the initiator's send settles")
+            .expect("the initiator reactor is alive");
+        assert_eq!(sent_id, CommandId(8));
+        let Settlement::SendLink(Ok(_delivered_receipt)) = sent else {
+            panic!("the ProveAll responder's proof settles the send Delivered, got {sent:?}");
+        };
 
         b_command_tx
             .send(IssuedCommand {
@@ -1660,7 +1674,11 @@ mod tests {
                 break sent;
             }
         };
-        assert_eq!(sent, Settlement::SendLink(Ok(())));
+        assert_eq!(
+            sent,
+            Settlement::SendLink(Err(SendLinkFailure::Timeout)),
+            "the initiator's side never proves, so the responder's send times out — parity",
+        );
         let delivered = tokio::time::timeout(Duration::from_secs(5), a_delivered_rx.recv())
             .await
             .expect("the initiator journals the delivery")
