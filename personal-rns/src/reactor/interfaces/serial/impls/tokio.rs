@@ -2,13 +2,13 @@ use std::future::Future;
 use std::io;
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::engine::InstantMillis;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
-use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
+use crate::reactor::interfaces::framed_stream;
 use crate::reactor::interfaces::serial::core;
 use crate::reactor::throughput::ThroughputLedger;
 
@@ -62,7 +62,13 @@ where
         loop {
             if let Ok(stream) = (self.open)().await {
                 self.status.set_connection(ConnectionState::Connected);
-                serve(
+                framed_stream::serve::<
+                    { core::READ_BUF_LEN },
+                    { core::SERIAL_FRAME_LEN },
+                    { core::FRAMED_LEN },
+                    _,
+                    _,
+                >(
                     stream,
                     &mut seam,
                     &self.status,
@@ -79,57 +85,6 @@ where
     }
 }
 
-/// Serve one connection until the stream drops: read bytes and deframe them up to the seam,
-/// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller can
-/// reconnect; a fresh decoder per connection discards any half-frame the drop interrupted.
-async fn serve<S, Seam>(
-    mut stream: S,
-    seam: &mut Seam,
-    status: &TokioInterfaceStatus,
-    airtime: &mut AirtimeLedger,
-    throughput: &mut ThroughputLedger,
-    bitrate_bps: Option<u32>,
-    started: tokio::time::Instant,
-) where
-    S: AsyncRead + AsyncWrite + Unpin,
-    Seam: InterfaceSeam,
-{
-    let mut decoder = core::Decoder::new();
-    let mut read_buf = [0u8; core::READ_BUF_LEN];
-
-    loop {
-        tokio::select! {
-            read = stream.read(&mut read_buf) => {
-                let read = match read {
-                    Ok(0) | Err(_) => return,
-                    Ok(read) => read,
-                };
-                status.add_rx(read as u64);
-                let now = InstantMillis(started.elapsed().as_millis() as u64);
-                throughput.record_rx(now, read as u64);
-                status.set_transfer_rates(throughput.rates(now));
-                core::deframe_to_seam(&mut decoder, &read_buf[..read], seam).await;
-            }
-            outbound = seam.next_outbound() => {
-                let mut frame_buf = [0u8; core::FRAMED_LEN];
-                if let Some(framed) = core::frame_for_wire(outbound, &mut frame_buf) {
-                    if stream.write_all(&frame_buf[..framed]).await.is_err() {
-                        return;
-                    }
-                    status.add_tx(framed as u64);
-                    let now = InstantMillis(started.elapsed().as_millis() as u64);
-                    throughput.record_tx(now, framed as u64);
-                    status.set_transfer_rates(throughput.rates(now));
-                    if let Some(bitrate_bps) = bitrate_bps {
-                        let frame_airtime = frame_airtime_us(framed, bitrate_bps);
-                        status.set_airtime(airtime.record_tx(now, frame_airtime));
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +92,7 @@ mod tests {
     use crate::interfaces::InterfaceStatus;
     use crate::reactor::grant::{GrantConsumer, GrantProducer};
     use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
