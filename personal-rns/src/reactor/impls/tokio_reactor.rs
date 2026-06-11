@@ -782,6 +782,7 @@ mod tests {
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
             | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
             | Journaled::LinkClosed { .. } => {}
         };
 
@@ -1109,6 +1110,7 @@ mod tests {
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
             | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
             | Journaled::LinkClosed { .. } => {}
         };
 
@@ -1318,6 +1320,7 @@ mod tests {
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
             | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
             | Journaled::LinkClosed { .. } => {}
         };
 
@@ -1424,6 +1427,7 @@ mod tests {
             | Journaled::RouteEvicted { .. }
             | Journaled::RouteInterfaceGone { .. }
             | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
             | Journaled::LinkClosed { .. } => {}
         };
 

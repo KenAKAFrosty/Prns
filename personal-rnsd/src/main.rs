@@ -167,6 +167,13 @@ fn log_journaled(journaled: Journaled<'_>) {
                 established.rtt_ms,
             );
         }
+        Journaled::PeerIdentified { link_id, identity } => {
+            println!(
+                "RNSD_PEER_IDENTIFIED link_id={:02x?} identity={:02x?}",
+                link_id.as_bytes(),
+                identity.as_bytes(),
+            );
+        }
         Journaled::LinkClosed { link_id, reason } => {
             println!(
                 "RNSD_LINK_CLOSED link_id={:02x?} reason={reason:?}",

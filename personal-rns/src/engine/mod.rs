@@ -12,12 +12,12 @@ pub mod tick;
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CloseLink,
     CloseLinkError, CloseLinkFailure, CommandId, CommandOutcome, Delivered, EngineCommand,
-    EstablishLink, EstablishLinkError, EstablishLinkFailure, IssuedCommand, LinkEstablished,
-    PathFound, PathRequestId, RequestPath, RequestPathFailure, SendGroup, SendGroupFailure,
-    SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload, SendSingle,
-    SendSingleError, SendSingleFailure, SendSinglePayload, Settleable, Settlement,
-    MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN,
-    PATH_REQUEST_ID_LEN,
+    EstablishLink, EstablishLinkError, EstablishLinkFailure, Identify, IdentifyError,
+    IdentifyFailure, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
+    RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendLink, SendLinkError,
+    SendLinkFailure, SendLinkPayload, SendSingle, SendSingleError, SendSingleFailure,
+    SendSinglePayload, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,

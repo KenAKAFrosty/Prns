@@ -1,4 +1,5 @@
 use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
+use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::LinkId;
@@ -26,6 +27,12 @@ pub enum Journaled<'a> {
     /// A link another node initiated to one of our destinations went ACTIVE on
     /// its LRRTT. Our own initiations settle through `CommandSettled` instead.
     LinkEstablished(LinkEstablished),
+    /// The initiator of an active link revealed (and proved) the identity it
+    /// holds — RNS 1.3.1's `remote_identified` callback as data.
+    PeerIdentified {
+        link_id: LinkId,
+        identity: IdentityHash,
+    },
     LinkClosed {
         link_id: LinkId,
         reason: LinkClosedReason,

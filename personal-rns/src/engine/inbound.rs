@@ -224,6 +224,12 @@ impl<S: EngineStorage> EngineState<S> {
                     wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 }
             }
+            IngestPacketOutcome::PeerIdentified { link_id, identity } => {
+                sink(EngineReaction::Journaled(Journaled::PeerIdentified {
+                    link_id,
+                    identity,
+                }));
+            }
             IngestPacketOutcome::LinkActivated { link_id, rtt_ms } => {
                 sink(EngineReaction::Journaled(Journaled::LinkEstablished(
                     LinkEstablished { link_id, rtt_ms },

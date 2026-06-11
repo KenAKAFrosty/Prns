@@ -1485,6 +1485,160 @@ mod tests {
     }
 
     #[test]
+    fn the_initiator_identifies_itself_and_the_responder_journals_it() {
+        use crate::engine::{Identify, IdentifyError};
+        use crate::wire::{WireContext, WirePacketHeader};
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let revealed = initiator.held_identity_hashes()[0];
+        let mut sent = std::vec::Vec::new();
+        let mut settled = std::vec::Vec::new();
+        let _ = initiator.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(11),
+                command: EngineCommand::Identify(Identify {
+                    link_id,
+                    identity: revealed,
+                }),
+            },
+            &arrival_view(),
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE7),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { bytes, .. }) => {
+                    sent.push(bytes.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settled.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(
+            settled,
+            std::vec![(CommandId(11), Settlement::Identify(Ok(())))],
+            "an identify is fire-and-forget: it settles at emission",
+        );
+        let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.context, WireContext::LinkIdentify);
+
+        let mut identified = std::vec::Vec::new();
+        let mut raw = sent[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_100),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_100),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::PeerIdentified { link_id, identity }) =
+                    reaction
+                {
+                    identified.push((link_id, identity));
+                }
+            },
+        );
+        assert_eq!(
+            identified,
+            std::vec![(link_id, revealed)],
+            "the responder validates the signature and surfaces the identity",
+        );
+
+        // The initiator's own frame fed back to itself dies on the role gate:
+        // only the non-initiator accepts an identify.
+        let mut echoed = std::vec::Vec::new();
+        let mut replay = sent[0].clone();
+        let _ = initiator.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: arrival(),
+                bytes: &mut replay,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_200),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
+                    echoed.push(());
+                }
+            },
+        );
+        assert!(echoed.is_empty(), "an initiator never accepts an identify");
+
+        // A tampered frame dies on the session MAC before any identity parses.
+        let mut tampered = sent[0].clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x01;
+        let mut forged = std::vec::Vec::new();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_300),
+                source_interface: arrival(),
+                bytes: &mut tampered,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_300),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::PeerIdentified { .. }) = reaction {
+                    forged.push(());
+                }
+            },
+        );
+        assert!(forged.is_empty(), "a tampered identify surfaces nothing");
+
+        // And the responder cannot command one: identify is the initiator's verb.
+        let outcome = responder.ingest_command(
+            IssuedCommand {
+                id: CommandId(12),
+                command: EngineCommand::Identify(Identify {
+                    link_id,
+                    identity: responder.held_identity_hashes()[0],
+                }),
+            },
+            &arrival_view(),
+        );
+        assert!(
+            matches!(
+                outcome,
+                crate::engine::CommandOutcome::IdentifyRejected {
+                    error: IdentifyError::NotInitiator,
+                    ..
+                },
+            ),
+            "got {outcome:?}",
+        );
+    }
+
+    #[test]
     fn a_send_link_demands_an_active_link() {
         use crate::engine::{SendLink, SendLinkError, SendLinkPayload};
 

@@ -23,6 +23,7 @@ use crate::routing::delivery::{
 use crate::routing::links::handshake::{
     link_proof_from, link_request_from, link_rtt_from, LinkRequest, LinkRttError,
 };
+use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
@@ -223,6 +224,13 @@ pub enum IngestPacketOutcome<'p> {
     ScheduledPathResponse {
         destination: DestinationHash,
     },
+    /// The initiator of an active link revealed its identity, and the
+    /// signature checked out — surfaced to the app, RNS 1.3.1's
+    /// `remote_identified` callback.
+    PeerIdentified {
+        link_id: LinkId,
+        identity: IdentityHash,
+    },
     /// A link request arrived for one of our own destinations — the engine
     /// owes the signed LRPROOF that brings the link up.
     OwesLinkProof {
@@ -417,6 +425,7 @@ impl<S: EngineStorage> EngineState<S> {
                             self.classify_keepalive(&data.destination, data.payload, arrived_at)
                         }
                         WireContext::LinkClose => self.classify_link_close(data),
+                        WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
                         _ => IngestPacketOutcome::Ignored,
                     };
                 }
@@ -647,6 +656,30 @@ impl<S: EngineStorage> EngineState<S> {
                 Some((ProofStrategy::ProveNone, _)) | None => ProofObligation::None,
             },
         }
+    }
+
+    fn classify_link_identify(
+        &mut self,
+        data: DataPacket<'_>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let Some(LinkPhase::Active {
+            key,
+            role: LinkRole::Responder { .. },
+            ..
+        }) = self.links.phase_for(&link_id)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(identity) = peer_identity_from(&link_id, plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        self.links.note_inbound(&link_id, arrived_at);
+        IngestPacketOutcome::PeerIdentified { link_id, identity }
     }
 
     fn classify_keepalive(

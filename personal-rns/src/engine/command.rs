@@ -5,13 +5,16 @@ use crate::engine::{
     RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
-use crate::engine::{CloseLinkFailure, SendLinkError, SendLinkFailure};
+use crate::engine::{
+    CloseLinkFailure, IdentifyError, IdentifyFailure, SendLinkError, SendLinkFailure,
+};
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
 use crate::routing::links::data::SendLinkWriteError;
 use crate::routing::links::establish::EstablishLinkEntropy;
+use crate::routing::links::identify::IdentifyWriteError;
 use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::storage::EngineStorage;
 use crate::wire::BROADCAST_MTU;
@@ -255,6 +258,41 @@ impl<S: EngineStorage> EngineState<S> {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(error))),
+                }));
+            }
+            CommandOutcome::OwesIdentify { id, identify } => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_entropy(&mut iv);
+                let mut buf = [0u8; BROADCAST_MTU];
+                let settlement = match self.write_commanded_identify(&identify, &iv, &mut buf) {
+                    Ok(dispatch) => {
+                        fan_self_originated(
+                            interfaces,
+                            Some(dispatch.fire_on),
+                            &buf[..dispatch.wire_len],
+                            sink,
+                        );
+                        Settlement::Identify(Ok(()))
+                    }
+                    Err(IdentifyWriteError::LinkVanished) => Settlement::Identify(Err(
+                        IdentifyFailure::Rejected(IdentifyError::NoSuchLink),
+                    )),
+                    Err(IdentifyWriteError::IdentityVanished) => Settlement::Identify(Err(
+                        IdentifyFailure::Rejected(IdentifyError::IdentityNotHeld),
+                    )),
+                    Err(IdentifyWriteError::BufferTooShort) => {
+                        Settlement::Identify(Err(IdentifyFailure::WriteFailed))
+                    }
+                };
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement,
+                }));
+            }
+            CommandOutcome::IdentifyRejected { id, error } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::Identify(Err(IdentifyFailure::Rejected(error))),
                 }));
             }
             CommandOutcome::OwesLinkClose { id, close } => {
