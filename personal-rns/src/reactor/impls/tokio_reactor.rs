@@ -1274,14 +1274,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_establish_link_settles_across_two_live_reactors() {
+    async fn a_link_establishes_and_carries_data_across_two_live_reactors() {
         use crate::engine::test_support::{
             personal_node_announcer, personal_node_destination, second_secret_key,
         };
         use crate::engine::{
             AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-            LinkEstablished, Settlement,
+            LinkEstablished, SendLink, SendLinkPayload, Settlement,
         };
+        use crate::routing::delivery::Delivery;
+        use crate::routing::links::LinkId;
 
         let initiator_iface = InterfaceId::new([0xA1; 16]);
         let responder_iface = InterfaceId::new([0xB2; 16]);
@@ -1303,12 +1305,17 @@ mod tests {
         let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (a_heard_tx, mut a_heard_rx) = mpsc::unbounded_channel::<()>();
         let (a_settled_tx, mut a_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
+        let (a_delivered_tx, mut a_delivered_rx) =
+            mpsc::unbounded_channel::<(LinkId, std::vec::Vec<u8>)>();
         let a_app = move |journaled: Journaled<'_>| match journaled {
             Journaled::AnnounceHeard { .. } => {
                 let _ = a_heard_tx.send(());
             }
             Journaled::CommandSettled { id, settlement } => {
                 let _ = a_settled_tx.send((id, settlement));
+            }
+            Journaled::Delivered(Delivery::Link(link)) => {
+                let _ = a_delivered_tx.send((link.link_id, link.plaintext.to_vec()));
             }
             _ => {}
         };
@@ -1326,10 +1333,20 @@ mod tests {
         let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
         let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
         let (b_established_tx, mut b_established_rx) = mpsc::unbounded_channel::<LinkEstablished>();
-        let b_app = move |journaled: Journaled<'_>| {
-            if let Journaled::LinkEstablished(established) = journaled {
+        let (b_settled_tx, mut b_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
+        let (b_delivered_tx, mut b_delivered_rx) =
+            mpsc::unbounded_channel::<(LinkId, std::vec::Vec<u8>)>();
+        let b_app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::LinkEstablished(established) => {
                 let _ = b_established_tx.send(established);
             }
+            Journaled::CommandSettled { id, settlement } => {
+                let _ = b_settled_tx.send((id, settlement));
+            }
+            Journaled::Delivered(Delivery::Link(link)) => {
+                let _ = b_delivered_tx.send((link.link_id, link.plaintext.to_vec()));
+            }
+            _ => {}
         };
 
         tokio::spawn(run(
@@ -1400,6 +1417,60 @@ mod tests {
         assert!(
             responder_side.rtt_ms >= established.rtt_ms,
             "the responder takes max(measured, reported)",
+        );
+
+        a_command_tx
+            .send(IssuedCommand {
+                id: CommandId(8),
+                command: EngineCommand::SendLink(SendLink {
+                    link_id: established.link_id,
+                    payload: SendLinkPayload::from_slice(b"ping over the live link").unwrap(),
+                }),
+            })
+            .unwrap();
+        let (sent_id, sent) = tokio::time::timeout(Duration::from_secs(5), a_settled_rx.recv())
+            .await
+            .expect("the initiator's send settles")
+            .expect("the initiator reactor is alive");
+        assert_eq!(
+            (sent_id, sent),
+            (CommandId(8), Settlement::SendLink(Ok(())))
+        );
+        let delivered = tokio::time::timeout(Duration::from_secs(5), b_delivered_rx.recv())
+            .await
+            .expect("the responder journals the delivery")
+            .expect("the responder reactor is alive");
+        assert_eq!(
+            delivered,
+            (established.link_id, b"ping over the live link".to_vec()),
+        );
+
+        b_command_tx
+            .send(IssuedCommand {
+                id: CommandId(2),
+                command: EngineCommand::SendLink(SendLink {
+                    link_id: established.link_id,
+                    payload: SendLinkPayload::from_slice(b"pong right back").unwrap(),
+                }),
+            })
+            .unwrap();
+        let sent = loop {
+            let (sent_id, sent) = tokio::time::timeout(Duration::from_secs(5), b_settled_rx.recv())
+                .await
+                .expect("the responder's send settles")
+                .expect("the responder reactor is alive");
+            if sent_id == CommandId(2) {
+                break sent;
+            }
+        };
+        assert_eq!(sent, Settlement::SendLink(Ok(())));
+        let delivered = tokio::time::timeout(Duration::from_secs(5), a_delivered_rx.recv())
+            .await
+            .expect("the initiator journals the delivery")
+            .expect("the initiator reactor is alive");
+        assert_eq!(
+            delivered,
+            (established.link_id, b"pong right back".to_vec()),
         );
     }
 }
