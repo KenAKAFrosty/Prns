@@ -13,6 +13,7 @@ use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, R
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
 use crate::routing::group_keys::GroupKeyColumns;
+use crate::routing::links::table::LinkColumns;
 use crate::routing::path_requests::pending::PendingPathRequestColumns;
 use crate::routing::path_requests::seen::SeenPathRequestColumns;
 use crate::routing::reverse_routes::ReverseRouteColumns;
@@ -187,4 +188,5 @@ pub trait EngineStorage {
     type SeenPathRequests: SeenPathRequestColumns + Default;
     type AnnounceRates: AnnounceRateColumns + Default;
     type GroupKeys: GroupKeyColumns + Default;
+    type Links: LinkColumns + Default;
 }

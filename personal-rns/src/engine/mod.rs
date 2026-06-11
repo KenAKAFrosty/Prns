@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn a_full_table_journals_the_eviction_then_the_new_hearing() {
         use crate::wire::DestinationHash;
-        type OneSlot = FixedInline<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8>;
+        type OneSlot = FixedInline<1, 8, 64, 4, 32, 4, 4, 32, 4, 4, 4, 4, 8, 4>;
         let mut state: EngineState<OneSlot> = EngineState::default();
         let view = &transporting_view();
         let mut schedules = state.wake_schedules(view);
@@ -817,8 +817,9 @@ mod tests {
     #[test]
     fn a_capable_host_can_widen_the_routing_table_at_the_type_level() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<FixedInline<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16>>::default();
+        let mut state = EngineState::<
+            FixedInline<64, 128, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
+        >::default();
         state.set_transport_id(TEST_TRANSPORT_ID);
         let out = state.ingest_packet(
             InboundPacket {

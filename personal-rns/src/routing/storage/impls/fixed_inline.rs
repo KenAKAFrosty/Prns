@@ -5,6 +5,7 @@ use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
@@ -28,6 +29,7 @@ pub struct FixedInline<
     const MAX_REVERSE_ROUTES: usize,
     const MAX_PENDING_PATH_REQUESTS: usize,
     const MAX_SEEN_PATH_REQUESTS: usize,
+    const MAX_LINKS: usize,
 >;
 
 impl<
@@ -44,6 +46,7 @@ impl<
         const MAX_REVERSE_ROUTES: usize,
         const MAX_PENDING_PATH_REQUESTS: usize,
         const MAX_SEEN_PATH_REQUESTS: usize,
+        const MAX_LINKS: usize,
     > EngineStorage
     for FixedInline<
         MAX_TRACKED_DESTINATIONS,
@@ -59,6 +62,7 @@ impl<
         MAX_REVERSE_ROUTES,
         MAX_PENDING_PATH_REQUESTS,
         MAX_SEEN_PATH_REQUESTS,
+        MAX_LINKS,
     >
 {
     type Routes = FixedArrayRouteColumns<MAX_TRACKED_DESTINATIONS>;
@@ -91,6 +95,7 @@ impl<
     // At most one key per registered GROUP destination, so sized by the upstream
     // registry like SelfRatchets.
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type Links = FixedLinkColumns<MAX_LINKS>;
 }
 
 #[cfg(test)]
@@ -99,12 +104,13 @@ mod tests {
     use crate::crypto::ratchets::SelfRatchetColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::delivery::receipts::ReceiptColumns;
+    use crate::routing::links::table::LinkColumns;
     use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8>;
+        type S = FixedInline<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
         let routes = <S as EngineStorage>::Routes::default();
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
@@ -121,5 +127,7 @@ mod tests {
         assert_eq!(self_ratchets.retained_per_destination(), 3);
         let receipts = <S as EngineStorage>::Receipts::default();
         assert_eq!(receipts.capacity(), 5);
+        let links = <S as EngineStorage>::Links::default();
+        assert_eq!(links.capacity(), 6);
     }
 }

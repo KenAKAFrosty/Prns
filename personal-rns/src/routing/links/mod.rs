@@ -1,9 +1,11 @@
 //! The core link primitives: the [`LinkId`] both ends derive, the negotiated
 //! [`LinkMode`], and the AES-256 session [`LinkKey`] — HKDF of the ECDH shared
 //! secret salted by the `link_id`. The establishment frames that carry them
-//! (LINKREQUEST, LRPROOF) live in [`handshake`].
+//! live in [`handshake`]; the per-link state the engine tracks lives in
+//! [`table`].
 
 pub mod handshake;
+pub mod table;
 
 use crate::crypto::{
     hkdf_sha256, sha256_chunks, token_open, token_open_in_place, token_seal, CryptoError,
