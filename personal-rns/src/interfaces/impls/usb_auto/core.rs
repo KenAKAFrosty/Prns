@@ -1,7 +1,7 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::wire::BROADCAST_MTU;
 

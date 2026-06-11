@@ -27,6 +27,9 @@ pub mod duty_gate;
 pub mod throughput;
 pub(crate) mod window_ring;
 
+#[cfg(any(feature = "tokio-host", feature = "embassy-seam"))]
+pub mod grant;
+
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 mod driver;
 

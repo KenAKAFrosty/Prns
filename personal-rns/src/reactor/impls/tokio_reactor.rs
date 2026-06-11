@@ -17,6 +17,7 @@ use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
+use crate::reactor::grant::{FrameSlot, GrantConsumer, GrantProducer};
 use crate::reactor::interface_seam::{
     InboundFrame, InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN,
 };
@@ -54,6 +55,94 @@ impl Host for TokioHost {
     #[allow(clippy::expect_used)]
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
         getrandom::getrandom(bytes).expect("OS CSPRNG must provide reactor entropy");
+    }
+}
+
+/// One interface's grant lane on tokio: the slots live in `Box`es recycled
+/// through a pair of bounded channels, so granting, committing, and releasing
+/// move an 8-byte pointer while the frame bytes stay where they were written.
+pub fn tokio_grant_lane<const SLOT: usize>(
+    depth: usize,
+) -> (TokioGrantProducer<SLOT>, TokioGrantConsumer<SLOT>) {
+    let (filled_tx, filled_rx) = tokio::sync::mpsc::channel(depth.max(1));
+    let (free_tx, free_rx) = tokio::sync::mpsc::channel(depth.max(1));
+    for _ in 0..depth.max(1) {
+        let _ = free_tx.try_send(Box::new(FrameSlot::empty()));
+    }
+    (
+        TokioGrantProducer {
+            free: free_rx,
+            filled: filled_tx,
+            granted: None,
+        },
+        TokioGrantConsumer {
+            filled: filled_rx,
+            free: free_tx,
+            peeked: None,
+        },
+    )
+}
+
+pub struct TokioGrantProducer<const SLOT: usize> {
+    free: tokio::sync::mpsc::Receiver<Box<FrameSlot<SLOT>>>,
+    filled: tokio::sync::mpsc::Sender<Box<FrameSlot<SLOT>>>,
+    granted: Option<Box<FrameSlot<SLOT>>>,
+}
+
+impl<const SLOT: usize> GrantProducer<SLOT> for TokioGrantProducer<SLOT> {
+    fn try_grant(&mut self) -> Option<&mut FrameSlot<SLOT>> {
+        if self.granted.is_none() {
+            self.granted = Some(self.free.try_recv().ok()?);
+        }
+        self.granted.as_deref_mut()
+    }
+
+    async fn grant(&mut self) -> &mut FrameSlot<SLOT> {
+        if self.granted.is_none() {
+            match self.free.recv().await {
+                Some(slot) => self.granted = Some(slot),
+                // The consumer hung up: park forever, like a seam whose lane closed.
+                None => core::future::pending().await,
+            }
+        }
+        self.granted.as_deref_mut().expect("just granted")
+    }
+
+    fn commit(&mut self) {
+        if let Some(slot) = self.granted.take() {
+            let _ = self.filled.try_send(slot);
+        }
+    }
+}
+
+pub struct TokioGrantConsumer<const SLOT: usize> {
+    filled: tokio::sync::mpsc::Receiver<Box<FrameSlot<SLOT>>>,
+    free: tokio::sync::mpsc::Sender<Box<FrameSlot<SLOT>>>,
+    peeked: Option<Box<FrameSlot<SLOT>>>,
+}
+
+impl<const SLOT: usize> GrantConsumer<SLOT> for TokioGrantConsumer<SLOT> {
+    fn try_peek(&mut self) -> Option<&mut FrameSlot<SLOT>> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.filled.try_recv().ok()?);
+        }
+        self.peeked.as_deref_mut()
+    }
+
+    async fn peek(&mut self) -> &mut FrameSlot<SLOT> {
+        if self.peeked.is_none() {
+            match self.filled.recv().await {
+                Some(slot) => self.peeked = Some(slot),
+                None => core::future::pending().await,
+            }
+        }
+        self.peeked.as_deref_mut().expect("just peeked")
+    }
+
+    fn release(&mut self) {
+        if let Some(slot) = self.peeked.take() {
+            let _ = self.free.try_send(slot);
+        }
     }
 }
 
@@ -561,6 +650,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_filled_grant_is_read_in_place_without_a_copy() {
+        let (mut producer, mut consumer) = tokio_grant_lane::<512>(2);
+
+        let granted = producer.grant().await;
+        granted.fill(b"the frame is written once");
+        let written_at = granted.bytes.as_ptr() as usize;
+        producer.commit();
+
+        let received = consumer.peek().await;
+        assert_eq!(received.frame(), b"the frame is written once");
+        assert_eq!(
+            received.bytes.as_ptr() as usize,
+            written_at,
+            "the consumer reads the very slot the producer filled",
+        );
+        received.frame_mut()[0] ^= 0x20;
+        assert_eq!(&received.frame()[..3], b"The");
+        consumer.release();
+    }
+
+    #[tokio::test]
+    async fn a_full_lane_refuses_grants_until_the_consumer_releases() {
+        let (mut producer, mut consumer) = tokio_grant_lane::<64>(1);
+
+        producer
+            .try_grant()
+            .expect("an empty lane grants")
+            .fill(b"one");
+        producer.commit();
+        assert!(producer.try_grant().is_none(), "a depth-one lane is full");
+
+        consumer.try_peek().expect("the committed frame is there");
+        consumer.release();
+        assert!(
+            producer.try_grant().is_some(),
+            "the release frees the slot for the next grant",
+        );
     }
 
     #[tokio::test]
