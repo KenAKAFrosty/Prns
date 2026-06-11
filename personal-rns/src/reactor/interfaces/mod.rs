@@ -5,4 +5,5 @@
 #[cfg(feature = "tokio-host")]
 pub mod framed_stream;
 pub mod serial;
+pub mod tcp;
 pub mod usb_auto;

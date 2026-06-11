@@ -48,10 +48,11 @@ usb-auto = ["std-sync-host", "dep:serialport", "dep:mio", "dep:mio-serial"]
 # if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
 # want it never link either crate.
 wifi-lan-auto = ["std-sync-host", "dep:socket2", "dep:if-addrs"]
-# The RNS-parity TCP interface (TCPClientInterface / TCPServerInterface) for std hosts:
-# the std worker machinery plus socket2 (TCP_NODELAY + keepalive parity). Opt-in, so std
-# hosts that don't want TCP never link socket2.
-tcp = ["std-sync-host", "dep:socket2"]
+# The RNS-parity TCP interface (TcpClientInterface / TcpServerInterface) on the reactor
+# seam: tokio's own TCP plus socket2 for the reference's socket discipline (TCP_NODELAY,
+# keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
+# socket2.
+tcp = ["tokio-host", "dep:socket2", "tokio/net"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -105,7 +106,7 @@ mio-serial = { version = "5", optional = true }
 # The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
 # egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —
 # none of which `std::net::UdpSocket` exposes. Thin libc/winsock wrapper, no_std-free.
-socket2 = { version = "0.5", optional = true, features = ["all"] }
+socket2 = { version = "0.6", optional = true, features = ["all"] }
 # Interface enumeration for the WiFi/LAN auto-interface (under `wifi-lan-auto`): the
 # chosen NIC's real `fe80::` link-local and its interface index. The peering token must
 # hash over the address peers actually see as our source, so a synthesized one won't do.
