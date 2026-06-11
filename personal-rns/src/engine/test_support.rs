@@ -272,3 +272,14 @@ pub(crate) const RAW_SEALED_TO_RATCHET: &str =
     "0000c3cfae69b36bb6e3bbfd96a3b5867a59007b0d47d93427f8311160781c7c733fd89f88970aef490d8a\
          a0ee19a4cb8a1b1444444444444444444444444444444444f0c0d10df07782f3a9a89a271b84960bc9d252\
          5bfcfd385954b4ebda6c6702dd9b82ca630f3b45c1c57457ad70aa14e6";
+
+/// Run an `EmitFrame` fill against heap scratch and hand back the frame it wrote — the
+/// test-side stand-in for a driver's granted slot.
+pub(crate) fn filled_frame(
+    fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+) -> Option<std::vec::Vec<u8>> {
+    let mut scratch = std::vec![0u8; crate::routing::links::MAX_LINK_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE];
+    let len = fill(&mut scratch)?;
+    scratch.truncate(len);
+    Some(scratch)
+}

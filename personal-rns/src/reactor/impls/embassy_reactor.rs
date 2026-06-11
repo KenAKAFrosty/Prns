@@ -546,7 +546,26 @@ fn route_reaction(
         }) => {
             offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
+        EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+            emit_for_wire(egress, ifacs, target, fill);
+        }
         EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+/// Grant-first lands as build-then-copy here: the erased embassy egress exposes only
+/// `try_fill_frame`, so the frame is built in a stack scratch (wire-small on embassy
+/// faces) and copied once into the ring. `fill` runs exactly once — the `EmitFrame`
+/// contract — whether or not the lane has room.
+fn emit_for_wire(
+    egress: &mut EmbassyEgress<'_>,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+) {
+    let mut frame = [0u8; MAX_WIRE_FRAME_LEN];
+    if let Some(len) = fill(&mut frame) {
+        enqueue_for_wire(egress, ifacs, target, &frame[..len]);
     }
 }
 

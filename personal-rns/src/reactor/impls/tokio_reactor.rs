@@ -225,6 +225,39 @@ impl Egress {
             }
         }
     }
+
+    /// Grant-first: borrow the target lane's next free slot and let `fill` seal the frame
+    /// in place, committing on `Some(len)`. A full lane, an unknown target, or a poisoned
+    /// lane still runs `fill` once against `discard` and drops the result — the
+    /// `EmitFrame` contract — so the engine's bookkeeping never depends on lane luck.
+    fn emit(
+        &self,
+        target: InterfaceId,
+        fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+        discard: &mut [u8],
+    ) {
+        for (id, producer) in &self.lanes {
+            if *id == target {
+                let Ok(mut producer) = producer.lock() else {
+                    let _ = fill(discard);
+                    return;
+                };
+                match producer.try_grant() {
+                    Some(slot) => {
+                        if let Some(len) = fill(&mut slot.bytes) {
+                            slot.len = len.min(slot.bytes.len());
+                            producer.commit();
+                        }
+                    }
+                    None => {
+                        let _ = fill(discard);
+                    }
+                }
+                return;
+            }
+        }
+        let _ = fill(discard);
+    }
 }
 
 /// A cheap-clone handle to one interface's live state: the interface holds a clone and writes
@@ -392,6 +425,8 @@ pub async fn run_with_proof_decider<S, H, J, P>(
             pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
         })
         .collect();
+    let mut wire_scratch = WireScratch::new();
+    let mut unmask_scratch = std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice();
     loop {
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
@@ -403,16 +438,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     continue;
                 };
                 let Some(slot) = lane.try_peek() else { continue };
-                let mut unmasked = [0u8; MAX_WIRE_FRAME_LEN];
                 let bytes = match ifac_for(&ifacs, source) {
                     Some(entry) => {
                         let Some(clean_len) =
-                            entry.context.unmask_inbound(slot.frame(), &mut unmasked)
+                            entry.context.unmask_inbound(slot.frame(), &mut unmask_scratch)
                         else {
                             lane.release();
                             continue;
                         };
-                        &mut unmasked[..clean_len]
+                        &mut unmask_scratch[..clean_len]
                     }
                     None => slot.frame_mut(),
                 };
@@ -430,7 +464,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut should_prove,
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
                 );
                 lane.release();
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
@@ -443,7 +477,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     &interfaces,
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
@@ -455,7 +489,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     now,
                     &interfaces,
                     &mut |bytes| host.fill_entropy(bytes),
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, now, &mut on_journaled),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
@@ -472,17 +506,35 @@ struct InterfacePacer {
     pacer: AnnouncePacer<HeapPacerQueue>,
 }
 
+/// Heap-parked wire scratch for every emission that can't land straight in a granted
+/// slot: `emit` carries a discarded or pre-mask frame, `masked` the IFAC mask output.
+/// Boxed once per reactor — wire-sized buffers never live on a task stack.
+struct WireScratch {
+    emit: std::boxed::Box<[u8]>,
+    masked: std::boxed::Box<[u8]>,
+}
+
+impl WireScratch {
+    fn new() -> Self {
+        Self {
+            emit: std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice(),
+            masked: std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice(),
+        }
+    }
+}
+
 fn route_reaction<A: FnMut(Journaled<'_>)>(
     reaction: EngineReaction<'_>,
     egress: &Egress,
     ifacs: &[InterfaceIfac],
     pacers: &mut [InterfacePacer],
+    scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
 ) {
     match reaction {
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
-            enqueue_for_wire(egress, ifacs, target, bytes);
+            enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
         }
         EngineReaction::Directive(Directive::SendAnnounce {
             target,
@@ -491,7 +543,37 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
         }) => {
             offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
+        EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+            emit_for_wire(egress, ifacs, target, fill, scratch);
+        }
         EngineReaction::Journaled(journaled) => app(journaled),
+    }
+}
+
+/// Grant-first emission: with no IFAC in the way the engine seals straight into the
+/// granted slot — zero copy. An IFAC'd target builds in scratch and masks into the slot
+/// (the mask is the copy), and a full lane runs `fill` against scratch and discards —
+/// the same drop `Send` has always had — so the engine's bookkeeping runs exactly once
+/// on every path.
+fn emit_for_wire(
+    egress: &Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
+    scratch: &mut WireScratch,
+) {
+    match ifac_for(ifacs, target) {
+        Some(entry) => {
+            if let Some(len) = fill(&mut scratch.emit) {
+                if let Some(masked_len) = entry
+                    .context
+                    .mask_outbound(&scratch.emit[..len], &mut scratch.masked)
+                {
+                    egress.enqueue(target, &scratch.masked[..masked_len]);
+                }
+            }
+        }
+        None => egress.emit(target, fill, &mut scratch.emit),
     }
 }
 
@@ -504,17 +586,26 @@ fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> 
 
 /// The one egress choke: a target with an access code never sees clean bytes on its
 /// wire, and a frame the mask refuses (oversize) is dropped rather than leaked open.
-fn enqueue_for_wire(egress: &Egress, ifacs: &[InterfaceIfac], target: InterfaceId, bytes: &[u8]) {
+fn enqueue_for_wire(
+    egress: &Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+    masked: &mut [u8],
+) {
     match ifac_for(ifacs, target) {
         Some(entry) => {
-            let mut wire = [0u8; MAX_WIRE_FRAME_LEN];
-            if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
-                egress.enqueue(target, &wire[..masked_len]);
+            if let Some(masked_len) = entry.context.mask_outbound(bytes, masked) {
+                egress.enqueue(target, &masked[..masked_len]);
             }
         }
         None => egress.enqueue(target, bytes),
     }
 }
+
+/// A paced announce is broadcast-sized by construction, so its mask scratch fits on the
+/// stack — the wire-sized [`WireScratch`] is reserved for the frame paths.
+const PACED_MASK_LEN: usize = crate::wire::BROADCAST_MTU + crate::interfaces::ifac::IFAC_MAX_SIZE;
 
 fn offer_to_pacer(
     pacers: &mut [InterfacePacer],
@@ -527,9 +618,13 @@ fn offer_to_pacer(
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
         Some(entry) => entry.pacer.offer(bytes, hops, now, |frame| {
-            enqueue_for_wire(egress, ifacs, target, frame)
+            let mut masked = [0u8; PACED_MASK_LEN];
+            enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
         }),
-        None => enqueue_for_wire(egress, ifacs, target, bytes),
+        None => {
+            let mut masked = [0u8; PACED_MASK_LEN];
+            enqueue_for_wire(egress, ifacs, target, bytes, &mut masked);
+        }
     }
 }
 
@@ -541,9 +636,10 @@ fn flush_due_pacers(
 ) {
     for entry in pacers.iter_mut() {
         let target = entry.id;
-        entry
-            .pacer
-            .release_due(now, |frame| enqueue_for_wire(egress, ifacs, target, frame));
+        entry.pacer.release_due(now, |frame| {
+            let mut masked = [0u8; PACED_MASK_LEN];
+            enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
+        });
     }
 }
 
@@ -1228,7 +1324,7 @@ mod tests {
         tokio::spawn(peer_iface.run(peer_seam));
 
         let clean = hx(RAW_ANNOUNCE);
-        let mut member_wire = [0u8; MAX_WIRE_FRAME_LEN];
+        let mut member_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
         let masked_len = network().mask_outbound(&clean, &mut member_wire).unwrap();
         source_wire_in_tx
             .send(member_wire[..masked_len].to_vec())
@@ -1252,7 +1348,7 @@ mod tests {
             0x80,
             "the peer's wire only ever carries flagged, masked frames",
         );
-        let mut recovered = [0u8; MAX_WIRE_FRAME_LEN];
+        let mut recovered = std::vec![0u8; MAX_WIRE_FRAME_LEN];
         let clean_len = network()
             .unmask_inbound(&rebroadcast, &mut recovered)
             .expect("a member can open the rebroadcast");
@@ -1264,7 +1360,7 @@ mod tests {
         );
 
         let stranger = IfacContext::derive(Some("testnet"), Some("wrong"), 8).unwrap();
-        let mut stranger_wire = [0u8; MAX_WIRE_FRAME_LEN];
+        let mut stranger_wire = std::vec![0u8; MAX_WIRE_FRAME_LEN];
         let stranger_len = stranger
             .mask_outbound(&hx(RATCHETED_ANNOUNCE_RNS_WIRE), &mut stranger_wire)
             .unwrap();

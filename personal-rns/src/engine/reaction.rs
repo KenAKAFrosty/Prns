@@ -79,6 +79,17 @@ pub enum Directive<'a> {
         bytes: &'a [u8],
         hops: u8,
     },
+    /// A frame owed to one interface, written straight into the wire slot the driver
+    /// provides — grant-first emission: sealed once, in place, never staged and copied.
+    /// The driver calls `fill` exactly once, with a buffer of at least
+    /// `MAX_WIRE_FRAME_LEN` bytes — the granted egress slot when one is free, or its own
+    /// discard scratch when the lane is full (the engine's bookkeeping must run either
+    /// way; a full lane drops the frame exactly as `Send` always has). `fill` returns the
+    /// wire length to commit, or `None` when the engine found nothing to emit after all.
+    EmitFrame {
+        target: InterfaceId,
+        fill: &'a mut dyn FnMut(&mut [u8]) -> Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

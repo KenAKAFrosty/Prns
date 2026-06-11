@@ -17,11 +17,24 @@ use crate::routing::links::data::SendLinkWriteError;
 use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::links::identify::IdentifyWriteError;
 use crate::routing::links::request::LinkRequestWriteError;
-use crate::routing::links::MAX_LINK_MTU;
+use crate::routing::links::table::LinkPhase;
+use crate::routing::links::LinkId;
 use crate::routing::storage::EngineStorage;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: EngineStorage> EngineState<S> {
+    /// The interface an Active link fires on — resolved before grant-first emission so the
+    /// driver knows which lane to grant from; the write itself re-resolves and stays the
+    /// source of truth.
+    fn active_link_interface(&self, link_id: &LinkId) -> Option<InterfaceId> {
+        match self.links.phase_for(link_id)? {
+            LinkPhase::Active {
+                attached_interface, ..
+            } => Some(*attached_interface),
+            _ => None,
+        }
+    }
+
     /// Run one app command and stream its result to `sink`: the `Directive`s it fans (an
     /// announce, a send, a path request — each to its self-originated targets) and a
     /// `Journaled` `CommandSettled` for whatever resolves at emission — an immediate
@@ -221,23 +234,8 @@ impl<S: EngineStorage> EngineState<S> {
             CommandOutcome::OwesSendLink { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
-                let mut buf = [0u8; MAX_LINK_MTU];
-                match self.write_commanded_send_link(id, &send, now, &iv, &mut buf) {
-                    Ok(dispatch) => {
-                        fan_self_originated(
-                            interfaces,
-                            Some(dispatch.fire_on),
-                            &buf[..dispatch.wire_len],
-                            sink,
-                        );
-                        if let Some(culled) = dispatch.culled {
-                            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                                id: culled.command_id,
-                                settlement: culled_settlement(culled),
-                            }));
-                        }
-                    }
-                    Err(SendLinkWriteError::LinkVanished) => {
+                match self.active_link_interface(&send.link_id) {
+                    None => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
                             settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(
@@ -245,13 +243,50 @@ impl<S: EngineStorage> EngineState<S> {
                             ))),
                         }));
                     }
-                    Err(SendLinkWriteError::Frame(error)) => {
-                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                            id,
-                            settlement: Settlement::SendLink(Err(SendLinkFailure::WriteFailed(
-                                error,
-                            ))),
+                    Some(fire_on) => {
+                        let mut wrote = None;
+                        let mut fill = |slot: &mut [u8]| match self
+                            .write_commanded_send_link(id, &send, now, &iv, slot)
+                        {
+                            Ok(dispatch) => {
+                                let wire_len = dispatch.wire_len;
+                                wrote = Some(Ok(dispatch.culled));
+                                Some(wire_len)
+                            }
+                            Err(error) => {
+                                wrote = Some(Err(error));
+                                None
+                            }
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            fill: &mut fill,
                         }));
+                        match wrote {
+                            Some(Ok(Some(culled))) => {
+                                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                    id: culled.command_id,
+                                    settlement: culled_settlement(culled),
+                                }));
+                            }
+                            Some(Ok(None)) | None => {}
+                            Some(Err(SendLinkWriteError::LinkVanished)) => {
+                                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                    id,
+                                    settlement: Settlement::SendLink(Err(
+                                        SendLinkFailure::Rejected(SendLinkError::NoSuchLink),
+                                    )),
+                                }));
+                            }
+                            Some(Err(SendLinkWriteError::Frame(error))) => {
+                                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                    id,
+                                    settlement: Settlement::SendLink(Err(
+                                        SendLinkFailure::WriteFailed(error),
+                                    )),
+                                }));
+                            }
+                        }
                     }
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -294,23 +329,8 @@ impl<S: EngineStorage> EngineState<S> {
             CommandOutcome::OwesSendRequest { id, request } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
-                let mut buf = [0u8; MAX_LINK_MTU];
-                match self.write_commanded_send_request(id, &request, now, &iv, &mut buf) {
-                    Ok(dispatch) => {
-                        fan_self_originated(
-                            interfaces,
-                            Some(dispatch.fire_on),
-                            &buf[..dispatch.wire_len],
-                            sink,
-                        );
-                        if let Some(culled) = dispatch.culled {
-                            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                                id: culled.command_id,
-                                settlement: culled_settlement(culled),
-                            }));
-                        }
-                    }
-                    Err(LinkRequestWriteError::LinkVanished) => {
+                match self.active_link_interface(&request.link_id) {
+                    None => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
                             settlement: Settlement::SendRequest(Err(SendRequestFailure::Rejected(
@@ -318,16 +338,53 @@ impl<S: EngineStorage> EngineState<S> {
                             ))),
                         }));
                     }
-                    Err(
-                        LinkRequestWriteError::PayloadTooLong
-                        | LinkRequestWriteError::BufferTooShort,
-                    ) => {
-                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                            id,
-                            settlement: Settlement::SendRequest(Err(
-                                SendRequestFailure::WriteFailed,
-                            )),
+                    Some(fire_on) => {
+                        let mut wrote = None;
+                        let mut fill = |slot: &mut [u8]| match self
+                            .write_commanded_send_request(id, &request, now, &iv, slot)
+                        {
+                            Ok(dispatch) => {
+                                let wire_len = dispatch.wire_len;
+                                wrote = Some(Ok(dispatch.culled));
+                                Some(wire_len)
+                            }
+                            Err(error) => {
+                                wrote = Some(Err(error));
+                                None
+                            }
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            fill: &mut fill,
                         }));
+                        match wrote {
+                            Some(Ok(Some(culled))) => {
+                                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                    id: culled.command_id,
+                                    settlement: culled_settlement(culled),
+                                }));
+                            }
+                            Some(Ok(None)) | None => {}
+                            Some(Err(LinkRequestWriteError::LinkVanished)) => {
+                                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                    id,
+                                    settlement: Settlement::SendRequest(Err(
+                                        SendRequestFailure::Rejected(SendRequestError::NoSuchLink),
+                                    )),
+                                }));
+                            }
+                            Some(Err(
+                                LinkRequestWriteError::PayloadTooLong
+                                | LinkRequestWriteError::BufferTooShort,
+                            )) => {
+                                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                    id,
+                                    settlement: Settlement::SendRequest(Err(
+                                        SendRequestFailure::WriteFailed,
+                                    )),
+                                }));
+                            }
+                        }
                     }
                 }
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -341,24 +398,41 @@ impl<S: EngineStorage> EngineState<S> {
             CommandOutcome::OwesRespond { id, respond } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
-                let mut buf = [0u8; MAX_LINK_MTU];
-                let settlement = match self.write_commanded_respond(&respond, &iv, &mut buf) {
-                    Ok(dispatch) => {
-                        fan_self_originated(
-                            interfaces,
-                            Some(dispatch.fire_on),
-                            &buf[..dispatch.wire_len],
-                            sink,
-                        );
-                        Settlement::Respond(Ok(()))
-                    }
-                    Err(LinkRequestWriteError::LinkVanished) => {
+                let settlement = match self.active_link_interface(&respond.link_id) {
+                    None => {
                         Settlement::Respond(Err(RespondFailure::Rejected(RespondError::NoSuchLink)))
                     }
-                    Err(
-                        LinkRequestWriteError::PayloadTooLong
-                        | LinkRequestWriteError::BufferTooShort,
-                    ) => Settlement::Respond(Err(RespondFailure::WriteFailed)),
+                    Some(fire_on) => {
+                        let mut wrote = None;
+                        let mut fill = |slot: &mut [u8]| match self
+                            .write_commanded_respond(&respond, &iv, slot)
+                        {
+                            Ok(dispatch) => {
+                                let wire_len = dispatch.wire_len;
+                                wrote = Some(Ok(()));
+                                Some(wire_len)
+                            }
+                            Err(error) => {
+                                wrote = Some(Err(error));
+                                None
+                            }
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            fill: &mut fill,
+                        }));
+                        match wrote {
+                            Some(Ok(())) => Settlement::Respond(Ok(())),
+                            Some(Err(LinkRequestWriteError::LinkVanished)) => Settlement::Respond(
+                                Err(RespondFailure::Rejected(RespondError::NoSuchLink)),
+                            ),
+                            Some(Err(
+                                LinkRequestWriteError::PayloadTooLong
+                                | LinkRequestWriteError::BufferTooShort,
+                            ))
+                            | None => Settlement::Respond(Err(RespondFailure::WriteFailed)),
+                        }
+                    }
                 };
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,

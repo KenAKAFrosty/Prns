@@ -1104,6 +1104,12 @@ mod tests {
                     assert_eq!(target, arrival(), "the data fires on the link's interface");
                     sent.push(bytes.to_vec());
                 }
+                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                    assert_eq!(target, arrival(), "the data fires on the link's interface");
+                    if let Some(bytes) = filled_frame(fill) {
+                        sent.push(bytes);
+                    }
+                }
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     settled.push((id, settlement));
                 }
@@ -1204,10 +1210,16 @@ mod tests {
             &arrival_view(),
             InstantMillis(now),
             &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                     sent.push(bytes.to_vec());
                 }
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(bytes) = filled_frame(fill) {
+                        sent.push(bytes);
+                    }
+                }
+                _ => {}
             },
         );
         assert_eq!(sent.len(), 1, "the link data frame fires");
@@ -1817,6 +1829,11 @@ mod tests {
                     EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                         sent.push(bytes.to_vec());
                     }
+                    EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                        if let Some(bytes) = filled_frame(fill) {
+                            sent.push(bytes);
+                        }
+                    }
                     EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                         settled.push((id, settlement));
                     }
@@ -2059,6 +2076,11 @@ mod tests {
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                     sent.push(bytes.to_vec());
+                }
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(bytes) = filled_frame(fill) {
+                        sent.push(bytes);
+                    }
                 }
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     settled.push((id, settlement));
@@ -2365,6 +2387,11 @@ mod tests {
                 EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                     sent.push(bytes.to_vec());
                 }
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(bytes) = filled_frame(fill) {
+                        sent.push(bytes);
+                    }
+                }
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     settled.push((id, settlement));
                 }
@@ -2495,12 +2522,14 @@ mod tests {
             &narrow_view(),
             InstantMillis(2_000),
             &mut |bytes: &mut [u8]| bytes.fill(0xD1),
-            &mut |reaction| {
-                if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
-                    reaction
-                {
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    let _ = filled_frame(fill);
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     settled.push((id, settlement));
                 }
+                _ => {}
             },
         );
         assert_eq!(
@@ -2526,10 +2555,16 @@ mod tests {
             &narrow_view(),
             InstantMillis(2_100),
             &mut |bytes: &mut [u8]| bytes.fill(0xD2),
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                     sent.push(bytes.to_vec());
                 }
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(bytes) = filled_frame(fill) {
+                        sent.push(bytes);
+                    }
+                }
+                _ => {}
             },
         );
         assert_eq!(sent.len(), 1, "200 bytes fit the narrow link");

@@ -9,6 +9,7 @@
 
 use crate::engine::commands::{
     CommandId, CommandOutcome, Respond, RespondError, SendRequest, SendRequestError,
+    MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
@@ -33,6 +34,18 @@ pub const REQUEST_RESPONSE_GRACE_MS: u64 = 11_250;
 
 /// msgpack `fixarray(3)` ‖ `float64` time ‖ `bin8(16)` path hash, before data.
 pub const REQUEST_WIRE_OVERHEAD: usize = 1 + 9 + 2 + TRUNCATED_HASH_BYTE_LEN;
+/// The largest wrapped plaintext either verb stages before sealing: the msgpack envelope
+/// plus the largest data it admits — both verbs' data caps were derived from the
+/// single-packet link MDU, so the two sides land on the same figure by construction.
+pub const WRAPPED_PLAINTEXT_CAP: usize = {
+    let request = REQUEST_WIRE_OVERHEAD + MAX_SEND_REQUEST_DATA_LEN;
+    let response = RESPONSE_WIRE_OVERHEAD + MAX_RESPOND_DATA_LEN;
+    if request > response {
+        request
+    } else {
+        response
+    }
+};
 /// msgpack `fixarray(2)` ‖ `bin8(16)` request id, before data.
 pub const RESPONSE_WIRE_OVERHEAD: usize = 1 + 2 + TRUNCATED_HASH_BYTE_LEN;
 
@@ -272,7 +285,7 @@ impl<S: EngineStorage> EngineState<S> {
             .max(LINK_TRAFFIC_TIMEOUT_MIN_MS)
             .saturating_add(REQUEST_RESPONSE_GRACE_MS);
 
-        let mut plaintext = [0u8; crate::routing::links::MAX_LINK_MTU];
+        let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
             write_request_plaintext(now, &request.path_hash, &request.data, &mut plaintext)
                 .ok_or(LinkRequestWriteError::BufferTooShort)?;
@@ -329,7 +342,7 @@ impl<S: EngineStorage> EngineState<S> {
         else {
             return Err(LinkRequestWriteError::LinkVanished);
         };
-        let mut plaintext = [0u8; crate::routing::links::MAX_LINK_MTU];
+        let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
             write_response_plaintext(&respond.request_id, &respond.data, &mut plaintext)
                 .ok_or(LinkRequestWriteError::BufferTooShort)?;
