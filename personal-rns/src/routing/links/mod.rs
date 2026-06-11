@@ -8,7 +8,8 @@ use crate::crypto::{
     Ed25519PublicKey, TokenKey, X25519PublicKey, X25519SharedSecret,
 };
 use crate::wire::{
-    DestinationHash, DestinationType, PacketType, WireContext, TRUNCATED_HASH_BYTE_LEN,
+    ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
+    WireContext, WireError, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
 };
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -84,6 +85,68 @@ impl core::fmt::Debug for LinkKey {
     }
 }
 
+/// The cipher a link negotiates. RNS  1.3.1 enables only `MODE_AES256_CBC`
+/// (`ENABLED_MODES = [0x01]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkMode {
+    Aes256Cbc,
+}
+
+impl LinkMode {
+    const fn to_bits(self) -> u8 {
+        match self {
+            Self::Aes256Cbc => 0x01,
+        }
+    }
+}
+
+const LINK_MTU_BYTEMASK: u32 = 0x1F_FFFF;
+
+/// RNS `Link.signalling_bytes`: the negotiated MTU (low 21 bits) and mode (top
+/// 3 bits) packed big-endian into 3 bytes. `link_id` excludes these, so a relay
+/// may clamp the MTU without moving the id.
+pub fn signalling_bytes(mtu: usize, mode: LinkMode) -> [u8; 3] {
+    let value = ((mtu as u32) & LINK_MTU_BYTEMASK) | ((mode.to_bits() as u32) << 21);
+    [(value >> 16) as u8, (value >> 8) as u8, value as u8]
+}
+
+pub fn write_link_request(
+    destination: &DestinationHash,
+    initiator_encryption: &X25519PublicKey,
+    initiator_signing: &Ed25519PublicKey,
+    mtu: usize,
+    mode: LinkMode,
+    buf: &mut [u8],
+) -> Result<usize, WireError> {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Single,
+        packet_type: PacketType::LinkRequest,
+        hops: 0,
+        transport_id: None,
+        destination: *destination,
+        context: WireContext::None,
+    };
+    let header_len = header.write(buf)?;
+    let encryption = &initiator_encryption.0;
+    let signing = &initiator_signing.0;
+    let signalling = signalling_bytes(mtu, mode);
+    let total = header_len + encryption.len() + signing.len() + signalling.len();
+    if buf.len() < total {
+        return Err(WireError::BufferTooShort);
+    }
+    let mut offset = header_len;
+    buf[offset..offset + encryption.len()].copy_from_slice(encryption);
+    offset += encryption.len();
+    buf[offset..offset + signing.len()].copy_from_slice(signing);
+    offset += signing.len();
+    buf[offset..offset + signalling.len()].copy_from_slice(&signalling);
+    offset += signalling.len();
+    Ok(offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +187,10 @@ mod tests {
     const INITIATOR_SIGNING_PUBLIC: &str =
         "505152535455565758595a5b5c5d5e5f505152535455565758595a5b5c5d5e5f";
     const REQUEST_LINK_ID: &str = "6923ae567bd1dba8db3f4b8d34f894e5";
+    const REQUEST_PACKET: &str = "020050de0d856ad9ed3541af6d506e14d26f00\
+                                  a0a1a2a3a4a5a6a7a8a9aaabacadaeafa0a1a2a3a4a5a6a7a8a9aaabacadaeaf\
+                                  505152535455565758595a5b5c5d5e5f505152535455565758595a5b5c5d5e5f\
+                                  2001f4";
 
     fn derived_link_key() -> LinkKey {
         let shared = x25519_diffie_hellman(
@@ -151,6 +218,54 @@ mod tests {
             &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
         );
         assert_eq!(id, LinkId::new(a16(REQUEST_LINK_ID)));
+    }
+
+    #[test]
+    fn signalling_bytes_match_the_reference_codec() {
+        assert_eq!(
+            signalling_bytes(500, LinkMode::Aes256Cbc),
+            [0x20, 0x01, 0xf4]
+        );
+        assert_eq!(
+            signalling_bytes(1064, LinkMode::Aes256Cbc),
+            [0x20, 0x04, 0x28]
+        );
+        assert_eq!(
+            signalling_bytes(262143, LinkMode::Aes256Cbc),
+            [0x23, 0xff, 0xff]
+        );
+        assert_eq!(signalling_bytes(1, LinkMode::Aes256Cbc), [0x20, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn write_link_request_matches_a_reference_packet() {
+        let mut buf = [0u8; 128];
+        let n = write_link_request(
+            &DestinationHash::new(a16(LINK_DEST)),
+            &X25519PublicKey(a32(INITIATOR_ENCRYPTION_PUBLIC)),
+            &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
+            500,
+            LinkMode::Aes256Cbc,
+            &mut buf,
+        )
+        .unwrap();
+        assert_eq!(&buf[..n], &hx(REQUEST_PACKET)[..]);
+    }
+
+    #[test]
+    fn write_link_request_rejects_a_buffer_too_small_for_the_payload() {
+        let mut tiny = [0u8; 40];
+        assert_eq!(
+            write_link_request(
+                &DestinationHash::new(a16(LINK_DEST)),
+                &X25519PublicKey(a32(INITIATOR_ENCRYPTION_PUBLIC)),
+                &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
+                500,
+                LinkMode::Aes256Cbc,
+                &mut tiny,
+            ),
+            Err(WireError::BufferTooShort),
+        );
     }
 
     #[test]
