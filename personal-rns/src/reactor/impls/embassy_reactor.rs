@@ -180,6 +180,7 @@ pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const INBOUND: usize, const OUT
     id: InterfaceId,
     inbound: Sender<'a, M, InboundFrame, INBOUND>,
     outbound: Receiver<'a, M, OutboundFrame, OUT>,
+    held: Option<OutboundFrame>,
 }
 
 impl<'a, M: RawMutex, const INBOUND: usize, const OUT: usize>
@@ -195,6 +196,7 @@ impl<'a, M: RawMutex, const INBOUND: usize, const OUT: usize>
             id,
             inbound,
             outbound,
+            held: None,
         }
     }
 }
@@ -206,8 +208,12 @@ impl<M: RawMutex, const INBOUND: usize, const OUT: usize> InterfaceSeam
         self.inbound.send(InboundFrame::new(self.id, frame)).await;
     }
 
-    async fn next_outbound(&mut self) -> OutboundFrame {
-        self.outbound.receive().await
+    async fn next_outbound(&mut self) -> &[u8] {
+        self.held = Some(self.outbound.receive().await);
+        match &self.held {
+            Some(frame) => frame.bytes(),
+            None => &[],
+        }
     }
 }
 
@@ -557,7 +563,7 @@ mod tests {
             loop {
                 match select(self.wire_in.receive(), seam.next_outbound()).await {
                     Either::First(frame) => seam.next_inbound(frame.bytes()).await,
-                    Either::Second(out) => self.wire_out.send(out).await,
+                    Either::Second(out) => self.wire_out.send(OutboundFrame::new(out)).await,
                 }
             }
         }

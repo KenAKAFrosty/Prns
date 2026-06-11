@@ -18,7 +18,7 @@ use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
 use crate::reactor::grant::{FrameSlot, GrantConsumer, GrantProducer};
-use crate::reactor::interface_seam::{InterfaceSeam, OutboundFrame, MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
 use crate::routing::storage::EngineStorage;
 
@@ -151,7 +151,7 @@ pub struct TokioInterfaceSeam {
     id: InterfaceId,
     inbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
     notify: UnboundedSender<InterfaceId>,
-    outbound: UnboundedReceiver<OutboundFrame>,
+    outbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
 }
 
 impl TokioInterfaceSeam {
@@ -160,7 +160,7 @@ impl TokioInterfaceSeam {
         id: InterfaceId,
         inbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
         notify: UnboundedSender<InterfaceId>,
-        outbound: UnboundedReceiver<OutboundFrame>,
+        outbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
     ) -> Self {
         Self {
             id,
@@ -178,13 +178,9 @@ impl InterfaceSeam for TokioInterfaceSeam {
         let _ = self.notify.send(self.id);
     }
 
-    async fn next_outbound(&mut self) -> OutboundFrame {
-        match self.outbound.recv().await {
-            Some(frame) => frame,
-            // The reactor's egress dropped this interface's lane: there is no more work
-            // ever. Park (lifecycle/shutdown is a deferred concern, not the seam's).
-            None => core::future::pending().await,
-        }
+    async fn next_outbound(&mut self) -> &[u8] {
+        self.outbound.release();
+        self.outbound.peek().await.frame()
     }
 }
 
@@ -192,19 +188,35 @@ impl InterfaceSeam for TokioInterfaceSeam {
 /// interface's outbound queue. The senders are cheap clones, so `enqueue` is `&self`
 /// and the copy-into-frame is synchronous — exactly what the lent-buffer borrow demands.
 pub struct Egress {
-    lanes: std::vec::Vec<(InterfaceId, UnboundedSender<OutboundFrame>)>,
+    lanes: std::vec::Vec<(
+        InterfaceId,
+        std::sync::Mutex<TokioGrantProducer<MAX_WIRE_FRAME_LEN>>,
+    )>,
 }
 
 impl Egress {
     #[must_use]
-    pub fn new(lanes: std::vec::Vec<(InterfaceId, UnboundedSender<OutboundFrame>)>) -> Self {
-        Self { lanes }
+    pub fn new(
+        lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
+    ) -> Self {
+        Self {
+            lanes: lanes
+                .into_iter()
+                .map(|(id, producer)| (id, std::sync::Mutex::new(producer)))
+                .collect(),
+        }
     }
 
     fn enqueue(&self, target: InterfaceId, bytes: &[u8]) {
-        for (id, sender) in &self.lanes {
+        for (id, producer) in &self.lanes {
             if *id == target {
-                let _ = sender.send(OutboundFrame::new(bytes));
+                let Ok(mut producer) = producer.lock() else {
+                    return;
+                };
+                if let Some(slot) = producer.try_grant() {
+                    slot.fill(bytes);
+                    producer.commit();
+                }
                 return;
             }
         }
@@ -597,7 +609,7 @@ mod tests {
                 Some(5_000),
             ),
         }];
-        let (tx, mut rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (tx, mut rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(id, tx)]);
 
         offer_to_pacer(
@@ -609,7 +621,8 @@ mod tests {
             &egress,
             &[],
         );
-        assert_eq!(rx.try_recv().unwrap().bytes(), [1u8; 10].as_slice());
+        assert_eq!(rx.try_peek().unwrap().frame(), [1u8; 10].as_slice());
+        rx.release();
 
         offer_to_pacer(
             &mut pacers,
@@ -620,14 +633,18 @@ mod tests {
             &egress,
             &[],
         );
-        assert!(rx.try_recv().is_err(), "the second is held, not sent");
+        assert!(rx.try_peek().is_none(), "the second is held, not sent");
         assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
 
         flush_due_pacers(&mut pacers, InstantMillis(1_799), &egress, &[]);
-        assert!(rx.try_recv().is_err(), "nothing releases before the window");
+        assert!(
+            rx.try_peek().is_none(),
+            "nothing releases before the window"
+        );
 
         flush_due_pacers(&mut pacers, InstantMillis(1_800), &egress, &[]);
-        assert_eq!(rx.try_recv().unwrap().bytes(), [2u8; 10].as_slice());
+        assert_eq!(rx.try_peek().unwrap().frame(), [2u8; 10].as_slice());
+        rx.release();
         assert_eq!(soonest_pacer_release(&pacers), None);
     }
 
@@ -658,7 +675,7 @@ mod tests {
                         }
                     }
                     outbound = seam.next_outbound() => {
-                        let _ = self.wire_out.send(outbound.bytes().to_vec());
+                        let _ = self.wire_out.send(outbound.to_vec());
                     }
                 }
             }
@@ -724,7 +741,7 @@ mod tests {
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (source_out_tx, source_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let source_iface = LoopbackInterface {
             descriptor: descriptor(source),
             wire_in: source_wire_in_rx,
@@ -737,7 +754,7 @@ mod tests {
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (peer_out_tx, peer_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let peer_iface = LoopbackInterface {
             descriptor: descriptor(peer),
             wire_in: peer_wire_in_rx,
@@ -840,7 +857,7 @@ mod tests {
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (source_out_tx, source_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let source_iface = LoopbackInterface {
             descriptor: descriptor(source),
             wire_in: source_wire_in_rx,
@@ -852,7 +869,7 @@ mod tests {
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (peer_out_tx, peer_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let peer_iface = LoopbackInterface {
             descriptor: descriptor(peer),
             wire_in: peer_wire_in_rx,
@@ -929,7 +946,7 @@ mod tests {
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (source_out_tx, source_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let source_iface = LoopbackInterface {
             descriptor: descriptor(source),
             wire_in: source_wire_in_rx,
@@ -941,7 +958,7 @@ mod tests {
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (peer_out_tx, peer_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let peer_iface = LoopbackInterface {
             descriptor: descriptor(peer),
             wire_in: peer_wire_in_rx,
@@ -1074,7 +1091,7 @@ mod tests {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (mut source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
-        let (source_out_tx, mut source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (source_out_tx, mut source_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(source, source_out_tx)]);
 
         let (delivered_tx, mut delivered_rx) = mpsc::unbounded_channel::<()>();
@@ -1117,12 +1134,11 @@ mod tests {
             .expect("the delivery journals within the window")
             .expect("the reactor task is alive");
 
-        let frame = tokio::time::timeout(Duration::from_secs(2), source_out_rx.recv())
+        let frame = tokio::time::timeout(Duration::from_secs(2), source_out_rx.peek())
             .await
-            .expect("the owed proof is emitted within the window")
-            .expect("the reactor task is alive");
+            .expect("the owed proof is emitted within the window");
         assert_eq!(
-            frame.bytes(),
+            frame.frame(),
             expected_proof,
             "the proof is byte-identical to the RNS 1.3.1 implicit proof, on the arrival lane"
         );
@@ -1157,7 +1173,7 @@ mod tests {
         let (source_wire_in_tx, source_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (source_wire_out_tx, _source_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (source_out_tx, source_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (source_out_tx, source_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let source_iface = LoopbackInterface {
             descriptor: descriptor(source),
             wire_in: source_wire_in_rx,
@@ -1169,7 +1185,7 @@ mod tests {
         let (_peer_wire_in_tx, peer_wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (peer_wire_out_tx, mut peer_wire_out_rx) =
             mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (peer_out_tx, peer_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (peer_out_tx, peer_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let peer_iface = LoopbackInterface {
             descriptor: descriptor(peer),
             wire_in: peer_wire_in_rx,
@@ -1270,7 +1286,7 @@ mod tests {
         let (source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (wire_in_tx, wire_in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (wire_out_tx, _wire_out_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (out_tx, out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let iface = LoopbackInterface {
             descriptor: descriptor(source),
             wire_in: wire_in_rx,
@@ -1389,8 +1405,8 @@ mod tests {
 
         let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
-        let (first_out_tx, mut first_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
-        let (second_out_tx, mut second_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (first_out_tx, mut first_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (second_out_tx, mut second_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(first, first_out_tx), (second, second_out_tx)]);
 
         let (settled_tx, mut settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
@@ -1439,11 +1455,10 @@ mod tests {
         assert_eq!(settlement, Settlement::AnnounceNow(Ok(())));
 
         for out_rx in [&mut first_out_rx, &mut second_out_rx] {
-            let frame = tokio::time::timeout(Duration::from_secs(2), out_rx.recv())
+            let frame = tokio::time::timeout(Duration::from_secs(2), out_rx.peek())
                 .await
-                .expect("an announce fires on each interface")
-                .expect("the reactor task is alive");
-            let (header, _) = WirePacketHeader::parse(frame.bytes()).expect("valid announce wire");
+                .expect("an announce fires on each interface");
+            let (header, _) = WirePacketHeader::parse(frame.frame()).expect("valid announce wire");
             assert_eq!(header.packet_type, PacketType::Announce);
             assert_eq!(header.destination, destination);
         }
@@ -1470,7 +1485,7 @@ mod tests {
         let initiator_engine = EngineState::<Cap>::new(second_secret_key());
         let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (a_in_tx, a_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (a_out_tx, a_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (a_out_tx, a_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let a_iface = LoopbackInterface {
             descriptor: descriptor(initiator_iface),
             wire_in: b_to_a_rx,
@@ -1499,7 +1514,7 @@ mod tests {
         let responder_engine = personal_node_announcer();
         let (b_notify_tx, b_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (b_in_tx, b_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (b_out_tx, b_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let (b_out_tx, b_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let b_iface = LoopbackInterface {
             descriptor: descriptor(responder_iface),
             wire_in: a_to_b_rx,

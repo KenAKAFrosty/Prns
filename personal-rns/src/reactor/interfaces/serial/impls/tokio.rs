@@ -112,7 +112,7 @@ async fn serve<S, Seam>(
             }
             outbound = seam.next_outbound() => {
                 let mut frame_buf = [0u8; core::FRAMED_LEN];
-                if let Some(framed) = core::frame_for_wire(outbound.bytes(), &mut frame_buf) {
+                if let Some(framed) = core::frame_for_wire(outbound, &mut frame_buf) {
                     if stream.write_all(&frame_buf[..framed]).await.is_err() {
                         return;
                     }
@@ -143,6 +143,7 @@ mod tests {
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         outbound: UnboundedReceiver<OutboundFrame>,
+        held: Option<OutboundFrame>,
     }
 
     impl InterfaceSeam for MockSeam {
@@ -150,9 +151,15 @@ mod tests {
             let _ = self.inbound.send(frame.to_vec());
         }
 
-        async fn next_outbound(&mut self) -> OutboundFrame {
+        async fn next_outbound(&mut self) -> &[u8] {
             match self.outbound.recv().await {
-                Some(frame) => frame,
+                Some(frame) => {
+                    self.held = Some(frame);
+                    match &self.held {
+                        Some(frame) => frame.bytes(),
+                        None => &[],
+                    }
+                }
                 None => ::core::future::pending().await,
             }
         }
@@ -178,6 +185,7 @@ mod tests {
         let seam = MockSeam {
             inbound: in_tx,
             outbound: out_rx,
+            held: None,
         };
 
         let interface = SerialInterface::new(test_id(), open, Duration::from_millis(10));

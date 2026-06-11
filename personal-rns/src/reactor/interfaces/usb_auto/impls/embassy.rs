@@ -134,7 +134,7 @@ where
                 }
                 Either3::Second(out) => {
                     if linked {
-                        let data = Message::Data(out.bytes());
+                        let data = Message::Data(out);
                         write_message(&mut tx, &data, &mut frame_buf, status).await;
                     }
                 }

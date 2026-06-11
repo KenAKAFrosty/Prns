@@ -23,7 +23,7 @@ use personal_rns::interfaces::ifac::{IfacContext, InterfaceIfac, DEFAULT_IFAC_SI
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{run, Egress, TokioHost, TokioInterfaceSeam};
 use personal_rns::reactor::impls::tokio_reactor::tokio_grant_lane;
-use personal_rns::reactor::interface_seam::{Interface, OutboundFrame, MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::serial::impls::tokio::SerialInterface;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
@@ -252,7 +252,7 @@ async fn main() {
     let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+    let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
 
     let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, notify_tx, outbound_rx);
     let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
