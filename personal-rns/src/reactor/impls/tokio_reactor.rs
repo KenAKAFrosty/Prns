@@ -1272,4 +1272,134 @@ mod tests {
             assert_eq!(header.destination, destination);
         }
     }
+
+    #[tokio::test]
+    async fn an_establish_link_settles_across_two_live_reactors() {
+        use crate::engine::test_support::{
+            personal_node_announcer, personal_node_destination, second_secret_key,
+        };
+        use crate::engine::{
+            AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
+            LinkEstablished, Settlement,
+        };
+
+        let initiator_iface = InterfaceId::new([0xA1; 16]);
+        let responder_iface = InterfaceId::new([0xB2; 16]);
+
+        let (a_to_b_tx, a_to_b_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (b_to_a_tx, b_to_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+
+        let initiator_engine = EngineState::<Cap>::new(second_secret_key());
+        let (a_funnel_tx, a_funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (a_out_tx, a_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let a_iface = LoopbackInterface {
+            descriptor: descriptor(initiator_iface),
+            wire_in: b_to_a_rx,
+            wire_out: a_to_b_tx,
+        };
+        let a_seam = TokioInterfaceSeam::new(initiator_iface, a_funnel_tx.clone(), a_out_rx);
+        drop(a_funnel_tx);
+        let a_egress = Egress::new(std::vec![(initiator_iface, a_out_tx)]);
+        let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (a_heard_tx, mut a_heard_rx) = mpsc::unbounded_channel::<()>();
+        let (a_settled_tx, mut a_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
+        let a_app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::AnnounceHeard { .. } => {
+                let _ = a_heard_tx.send(());
+            }
+            Journaled::CommandSettled { id, settlement } => {
+                let _ = a_settled_tx.send((id, settlement));
+            }
+            _ => {}
+        };
+
+        let responder_engine = personal_node_announcer();
+        let (b_funnel_tx, b_funnel_rx) = mpsc::unbounded_channel::<InboundFrame>();
+        let (b_out_tx, b_out_rx) = mpsc::unbounded_channel::<OutboundFrame>();
+        let b_iface = LoopbackInterface {
+            descriptor: descriptor(responder_iface),
+            wire_in: a_to_b_rx,
+            wire_out: b_to_a_tx,
+        };
+        let b_seam = TokioInterfaceSeam::new(responder_iface, b_funnel_tx.clone(), b_out_rx);
+        drop(b_funnel_tx);
+        let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
+        let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (b_established_tx, mut b_established_rx) = mpsc::unbounded_channel::<LinkEstablished>();
+        let b_app = move |journaled: Journaled<'_>| {
+            if let Journaled::LinkEstablished(established) = journaled {
+                let _ = b_established_tx.send(established);
+            }
+        };
+
+        tokio::spawn(run(
+            initiator_engine,
+            std::vec![descriptor(initiator_iface)],
+            std::vec![],
+            TokioHost::new(),
+            a_funnel_rx,
+            a_command_rx,
+            a_egress,
+            a_app,
+        ));
+        tokio::spawn(run(
+            responder_engine,
+            std::vec![descriptor(responder_iface)],
+            std::vec![],
+            TokioHost::new(),
+            b_funnel_rx,
+            b_command_rx,
+            b_egress,
+            b_app,
+        ));
+        tokio::spawn(a_iface.run(a_seam));
+        tokio::spawn(b_iface.run(b_seam));
+
+        b_command_tx
+            .send(IssuedCommand {
+                id: CommandId(1),
+                command: EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), a_heard_rx.recv())
+            .await
+            .expect("the announce crosses the wire")
+            .expect("the initiator reactor is alive");
+
+        a_command_tx
+            .send(IssuedCommand {
+                id: CommandId(7),
+                command: EngineCommand::EstablishLink(EstablishLink {
+                    destination: personal_node_destination(),
+                }),
+            })
+            .unwrap();
+
+        let (settled_id, settlement) =
+            tokio::time::timeout(Duration::from_secs(5), a_settled_rx.recv())
+                .await
+                .expect("the link settles within the window")
+                .expect("the initiator reactor is alive");
+        assert_eq!(settled_id, CommandId(7));
+        let Settlement::EstablishLink(Ok(established)) = settlement else {
+            panic!("the command must settle established, got {settlement:?}");
+        };
+
+        let responder_side = tokio::time::timeout(Duration::from_secs(5), b_established_rx.recv())
+            .await
+            .expect("the responder journals the link up")
+            .expect("the responder reactor is alive");
+        assert_eq!(
+            responder_side.link_id, established.link_id,
+            "one link, two ends",
+        );
+        assert!(
+            responder_side.rtt_ms >= established.rtt_ms,
+            "the responder takes max(measured, reported)",
+        );
+    }
 }
