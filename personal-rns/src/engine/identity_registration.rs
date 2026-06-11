@@ -7,6 +7,7 @@ use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
+use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
 use crate::routing::storage::{ColumnsFull, EngineStorage};
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
@@ -116,6 +117,42 @@ impl<S: EngineStorage> EngineState<S> {
 
     pub fn upstream_app_destinations(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
         self.upstream_app_destinations.iter()
+    }
+
+    /// RNS 1.3.1 `Destination.register_request_handler`: requests arriving
+    /// over this destination's links at `truncated_hash(path)` pass the
+    /// registry's gate and journal to the app; everything else dies silently.
+    /// Last write wins, and a re-registration starts from an empty allow list.
+    pub fn register_request_handler(
+        &mut self,
+        destination: &DestinationHash,
+        path: &str,
+        policy: RequestPolicy,
+    ) -> Result<(), ColumnsFull> {
+        self.request_handlers
+            .register(*destination, RequestPathHash::of(path), policy)
+    }
+
+    /// Admit one identified peer to an [`RequestPolicy::AllowList`] handler
+    /// (RNS 1.3.1's `allowed_list`)
+    pub fn allow_requester(
+        &mut self,
+        destination: &DestinationHash,
+        path: &str,
+        identity: IdentityHash,
+    ) -> Result<(), RequestHandlerError> {
+        self.request_handlers
+            .allow(destination, &RequestPathHash::of(path), identity)
+    }
+
+    pub fn disallow_requester(
+        &mut self,
+        destination: &DestinationHash,
+        path: &str,
+        identity: &IdentityHash,
+    ) -> Result<(), RequestHandlerError> {
+        self.request_handlers
+            .disallow(destination, &RequestPathHash::of(path), identity)
     }
 }
 

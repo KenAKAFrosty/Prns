@@ -368,6 +368,31 @@ fn log_journaled(journaled: Journaled<'_>) {
                 established.rtt_ms,
             );
         }
+        Journaled::RequestReceived {
+            link_id,
+            request_id,
+            data,
+            ..
+        } => {
+            println!(
+                "HOPSPOT_REQUEST_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
+                link_id.as_bytes(),
+                request_id.as_bytes(),
+                data.len(),
+            );
+        }
+        Journaled::ResponseReceived {
+            link_id,
+            request_id,
+            data,
+        } => {
+            println!(
+                "HOPSPOT_RESPONSE_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
+                link_id.as_bytes(),
+                request_id.as_bytes(),
+                data.len(),
+            );
+        }
         Journaled::PeerIdentified { link_id, identity } => {
             println!(
                 "HOPSPOT_PEER_IDENTIFIED link_id={:02x?} identity={:02x?}",

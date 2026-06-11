@@ -748,6 +748,8 @@ mod tests {
             | Journaled::RouteInterfaceGone { .. }
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
+            | Journaled::RequestReceived { .. }
+            | Journaled::ResponseReceived { .. }
             | Journaled::LinkClosed { .. } => {}
         };
 

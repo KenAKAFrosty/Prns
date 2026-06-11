@@ -1,6 +1,7 @@
 use crate::crypto::{token_open_in_place, TokenKey};
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
 use crate::engine::commands::CommandId;
+use crate::engine::commands::Delivered;
 use crate::engine::egress::PATH_REQUEST_DESTINATION;
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::EngineState;
@@ -25,10 +26,14 @@ use crate::routing::links::handshake::{
 };
 use crate::routing::links::identify::peer_identity_from;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
+use crate::routing::links::request::{
+    parse_request_plaintext, parse_response_plaintext, RequestId,
+};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
+use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
@@ -231,6 +236,24 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         identity: IdentityHash,
     },
+    /// A sealed request passed the registry's allow gate — the app owes the
+    /// response, answered back with a `Respond` command naming `request_id`.
+    RequestReceived {
+        link_id: LinkId,
+        request_id: RequestId,
+        path_hash: RequestPathHash,
+        requested_at: InstantMillis,
+        data: &'p [u8],
+    },
+    /// A sealed response named an outstanding request's id — the command
+    /// settles Delivered and the bytes ride the journal.
+    ResponseSettled {
+        id: CommandId,
+        delivered: Delivered,
+        link_id: LinkId,
+        request_id: RequestId,
+        data: &'p [u8],
+    },
     /// A link request arrived for one of our own destinations — the engine
     /// owes the signed LRPROOF that brings the link up.
     OwesLinkProof {
@@ -426,6 +449,8 @@ impl<S: EngineStorage> EngineState<S> {
                         }
                         WireContext::LinkClose => self.classify_link_close(data),
                         WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
+                        WireContext::Request => self.classify_request_over_link(data, arrived_at),
+                        WireContext::Response => self.classify_response_over_link(data, arrived_at),
                         _ => IngestPacketOutcome::Ignored,
                     };
                 }
@@ -678,8 +703,102 @@ impl<S: EngineStorage> EngineState<S> {
         let Some(identity) = peer_identity_from(&link_id, plaintext) else {
             return IngestPacketOutcome::Ignored;
         };
+        self.links.note_identified(&link_id, identity);
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::PeerIdentified { link_id, identity }
+    }
+
+    fn classify_request_over_link<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+        let Some(LinkPhase::Active {
+            key,
+            role: LinkRole::Responder { destination, .. },
+            remote_identity,
+            ..
+        }) = self.links.phase_for(&link_id)
+        else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let destination = *destination;
+        let remote_identity = *remote_identity;
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let plaintext: &'p [u8] = plaintext;
+        let Some(parsed) = parse_request_plaintext(plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        if !self
+            .request_handlers
+            .permits(&destination, &parsed.path_hash, remote_identity.as_ref())
+        {
+            return IngestPacketOutcome::Ignored;
+        }
+        self.links.note_inbound(&link_id, arrived_at);
+        IngestPacketOutcome::RequestReceived {
+            link_id,
+            request_id: RequestId::of_packet(&packet_hash),
+            path_hash: parsed.path_hash,
+            requested_at: parsed.requested_at,
+            data: parsed.data,
+        }
+    }
+
+    fn classify_response_over_link<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let plaintext: &'p [u8] = plaintext;
+        let Some((request_id, response_data)) = parse_response_plaintext(plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(proven) = self.receipts.settle_by_request_id(request_id.as_bytes()) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        self.links.note_inbound(&link_id, arrived_at);
+        IngestPacketOutcome::ResponseSettled {
+            id: proven.command_id,
+            delivered: Delivered {
+                rtt_ms: arrived_at.0.saturating_sub(proven.sent_at.0),
+            },
+            link_id,
+            request_id,
+            data: response_data,
+        }
     }
 
     fn classify_keepalive(

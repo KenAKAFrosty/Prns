@@ -2,7 +2,8 @@ use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
     Directive, EngineReaction, EngineState, EstablishLinkFailure, InstantMillis, Journaled,
-    RequestPathFailure, SendLinkFailure, SendSingleFailure, Settlement, WakeSchedules,
+    RequestPathFailure, SendLinkFailure, SendRequestFailure, SendSingleFailure, Settlement,
+    WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::InterfaceConfig;
@@ -25,6 +26,9 @@ impl<S: EngineStorage> EngineState<S> {
             let settlement = match expired.kind {
                 ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Timeout)),
                 ReceiptKind::SendLink => Settlement::SendLink(Err(SendLinkFailure::Timeout)),
+                ReceiptKind::SendRequest => {
+                    Settlement::SendRequest(Err(SendRequestFailure::Timeout))
+                }
             };
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: expired.command_id,

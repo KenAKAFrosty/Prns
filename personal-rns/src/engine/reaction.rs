@@ -1,8 +1,11 @@
 use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
+use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
+use crate::routing::request_handlers::RequestPathHash;
 use crate::wire::DestinationHash;
 
 pub enum EngineReaction<'a> {
@@ -32,6 +35,24 @@ pub enum Journaled<'a> {
     PeerIdentified {
         link_id: LinkId,
         identity: IdentityHash,
+    },
+    /// RNS 1.3.1's request handler callback as data: a sealed request passed
+    /// the registry's allow gate, and the app owes the response — answered
+    /// with a `Respond` command naming `request_id`. `data` is the request's
+    /// raw msgpack value bytes, app-owned.
+    RequestReceived {
+        link_id: LinkId,
+        request_id: RequestId,
+        path_hash: RequestPathHash,
+        requested_at: InstantMillis,
+        data: &'a [u8],
+    },
+    /// The response that settled a `SendRequest` — the bytes ride here while
+    /// the settlement carries the round trip.
+    ResponseReceived {
+        link_id: LinkId,
+        request_id: RequestId,
+        data: &'a [u8],
     },
     LinkClosed {
         link_id: LinkId,

@@ -52,6 +52,7 @@ pub enum LinkPhase {
         last_keepalive_sent: InstantMillis,
         keepalive_ms: u64,
         peer_signing: Ed25519PublicKey,
+        remote_identity: Option<IdentityHash>,
     },
 }
 
@@ -279,6 +280,7 @@ impl<C: LinkColumns> Links<C> {
         }
         let keepalive_ms = keepalive_ms_from(rtt_ms);
         *self.columns.phase_mut(index) = LinkPhase::Active {
+            remote_identity: None,
             key,
             role: LinkRole::Initiator,
             rtt_ms,
@@ -324,6 +326,7 @@ impl<C: LinkColumns> Links<C> {
                     proof_strategy,
                 };
                 *phase = LinkPhase::Active {
+                    remote_identity: None,
                     key,
                     role,
                     rtt_ms,
@@ -342,6 +345,18 @@ impl<C: LinkColumns> Links<C> {
                 *phase = other;
                 Err(LinkActivationError::WrongPhase)
             }
+        }
+    }
+
+    pub fn note_identified(&mut self, link_id: &LinkId, identity: IdentityHash) {
+        let Some(index) = self.index_of(link_id) else {
+            return;
+        };
+        if let LinkPhase::Active {
+            remote_identity, ..
+        } = self.columns.phase_mut(index)
+        {
+            *remote_identity = Some(identity);
         }
     }
 

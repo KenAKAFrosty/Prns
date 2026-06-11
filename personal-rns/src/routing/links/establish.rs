@@ -1485,6 +1485,266 @@ mod tests {
     }
 
     #[test]
+    fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
+        use crate::engine::{
+            Delivered, Identify, Respond, RespondData, SendRequest, SendRequestData,
+            SendRequestFailure,
+        };
+        use crate::routing::links::request::RequestId;
+        use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let asker = initiator.held_identity_hashes()[0];
+        responder
+            .register_request_handler(
+                &personal_node_destination(),
+                "/status",
+                RequestPolicy::AllowList,
+            )
+            .unwrap();
+        responder
+            .allow_requester(&personal_node_destination(), "/status", asker)
+            .unwrap();
+
+        let command = |engine: &mut EngineState<Cap>,
+                       id: u64,
+                       command: EngineCommand,
+                       now: u64,
+                       iv_fill: u8| {
+            let mut sent = std::vec::Vec::new();
+            let mut settled = std::vec::Vec::new();
+            let _ = engine.ingest_command_into(
+                IssuedCommand {
+                    id: CommandId(id),
+                    command,
+                },
+                &arrival_view(),
+                InstantMillis(now),
+                &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+                &mut |reaction| match reaction {
+                    EngineReaction::Directive(Directive::Send { bytes, .. }) => {
+                        sent.push(bytes.to_vec());
+                    }
+                    EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                        settled.push((id, settlement));
+                    }
+                    _ => {}
+                },
+            );
+            (sent, settled)
+        };
+        let ask = SendRequest {
+            link_id,
+            path_hash: RequestPathHash::of("/status"),
+            data: SendRequestData::from_slice(&[0xC4, 0x03, b'a', b's', b'k']).unwrap(),
+        };
+
+        // An unidentified peer's ask dies silently at the allow gate.
+        let (sent, settled) = command(
+            &mut initiator,
+            20,
+            EngineCommand::SendRequest(ask.clone()),
+            2_000,
+            0xD1,
+        );
+        assert_eq!(sent.len(), 1);
+        assert!(settled.is_empty(), "the request awaits its response");
+        let mut heard = std::vec::Vec::new();
+        let mut raw = sent[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_100),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_100),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::RequestReceived { .. })
+                | EngineReaction::Directive(Directive::Send { .. }) = reaction
+                {
+                    heard.push(());
+                }
+            },
+        );
+        assert!(heard.is_empty(), "a stranger's request is silently refused");
+
+        // The peer identifies; the very same ask now passes the list.
+        let (identify_frames, _) = command(
+            &mut initiator,
+            21,
+            EngineCommand::Identify(Identify {
+                link_id,
+                identity: asker,
+            }),
+            2_200,
+            0xE1,
+        );
+        let mut raw = identify_frames[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_300),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_300),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |_| {},
+        );
+
+        let Some(LinkPhase::Active {
+            remote_identity, ..
+        }) = responder.links.phase_for(&link_id)
+        else {
+            panic!("active");
+        };
+        assert_eq!(
+            *remote_identity,
+            Some(asker),
+            "identify stored the identity"
+        );
+        let (sent, _) = command(
+            &mut initiator,
+            22,
+            EngineCommand::SendRequest(ask),
+            2_400,
+            0xF1,
+        );
+        let mut received: std::vec::Vec<(RequestId, std::vec::Vec<u8>)> = std::vec::Vec::new();
+        let mut raw = sent[0].clone();
+        let _ = responder.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_500),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::RequestReceived {
+                    link_id: heard_link,
+                    request_id,
+                    path_hash,
+                    data,
+                    ..
+                }) = reaction
+                {
+                    assert_eq!(heard_link, link_id);
+                    assert_eq!(path_hash, RequestPathHash::of("/status"));
+                    received.push((request_id, data.to_vec()));
+                }
+            },
+        );
+        assert_eq!(received.len(), 1, "the identified peer's request lands");
+        assert_eq!(received[0].1, &[0xC4, 0x03, b'a', b's', b'k']);
+        let request_id = received[0].0;
+
+        // The app answers; the response settles the request with its bytes.
+        let (responses, settled) = command(
+            &mut responder,
+            23,
+            EngineCommand::Respond(Respond {
+                link_id,
+                request_id,
+                data: RespondData::from_slice(&[0xC4, 0x02, b'o', b'k']).unwrap(),
+            }),
+            2_600,
+            0xA9,
+        );
+        assert_eq!(
+            settled,
+            std::vec![(CommandId(23), Settlement::Respond(Ok(())))],
+            "a response is fire-and-forget",
+        );
+        let mut answered = std::vec::Vec::new();
+        let mut concluded = std::vec::Vec::new();
+        let mut raw = responses[0].clone();
+        let _ = initiator.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_700),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+            InstantMillis(2_700),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::ResponseReceived {
+                    request_id: answered_id,
+                    data,
+                    ..
+                }) => {
+                    assert_eq!(answered_id, request_id);
+                    answered.push(data.to_vec());
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    concluded.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(answered, std::vec![std::vec![0xC4, 0x02, b'o', b'k']]);
+        assert_eq!(
+            concluded,
+            std::vec![(
+                CommandId(22),
+                Settlement::SendRequest(Ok(Delivered { rtt_ms: 300 })),
+            )],
+            "the response settles the request with the measured round trip",
+        );
+
+        // The refused first ask was never answered: it times out at
+        // rtt × 6 + the response grace = 2_000 + 1_500 + 11_250.
+        let mut expired = std::vec::Vec::new();
+        let mut collect = |reaction: EngineReaction<'_>| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                reaction
+            {
+                expired.push((id, settlement));
+            }
+        };
+        let _ = initiator.settle_timed_out_receipts(InstantMillis(14_749), &mut collect);
+        let _ = initiator.settle_timed_out_receipts(InstantMillis(14_750), &mut collect);
+        assert_eq!(
+            expired,
+            std::vec![(
+                CommandId(20),
+                Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+            )],
+        );
+    }
+
+    #[test]
     fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         use crate::engine::{Identify, IdentifyError};
         use crate::wire::{WireContext, WirePacketHeader};

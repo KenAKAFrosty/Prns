@@ -16,6 +16,7 @@ use crate::routing::group_keys::GroupKeyColumns;
 use crate::routing::links::table::LinkColumns;
 use crate::routing::path_requests::pending::PendingPathRequestColumns;
 use crate::routing::path_requests::seen::SeenPathRequestColumns;
+use crate::routing::request_handlers::RequestHandlerColumns;
 use crate::routing::reverse_routes::ReverseRouteColumns;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 use crate::routing::{NextHop, RouteResponsiveness};
@@ -188,5 +189,6 @@ pub trait EngineStorage {
     type SeenPathRequests: SeenPathRequestColumns + Default;
     type AnnounceRates: AnnounceRateColumns + Default;
     type GroupKeys: GroupKeyColumns + Default;
+    type RequestHandlers: RequestHandlerColumns + Default;
     type Links: LinkColumns + Default;
 }

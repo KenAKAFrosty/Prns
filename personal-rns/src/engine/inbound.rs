@@ -224,6 +224,39 @@ impl<S: EngineStorage> EngineState<S> {
                     wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
                 }
             }
+            IngestPacketOutcome::RequestReceived {
+                link_id,
+                request_id,
+                path_hash,
+                requested_at,
+                data,
+            } => {
+                sink(EngineReaction::Journaled(Journaled::RequestReceived {
+                    link_id,
+                    request_id,
+                    path_hash,
+                    requested_at,
+                    data,
+                }));
+            }
+            IngestPacketOutcome::ResponseSettled {
+                id,
+                delivered,
+                link_id,
+                request_id,
+                data,
+            } => {
+                sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                    link_id,
+                    request_id,
+                    data,
+                }));
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendRequest(Ok(delivered)),
+                }));
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            }
             IngestPacketOutcome::PeerIdentified { link_id, identity } => {
                 sink(EngineReaction::Journaled(Journaled::PeerIdentified {
                     link_id,

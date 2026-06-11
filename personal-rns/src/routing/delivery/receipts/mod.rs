@@ -21,6 +21,7 @@ use crate::routing::dedup::PacketHash;
 pub enum ReceiptKind {
     SendSingle,
     SendLink,
+    SendRequest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,11 +143,10 @@ impl<C: ReceiptColumns> Receipts<C> {
         proof_hash: &PacketHash,
         signature: &Ed25519Signature,
     ) -> Option<ProvenReceipt> {
-        let index = self
-            .columns
-            .packet_hashes()
-            .iter()
-            .position(|candidate| candidate == proof_hash)?;
+        let index = (0..self.columns.len()).find(|index| {
+            self.columns.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+                && self.columns.packet_hashes().get(*index) == Some(proof_hash)
+        })?;
         self.settle_verified(index, signature)
     }
 
@@ -156,8 +156,31 @@ impl<C: ReceiptColumns> Receipts<C> {
         &mut self,
         signature: &Ed25519Signature,
     ) -> Option<ProvenReceipt> {
-        let index =
-            (0..self.columns.len()).find(|index| self.row_signature_valid(*index, signature))?;
+        let index = (0..self.columns.len()).find(|index| {
+            self.columns.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
+                && self.row_signature_valid(*index, signature)
+        })?;
+        let proven = ProvenReceipt {
+            command_id: *self.columns.command_ids().get(index)?,
+            kind: *self.columns.kinds().get(index)?,
+            sent_at: *self.columns.sent_ats().get(index)?,
+        };
+        self.columns.swap_remove(index);
+        Some(proven)
+    }
+
+    /// A response names its request by the truncated hash of the request
+    /// packet — the first sixteen bytes of the hash already tracked here. The
+    /// session key authenticated the response, so no signature gates this.
+    pub fn settle_by_request_id(&mut self, request_id: &[u8; 16]) -> Option<ProvenReceipt> {
+        let index = (0..self.columns.len()).find(|index| {
+            self.columns.kinds().get(*index) == Some(&ReceiptKind::SendRequest)
+                && self
+                    .columns
+                    .packet_hashes()
+                    .get(*index)
+                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id)
+        })?;
         let proven = ProvenReceipt {
             command_id: *self.columns.command_ids().get(index)?,
             kind: *self.columns.kinds().get(index)?,

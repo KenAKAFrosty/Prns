@@ -14,10 +14,12 @@ pub use commands::{
     CloseLinkError, CloseLinkFailure, CommandId, CommandOutcome, Delivered, EngineCommand,
     EstablishLink, EstablishLinkError, EstablishLinkFailure, Identify, IdentifyError,
     IdentifyFailure, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
-    RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendLink, SendLinkError,
-    SendLinkFailure, SendLinkPayload, SendSingle, SendSingleError, SendSingleFailure,
-    SendSinglePayload, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
-    MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
+    RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, SendGroup,
+    SendGroupFailure, SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload,
+    SendRequest, SendRequestData, SendRequestError, SendRequestFailure, SendSingle,
+    SendSingleError, SendSingleFailure, SendSinglePayload, Settleable, Settlement,
+    MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN,
+    PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -71,6 +73,7 @@ use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::table::Links;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
+use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
@@ -198,6 +201,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
+    pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
     pub(crate) links: Links<S::Links>,
 }
 
@@ -219,6 +223,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             seen_path_requests: SeenPathRequests::default(),
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),
+            request_handlers: RequestHandlers::default(),
             links: Links::default(),
         }
     }

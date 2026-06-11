@@ -9,6 +9,7 @@ pub mod establish;
 pub mod handshake;
 pub mod identify;
 pub mod maintenance;
+pub mod request;
 pub mod table;
 
 use crate::crypto::{

@@ -151,6 +151,7 @@ impl<S: EngineStorage> EngineState<S> {
                         id: receipt.command_id,
                         delivered,
                     },
+                    ReceiptKind::SendRequest => ProofIngest::Ignored,
                 }
             }
             None => ProofIngest::Ignored,

@@ -5,6 +5,7 @@ pub mod group_keys;
 pub mod links;
 pub mod path_requests;
 pub mod proof;
+pub mod request_handlers;
 pub mod reverse_routes;
 pub mod storage;
 pub mod types;

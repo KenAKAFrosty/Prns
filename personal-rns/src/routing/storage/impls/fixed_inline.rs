@@ -8,6 +8,7 @@ use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
+use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::storage::{
     EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
@@ -95,6 +96,7 @@ impl<
     // At most one key per registered GROUP destination, so sized by the upstream
     // registry like SelfRatchets.
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
+    type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type Links = FixedLinkColumns<MAX_LINKS>;
 }
 
