@@ -12,9 +12,10 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
-    run as run_reactor, Egress, TokioHost, TokioInterfaceStatus,
+    run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
+    TokioInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{InboundFrame, OutboundFrame};
+use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
@@ -99,8 +100,9 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>, bridge: AndroidUsbBridge) 
             .expect("registers the lxmf.delivery destination");
 
         let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
-        let (funnel_tx, funnel_rx) = unbounded_channel::<InboundFrame>();
-        let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
+        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
+        let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
 
         // The USB-auto host over the JNI bridge: it reports the one conduit present while the
@@ -122,21 +124,23 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>, bridge: AndroidUsbBridge) 
                 async move { Ok::<BridgeStream, io::Error>(bridge.open_stream()) }
             }
         };
-        let interface = UsbAutoHost::new(USB_INTERFACE_ID, scan, open);
+        let interface = UsbAutoHost::new(USB_INTERFACE_ID, scan, open, bridge.rescan());
         let status = interface.status();
         let interfaces = std::vec![interface.descriptor()];
+        let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, notify_tx, outbound_rx);
 
         let _ = ready_tx.send(status);
 
         tokio::spawn(announce_loop(command_tx, destination));
-        tokio::spawn(interface.run(funnel_tx, outbound_rx, bridge.rescan()));
+        tokio::spawn(interface.run(seam));
 
         run_reactor(
             engine,
             interfaces,
             std::vec::Vec::new(),
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(USB_INTERFACE_ID, usb_in_rx)],
             command_rx,
             egress,
             |_journaled: Journaled<'_>| {},

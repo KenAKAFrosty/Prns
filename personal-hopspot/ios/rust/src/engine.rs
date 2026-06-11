@@ -12,9 +12,10 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
-    run as run_reactor, Egress, TokioHost, TokioInterfaceSeam, TokioInterfaceStatus,
+    run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
+    TokioInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{InboundFrame, Interface, OutboundFrame};
+use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::serial::impls::tokio::SerialInterface;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
@@ -96,8 +97,9 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
             .expect("registers the lxmf.delivery destination");
 
         let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
-        let (funnel_tx, funnel_rx) = unbounded_channel::<InboundFrame>();
-        let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
+        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
+        let (tcp_in_tx, tcp_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(TCP_INTERFACE_ID, outbound_tx)]);
 
         // The interface owns the listener: each `open` accepts the next connection (the iOS host
@@ -123,7 +125,7 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
         );
         let status = interface.status();
         let interfaces = std::vec![interface.descriptor()];
-        let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, funnel_tx, outbound_rx);
+        let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, tcp_in_tx, notify_tx, outbound_rx);
 
         let _ = ready_tx.send(status);
 
@@ -135,7 +137,8 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
             interfaces,
             std::vec::Vec::new(),
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(TCP_INTERFACE_ID, tcp_in_rx)],
             command_rx,
             egress,
             |_journaled: Journaled<'_>| {},

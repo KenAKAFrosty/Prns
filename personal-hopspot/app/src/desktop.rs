@@ -30,9 +30,10 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
-    run as run_reactor, Egress, TokioHost, TokioInterfaceStatus,
+    run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
+    TokioInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{InboundFrame, OutboundFrame};
+use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
@@ -161,14 +162,22 @@ fn run_engine(
             .expect("registers the lxmf.delivery destination");
 
         let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
-        let (funnel_tx, funnel_rx) = unbounded_channel::<InboundFrame>();
-        let (outbound_tx, outbound_rx) = unbounded_channel::<OutboundFrame>();
+        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
+        let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
 
         let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
 
-        let interface = UsbAutoHost::new(USB_INTERFACE_ID, scan_cdc_ports, open_cdc_port);
+        let rescan = Arc::new(Notify::new());
+        let interface = UsbAutoHost::new(
+            USB_INTERFACE_ID,
+            scan_cdc_ports,
+            open_cdc_port,
+            rescan.clone(),
+        );
         let status = interface.status();
         let interfaces = std::vec![interface.descriptor()];
+        let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, notify_tx, outbound_rx);
 
         let _ = ready_tx.send(EngineHandles {
             command_tx: command_tx.clone(),
@@ -176,18 +185,18 @@ fn run_engine(
             destination,
         });
 
-        let rescan = Arc::new(Notify::new());
         #[cfg(target_os = "linux")]
         spawn_hotplug_watcher(rescan.clone());
         tokio::spawn(announce_loop(command_tx, destination));
-        tokio::spawn(interface.run(funnel_tx, outbound_rx, rescan));
+        tokio::spawn(interface.run(seam));
 
         run_reactor(
             engine,
             interfaces,
             std::vec::Vec::new(),
             TokioHost::new(),
-            funnel_rx,
+            notify_rx,
+            std::vec![(USB_INTERFACE_ID, usb_in_rx)],
             command_rx,
             egress,
             log_journaled,
@@ -327,6 +336,13 @@ fn log_journaled(journaled: Journaled<'_>) {
                 delivery.plaintext.len(),
             );
         }
+        Journaled::Delivered(Delivery::Link(delivery)) => {
+            println!(
+                "HOPSPOT_USB_RX_DELIVERY kind=link link_id={:02x?} bytes={}",
+                delivery.link_id.as_bytes(),
+                delivery.plaintext.len(),
+            );
+        }
         Journaled::RouteExpired { destination } => {
             println!(
                 "HOPSPOT_ROUTE_EXPIRED destination={:02x?}",
@@ -343,6 +359,19 @@ fn log_journaled(journaled: Journaled<'_>) {
             println!(
                 "HOPSPOT_ROUTE_INTERFACE_GONE destination={:02x?}",
                 destination.as_bytes(),
+            );
+        }
+        Journaled::LinkEstablished(established) => {
+            println!(
+                "HOPSPOT_LINK_ESTABLISHED link_id={:02x?} rtt_ms={}",
+                established.link_id.as_bytes(),
+                established.rtt_ms,
+            );
+        }
+        Journaled::LinkClosed { link_id, reason } => {
+            println!(
+                "HOPSPOT_LINK_CLOSED link_id={:02x?} reason={reason:?}",
+                link_id.as_bytes(),
             );
         }
         Journaled::CommandSettled { id, settlement } => {

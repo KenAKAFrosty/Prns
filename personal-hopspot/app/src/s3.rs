@@ -22,11 +22,12 @@ use embassy_executor::Spawner;
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::zerocopy_channel;
 use embassy_time::{Duration, Ticker, Timer};
 use heapless::Vec as HVec;
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
@@ -36,10 +37,12 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
+use personal_rns::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, FrameSlot};
 use personal_rns::reactor::impls::embassy_reactor::{
-    run as run_reactor, EmbassyEgress, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
+    embassy_grant_lane, run as run_reactor, EmbassyEgress, EmbassyGrantConsumer,
+    EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{InboundFrame, Interface, OutboundFrame};
+use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::reactor::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
@@ -68,7 +71,7 @@ const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
 /// The engine's fixed inline storage (no heap): the same shape the firmware has always run.
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8>;
+type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>;
 
 /// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
 /// painted stacks whenever the engine grows.
@@ -116,11 +119,28 @@ macro_rules! mk_static {
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
-/// The reactor's three inputs, crossing the core 0 ↔ core 1 seam: the device funnels inbound
-/// frames here, the egress sends outbound the device drains, and the render loop / announce timer
-/// issue commands.
-static FUNNEL: Channel<CriticalSectionRawMutex, InboundFrame, INBOUND_CAP> = Channel::new();
-static OUTBOUND: Channel<CriticalSectionRawMutex, OutboundFrame, OUTBOUND_CAP> = Channel::new();
+/// One lane slot carries the engine's whole wire ceiling — the USB hardware MTU is larger,
+/// but a thin (non-fat-links) engine never negotiates past this, so bigger slots would hold
+/// bytes the engine refuses.
+const USB_LANE_SLOT: usize = MAX_WIRE_FRAME_LEN;
+
+const EMPTY_SLOT: FrameSlot<USB_LANE_SLOT> = FrameSlot::empty();
+
+type UsbLaneRing =
+    zerocopy_channel::Channel<'static, CriticalSectionRawMutex, FrameSlot<USB_LANE_SLOT>>;
+type UsbSeam = EmbassyInterfaceSeam<'static, CriticalSectionRawMutex, INBOUND_CAP, USB_LANE_SLOT>;
+
+/// The reactor's inputs, crossing the core 0 ↔ core 1 seam: the device fills inbound slots in
+/// place and announces each commit on `NOTIFY`, the egress write-grants outbound slots the
+/// device drains, and the render loop / announce timer issue commands. The frame bytes live in
+/// these link-time buffers and never move.
+static USB_IN_SLOTS: ConstStaticCell<[FrameSlot<USB_LANE_SLOT>; INBOUND_CAP]> =
+    ConstStaticCell::new([EMPTY_SLOT; INBOUND_CAP]);
+static USB_IN_RING: StaticCell<UsbLaneRing> = StaticCell::new();
+static USB_OUT_SLOTS: ConstStaticCell<[FrameSlot<USB_LANE_SLOT>; OUTBOUND_CAP]> =
+    ConstStaticCell::new([EMPTY_SLOT; OUTBOUND_CAP]);
+static USB_OUT_RING: StaticCell<UsbLaneRing> = StaticCell::new();
+static NOTIFY: Channel<CriticalSectionRawMutex, InterfaceId, INBOUND_CAP> = Channel::new();
 static COMMANDS: Channel<CriticalSectionRawMutex, IssuedCommand, COMMANDS_CAP> = Channel::new();
 /// The user button's short/long-press events, from `button_task` to the render loop.
 static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, screen::InputEvent, 4> = Channel::new();
@@ -242,7 +262,12 @@ pub async fn run(spawner: Spawner) {
 
     // Async USB serial, split — the device task owns the halves on core 0.
     let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
-    spawner.spawn(usb_device_task(usb_rx, usb_tx).expect("device task fits the pool"));
+    let (usb_in_tx, usb_in_rx) =
+        embassy_grant_lane(USB_IN_RING.init(zerocopy_channel::Channel::new(USB_IN_SLOTS.take())));
+    let (usb_out_tx, usb_out_rx) =
+        embassy_grant_lane(USB_OUT_RING.init(zerocopy_channel::Channel::new(USB_OUT_SLOTS.take())));
+    let seam = EmbassyInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, NOTIFY.sender(), usb_out_rx);
+    spawner.spawn(usb_device_task(usb_rx, usb_tx, seam).expect("device task fits the pool"));
 
     // The destination the announces name: derived from the same fixture identity the engine
     // answers as (`register_single_destination` derives the same hash), so command and
@@ -278,8 +303,10 @@ pub async fn run(spawner: Spawner) {
             CORE1_EXECUTOR
                 .init(esp_rtos::embassy::Executor::new())
                 .run(|engine_spawner| {
-                    engine_spawner
-                        .spawn(engine_task(secret_key, timebase).expect("engine task fits"));
+                    engine_spawner.spawn(
+                        engine_task(secret_key, timebase, usb_in_rx, usb_out_tx)
+                            .expect("engine task fits"),
+                    );
                 })
         },
     );
@@ -394,6 +421,8 @@ fn fixture_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 async fn engine_task(
     secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     timebase: EmbassyTimebase,
+    usb_in_rx: EmbassyGrantConsumer<'static, CriticalSectionRawMutex, USB_LANE_SLOT>,
+    usb_out_tx: EmbassyGrantProducer<'static, CriticalSectionRawMutex, USB_LANE_SLOT>,
 ) {
     let mut engine = EngineState::<EngineStorageType>::new(secret_key);
     let node = engine.held_identity_hashes()[0];
@@ -417,9 +446,14 @@ async fn engine_task(
         Rng::new().read(bytes);
     });
 
+    let mut usb_in_rx = usb_in_rx;
+    let mut usb_out_tx = usb_out_tx;
     let interfaces = [device_descriptor(USB_INTERFACE_ID)];
-    let lanes = [(USB_INTERFACE_ID, OUTBOUND.sender())];
-    let egress = EmbassyEgress::new(&lanes);
+    let mut inbound_lanes: [(InterfaceId, &mut dyn AnyGrantConsumer); 1] =
+        [(USB_INTERFACE_ID, &mut usb_in_rx)];
+    let mut egress_lanes: [(InterfaceId, &mut dyn AnyGrantProducer); 1] =
+        [(USB_INTERFACE_ID, &mut usb_out_tx)];
+    let egress = EmbassyEgress::new(&mut egress_lanes);
 
     // The reactor swallows every directive into the egress itself; the app sees only `Journaled`,
     // and the board has nowhere to log it (the usb-serial-jtag is the wire) — so it is dropped.
@@ -428,7 +462,8 @@ async fn engine_task(
         &interfaces,
         &[],
         host,
-        FUNNEL.receiver(),
+        NOTIFY.receiver(),
+        &mut inbound_lanes,
         COMMANDS.receiver(),
         egress,
         |_journaled: Journaled<'_>| {},
@@ -440,7 +475,11 @@ async fn engine_task(
 /// the USB-auto device interface over the serial-jtag halves, funneling into the reactor and
 /// writing the broadcasts it drains.
 #[embassy_executor::task]
-async fn usb_device_task(rx: UsbSerialJtagRx<'static, Async>, tx: UsbSerialJtagTx<'static, Async>) {
+async fn usb_device_task(
+    rx: UsbSerialJtagRx<'static, Async>,
+    tx: UsbSerialJtagTx<'static, Async>,
+    seam: UsbSeam,
+) {
     let mut last_sof = 0u16;
     let host_present = move || {
         let frame = USB_DEVICE::regs()
@@ -453,7 +492,6 @@ async fn usb_device_task(rx: UsbSerialJtagRx<'static, Async>, tx: UsbSerialJtagT
         advanced
     };
     let device = UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present);
-    let seam = EmbassyInterfaceSeam::new(USB_INTERFACE_ID, FUNNEL.sender(), OUTBOUND.receiver());
     device.run(seam).await
 }
 
