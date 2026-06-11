@@ -53,7 +53,7 @@ use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::rate_limit::AnnounceRates;
-use crate::routing::announce::schedule::RebroadcastQueue;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::path_requests::pending::PendingPathRequests;
@@ -70,7 +70,7 @@ pub struct InstantMillis(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DueLane {
-    RebroadcastAnnounces,
+    ScheduledAnnounces,
     SendSingleTimeout,
     PathRequestTimeout,
     ExpiredRoutes,
@@ -103,7 +103,7 @@ impl LaneWake {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeSchedules {
-    pub rebroadcast_announces: LaneWake,
+    pub scheduled_announces: LaneWake,
     pub send_single_timeout: LaneWake,
     pub path_request_timeout: LaneWake,
     pub expired_routes: LaneWake,
@@ -111,7 +111,7 @@ pub struct WakeSchedules {
 
 impl WakeSchedules {
     pub const UNCHANGED: Self = Self {
-        rebroadcast_announces: LaneWake::Unchanged,
+        scheduled_announces: LaneWake::Unchanged,
         send_single_timeout: LaneWake::Unchanged,
         path_request_timeout: LaneWake::Unchanged,
         expired_routes: LaneWake::Unchanged,
@@ -119,7 +119,7 @@ impl WakeSchedules {
 
     pub fn merge(&mut self, delta: WakeSchedules) {
         for (slot, change) in [
-            (&mut self.rebroadcast_announces, delta.rebroadcast_announces),
+            (&mut self.scheduled_announces, delta.scheduled_announces),
             (&mut self.send_single_timeout, delta.send_single_timeout),
             (&mut self.path_request_timeout, delta.path_request_timeout),
             (&mut self.expired_routes, delta.expired_routes),
@@ -142,7 +142,7 @@ impl WakeSchedules {
         for (wake, lane) in [
             //An implicit priority is here. Items higher in this list will trigger their 'due' before the later items
             //If we need to manage this, the WakeSchedules might need some more light bookkeeping to better distribute that. Marked here for later REVIEW
-            (self.rebroadcast_announces, DueLane::RebroadcastAnnounces),
+            (self.scheduled_announces, DueLane::ScheduledAnnounces),
             (self.send_single_timeout, DueLane::SendSingleTimeout),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
             (self.expired_routes, DueLane::ExpiredRoutes),
@@ -168,7 +168,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
     pub(crate) routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
-    pub(crate) pending_rebroadcasts: S::Pending,
+    pub(crate) scheduled_announces: S::ScheduledAnnounces,
     pub(crate) upstream_app_destinations: UpstreamAppDestinations<S::UpstreamAppDestinations>,
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
@@ -188,7 +188,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             ingested_packet_count: 0,
             ingested_command_count: 0,
             routing_table: Default::default(),
-            pending_rebroadcasts: Default::default(),
+            scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
             packet_hash_history: Default::default(),
             held_identities: HeldIdentities::default(),
@@ -210,7 +210,7 @@ where
     S::Announces: core::fmt::Debug,
     S::History: core::fmt::Debug,
     S::AppData: core::fmt::Debug,
-    S::Pending: core::fmt::Debug,
+    S::ScheduledAnnounces: core::fmt::Debug,
     S::UpstreamAppDestinations: core::fmt::Debug,
     S::PacketHashes: core::fmt::Debug,
 {
@@ -219,7 +219,7 @@ where
             .field("ingested_packet_count", &self.ingested_packet_count)
             .field("ingested_command_count", &self.ingested_command_count)
             .field("routing_table", &self.routing_table)
-            .field("pending_rebroadcasts", &self.pending_rebroadcasts)
+            .field("scheduled_announces", &self.scheduled_announces)
             .field("upstream_app_destinations", &self.upstream_app_destinations)
             .field("packet_hash_history", &self.packet_hash_history)
             .field("held_identities", &self.held_identities)
@@ -261,13 +261,13 @@ impl<S: EngineStorage> EngineState<S> {
         self.routing_table.route_count_via(interface)
     }
 
-    pub fn pending_announce_rebroadcast_count(&self) -> usize {
-        self.pending_rebroadcasts.pending_count()
+    pub fn scheduled_announce_count(&self) -> usize {
+        self.scheduled_announces.scheduled_count()
     }
 
     /// The rebroadcast lane's state from the soonest scheduled re-emit.
-    pub(crate) fn rebroadcast_lane(&self) -> LaneWake {
-        LaneWake::from_deadline(self.pending_rebroadcasts.earliest_due_at())
+    pub(crate) fn scheduled_announce_lane(&self) -> LaneWake {
+        LaneWake::from_deadline(self.scheduled_announces.earliest_due_at())
     }
 
     /// The send-single-timeout lane's state from the soonest receipt deadline.
@@ -293,7 +293,7 @@ impl<S: EngineStorage> EngineState<S> {
     /// a lane it moved (which the oracle catches).
     pub fn wake_schedules(&self, view: &[InterfaceConfig]) -> WakeSchedules {
         WakeSchedules {
-            rebroadcast_announces: self.rebroadcast_lane(),
+            scheduled_announces: self.scheduled_announce_lane(),
             send_single_timeout: self.send_timeout_lane(),
             path_request_timeout: self.path_timeout_lane(),
             expired_routes: self.route_expiry_lane(view),
@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn next_scheduled_wake_names_the_rebroadcast_lane_future_then_due() {
+    fn next_scheduled_wake_names_the_scheduled_announce_lane_future_then_due() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
         let _ = state.ingest_packet(
@@ -356,11 +356,11 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
         );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
 
         match state.next_scheduled_wake(InstantMillis(0), &transporting_view()) {
             ScheduledWake::At { at, lane } => {
-                assert_eq!(lane, DueLane::RebroadcastAnnounces);
+                assert_eq!(lane, DueLane::ScheduledAnnounces);
                 assert!(
                     at.0 >= 1_000 && at.0 < 1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
                     "due_at {} should sit within the jitter window after arrival",
@@ -372,7 +372,7 @@ mod tests {
 
         assert_eq!(
             state.next_scheduled_wake(InstantMillis(1_000_000), &transporting_view()),
-            ScheduledWake::Due(DueLane::RebroadcastAnnounces),
+            ScheduledWake::Due(DueLane::ScheduledAnnounces),
         );
     }
 
@@ -395,7 +395,7 @@ mod tests {
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             0,
             "a leaf owes no rebroadcast, so the expiry is its only deadline",
         );
@@ -422,7 +422,7 @@ mod tests {
         expired: LaneWake,
     ) -> WakeSchedules {
         WakeSchedules {
-            rebroadcast_announces: rebroadcast,
+            scheduled_announces: rebroadcast,
             send_single_timeout: send,
             path_request_timeout: path,
             expired_routes: expired,
@@ -484,7 +484,7 @@ mod tests {
             tied.soonest(InstantMillis(1_000)),
             ScheduledWake::At {
                 at: InstantMillis(5_000),
-                lane: DueLane::RebroadcastAnnounces,
+                lane: DueLane::ScheduledAnnounces,
             },
         );
     }
@@ -498,11 +498,11 @@ mod tests {
             LaneWake::Idle,
         );
         live.merge(WakeSchedules {
-            rebroadcast_announces: LaneWake::Idle,
+            scheduled_announces: LaneWake::Idle,
             ..WakeSchedules::UNCHANGED
         });
         assert_eq!(
-            live.rebroadcast_announces,
+            live.scheduled_announces,
             LaneWake::Idle,
             "the fired lane is cleared"
         );
@@ -589,7 +589,7 @@ mod tests {
             "an accepted announce arms the rebroadcast lane; the delta tracks the recompute",
         );
 
-        let delta = state.fire_due_announce_rebroadcasts(
+        let delta = state.fire_due_scheduled_announces(
             InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             &transporting_view(),
             &mut |_| {},

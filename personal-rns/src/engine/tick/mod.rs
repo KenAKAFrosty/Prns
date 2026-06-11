@@ -6,7 +6,7 @@ use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::{
     MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
 };
-use crate::routing::announce::schedule::RebroadcastQueue as _;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
 use crate::routing::storage::EngineStorage;
 use crate::wire::MTU;
 
@@ -14,14 +14,14 @@ impl<S: EngineStorage> EngineState<S> {
     /// One [`EgressDirective`] per (rebroadcast due at `now` × interface the engine elects
     /// to fire it on). The fan-out decision is the engine's alone ([`firable_on`]); the
     /// caller takes each named target to its handle. The reactor's
-    /// [`fire_due_announce_rebroadcasts`](Self::fire_due_announce_rebroadcasts) serializes
+    /// [`fire_due_scheduled_announces`](Self::fire_due_scheduled_announces) serializes
     /// and drains it.
     fn due_rebroadcast_directives<'v>(
         &'v self,
         now: InstantMillis,
         view: &'v [InterfaceConfig],
     ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
-        self.pending_rebroadcasts
+        self.scheduled_announces
             .iter()
             .filter(move |scheduled| scheduled.due_at.0 <= now.0)
             .filter_map(move |scheduled| {
@@ -54,7 +54,7 @@ impl<S: EngineStorage> EngineState<S> {
     /// due entry re-emits until [`MAX_ANNOUNCE_REBROADCASTS`], re-armed
     /// [`REBROADCAST_RETRANSMIT_INTERVAL_MS`] out, then drops. Returns the rebroadcast lane's
     /// new soonest deadline as a [`WakeSchedules`] delta.
-    pub fn fire_due_announce_rebroadcasts(
+    pub fn fire_due_scheduled_announces(
         &mut self,
         now: InstantMillis,
         view: &[InterfaceConfig],
@@ -70,13 +70,13 @@ impl<S: EngineStorage> EngineState<S> {
                 }));
             }
         }
-        self.pending_rebroadcasts.advance_due_retransmits(
+        self.scheduled_announces.advance_due_retransmits(
             now,
             REBROADCAST_RETRANSMIT_INTERVAL_MS,
             MAX_ANNOUNCE_REBROADCASTS,
         );
         WakeSchedules {
-            rebroadcast_announces: self.rebroadcast_lane(),
+            scheduled_announces: self.scheduled_announce_lane(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -123,7 +123,7 @@ mod tests {
             &transporting_view(),
         );
         assert_eq!(out, raw_announce_accepted(1));
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
 
         let (tick_out, emitted) = tick_capture(
             &mut state,
@@ -132,7 +132,7 @@ mod tests {
         );
         assert_eq!(tick_out.egress_directive_count, 1);
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             1,
             "the first emission re-arms the entry for its second rebroadcast",
         );
@@ -165,7 +165,7 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
         );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
 
         let (_, emitted) = tick_capture(
             &mut state,
@@ -194,10 +194,10 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
         );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
 
         let mut targets = std::vec::Vec::new();
-        let _ = state.fire_due_announce_rebroadcasts(
+        let _ = state.fire_due_scheduled_announces(
             InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1),
             view,
             &mut |reaction| {
@@ -261,7 +261,7 @@ mod tests {
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             1,
             "the echo is absorbed as a same-distance peer rebroadcast — counted, not looped into a fresh schedule",
         );
@@ -275,7 +275,7 @@ mod tests {
         let fan = rebroadcast_fan_for(&mut state, &view);
         assert_eq!(fan, std::vec![source]);
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             1,
             "after one emission the entry is re-armed for its second rebroadcast",
         );
@@ -292,7 +292,7 @@ mod tests {
             &view,
         );
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             0,
             "hearing our own rebroadcast one hop onward retires the pending retransmit",
         );
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_rebroadcasts_are_not_emitted_before_their_due_time() {
+    fn scheduled_announces_are_not_emitted_before_their_due_time() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
         let arrival = InstantMillis(1_000);
@@ -325,13 +325,13 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
         );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
 
         let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
         let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1), &view);
         assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
     }
 
     #[test]
@@ -365,14 +365,14 @@ mod tests {
     }
 
     #[test]
-    fn fire_due_announce_rebroadcasts_emits_then_re_arms_until_the_cap() {
+    fn fire_due_scheduled_announces_emits_then_re_arms_until_the_cap() {
         fn fire(
             state: &mut EngineState<Cap>,
             now: InstantMillis,
             view: &[InterfaceConfig],
         ) -> (std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>, LaneWake) {
             let mut sent = std::vec::Vec::new();
-            let delta = state.fire_due_announce_rebroadcasts(now, view, &mut |reaction| {
+            let delta = state.fire_due_scheduled_announces(now, view, &mut |reaction| {
                 if let EngineReaction::Directive(Directive::SendAnnounce {
                     target, bytes, ..
                 }) = reaction
@@ -380,7 +380,7 @@ mod tests {
                     sent.push((target, bytes.to_vec()));
                 }
             });
-            (sent, delta.rebroadcast_announces)
+            (sent, delta.scheduled_announces)
         }
 
         let mut raw = hx(RAW_ANNOUNCE);
@@ -398,7 +398,7 @@ mod tests {
             TEST_ENTROPY,
             &transporting_view(),
         );
-        assert_eq!(state.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(state.scheduled_announce_count(), 1);
 
         let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
         let (sent, lane) = fire(&mut state, first_due, &view);
@@ -408,7 +408,7 @@ mod tests {
             "the rebroadcast names the firable interface"
         );
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             1,
             "the first emission re-arms the entry rather than clearing it",
         );
@@ -437,7 +437,7 @@ mod tests {
             "the retransmit re-emits the same pinned announce, byte for byte",
         );
         assert_eq!(
-            state.pending_announce_rebroadcast_count(),
+            state.scheduled_announce_count(),
             0,
             "reaching the rebroadcast cap drops the entry",
         );

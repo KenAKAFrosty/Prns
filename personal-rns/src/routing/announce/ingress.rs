@@ -7,7 +7,7 @@ use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
 };
 use crate::routing::announce::rate_limit::AnnounceRateVerdict;
-use crate::routing::announce::schedule::RebroadcastQueue;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::Announce;
 use crate::routing::announce::{AnnounceAcceptanceDecision, AnnounceAcceptanceInput};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -663,7 +663,7 @@ impl<S: EngineStorage> EngineState<S> {
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> AnnounceIngest {
         if self.transport_id.is_some() {
-            self.pending_rebroadcasts.absorb_echo(
+            self.scheduled_announces.absorb_echo(
                 &announce.destination,
                 received_hops,
                 arrived_at,
@@ -722,7 +722,7 @@ impl<S: EngineStorage> EngineState<S> {
                         &announce.destination,
                         DEFAULT_REBROADCAST_JITTER_WINDOW_MS,
                     );
-                    self.pending_rebroadcasts.schedule(
+                    self.scheduled_announces.schedule(
                         announce.destination,
                         InstantMillis(arrived_at.0.saturating_add(offset)),
                         source_interface,
@@ -1370,7 +1370,7 @@ mod tests {
         );
         assert_eq!(relay.route_count(), 1, "the path response is learned");
         assert_eq!(
-            relay.pending_announce_rebroadcast_count(),
+            relay.scheduled_announce_count(),
             0,
             "a path response is never re-flooded",
         );
@@ -1395,7 +1395,7 @@ mod tests {
                 ..
             })),
         ));
-        assert_eq!(relay.pending_announce_rebroadcast_count(), 1);
+        assert_eq!(relay.scheduled_announce_count(), 1);
     }
 
     #[test]
@@ -1482,7 +1482,7 @@ mod tests {
         ));
         assert_eq!(relay.route_count(), 1, "the route is still learned");
         assert_eq!(
-            relay.pending_announce_rebroadcast_count(),
+            relay.scheduled_announce_count(),
             1,
             "only the first announce was scheduled to rebroadcast",
         );
@@ -1562,7 +1562,7 @@ mod tests {
             })),
         ));
         assert_eq!(
-            relay.pending_announce_rebroadcast_count(),
+            relay.scheduled_announce_count(),
             1,
             "one pending per destination — the second schedule replaces the first",
         );
@@ -2419,7 +2419,7 @@ mod tests {
             })),
         );
         assert_eq!(state.route_count(), 1);
-        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
+        assert_eq!(state.scheduled_announce_count(), 0);
     }
 
     #[test]
@@ -2746,7 +2746,7 @@ mod tests {
             })),
         );
         assert_eq!(state.route_count(), 1);
-        assert_eq!(state.pending_announce_rebroadcast_count(), 0);
+        assert_eq!(state.scheduled_announce_count(), 0);
     }
 
     #[test]

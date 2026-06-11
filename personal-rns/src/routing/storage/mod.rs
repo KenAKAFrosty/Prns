@@ -8,7 +8,7 @@ use crate::engine::InstantMillis;
 use crate::identity::held::HeldIdentityColumns;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::rate_limit::AnnounceRateColumns;
-use crate::routing::announce::schedule::RebroadcastQueue;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
@@ -176,7 +176,7 @@ pub trait EngineStorage {
     type Announces: RetainedAnnounceColumns + Default;
     type History: AnnounceIdHistory + Default;
     type AppData: RetainedAppData + Default;
-    type Pending: RebroadcastQueue + Default;
+    type ScheduledAnnounces: ScheduledAnnounceQueue + Default;
     type UpstreamAppDestinations: UpstreamAppDestinationColumns + Default;
     type HeldIdentities: HeldIdentityColumns + Default;
     type SelfRatchets: SelfRatchetColumns + Default;

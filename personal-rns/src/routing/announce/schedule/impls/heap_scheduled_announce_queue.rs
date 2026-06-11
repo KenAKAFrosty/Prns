@@ -2,11 +2,11 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::schedule::{EchoOutcome, RebroadcastQueue, ScheduledRebroadcast};
+use crate::routing::announce::schedule::{EchoOutcome, ScheduledAnnounce, ScheduledAnnounceQueue};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
-pub struct HeapRebroadcastQueue {
+pub struct HeapScheduledAnnounceQueue {
     destination: Vec<DestinationHash>,
     due_at: Vec<InstantMillis>,
     source_interface: Vec<InterfaceId>,
@@ -15,9 +15,9 @@ pub struct HeapRebroadcastQueue {
     peer_rebroadcast_count: Vec<u8>,
 }
 
-impl HeapRebroadcastQueue {
-    fn row(&self, i: usize) -> ScheduledRebroadcast {
-        ScheduledRebroadcast {
+impl HeapScheduledAnnounceQueue {
+    fn row(&self, i: usize) -> ScheduledAnnounce {
+        ScheduledAnnounce {
             destination: self.destination[i],
             due_at: self.due_at[i],
             source_interface: self.source_interface[i],
@@ -27,7 +27,7 @@ impl HeapRebroadcastQueue {
         }
     }
 
-    fn push_row(&mut self, entry: ScheduledRebroadcast) {
+    fn push_row(&mut self, entry: ScheduledAnnounce) {
         self.destination.push(entry.destination);
         self.due_at.push(entry.due_at);
         self.source_interface.push(entry.source_interface);
@@ -47,8 +47,8 @@ impl HeapRebroadcastQueue {
     }
 }
 
-impl RebroadcastQueue for HeapRebroadcastQueue {
-    fn pending_count(&self) -> usize {
+impl ScheduledAnnounceQueue for HeapScheduledAnnounceQueue {
+    fn scheduled_count(&self) -> usize {
         self.due_at.len()
     }
     fn schedule(
@@ -69,7 +69,7 @@ impl RebroadcastQueue for HeapRebroadcastQueue {
             self.emission_count[i] = 0;
             self.peer_rebroadcast_count[i] = 0;
         } else {
-            self.push_row(ScheduledRebroadcast {
+            self.push_row(ScheduledAnnounce {
                 destination,
                 due_at,
                 source_interface,
@@ -150,8 +150,8 @@ impl RebroadcastQueue for HeapRebroadcastQueue {
     fn earliest_due_at(&self) -> Option<InstantMillis> {
         self.due_at.iter().copied().min()
     }
-    fn iter(&self) -> impl Iterator<Item = ScheduledRebroadcast> + '_ {
-        (0..self.pending_count()).map(move |i| self.row(i))
+    fn iter(&self) -> impl Iterator<Item = ScheduledAnnounce> + '_ {
+        (0..self.scheduled_count()).map(move |i| self.row(i))
     }
 }
 
@@ -168,36 +168,36 @@ mod tests {
 
     #[test]
     fn grows_past_a_fixed_cap_upserts_and_drains() {
-        let mut pending = HeapRebroadcastQueue::default();
+        let mut pending = HeapScheduledAnnounceQueue::default();
         for n in 0..200u8 {
             pending.schedule(dest(n), InstantMillis(100 + n as u64), iface(0xAA), 1);
         }
-        assert_eq!(pending.pending_count(), 200);
+        assert_eq!(pending.scheduled_count(), 200);
         assert_eq!(pending.earliest_due_at(), Some(InstantMillis(100)));
 
         pending.schedule(dest(0), InstantMillis(50), iface(0xBB), 1);
-        assert_eq!(pending.pending_count(), 200);
+        assert_eq!(pending.scheduled_count(), 200);
         assert_eq!(pending.earliest_due_at(), Some(InstantMillis(50)));
 
         assert_eq!(pending.drain_due(InstantMillis(10_000)), 200);
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn drain_due_uses_the_due_boundary_and_reports_removed_count() {
-        let mut pending = HeapRebroadcastQueue::default();
+        let mut pending = HeapScheduledAnnounceQueue::default();
         pending.schedule(dest(1), InstantMillis(99), iface(0xAA), 1);
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
         assert_eq!(pending.drain_due(InstantMillis(100)), 2);
-        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(pending.scheduled_count(), 1);
         assert_eq!(pending.iter().next().unwrap().destination, dest(3));
     }
 
     #[test]
     fn advance_re_arms_then_completes_at_the_emission_cap() {
-        let mut pending = HeapRebroadcastQueue::default();
+        let mut pending = HeapScheduledAnnounceQueue::default();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
 
         assert_eq!(
@@ -212,12 +212,12 @@ mod tests {
             pending.advance_due_retransmits(InstantMillis(5_600), 5_500, 2),
             1
         );
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn absorb_echo_counts_then_cancels_like_the_fixed_queue() {
-        let mut pending = HeapRebroadcastQueue::default();
+        let mut pending = HeapScheduledAnnounceQueue::default();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
         pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
 
@@ -229,6 +229,6 @@ mod tests {
             pending.absorb_echo(&dest(1), 7, InstantMillis(300), 2),
             EchoOutcome::RetransmitCancelled
         );
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 }

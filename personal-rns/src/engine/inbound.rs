@@ -73,7 +73,7 @@ impl<S: EngineStorage> EngineState<S> {
                         })),
                     }));
                 }
-                delta.rebroadcast_announces = self.rebroadcast_lane();
+                delta.scheduled_announces = self.scheduled_announce_lane();
                 delta.path_request_timeout = self.path_timeout_lane();
                 delta.expired_routes = self
                     .routing_table

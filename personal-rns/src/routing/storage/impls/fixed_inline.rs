@@ -1,7 +1,7 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
-use crate::routing::announce::schedule::FixedRebroadcastQueue;
+use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
@@ -72,7 +72,7 @@ impl<
     type AppData = PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_TRACKED_DESTINATIONS>;
     // Sized by the routing table (one pending per tracked route), not the held
     // cache — there is never more than one pending rebroadcast per destination.
-    type Pending = FixedRebroadcastQueue<MAX_TRACKED_DESTINATIONS>;
+    type ScheduledAnnounces = FixedScheduledAnnounceQueue<MAX_TRACKED_DESTINATIONS>;
     type UpstreamAppDestinations =
         FixedUpstreamAppDestinationColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type HeldIdentities = FixedHeldIdentityColumns<MAX_HELD_IDENTITIES>;
@@ -109,7 +109,7 @@ mod tests {
         let announces = <S as EngineStorage>::Announces::default();
         let _history = <S as EngineStorage>::History::default();
         let _app_data = <S as EngineStorage>::AppData::default();
-        let _pending = <S as EngineStorage>::Pending::default();
+        let _pending = <S as EngineStorage>::ScheduledAnnounces::default();
         let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <S as EngineStorage>::PacketHashes::default();
         let self_ratchets = <S as EngineStorage>::SelfRatchets::default();

@@ -2,11 +2,11 @@ use heapless::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::announce::schedule::{EchoOutcome, RebroadcastQueue, ScheduledRebroadcast};
+use crate::routing::announce::schedule::{EchoOutcome, ScheduledAnnounce, ScheduledAnnounceQueue};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct FixedRebroadcastQueue<const MAX_PENDING: usize> {
+pub struct FixedScheduledAnnounceQueue<const MAX_PENDING: usize> {
     destination: Vec<DestinationHash, MAX_PENDING>,
     due_at: Vec<InstantMillis, MAX_PENDING>,
     source_interface: Vec<InterfaceId, MAX_PENDING>,
@@ -15,7 +15,7 @@ pub struct FixedRebroadcastQueue<const MAX_PENDING: usize> {
     peer_rebroadcast_count: Vec<u8, MAX_PENDING>,
 }
 
-impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
+impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
     pub const fn new() -> Self {
         Self {
             destination: Vec::new(),
@@ -27,8 +27,8 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         }
     }
 
-    fn row(&self, i: usize) -> ScheduledRebroadcast {
-        ScheduledRebroadcast {
+    fn row(&self, i: usize) -> ScheduledAnnounce {
+        ScheduledAnnounce {
             destination: self.destination[i],
             due_at: self.due_at[i],
             source_interface: self.source_interface[i],
@@ -38,7 +38,7 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         }
     }
 
-    fn push_row(&mut self, entry: ScheduledRebroadcast) {
+    fn push_row(&mut self, entry: ScheduledAnnounce) {
         if self.destination.len() >= MAX_PENDING {
             return;
         }
@@ -61,7 +61,7 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         self.peer_rebroadcast_count.swap_remove(i);
     }
 
-    pub fn pending_count(&self) -> usize {
+    pub fn scheduled_count(&self) -> usize {
         self.due_at.len()
     }
 
@@ -83,7 +83,7 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
             self.emission_count[i] = 0;
             self.peer_rebroadcast_count[i] = 0;
         } else {
-            self.push_row(ScheduledRebroadcast {
+            self.push_row(ScheduledAnnounce {
                 destination,
                 due_at,
                 source_interface,
@@ -94,15 +94,15 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
         }
     }
 
-    pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledRebroadcast> {
+    pub fn take_due(&mut self, now: InstantMillis) -> Option<ScheduledAnnounce> {
         let i = self.due_at.iter().position(|due| *due <= now)?;
         let row = self.row(i);
         self.swap_remove_row(i);
         Some(row)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = ScheduledRebroadcast> + '_ {
-        (0..self.pending_count()).map(move |i| self.row(i))
+    pub fn iter(&self) -> impl Iterator<Item = ScheduledAnnounce> + '_ {
+        (0..self.scheduled_count()).map(move |i| self.row(i))
     }
 
     pub fn earliest_due_at(&self) -> Option<InstantMillis> {
@@ -128,9 +128,9 @@ impl<const MAX_PENDING: usize> FixedRebroadcastQueue<MAX_PENDING> {
     }
 }
 
-impl<const MAX_PENDING: usize> RebroadcastQueue for FixedRebroadcastQueue<MAX_PENDING> {
-    fn pending_count(&self) -> usize {
-        FixedRebroadcastQueue::pending_count(self)
+impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounceQueue<MAX_PENDING> {
+    fn scheduled_count(&self) -> usize {
+        FixedScheduledAnnounceQueue::scheduled_count(self)
     }
     fn schedule(
         &mut self,
@@ -139,10 +139,10 @@ impl<const MAX_PENDING: usize> RebroadcastQueue for FixedRebroadcastQueue<MAX_PE
         source_interface: InterfaceId,
         hops: u8,
     ) {
-        FixedRebroadcastQueue::schedule(self, destination, due_at, source_interface, hops)
+        FixedScheduledAnnounceQueue::schedule(self, destination, due_at, source_interface, hops)
     }
     fn drain_due(&mut self, now: InstantMillis) -> usize {
-        FixedRebroadcastQueue::drain_due(self, now)
+        FixedScheduledAnnounceQueue::drain_due(self, now)
     }
     fn advance_due_retransmits(
         &mut self,
@@ -200,10 +200,10 @@ impl<const MAX_PENDING: usize> RebroadcastQueue for FixedRebroadcastQueue<MAX_PE
         EchoOutcome::HopsUnrelated
     }
     fn earliest_due_at(&self) -> Option<InstantMillis> {
-        FixedRebroadcastQueue::earliest_due_at(self)
+        FixedScheduledAnnounceQueue::earliest_due_at(self)
     }
-    fn iter(&self) -> impl Iterator<Item = ScheduledRebroadcast> + '_ {
-        FixedRebroadcastQueue::iter(self)
+    fn iter(&self) -> impl Iterator<Item = ScheduledAnnounce> + '_ {
+        FixedScheduledAnnounceQueue::iter(self)
     }
 }
 
@@ -220,13 +220,13 @@ mod tests {
 
     #[test]
     fn nothing_is_due_before_its_time_then_it_drains_once() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
 
         assert_eq!(pending.take_due(InstantMillis(99)), None);
         assert_eq!(
             pending.take_due(InstantMillis(100)),
-            Some(ScheduledRebroadcast {
+            Some(ScheduledAnnounce {
                 destination: dest(1),
                 due_at: InstantMillis(100),
                 source_interface: iface(0xAA),
@@ -236,15 +236,15 @@ mod tests {
             })
         );
         assert_eq!(pending.take_due(InstantMillis(100)), None);
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn rescheduling_a_destination_updates_time_and_source_without_duplicating() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(1), InstantMillis(200), iface(0xBB), 1);
-        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(pending.scheduled_count(), 1);
 
         assert_eq!(pending.take_due(InstantMillis(150)), None);
         let taken = pending.take_due(InstantMillis(200)).unwrap();
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn only_entries_whose_time_has_come_are_taken() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(2), InstantMillis(300), iface(0xAA), 1);
 
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn iter_exposes_pending_entries() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(2), InstantMillis(300), iface(0xBB), 1);
 
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn count_due_uses_the_due_boundary() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(99), iface(0xAA), 1);
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
@@ -292,13 +292,13 @@ mod tests {
 
     #[test]
     fn drain_due_returns_removed_count_and_keeps_future_entries() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(99), iface(0xAA), 1);
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(101), iface(0xAA), 1);
 
         assert_eq!(pending.drain_due(InstantMillis(100)), 2);
-        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(pending.scheduled_count(), 1);
         assert_eq!(
             pending.iter().next().map(|entry| entry.destination),
             Some(dest(3))
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn a_tick_drains_every_due_entry() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule(dest(3), InstantMillis(100), iface(0xAA), 1);
@@ -318,12 +318,12 @@ mod tests {
         }
         drained.sort_by_key(|d| *d.as_bytes());
         assert_eq!(drained, std::vec![dest(1), dest(2), dest(3)]);
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn advance_re_arms_a_due_entry_until_the_emission_cap() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
 
         assert_eq!(
@@ -338,12 +338,12 @@ mod tests {
             pending.advance_due_retransmits(InstantMillis(5_600), 5_500, 2),
             1
         );
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn advance_leaves_entries_that_are_not_yet_due() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(500), iface(0xAA), 5);
 
         assert_eq!(
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn absorb_echo_with_no_pending_entry_is_a_no_op() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         assert_eq!(
             pending.absorb_echo(&dest(1), 6, InstantMillis(100), 2),
             EchoOutcome::NoPendingEntry
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn a_same_distance_echo_only_counts_until_we_have_emitted() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
 
         assert_eq!(
@@ -375,13 +375,13 @@ mod tests {
             pending.absorb_echo(&dest(1), 6, InstantMillis(160), 2),
             EchoOutcome::PeerRebroadcastCounted
         );
-        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(pending.scheduled_count(), 1);
         assert_eq!(pending.iter().next().unwrap().peer_rebroadcast_count, 2);
     }
 
     #[test]
     fn a_same_distance_echo_cancels_after_we_emit_and_reach_the_cap() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
         pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
 
@@ -393,12 +393,12 @@ mod tests {
             pending.absorb_echo(&dest(1), 6, InstantMillis(300), 2),
             EchoOutcome::RetransmitCancelled
         );
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn an_onward_echo_cancels_the_pending_retransmit_before_its_deadline() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
         pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
 
@@ -406,12 +406,12 @@ mod tests {
             pending.absorb_echo(&dest(1), 7, InstantMillis(200), 2),
             EchoOutcome::RetransmitCancelled
         );
-        assert_eq!(pending.pending_count(), 0);
+        assert_eq!(pending.scheduled_count(), 0);
     }
 
     #[test]
     fn an_onward_echo_at_or_after_the_deadline_leaves_the_entry() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
         pending.advance_due_retransmits(InstantMillis(100), 5_500, 2);
 
@@ -419,12 +419,12 @@ mod tests {
             pending.absorb_echo(&dest(1), 7, InstantMillis(5_600), 2),
             EchoOutcome::HopsUnrelated
         );
-        assert_eq!(pending.pending_count(), 1);
+        assert_eq!(pending.scheduled_count(), 1);
     }
 
     #[test]
     fn an_unrelated_hop_count_touches_nothing() {
-        let mut pending = FixedRebroadcastQueue::<4>::new();
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
 
         assert_eq!(

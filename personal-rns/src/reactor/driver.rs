@@ -41,8 +41,8 @@ where
     S: EngineStorage,
 {
     match lane {
-        DueLane::RebroadcastAnnounces => {
-            engine.fire_due_announce_rebroadcasts(now, interfaces, on_reaction)
+        DueLane::ScheduledAnnounces => {
+            engine.fire_due_scheduled_announces(now, interfaces, on_reaction)
         }
         DueLane::SendSingleTimeout => engine.settle_timed_out_send_singles(now, on_reaction),
         DueLane::PathRequestTimeout => engine.settle_timed_out_path_requests(now, on_reaction),
@@ -67,7 +67,7 @@ pub fn merge_wake_schedules_delta<S: EngineStorage>(
     {
         let truth = engine.wake_schedules(view);
         debug_assert_eq!(
-            source_wake_schedules.rebroadcast_announces, truth.rebroadcast_announces,
+            source_wake_schedules.scheduled_announces, truth.scheduled_announces,
             "the rebroadcast lane drifted from a full recompute",
         );
         debug_assert_eq!(

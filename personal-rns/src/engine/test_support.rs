@@ -199,7 +199,7 @@ pub(crate) fn tick_capture<S: EngineStorage>(
     interfaces: &[InterfaceConfig],
 ) -> (TickSnapshot, std::vec::Vec<std::vec::Vec<u8>>) {
     let mut emitted = std::vec::Vec::new();
-    let _ = state.fire_due_announce_rebroadcasts(now, interfaces, &mut |reaction| {
+    let _ = state.fire_due_scheduled_announces(now, interfaces, &mut |reaction| {
         if let EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) = reaction {
             emitted.push(bytes.to_vec());
         }
@@ -215,7 +215,7 @@ pub(crate) fn observable_state<S: EngineStorage>(state: &EngineState<S>) -> (u64
     (
         state.ingested_packet_count(),
         state.route_count(),
-        state.pending_announce_rebroadcast_count(),
+        state.scheduled_announce_count(),
     )
 }
 

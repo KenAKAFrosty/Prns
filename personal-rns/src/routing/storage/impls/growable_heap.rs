@@ -1,7 +1,7 @@
 use crate::crypto::ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
 use crate::routing::announce::rate_limit::HeapAnnounceRateColumns;
-use crate::routing::announce::schedule::HeapRebroadcastQueue;
+use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
 use crate::routing::group_keys::HeapGroupKeyColumns;
@@ -21,7 +21,7 @@ impl EngineStorage for GrowableHeap {
     type Announces = HeapRetainedAnnounceColumns;
     type History = HeapAnnounceIdHistory;
     type AppData = HeapRetainedAppData;
-    type Pending = HeapRebroadcastQueue;
+    type ScheduledAnnounces = HeapScheduledAnnounceQueue;
     type UpstreamAppDestinations = HeapUpstreamAppDestinationColumns;
     type HeldIdentities = HeapHeldIdentityColumns;
     type SelfRatchets = HeapSelfRatchetColumns;
@@ -47,7 +47,7 @@ mod tests {
         let announces = <GrowableHeap as EngineStorage>::Announces::default();
         let _history = <GrowableHeap as EngineStorage>::History::default();
         let _app_data = <GrowableHeap as EngineStorage>::AppData::default();
-        let _pending = <GrowableHeap as EngineStorage>::Pending::default();
+        let _pending = <GrowableHeap as EngineStorage>::ScheduledAnnounces::default();
         let upstream_app_destinations =
             <GrowableHeap as EngineStorage>::UpstreamAppDestinations::default();
         let packet_hashes = <GrowableHeap as EngineStorage>::PacketHashes::default();

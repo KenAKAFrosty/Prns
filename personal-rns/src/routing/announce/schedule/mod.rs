@@ -1,12 +1,12 @@
-//! Pending rebroadcasts of accepted announces — the analog of RNS's `announce_table`
+//! Announces scheduled for re-emission at a future time — the analog of RNS's `announce_table`
 //! ([Transport.py:113](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Transport.py#L113)):
 //! "a table for storing announces currently waiting to be retransmitted."
 //!
-//! One entry per destination whose announce we accepted and now owe the network a
-//! re-emission of, keyed by destination so a fresher announce supersedes the one
-//! already waiting. Entries are tiny — destination + due time only; the announce
-//! bytes live in the routing table's app_data arena and are read back at emit time,
-//! keeping the freshest accept the one rebroadcast with no second copy.
+//! One entry per destination whose announce we owe the network a re-emission of, keyed
+//! by destination so a fresher announce supersedes the one already waiting. Entries are
+//! tiny — destination + due time only; the announce bytes live in the routing table's
+//! app_data arena and are read back at emit time, keeping the freshest accept the one
+//! re-emission with no second copy.
 
 mod impls;
 
@@ -17,7 +17,7 @@ use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScheduledRebroadcast {
+pub struct ScheduledAnnounce {
     pub destination: DestinationHash,
     pub due_at: InstantMillis,
     pub source_interface: InterfaceId,
@@ -34,8 +34,8 @@ pub enum EchoOutcome {
     HopsUnrelated,
 }
 
-pub trait RebroadcastQueue {
-    fn pending_count(&self) -> usize;
+pub trait ScheduledAnnounceQueue {
+    fn scheduled_count(&self) -> usize;
     fn schedule(
         &mut self,
         destination: DestinationHash,
@@ -58,5 +58,5 @@ pub trait RebroadcastQueue {
         max_peer_rebroadcast_count: u8,
     ) -> EchoOutcome;
     fn earliest_due_at(&self) -> Option<InstantMillis>;
-    fn iter(&self) -> impl Iterator<Item = ScheduledRebroadcast> + '_;
+    fn iter(&self) -> impl Iterator<Item = ScheduledAnnounce> + '_;
 }

@@ -1,7 +1,7 @@
-mod fixed_rebroadcast_queue;
-pub use fixed_rebroadcast_queue::FixedRebroadcastQueue;
+mod fixed_scheduled_announce_queue;
+pub use fixed_scheduled_announce_queue::FixedScheduledAnnounceQueue;
 
 #[cfg(feature = "alloc")]
-mod heap_rebroadcast_queue;
+mod heap_scheduled_announce_queue;
 #[cfg(feature = "alloc")]
-pub use heap_rebroadcast_queue::HeapRebroadcastQueue;
+pub use heap_scheduled_announce_queue::HeapScheduledAnnounceQueue;
