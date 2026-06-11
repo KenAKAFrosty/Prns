@@ -12,7 +12,9 @@ use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
-use crate::routing::proof::{ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN};
+use crate::routing::proof::{
+    ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
+};
 use crate::routing::storage::EngineStorage;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::wire::BROADCAST_MTU;
@@ -89,7 +91,9 @@ impl<S: EngineStorage> EngineState<S> {
             IngestPacketOutcome::Delivery { delivery, proof } => {
                 sink(EngineReaction::Journaled(Journaled::Delivered(delivery)));
                 let owed = match proof {
-                    ProofObligation::None => None,
+                    ProofObligation::None
+                    | ProofObligation::OwedOverLink(_)
+                    | ProofObligation::OwedIfAppOverLink(_) => None,
                     ProofObligation::Owed(owed) => Some(owed),
                     ProofObligation::OwedIfApp(owed) => match delivery {
                         Delivery::Single(single) => should_prove(&ProofRequest {
@@ -104,6 +108,31 @@ impl<S: EngineStorage> EngineState<S> {
                     if is_egress_eligible(view, source, Egress::Transmit) {
                         let mut proof = [0u8; IMPLICIT_PROOF_WIRE_LEN];
                         if let Ok(written) = self.write_proof(&owed, &mut proof) {
+                            sink(EngineReaction::Directive(Directive::Send {
+                                target: source,
+                                bytes: &proof[..written],
+                            }));
+                        }
+                    }
+                }
+                let owed_over_link = match proof {
+                    ProofObligation::None
+                    | ProofObligation::Owed(_)
+                    | ProofObligation::OwedIfApp(_) => None,
+                    ProofObligation::OwedOverLink(owed) => Some(owed),
+                    ProofObligation::OwedIfAppOverLink(owed) => match delivery {
+                        Delivery::Link(link) => should_prove(&ProofRequest {
+                            destination: owed.destination,
+                            plaintext: link.plaintext,
+                        })
+                        .then_some(owed),
+                        Delivery::Plain(_) | Delivery::Single(_) | Delivery::Group(_) => None,
+                    },
+                };
+                if let Some(owed) = owed_over_link {
+                    if is_egress_eligible(view, source, Egress::Transmit) {
+                        let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                        if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
                             sink(EngineReaction::Directive(Directive::Send {
                                 target: source,
                                 bytes: &proof[..written],

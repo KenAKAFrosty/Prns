@@ -27,7 +27,7 @@ use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
-use crate::routing::proof::{ProofIngest, ProofObligation, ProofOwed};
+use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::routing::storage::EngineStorage;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
@@ -604,8 +604,24 @@ impl<S: EngineStorage> EngineState<S> {
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
 
-        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+        let Some(LinkPhase::Active { key, role, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
+        };
+        let owed = match role {
+            LinkRole::Initiator => None,
+            LinkRole::Responder {
+                destination,
+                identity,
+                proof_strategy,
+            } => Some((
+                *proof_strategy,
+                LinkProofOwed {
+                    link_id,
+                    packet_hash,
+                    identity: *identity,
+                    destination: *destination,
+                },
+            )),
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
             return IngestPacketOutcome::Ignored;
@@ -618,7 +634,11 @@ impl<S: EngineStorage> EngineState<S> {
                 arrived_at,
                 source_interface,
             }),
-            proof: ProofObligation::None,
+            proof: match owed {
+                Some((ProofStrategy::ProveAll, owed)) => ProofObligation::OwedOverLink(owed),
+                Some((ProofStrategy::ProveIf, owed)) => ProofObligation::OwedIfAppOverLink(owed),
+                Some((ProofStrategy::ProveNone, _)) | None => ProofObligation::None,
+            },
         }
     }
 

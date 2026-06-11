@@ -4,6 +4,7 @@ use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
+use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
@@ -12,6 +13,10 @@ pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
 pub const IMPLICIT_PROOF_PAYLOAD_LEN: usize = SIGNATURE_LEN;
 /// RNS 1.3.1 `PacketReceipt.EXPL_LENGTH`
 pub const EXPLICIT_PROOF_PAYLOAD_LEN: usize = PACKET_HASH_LEN + SIGNATURE_LEN;
+
+/// A packet proof over a link is always the explicit form (RNS 1.3.1
+/// `Link.prove_packet`: "hardcoded as explicit proof for now").
+pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProofIngest {
@@ -32,6 +37,20 @@ pub struct ProofOwed {
     pub identity: IdentityHash,
 }
 
+/// The proof a delivered link packet earned from the responder — RNS 1.3.1
+/// `Link.prove_packet`: 96 unencrypted bytes (`packet_hash ‖ sig(packet_hash)`)
+/// answered to the link destination, signed by the registered identity the link
+/// responds for. Only the responder ever owes one: the initiator's side of a
+/// link is a remote destination, and a remote destination never proves.
+/// `destination` is what a deferred decider is asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkProofOwed {
+    pub link_id: LinkId,
+    pub packet_hash: PacketHash,
+    pub identity: IdentityHash,
+    pub destination: DestinationHash,
+}
+
 pub struct ProofRequest<'a> {
     pub destination: DestinationHash,
     pub plaintext: &'a [u8],
@@ -42,6 +61,8 @@ pub enum ProofObligation {
     None,
     Owed(ProofOwed),
     OwedIfApp(ProofOwed),
+    OwedOverLink(LinkProofOwed),
+    OwedIfAppOverLink(LinkProofOwed),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +71,7 @@ pub enum WriteProofError {
     Serialize(EgressSerializeError),
 }
 
-use crate::engine::egress::write_implicit_proof_wire_packet;
+use crate::engine::egress::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
 use crate::engine::EngineState;
 use crate::identity::IdentitySigner;
 use crate::routing::storage::EngineStorage;
@@ -68,6 +89,24 @@ impl<S: EngineStorage> EngineState<S> {
             .ok_or(WriteProofError::IdentityNotHeld)?;
         let signature = identity.sign(owed.packet_hash.as_bytes());
         write_implicit_proof_wire_packet(&owed.packet_hash, &signature, buf)
+            .map_err(WriteProofError::Serialize)
+    }
+
+    /// Sign and frame the proof a delivered link packet earned
+    /// ([`LinkProofOwed`], same one-cycle custody as [`ProofOwed`]) into `buf`.
+    /// The same best-effort posture applies: the initiator's timeout is the
+    /// designed recovery for a proof that can't be written.
+    pub fn write_link_proof(
+        &self,
+        owed: &LinkProofOwed,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteProofError> {
+        let identity = self
+            .held_identities
+            .get(&owed.identity)
+            .ok_or(WriteProofError::IdentityNotHeld)?;
+        let signature = identity.sign(owed.packet_hash.as_bytes());
+        write_link_proof_wire_packet(&owed.link_id, &owed.packet_hash, &signature, buf)
             .map_err(WriteProofError::Serialize)
     }
 

@@ -1169,6 +1169,218 @@ mod tests {
         assert!(replayed.is_empty(), "a replayed frame deduplicates away");
     }
 
+    fn proving_node_announcer(strategy: ProofStrategy) -> EngineState<Cap> {
+        use crate::engine::RatchetPolicy;
+
+        let mut state: EngineState<Cap> = EngineState::new(fixed_secret_key());
+        let node = state.held_identity_hashes()[0];
+        state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["node"],
+                b"hello-personal",
+                strategy,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        state
+    }
+
+    fn commanded_link_data(
+        engine: &mut EngineState<Cap>,
+        link_id: LinkId,
+        payload: &[u8],
+        now: u64,
+        iv_fill: u8,
+    ) -> std::vec::Vec<u8> {
+        use crate::engine::{SendLink, SendLinkPayload};
+
+        let mut sent = std::vec::Vec::new();
+        let _ = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(9),
+                command: EngineCommand::SendLink(SendLink {
+                    link_id,
+                    payload: SendLinkPayload::from_slice(payload).unwrap(),
+                }),
+            },
+            &arrival_view(),
+            InstantMillis(now),
+            &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    sent.push(bytes.to_vec());
+                }
+            },
+        );
+        assert_eq!(sent.len(), 1, "the link data frame fires");
+        sent.remove(0)
+    }
+
+    #[test]
+    fn a_prove_all_responder_proves_link_data_the_reference_way() {
+        use crate::crypto::{ed25519_verify, Ed25519Signature};
+        use crate::routing::dedup::PacketHash;
+        use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
+        use crate::wire::{DestinationType, PacketType, WireContext, WirePacketHeader};
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let data = commanded_link_data(&mut initiator, link_id, b"prove this", 2_000, 0xD1);
+        let (answers, _, _) = reactions_of(&mut responder, &data, 2_100, 0xD2);
+        assert_eq!(answers.len(), 1, "the ProveAll responder answers a proof");
+
+        let (header, payload) = WirePacketHeader::parse(&answers[0]).unwrap();
+        assert_eq!(header.packet_type, PacketType::Proof);
+        assert_eq!(header.destination_type, DestinationType::Link);
+        assert_eq!(header.destination.as_bytes(), link_id.as_bytes());
+        assert_eq!(header.context, WireContext::None);
+        assert_eq!(header.hops, 0);
+        assert_eq!(payload.len(), EXPLICIT_PROOF_PAYLOAD_LEN);
+
+        let (data_header, data_payload) = WirePacketHeader::parse(&data).unwrap();
+        let expected_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data_header.destination,
+            data_header.context,
+            data_payload,
+        );
+        assert_eq!(
+            &payload[..32],
+            expected_hash.as_bytes(),
+            "the proof names the ciphertext frame's packet hash",
+        );
+
+        let Some(LinkPhase::Active { peer_signing, .. }) = initiator.links.phase_for(&link_id)
+        else {
+            panic!("the initiator holds the active link");
+        };
+        let mut signature = [0u8; 64];
+        signature.copy_from_slice(&payload[32..]);
+        ed25519_verify(peer_signing, &payload[..32], &Ed25519Signature(signature)).expect(
+            "the proof validates against the announced identity the initiator already holds",
+        );
+    }
+
+    #[test]
+    fn the_initiator_never_proves_link_data() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = proving_node_announcer(ProofStrategy::ProveAll);
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let data = commanded_link_data(&mut responder, link_id, b"no proof owed", 2_000, 0xC1);
+        let (answers, _, _) = reactions_of(&mut initiator, &data, 2_100, 0xC2);
+        assert!(
+            answers.is_empty(),
+            "the initiator's side of a link is a remote destination, and it never proves",
+        );
+    }
+
+    #[test]
+    fn the_app_decider_gates_the_prove_if_link_proof() {
+        use crate::engine::ProofRequest;
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let link_id = dispatch.link_id;
+
+        let mut responder = proving_node_announcer(ProofStrategy::ProveIf);
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let mut answer_deferred = |data: &[u8], arrived_at: u64, agree: bool| {
+            let mut requests = std::vec::Vec::new();
+            let mut answers = std::vec::Vec::new();
+            let mut raw = data.to_vec();
+            let _ = responder.ingest_packet_into(
+                InboundPacket {
+                    arrived_at: InstantMillis(arrived_at),
+                    source_interface: arrival(),
+                    bytes: &mut raw,
+                },
+                TEST_ENTROPY,
+                &arrival_view(),
+                InstantMillis(arrived_at),
+                &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+                &mut |request: &ProofRequest| {
+                    requests.push((request.destination, request.plaintext.to_vec()));
+                    agree
+                },
+                &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                        answers.push(bytes.to_vec());
+                    }
+                },
+            );
+            (requests, answers)
+        };
+
+        let data = commanded_link_data(&mut initiator, link_id, b"ask the app", 2_000, 0xD1);
+        let (requests, answers) = answer_deferred(&data, 2_100, true);
+        assert_eq!(
+            requests,
+            std::vec![(personal_node_destination(), b"ask the app".to_vec())],
+            "the decider sees the registered destination and the decrypted content",
+        );
+        assert_eq!(answers.len(), 1, "the decider agreed, so the proof answers");
+
+        let again = commanded_link_data(&mut initiator, link_id, b"ask once more", 3_000, 0xE1);
+        let (requests, answers) = answer_deferred(&again, 3_100, false);
+        assert_eq!(requests.len(), 1);
+        assert!(
+            answers.is_empty(),
+            "the decider declined, so no proof goes out"
+        );
+    }
+
     #[test]
     fn a_send_link_demands_an_active_link() {
         use crate::engine::{SendLink, SendLinkError, SendLinkPayload};

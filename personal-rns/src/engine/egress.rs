@@ -1,8 +1,9 @@
 use crate::crypto::Ed25519Signature;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::Announce;
-use crate::routing::dedup::PacketHash;
-use crate::routing::proof::IMPLICIT_PROOF_WIRE_LEN;
+use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
+use crate::routing::links::LinkId;
+use crate::routing::proof::{IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WirePacketHeader, HEADER_MAX_LEN, HEADER_MIN_LEN,
@@ -136,6 +137,38 @@ pub fn write_implicit_proof_wire_packet(
         .map_err(|_| EgressSerializeError::BufferTooShort)?;
     buf[HEADER_MIN_LEN..IMPLICIT_PROOF_WIRE_LEN].copy_from_slice(&signature.0);
     Ok(IMPLICIT_PROOF_WIRE_LEN)
+}
+
+/// Frame a packet proof over a link: PROOF to the link destination, context
+/// `None`, payload `packet_hash ‖ signature`. Unencrypted per the reference; the
+/// RNS 1.3.1 `Packet.pack` exemption ("packet proofs over links are not
+/// encrypted").
+pub fn write_link_proof_wire_packet(
+    link_id: &LinkId,
+    packet_hash: &PacketHash,
+    signature: &Ed25519Signature,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    let header = WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Link,
+        packet_type: PacketType::Proof,
+        hops: 0,
+        transport_id: None,
+        destination: DestinationHash::new(*link_id.as_bytes()),
+        context: WireContext::None,
+    };
+    if buf.len() < LINK_PROOF_WIRE_LEN {
+        return Err(EgressSerializeError::BufferTooShort);
+    }
+    header
+        .write(&mut buf[..HEADER_MIN_LEN])
+        .map_err(|_| EgressSerializeError::BufferTooShort)?;
+    buf[HEADER_MIN_LEN..HEADER_MIN_LEN + PACKET_HASH_LEN].copy_from_slice(packet_hash.as_bytes());
+    buf[HEADER_MIN_LEN + PACKET_HASH_LEN..LINK_PROOF_WIRE_LEN].copy_from_slice(&signature.0);
+    Ok(LINK_PROOF_WIRE_LEN)
 }
 
 /// The well-known plain destination every path request is addressed to,
