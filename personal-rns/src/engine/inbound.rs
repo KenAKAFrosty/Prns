@@ -10,6 +10,7 @@ use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::proof::{ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN};
 use crate::routing::storage::EngineStorage;
@@ -165,7 +166,7 @@ impl<S: EngineStorage> EngineState<S> {
                         &link_id,
                         &responder_encryption,
                         rtt_ms,
-                        mtu,
+                        mtu.min(link_mtu_ceiling(view, source)),
                         source,
                         now,
                         &iv,
@@ -208,6 +209,7 @@ impl<S: EngineStorage> EngineState<S> {
                         received_hops,
                         arrived_at,
                         X25519SecretKey::new(secret_bytes),
+                        link_mtu_ceiling(view, source),
                         &mut buf,
                     ) {
                         sink(EngineReaction::Directive(Directive::Send {

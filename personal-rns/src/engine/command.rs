@@ -11,6 +11,7 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::links::data::SendLinkWriteError;
 use crate::routing::links::establish::EstablishLinkEntropy;
+use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::storage::EngineStorage;
 use crate::wire::BROADCAST_MTU;
 
@@ -190,7 +191,9 @@ impl<S: EngineStorage> EngineState<S> {
                 let entropy = EstablishLinkEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
-                match self.write_commanded_link_request(id, &establish, now, entropy, &mut buf) {
+                match self.write_commanded_link_request(
+                    id, &establish, now, entropy, interfaces, &mut buf,
+                ) {
                     EstablishLinkWriteOutcome::Written(dispatch) => {
                         fan_self_originated(
                             interfaces,
@@ -213,7 +216,7 @@ impl<S: EngineStorage> EngineState<S> {
             CommandOutcome::OwesSendLink { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
-                let mut buf = [0u8; BROADCAST_MTU];
+                let mut buf = [0u8; MAX_LINK_MTU];
                 let settlement = match self.write_commanded_send_link(&send, &iv, &mut buf) {
                     Ok(dispatch) => {
                         fan_self_originated(

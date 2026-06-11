@@ -6,6 +6,7 @@ pub struct InterfaceConfig {
     pub capabilities: InterfaceCapabilities,
     pub mode: InterfaceMode,
     pub bitrate_bps: Option<u32>,
+    pub hardware_mtu: Option<usize>,
     pub announce_rate_limit: Option<AnnounceRateLimit>,
     pub announce_bandwidth_cap: AnnounceBandwidthCap,
     pub airtime_duty_cycle: Option<AirtimeDutyCycle>,

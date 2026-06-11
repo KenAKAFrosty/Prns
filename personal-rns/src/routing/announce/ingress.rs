@@ -537,7 +537,7 @@ impl<S: EngineStorage> EngineState<S> {
             mtu: if proof.mtu == 0 {
                 BROADCAST_MTU
             } else {
-                proof.mtu.min(BROADCAST_MTU)
+                proof.mtu
             },
         }
     }

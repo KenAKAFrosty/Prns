@@ -22,6 +22,7 @@ pub fn descriptor(id: InterfaceId) -> InterfaceConfig {
             egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
         },
         mode: InterfaceMode::PointToPoint,
+        hardware_mtu: None,
         announce_rate_limit: None,
         bitrate_bps: Some(1_000_000),
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,

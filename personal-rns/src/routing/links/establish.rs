@@ -3,7 +3,7 @@ use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, Establis
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentityHash, IdentitySigner, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::delivery::send_single::{
     DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
 };
@@ -13,12 +13,21 @@ use crate::routing::links::handshake::{
 use crate::routing::links::table::{
     InitiatedLink, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
 };
-use crate::routing::links::{LinkId, LinkKey, LinkMode};
+use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
 use crate::routing::storage::EngineStorage;
 use crate::routing::NextHop;
 use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
+
+pub fn link_mtu_ceiling(interfaces: &[InterfaceConfig], interface: InterfaceId) -> usize {
+    interfaces
+        .iter()
+        .find(|config| config.id == interface)
+        .and_then(|config| config.hardware_mtu)
+        .unwrap_or(BROADCAST_MTU)
+        .min(MAX_LINK_MTU)
+}
 
 /// RNS 1.3.1 `Link.KEEPALIVE` (360s): the responder's establishment timeout
 /// rides on it (Link.py:207), and the keepalive cadence itself arrives with
@@ -120,6 +129,7 @@ impl<S: EngineStorage> EngineState<S> {
         establish: &EstablishLink,
         now: InstantMillis,
         entropy: EstablishLinkEntropy,
+        view: &[InterfaceConfig],
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Failed, Written};
@@ -144,7 +154,7 @@ impl<S: EngineStorage> EngineState<S> {
             &establish.destination,
             &encryption_public,
             &signing_public,
-            BROADCAST_MTU,
+            link_mtu_ceiling(view, fire_on),
             LinkMode::Aes256Cbc,
             buf,
         ) else {
@@ -182,6 +192,7 @@ impl<S: EngineStorage> EngineState<S> {
     /// initiator's public, frame the identity-signed LRPROOF (echoing the
     /// negotiated MTU and mode) directly into `buf`, and track the responding
     /// link awaiting its LRRTT.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_owed_link_proof(
         &mut self,
         request: &LinkRequest,
@@ -189,6 +200,7 @@ impl<S: EngineStorage> EngineState<S> {
         received_hops: u8,
         arrived_at: InstantMillis,
         ephemeral_secret: X25519SecretKey,
+        mtu_ceiling: usize,
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkProofError> {
         let held = self
@@ -202,8 +214,9 @@ impl<S: EngineStorage> EngineState<S> {
         let mtu = if request.mtu == 0 {
             BROADCAST_MTU
         } else {
-            request.mtu.min(BROADCAST_MTU)
-        };
+            request.mtu
+        }
+        .min(mtu_ceiling);
         let written = write_link_proof(
             &request.link_id,
             &responder_encryption,
@@ -381,6 +394,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut buf,
             )
             .dispatched();
@@ -496,6 +510,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut buf,
             )
             .dispatched();
@@ -551,6 +566,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut buf,
             )
             .dispatched();
@@ -604,6 +620,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut buf,
             )
             .dispatched();
@@ -633,6 +650,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut buf,
             )
             .dispatched();
@@ -727,6 +745,20 @@ mod tests {
         std::vec::Vec<(CommandId, Settlement)>,
         WakeSchedules,
     ) {
+        reactions_of_on(engine, bytes, arrived_at, iv_fill, &arrival_view())
+    }
+
+    fn reactions_of_on(
+        engine: &mut EngineState<Cap>,
+        bytes: &[u8],
+        arrived_at: u64,
+        iv_fill: u8,
+        view: &[InterfaceConfig],
+    ) -> (
+        std::vec::Vec<std::vec::Vec<u8>>,
+        std::vec::Vec<(CommandId, Settlement)>,
+        WakeSchedules,
+    ) {
         let mut sent = std::vec::Vec::new();
         let mut journaled = std::vec::Vec::new();
         let mut raw = bytes.to_vec();
@@ -737,7 +769,7 @@ mod tests {
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &arrival_view(),
+            view,
             InstantMillis(arrived_at),
             &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
             &mut |_: &crate::engine::ProofRequest| false,
@@ -775,6 +807,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -880,6 +913,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -912,6 +946,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -948,6 +983,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -1023,6 +1059,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -1142,6 +1179,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -1163,6 +1201,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut request,
             )
             .dispatched();
@@ -1377,6 +1416,163 @@ mod tests {
     }
 
     #[test]
+    fn a_narrow_interface_negotiates_the_link_mtu_down_end_to_end() {
+        use crate::engine::{SendLink, SendLinkFailure, SendLinkPayload};
+        use crate::routing::links::data::LinkDataError;
+
+        fn narrow_view() -> [InterfaceConfig; 1] {
+            let mut config = routable_descriptor(arrival());
+            config.hardware_mtu = Some(300);
+            [config]
+        }
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &narrow_view(),
+                &mut request,
+            )
+            .dispatched();
+        let parsed = parse_link_request(&request[..dispatch.wire_len]).unwrap();
+        assert_eq!(
+            parsed.mtu, 300,
+            "the initiator signals its interface's ceiling"
+        );
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) = reactions_of_on(
+            &mut responder,
+            &request[..dispatch.wire_len],
+            1_100,
+            0x99,
+            &narrow_view(),
+        );
+        let (rtts, _, _) = reactions_of_on(&mut initiator, &proofs[0], 1_250, 0xA5, &narrow_view());
+        let (_, _, _) = reactions_of_on(&mut responder, &rtts[0], 1_600, 0xB5, &narrow_view());
+
+        for (name, engine) in [("initiator", &initiator), ("responder", &responder)] {
+            let Some(LinkPhase::Active { mtu, .. }) = engine.links.phase_for(&dispatch.link_id)
+            else {
+                panic!("the {name} must be active");
+            };
+            assert_eq!(*mtu, 300, "the {name} settled on the narrow mtu");
+        }
+
+        let mut settled = std::vec::Vec::new();
+        let _ = initiator.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(9),
+                command: EngineCommand::SendLink(SendLink {
+                    link_id: dispatch.link_id,
+                    payload: SendLinkPayload::from_slice(&[0x42; 250]).unwrap(),
+                }),
+            },
+            &narrow_view(),
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xD1),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                    reaction
+                {
+                    settled.push((id, settlement));
+                }
+            },
+        );
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(9),
+                Settlement::SendLink(Err(SendLinkFailure::WriteFailed(
+                    LinkDataError::PayloadTooLong,
+                ))),
+            )],
+            "250 bytes overflow the narrow link's 223-byte MDU",
+        );
+
+        let mut sent = std::vec::Vec::new();
+        let _ = initiator.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(10),
+                command: EngineCommand::SendLink(SendLink {
+                    link_id: dispatch.link_id,
+                    payload: SendLinkPayload::from_slice(&[0x42; 200]).unwrap(),
+                }),
+            },
+            &narrow_view(),
+            InstantMillis(2_100),
+            &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    sent.push(bytes.to_vec());
+                }
+            },
+        );
+        assert_eq!(sent.len(), 1, "200 bytes fit the narrow link");
+        assert!(
+            sent[0].len() <= 300,
+            "the frame respects the negotiated mtu"
+        );
+    }
+
+    #[test]
+    fn a_fat_interface_negotiates_up_to_the_engine_ceiling_and_no_further() {
+        use crate::routing::links::MAX_LINK_MTU;
+
+        fn fat_view() -> [InterfaceConfig; 1] {
+            let mut config = routable_descriptor(arrival());
+            config.hardware_mtu = Some(1_064);
+            [config]
+        }
+        let negotiable = MAX_LINK_MTU.min(1_064);
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &fat_view(),
+                &mut request,
+            )
+            .dispatched();
+        let parsed = parse_link_request(&request[..dispatch.wire_len]).unwrap();
+        assert_eq!(
+            parsed.mtu, negotiable,
+            "a fat interface signals up to the engine ceiling, never past it",
+        );
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) = reactions_of_on(
+            &mut responder,
+            &request[..dispatch.wire_len],
+            1_100,
+            0x99,
+            &fat_view(),
+        );
+        let (rtts, _, _) = reactions_of_on(&mut initiator, &proofs[0], 1_250, 0xA5, &fat_view());
+        let (_, _, _) = reactions_of_on(&mut responder, &rtts[0], 1_600, 0xB5, &fat_view());
+
+        for (name, engine) in [("initiator", &initiator), ("responder", &responder)] {
+            let Some(LinkPhase::Active { mtu, .. }) = engine.links.phase_for(&dispatch.link_id)
+            else {
+                panic!("the {name} must be active");
+            };
+            assert_eq!(
+                *mtu, negotiable,
+                "the {name} settled on the negotiable ceiling; raising MAX_LINK_MTU \
+                 (with the seam frame) is what unlocks the rest of this interface",
+            );
+        }
+    }
+
+    #[test]
     fn a_repeated_entropy_draw_is_refused_as_a_duplicate_link() {
         let mut state = neighbor_with_a_route();
         let mut buf = [0u8; BROADCAST_MTU];
@@ -1386,6 +1582,7 @@ mod tests {
                 &establish(),
                 InstantMillis(1_000),
                 vector_establish_entropy(),
+                &arrival_view(),
                 &mut buf,
             )
             .dispatched();
@@ -1395,6 +1592,7 @@ mod tests {
             &establish(),
             InstantMillis(2_000),
             vector_establish_entropy(),
+            &arrival_view(),
             &mut buf,
         );
         assert!(matches!(
