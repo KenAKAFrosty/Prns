@@ -278,7 +278,7 @@ mod tests {
                                           2222222222222222222222abababababababababababababababab";
 
     // The transport form inserts the requester's transport id between the
-    // requested destination and the tag.
+    // requested destination and the id.
     const RNS_1_3_1_PATH_REQUEST_TRANSPORT: &str =
         "08006b9f66014d9853faab220fba47d027610022222222222222222222222222222222\
          7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7aabababababababababababababababab";

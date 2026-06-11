@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn the_oldest_tag_ages_out_when_the_ring_fills() {
+    fn the_oldest_id_ages_out_when_the_ring_fills() {
         let mut seen: SeenPathRequests<FixedSeenPathRequestColumns<2>> =
             SeenPathRequests::default();
         assert_eq!(seen.observe(dest(1), [1; 16]), PathRequestNovelty::Fresh);

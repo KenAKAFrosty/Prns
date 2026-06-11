@@ -224,12 +224,12 @@ impl PacketToForward<'_> {
 }
 
 /// A parsed path-request payload (RNS 1.3.1 `Transport.path_request_handler`):
-/// the requested destination, the tag the network dedups on, and — only in the
+/// the requested destination, the id the network dedups on, and — only in the
 /// transport form — the requester's transport id.
 struct PathRequest {
     destination: DestinationHash,
     requester_transport_id: Option<TransportId>,
-    tag: PathRequestIdBytes,
+    id: PathRequestIdBytes,
 }
 
 /// Why a payload is not an answerable path request — the reference's two
@@ -239,8 +239,8 @@ struct PathRequest {
 enum PathRequestError {
     /// Too short to carry a destination hash — not a path request at all.
     NoDestination,
-    /// A destination with no tag; recognized, but never answered.
-    Tagless,
+    /// A destination with no id; recognized, but never answered.
+    NoId,
 }
 
 impl PathRequest {
@@ -249,7 +249,7 @@ impl PathRequest {
             .get(..TRUNCATED_HASH_BYTE_LEN)
             .and_then(DestinationHash::from_slice)
             .ok_or(PathRequestError::NoDestination)?;
-        let (requester_transport_id, tag_region) = if payload.len() > TRUNCATED_HASH_BYTE_LEN * 2 {
+        let (requester_transport_id, id_region) = if payload.len() > TRUNCATED_HASH_BYTE_LEN * 2 {
             (
                 TransportId::from_slice(
                     &payload[TRUNCATED_HASH_BYTE_LEN..TRUNCATED_HASH_BYTE_LEN * 2],
@@ -259,15 +259,15 @@ impl PathRequest {
         } else if payload.len() > TRUNCATED_HASH_BYTE_LEN {
             (None, &payload[TRUNCATED_HASH_BYTE_LEN..])
         } else {
-            return Err(PathRequestError::Tagless);
+            return Err(PathRequestError::NoId);
         };
-        let used = tag_region.len().min(TRUNCATED_HASH_BYTE_LEN);
-        let mut tag = PathRequestIdBytes::default();
-        tag[..used].copy_from_slice(&tag_region[..used]);
+        let used = id_region.len().min(TRUNCATED_HASH_BYTE_LEN);
+        let mut id = PathRequestIdBytes::default();
+        id[..used].copy_from_slice(&id_region[..used]);
         Ok(Self {
             destination,
             requester_transport_id,
-            tag,
+            id,
         })
     }
 
@@ -523,11 +523,11 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
 
-        // A request we have already seen (same destination and tag) is a loop or
+        // A request we have already seen (same destination and id) is a loop or
         // a re-arrival — drop it before answering or forwarding again.
         if self
             .seen_path_requests
-            .observe(request.destination, request.tag)
+            .observe(request.destination, request.id)
             == PathRequestNovelty::Duplicate
         {
             return IngestPacketOutcome::Ignored;
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn path_request_parse_names_its_two_non_answering_cases() {
         let dest = [0x11; TRUNCATED_HASH_BYTE_LEN];
-        let tag = [0x55; TRUNCATED_HASH_BYTE_LEN];
+        let id = [0x55; TRUNCATED_HASH_BYTE_LEN];
         let tid = [0x7a; TRUNCATED_HASH_BYTE_LEN];
 
         assert_eq!(
@@ -797,18 +797,18 @@ mod tests {
         );
         assert_eq!(
             PathRequest::parse(&dest).err(),
-            Some(PathRequestError::Tagless),
+            Some(PathRequestError::NoId)
         );
 
-        let leaf = [&dest[..], &tag[..]].concat();
+        let leaf = [&dest[..], &id[..]].concat();
         let parsed = PathRequest::parse(&leaf).unwrap();
         assert_eq!(parsed.requester_transport_id, None);
-        assert_eq!(parsed.tag, tag);
+        assert_eq!(parsed.id, id);
 
-        let transport = [&dest[..], &tid[..], &tag[..]].concat();
+        let transport = [&dest[..], &tid[..], &id[..]].concat();
         let parsed = PathRequest::parse(&transport).unwrap();
         assert_eq!(parsed.requester_transport_id, TransportId::from_slice(&tid));
-        assert_eq!(parsed.tag, tag);
+        assert_eq!(parsed.id, id);
     }
 
     #[test]
@@ -1139,14 +1139,14 @@ mod tests {
     }
 
     #[test]
-    fn a_transport_form_request_answers_and_dedups_on_the_tag_not_the_transport_id() {
+    fn a_transport_form_request_answers_and_dedups_on_the_id_not_the_transport_id() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let transport_id = [0x7a; 16];
-        let tag = [0x55; 16];
+        let id = [0x55; 16];
         let mut body = std::vec::Vec::new();
         body.extend_from_slice(cached.as_bytes());
         body.extend_from_slice(&transport_id);
-        body.extend_from_slice(&tag);
+        body.extend_from_slice(&id);
 
         let mut wire = path_request_wire_with(&body);
         assert_eq!(
@@ -1165,11 +1165,11 @@ mod tests {
             "the 48-byte transport form is parsed and answered",
         );
 
-        let mut same_tag_other_id = std::vec::Vec::new();
-        same_tag_other_id.extend_from_slice(cached.as_bytes());
-        same_tag_other_id.extend_from_slice(&[0xCC; 16]);
-        same_tag_other_id.extend_from_slice(&tag);
-        let mut wire = path_request_wire_with(&same_tag_other_id);
+        let mut same_id_other_transport = std::vec::Vec::new();
+        same_id_other_transport.extend_from_slice(cached.as_bytes());
+        same_id_other_transport.extend_from_slice(&[0xCC; 16]);
+        same_id_other_transport.extend_from_slice(&id);
+        let mut wire = path_request_wire_with(&same_id_other_transport);
         assert_eq!(
             relay.ingest_packet(
                 InboundPacket {
@@ -1181,7 +1181,7 @@ mod tests {
                 &transporting_view(),
             ),
             IngestPacketOutcome::Ignored,
-            "a different transport id but the same tag is the same request — deduped",
+            "a different transport id but the same id is the same request — deduped",
         );
     }
 
@@ -1201,11 +1201,11 @@ mod tests {
             &transporting_view(),
         );
 
-        let request = |requester: [u8; 16], tag: u8| {
+        let request = |requester: [u8; 16], id: u8| {
             let mut body = std::vec::Vec::new();
             body.extend_from_slice(cached.as_bytes());
             body.extend_from_slice(&requester);
-            body.extend_from_slice(&[tag; 16]);
+            body.extend_from_slice(&[id; 16]);
             path_request_wire_with(&body)
         };
 
@@ -1243,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tagless_path_request_is_ignored() {
+    fn an_idless_path_request_is_ignored() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire_with(cached.as_bytes());
         assert_eq!(
@@ -1257,7 +1257,7 @@ mod tests {
                 &transporting_view(),
             ),
             IngestPacketOutcome::Ignored,
-            "a bare destination carries no tag — the reference ignores it",
+            "a bare destination carries no id — the reference ignores it",
         );
     }
 

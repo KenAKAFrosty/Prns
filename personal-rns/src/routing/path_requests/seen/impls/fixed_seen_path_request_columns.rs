@@ -1,7 +1,7 @@
 use crate::routing::path_requests::seen::{PathRequestIdBytes, SeenPathRequestColumns};
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
-/// A fixed-capacity FIFO ring: `write_cursor` overwrites the oldest tag once the
+/// A fixed-capacity FIFO ring: `write_cursor` overwrites the oldest id once the
 /// array is full, so the set always holds the most recent `MAX_SEEN_PATH_REQUESTS`.
 #[derive(Debug)]
 pub struct FixedSeenPathRequestColumns<const MAX_SEEN_PATH_REQUESTS: usize> {

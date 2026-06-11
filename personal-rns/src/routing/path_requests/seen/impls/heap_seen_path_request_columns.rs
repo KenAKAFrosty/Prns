@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, SeenPathRequestColumns};
 use crate::wire::DestinationHash;
 
-/// A daemon-grade ceiling on remembered path-request tags — far above any real
+/// A daemon-grade ceiling on remembered path-request ids — far above any real
 /// in-flight discovery count, a backstop against unbounded growth, matching the
 /// other engine tables' hygiene.
 pub const DEFAULT_MAX_SEEN_PATH_REQUESTS: usize = 1024;
