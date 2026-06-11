@@ -11,7 +11,8 @@ pub mod tick;
 
 pub use commands::{
     AnnounceAppData, AnnounceNow, AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CommandId,
-    CommandOutcome, Delivered, EngineCommand, IssuedCommand, PathFound, PathRequestId, RequestPath,
+    CommandOutcome, Delivered, EngineCommand, EstablishLink, EstablishLinkError,
+    EstablishLinkFailure, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendSingle, SendSingleError,
     SendSingleFailure, SendSinglePayload, Settleable, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
     MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
@@ -37,6 +38,9 @@ pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
     WriteSendSingleError,
 };
+pub use crate::routing::links::establish::{
+    EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch, WriteEstablishLinkError,
+};
 pub use crate::routing::path_requests::pending::{
     CulledPathRequest, ExpiredPathRequest, SettledPathRequest, PATH_REQUEST_TIMEOUT_MS,
 };
@@ -54,6 +58,7 @@ use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
+use crate::routing::links::table::Links;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::reverse_routes::ReverseRoutes;
@@ -72,6 +77,7 @@ pub enum DueLane {
     SendSingleTimeout,
     PathRequestTimeout,
     ExpiredRoutes,
+    LinkEstablishmentTimeout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +111,7 @@ pub struct WakeSchedules {
     pub send_single_timeout: LaneWake,
     pub path_request_timeout: LaneWake,
     pub expired_routes: LaneWake,
+    pub link_establishment_timeout: LaneWake,
 }
 
 impl WakeSchedules {
@@ -113,6 +120,7 @@ impl WakeSchedules {
         send_single_timeout: LaneWake::Unchanged,
         path_request_timeout: LaneWake::Unchanged,
         expired_routes: LaneWake::Unchanged,
+        link_establishment_timeout: LaneWake::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -121,6 +129,10 @@ impl WakeSchedules {
             (&mut self.send_single_timeout, delta.send_single_timeout),
             (&mut self.path_request_timeout, delta.path_request_timeout),
             (&mut self.expired_routes, delta.expired_routes),
+            (
+                &mut self.link_establishment_timeout,
+                delta.link_establishment_timeout,
+            ),
         ] {
             match change {
                 LaneWake::Unchanged => {}
@@ -144,6 +156,10 @@ impl WakeSchedules {
             (self.send_single_timeout, DueLane::SendSingleTimeout),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
             (self.expired_routes, DueLane::ExpiredRoutes),
+            (
+                self.link_establishment_timeout,
+                DueLane::LinkEstablishmentTimeout,
+            ),
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
@@ -178,6 +194,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
+    pub(crate) links: Links<S::Links>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -198,6 +215,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             seen_path_requests: SeenPathRequests::default(),
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),
+            links: Links::default(),
         }
     }
 }
@@ -275,6 +293,10 @@ impl<S: EngineStorage> EngineState<S> {
         LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
     }
 
+    pub fn link_establishment_timeout_wake(&self) -> LaneWake {
+        LaneWake::from_deadline(self.links.earliest_timeout_at())
+    }
+
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {
         LaneWake::from_deadline(self.routing_table.soonest_route_expiry(view))
     }
@@ -290,6 +312,7 @@ impl<S: EngineStorage> EngineState<S> {
             send_single_timeout: self.send_single_receipts_timeout_wake(),
             path_request_timeout: self.path_request_timeout_wake(),
             expired_routes: self.route_expiry_wake(view),
+            link_establishment_timeout: self.link_establishment_timeout_wake(),
         }
     }
 
@@ -419,6 +442,7 @@ mod tests {
             send_single_timeout: send,
             path_request_timeout: path,
             expired_routes: expired,
+            link_establishment_timeout: LaneWake::Unchanged,
         }
     }
 

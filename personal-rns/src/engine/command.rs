@@ -1,13 +1,14 @@
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
-    EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, PathFound,
-    PathRequestWriteOutcome, RatchetEntropy, RequestPathFailure, SendGroupFailure,
-    SendSingleEntropy, SendSingleFailure, SendSingleWriteOutcome, Settlement, WakeSchedules,
-    WriteSendSingleError,
+    EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, InstantMillis,
+    IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RatchetEntropy,
+    RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
+    SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
+use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::storage::EngineStorage;
 use crate::wire::BROADCAST_MTU;
 
@@ -24,7 +25,7 @@ impl<S: EngineStorage> EngineState<S> {
     pub fn ingest_command_into<F>(
         &mut self,
         issued: IssuedCommand,
-        view: &[InterfaceConfig],
+        interfaces: &[InterfaceConfig],
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -32,8 +33,8 @@ impl<S: EngineStorage> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        let mut delta = WakeSchedules::UNCHANGED;
-        match self.ingest_command(issued, view) {
+        let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
+        match self.ingest_command(issued, interfaces) {
             CommandOutcome::OwesAnnounce { id, announce } => {
                 let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
                 fill_entropy(&mut announce_entropy_bytes);
@@ -55,7 +56,7 @@ impl<S: EngineStorage> EngineState<S> {
                             AnnounceTarget::AllInterfaces => None,
                             AnnounceTarget::Interface(interface) => Some(interface),
                         };
-                        fan_self_originated(view, only, &buf[..len], sink);
+                        fan_self_originated(interfaces, only, &buf[..len], sink);
                         Settlement::AnnounceNow(Ok(()))
                     }
                     CommandedAnnounceWriteOutcome::Rejected { rejection, .. } => {
@@ -89,7 +90,7 @@ impl<S: EngineStorage> EngineState<S> {
                 match self.write_commanded_send_single(id, &send, now, entropy, &mut buf) {
                     SendSingleWriteOutcome::Written(dispatch) => {
                         fan_self_originated(
-                            view,
+                            interfaces,
                             Some(dispatch.fire_on),
                             &buf[..dispatch.wire_len],
                             sink,
@@ -118,7 +119,8 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
-                delta.send_single_timeout = self.send_single_receipts_timeout_wake();
+                wake_schedule_changes.send_single_timeout =
+                    self.send_single_receipts_timeout_wake();
             }
             CommandOutcome::SendSingleRejected { id, error } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -133,7 +135,7 @@ impl<S: EngineStorage> EngineState<S> {
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_send_group(&send, &iv, &mut buf) {
                     Ok(wire_len) => {
-                        fan_self_originated(view, None, &buf[..wire_len], sink);
+                        fan_self_originated(interfaces, None, &buf[..wire_len], sink);
                         Settlement::SendGroup(Ok(()))
                     }
                     Err(_) => Settlement::SendGroup(Err(SendGroupFailure::WriteFailed)),
@@ -159,7 +161,7 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                     PathRequestWriteOutcome::Written { wire_len, culled } => {
-                        fan_self_originated(view, None, &buf[..wire_len], sink);
+                        fan_self_originated(interfaces, None, &buf[..wire_len], sink);
                         if let Some(culled) = culled {
                             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                 id: culled.command_id,
@@ -178,10 +180,45 @@ impl<S: EngineStorage> EngineState<S> {
                         }));
                     }
                 }
-                delta.path_request_timeout = self.path_request_timeout_wake();
+                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
+            }
+            CommandOutcome::OwesLinkRequest { id, establish } => {
+                let mut entropy_bytes = [0u8; EstablishLinkEntropy::LEN];
+                fill_entropy(&mut entropy_bytes);
+                let entropy = EstablishLinkEntropy::new(entropy_bytes);
+
+                let mut buf = [0u8; BROADCAST_MTU];
+                match self.write_commanded_link_request(id, &establish, now, entropy, &mut buf) {
+                    EstablishLinkWriteOutcome::Written(dispatch) => {
+                        fan_self_originated(
+                            interfaces,
+                            Some(dispatch.fire_on),
+                            &buf[..dispatch.wire_len],
+                            sink,
+                        );
+                    }
+                    EstablishLinkWriteOutcome::Failed { failure } => {
+                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::EstablishLink(Err(
+                                EstablishLinkFailure::WriteFailed(failure),
+                            )),
+                        }));
+                    }
+                }
+                wake_schedule_changes.link_establishment_timeout =
+                    self.link_establishment_timeout_wake();
+            }
+            CommandOutcome::EstablishLinkRejected { id, error } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
+                        error,
+                    ))),
+                }));
             }
         }
-        delta
+        wake_schedule_changes
     }
 }
 
@@ -190,12 +227,12 @@ impl<S: EngineStorage> EngineState<S> {
 /// runtime's `fan_to_handles` applied with `FanoutClass::SelfOriginated`; the bytes are
 /// lent to each `Send` in turn, never copied into a staging buffer.
 fn fan_self_originated(
-    view: &[InterfaceConfig],
+    interfaces: &[InterfaceConfig],
     only: Option<InterfaceId>,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
-    for config in view {
+    for config in interfaces {
         let targeted = only.is_none_or(|id| config.id == id);
         if targeted && config.capabilities.allows_transmit() {
             sink(EngineReaction::Directive(Directive::Send {

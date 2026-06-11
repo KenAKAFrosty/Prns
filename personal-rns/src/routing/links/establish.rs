@@ -1,0 +1,460 @@
+use crate::crypto::X25519SecretKey;
+use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
+use crate::engine::{EngineState, InstantMillis};
+use crate::identity::in_memory::InMemoryNodeIdentity;
+use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
+use crate::interfaces::InterfaceId;
+use crate::routing::delivery::send_single::{
+    DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
+};
+use crate::routing::links::handshake::write_link_request;
+use crate::routing::links::table::{InitiatedLink, OverdueLink, TrackLinkError};
+use crate::routing::links::{LinkId, LinkMode};
+use crate::routing::storage::EngineStorage;
+use crate::routing::NextHop;
+use crate::wire::BROADCAST_MTU;
+
+pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
+
+/// One establishment's worth of ephemeral key material: a fresh X25519
+/// (encryption) secret followed by a fresh Ed25519 (signing) secret, the same
+/// layout an identity persists. Move-only and never shown. Consuming it keys
+/// exactly one link request, so one draw can never key two.
+pub struct EstablishLinkEntropy([u8; ESTABLISH_LINK_ENTROPY_LEN]);
+
+impl EstablishLinkEntropy {
+    pub const LEN: usize = ESTABLISH_LINK_ENTROPY_LEN;
+
+    pub const fn new(bytes: [u8; ESTABLISH_LINK_ENTROPY_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    fn into_parts(self) -> (X25519SecretKey, InMemoryNodeIdentity) {
+        let ephemeral = InMemoryNodeIdentity::from_secret_key_bytes(&self.0);
+        let mut scalar = [0u8; 32];
+        scalar.copy_from_slice(&self.0[..32]);
+        (X25519SecretKey::new(scalar), ephemeral)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkRequestDispatch {
+    pub wire_len: usize,
+    pub fire_on: InterfaceId,
+    pub link_id: LinkId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteEstablishLinkError {
+    RouteVanished,
+    Serialize,
+    LinkTableFull,
+    DuplicateLinkId,
+}
+
+impl From<TrackLinkError> for WriteEstablishLinkError {
+    fn from(error: TrackLinkError) -> Self {
+        match error {
+            TrackLinkError::TableFull => Self::LinkTableFull,
+            TrackLinkError::AlreadyTracked => Self::DuplicateLinkId,
+        }
+    }
+}
+
+#[must_use]
+pub enum EstablishLinkWriteOutcome {
+    Written(LinkRequestDispatch),
+    Failed { failure: WriteEstablishLinkError },
+}
+
+impl<S: EngineStorage> EngineState<S> {
+    pub fn ingest_establish_link(&self, id: CommandId, establish: EstablishLink) -> CommandOutcome {
+        let Some(retained) = self
+            .routing_table
+            .retained_announce_for(&establish.destination)
+        else {
+            return CommandOutcome::EstablishLinkRejected {
+                id,
+                error: EstablishLinkError::NoRouteToDestination,
+            };
+        };
+        if retained.hops > 1 || retained.next_hop != NextHop::Direct {
+            return CommandOutcome::EstablishLinkRejected {
+                id,
+                error: EstablishLinkError::NotDirectlyReachable,
+            };
+        }
+        CommandOutcome::OwesLinkRequest { id, establish }
+    }
+
+    /// Mint the initiator's ephemeral keypair from `entropy`, frame the
+    /// LINKREQUEST directly into `buf` (RNS 1.3.1 `Link.__init__`, which
+    /// always signals the default MTU and mode), and track the pending
+    /// establishment that `id` settles through.
+    pub fn write_commanded_link_request(
+        &mut self,
+        id: CommandId,
+        establish: &EstablishLink,
+        now: InstantMillis,
+        entropy: EstablishLinkEntropy,
+        buf: &mut [u8],
+    ) -> EstablishLinkWriteOutcome {
+        use EstablishLinkWriteOutcome::{Failed, Written};
+
+        let Some(retained) = self
+            .routing_table
+            .retained_announce_for(&establish.destination)
+        else {
+            return Failed {
+                failure: WriteEstablishLinkError::RouteVanished,
+            };
+        };
+        let hops = retained.hops;
+        let fire_on = retained.receiving_interface;
+
+        let (initiator_secret, ephemeral) = entropy.into_parts();
+        let encryption_public = *ephemeral.encryption_public_key().as_x25519();
+        let signing_public = *ephemeral.signing_public_key().as_ed25519();
+        let link_id = LinkId::derive(&establish.destination, &encryption_public, &signing_public);
+
+        let Ok(wire_len) = write_link_request(
+            &establish.destination,
+            &encryption_public,
+            &signing_public,
+            BROADCAST_MTU,
+            LinkMode::Aes256Cbc,
+            buf,
+        ) else {
+            return Failed {
+                failure: WriteEstablishLinkError::Serialize,
+            };
+        };
+
+        let timeout_at = InstantMillis(
+            now.0
+                .saturating_add(DEFAULT_FIRST_HOP_TIMEOUT_MS)
+                .saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops.max(1)))),
+        );
+        match self.links.track_initiated(InitiatedLink {
+            link_id,
+            destination: establish.destination,
+            initiator_secret,
+            requested_at: now,
+            timeout_at,
+            command_id: id,
+        }) {
+            Ok(()) => Written(LinkRequestDispatch {
+                wire_len,
+                fire_on,
+                link_id,
+            }),
+            Err(error) => Failed {
+                failure: error.into(),
+            },
+        }
+    }
+
+    /// Drain one establishment whose handshake never completed. Call
+    /// repeatedly until `None` to fully drain. An initiated pop is that
+    /// command's timeout settlement.
+    pub fn pop_timed_out_link(&mut self, now: InstantMillis) -> Option<OverdueLink> {
+        self.links.pop_overdue(now)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::test_support::*;
+    use crate::engine::{
+        AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, Directive, EngineCommand,
+        EngineReaction, EngineState, IngestPacketOutcome, IssuedCommand, Journaled, LaneWake,
+        Settlement,
+    };
+    use crate::engine::{EstablishLinkFailure, WakeSchedules};
+    use crate::interfaces::{InboundPacket, InterfaceConfig};
+    use crate::routing::links::handshake::parse_link_request;
+    use crate::routing::links::table::LinkPhase;
+    use crate::wire::DestinationHash;
+
+    impl EstablishLinkWriteOutcome {
+        #[track_caller]
+        fn dispatched(self) -> LinkRequestDispatch {
+            match self {
+                Self::Written(dispatch) => dispatch,
+                Self::Failed { failure } => panic!("expected Written, got Failed({failure:?})"),
+            }
+        }
+    }
+
+    const PEER_DESTINATION_HEX: &str = "c3cfae69b36bb6e3bbfd96a3b5867a59";
+
+    fn peer_destination() -> DestinationHash {
+        DestinationHash::new(hx(PEER_DESTINATION_HEX).try_into().unwrap())
+    }
+
+    fn arrival() -> InterfaceId {
+        InterfaceId::new([0xA1; 16])
+    }
+
+    fn arrival_view() -> [InterfaceConfig; 1] {
+        [routable_descriptor(arrival())]
+    }
+
+    fn vector_establish_entropy() -> EstablishLinkEntropy {
+        let mut bytes = [0x77u8; EstablishLinkEntropy::LEN];
+        bytes[32..].fill(0x88);
+        EstablishLinkEntropy::new(bytes)
+    }
+
+    fn establish() -> EstablishLink {
+        EstablishLink {
+            destination: peer_destination(),
+        }
+    }
+
+    fn hear_announce(state: &mut EngineState<Cap>, wire: &[u8]) {
+        let mut raw = wire.to_vec();
+        let outcome = state.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: arrival(),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &arrival_view(),
+        );
+        assert!(
+            matches!(
+                outcome,
+                IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
+            ),
+            "the announce fixture must take a route before linking",
+        );
+    }
+
+    fn neighbor_with_a_route() -> EngineState<Cap> {
+        let mut announcer = personal_node_announcer();
+        let mut announce_buf = [0u8; BROADCAST_MTU];
+        let announce_len = announcer
+            .write_commanded_announce(
+                &AnnounceNow {
+                    destination: personal_node_destination(),
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                },
+                InstantMillis(100),
+                TEST_ANNOUNCE_ENTROPY,
+                TEST_RATCHET_ENTROPY,
+                &mut announce_buf,
+            )
+            .written_len();
+
+        let mut state = EngineState::new(second_secret_key());
+        hear_announce(&mut state, &announce_buf[..announce_len]);
+        state
+    }
+
+    #[test]
+    fn a_commanded_link_request_frames_tracks_and_arms_the_lane() {
+        let mut state = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+
+        let dispatch = state
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        assert_eq!(dispatch.fire_on, arrival());
+        let parsed = parse_link_request(&buf[..dispatch.wire_len]).unwrap();
+        assert_eq!(parsed.destination, peer_destination());
+        assert_eq!(parsed.link_id, dispatch.link_id);
+        assert_eq!(parsed.mtu, BROADCAST_MTU);
+        assert_eq!(parsed.mode, LinkMode::Aes256Cbc);
+
+        let (_, ephemeral) = vector_establish_entropy().into_parts();
+        assert_eq!(
+            parsed.initiator_encryption,
+            *ephemeral.encryption_public_key().as_x25519(),
+        );
+        assert_eq!(
+            parsed.initiator_signing,
+            *ephemeral.signing_public_key().as_ed25519(),
+        );
+
+        assert!(matches!(
+            state.links.phase_for(&dispatch.link_id),
+            Some(LinkPhase::Pending {
+                command_id: CommandId(7),
+                ..
+            }),
+        ));
+        assert_eq!(
+            state.link_establishment_timeout_wake(),
+            LaneWake::At(InstantMillis(13_000)),
+            "one direct hop arms first-hop + one per-hop increment",
+        );
+    }
+
+    #[test]
+    fn an_establish_link_needs_a_known_direct_route() {
+        let mut state = EngineState::<Cap>::new(second_secret_key());
+        assert_eq!(
+            state.ingest_command(
+                IssuedCommand {
+                    id: CommandId(7),
+                    command: EngineCommand::EstablishLink(establish()),
+                },
+                &arrival_view(),
+            ),
+            CommandOutcome::EstablishLinkRejected {
+                id: CommandId(7),
+                error: EstablishLinkError::NoRouteToDestination,
+            },
+        );
+
+        hear_announce(&mut state, &hx(RNS_1_3_1_RETRANSMITTED_ANNOUNCE));
+        assert_eq!(
+            state.ingest_command(
+                IssuedCommand {
+                    id: CommandId(8),
+                    command: EngineCommand::EstablishLink(establish()),
+                },
+                &arrival_view(),
+            ),
+            CommandOutcome::EstablishLinkRejected {
+                id: CommandId(8),
+                error: EstablishLinkError::NotDirectlyReachable,
+            },
+            "a route through a relay is not yet linkable",
+        );
+    }
+
+    #[test]
+    fn the_command_lane_fires_the_link_request_at_the_route_interface() {
+        let mut state = neighbor_with_a_route();
+        let mut sent = std::vec::Vec::new();
+        let mut settled = std::vec::Vec::new();
+
+        let delta = state.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(9),
+                command: EngineCommand::EstablishLink(establish()),
+            },
+            &arrival_view(),
+            InstantMillis(1_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0x77),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    sent.push((target, bytes.to_vec()));
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settled.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].0, arrival());
+        let parsed = parse_link_request(&sent[0].1).unwrap();
+        assert_eq!(parsed.destination, peer_destination());
+        assert!(
+            settled.is_empty(),
+            "an in-flight establishment settles later, not in its own cycle",
+        );
+        assert_eq!(
+            delta.link_establishment_timeout,
+            LaneWake::At(InstantMillis(13_000)),
+        );
+    }
+
+    #[test]
+    fn a_silent_handshake_settles_its_command_at_the_deadline() {
+        let mut state = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let _ = state
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        fn settled_of(reaction: EngineReaction<'_>) -> Option<(CommandId, Settlement)> {
+            match reaction {
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    Some((id, settlement))
+                }
+                _ => None,
+            }
+        }
+
+        let mut settled = std::vec::Vec::new();
+        let early = state
+            .settle_timed_out_link_establishments(InstantMillis(12_999), &mut |reaction| {
+                settled.extend(settled_of(reaction))
+            });
+        assert!(settled.is_empty(), "the deadline has not passed yet");
+        assert_eq!(
+            early.link_establishment_timeout,
+            LaneWake::At(InstantMillis(13_000)),
+        );
+
+        let after = state
+            .settle_timed_out_link_establishments(InstantMillis(13_000), &mut |reaction| {
+                settled.extend(settled_of(reaction))
+            });
+        assert_eq!(
+            settled,
+            std::vec![(
+                CommandId(7),
+                Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
+            )],
+        );
+        assert_eq!(after.link_establishment_timeout, LaneWake::Idle);
+        assert!(state.links.is_empty());
+        assert_eq!(
+            after.scheduled_announces,
+            WakeSchedules::UNCHANGED.scheduled_announces,
+            "only the link lane moves",
+        );
+    }
+
+    #[test]
+    fn a_repeated_entropy_draw_is_refused_as_a_duplicate_link() {
+        let mut state = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let _ = state
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &mut buf,
+            )
+            .dispatched();
+
+        let outcome = state.write_commanded_link_request(
+            CommandId(8),
+            &establish(),
+            InstantMillis(2_000),
+            vector_establish_entropy(),
+            &mut buf,
+        );
+        assert!(matches!(
+            outcome,
+            EstablishLinkWriteOutcome::Failed {
+                failure: WriteEstablishLinkError::DuplicateLinkId,
+            },
+        ));
+        assert_eq!(state.links.len(), 1, "the original establishment stands");
+    }
+}

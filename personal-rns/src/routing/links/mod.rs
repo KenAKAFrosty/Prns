@@ -4,6 +4,7 @@
 //! live in [`handshake`]; the per-link state the engine tracks lives in
 //! [`table`].
 
+pub mod establish;
 pub mod handshake;
 pub mod table;
 

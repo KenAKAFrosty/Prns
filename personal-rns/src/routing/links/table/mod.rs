@@ -7,6 +7,7 @@ mod impls;
 pub use impls::*;
 
 use crate::crypto::X25519SecretKey;
+use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::wire::DestinationHash;
@@ -22,6 +23,7 @@ pub enum LinkPhase {
         destination: DestinationHash,
         initiator_secret: X25519SecretKey,
         requested_at: InstantMillis,
+        command_id: CommandId,
     },
     Handshake {
         key: LinkKey,
@@ -40,6 +42,7 @@ impl LinkPhase {
             destination: DestinationHash::new([0u8; 16]),
             initiator_secret: X25519SecretKey::new([0u8; 32]),
             requested_at: InstantMillis(0),
+            command_id: CommandId(0),
         }
     }
 }
@@ -54,11 +57,13 @@ impl core::fmt::Debug for LinkPhase {
             Self::Pending {
                 destination,
                 requested_at,
+                command_id,
                 ..
             } => f
                 .debug_struct("Pending")
                 .field("destination", destination)
                 .field("requested_at", requested_at)
+                .field("command_id", command_id)
                 .finish_non_exhaustive(),
             Self::Handshake { key, requested_at } => f
                 .debug_struct("Handshake")
@@ -81,6 +86,7 @@ pub struct InitiatedLink {
     pub initiator_secret: X25519SecretKey,
     pub requested_at: InstantMillis,
     pub timeout_at: InstantMillis,
+    pub command_id: CommandId,
 }
 
 pub struct RespondingLink {
@@ -91,9 +97,14 @@ pub struct RespondingLink {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OverdueLink {
-    pub link_id: LinkId,
-    pub role: LinkRole,
+pub enum OverdueLink {
+    Initiated {
+        link_id: LinkId,
+        command_id: CommandId,
+    },
+    Responding {
+        link_id: LinkId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +158,7 @@ impl<C: LinkColumns> Links<C> {
                 destination: link.destination,
                 initiator_secret: link.initiator_secret,
                 requested_at: link.requested_at,
+                command_id: link.command_id,
             },
             Some(link.timeout_at),
         )?;
@@ -227,13 +239,17 @@ impl<C: LinkColumns> Links<C> {
             .iter()
             .position(|timeout_at| timeout_at.is_some_and(|at| at <= now))?;
         let link_id = self.columns.link_ids()[index];
-        let role = match &self.columns.phases()[index] {
-            LinkPhase::Pending { .. } => LinkRole::Initiator,
-            LinkPhase::Handshake { .. } => LinkRole::Responder,
-            LinkPhase::Active { role, .. } => *role,
+        let overdue = match &self.columns.phases()[index] {
+            LinkPhase::Pending { command_id, .. } => OverdueLink::Initiated {
+                link_id,
+                command_id: *command_id,
+            },
+            LinkPhase::Handshake { .. } | LinkPhase::Active { .. } => {
+                OverdueLink::Responding { link_id }
+            }
         };
         self.columns.swap_remove(index);
-        Some(OverdueLink { link_id, role })
+        Some(overdue)
     }
 
     pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
@@ -290,6 +306,7 @@ mod tests {
             initiator_secret: secret(id),
             requested_at: InstantMillis(1_000),
             timeout_at: InstantMillis(timeout_at),
+            command_id: CommandId(u64::from(id)),
         }
     }
 
@@ -441,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn overdue_establishments_pop_with_their_roles() {
+    fn overdue_establishments_pop_with_their_shapes() {
         let mut links = TestLinks::default();
         links.track_initiated(initiated(1, 5_000)).unwrap();
         links.track_responding(responding(2, 3_000)).unwrap();
@@ -452,25 +469,19 @@ mod tests {
 
         assert_eq!(links.pop_overdue(InstantMillis(2_999)), None);
 
-        let first = links.pop_overdue(InstantMillis(5_000)).unwrap();
-        let second = links.pop_overdue(InstantMillis(5_000)).unwrap();
+        let popped = [
+            links.pop_overdue(InstantMillis(5_000)).unwrap(),
+            links.pop_overdue(InstantMillis(5_000)).unwrap(),
+        ];
         assert_eq!(links.pop_overdue(InstantMillis(5_000)), None);
 
-        let mut popped = [first, second];
-        popped.sort_unstable_by_key(|overdue| overdue.link_id.as_bytes()[0]);
-        assert_eq!(
-            popped,
-            [
-                OverdueLink {
-                    link_id: link_id(1),
-                    role: LinkRole::Initiator,
-                },
-                OverdueLink {
-                    link_id: link_id(2),
-                    role: LinkRole::Responder,
-                },
-            ],
-        );
+        assert!(popped.contains(&OverdueLink::Initiated {
+            link_id: link_id(1),
+            command_id: CommandId(1),
+        }));
+        assert!(popped.contains(&OverdueLink::Responding {
+            link_id: link_id(2),
+        }));
         assert_eq!(links.len(), 1, "the active link never times out here");
     }
 

@@ -12,6 +12,8 @@ use crate::engine::WriteAnnounceError;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::delivery::send_single::WriteSendSingleError;
+use crate::routing::links::establish::WriteEstablishLinkError;
+use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
@@ -33,6 +35,7 @@ pub enum EngineCommand {
     SendSingle(SendSingle),
     SendGroup(SendGroup),
     RequestPath(RequestPath),
+    EstablishLink(EstablishLink),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -87,10 +90,32 @@ pub enum CommandOutcome {
         id: CommandId,
         request: RequestPath,
     },
+    OwesLinkRequest {
+        id: CommandId,
+        establish: EstablishLink,
+    },
+    EstablishLinkRejected {
+        id: CommandId,
+        error: EstablishLinkError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendSingleError {
+    NoRouteToDestination,
+    NotDirectlyReachable,
+}
+
+/// RNS 1.3.1 `Link(destination)`: bring a session up with a peer whose
+/// announce we hold. Settles established when the LRPROOF validates, or fails
+/// on rejection, a write error, or the establishment timeout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EstablishLink {
+    pub destination: DestinationHash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstablishLinkError {
     NoRouteToDestination,
     NotDirectlyReachable,
 }
@@ -172,6 +197,7 @@ pub enum Settlement {
     SendSingle(Result<Delivered, SendSingleFailure>),
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
+    EstablishLink(Result<LinkEstablished, EstablishLinkFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +238,19 @@ pub enum RequestPathFailure {
     Culled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkEstablished {
+    pub link_id: LinkId,
+    pub rtt_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstablishLinkFailure {
+    Rejected(EstablishLinkError),
+    WriteFailed(WriteEstablishLinkError),
+    Timeout,
+}
+
 pub trait Settleable {
     type Success;
     type Failure;
@@ -231,9 +270,10 @@ impl Settleable for AnnounceNow {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), AnnounceNowFailure>> {
         match settlement {
             Settlement::AnnounceNow(result) => Some(result),
-            Settlement::SendSingle(_) | Settlement::SendGroup(_) | Settlement::RequestPath(_) => {
-                None
-            }
+            Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_) => None,
         }
     }
 }
@@ -249,9 +289,10 @@ impl Settleable for SendGroup {
     fn from_settlement(settlement: Settlement) -> Option<Result<(), SendGroupFailure>> {
         match settlement {
             Settlement::SendGroup(result) => Some(result),
-            Settlement::AnnounceNow(_) | Settlement::SendSingle(_) | Settlement::RequestPath(_) => {
-                None
-            }
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_) => None,
         }
     }
 }
@@ -267,9 +308,10 @@ impl Settleable for SendSingle {
     fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendSingleFailure>> {
         match settlement {
             Settlement::SendSingle(result) => Some(result),
-            Settlement::AnnounceNow(_) | Settlement::SendGroup(_) | Settlement::RequestPath(_) => {
-                None
-            }
+            Settlement::AnnounceNow(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_) => None,
         }
     }
 }
@@ -285,9 +327,31 @@ impl Settleable for RequestPath {
     fn from_settlement(settlement: Settlement) -> Option<Result<PathFound, RequestPathFailure>> {
         match settlement {
             Settlement::RequestPath(result) => Some(result),
-            Settlement::AnnounceNow(_) | Settlement::SendSingle(_) | Settlement::SendGroup(_) => {
-                None
-            }
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::EstablishLink(_) => None,
+        }
+    }
+}
+
+impl Settleable for EstablishLink {
+    type Success = LinkEstablished;
+    type Failure = EstablishLinkFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::EstablishLink(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<LinkEstablished, EstablishLinkFailure>> {
+        match settlement {
+            Settlement::EstablishLink(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_) => None,
         }
     }
 }
@@ -314,6 +378,7 @@ impl<S: EngineStorage> EngineState<S> {
             EngineCommand::SendSingle(send) => self.ingest_send_single(id, send),
             EngineCommand::SendGroup(send) => self.ingest_send_group(id, send),
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
+            EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
         }
     }
 
@@ -569,6 +634,30 @@ mod tests {
             RequestPath::from_settlement(Settlement::AnnounceNow(Ok(()))),
             None,
             "a path request never reads another verb's settlement",
+        );
+    }
+
+    #[test]
+    fn establish_link_recovers_its_typed_settlement() {
+        let verb = EstablishLink {
+            destination: DestinationHash::new([0x11; 16]),
+        };
+
+        assert_eq!(verb.into_command(), EngineCommand::EstablishLink(verb));
+        assert_eq!(
+            EstablishLink::from_settlement(Settlement::EstablishLink(Ok(LinkEstablished {
+                link_id: LinkId::new([0x22; 16]),
+                rtt_ms: 250,
+            }))),
+            Some(Ok(LinkEstablished {
+                link_id: LinkId::new([0x22; 16]),
+                rtt_ms: 250,
+            })),
+        );
+        assert_eq!(
+            EstablishLink::from_settlement(Settlement::SendGroup(Ok(()))),
+            None,
+            "an establishment never reads another verb's settlement",
         );
     }
 

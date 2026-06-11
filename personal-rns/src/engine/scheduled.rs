@@ -1,8 +1,9 @@
 use crate::engine::{
-    EngineReaction, EngineState, InstantMillis, Journaled, RequestPathFailure, SendSingleFailure,
-    Settlement, WakeSchedules,
+    EngineReaction, EngineState, EstablishLinkFailure, InstantMillis, Journaled,
+    RequestPathFailure, SendSingleFailure, Settlement, WakeSchedules,
 };
 use crate::interfaces::InterfaceConfig;
+use crate::routing::links::table::OverdueLink;
 use crate::routing::storage::EngineStorage;
 
 impl<S: EngineStorage> EngineState<S> {
@@ -40,6 +41,25 @@ impl<S: EngineStorage> EngineState<S> {
         }
         WakeSchedules {
             path_request_timeout: self.path_request_timeout_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
+
+    pub fn settle_timed_out_link_establishments(
+        &mut self,
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        while let Some(overdue) = self.pop_timed_out_link(now) {
+            if let OverdueLink::Initiated { command_id, .. } = overdue {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: command_id,
+                    settlement: Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
+                }));
+            }
+        }
+        WakeSchedules {
+            link_establishment_timeout: self.link_establishment_timeout_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
