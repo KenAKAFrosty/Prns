@@ -1,6 +1,10 @@
 # Pinned upstream clones for the energy harnesses — energy/build.sh re-fetches them.
 external/*/.upstream/
 
+# This checkout's submitter identity — each contributor mints their own (results.rs);
+# only the resulting UUID travels, stamped onto committed rows.
+.submitter.json
+
 # Energy harness build artifacts — energy/build.sh regenerates them.
 energy/contestants/*/target/
 energy/contestants/*/Cargo.lock
