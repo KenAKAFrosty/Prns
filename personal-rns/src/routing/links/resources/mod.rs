@@ -10,6 +10,7 @@ pub mod advertisement;
 pub mod assemble_incoming;
 pub mod build_outgoing;
 pub mod control;
+pub mod serve_outgoing;
 
 use crate::crypto::sha256_chunks;
 use crate::routing::links::data::LINK_MDU;
