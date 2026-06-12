@@ -76,6 +76,43 @@ struct Profile {
     size_seed: u64,
     #[serde(default = "default_topology")]
     topology: String,
+    #[serde(default)]
+    command_share: usize,
+    #[serde(default)]
+    command_min: usize,
+    #[serde(default)]
+    command_max: usize,
+    #[serde(default)]
+    page_share: usize,
+    #[serde(default)]
+    page_min: usize,
+    #[serde(default)]
+    page_max: usize,
+    #[serde(default)]
+    file_min: usize,
+    #[serde(default)]
+    file_max: usize,
+}
+
+/// One churn cycle's traffic: a band rolled from the shared sequence, then a
+/// size within it — command messages ride a single link send, pages and
+/// files ride a resource.
+#[derive(Clone, Copy, PartialEq)]
+enum Band {
+    Command,
+    Page,
+    File,
+}
+
+fn roll_band(sizes: &mut SizeSequence, profile: &Profile) -> (Band, usize) {
+    let roll = sizes.next_in(0, 99);
+    if roll < profile.command_share {
+        (Band::Command, sizes.next_in(profile.command_min, profile.command_max))
+    } else if roll < profile.command_share + profile.page_share {
+        (Band::Page, sizes.next_in(profile.page_min, profile.page_max))
+    } else {
+        (Band::File, sizes.next_in(profile.file_min, profile.file_max))
+    }
 }
 
 fn default_topology() -> String {
@@ -106,11 +143,15 @@ impl SizeSequence {
     }
 
     fn next_len(&mut self) -> usize {
+        self.next_in(self.min, self.max)
+    }
+
+    fn next_in(&mut self, min: usize, max: usize) -> usize {
         self.state ^= self.state << 13;
         self.state ^= self.state >> 7;
         self.state ^= self.state << 17;
-        let span = (self.max - self.min + 1) as u64;
-        self.min + (self.state % span) as usize
+        let span = (max - min + 1) as u64;
+        min + (self.state % span) as usize
     }
 }
 
@@ -229,6 +270,15 @@ async fn main() {
             .register_request_handler(&destination, REQUEST_PATH, RequestPolicy::AllowAll)
             .expect("registers the bench handler");
     }
+    if matches!(manifest.profile.mechanism.as_str(), "resource" | "churn") && role == "responder" {
+        assert!(engine.set_default_resource_strategy(
+            &destination,
+            ResourceStrategy::Accept {
+                max_uncompressed_len: 2 * 1024 * 1024,
+                accept_compressed: false,
+            },
+        ));
+    }
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
@@ -342,7 +392,9 @@ async fn main() {
                 journal,
             ));
             println!("READY role=responder addr={bound}");
-            if manifest.profile.mechanism == "request" {
+            if manifest.profile.mechanism == "churn" {
+                respond_churn(destination, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "request" {
                 respond_request(destination, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "resource" {
                 respond_resource(destination, command_tx, event_rx).await;
@@ -385,7 +437,9 @@ async fn main() {
                 journal,
             ));
             println!("READY role=initiator");
-            if manifest.profile.mechanism == "request" {
+            if manifest.profile.mechanism == "churn" {
+                initiate_churn(&manifest.profile, duration, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "request" {
                 initiate_request(&manifest.profile, duration, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "resource" {
                 initiate_resource(&manifest.profile, duration, command_tx, event_rx).await;
@@ -741,22 +795,6 @@ async fn respond_resource(
             }
             event = events.recv() => {
                 match event {
-                    Some(Event::LinkUp(link_id)) => {
-                        next_id += 1;
-                        let open_gate = IssuedCommand {
-                            id: CommandId(next_id),
-                            command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
-                                link_id,
-                                strategy: ResourceStrategy::Accept {
-                                    max_uncompressed_len: 2 * 1024 * 1024,
-                                    accept_compressed: false,
-                                },
-                            }),
-                        };
-                        if commands.send(HostCommand::Engine(open_gate)).is_err() {
-                            return;
-                        }
-                    }
                     Some(Event::ResourceIn(bytes)) => {
                         received += 1;
                         payload_bytes += bytes as u64;
@@ -805,10 +843,6 @@ async fn initiate_resource(
             _ => {}
         }
     };
-    // The responder opens its strategy gate on hearing the link; give that
-    // command a moment to land before the first advertisement races it.
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
     let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
     let mut sizes = SizeSequence::new(
         profile.size_seed,
@@ -1149,4 +1183,208 @@ async fn relay_node(manifest: &Manifest) {
     ));
     println!("READY role=relay addr={addr_a}>{addr_b}");
     std::future::pending::<()>().await;
+}
+
+
+/// The serving end of session churn: every fresh link gets the strategy gate
+/// opened, every delivery counted, and the report comes when the churn has
+/// been quiet — closed links are the cycle's normal end, not the run's.
+async fn respond_churn(
+    destination: DestinationHash,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let mut next_id = 1u64;
+    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut idle = tokio::time::interval(Duration::from_millis(200));
+    let mut received = 0u64;
+    let mut payload_bytes = 0u64;
+    let mut last_delivery: Option<tokio::time::Instant> = None;
+    loop {
+        tokio::select! {
+            _ = announce.tick() => {
+                let command = IssuedCommand {
+                    id: CommandId(next_id),
+                    command: EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }),
+                };
+                next_id += 1;
+                if commands.send(HostCommand::Engine(command)).is_err() {
+                    return;
+                }
+            }
+            _ = idle.tick() => {
+                if last_delivery.is_some_and(|at| at.elapsed() > QUIET_AFTER_TRAFFIC) {
+                    println!("RESULT received={received} payload_bytes={payload_bytes}");
+                    return;
+                }
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::Delivered(bytes)) | Some(Event::ResourceIn(bytes)) => {
+                        received += 1;
+                        payload_bytes += bytes as u64;
+                        last_delivery = Some(tokio::time::Instant::now());
+                    }
+                    None => return,
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+/// The churning end: hear the announce once, then live whole sessions back
+/// to back — establish, move one banded payload (command sends on the link,
+/// pages and files as resources), tear down. The product is sessions per
+/// second and where the time goes.
+async fn initiate_churn(
+    profile: &Profile,
+    duration: Duration,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+
+    let scratch = incompressible_payload(profile.file_max.max(profile.page_max));
+    let mut sizes = SizeSequence::new(profile.size_seed, 0, 0, 1);
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut next_id = 1u64;
+    let mut cycles = 0u64;
+    let mut failures = 0u64;
+    let mut commands_moved = 0u64;
+    let mut pages_moved = 0u64;
+    let mut files_moved = 0u64;
+    let mut payload_bytes = 0u64;
+    let mut establish_ms: Vec<u64> = Vec::new();
+    let mut cycle_ms: Vec<u64> = Vec::new();
+
+    'churn: while tokio::time::Instant::now() < deadline {
+        let cycle_started = tokio::time::Instant::now();
+        next_id += 1;
+        let establish_id = CommandId(next_id);
+        commands
+            .send(HostCommand::Engine(IssuedCommand {
+                id: establish_id,
+                command: EngineCommand::EstablishLink(EstablishLink { destination }),
+            }))
+            .expect("reactor alive");
+        let link_id = loop {
+            match events.recv().await.expect("reactor alive") {
+                Event::Settled(id, Settlement::EstablishLink(result)) if id == establish_id => {
+                    match result {
+                        Ok(established) => break established.link_id,
+                        Err(_) => {
+                            failures += 1;
+                            continue 'churn;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        };
+        establish_ms.push(cycle_started.elapsed().as_millis() as u64);
+
+        let (band, len) = roll_band(&mut sizes, profile);
+        next_id += 1;
+        let transfer_id = CommandId(next_id);
+        let moved = match band {
+            Band::Command => {
+                commands
+                    .send(HostCommand::Engine(IssuedCommand {
+                        id: transfer_id,
+                        command: EngineCommand::SendLink(SendLink {
+                            link_id,
+                            payload: SendLinkPayload::from_slice(&scratch[..len])
+                                .expect("command fits"),
+                        }),
+                    }))
+                    .expect("reactor alive");
+                loop {
+                    match events.recv().await.expect("reactor alive") {
+                        Event::Settled(id, Settlement::SendLink(result)) if id == transfer_id => {
+                            break result.is_ok();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Band::Page | Band::File => {
+                commands
+                    .send(HostCommand::SendResource(SendResourceHostCommand {
+                        id: transfer_id,
+                        link_id,
+                        data: scratch[..len].to_vec(),
+                        compressed_candidate: None,
+                        request_id: None,
+                    }))
+                    .expect("reactor alive");
+                loop {
+                    match events.recv().await.expect("reactor alive") {
+                        Event::Settled(id, Settlement::SendResource(result))
+                            if id == transfer_id =>
+                        {
+                            break result.is_ok();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        };
+        if moved {
+            payload_bytes += len as u64;
+            match band {
+                Band::Command => commands_moved += 1,
+                Band::Page => pages_moved += 1,
+                Band::File => files_moved += 1,
+            }
+        } else {
+            failures += 1;
+        }
+
+        next_id += 1;
+        let close_id = CommandId(next_id);
+        commands
+            .send(HostCommand::Engine(IssuedCommand {
+                id: close_id,
+                command: EngineCommand::CloseLink(CloseLink { link_id }),
+            }))
+            .expect("reactor alive");
+        loop {
+            match events.recv().await.expect("reactor alive") {
+                Event::Settled(id, Settlement::CloseLink(_)) if id == close_id => break,
+                _ => {}
+            }
+        }
+        if moved {
+            cycles += 1;
+            cycle_ms.push(cycle_started.elapsed().as_millis() as u64);
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    establish_ms.sort_unstable();
+    cycle_ms.sort_unstable();
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT cycles={cycles} failures={failures} commands={commands_moved} \
+         pages={pages_moved} files={files_moved} payload_bytes={payload_bytes} \
+         elapsed_ms={elapsed_ms} cycles_per_sec={:.1} \
+         establish_p50_ms={:.0} establish_p99_ms={:.0} \
+         cycle_p50_ms={:.0} cycle_p99_ms={:.0}",
+        cycles as f64 / seconds,
+        percentile(&establish_ms, 0.50),
+        percentile(&establish_ms, 0.99),
+        percentile(&cycle_ms, 0.50),
+        percentile(&cycle_ms, 0.99),
+    );
 }

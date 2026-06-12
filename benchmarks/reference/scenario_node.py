@@ -36,12 +36,15 @@ class SizeSequence:
         self.hi = hi
 
     def next_len(self):
+        return self.next_in(self.lo, self.hi)
+
+    def next_in(self, lo, hi):
         s = self.state
         s = (s ^ (s << 13)) & MASK64
         s = (s ^ (s >> 7)) & MASK64
         s = (s ^ (s << 17)) & MASK64
         self.state = s
-        return self.lo + (s % (self.hi - self.lo + 1))
+        return lo + (s % (hi - lo + 1))
 
 
 def sizes_from(profile, lo_key, hi_key, fixed_key, seed_xor=0):
@@ -649,6 +652,157 @@ def initiate_request(name, block, profile, duration):
     os._exit(0)
 
 
+def roll_band(sizes, profile):
+    roll = sizes.next_in(0, 99)
+    if roll < profile["command_share"]:
+        return "command", sizes.next_in(profile["command_min"], profile["command_max"])
+    if roll < profile["command_share"] + profile["page_share"]:
+        return "page", sizes.next_in(profile["page_min"], profile["page_max"])
+    return "file", sizes.next_in(profile["file_min"], profile["file_max"])
+
+
+def respond_churn(name, block, ready_addr):
+    """The serving end of session churn: ACCEPT_ALL and a packet callback on
+    every fresh link; report after the churn has been quiet."""
+    start_reticulum(block)
+    identity = RNS.Identity()
+    destination = RNS.Destination(
+        identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
+    )
+    destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
+    state = {"received": 0, "payload_bytes": 0, "last": None}
+
+    def on_packet(message, packet):
+        state["received"] += 1
+        state["payload_bytes"] += len(message)
+        state["last"] = time.monotonic()
+
+    def on_concluded(resource):
+        if resource.status == RNS.Resource.COMPLETE:
+            state["received"] += 1
+            state["payload_bytes"] += len(resource.data.read())
+            state["last"] = time.monotonic()
+
+    def on_link(link):
+        link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+        link.set_packet_callback(on_packet)
+        link.set_resource_concluded_callback(on_concluded)
+
+    destination.set_link_established_callback(on_link)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
+    done = threading.Event()
+    while True:
+        destination.announce()
+        done.wait(ANNOUNCE_EVERY)
+        last = state["last"]
+        if last is not None and time.monotonic() - last > QUIET_AFTER_TRAFFIC:
+            break
+    print(
+        f"RESULT received={state['received']} payload_bytes={state['payload_bytes']}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def initiate_churn(name, block, profile, duration):
+    """The churning end: whole sessions back to back — establish, move one
+    banded payload, tear down."""
+    start_reticulum(block)
+
+    heard = {"hash": None, "identity": None}
+    announced = threading.Event()
+
+    class Handler:
+        aspect_filter = f"bench.{name}"
+
+        def received_announce(self, destination_hash, announced_identity, app_data):
+            heard["hash"] = destination_hash
+            heard["identity"] = announced_identity
+            announced.set()
+
+    RNS.Transport.register_announce_handler(Handler())
+    print("READY role=initiator", flush=True)
+    if not announced.wait(30):
+        sys.exit("no announce heard")
+
+    destination = RNS.Destination(
+        heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
+    )
+    sizes = SizeSequence(profile.get("size_seed", DEFAULT_SIZE_SEED), 0, 0, 1)
+    scratch = os.urandom(max(profile["file_max"], profile["page_max"]))
+    state = {"cycles": 0, "failures": 0, "command": 0, "page": 0, "file": 0, "payload_bytes": 0}
+    establish_ms = []
+    cycle_ms = []
+    started = time.monotonic()
+    deadline = started + duration
+
+    while time.monotonic() < deadline:
+        cycle_started = time.monotonic()
+        up = threading.Event()
+        link = RNS.Link(destination, established_callback=lambda _l: up.set())
+        if not up.wait(10):
+            state["failures"] += 1
+            link.teardown()
+            continue
+        establish_ms.append((time.monotonic() - cycle_started) * 1000.0)
+
+        band, size = roll_band(sizes, profile)
+        moved = False
+        if band == "command":
+            receipt = RNS.Packet(link, scratch[:size]).send()
+            waited = time.monotonic()
+            while time.monotonic() - waited < 10:
+                status = receipt.status if receipt else RNS.PacketReceipt.FAILED
+                if status == RNS.PacketReceipt.DELIVERED:
+                    moved = True
+                    break
+                if status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
+                    break
+                time.sleep(0.0005)
+        else:
+            concluded = threading.Event()
+            outcome = {}
+
+            def callback(resource):
+                outcome["status"] = resource.status
+                concluded.set()
+
+            RNS.Resource(scratch[:size], link, callback=callback)
+            if concluded.wait(30):
+                moved = outcome["status"] == RNS.Resource.COMPLETE
+
+        if moved:
+            state["payload_bytes"] += size
+            state[band] += 1
+        else:
+            state["failures"] += 1
+        link.teardown()
+        time.sleep(0.002)
+        if moved:
+            state["cycles"] += 1
+            cycle_ms.append((time.monotonic() - cycle_started) * 1000.0)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    time.sleep(0.5)
+
+    establish_ms = sorted(establish_ms)
+    cycle_ms = sorted(cycle_ms)
+    pct = lambda arr, p: (
+        arr[min(round((len(arr) - 1) * p), len(arr) - 1)] if arr else float("nan")
+    )
+    seconds = max(elapsed_ms / 1000.0, 1e-9)
+    print(
+        f"RESULT cycles={state['cycles']} failures={state['failures']} "
+        f"commands={state['command']} pages={state['page']} files={state['file']} "
+        f"payload_bytes={state['payload_bytes']} elapsed_ms={elapsed_ms} "
+        f"cycles_per_sec={state['cycles'] / seconds:.1f} "
+        f"establish_p50_ms={pct(establish_ms, 0.50):.0f} "
+        f"establish_p99_ms={pct(establish_ms, 0.99):.0f} "
+        f"cycle_p50_ms={pct(cycle_ms, 0.50):.0f} cycle_p99_ms={pct(cycle_ms, 0.99):.0f}",
+        flush=True,
+    )
+    os._exit(0)
+
+
 def main():
     usage = "usage: scenario_node.py <manifest.json> <responder|initiator> <addr> [duration-ms]"
     if len(sys.argv) < 4:
@@ -671,11 +825,13 @@ def main():
         "link": respond_link,
         "resource": respond_resource,
         "request": respond_request,
+        "churn": respond_churn,
     }
     initiators = {
         "link": initiate_link,
         "resource": initiate_resource,
         "request": initiate_request,
+        "churn": initiate_churn,
     }
     if role == "responder":
         responders.get(mechanism, respond)(manifest["name"], block, ready_addr)

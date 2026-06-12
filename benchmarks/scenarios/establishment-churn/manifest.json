@@ -1,0 +1,23 @@
+{
+  "name": "establishment-churn",
+  "version": 1,
+  "description": "Whole sessions lived back to back: establish a link, move one payload, tear down, repeat for the wall-time. Payloads roll from a realistic mix - mostly small command messages on the link itself, NomadNet-page-sized and file-sized resources for the rest - so every cycle pays the full handshake crypto, table tracking, and teardown that sensor check-ins and short-lived interactions pay in the field.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "churn",
+    "command_share": 60,
+    "command_min": 16,
+    "command_max": 400,
+    "page_share": 30,
+    "page_min": 1024,
+    "page_max": 8192,
+    "file_min": 50000,
+    "file_max": 200000,
+    "window": 1,
+    "duration_ms": 30000
+  },
+  "conformance": "cycles == receiver's count of delivered payloads; every cycle is a full establish/transfer/teardown"
+}
