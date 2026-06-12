@@ -33,7 +33,7 @@ pub use crate::routing::announce::emit::{
     AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
     PathResponseWriteOutcome, WriteAnnounceError,
 };
-pub use crate::routing::announce::ingress::{
+pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
     RebroadcastDecision,
 };

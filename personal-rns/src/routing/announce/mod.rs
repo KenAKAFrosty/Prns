@@ -2,7 +2,6 @@ pub mod acceptance;
 pub mod defaults;
 pub mod emit;
 mod id;
-pub mod ingress;
 pub mod rate_limit;
 pub mod schedule;
 

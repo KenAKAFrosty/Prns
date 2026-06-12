@@ -25,7 +25,7 @@ use crate::routing::links::resources::{
     RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::table::LinkPhase;
-use crate::routing::announce::ingress::{DataPacket, IngestPacketOutcome};
+use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::LinkId;
 use crate::routing::storage::EngineStorage;
 use crate::wire::{PacketType, WireContext};

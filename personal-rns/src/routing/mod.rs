@@ -2,6 +2,7 @@ pub mod announce;
 pub mod dedup;
 pub mod delivery;
 pub mod group_keys;
+pub mod ingress;
 pub mod links;
 pub mod path_requests;
 pub mod proof;
