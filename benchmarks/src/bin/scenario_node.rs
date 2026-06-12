@@ -12,12 +12,13 @@ use std::time::Duration;
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, EngineCommand, EngineState,
     EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendLink, SendLinkPayload, SendSingle,
-    SendSinglePayload, Settlement,
+    SendSinglePayload, SetResourceStrategy, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
-    run, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
+    run, tokio_grant_lane, Egress, HostCommand, SendResourceHostCommand, TokioHost,
+    TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::tcp::core as tcp_core;
@@ -27,6 +28,8 @@ use personal_rns::reactor::interfaces::tcp::impls::tokio::{
 use personal_rns::reactor::interfaces::udp::core as udp_core;
 use personal_rns::reactor::interfaces::udp::impls::tokio::UdpInterface;
 use personal_rns::routing::delivery::Delivery;
+use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::links::LinkId;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
@@ -69,6 +72,8 @@ enum Event {
     Heard(DestinationHash),
     Settled(CommandId, Settlement),
     Delivered(usize),
+    LinkUp(LinkId),
+    ResourceIn(usize),
     Closed,
 }
 
@@ -113,7 +118,7 @@ async fn main() {
         )
         .expect("registers the bench destination");
 
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
     let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
@@ -146,6 +151,12 @@ async fn main() {
         }
         Journaled::LinkClosed { .. } => {
             let _ = event_tx.send(Event::Closed);
+        }
+        Journaled::LinkEstablished(established) => {
+            let _ = event_tx.send(Event::LinkUp(established.link_id));
+        }
+        Journaled::ResourceReceived { data, .. } => {
+            let _ = event_tx.send(Event::ResourceIn(data.len()));
         }
         _ => {}
     };
@@ -188,7 +199,9 @@ async fn main() {
                 journal,
             ));
             println!("READY role=responder addr={bound}");
-            if manifest.profile.mechanism == "link" {
+            if manifest.profile.mechanism == "resource" {
+                respond_resource(destination, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "link" {
                 respond_link(destination, command_tx, event_rx).await;
             } else {
                 respond(destination, command_tx, event_rx).await;
@@ -227,7 +240,9 @@ async fn main() {
                 journal,
             ));
             println!("READY role=initiator");
-            if manifest.profile.mechanism == "link" {
+            if manifest.profile.mechanism == "resource" {
+                initiate_resource(&manifest.profile, duration, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "link" {
                 initiate_link(&manifest.profile, duration, command_tx, event_rx).await;
             } else {
                 initiate(&manifest.profile, duration, command_tx, event_rx).await;
@@ -242,7 +257,7 @@ async fn main() {
 /// singles have no teardown to signal the end with, so silence after traffic is it.
 async fn respond(
     destination: DestinationHash,
-    commands: mpsc::UnboundedSender<IssuedCommand>,
+    commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
@@ -263,7 +278,7 @@ async fn respond(
                     }),
                 };
                 next_id += 1;
-                if commands.send(command).is_err() {
+                if commands.send(HostCommand::Engine(command)).is_err() {
                     return;
                 }
             }
@@ -294,7 +309,7 @@ async fn respond(
 async fn initiate(
     profile: &Profile,
     duration: Duration,
-    commands: mpsc::UnboundedSender<IssuedCommand>,
+    commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -324,7 +339,7 @@ async fn initiate(
         *next_id += 1;
         *sent += 1;
         *in_flight += 1;
-        commands.send(command).is_ok()
+        commands.send(HostCommand::Engine(command)).is_ok()
     };
 
     for _ in 0..profile.window {
@@ -370,7 +385,7 @@ async fn initiate(
 /// initiator closes the link.
 async fn respond_link(
     destination: DestinationHash,
-    commands: mpsc::UnboundedSender<IssuedCommand>,
+    commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
@@ -389,7 +404,7 @@ async fn respond_link(
                     }),
                 };
                 next_id += 1;
-                if commands.send(command).is_err() {
+                if commands.send(HostCommand::Engine(command)).is_err() {
                     return;
                 }
             }
@@ -416,7 +431,7 @@ async fn respond_link(
 async fn initiate_link(
     profile: &Profile,
     duration: Duration,
-    commands: mpsc::UnboundedSender<IssuedCommand>,
+    commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -426,10 +441,10 @@ async fn initiate_link(
         }
     };
     commands
-        .send(IssuedCommand {
+        .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(1),
             command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        })
+        }))
         .expect("reactor alive");
     let link_id = loop {
         match events.recv().await.expect("reactor alive") {
@@ -463,7 +478,7 @@ async fn initiate_link(
         *next_id += 1;
         *sent += 1;
         *in_flight += 1;
-        commands.send(command).is_ok()
+        commands.send(HostCommand::Engine(command)).is_ok()
     };
 
     for _ in 0..profile.window {
@@ -490,10 +505,10 @@ async fn initiate_link(
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     commands
-        .send(IssuedCommand {
+        .send(HostCommand::Engine(IssuedCommand {
             id: CommandId(next_id),
             command: EngineCommand::CloseLink(CloseLink { link_id }),
-        })
+        }))
         .expect("reactor alive");
     let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
     loop {
@@ -515,5 +530,178 @@ async fn initiate_link(
         payload_bytes as f64 / seconds,
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
+    );
+}
+
+
+/// The accepting end: announce until the link arrives, open the strategy
+/// gate for it, count every hash-proved transfer, and report when the
+/// initiator closes the link.
+async fn respond_resource(
+    destination: DestinationHash,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let mut next_id = 1u64;
+    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut received = 0u64;
+    let mut payload_bytes = 0u64;
+    loop {
+        tokio::select! {
+            _ = announce.tick() => {
+                let command = IssuedCommand {
+                    id: CommandId(next_id),
+                    command: EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }),
+                };
+                next_id += 1;
+                if commands.send(HostCommand::Engine(command)).is_err() {
+                    return;
+                }
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::LinkUp(link_id)) => {
+                        next_id += 1;
+                        let open_gate = IssuedCommand {
+                            id: CommandId(next_id),
+                            command: EngineCommand::SetResourceStrategy(SetResourceStrategy {
+                                link_id,
+                                strategy: ResourceStrategy::Accept {
+                                    max_uncompressed_len: 2 * 1024 * 1024,
+                                    accept_compressed: false,
+                                },
+                            }),
+                        };
+                        if commands.send(HostCommand::Engine(open_gate)).is_err() {
+                            return;
+                        }
+                    }
+                    Some(Event::ResourceIn(bytes)) => {
+                        received += 1;
+                        payload_bytes += bytes as u64;
+                    }
+                    Some(Event::Closed) | None => {
+                        println!("RESULT received={received} payload_bytes={payload_bytes}");
+                        return;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+/// The measuring end: establish one link, then send maximum-size resources
+/// back to back — one at a time, the protocol's own rule — until the
+/// wall-time elapses. Goodput from the settled transfers; per-transfer wall
+/// time measured locally.
+async fn initiate_resource(
+    profile: &Profile,
+    duration: Duration,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+    commands
+        .send(HostCommand::Engine(IssuedCommand {
+            id: CommandId(1),
+            command: EngineCommand::EstablishLink(EstablishLink { destination }),
+        }))
+        .expect("reactor alive");
+    let link_id = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
+                break established.link_id;
+            }
+            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
+                panic!("link refused: {failure:?}");
+            }
+            _ => {}
+        }
+    };
+    // The responder opens its strategy gate on hearing the link; give that
+    // command a moment to land before the first advertisement races it.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let data = vec![0xAB; profile.payload_len];
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut next_id = 2u64;
+    let mut sent = 0u64;
+    let mut settled = 0u64;
+    let mut failures = 0u64;
+    let mut transfer_ms: Vec<u64> = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        next_id += 1;
+        let id = CommandId(next_id);
+        let transfer_started = tokio::time::Instant::now();
+        commands
+            .send(HostCommand::SendResource(SendResourceHostCommand {
+                id,
+                link_id,
+                data: data.clone(),
+                compressed_candidate: None,
+                request_id: None,
+            }))
+            .expect("reactor alive");
+        sent += 1;
+        loop {
+            match events.recv().await.expect("reactor alive") {
+                Event::Settled(settled_id, Settlement::SendResource(result))
+                    if settled_id == id =>
+                {
+                    match result {
+                        Ok(()) => {
+                            settled += 1;
+                            transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
+                        }
+                        Err(failure) => {
+                            eprintln!("transfer failed: {failure:?}");
+                            failures += 1;
+                        }
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    commands
+        .send(HostCommand::Engine(IssuedCommand {
+            id: CommandId(next_id + 1),
+            command: EngineCommand::CloseLink(CloseLink { link_id }),
+        }))
+        .expect("reactor alive");
+    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
+    loop {
+        match tokio::time::timeout_at(close_deadline, events.recv()).await {
+            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+
+    transfer_ms.sort_unstable();
+    let payload_bytes = settled * profile.payload_len as u64;
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT sent={sent} settled={settled} failures={failures} \
+         payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
+         goodput_bytes_per_sec={:.0} goodput_mbits_per_sec={:.2} \
+         transfer_p50_ms={:.0} transfer_p99_ms={:.0}",
+        payload_bytes as f64 / seconds,
+        payload_bytes as f64 * 8.0 / seconds / 1_000_000.0,
+        percentile(&transfer_ms, 0.50),
+        percentile(&transfer_ms, 0.99),
     );
 }
