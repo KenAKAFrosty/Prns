@@ -537,12 +537,16 @@ def initiate_request(name, block, profile, duration):
     started = time.monotonic()
     deadline = started + duration
 
+    second_counts = {}
+
     def on_response(receipt):
         with lock:
             state["delivered"] += 1
             state["in_flight"] -= 1
             state["response_bytes"] += len(receipt.response or b"")
             rtts.append((time.monotonic() - receipt.sent_at_wall) * 1000.0)
+            bucket = int(time.monotonic() - started)
+            second_counts[bucket] = second_counts.get(bucket, 0) + 1
         settled.set()
 
     def on_failed(receipt):
@@ -580,6 +584,11 @@ def initiate_request(name, block, profile, duration):
     elapsed_ms = int((time.monotonic() - started) * 1000)
     link.teardown()
     time.sleep(0.5)
+    print(
+        "DEBUG per_second_settles=" + str(sorted(second_counts.items())),
+        file=sys.stderr,
+        flush=True,
+    )
 
     rtts = sorted(rtts)
     pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
