@@ -4,17 +4,18 @@
 
 The suite runs on whatever machines we have; every host is its own column of the story, so
 results are filed per host. Each figure is stamped with the commit, toolchain, and host that
-produced it and lives as a row in `results/<host>/<scenario>/<impl>.jsonl` — the same schema
+produced it and lives as a row in `results/<host>/<scenario>/<pairing>.jsonl` — the same schema
 any implementation emits. These pages are rendered from those rows, and the website renders the
 same files, so the two never drift.
 
-**Comparability.** Conformance and throughput line up across implementations; memory and latency
-stay within one (a GC and a no-alloc core racing on RSS would be a dishonest column). Numbers are
-only comparable *within* a host — never race a laptop against a server.
+**Comparability.** Conformance, throughput, and latency line up across pairings *within* a host;
+energy is the package-domain figure that host's silicon actually reports. Numbers are only
+comparable within a host — never race a laptop against a server.
 
 | Host | Machine | Status | Results |
 |------|---------|--------|---------|
 | `aarch64-apple-darwin` | Apple M4 | measured | [view](RESULTS-aarch64-apple-darwin.md) |
+| `x86_64-unknown-linux-gnu` | 12th Gen Intel(R) Core(TM) i7-1260P | measured | [view](RESULTS-x86_64-unknown-linux-gnu.md) |
 
 Pick a host above for its tables. A `pending` host has been scaffolded but not yet measured —
 run the drivers there to fill it in.

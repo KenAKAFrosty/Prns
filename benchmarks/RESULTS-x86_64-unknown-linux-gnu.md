@@ -1,14 +1,14 @@
-# Benchmark results — `aarch64-apple-darwin`
+# Benchmark results — `x86_64-unknown-linux-gnu`
 
 [← All hosts](RESULTS.md)
 
 ## Machine
 
-- **CPU** — Apple M4
-- **Cores** — 10 physical / 10 logical
-- **Memory** — 16.0 GiB
-- **OS** — macOS 26.4
-- **Kernel** — 25.4.0
+- **CPU** — 12th Gen Intel(R) Core(TM) i7-1260P
+- **Cores** — 12 physical / 16 logical
+- **Memory** — 31.0 GiB
+- **OS** — Linux (Ubuntu 22.04)
+- **Kernel** — 6.8.0-124-generic
 
 ## link-firehose-small-payload (v1)
 
@@ -18,10 +18,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 253,802 / 253,802 | 25.4k msg/s | 7.6 MB/s | 0 / 1 ms | 10.1 / 20.5 MiB | 0.29 mJ |
-| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 86,246 / 86,246 | 8.6k msg/s | 2.6 MB/s | 2 / 2 ms | 8.8 / 68.0 MiB | 1.09 mJ |
-| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 42,483 / 42,628 · 145 timed out | 3.9k msg/s | 1.2 MB/s | 0 / 1 ms | 55.0 / 9.5 MiB | 1.50 mJ |
-| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 50,343 / 50,466 · 123 timed out | 4.7k msg/s | 1.4 MB/s | 1 / 2 ms | 56.6 / 54.1 MiB | 2.14 mJ |
+| Prns → Prns | _pending_ | 23.9k msg/s | 7.2 MB/s | 0 / 1 ms | 7.1 / 17.1 MiB | 0.86 mJ |
+| Prns → RNS 1.3.1 _(ref)_ | _pending_ | 7.1k msg/s | 2.1 MB/s | 2 / 3 ms | 5.7 / 45.3 MiB | 2.85 mJ |
+| RNS 1.3.1 _(ref)_ → Prns | _pending_ | 5.2k msg/s | 1.6 MB/s | 0 / 1 ms | 44.7 / 7.7 MiB | 3.06 mJ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | _pending_ | 5.6k msg/s | 1.7 MB/s | 1 / 2 ms | 45.6 / 43.3 MiB | 3.94 mJ |
 
 **Implementations.**
 
@@ -36,10 +36,10 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 132,054 / 132,054 | 13.2k msg/s | 4.0 MB/s | 1 / 2 ms | 9.2 / 14.2 MiB | 0.55 mJ |
-| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 41,114 / 41,114 | 4.1k msg/s | 1.2 MB/s | 4 / 4 ms | 8.0 / 53.0 MiB | 1.97 mJ |
-| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 12,789 / 12,789 | 1.3k msg/s | 384 kB/s | 3 / 18 ms | 42.1 / 8.0 MiB | 6.44 mJ |
-| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 12,425 / 12,425 | 1.2k msg/s | 372 kB/s | 3 / 19 ms | 41.6 / 44.4 MiB | 7.79 mJ |
+| Prns → Prns | _pending_ | 10.3k msg/s | 3.1 MB/s | 1 / 2 ms | 6.0 / 10.1 MiB | 2.67 mJ |
+| Prns → RNS 1.3.1 _(ref)_ | _pending_ | 6.9k msg/s | 2.1 MB/s | 2 / 3 ms | 5.9 / 45.1 MiB | 3.07 mJ |
+| RNS 1.3.1 _(ref)_ → Prns | _pending_ | 1.9k msg/s | 585 kB/s | 0 / 1 ms | 33.4 / 6.0 MiB | 8.03 mJ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | _pending_ | 1.9k msg/s | 568 kB/s | 0 / 1 ms | 33.2 / 35.4 MiB | 8.85 mJ |
 
 **Implementations.**
 
