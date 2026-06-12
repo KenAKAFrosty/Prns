@@ -10,6 +10,7 @@ pub mod handshake;
 pub mod identify;
 pub mod maintenance;
 pub mod request;
+pub mod resources;
 pub mod table;
 pub mod transported;
 
