@@ -31,6 +31,7 @@ use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
 };
+use crate::routing::links::resources::{ResourceHash, MAP_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
@@ -273,6 +274,15 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         request_id: RequestId,
         data: &'p [u8],
+    },
+    /// A part request named one of our outgoing transfers — the engine owes
+    /// the requested parts raw from the register, and a hashmap update when
+    /// the receiver's names ran dry.
+    OwesResourceParts {
+        link_id: LinkId,
+        hash: ResourceHash,
+        requested: &'p [u8],
+        exhausted_at: Option<[u8; MAP_HASH_LEN]>,
     },
     /// A link request in transport booked a transported row — the rewritten
     /// request (re-headered, MTU signalling clamped to this path segment) is
@@ -520,6 +530,9 @@ impl<S: EngineStorage> EngineState<S> {
                         WireContext::LinkIdentify => self.classify_link_identify(data, arrived_at),
                         WireContext::Request => self.classify_request_over_link(data, arrived_at),
                         WireContext::Response => self.classify_response_over_link(data, arrived_at),
+                        WireContext::ResourceRequest => {
+                            self.classify_resource_request(data, arrived_at)
+                        }
                         _ => IngestPacketOutcome::Ignored,
                     };
                 }

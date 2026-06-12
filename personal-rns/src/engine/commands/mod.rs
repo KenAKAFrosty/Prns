@@ -452,6 +452,9 @@ pub enum SendResourceError {
 pub enum SendResourceFailure {
     Rejected(SendResourceError),
     WriteFailed,
+    /// The receiver's hashmap-exhausted request named a position that closes
+    /// no segment (the reference's "sequencing error"), which cancels the transfer.
+    Sequencing,
 }
 
 pub trait Settleable {

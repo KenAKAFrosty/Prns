@@ -275,6 +275,22 @@ impl<S: EngineStorage> EngineState<S> {
                 }));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
+            IngestPacketOutcome::OwesResourceParts {
+                link_id,
+                hash,
+                requested,
+                exhausted_at,
+            } => {
+                self.serve_resource_request(
+                    &link_id,
+                    &hash,
+                    requested,
+                    exhausted_at,
+                    source,
+                    fill_entropy,
+                    sink,
+                );
+            }
             IngestPacketOutcome::PeerIdentified { link_id, identity } => {
                 sink(EngineReaction::Journaled(Journaled::PeerIdentified {
                     link_id,
