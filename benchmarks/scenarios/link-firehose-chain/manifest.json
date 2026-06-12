@@ -1,7 +1,7 @@
 {
   "name": "link-firehose-chain",
   "version": 1,
-  "description": "The link firehose carried across a trunk of five pure transport nodes - six hops leaf to leaf, every packet switched five times each way. Same traffic as link-firehose-small-payload; the delta against the direct table IS the stacked per-hop transport tax: throughput lost to five switch decisions and rtt grown by five store-and-forwards, measured at the only place it matters - end to end.",
+  "description": "The link firehose carried across a trunk of five pure transport nodes - six hops leaf to leaf, every packet switched five times each way. What it measures at the manifest's window: how latency stacks per hop and what that does to a fixed-window flow - the deployment truth for interactive apps. It is NOT a switch-cost meter: the trunk nodes loaf (~14us per switched packet) while Little's law (window / end-to-end rtt) sets the throughput. Probe pipeline capacity instead with a deeper-window manifest via the runner's MANIFEST override - and expect the protocol's own rtt*6 receipt deadline to expire receipts en masse if the window outruns capacity*6*rtt: deep windows are self-defeating by the link's design.",
   "roles": [
     "responder",
     "chain",
