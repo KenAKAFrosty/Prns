@@ -359,6 +359,23 @@ pub enum IngestPacketOutcome<'p> {
     Ignored,
 }
 
+/// RNS 1.3.1 `Transport.packet_filter`'s duplicate-filter exemptions, as a
+/// switching relay must honor them: these contexts retry byte-identically by
+/// design — a re-sent resource part is the same raw slice, a keepalive is
+/// the same single byte — so deduplicating them severs every retry that
+/// crosses the relay.
+fn switch_exempt_from_duplicate_filter(context: WireContext) -> bool {
+    matches!(
+        context,
+        WireContext::KeepAlive
+            | WireContext::Resource
+            | WireContext::ResourceRequest
+            | WireContext::ResourceProof
+            | WireContext::CacheRequest
+            | WireContext::Channel
+    )
+}
+
 /// A packet in transport, re-framed and owed to another interface — RNS 1.3.1
 /// Transport.py:1556-1580 (data riding the path table onward) and :2254 (a
 /// proof riding the reverse table home).
@@ -507,19 +524,21 @@ impl<S: EngineStorage> EngineState<S> {
                             received_hops,
                             arrived_at,
                         ) {
-                            let packet_hash = PacketHash::of_fields(
-                                DestinationType::Link,
-                                PacketType::Data,
-                                &data.destination,
-                                data.context,
-                                data.payload,
-                            );
-                            match self.packet_hash_history.remember(packet_hash) {
-                                RememberPacketOutcome::AlreadyKnown => {
-                                    return IngestPacketOutcome::Ignored
+                            if !switch_exempt_from_duplicate_filter(data.context) {
+                                let packet_hash = PacketHash::of_fields(
+                                    DestinationType::Link,
+                                    PacketType::Data,
+                                    &data.destination,
+                                    data.context,
+                                    data.payload,
+                                );
+                                match self.packet_hash_history.remember(packet_hash) {
+                                    RememberPacketOutcome::AlreadyKnown => {
+                                        return IngestPacketOutcome::Ignored
+                                    }
+                                    RememberPacketOutcome::StoredFresh
+                                    | RememberPacketOutcome::StoredAfterRotation => {}
                                 }
-                                RememberPacketOutcome::StoredFresh
-                                | RememberPacketOutcome::StoredAfterRotation => {}
                             }
                             return IngestPacketOutcome::Forward(PacketToForward {
                                 header: WirePacketHeader {
@@ -645,19 +664,21 @@ impl<S: EngineStorage> EngineState<S> {
                         received_hops,
                         arrived_at,
                     ) {
-                        let packet_hash = PacketHash::of_fields(
-                            DestinationType::Link,
-                            PacketType::Proof,
-                            &destination,
-                            context,
-                            payload,
-                        );
-                        match self.packet_hash_history.remember(packet_hash) {
-                            RememberPacketOutcome::AlreadyKnown => {
-                                return IngestPacketOutcome::Ignored
+                        if !switch_exempt_from_duplicate_filter(context) {
+                            let packet_hash = PacketHash::of_fields(
+                                DestinationType::Link,
+                                PacketType::Proof,
+                                &destination,
+                                context,
+                                payload,
+                            );
+                            match self.packet_hash_history.remember(packet_hash) {
+                                RememberPacketOutcome::AlreadyKnown => {
+                                    return IngestPacketOutcome::Ignored
+                                }
+                                RememberPacketOutcome::StoredFresh
+                                | RememberPacketOutcome::StoredAfterRotation => {}
                             }
-                            RememberPacketOutcome::StoredFresh
-                            | RememberPacketOutcome::StoredAfterRotation => {}
                         }
                         return IngestPacketOutcome::Forward(PacketToForward {
                             header: WirePacketHeader {

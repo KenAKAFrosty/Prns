@@ -1728,6 +1728,56 @@ mod tests {
             0x65,
             &relay_view,
         );
+
+        // The duplicate-filter law of a switching relay, both halves: a
+        // byte-identical keepalive crosses again (retries are identical by
+        // design — the reference's packet_filter exemptions), while a
+        // byte-identical sealed data frame is deduplicated.
+        let (keepalive_again, _, _, _) = ingest_via(
+            &mut relay,
+            &keepalive[..n],
+            iface_to_a,
+            2_800,
+            0x66,
+            &relay_view,
+        );
+        assert_eq!(
+            keepalive_again.len(),
+            1,
+            "an identical keepalive switches every time it arrives",
+        );
+        let mut part = [0u8; BROADCAST_MTU];
+        let part_len = crate::routing::links::data::write_link_raw_packet(
+            &link_id,
+            crate::wire::PacketType::Data,
+            crate::wire::WireContext::Resource,
+            BROADCAST_MTU,
+            b"the same raw part, twice",
+            &mut part,
+        )
+        .unwrap();
+        for resend in 0..2 {
+            let (switched_part, _, _, _) = ingest_via(
+                &mut relay,
+                &part[..part_len],
+                iface_to_a,
+                2_850 + resend,
+                0x67,
+                &relay_view,
+            );
+            assert_eq!(
+                switched_part.len(),
+                1,
+                "a byte-identical resource part switches on send and on resend",
+            );
+        }
+        let (data_replay, _, _, _) =
+            ingest_via(&mut relay, &data, iface_to_a, 2_900, 0x68, &relay_view);
+        assert_eq!(
+            data_replay.len(),
+            0,
+            "a replayed sealed data frame stays behind the duplicate filter",
+        );
         assert_eq!(switched_echo.len(), 1);
         assert_eq!(
             switched_echo[0].0, iface_to_a,
