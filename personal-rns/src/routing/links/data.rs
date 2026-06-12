@@ -44,20 +44,33 @@ pub fn write_link_data(
     iv: &[u8; 16],
     buf: &mut [u8],
 ) -> Result<usize, LinkDataError> {
+    write_link_packet(
+        link_id,
+        link_key,
+        mtu,
+        WireContext::None,
+        plaintext,
+        iv,
+        buf,
+    )
+}
+
+/// [`write_link_data`] for any link context: the same sealed data frame with
+/// the context byte the family dictates — a resource advertisement, a part
+/// request, a hashmap update.
+pub fn write_link_packet(
+    link_id: &LinkId,
+    link_key: &LinkKey,
+    mtu: usize,
+    context: WireContext,
+    plaintext: &[u8],
+    iv: &[u8; 16],
+    buf: &mut [u8],
+) -> Result<usize, LinkDataError> {
     if plaintext.len() > link_mdu(mtu) {
         return Err(LinkDataError::PayloadTooLong);
     }
-    let header = WirePacketHeader {
-        ifac_flag: IfacFlag::Open,
-        context_flag: ContextFlag::Unset,
-        propagation: PropagationType::Broadcast,
-        destination_type: DestinationType::Link,
-        packet_type: PacketType::Data,
-        hops: 0,
-        transport_id: None,
-        destination: DestinationHash::new(*link_id.as_bytes()),
-        context: WireContext::None,
-    };
+    let header = link_packet_header(link_id, PacketType::Data, context);
     let header_len = header
         .write(buf)
         .map_err(|_| LinkDataError::BufferTooShort)?;
@@ -65,6 +78,51 @@ pub fn write_link_data(
         .seal(iv, plaintext, &mut buf[header_len..])
         .map_err(|_| LinkDataError::BufferTooShort)?;
     Ok(header_len + sealed)
+}
+
+/// A link packet whose payload rides exactly as given. No token around it.
+/// What RNS 1.3.1 `Packet.pack` does for context `RESOURCE` (parts are
+/// slices of an already-sealed stream) and `RESOURCE_PRF` (the proof is a
+/// bare hash pair on a PROOF-type packet).
+pub fn write_link_raw_packet(
+    link_id: &LinkId,
+    packet_type: PacketType,
+    context: WireContext,
+    mtu: usize,
+    payload: &[u8],
+    buf: &mut [u8],
+) -> Result<usize, LinkDataError> {
+    if payload.len() > mtu - HEADER_MIN_LEN - IFAC_MIN_LEN {
+        return Err(LinkDataError::PayloadTooLong);
+    }
+    let header = link_packet_header(link_id, packet_type, context);
+    let header_len = header
+        .write(buf)
+        .map_err(|_| LinkDataError::BufferTooShort)?;
+    let end = header_len + payload.len();
+    if buf.len() < end {
+        return Err(LinkDataError::BufferTooShort);
+    }
+    buf[header_len..end].copy_from_slice(payload);
+    Ok(end)
+}
+
+fn link_packet_header(
+    link_id: &LinkId,
+    packet_type: PacketType,
+    context: WireContext,
+) -> WirePacketHeader {
+    WirePacketHeader {
+        ifac_flag: IfacFlag::Open,
+        context_flag: ContextFlag::Unset,
+        propagation: PropagationType::Broadcast,
+        destination_type: DestinationType::Link,
+        packet_type,
+        hops: 0,
+        transport_id: None,
+        destination: DestinationHash::new(*link_id.as_bytes()),
+        context,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

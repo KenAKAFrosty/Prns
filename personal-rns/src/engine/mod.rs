@@ -70,6 +70,7 @@ use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
+use crate::routing::links::resources::table::OutgoingResources;
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::pending::PendingPathRequests;
@@ -205,6 +206,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
     pub(crate) transported_links: TransportedLinks<S::TransportedLinks>,
     pub(crate) links: Links<S::Links>,
+    pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -228,6 +230,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             request_handlers: RequestHandlers::default(),
             transported_links: TransportedLinks::default(),
             links: Links::default(),
+            outgoing_resources: OutgoingResources::default(),
         }
     }
 }

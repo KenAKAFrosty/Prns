@@ -15,6 +15,7 @@ use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::delivery::send_single::WriteSendSingleError;
 use crate::routing::links::data::LinkDataError;
 use crate::routing::links::establish::WriteEstablishLinkError;
+use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
@@ -367,6 +368,7 @@ pub enum Settlement {
     SendRequest(Result<Delivered, SendRequestFailure>),
     Respond(Result<(), RespondFailure>),
     CloseLink(Result<(), CloseLinkFailure>),
+    SendResource(Result<(), SendResourceFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,6 +436,24 @@ pub enum CloseLinkFailure {
     WriteFailed,
 }
 
+/// Why a `send_resource` never started: the link, the register, or the build
+/// itself refused. Unlike the queueable commands this settles straight from
+/// the borrow-taking entry point — the payload never rides a command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendResourceError {
+    NoSuchLink,
+    LinkNotActive,
+    LinkBusy,
+    TableFull,
+    Build(BuildOutgoingResourceError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendResourceFailure {
+    Rejected(SendResourceError),
+    WriteFailed,
+}
+
 pub trait Settleable {
     type Success;
     type Failure;
@@ -461,7 +481,8 @@ impl Settleable for AnnounceNow {
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -485,7 +506,8 @@ impl Settleable for SendGroup {
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -509,7 +531,8 @@ impl Settleable for SendSingle {
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -533,7 +556,8 @@ impl Settleable for RequestPath {
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -559,7 +583,8 @@ impl Settleable for EstablishLink {
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -583,7 +608,8 @@ impl Settleable for SendLink {
             | Settlement::CloseLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -607,7 +633,8 @@ impl Settleable for Identify {
             | Settlement::RequestPath(_)
             | Settlement::EstablishLink(_)
             | Settlement::SendLink(_)
-            | Settlement::CloseLink(_) => None,
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
@@ -663,7 +690,8 @@ impl Settleable for CloseLink {
             | Settlement::SendLink(_)
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
-            | Settlement::Respond(_) => None,
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_) => None,
         }
     }
 }
