@@ -1,0 +1,22 @@
+{
+  "name": "resource-degraded-bluetooth",
+  "version": 1,
+  "description": "Sequential resource transfers (20-60 KB attachments) through a shaped pipe at a degraded-Bluetooth wire: 100 kbps serialization with 30 ms one-way latency. The first scenario where the rtt-proportional machinery - AIMD window growth, eifr-derived deadlines, part-retry schedules - operates above its loopback floors. Time-to-complete is the product; the pipe counts every wire byte, so payload-per-wire-byte is the protocol's measured overhead tax.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "resource",
+    "payload_min": 20000,
+    "payload_max": 60000,
+    "window": 1,
+    "duration_ms": 30000,
+    "wire_shape": {
+      "label": "degraded-bluetooth",
+      "rate_bps": 100000,
+      "latency_ms": 30
+    }
+  },
+  "conformance": "settled == received with byte-identical totals and zero failures; a retry the unshaped run does not pay is a dynamics bug, not wire loss - the pipe delays, it never drops"
+}

@@ -180,6 +180,7 @@ fn gib(bytes: u64) -> String {
 struct Pairing {
     initiator: String,
     responder: String,
+    scenario_version: Option<u32>,
     sent: Option<f64>,
     delivered: Option<f64>,
     timed_out: Option<f64>,
@@ -190,6 +191,22 @@ struct Pairing {
     mj_per_delivered: Option<f64>,
     init_rss_bytes: Option<f64>,
     resp_rss_bytes: Option<f64>,
+}
+
+/// How trustworthy a pairing's headline figures are: clean rows rank first, rows with no
+/// conformance data yet sit in the middle, and rows that dropped or timed out messages sink
+/// to the bottom — a cheap-but-broken run must never top a table.
+fn conformance_rank(p: &Pairing) -> u8 {
+    match (p.sent, p.delivered) {
+        (Some(sent), Some(delivered)) => {
+            if p.timed_out.unwrap_or(0.0) == 0.0 && sent == delivered {
+                0
+            } else {
+                2
+            }
+        }
+        _ => 1,
+    }
 }
 
 /// Split a pairing label ("Prns → RNS 1.3.1") into its initiator and responder.
@@ -204,6 +221,7 @@ fn split_pairing(label: &str) -> (String, String) {
 fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
     #[derive(Default)]
     struct Acc {
+        version: Option<u32>,
         sent: Option<f64>,
         delivered: Option<f64>,
         timed_out: Option<f64>,
@@ -218,6 +236,10 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
     let mut by_pairing: BTreeMap<String, Acc> = BTreeMap::new();
     for row in rows {
         let acc = by_pairing.entry(row.implementation.clone()).or_default();
+        acc.version = Some(
+            acc.version
+                .map_or(row.scenario_version, |v| v.max(row.scenario_version)),
+        );
         match (row.axis, row.metric.as_str()) {
             (Axis::Conformance, "sent") => acc.sent = row.value,
             (Axis::Conformance, "delivered") => acc.delivered = row.value,
@@ -239,6 +261,7 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
             Pairing {
                 initiator,
                 responder,
+                scenario_version: acc.version,
                 sent: acc.sent,
                 delivered: acc.delivered,
                 timed_out: acc.timed_out,
@@ -261,26 +284,51 @@ fn render_scenario(
     impls: &[ImplementationDescriptor],
 ) {
     let manifest = Manifest::load(scenario);
-    render_interop(out, scenario, pairings(rows), &manifest, impls);
+    let measured_version = rows
+        .iter()
+        .map(|r| r.scenario_version)
+        .max()
+        .unwrap_or(manifest.version as u32);
+    render_interop(
+        out,
+        scenario,
+        pairings(rows),
+        &manifest,
+        measured_version,
+        impls,
+    );
 }
 
 /// The interop matrix: every initiator→responder pairing with its conformance, delivered
 /// throughput, goodput, settlement latency, peak RSS, and energy per delivered message.
-/// Ordered by energy per message ascending — the most efficient pairing on top, since the
-/// static GitHub table can't be re-sorted (the website's eventually will). Pairings without an
-/// energy figure (no root at run time) sort last, tie-broken by throughput.
+/// Conformant pairings rank first, ordered by energy per message ascending — a
+/// cheap-but-broken run must never top the table, and the static GitHub table can't be
+/// re-sorted (the website's eventually will). Pairings without an energy figure (no root at
+/// run time) sort last within their conformance class, tie-broken by throughput. The section
+/// version is the one recorded ON the rows — never the manifest's current version, which may
+/// have moved on since these figures were measured.
 fn render_interop(
     out: &mut String,
     scenario: &str,
     mut pairings: Vec<Pairing>,
     manifest: &Manifest,
+    measured_version: u32,
     impls: &[ImplementationDescriptor],
 ) {
     pairings.sort_by(|a, b| {
-        let ea = a.mj_per_delivered.unwrap_or(f64::INFINITY);
-        let eb = b.mj_per_delivered.unwrap_or(f64::INFINITY);
-        ea.partial_cmp(&eb)
-            .unwrap_or(Ordering::Equal)
+        conformance_rank(a)
+            .cmp(&conformance_rank(b))
+            .then_with(|| {
+                let ea = a
+                    .mj_per_delivered
+                    .filter(|v| *v > 0.0)
+                    .unwrap_or(f64::INFINITY);
+                let eb = b
+                    .mj_per_delivered
+                    .filter(|v| *v > 0.0)
+                    .unwrap_or(f64::INFINITY);
+                ea.partial_cmp(&eb).unwrap_or(Ordering::Equal)
+            })
             .then_with(|| {
                 let ta = a.delivered_per_sec.unwrap_or(0.0);
                 let tb = b.delivered_per_sec.unwrap_or(0.0);
@@ -290,17 +338,25 @@ fn render_interop(
             .then_with(|| a.responder.cmp(&b.responder))
     });
 
-    let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
+    let _ = write!(out, "\n## {scenario} (v{measured_version})\n\n");
+    if manifest.version as u32 != measured_version {
+        let _ = writeln!(
+            out,
+            "_The manifest has since moved to v{}; every figure below was measured under \
+             v{measured_version}._\n",
+            manifest.version
+        );
+    }
     if !manifest.description.is_empty() {
         let _ = writeln!(out, "{}\n", manifest.description);
     }
     out.push_str(
         "Each row is one live pairing — the initiator drives a windowed firehose at the \
          responder over loopback, and every figure is the protocol's own: delivery proven by \
-         receipt, latency from the proofs, energy bracketed around the run. Rows are ordered by \
-         energy per delivered message, the most efficient pairing first; energy needs `sudo` for \
-         the power counters and renders pending without it. Numbers compare within a host, never \
-         across.\n\n",
+         receipt, latency from the proofs, energy bracketed around the run. Conformant \
+         pairings rank first, ordered by energy per delivered message — a cheap-but-broken \
+         run never tops the table; energy needs `sudo` for the power counters and renders \
+         pending without it. Numbers compare within a host, never across.\n\n",
     );
 
     out.push_str(
@@ -310,9 +366,13 @@ fn render_interop(
         "|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|\n",
     );
     for p in &pairings {
+        let version_marker = match p.scenario_version {
+            Some(v) if v != measured_version => format!(" _(measured at v{v})_"),
+            _ => String::new(),
+        };
         let _ = writeln!(
             out,
-            "| {} \u{2192} {} | {} | {} | {} | {} | {} | {} |",
+            "| {} \u{2192} {}{version_marker} | {} | {} | {} | {} | {} | {} |",
             label_with_role(&p.initiator, impls),
             label_with_role(&p.responder, impls),
             interop_conformance_cell(p),
@@ -372,8 +432,10 @@ fn goodput_cell(value: Option<f64>) -> String {
         .map(|b| {
             if b >= 1e6 {
                 format!("{:.1} MB/s", b / 1e6)
-            } else {
+            } else if b >= 1e3 {
                 format!("{:.0} kB/s", b / 1e3)
+            } else {
+                format!("{b:.0} B/s")
             }
         })
         .unwrap_or_else(pending)
@@ -386,10 +448,14 @@ fn rtt_cell(p50: Option<f64>, p99: Option<f64>) -> String {
     }
 }
 
+/// A delivered message can never cost zero joules — a non-positive figure means the run's
+/// package energy fell below the idle baseline (baseline drift), so it renders as pending
+/// rather than as an impossibly perfect number.
 fn energy_cell(value: Option<f64>) -> String {
-    value
-        .map(|mj| format!("{mj:.2} mJ"))
-        .unwrap_or_else(pending)
+    match value {
+        Some(mj) if mj > 0.0 => format!("{mj:.2} mJ"),
+        _ => pending(),
+    }
 }
 
 fn rss_cell(init: Option<f64>, resp: Option<f64>) -> String {

@@ -101,6 +101,40 @@ def relay(name, _addr):
         time.sleep(3600)
 
 
+def chain(name, addr):
+    """A pure transport node in a trunk: listen for the next hop downstream, dial the
+    previous hop upstream, switch everything between them."""
+    port = free_port()
+    host, upstream_port = addr.rsplit(":", 1)
+    block = (
+        "  [[Chain Down]]\n"
+        "    type = TCPServerInterface\n"
+        "    enabled = True\n"
+        "    listen_ip = 127.0.0.1\n"
+        f"    listen_port = {port}\n"
+        "  [[Chain Up]]\n"
+        "    type = TCPClientInterface\n"
+        "    enabled = True\n"
+        f"    target_host = {host}\n"
+        f"    target_port = {upstream_port}\n"
+    )
+    configdir = tempfile.mkdtemp(prefix="rns-scenario-chain-")
+    with open(os.path.join(configdir, "config"), "w") as f:
+        f.write(
+            "[reticulum]\n"
+            "  enable_transport = True\n"
+            "  share_instance = No\n"
+            "  panic_on_interface_error = No\n"
+            "[logging]\n"
+            f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
+            "[interfaces]\n" + block
+        )
+    RNS.Reticulum(configdir=configdir)
+    print(f"READY role=chain addr=127.0.0.1:{port}", flush=True)
+    while True:
+        time.sleep(3600)
+
+
 def interface_block(wire, role, addr, topology="direct"):
     """One role's interface config plus the address its READY line should carry. UDP is
     symmetric (the orchestrator pre-assigns both ends as local>peer, the reference's
@@ -172,7 +206,8 @@ def respond(name, block, ready_addr):
     destination.set_packet_callback(on_packet)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while True:
-        destination.announce()
+        if state["delivered"] == 0:
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
         last = state["last_delivery"]
         if last is not None and time.monotonic() - last > QUIET_AFTER_TRAFFIC:
@@ -223,24 +258,36 @@ def initiate(name, block, profile, duration):
         return RNS.Packet(destination, scratch[:size]).send(), size
 
     outstanding = [send_one() for _ in range(profile["window"])]
+    streak_limit = max(profile["window"] * 8, 64)
+    failure_streak = 0
+    died = False
     while outstanding and time.monotonic() < drain_deadline:
         still = []
+        settled = 0
         for receipt, size in outstanding:
             status = receipt.status if receipt else RNS.PacketReceipt.FAILED
             if status == RNS.PacketReceipt.DELIVERED:
                 state["delivered"] += 1
                 state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
-                if time.monotonic() < deadline:
+                settled += 1
+                failure_streak = 0
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
                 state["timeouts"] += 1
-                if time.monotonic() < deadline:
+                settled += 1
+                failure_streak += 1
+                if not died and failure_streak >= streak_limit:
+                    died = True
+                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             else:
                 still.append((receipt, size))
         outstanding = still
-        time.sleep(0.0005)
+        if settled == 0:
+            time.sleep(0.0005)
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     rtts = sorted(rtts)
@@ -252,7 +299,8 @@ def initiate(name, block, profile, duration):
         f"timeouts={state['timeouts']} payload_bytes={payload_bytes} "
         f"elapsed_ms={elapsed_ms} delivered_per_sec={state['delivered'] / seconds:.1f} "
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
-        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}"
+        + (" died=1" if died else ""),
         flush=True,
     )
     os._exit(0)
@@ -273,14 +321,17 @@ def respond_link(name, block, ready_addr):
         state["delivered"] += 1
         state["payload_bytes"] += len(message)
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_packet_callback(on_packet)
         link.set_link_closed_callback(lambda _link: done.set())
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
     print(
         f"RESULT delivered={state['delivered']} payload_bytes={state['payload_bytes']}",
@@ -333,24 +384,36 @@ def initiate_link(name, block, profile, duration):
         return RNS.Packet(link, scratch[:size]).send(), size
 
     outstanding = [send_one() for _ in range(profile["window"])]
+    streak_limit = max(profile["window"] * 8, 64)
+    failure_streak = 0
+    died = False
     while outstanding and time.monotonic() < drain_deadline:
         still = []
+        settled = 0
         for receipt, size in outstanding:
             status = receipt.status if receipt else RNS.PacketReceipt.FAILED
             if status == RNS.PacketReceipt.DELIVERED:
                 state["delivered"] += 1
                 state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
-                if time.monotonic() < deadline:
+                settled += 1
+                failure_streak = 0
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
                 state["timeouts"] += 1
-                if time.monotonic() < deadline:
+                settled += 1
+                failure_streak += 1
+                if not died and failure_streak >= streak_limit:
+                    died = True
+                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             else:
                 still.append((receipt, size))
         outstanding = still
-        time.sleep(0.0005)
+        if settled == 0:
+            time.sleep(0.0005)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     link.teardown()
     time.sleep(0.5)
@@ -364,7 +427,8 @@ def initiate_link(name, block, profile, duration):
         f"timeouts={state['timeouts']} payload_bytes={payload_bytes} "
         f"elapsed_ms={elapsed_ms} delivered_per_sec={state['delivered'] / seconds:.1f} "
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
-        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}"
+        + (" died=1" if died else ""),
         flush=True,
     )
     os._exit(0)
@@ -390,7 +454,9 @@ def respond_resource(name, block, ready_addr):
             data = resource.data.read()
             state["payload_bytes"] += len(data)
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(on_concluded)
         link.set_link_closed_callback(lambda _link: done.set())
@@ -398,7 +464,8 @@ def respond_resource(name, block, ready_addr):
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
     time.sleep(0.5)
     print(
@@ -513,13 +580,16 @@ def respond_request(name, block, ready_addr):
         REQUEST_PATH, response_generator=answer, allow=RNS.Destination.ALLOW_ALL
     )
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_link_closed_callback(lambda _link: done.set())
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
     time.sleep(0.5)
     print(
@@ -683,7 +753,9 @@ def respond_churn(name, block, ready_addr):
             state["payload_bytes"] += len(resource.data.read())
             state["last"] = time.monotonic()
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_packet_callback(on_packet)
         link.set_resource_concluded_callback(on_concluded)
@@ -692,7 +764,8 @@ def respond_churn(name, block, ready_addr):
     print(f"READY role=responder addr={ready_addr}", flush=True)
     done = threading.Event()
     while True:
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
         last = state["last"]
         if last is not None and time.monotonic() - last > QUIET_AFTER_TRAFFIC:
@@ -812,11 +885,17 @@ def main():
     role, addr = sys.argv[2], sys.argv[3]
     duration_ms = int(sys.argv[4]) if len(sys.argv) > 4 else manifest["profile"]["duration_ms"]
 
+    global ANNOUNCE_EVERY
+    ANNOUNCE_EVERY = manifest["profile"].get("announce_every_ms", 500) / 1000.0
+
     mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")
     topology = manifest["profile"].get("topology", "direct")
     if role == "relay":
         relay(manifest["name"], addr)
+        return
+    if role == "chain":
+        chain(manifest["name"], addr)
         return
     if role not in ("responder", "initiator"):
         sys.exit(usage)

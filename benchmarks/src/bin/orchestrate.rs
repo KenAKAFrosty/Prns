@@ -383,6 +383,7 @@ impl RoleProcess {
         let mut status: libc::c_int = 0;
         let mut usage = MaybeUninit::<libc::rusage>::zeroed();
         let reaped = unsafe { libc::wait4(pid, &mut status, 0, usage.as_mut_ptr()) };
+        std::mem::forget(self);
         if reaped < 0 {
             return RoleMetrics {
                 cpu_seconds: 0.0,
@@ -404,6 +405,17 @@ impl RoleProcess {
             cpu_seconds: 0.0,
             peak_rss_bytes: 0,
         }
+    }
+}
+
+/// Any exit path that abandons a role — the no-RESULT panic included — must not orphan its
+/// child: an orphaned responder keeps announcing into later runs' measurements. A finalized
+/// role was already reaped, so the kill is a no-op there (macOS reaps outside std's
+/// bookkeeping and forgets self instead — its pid may already be recycled).
+impl Drop for RoleProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -580,6 +592,28 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             .to_string()
     });
 
+    // A manifest with a wire_shape gets the shaped pipe spliced between the endpoints:
+    // infrastructure, not a contestant — the initiator dials the pipe, the pipe dials the
+    // responder, and every wire byte is counted on the way through.
+    let (pipe, addr) = if manifest_json["profile"]["wire_shape"].is_object() {
+        assert!(wire != "udp", "wire_shape shapes tcp scenarios only");
+        let pipe_bin = std::env::current_exe()
+            .expect("own path")
+            .parent()
+            .expect("bin dir")
+            .join("shaped_pipe");
+        let pipe = spawn_role(Command::new(pipe_bin), manifest, "pipe", &addr, args);
+        let pipe_ready = await_line(&pipe, "READY", Duration::from_secs(10));
+        let pipe_addr = pipe_ready
+            .split_whitespace()
+            .find_map(|kv| kv.strip_prefix("addr="))
+            .expect("pipe READY carries addr")
+            .to_string();
+        (Some(pipe), pipe_addr)
+    } else {
+        (None, addr)
+    };
+
     let initiator = spawn_role(
         interop_command(&initiator_impl),
         manifest,
@@ -587,9 +621,16 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         &addr,
         args,
     );
-    let window = Duration::from_millis(args.duration_ms.unwrap_or(10_000) + 30_000);
+    let scenario_duration_ms = args
+        .duration_ms
+        .or_else(|| manifest_json["profile"]["duration_ms"].as_u64())
+        .unwrap_or(10_000);
+    let window = Duration::from_millis(scenario_duration_ms + 30_000);
     let result = await_line(&initiator, "RESULT", window);
     let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
+    let wire_line = pipe
+        .as_ref()
+        .map(|p| await_line(p, "WIRE", Duration::from_secs(15)));
 
     let energy = bracket.map(|b| b.finish());
 
@@ -618,6 +659,13 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         .or_else(|| field(&responder_result, "received"))
         .or_else(|| field(&responder_result, "served"))
         .unwrap_or(0.0);
+    let died = field(&result, "died").unwrap_or(0.0) > 0.0;
+    if died {
+        eprintln!(
+            "verdict: the initiator declared the responder DEAD mid-run — conformance filed, \
+             throughput/latency/energy withheld (a dead run's last gasp is not a measurement)"
+        );
+    }
     assert!(
         delivered <= sent,
         "delivery accounting holds (initiator-proven <= sent): {delivered} <= {sent}",
@@ -671,25 +719,28 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Throughput,
             "delivered_per_sec",
-            field(&result, "delivered_per_sec"),
+            field(&result, "delivered_per_sec")
+                .or_else(|| field(&result, "requests_per_sec"))
+                .or_else(|| field(&result, "cycles_per_sec"))
+                .filter(|_| !died),
             "msgs/s",
         ),
         row(
             Axis::Throughput,
             "goodput_bytes_per_sec",
-            field(&result, "goodput_bytes_per_sec"),
+            field(&result, "goodput_bytes_per_sec").filter(|_| !died),
             "B/s",
         ),
         row(
             Axis::Latency,
             "rtt_p50_ms",
-            field(&result, "rtt_p50_ms"),
+            field(&result, "rtt_p50_ms").filter(|_| !died),
             "ms",
         ),
         row(
             Axis::Latency,
             "rtt_p99_ms",
-            field(&result, "rtt_p99_ms"),
+            field(&result, "rtt_p99_ms").filter(|_| !died),
             "ms",
         ),
         row(
@@ -706,8 +757,10 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         ),
     ];
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
-        let net_joules = (raw_joules - idle_watts * wall_seconds).max(0.0);
-        let per_delivered_mj = (delivered > 0.0).then(|| net_joules * 1_000.0 / delivered);
+        let net_joules = raw_joules - idle_watts * wall_seconds;
+        let measurable = net_joules > 0.0;
+        let per_delivered_mj =
+            (measurable && delivered > 0.0 && !died).then(|| net_joules * 1_000.0 / delivered);
         rows.push(row(
             Axis::Energy,
             "package_joules_raw",
@@ -720,17 +773,64 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             Some(idle_watts),
             "W",
         ));
-        rows.push(row(Axis::Energy, "net_joules", Some(net_joules), "J"));
+        rows.push(row(
+            Axis::Energy,
+            "net_joules",
+            measurable.then_some(net_joules),
+            "J",
+        ));
         rows.push(row(
             Axis::Energy,
             "net_millijoules_per_delivered",
             per_delivered_mj,
             "mJ/msg",
         ));
+        if measurable {
+            println!(
+                "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
+                 (idle {idle_watts:.2}W) | net={net_joules:.1}J | {:.2} mJ/msg",
+                per_delivered_mj.unwrap_or(f64::NAN),
+            );
+        } else {
+            println!(
+                "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s ran BELOW the \
+                 idle baseline ({idle_watts:.2}W) — net energy unmeasurable this run \
+                 (baseline drift), filed as pending",
+            );
+        }
+    }
+    if let Some(wire_line) = &wire_line {
+        let wire_total = field(wire_line, "a_to_b_bytes").unwrap_or(0.0)
+            + field(wire_line, "b_to_a_bytes").unwrap_or(0.0);
+        let payload = field(&result, "payload_bytes").or_else(|| {
+            match (
+                field(&result, "request_bytes"),
+                field(&result, "response_bytes"),
+            ) {
+                (Some(requests), Some(responses)) => Some(requests + responses),
+                _ => None,
+            }
+        });
+        let efficiency = payload
+            .filter(|_| wire_total > 0.0 && !died)
+            .map(|p| p / wire_total);
+        rows.push(row(
+            Axis::Throughput,
+            "wire_bytes_total",
+            Some(wire_total),
+            "bytes",
+        ));
+        rows.push(row(
+            Axis::Throughput,
+            "payload_per_wire_byte",
+            efficiency,
+            "ratio",
+        ));
         println!(
-            "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
-             (idle {idle_watts:.2}W) | net={net_joules:.1}J | {:.2} mJ/msg",
-            per_delivered_mj.unwrap_or(f64::NAN),
+            "\nSUMMARY wire bytes={wire_total:.0} | payload/wire={}",
+            efficiency
+                .map(|e| format!("{e:.3}"))
+                .unwrap_or_else(|| "unmeasured".into()),
         );
     }
     println!(
