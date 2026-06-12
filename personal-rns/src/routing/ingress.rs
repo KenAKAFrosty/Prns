@@ -288,6 +288,12 @@ pub enum IngestPacketOutcome<'p> {
     ResourceDelivered {
         id: CommandId,
     },
+    /// An advertisement passed the strategy and capacity gates and its
+    /// transfer is registered. The engine now owes the first part request.
+    OwesResourcePull {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     /// A link request in transport booked a transported row — the rewritten
     /// request (re-headered, MTU signalling clamped to this path segment) is
     /// owed to the next hop.
@@ -536,6 +542,9 @@ impl<S: EngineStorage> EngineState<S> {
                         WireContext::Response => self.classify_response_over_link(data, arrived_at),
                         WireContext::ResourceRequest => {
                             self.classify_resource_request(data, arrived_at)
+                        }
+                        WireContext::ResourceAdvertisement => {
+                            self.classify_resource_advertisement(data, arrived_at)
                         }
                         _ => IngestPacketOutcome::Ignored,
                     };

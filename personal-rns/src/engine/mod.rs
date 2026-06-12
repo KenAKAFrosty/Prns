@@ -17,7 +17,9 @@ pub use commands::{
     RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, SendGroup,
     SendGroupFailure, SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload,
     SendRequest, SendRequestData, SendRequestError, SendRequestFailure, SendSingle,
-    SendSingleError, SendSingleFailure, SendSinglePayload, Settleable, Settlement,
+    SendSingleError, SendSingleFailure, SendSinglePayload, SendResourceError,
+    SendResourceFailure, SetResourceStrategy, SetResourceStrategyError,
+    SetResourceStrategyFailure, Settleable, Settlement,
     MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN,
     PATH_REQUEST_ID_LEN,
 };
@@ -70,7 +72,7 @@ use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
-use crate::routing::links::resources::table::OutgoingResources;
+use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::pending::PendingPathRequests;
@@ -207,6 +209,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) transported_links: TransportedLinks<S::TransportedLinks>,
     pub(crate) links: Links<S::Links>,
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
+    pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
 }
 
 impl<S: EngineStorage> Default for EngineState<S> {
@@ -231,6 +234,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
             transported_links: TransportedLinks::default(),
             links: Links::default(),
             outgoing_resources: OutgoingResources::default(),
+            incoming_resources: IncomingResources::default(),
         }
     }
 }

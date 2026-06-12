@@ -7,7 +7,7 @@ use crate::engine::{
 };
 use crate::engine::{
     CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError, RespondFailure, SendLinkError,
-    SendLinkFailure, SendRequestError, SendRequestFailure,
+    SendLinkFailure, SendRequestError, SendRequestFailure, SetResourceStrategyFailure,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
@@ -479,6 +479,20 @@ impl<S: EngineStorage> EngineState<S> {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::CloseLink(Err(CloseLinkFailure::Rejected(error))),
+                }));
+            }
+            CommandOutcome::ResourceStrategySet { id } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SetResourceStrategy(Ok(())),
+                }));
+            }
+            CommandOutcome::SetResourceStrategyRejected { id, error } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SetResourceStrategy(Err(
+                        SetResourceStrategyFailure::Rejected(error),
+                    )),
                 }));
             }
             CommandOutcome::EstablishLinkRejected { id, error } => {

@@ -10,6 +10,7 @@ pub mod advertisement;
 pub mod assemble_incoming;
 pub mod build_outgoing;
 pub mod control;
+pub mod receive;
 pub mod send;
 pub mod serve_outgoing;
 pub mod table;
@@ -125,6 +126,25 @@ impl SaltNonce {
     pub const fn as_bytes(&self) -> &[u8; RESOURCE_NONCE_LEN] {
         &self.0
     }
+}
+
+/// RNS 1.3.1 `Link.resource_strategy`, engine-gated: the reference's
+/// `ACCEPT_NONE` is the default, and its unbounded `ACCEPT_ALL` becomes an
+/// accept with the bounds the engine enforces at the advertisement gate — a
+/// receiver always knows the decompressed size and compression kind up
+/// front, so an embedded target refuses what it cannot hold or inflate
+/// before a single part moves. `ACCEPT_APP` (ask the app per offer) is
+/// deferred to the consumer arc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResourceStrategy {
+    /// Every link is born refusing resources — RNS 1.3.1 `Link.__init__`
+    /// sets `ACCEPT_NONE` and the app opts in per link afterwards.
+    #[default]
+    AcceptNone,
+    Accept {
+        max_uncompressed_len: u64,
+        accept_compressed: bool,
+    },
 }
 
 /// How a transfer's stream was prepared. RNS 1.3.1 knows exactly one

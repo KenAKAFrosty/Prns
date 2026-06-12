@@ -16,6 +16,7 @@ use crate::routing::delivery::send_single::WriteSendSingleError;
 use crate::routing::links::data::LinkDataError;
 use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
+use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
@@ -45,6 +46,7 @@ pub enum EngineCommand {
     SendRequest(SendRequest),
     Respond(Respond),
     CloseLink(CloseLink),
+    SetResourceStrategy(SetResourceStrategy),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -138,6 +140,13 @@ pub enum CommandOutcome {
     SendLinkRejected {
         id: CommandId,
         error: SendLinkError,
+    },
+    ResourceStrategySet {
+        id: CommandId,
+    },
+    SetResourceStrategyRejected {
+        id: CommandId,
+        error: SetResourceStrategyError,
     },
     OwesLinkClose {
         id: CommandId,
@@ -369,6 +378,7 @@ pub enum Settlement {
     Respond(Result<(), RespondFailure>),
     CloseLink(Result<(), CloseLinkFailure>),
     SendResource(Result<(), SendResourceFailure>),
+    SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -436,6 +446,25 @@ pub enum CloseLinkFailure {
     WriteFailed,
 }
 
+/// RNS 1.3.1 `Link.set_resource_strategy` as a command: how an active link
+/// answers inbound resource advertisements from now on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetResourceStrategy {
+    pub link_id: LinkId,
+    pub strategy: ResourceStrategy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetResourceStrategyError {
+    NoSuchLink,
+    LinkNotActive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetResourceStrategyFailure {
+    Rejected(SetResourceStrategyError),
+}
+
 /// Why a `send_resource` never started: the link, the register, or the build
 /// itself refused. Unlike the queueable commands this settles straight from
 /// the borrow-taking entry point — the payload never rides a command.
@@ -485,7 +514,8 @@ impl Settleable for AnnounceNow {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -510,7 +540,8 @@ impl Settleable for SendGroup {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -535,7 +566,8 @@ impl Settleable for SendSingle {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -560,7 +592,8 @@ impl Settleable for RequestPath {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -587,7 +620,8 @@ impl Settleable for EstablishLink {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -612,7 +646,8 @@ impl Settleable for SendLink {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -637,7 +672,8 @@ impl Settleable for Identify {
             | Settlement::EstablishLink(_)
             | Settlement::SendLink(_)
             | Settlement::CloseLink(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -694,6 +730,35 @@ impl Settleable for CloseLink {
             | Settlement::Identify(_)
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
+        }
+    }
+}
+
+impl Settleable for SetResourceStrategy {
+    type Success = ();
+    type Failure = SetResourceStrategyFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::SetResourceStrategy(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<(), SetResourceStrategyFailure>> {
+        match settlement {
+            Settlement::SetResourceStrategy(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
             | Settlement::SendResource(_) => None,
         }
     }
@@ -727,6 +792,9 @@ impl<S: EngineStorage> EngineState<S> {
             EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
+            EngineCommand::SetResourceStrategy(set) => {
+                self.ingest_set_resource_strategy(id, set)
+            }
         }
     }
 

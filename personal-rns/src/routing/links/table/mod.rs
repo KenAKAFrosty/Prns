@@ -12,6 +12,7 @@ use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from};
+use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::DestinationHash;
@@ -53,6 +54,7 @@ pub enum LinkPhase {
         keepalive_ms: u64,
         peer_signing: Ed25519PublicKey,
         remote_identity: Option<IdentityHash>,
+        resource_strategy: ResourceStrategy,
     },
 }
 
@@ -281,6 +283,7 @@ impl<C: LinkColumns> Links<C> {
         let keepalive_ms = keepalive_ms_from(rtt_ms);
         *self.columns.phase_mut(index) = LinkPhase::Active {
             remote_identity: None,
+            resource_strategy: ResourceStrategy::default(),
             key,
             role: LinkRole::Initiator,
             rtt_ms,
@@ -327,6 +330,7 @@ impl<C: LinkColumns> Links<C> {
                 };
                 *phase = LinkPhase::Active {
                     remote_identity: None,
+                    resource_strategy: ResourceStrategy::default(),
                     key,
                     role,
                     rtt_ms,
@@ -346,6 +350,26 @@ impl<C: LinkColumns> Links<C> {
                 Err(LinkActivationError::WrongPhase)
             }
         }
+    }
+
+    /// RNS 1.3.1 `Link.set_resource_strategy`: how this link answers
+    /// inbound resource advertisements from now on.
+    pub fn set_resource_strategy(
+        &mut self,
+        link_id: &LinkId,
+        strategy: ResourceStrategy,
+    ) -> Result<(), LinkActivationError> {
+        let index = self
+            .index_of(link_id)
+            .ok_or(LinkActivationError::UnknownLink)?;
+        let LinkPhase::Active {
+            resource_strategy, ..
+        } = self.columns.phase_mut(index)
+        else {
+            return Err(LinkActivationError::WrongPhase);
+        };
+        *resource_strategy = strategy;
+        Ok(())
     }
 
     pub fn note_identified(&mut self, link_id: &LinkId, identity: IdentityHash) {

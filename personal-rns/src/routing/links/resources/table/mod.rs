@@ -486,6 +486,12 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         &mut self.columns.buffers_mut(index).transfer[..len]
     }
 
+    /// Which parts have landed, by position.
+    pub fn received_flags(&self, index: usize) -> &[bool] {
+        let count = self.columns.states()[index].part_count;
+        &self.columns.part_flags(index)[..count]
+    }
+
     /// Every name known so far, contiguous from part zero
     pub fn names_flat(&self, index: usize) -> &[u8] {
         let height = self.columns.states()[index].hashmap_height;

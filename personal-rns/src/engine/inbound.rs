@@ -291,6 +291,9 @@ impl<S: EngineStorage> EngineState<S> {
                     sink,
                 );
             }
+            IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
+                self.emit_resource_pull(&link_id, &hash, fill_entropy, sink);
+            }
             IngestPacketOutcome::ResourceDelivered { id } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
