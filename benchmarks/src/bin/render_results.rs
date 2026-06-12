@@ -445,6 +445,9 @@ fn render_legend(out: &mut String, pairings: &[Pairing], impls: &[Implementation
         if let Some(license) = descriptor.and_then(|d| d.license.as_deref()) {
             let _ = write!(line, " \u{00b7} {license}");
         }
+        if let Some(notes) = descriptor.and_then(|d| d.notes.as_deref()) {
+            let _ = write!(line, "\n  - _{notes}_");
+        }
         out.push_str(&line);
     }
     out.push('\n');

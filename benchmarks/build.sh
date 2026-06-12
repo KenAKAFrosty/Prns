@@ -29,6 +29,17 @@ git -C "$LEVICULUM" apply --reverse --check "$LEVICULUM_PATCH" 2>/dev/null \
 ( cd "$HERE/external/leviculum/interop" && cargo build --quiet --release \
     && cp target/release/leviculum-node leviculum-node )
 
+echo "== rns-cr =="
+RNSCR="$HERE/external/rns-cr/.upstream"
+clone_pinned "https://github.com/jtippett/rns-cr.git" 514c309 "$RNSCR"
+# Crystal resolves the upstream shard's dependencies from its own lib/, so install them there
+# first; then compile the node from the upstream root (node.cr requires ../.upstream/src/rns by
+# relative path, and the shard deps resolve from this working directory's lib/).
+( cd "$RNSCR" && shards install --without-development --skip-postinstall )
+( cd "$RNSCR" && crystal build --release --no-debug \
+    -o "$HERE/external/rns-cr/interop/rnscr-node" \
+    "$HERE/external/rns-cr/interop/node.cr" )
+
 echo
 echo "Built. Register this machine once with:  cargo run --release --bin describe_host"
 echo "Then measure:  sudo env \"PATH=\$PATH\" ./run.sh"

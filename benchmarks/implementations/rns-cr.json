@@ -6,5 +6,6 @@
   "role": "external",
   "repo": "https://github.com/jtippett/rns-cr",
   "pinned_ref": "514c309",
-  "license": "MIT"
+  "license": "MIT",
+  "notes": "Single-firehose initiator only — at this commit rns-cr does not prove incoming single packets and never resolves a link data-packet proof, so it fields no responder or link node and appears only as a single initiator."
 }

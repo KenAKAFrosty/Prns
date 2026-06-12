@@ -114,7 +114,17 @@ struct Implementation {
     name: &'static str,
     slug: &'static str,
     label: &'static str,
+    /// The interop roles this impl can field. A pairing is only run when the initiator
+    /// declares `initiator` and the responder declares `responder` — an impl that fields a
+    /// partial node (e.g. rns-cr, which sends one-shot singles but cannot prove them as a
+    /// responder, nor field links) declares only the side it can honestly drive.
+    interop_roles: &'static [&'static str],
+    /// The interop mechanisms this impl can field on the roles above.
+    interop_mechanisms: &'static [&'static str],
 }
+
+const BOTH_ROLES: &[&str] = &["initiator", "responder"];
+const BOTH_MECHANISMS: &[&str] = &["single", "link"];
 
 fn implementation(name: &str) -> Implementation {
     match name {
@@ -122,26 +132,71 @@ fn implementation(name: &str) -> Implementation {
             name: "self",
             slug: "personal-rns",
             label: "Prns",
+            interop_roles: BOTH_ROLES,
+            interop_mechanisms: BOTH_MECHANISMS,
         },
         "reference" => Implementation {
             name: "reference",
             slug: "rns-1.3.1",
             label: "RNS 1.3.1",
+            interop_roles: BOTH_ROLES,
+            interop_mechanisms: BOTH_MECHANISMS,
         },
         "go-reticulum" => Implementation {
             name: "go-reticulum",
             slug: "go-reticulum",
             label: "go-reticulum",
+            interop_roles: BOTH_ROLES,
+            interop_mechanisms: BOTH_MECHANISMS,
         },
         "leviculum" => Implementation {
             name: "leviculum",
             slug: "leviculum",
             label: "Leviculum 0.6.3",
+            interop_roles: BOTH_ROLES,
+            interop_mechanisms: BOTH_MECHANISMS,
+        },
+        // rns-cr (Crystal) fields only a single-mechanism initiator at its current commit: its
+        // single responder never proves incoming packets (an unimplemented strategy) and its
+        // link layer never resolves a data-packet proof, so it can drive neither role over a
+        // link nor the responder side of a single. We run it where it is honest — and only
+        // there — rather than patch its protocol.
+        "rns-cr" => Implementation {
+            name: "rns-cr",
+            slug: "rns-cr",
+            label: "rns-cr 0.1.0",
+            interop_roles: &["initiator"],
+            interop_mechanisms: &["single"],
         },
         other => {
-            panic!("unknown implementation {other:?} (self|reference|go-reticulum|leviculum)")
+            panic!(
+                "unknown implementation {other:?} (self|reference|go-reticulum|leviculum|rns-cr)"
+            )
         }
     }
+}
+
+/// Why a pairing cannot be honestly run, or `None` when both sides can field their role for the
+/// scenario's mechanism. Lets the matrix sweep every cell while skipping the ones an impl's
+/// partial node would only hang or falsify.
+fn unsupported_pairing(
+    initiator: &Implementation,
+    responder: &Implementation,
+    mechanism: &str,
+) -> Option<String> {
+    if !initiator.interop_mechanisms.contains(&mechanism) {
+        return Some(format!("{} fields no {mechanism} node", initiator.name));
+    }
+    if !initiator.interop_roles.contains(&"initiator") {
+        return Some(format!("{} fields no initiator", initiator.name));
+    }
+    if !responder.interop_mechanisms.contains(&mechanism) {
+        return Some(format!("{} fields no {mechanism} node", responder.name));
+    }
+    if !responder.interop_roles.contains(&"responder") {
+        return Some(format!("{} fields no responder", responder.name));
+    }
+    None
 }
 
 impl Implementation {
@@ -153,6 +208,7 @@ impl Implementation {
             "reference" => Some(reference_python("scenario_node.py")),
             "go-reticulum" => Some(Command::new(external_node("go-reticulum", "go-node"))),
             "leviculum" => Some(Command::new(external_node("leviculum", "leviculum-node"))),
+            "rns-cr" => Some(Command::new(external_node("rns-cr", "rnscr-node"))),
             _ => None,
         }
     }
@@ -437,6 +493,12 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     let responder_impl = implementation(&args.responder);
     let pairing_slug = format!("{}--{}", initiator_impl.slug, responder_impl.slug);
     let pairing_label = format!("{} \u{2192} {}", initiator_impl.label, responder_impl.label);
+
+    let mechanism = manifest_json["profile"]["mechanism"].as_str().unwrap_or("single");
+    if let Some(reason) = unsupported_pairing(&initiator_impl, &responder_impl, mechanism) {
+        println!("SKIP scenario={} pairing={pairing_label} reason={reason}", args.scenario);
+        return;
+    }
     let interop_command = |subject: &Implementation| {
         subject
             .interop_command()

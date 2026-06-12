@@ -259,6 +259,10 @@ pub struct ImplementationDescriptor {
     pub license: Option<String>,
     #[serde(default)]
     pub maturity: Option<String>,
+    /// A caveat shown in the legend — e.g. an impl that fields only a partial interop node and
+    /// therefore appears in a subset of the matrix.
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 /// The implementation registry: `<crate>/implementations`.
