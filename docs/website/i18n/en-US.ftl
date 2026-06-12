@@ -12,8 +12,8 @@ footer-tagline = Brought to you by the Personal team.
 # final word that rotates (developers → builders → tinkerers) and rests on
 # "people". The rotating words live in src/pages/landing.rs (English-only, since
 # the trick is word-order specific).
-landing-kicker = Unstoppable mesh networks, for the people
-landing-kicker-prefix = Unstoppable mesh networks, for the
+landing-kicker = Unstoppable mesh networks for the people
+landing-kicker-prefix = Unstoppable mesh networks for the
 landing-title = A production-grade port of Reticulum (RNS) written in safe Rust.
 landing-subtitle = A deterministic, no_std, alloc-free core. Built for the performance and stability every Reticulum node needs, from a five-dollar microcontroller to a cloud server.
 landing-cta-ethos = Pick a crate
@@ -21,7 +21,7 @@ landing-cta-contributing = Contributing
 
 # Pull quote
 landing-quote-label = What we're building toward
-landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, if we build it. This is our effort to bring it into the hands of more builders, to help realize that future.
+landing-quote-body = Reticulum is the foundational communication infrastructure of a bright future we can have, as long as we all build it. This is the Personal team's effort to put RNS into the hands of more builders, to help realize that future.
 
 # What you can count on (standards callout)
 standards-section-label = Our standards

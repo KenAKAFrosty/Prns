@@ -124,75 +124,104 @@ html, body {
 .prose th:first-child, .prose td:first-child { color: var(--color-paper); }
 .prose td img, .prose th img { display: inline-block; vertical-align: -3px; margin-right: 0.15em; }
 
-/* Landing eyebrow: the final word rotates on load (developers → builders →
-   tinkerers) and comes to rest on "people". One-shot, ends on the last word.
-   The slot is sized to the text-xs line box (1rem) so it sits inline with the
-   surrounding all-caps text; steps of 1rem walk the stacked word list up. */
+/* Landing eyebrow: the last word rotates on load (developers → builders →
+   tinkerers → makers) and rests on "people", which then draws an underline.
+   One-shot. A 1rem window sits inline with the surrounding all-caps text; the
+   stacked word list (1.4rem steps) scrolls up through it. */
 .kicker-rotator {
     display: inline-block;
     height: 1rem;
     line-height: 1rem;
-    /* Clip the scrolled-away words at the top and sides, but let the bottom
-       breathe ~0.35rem so the resting word's underline can sit clear of the
-       text — a hard 1rem overflow:hidden left no room below the descenders. */
-    clip-path: inset(0 0 -0.35rem 0);
     vertical-align: bottom;
+    position: relative;
     white-space: nowrap;
 }
+/* Safari/WebKit composites the translated resting word ~1px high relative to the
+   surrounding line — a device-pixel snap of the transformed layer that Blink
+   doesn't do. Nudge the whole rotator (word + underline together) down 1px there
+   only, via a WebKit-only feature query (-webkit-named-image is unsupported in
+   Blink), so Chrome stays pixel-perfect. Measured: -1.05px → -0.05px. */
+@supports (background: -webkit-named-image(i)) {
+    .kicker-rotator { top: 1px; }
+}
+/* Clipping lives on this inner window, NOT on .kicker-rotator, so the
+   inline-block that participates in line layout stays a clean 1rem box. An
+   earlier version clipped with clip-path: inset(0 0 -0.35rem 0) on the rotator
+   itself; Safari folds a negative clip-path inset into the layout box and, under
+   vertical-align:bottom, floated the resting word up by ~0.35rem (Chrome treats
+   clip-path as paint-only). A plain overflow:hidden window has no such effect,
+   and the underline lives outside it (see __rule) so nothing needs to bleed. */
+.kicker-rotator__window {
+    display: block;
+    height: 1rem;
+    overflow: hidden;
+}
+/* translateY(-7rem) is the resting state as a real static transform; the
+   animation fills `backwards` so it governs only the 0.5s lead-in and the run,
+   then hands back to this static value. Relying on forwards-fill alone left
+   Safari holding the end frame on a stale layer — a second source of float. */
 .kicker-rotator__list {
     display: block;
-    animation: kicker-rotate 5.5s cubic-bezier(0.65, 0, 0.35, 1) 0.5s 1 forwards;
+    transform: translateY(-7rem);
+    animation: kicker-rotate 5.5s cubic-bezier(0.65, 0, 0.35, 1) 0.5s 1 backwards;
 }
 .kicker-rotator__word {
     display: block;
     height: 1rem;
     line-height: 1rem;
-    /* Gap between stacked words so the bottom clip extension shows empty space
-       (not the next word) mid-rotation. The translate step includes it. */
+    /* Gap between stacked words so mid-rotation you see space, not the next word. */
     margin-bottom: 0.4rem;
 }
-/* The resting word ("people") lands, then a thin underline draws in beneath it
-   left-to-right — emphasis on the punchline. Width-matched to the word (not the
-   wider slot) via fit-content, and drawn with a pseudo-element since
-   text-decoration can't animate. Timed to fire just after the rotation settles
-   (people is in place ~4.55s in: 0.5s delay + 0.81 * 5s). */
-.kicker-rotator__word--final {
-    position: relative;
-    width: fit-content;
+.kicker-rotator__word:last-child {
+    margin-bottom: 0;
 }
-.kicker-rotator__word--final::after {
+/* The underline under the resting word. A sibling of the window (so its
+   overflow:hidden never clips it), placed just below the 1rem slot. It carries
+   the resting word's text (transparent, zero-height) only to size itself to
+   "people" — narrower than the widest rotated word — then draws a bar. Fires a
+   comfortable beat after the word lands (~5.45s in: 0.5s delay + 0.90 * 5.5s). */
+.kicker-rotator__rule {
+    position: absolute;
+    left: 0;
+    bottom: -0.12rem;
+    height: 0;
+    color: transparent;
+    overflow: visible;
+    pointer-events: none;
+    white-space: nowrap;
+}
+.kicker-rotator__rule::after {
     content: "";
     position: absolute;
-    /* Nudge the whole bar 2px left: "people" carries ~2.6px of trailing
-       letter-spacing (tracking) in its box, which otherwise pushes the
-       underline right of the glyphs. Same width, just shifted. */
+    /* Nudge 2px left: "people" carries ~2.6px of trailing letter-spacing in its
+       box, which would otherwise push the bar right of the glyphs. */
     left: -2px;
     right: 2px;
-    bottom: -0.12rem;
+    top: 0;
     height: 1px;
-    background: currentColor;
+    background: var(--color-accent);
     transform: scaleX(0);
     transform-origin: left;
-    animation: kicker-underline 0.55s cubic-bezier(0.16, 1, 0.3, 1) 5.4s forwards;
+    animation: kicker-underline 0.55s cubic-bezier(0.16, 1, 0.3, 1) 5.9s forwards;
 }
 @keyframes kicker-underline {
     to { transform: scaleX(1); }
 }
 @keyframes kicker-rotate {
-    0%, 14%   { transform: translateY(0); }
-    22%, 38%  { transform: translateY(-1.4rem); }
-    46%, 62%  { transform: translateY(-2.8rem); }
-    70%, 84%  { transform: translateY(-4.2rem); }
-    88%, 100% { transform: translateY(-5.6rem); }
+    0%, 10%   { transform: translateY(0); }
+    18%, 28%  { transform: translateY(-1.4rem); }
+    36%, 46%  { transform: translateY(-2.8rem); }
+    54%, 64%  { transform: translateY(-4.2rem); }
+    72%, 82%  { transform: translateY(-5.6rem); }
+    90%, 100% { transform: translateY(-7rem); }
 }
-/* Honor reduced-motion: skip the reveal. Show the resting word with a static
-   underline, no rotation, no draw-in. */
+/* Honor reduced-motion: skip the reveal. Resting word + static underline.
+   The list keeps its base translateY(-7rem); only the animations are dropped. */
 @media (prefers-reduced-motion: reduce) {
     .kicker-rotator__list {
         animation: none;
-        transform: translateY(-5.6rem);
     }
-    .kicker-rotator__word--final::after {
+    .kicker-rotator__rule::after {
         animation: none;
         transform: scaleX(1);
     }

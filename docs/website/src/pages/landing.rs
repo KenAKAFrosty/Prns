@@ -7,16 +7,16 @@ use crate::components::PlatformChip;
 use crate::platforms::PLATFORMS;
 use crate::routes::Route;
 
-/// The eyebrow's final word animates. It opens on "people" (plain), rotates
-/// through developers, builders, tinkerers, then comes to rest back on "people"
+/// The eyebrow's last word animates. It opens on "people" (plain), rotates
+/// through developers, builders, tinkerers, makers, then rests back on "people"
 /// (underlined). The first and last entries are both "people" on purpose.
 ///
 /// Coupled to the `kicker-rotate` keyframes in tailwind.css, authored for
 /// exactly this many words (one 1.4rem step each, resting on the last). If you
-/// add or remove a word, update the keyframe stops, the reduced-motion
-/// translate, and the underline delay there (and in the compiled
-/// public/assets/tailwind.css).
-const KICKER_WORDS: &[&str] = &["people", "developers", "builders", "tinkerers", "people"];
+/// add or remove a word, update the keyframe stops, the list's base
+/// `transform: translateY(...)`, and the underline delay there (then rebuild
+/// the compiled public/assets/tailwind.css with `npm run build:css`).
+const KICKER_WORDS: &[&str] = &["people", "developers", "builders", "tinkerers", "makers", "people"];
 
 #[component]
 pub fn Landing() -> Element {
@@ -34,19 +34,18 @@ pub fn Landing() -> Element {
                     {t!("landing-kicker-prefix")}
                     " "
                     span { class: "kicker-rotator", "aria-hidden": "true",
-                        span { class: "kicker-rotator__list",
-                            for (i, word) in KICKER_WORDS.iter().enumerate() {
-                                span {
-                                    key: "{i}-{word}",
-                                    class: if i + 1 == KICKER_WORDS.len() {
-                                        "kicker-rotator__word kicker-rotator__word--final"
-                                    } else {
-                                        "kicker-rotator__word"
-                                    },
-                                    "{word}"
+                        span { class: "kicker-rotator__window",
+                            span { class: "kicker-rotator__list",
+                                for (i, word) in KICKER_WORDS.iter().enumerate() {
+                                    span {
+                                        key: "{i}-{word}",
+                                        class: "kicker-rotator__word",
+                                        "{word}"
+                                    }
                                 }
                             }
                         }
+                        span { class: "kicker-rotator__rule", "{resting_word}" }
                     }
                     // The animation is decorative; expose the resting word to
                     // screen readers so the phrase still reads "…for the people".
@@ -159,7 +158,7 @@ pub fn Landing() -> Element {
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-mid",
                 {t!("landing-quote-label")}
             }
-            blockquote { class: "mt-3 text-xl md:text-2xl font-serif leading-snug text-paper italic max-w-3xl",
+            blockquote { class: "mt-3 text-lg md:text-xl font-serif leading-snug text-paper italic max-w-3xl",
                 {t!("landing-quote-body")}
             }
         }
