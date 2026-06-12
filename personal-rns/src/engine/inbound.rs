@@ -176,13 +176,11 @@ impl<S: EngineStorage> EngineState<S> {
             }
             IngestPacketOutcome::Forward(forward) => {
                 if is_egress_eligible(view, forward.fire_on, Egress::Transport) {
-                    let mut buf = [0u8; BROADCAST_MTU];
-                    if let Ok(written) = forward.to_wire(&mut buf) {
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: forward.fire_on,
-                            bytes: &buf[..written],
-                        }));
-                    }
+                    let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
+                    sink(EngineReaction::Directive(Directive::EmitFrame {
+                        target: forward.fire_on,
+                        fill: &mut fill,
+                    }));
                 }
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {

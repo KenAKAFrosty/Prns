@@ -797,6 +797,11 @@ mod tests {
                     );
                     sent.push(bytes.to_vec());
                 }
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                        sent.push(frame);
+                    }
+                }
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     journaled.push((id, settlement));
                 }
@@ -1548,6 +1553,11 @@ mod tests {
                 &mut |reaction| match reaction {
                     EngineReaction::Directive(Directive::Send { target, bytes }) => {
                         sent.push((target, bytes.to_vec()));
+                    }
+                    EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                        if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                            sent.push((target, frame));
+                        }
                     }
                     EngineReaction::Journaled(Journaled::Delivered(Delivery::Link(link))) => {
                         journaled.push(link.plaintext.to_vec());
