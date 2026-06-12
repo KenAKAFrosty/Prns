@@ -6,4 +6,5 @@
 pub mod framed_stream;
 pub mod serial;
 pub mod tcp;
+pub mod udp;
 pub mod usb_auto;

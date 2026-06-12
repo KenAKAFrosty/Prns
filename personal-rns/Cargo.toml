@@ -57,6 +57,9 @@ wifi-lan-auto = ["std-sync-host", "dep:socket2", "dep:if-addrs"]
 # keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
 # socket2.
 tcp = ["tokio-host", "dep:socket2", "tokio/net"]
+# The RNS-parity UDP interface (UDPInterface) on the reactor seam: one raw wire packet
+# per datagram, fixed peer addressing, tokio's own UDP — no extra socket crate needed.
+udp = ["tokio-host", "tokio/net"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
