@@ -23,9 +23,9 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | go-reticulum → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 325,264 / 325,736 · 472 timed out | 10.6k msg/s | 2.5 MB/s | 0 / 0 ms | 92.8 / 21.9 MiB | 1.99 mJ |
 | Prns → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 201,710 / 202,315 · 605 timed out | 6.7k msg/s | 1.6 MB/s | 2 / 3 ms | 7.2 / 80.2 MiB | 2.63 mJ |
 | go-reticulum → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 209,812 / 209,825 · 13 timed out | 7.0k msg/s | 1.7 MB/s | 2 / 3 ms | 50.8 / 80.9 MiB | 3.24 mJ |
-| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 163,611 / 163,614 · 3 timed out | 5.5k msg/s | 1.3 MB/s | 1 / 3 ms | 85.7 / 79.8 MiB | 3.60 mJ |
-| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 153,493 / 153,512 · 19 timed out | 5.1k msg/s | 1.2 MB/s | 0 / 1 ms | 69.5 / 13.3 MiB | 3.60 mJ |
-| RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 2,512 / 368,944 · 366,432 timed out | 84 msg/s | 20 kB/s | 0 / 1 ms | 32.9 / 18.1 MiB | 60.90 mJ |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 177,077 / 177,078 · 1 timed out | 5.9k msg/s | 1.4 MB/s | 2 / 2 ms | 85.7 / 14.3 MiB | 3.39 mJ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 170,266 / 170,267 · 1 timed out | 5.7k msg/s | 1.4 MB/s | 2 / 3 ms | 85.7 / 80.0 MiB | 4.38 mJ |
+| RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 1,490 / 6,813,767 · 6,812,277 timed out | 50 msg/s | 12 kB/s | 1 / 1 ms | 32.3 / 17.5 MiB | 229.77 mJ |
 
 **Implementations.**
 
@@ -47,9 +47,9 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | go-reticulum → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 215,748 / 215,755 | 6.2k msg/s | 1.4 MB/s | 0 / 2 ms | 29.4 / 16.3 MiB | 2.53 mJ |
 | go-reticulum → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 178,915 / 178,916 | 5.1k msg/s | 1.1 MB/s | 0 / 5 ms | 29.5 / 80.1 MiB | 3.34 mJ |
 | Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 198,326 / 198,326 | 6.6k msg/s | 1.5 MB/s | 2 / 3 ms | 7.1 / 79.9 MiB | 3.88 mJ |
-| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 57,072 / 57,072 | 1.9k msg/s | 419 kB/s | 0 / 1 ms | 40.3 / 44.5 MiB | 9.11 mJ |
-| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 59,923 / 59,923 | 2.0k msg/s | 440 kB/s | 0 / 0 ms | 40.7 / 8.2 MiB | 9.42 mJ |
-| RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 31,273 / 31,305 · 16 timed out | 894 msg/s | 197 kB/s | 0 / 0 ms | 37.4 / 19.7 MiB | 10.09 mJ |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 62,861 / 62,861 | 2.1k msg/s | 461 kB/s | 0 / 3 ms | 40.9 / 8.4 MiB | 7.84 mJ |
+| RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/check.svg" width="14" alt="conformant" /> 63,690 / 63,690 | 2.1k msg/s | 468 kB/s | 0 / 0 ms | 41.7 / 24.5 MiB | 9.66 mJ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 50,039 / 50,039 | 1.7k msg/s | 367 kB/s | 0 / 25 ms | 39.6 / 43.6 MiB | 12.44 mJ |
 
 **Implementations.**
 

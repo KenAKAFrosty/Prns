@@ -225,22 +225,26 @@ def initiate(name, block, profile, duration):
     outstanding = [send_one() for _ in range(profile["window"])]
     while outstanding and time.monotonic() < drain_deadline:
         still = []
+        settled = 0
         for receipt, size in outstanding:
             status = receipt.status if receipt else RNS.PacketReceipt.FAILED
             if status == RNS.PacketReceipt.DELIVERED:
                 state["delivered"] += 1
                 state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
+                settled += 1
                 if time.monotonic() < deadline:
                     still.append(send_one())
             elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
                 state["timeouts"] += 1
+                settled += 1
                 if time.monotonic() < deadline:
                     still.append(send_one())
             else:
                 still.append((receipt, size))
         outstanding = still
-        time.sleep(0.0005)
+        if settled == 0:
+            time.sleep(0.0005)
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     rtts = sorted(rtts)
@@ -335,22 +339,26 @@ def initiate_link(name, block, profile, duration):
     outstanding = [send_one() for _ in range(profile["window"])]
     while outstanding and time.monotonic() < drain_deadline:
         still = []
+        settled = 0
         for receipt, size in outstanding:
             status = receipt.status if receipt else RNS.PacketReceipt.FAILED
             if status == RNS.PacketReceipt.DELIVERED:
                 state["delivered"] += 1
                 state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
+                settled += 1
                 if time.monotonic() < deadline:
                     still.append(send_one())
             elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
                 state["timeouts"] += 1
+                settled += 1
                 if time.monotonic() < deadline:
                     still.append(send_one())
             else:
                 still.append((receipt, size))
         outstanding = still
-        time.sleep(0.0005)
+        if settled == 0:
+            time.sleep(0.0005)
     elapsed_ms = int((time.monotonic() - started) * 1000)
     link.teardown()
     time.sleep(0.5)
