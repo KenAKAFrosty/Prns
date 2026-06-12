@@ -49,8 +49,21 @@ pub fn token_seal(
     plaintext: &[u8],
     out: &mut [u8],
 ) -> Result<usize, CryptoError> {
+    token_seal_chunks(key, iv, &[plaintext], out)
+}
+
+/// [`token_seal`] over a discontiguous plaintext: `chunks` seal exactly as if
+/// concatenated, so a caller can prefix a nonce or header without staging the
+/// whole payload contiguously first.
+pub fn token_seal_chunks(
+    key: &TokenKey,
+    iv: &[u8; IV_LEN],
+    chunks: &[&[u8]],
+    out: &mut [u8],
+) -> Result<usize, CryptoError> {
+    let plain_len: usize = chunks.iter().map(|chunk| chunk.len()).sum();
     // PKCS#7 always adds 1..=BLOCK_LEN bytes, so this rounds strictly up.
-    let padded_len = (plaintext.len() / BLOCK_LEN + 1) * BLOCK_LEN;
+    let padded_len = (plain_len / BLOCK_LEN + 1) * BLOCK_LEN;
     let total = IV_LEN + padded_len + MAC_LEN;
     if out.len() < total {
         return Err(CryptoError::BufferTooShort);
@@ -58,15 +71,19 @@ pub fn token_seal(
 
     out[..IV_LEN].copy_from_slice(iv);
     let cipher_region = &mut out[IV_LEN..IV_LEN + padded_len];
-    cipher_region[..plaintext.len()].copy_from_slice(plaintext);
+    let mut at = 0;
+    for chunk in chunks {
+        cipher_region[at..at + chunk.len()].copy_from_slice(chunk);
+        at += chunk.len();
+    }
     match key.mode {
         AesMode::Aes128 => Encryptor::<Aes128>::new_from_slices(key.encryption_key, iv)
             .map_err(|_| CryptoError::BadKeyLength)?
-            .encrypt_padded_mut::<Pkcs7>(cipher_region, plaintext.len())
+            .encrypt_padded_mut::<Pkcs7>(cipher_region, plain_len)
             .map_err(|_| CryptoError::BufferTooShort)?,
         AesMode::Aes256 => Encryptor::<Aes256>::new_from_slices(key.encryption_key, iv)
             .map_err(|_| CryptoError::BadKeyLength)?
-            .encrypt_padded_mut::<Pkcs7>(cipher_region, plaintext.len())
+            .encrypt_padded_mut::<Pkcs7>(cipher_region, plain_len)
             .map_err(|_| CryptoError::BufferTooShort)?,
     };
 
