@@ -291,6 +291,122 @@ def initiate_link(name, block, profile, duration):
     os._exit(0)
 
 
+def respond_resource(name, block, ready_addr):
+    """The accepting end of the bulk mechanism: ACCEPT_ALL on every inbound
+    link, count each hash-proved transfer at its conclusion, report when the
+    initiator tears the link down."""
+    start_reticulum(block)
+    identity = RNS.Identity()
+    destination = RNS.Destination(
+        identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
+    )
+    destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
+
+    state = {"received": 0, "payload_bytes": 0}
+    done = threading.Event()
+
+    def on_concluded(resource):
+        if resource.status == RNS.Resource.COMPLETE:
+            state["received"] += 1
+            data = resource.data.read()
+            state["payload_bytes"] += len(data)
+
+    def on_link(link):
+        link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+        link.set_resource_concluded_callback(on_concluded)
+        link.set_link_closed_callback(lambda _link: done.set())
+
+    destination.set_link_established_callback(on_link)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
+    while not done.is_set():
+        destination.announce()
+        done.wait(ANNOUNCE_EVERY)
+    time.sleep(0.5)
+    print(
+        f"RESULT received={state['received']} payload_bytes={state['payload_bytes']}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def initiate_resource(name, block, profile, duration):
+    """The measuring end: one link, then maximum-size resources back to back
+    until the wall-time elapses — incompressible payload so auto-compress
+    keeps the full stream on the wire."""
+    start_reticulum(block)
+
+    heard = {"hash": None, "identity": None}
+    announced = threading.Event()
+
+    class Handler:
+        aspect_filter = f"bench.{name}"
+
+        def received_announce(self, destination_hash, announced_identity, app_data):
+            heard["hash"] = destination_hash
+            heard["identity"] = announced_identity
+            announced.set()
+
+    RNS.Transport.register_announce_handler(Handler())
+    print("READY role=initiator", flush=True)
+    if not announced.wait(30):
+        sys.exit("no announce heard")
+
+    destination = RNS.Destination(
+        heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
+    )
+    up = threading.Event()
+    link = RNS.Link(destination, established_callback=lambda _l: up.set())
+    if not up.wait(30):
+        sys.exit("link did not establish")
+
+    data = os.urandom(profile["payload_len"])
+    state = {"sent": 0, "settled": 0, "failures": 0}
+    transfer_ms = []
+    started = time.monotonic()
+    deadline = started + duration
+    while time.monotonic() < deadline:
+        concluded = threading.Event()
+        outcome = {}
+
+        def callback(resource):
+            outcome["status"] = resource.status
+            concluded.set()
+
+        state["sent"] += 1
+        transfer_started = time.monotonic()
+        RNS.Resource(data, link, callback=callback)
+        if not concluded.wait(120):
+            state["failures"] += 1
+            break
+        if outcome["status"] == RNS.Resource.COMPLETE:
+            state["settled"] += 1
+            transfer_ms.append((time.monotonic() - transfer_started) * 1000.0)
+        else:
+            state["failures"] += 1
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    link.teardown()
+    time.sleep(0.5)
+
+    transfer_ms = sorted(transfer_ms)
+    pct = lambda p: (
+        transfer_ms[min(round((len(transfer_ms) - 1) * p), len(transfer_ms) - 1)]
+        if transfer_ms
+        else float("nan")
+    )
+    payload_bytes = state["settled"] * profile["payload_len"]
+    seconds = max(elapsed_ms / 1000.0, 1e-9)
+    print(
+        f"RESULT sent={state['sent']} settled={state['settled']} "
+        f"failures={state['failures']} payload_bytes={payload_bytes} "
+        f"elapsed_ms={elapsed_ms} "
+        f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
+        f"goodput_mbits_per_sec={payload_bytes * 8.0 / seconds / 1e6:.2f} "
+        f"transfer_p50_ms={pct(0.50):.0f} transfer_p99_ms={pct(0.99):.0f}",
+        flush=True,
+    )
+    os._exit(0)
+
+
 def main():
     usage = "usage: scenario_node.py <manifest.json> <responder|initiator> <addr> [duration-ms]"
     if len(sys.argv) < 4:
@@ -300,17 +416,19 @@ def main():
     role, addr = sys.argv[2], sys.argv[3]
     duration_ms = int(sys.argv[4]) if len(sys.argv) > 4 else manifest["profile"]["duration_ms"]
 
-    link = manifest["profile"]["mechanism"] == "link"
+    mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")
     if role not in ("responder", "initiator"):
         sys.exit(usage)
     block, ready_addr = interface_block(wire, role, addr)
+    responders = {"link": respond_link, "resource": respond_resource}
+    initiators = {"link": initiate_link, "resource": initiate_resource}
     if role == "responder":
-        (respond_link if link else respond)(manifest["name"], block, ready_addr)
-    elif link:
-        initiate_link(manifest["name"], block, manifest["profile"], duration_ms / 1000.0)
+        responders.get(mechanism, respond)(manifest["name"], block, ready_addr)
     else:
-        initiate(manifest["name"], block, manifest["profile"], duration_ms / 1000.0)
+        initiators.get(mechanism, initiate)(
+            manifest["name"], block, manifest["profile"], duration_ms / 1000.0
+        )
 
 
 if __name__ == "__main__":

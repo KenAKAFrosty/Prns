@@ -83,6 +83,22 @@ fn fresh_identity() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
+/// Deterministic pseudo-random bytes: bz2 gains nothing, so both ends'
+/// keep-only-if-smaller rules keep the full stream on the wire — the bulk
+/// measurement measures bulk.
+fn incompressible_payload(len: usize) -> Vec<u8> {
+    let mut state = 0x9E37_79B9_7F4A_7C15u64;
+    let mut data = Vec::with_capacity(len);
+    while data.len() < len {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        data.extend_from_slice(&state.to_le_bytes());
+    }
+    data.truncate(len);
+    data
+}
+
 fn percentile(sorted: &[u64], p: f64) -> f64 {
     if sorted.is_empty() {
         return f64::NAN;
@@ -632,7 +648,7 @@ async fn initiate_resource(
     // command a moment to land before the first advertisement races it.
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let data = vec![0xAB; profile.payload_len];
+    let data = incompressible_payload(profile.payload_len);
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut next_id = 2u64;
