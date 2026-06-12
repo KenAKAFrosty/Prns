@@ -7,6 +7,7 @@
 //! the two msgpack wire shapes live in [`advertisement`].
 
 pub mod advertisement;
+pub mod control;
 
 use crate::routing::links::data::LINK_MDU;
 
@@ -49,6 +50,24 @@ pub const COLLISION_GUARD_SIZE: usize = 2 * WINDOW_MAX + HASHMAP_MAX_LEN;
 pub struct ResourceHash([u8; RESOURCE_HASH_LEN]);
 
 impl ResourceHash {
+    #[must_use]
+    pub const fn new(bytes: [u8; RESOURCE_HASH_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; RESOURCE_HASH_LEN] {
+        &self.0
+    }
+}
+
+/// What the receiver sends back when the assembled plaintext checks out —
+/// RNS 1.3.1 `expected_proof = Identity.full_hash(data + hash)`. A hash, not
+/// a signature: the link itself is the authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceProof([u8; RESOURCE_HASH_LEN]);
+
+impl ResourceProof {
     #[must_use]
     pub const fn new(bytes: [u8; RESOURCE_HASH_LEN]) -> Self {
         Self(bytes)
