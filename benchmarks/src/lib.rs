@@ -9,7 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod energy;
 mod results;
+pub use energy::{EnergySnapshot, RaplMeter};
 pub use results::{
     load_all_rows, load_host, load_implementations, results_dir, write_host, write_rows, Axis,
     Comparability, HostDescriptor, ImplementationDescriptor, ImplementationRole, ResultRow,

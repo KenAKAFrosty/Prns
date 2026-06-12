@@ -18,7 +18,7 @@ use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
 
 use benchmarks::scenario_dir;
-use benchmarks::{write_rows, Axis, ResultRow};
+use benchmarks::{write_rows, Axis, RaplMeter, ResultRow};
 
 /// One physical core's SMT siblings per role, read from the live topology — pinned runs
 /// are per-physical-core figures by construction. Falls back to the first two thread
@@ -245,6 +245,21 @@ fn main() {
         ("127.0.0.1:0".to_string(), None)
     };
 
+    // The energy prong: baseline the quiet box BEFORE any contestant exists, then
+    // bracket the contestants' whole lifetime. Package-domain RAPL counts everything on
+    // the package, so the baseline-net figure is the honest one; both are filed.
+    let meter = RaplMeter::detect();
+    if meter.is_none() {
+        println!(
+            "ENERGY unavailable: RAPL counters are root-locked — \
+             `sudo chmod o+r /sys/class/powercap/intel-rapl*/energy_uj` opens them until reboot"
+        );
+    }
+    let idle_watts = meter
+        .as_ref()
+        .map(|m| m.idle_watts(Duration::from_millis(1500)));
+    let run_energy = meter.as_ref().map(|m| m.snapshot());
+
     let mut responder = spawn_role(
         &manifest,
         "responder",
@@ -265,6 +280,11 @@ fn main() {
     let window = Duration::from_millis(args.duration_ms.unwrap_or(10_000) + 30_000);
     let result = await_line(&initiator, "RESULT", window);
     let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
+
+    let energy = meter.as_ref().map(|m| {
+        let bracket = run_energy.as_ref().expect("snapshot taken with the meter");
+        (m.joules_since(bracket), m.seconds_since(bracket))
+    });
 
     let initiator_cpu = *initiator.cpu_seconds.lock().expect("cpu");
     let initiator_rss = *initiator.peak_rss_bytes.lock().expect("rss");
@@ -344,6 +364,35 @@ fn main() {
             "bytes",
         ),
     ];
+    let mut rows = rows;
+    if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
+        let net_joules = (raw_joules - idle_watts * wall_seconds).max(0.0);
+        let per_delivered_mj = (delivered > 0.0).then(|| net_joules * 1_000.0 / delivered);
+        rows.push(row(
+            Axis::Energy,
+            "package_joules_raw",
+            Some(raw_joules),
+            "J",
+        ));
+        rows.push(row(
+            Axis::Energy,
+            "idle_baseline_watts",
+            Some(idle_watts),
+            "W",
+        ));
+        rows.push(row(Axis::Energy, "net_joules", Some(net_joules), "J"));
+        rows.push(row(
+            Axis::Energy,
+            "net_millijoules_per_delivered",
+            per_delivered_mj,
+            "mJ/msg",
+        ));
+        println!(
+            "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
+             (idle {idle_watts:.2}W) | net={net_joules:.1}J | {:.2} mJ/msg",
+            per_delivered_mj.unwrap_or(f64::NAN),
+        );
+    }
     if args.pin {
         write_rows(&host, &args.scenario, &pairing_slug, &rows);
     } else {
