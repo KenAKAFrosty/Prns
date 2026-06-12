@@ -1267,6 +1267,8 @@ async fn initiate_churn(
     let mut payload_bytes = 0u64;
     let mut establish_ms: Vec<u64> = Vec::new();
     let mut cycle_ms: Vec<u64> = Vec::new();
+    let mut close_ms: Vec<u64> = Vec::new();
+    let mut transfer_ms_by_band: [Vec<u64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
     'churn: while tokio::time::Instant::now() < deadline {
         let cycle_started = tokio::time::Instant::now();
@@ -1295,6 +1297,7 @@ async fn initiate_churn(
         establish_ms.push(cycle_started.elapsed().as_millis() as u64);
 
         let (band, len) = roll_band(&mut sizes, profile);
+        let transfer_started = tokio::time::Instant::now();
         next_id += 1;
         let transfer_id = CommandId(next_id);
         let moved = match band {
@@ -1340,6 +1343,7 @@ async fn initiate_churn(
                 }
             }
         };
+        let transfer_elapsed = transfer_started.elapsed().as_millis() as u64;
         if moved {
             payload_bytes += len as u64;
             match band {
@@ -1347,10 +1351,17 @@ async fn initiate_churn(
                 Band::Page => pages_moved += 1,
                 Band::File => files_moved += 1,
             }
+            let band_index = match band {
+                Band::Command => 0,
+                Band::Page => 1,
+                Band::File => 2,
+            };
+            transfer_ms_by_band[band_index].push(transfer_elapsed);
         } else {
             failures += 1;
         }
 
+        let close_started = tokio::time::Instant::now();
         next_id += 1;
         let close_id = CommandId(next_id);
         commands
@@ -1365,6 +1376,7 @@ async fn initiate_churn(
                 _ => {}
             }
         }
+        close_ms.push(close_started.elapsed().as_millis() as u64);
         if moved {
             cycles += 1;
             cycle_ms.push(cycle_started.elapsed().as_millis() as u64);
@@ -1387,4 +1399,28 @@ async fn initiate_churn(
         percentile(&cycle_ms, 0.50),
         percentile(&cycle_ms, 0.99),
     );
+
+    let [mut command_ms, mut page_ms, mut file_ms] = transfer_ms_by_band;
+    let establish_line = phase_line("establish", &mut establish_ms);
+    let close_line = phase_line("close", &mut close_ms);
+    let command_line = phase_line("transfer_command", &mut command_ms);
+    let page_line = phase_line("transfer_page", &mut page_ms);
+    let file_line = phase_line("transfer_file", &mut file_ms);
+    eprintln!("PHASES {establish_line} | {close_line} | {command_line} | {page_line} | {file_line}");
+}
+
+fn phase_line(label: &str, samples: &mut Vec<u64>) -> String {
+    samples.sort_unstable();
+    let over_500 = samples.iter().filter(|&&ms| ms > 500).count();
+    let near_1s = samples
+        .iter()
+        .filter(|&&ms| (900..=1100).contains(&ms))
+        .count();
+    format!(
+        "{label} n={} p50={:.0} p99={:.0} max={} over_500ms={over_500} near_1s={near_1s}",
+        samples.len(),
+        percentile(samples, 0.50),
+        percentile(samples, 0.99),
+        samples.last().copied().unwrap_or(0),
+    )
 }
