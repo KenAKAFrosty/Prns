@@ -75,8 +75,8 @@ hmac = { version = "0.12", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 aes = { version = "0.8", default-features = false }
 cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
-x25519-dalek = { version = "2", default-features = false }
+ed25519-dalek = { version = "2", default-features = false, features = ["zeroize", "fast"] }
+x25519-dalek = { version = "2", default-features = false, features = ["precomputed-tables", "static_secrets"] }
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
