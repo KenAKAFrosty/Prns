@@ -16,7 +16,7 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::build_outgoing::build_outgoing_resource;
 use crate::routing::links::resources::control::{
-    parse_part_request_plaintext, PART_REQUEST_PLAINTEXT_CAP,
+    parse_part_request_plaintext, parse_proof_plaintext, PART_REQUEST_PLAINTEXT_CAP,
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
@@ -28,7 +28,7 @@ use crate::routing::links::table::LinkPhase;
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::LinkId;
 use crate::routing::storage::EngineStorage;
-use crate::wire::{PacketType, WireContext};
+use crate::wire::{DestinationHash, PacketType, WireContext};
 
 impl<S: EngineStorage> EngineState<S> {
     /// Build and advertise one resource over an active link. `data` is the
@@ -202,6 +202,36 @@ impl<S: EngineStorage> EngineState<S> {
             requested: parsed.requested,
             exhausted_at: parsed.last_known_map_hash,
         }
+    }
+
+    /// RNS 1.3.1 `Resource.validate_proof`, with the hash half matched here
+    /// where the reference matches it at dispatch: a 64-byte proof naming a
+    /// transfer in our register settles its send the moment the proof half
+    /// equals what the build predicted. `None` means the link is not ours at
+    /// all — the caller falls through to the transported-link switch so a
+    /// relay keeps forwarding resource proofs blind. `RESOURCE_PRF` is
+    /// exempt from duplicate filtering, like the request.
+    pub(crate) fn classify_resource_proof(
+        &mut self,
+        destination: &DestinationHash,
+        payload: &[u8],
+        arrived_at: InstantMillis,
+    ) -> Option<IngestPacketOutcome<'static>> {
+        let link_id = LinkId::new(*destination.as_bytes());
+        self.links.phase_for(&link_id)?;
+        let Ok((hash, proof)) = parse_proof_plaintext(payload) else {
+            return Some(IngestPacketOutcome::Ignored);
+        };
+        let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
+            return Some(IngestPacketOutcome::Ignored);
+        };
+        if proof != self.outgoing_resources.state(index).expected_proof {
+            return Some(IngestPacketOutcome::Ignored);
+        }
+        let id = self.outgoing_resources.state(index).command_id;
+        self.outgoing_resources.remove(&link_id, &hash);
+        self.links.note_inbound(&link_id, arrived_at);
+        Some(IngestPacketOutcome::ResourceDelivered { id })
     }
 
     /// Answer one part request from the outgoing register — RNS 1.3.1
@@ -784,6 +814,93 @@ mod tests {
             ),
         ));
         assert!(engine.outgoing_resources.is_empty());
+    }
+
+    fn proof_frame(hash: &ResourceHash, proof: &crate::routing::links::resources::ResourceProof) -> std::vec::Vec<u8> {
+        use crate::routing::links::resources::control::write_proof_plaintext;
+        let mut plaintext = [0u8; 64];
+        write_proof_plaintext(hash, proof, &mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_raw_packet(
+            &link_id(),
+            PacketType::Proof,
+            WireContext::ResourceProof,
+            BROADCAST_MTU,
+            &plaintext,
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    #[test]
+    fn the_receivers_proof_settles_the_send_and_retires_the_transfer() {
+        use crate::routing::links::resources::assemble_incoming::{open_transfer, verify_and_prove};
+
+        let mut engine = sender_with_active_link();
+        let data = four_part_payload();
+        let capture = send(&mut engine, 7, &data, None);
+        let (_, adv_frame) = &capture.frames[0];
+        let (_, adv_payload) = WirePacketHeader::parse(adv_frame).unwrap();
+        let mut sealed_adv = adv_payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed_adv).unwrap();
+        let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+
+        let serve = feed(
+            &mut engine,
+            &request_frame(&advertisement.hash, None, advertisement.hashmap),
+            2_000,
+        );
+        let mut reassembled = std::vec::Vec::new();
+        for (_, frame) in &serve.frames {
+            let (_, part) = WirePacketHeader::parse(frame).unwrap();
+            reassembled.extend_from_slice(part);
+        }
+        let plaintext = open_transfer(&link_key(), &mut reassembled).unwrap();
+        assert_eq!(plaintext, &data[..], "the receiver assembles the original data");
+        let proof =
+            verify_and_prove(plaintext, &advertisement.salt_nonce, &advertisement.hash).unwrap();
+
+        let settled = feed(&mut engine, &proof_frame(&advertisement.hash, &proof), 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+        assert!(
+            engine.outgoing_resources.is_empty(),
+            "a proven transfer retires its register row",
+        );
+    }
+
+    #[test]
+    fn a_wrong_or_misaddressed_proof_settles_nothing() {
+        use crate::routing::links::resources::ResourceProof;
+
+        let mut engine = sender_with_active_link();
+        let data = four_part_payload();
+        let (hash, names) = advertised_resource(&mut engine, &data);
+        feed(&mut engine, &request_frame(&hash, None, &names), 2_000);
+
+        let forged = feed(
+            &mut engine,
+            &proof_frame(&hash, &ResourceProof::new([0x5A; 32])),
+            3_000,
+        );
+        assert!(forged.settlements.is_empty());
+
+        let unknown = feed(
+            &mut engine,
+            &proof_frame(&ResourceHash::new([0x66; 32]), &ResourceProof::new([0x5A; 32])),
+            3_100,
+        );
+        assert!(unknown.settlements.is_empty());
+
+        let index = engine.outgoing_resources.lookup(&link_id(), &hash).unwrap();
+        assert_eq!(
+            engine.outgoing_resources.state(index).status,
+            OutgoingResourceStatus::AwaitingProof,
+            "the transfer keeps waiting for the genuine proof",
+        );
     }
 
     #[test]

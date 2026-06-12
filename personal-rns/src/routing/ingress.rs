@@ -284,6 +284,10 @@ pub enum IngestPacketOutcome<'p> {
         requested: &'p [u8],
         exhausted_at: Option<[u8; MAP_HASH_LEN]>,
     },
+
+    ResourceDelivered {
+        id: CommandId,
+    },
     /// A link request in transport booked a transported row — the rewritten
     /// request (re-headered, MTU signalling clamped to this path segment) is
     /// owed to the next hop.
@@ -591,6 +595,13 @@ impl<S: EngineStorage> EngineState<S> {
                         source_interface,
                         arrived_at,
                     );
+                }
+                if context == WireContext::ResourceProof {
+                    if let Some(outcome) =
+                        self.classify_resource_proof(&destination, payload, arrived_at)
+                    {
+                        return outcome;
+                    }
                 }
                 let link_id = LinkId::new(*destination.as_bytes());
                 if self.links.phase_for(&link_id).is_none() {

@@ -291,6 +291,12 @@ impl<S: EngineStorage> EngineState<S> {
                     sink,
                 );
             }
+            IngestPacketOutcome::ResourceDelivered { id } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendResource(Ok(())),
+                }));
+            }
             IngestPacketOutcome::PeerIdentified { link_id, identity } => {
                 sink(EngineReaction::Journaled(Journaled::PeerIdentified {
                     link_id,
