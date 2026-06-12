@@ -2315,6 +2315,46 @@ mod tests {
         (initiator, responder, dispatch.link_id)
     }
 
+    #[test]
+    fn a_registered_default_resource_strategy_greets_the_link_at_activation() {
+        use crate::routing::links::resources::ResourceStrategy;
+
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        let mut responder = personal_node_announcer();
+        let opened_gate = ResourceStrategy::Accept {
+            max_uncompressed_len: 1 << 20,
+            accept_compressed: false,
+        };
+        assert!(responder.set_default_resource_strategy(&personal_node_destination(), opened_gate));
+
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let (rtts, _, _) = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+        let (_, _, _) = reactions_of(&mut responder, &rtts[0], 1_600, 0xB5);
+
+        let Some(LinkPhase::Active {
+            resource_strategy, ..
+        }) = responder.links.phase_for(&dispatch.link_id)
+        else {
+            panic!("the responder's link must be active");
+        };
+        assert_eq!(
+            *resource_strategy, opened_gate,
+            "the destination's default is stamped at activation — no command, no race",
+        );
+    }
+
     fn fire_deadlines(
         state: &mut EngineState<Cap>,
         now: u64,
@@ -2777,3 +2817,4 @@ mod tests {
         assert_eq!(state.links.len(), 1, "the original establishment stands");
     }
 }
+

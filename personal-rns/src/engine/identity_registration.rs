@@ -123,6 +123,21 @@ impl<S: EngineStorage> EngineState<S> {
     /// over this destination's links at `truncated_hash(path)` pass the
     /// registry's gate and journal to the app; everything else dies silently.
     /// Last write wins, and a re-registration starts from an empty allow list.
+    /// The destination's standing answer to inbound resource offers — RNS
+    /// 1.3.1 apps set `Link.resource_strategy` inside the link-established
+    /// callback on every link, which makes it a de facto per-destination
+    /// default; registering it here stamps every responder-side link at
+    /// activation, so no per-link command can race a sender who advertises
+    /// the instant the link comes up.
+    pub fn set_default_resource_strategy(
+        &mut self,
+        destination: &DestinationHash,
+        strategy: crate::routing::links::resources::ResourceStrategy,
+    ) -> bool {
+        self.upstream_app_destinations
+            .set_default_resource_strategy(destination, strategy)
+    }
+
     pub fn register_request_handler(
         &mut self,
         destination: &DestinationHash,

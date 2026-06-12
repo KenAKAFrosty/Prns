@@ -37,6 +37,10 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
         self.app_data.get(index).map(|data| data.as_slice())
     }
 
+    fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind {
+        &mut self.kind[index]
+    }
+
     fn upsert(
         &mut self,
         destination: DestinationHash,
@@ -66,6 +70,7 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::links::resources::ResourceStrategy;
     use crate::identity::IdentityHash;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
@@ -81,6 +86,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([n; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
+                    resource_strategy: ResourceStrategy::AcceptNone,
                 },
                 DottedNameHash::new([n; DOTTED_NAME_HASH_LEN]),
                 AnnounceAppDataBytes::new(),

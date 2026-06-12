@@ -979,6 +979,21 @@ impl<S: EngineStorage> EngineState<S> {
         {
             return IngestPacketOutcome::Ignored;
         }
+        let responder_destination = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Active {
+                role: LinkRole::Responder { destination, .. },
+                ..
+            }) => Some(*destination),
+            _ => None,
+        };
+        if let Some(destination) = responder_destination {
+            let default_strategy = self
+                .upstream_app_destinations
+                .default_resource_strategy(&destination);
+            let _ = self
+                .links
+                .set_resource_strategy(&link_id, default_strategy);
+        }
         IngestPacketOutcome::LinkActivated { link_id, rtt_ms }
     }
 
@@ -1237,6 +1252,7 @@ impl<S: EngineStorage> EngineState<S> {
         let UpstreamAppDestinationKind::Single {
             identity,
             proof_strategy,
+            ..
         } = registered.kind
         else {
             return IngestPacketOutcome::Ignored;
@@ -1304,6 +1320,7 @@ impl<S: EngineStorage> EngineState<S> {
                 let UpstreamAppDestinationKind::Single {
                     identity,
                     proof_strategy,
+                    ..
                 } = registered.kind
                 else {
                     return None;

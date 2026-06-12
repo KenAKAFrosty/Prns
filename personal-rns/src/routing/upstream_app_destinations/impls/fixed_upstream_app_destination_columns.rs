@@ -56,6 +56,10 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
         self.app_data.get(index).map(|data| data.as_slice())
     }
 
+    fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind {
+        &mut self.kind[index]
+    }
+
     fn upsert(
         &mut self,
         destination: DestinationHash,
@@ -88,6 +92,7 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::links::resources::ResourceStrategy;
     use crate::identity::IdentityHash;
     use crate::routing::upstream_app_destinations::ProofStrategy;
 
@@ -120,6 +125,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
+                    resource_strategy: ResourceStrategy::AcceptNone,
                 },
                 name(2),
                 AnnounceAppDataBytes::new()
@@ -145,6 +151,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([2; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
+                    resource_strategy: ResourceStrategy::AcceptNone,
                 }
             ]
         );
@@ -160,6 +167,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveNone,
+                    resource_strategy: ResourceStrategy::AcceptNone,
                 },
                 name(1),
                 AnnounceAppDataBytes::new(),
@@ -171,6 +179,7 @@ mod tests {
                 UpstreamAppDestinationKind::Single {
                     identity: IdentityHash::new([1; 16]),
                     proof_strategy: ProofStrategy::ProveAll,
+                    resource_strategy: ResourceStrategy::AcceptNone,
                 },
                 name(1),
                 AnnounceAppDataBytes::from_slice(b"new").unwrap(),
@@ -185,6 +194,7 @@ mod tests {
             &[UpstreamAppDestinationKind::Single {
                 identity: IdentityHash::new([1; 16]),
                 proof_strategy: ProofStrategy::ProveAll,
+                resource_strategy: ResourceStrategy::AcceptNone,
             }],
         );
         assert_eq!(columns.app_data_at(0), Some(b"new".as_slice()));

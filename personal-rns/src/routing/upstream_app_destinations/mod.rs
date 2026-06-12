@@ -3,6 +3,7 @@ mod impls;
 pub use impls::*;
 
 use crate::identity::IdentityHash;
+use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, DottedNameHash,
@@ -26,6 +27,11 @@ pub enum UpstreamAppDestinationKind {
     Single {
         identity: IdentityHash,
         proof_strategy: ProofStrategy,
+        /// How links answered for this destination greet inbound resource
+        /// advertisements the moment they activate — set once per
+        /// destination, stamped onto every responder-side link at birth, so
+        /// no per-link command can race a sender who advertises instantly.
+        resource_strategy: ResourceStrategy,
     },
     Group,
 }
@@ -60,6 +66,7 @@ pub trait UpstreamAppDestinationColumns {
     fn name_hashes(&self) -> &[DottedNameHash];
     fn app_data_at(&self, index: usize) -> Option<&[u8]>;
 
+    fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind;
     fn upsert(
         &mut self,
         destination: DestinationHash,
@@ -117,10 +124,55 @@ impl<C: UpstreamAppDestinationColumns> UpstreamAppDestinations<C> {
             UpstreamAppDestinationKind::Single {
                 identity: *identity_hash,
                 proof_strategy,
+                resource_strategy: ResourceStrategy::AcceptNone,
             },
             name_hash,
             app_data,
         )
+    }
+
+    /// The destination's standing answer to inbound resource offers,
+    /// stamped onto its links at activation. Anything but a registered
+    /// `Single` refuses.
+    pub fn default_resource_strategy(&self, destination: &DestinationHash) -> ResourceStrategy {
+        let Some(index) = self
+            .columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        else {
+            return ResourceStrategy::AcceptNone;
+        };
+        match self.columns.kinds()[index] {
+            UpstreamAppDestinationKind::Single {
+                resource_strategy, ..
+            } => resource_strategy,
+            _ => ResourceStrategy::AcceptNone,
+        }
+    }
+
+    pub fn set_default_resource_strategy(
+        &mut self,
+        destination: &DestinationHash,
+        strategy: ResourceStrategy,
+    ) -> bool {
+        let Some(index) = self
+            .columns
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        else {
+            return false;
+        };
+        if let UpstreamAppDestinationKind::Single {
+            resource_strategy, ..
+        } = self.columns.kind_mut(index)
+        {
+            *resource_strategy = strategy;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn register_group(
@@ -298,6 +350,7 @@ mod tests {
             Some(UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                resource_strategy: ResourceStrategy::AcceptNone,
             }),
             "re-registration overwrites the proof strategy in place",
         );
@@ -379,6 +432,7 @@ mod tests {
             UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                resource_strategy: ResourceStrategy::AcceptNone,
             }
         );
         assert_eq!(views[0].name_hash, views[1].name_hash);
@@ -414,6 +468,7 @@ mod tests {
             Some(UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveAll,
+                resource_strategy: ResourceStrategy::AcceptNone,
             }),
         );
         assert_eq!(
@@ -423,6 +478,7 @@ mod tests {
             Some(UpstreamAppDestinationKind::Single {
                 identity: identity_hash,
                 proof_strategy: ProofStrategy::ProveNone,
+                resource_strategy: ResourceStrategy::AcceptNone,
             }),
         );
     }
