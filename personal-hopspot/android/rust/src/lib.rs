@@ -13,6 +13,17 @@ use personal_hopspot_ui::{InputEvent, UiAction};
 
 use crate::engine::usb_bridge;
 
+#[cfg(all(target_os = "android", target_arch = "arm"))]
+#[no_mangle]
+pub extern "C" fn dl_iterate_phdr(
+    _callback: *mut core::ffi::c_void,
+    _data: *mut core::ffi::c_void,
+) -> i32 {
+    // Android before API 21 does not export this symbol. Rust's runtime may reference it for
+    // backtrace/unwind metadata; Hopspot does not need that walk on the projector path.
+    0
+}
+
 const INPUT_SHORT_PRESS: jint = 0;
 const INPUT_LONG_PRESS: jint = 1;
 const ACTION_NONE: jint = 0;

@@ -1,44 +1,34 @@
 package org.personal.hopspot
 
+import android.app.Activity
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
+import android.view.GestureDetector
+import android.view.MotionEvent
+import android.view.View
 import java.nio.ByteBuffer
 
-class MainActivity : ComponentActivity() {
+class MainActivity : Activity() {
     private var handle: Long = 0L
     private var usbLink: UsbLink? = null
     private var wifiAutoLink: WifiAutoLink? = null
+    private var hopspotView: HopspotView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handle = NativeBridge.nativeInit()
         wifiAutoLink = WifiAutoLink(this).also { it.start() }
         usbLink = UsbLink(this).also { it.start() }
-        setContent { HopspotScreen(handle) }
+        hopspotView = HopspotView(this, handle).also { setContentView(it) }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        hopspotView?.stop()
+        hopspotView = null
         usbLink?.stop()
         usbLink = null
         wifiAutoLink?.stop()
@@ -50,49 +40,79 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-private fun HopspotScreen(handle: Long) {
-    val bitmap = remember {
-        Bitmap.createBitmap(
-            NativeBridge.PANEL_WIDTH,
-            NativeBridge.PANEL_HEIGHT,
-            Bitmap.Config.ARGB_8888,
-        )
+private class HopspotView(
+    context: android.content.Context,
+    private val handle: Long,
+) : View(context) {
+    private val bitmap = Bitmap.createBitmap(
+        NativeBridge.PANEL_WIDTH,
+        NativeBridge.PANEL_HEIGHT,
+        Bitmap.Config.ARGB_8888,
+    )
+    private val buffer = ByteBuffer.allocateDirect(NativeBridge.ARGB_BYTES)
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+        isFilterBitmap = false
+        isDither = false
     }
-    val buffer = remember { ByteBuffer.allocateDirect(NativeBridge.ARGB_BYTES) }
-    var image by remember { mutableStateOf<ImageBitmap?>(null) }
+    private val src = Rect(0, 0, NativeBridge.PANEL_WIDTH, NativeBridge.PANEL_HEIGHT)
+    private val dst = Rect()
+    private val detector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
 
-    LaunchedEffect(handle) {
-        while (true) {
-            withFrameNanos { }
-            NativeBridge.nativeRender(handle, buffer)
-            buffer.rewind()
-            bitmap.copyPixelsFromBuffer(buffer)
-            buffer.rewind()
-            image = bitmap.copy(Bitmap.Config.ARGB_8888, false).asImageBitmap()
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                NativeBridge.nativePostInput(handle, NativeBridge.INPUT_SHORT_PRESS)
+                invalidate()
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                NativeBridge.nativePostInput(handle, NativeBridge.INPUT_LONG_PRESS)
+                invalidate()
+            }
+        },
+    )
+    private val ticker = object : Runnable {
+        override fun run() {
+            invalidate()
+            postDelayed(this, FRAME_DELAY_MS)
         }
     }
 
-    val current = image
-    if (current != null) {
-        Image(
-            bitmap = current,
-            contentDescription = null,
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-                .pointerInput(handle) {
-                    detectTapGestures(
-                        onTap = {
-                            NativeBridge.nativePostInput(handle, NativeBridge.INPUT_SHORT_PRESS)
-                        },
-                        onLongPress = {
-                            NativeBridge.nativePostInput(handle, NativeBridge.INPUT_LONG_PRESS)
-                        },
-                    )
-                },
-            contentScale = ContentScale.Fit,
-            filterQuality = FilterQuality.None,
+    init {
+        setBackgroundColor(android.graphics.Color.BLACK)
+        post(ticker)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        NativeBridge.nativeRender(handle, buffer)
+        buffer.rewind()
+        bitmap.copyPixelsFromBuffer(buffer)
+        buffer.rewind()
+
+        val scale = minOf(
+            width.toFloat() / NativeBridge.PANEL_WIDTH.toFloat(),
+            height.toFloat() / NativeBridge.PANEL_HEIGHT.toFloat(),
         )
+        val outWidth = (NativeBridge.PANEL_WIDTH * scale).toInt()
+        val outHeight = (NativeBridge.PANEL_HEIGHT * scale).toInt()
+        val left = (width - outWidth) / 2
+        val top = (height - outHeight) / 2
+        dst.set(left, top, left + outWidth, top + outHeight)
+        canvas.drawBitmap(bitmap, src, dst, paint)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        return detector.onTouchEvent(event) || super.onTouchEvent(event)
+    }
+
+    fun stop() {
+        removeCallbacks(ticker)
+    }
+
+    private companion object {
+        private const val FRAME_DELAY_MS = 33L
     }
 }
