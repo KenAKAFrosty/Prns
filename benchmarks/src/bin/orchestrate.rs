@@ -283,6 +283,7 @@ impl RoleProcess {
         let mut status: libc::c_int = 0;
         let mut usage = MaybeUninit::<libc::rusage>::zeroed();
         let reaped = unsafe { libc::wait4(pid, &mut status, 0, usage.as_mut_ptr()) };
+        std::mem::forget(self);
         if reaped < 0 {
             return RoleMetrics {
                 cpu_seconds: 0.0,
@@ -304,6 +305,17 @@ impl RoleProcess {
             cpu_seconds: 0.0,
             peak_rss_bytes: 0,
         }
+    }
+}
+
+/// Any exit path that abandons a role — the no-RESULT panic included — must not orphan its
+/// child: an orphaned responder keeps announcing into later runs' measurements. A finalized
+/// role was already reaped, so the kill is a no-op there (macOS reaps outside std's
+/// bookkeeping and forgets self instead — its pid may already be recycled).
+impl Drop for RoleProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -512,6 +524,13 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         .or_else(|| field(&responder_result, "received"))
         .or_else(|| field(&responder_result, "served"))
         .unwrap_or(0.0);
+    let died = field(&result, "died").unwrap_or(0.0) > 0.0;
+    if died {
+        eprintln!(
+            "verdict: the initiator declared the responder DEAD mid-run — conformance filed, \
+             throughput/latency/energy withheld (a dead run's last gasp is not a measurement)"
+        );
+    }
     assert!(
         delivered <= sent,
         "delivery accounting holds (initiator-proven <= sent): {delivered} <= {sent}",
@@ -565,25 +584,25 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Throughput,
             "delivered_per_sec",
-            field(&result, "delivered_per_sec"),
+            field(&result, "delivered_per_sec").filter(|_| !died),
             "msgs/s",
         ),
         row(
             Axis::Throughput,
             "goodput_bytes_per_sec",
-            field(&result, "goodput_bytes_per_sec"),
+            field(&result, "goodput_bytes_per_sec").filter(|_| !died),
             "B/s",
         ),
         row(
             Axis::Latency,
             "rtt_p50_ms",
-            field(&result, "rtt_p50_ms"),
+            field(&result, "rtt_p50_ms").filter(|_| !died),
             "ms",
         ),
         row(
             Axis::Latency,
             "rtt_p99_ms",
-            field(&result, "rtt_p99_ms"),
+            field(&result, "rtt_p99_ms").filter(|_| !died),
             "ms",
         ),
         row(
@@ -600,8 +619,10 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         ),
     ];
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
-        let net_joules = (raw_joules - idle_watts * wall_seconds).max(0.0);
-        let per_delivered_mj = (delivered > 0.0).then(|| net_joules * 1_000.0 / delivered);
+        let net_joules = raw_joules - idle_watts * wall_seconds;
+        let measurable = net_joules > 0.0;
+        let per_delivered_mj =
+            (measurable && delivered > 0.0 && !died).then(|| net_joules * 1_000.0 / delivered);
         rows.push(row(
             Axis::Energy,
             "package_joules_raw",
@@ -614,18 +635,31 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             Some(idle_watts),
             "W",
         ));
-        rows.push(row(Axis::Energy, "net_joules", Some(net_joules), "J"));
+        rows.push(row(
+            Axis::Energy,
+            "net_joules",
+            measurable.then_some(net_joules),
+            "J",
+        ));
         rows.push(row(
             Axis::Energy,
             "net_millijoules_per_delivered",
             per_delivered_mj,
             "mJ/msg",
         ));
-        println!(
-            "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
-             (idle {idle_watts:.2}W) | net={net_joules:.1}J | {:.2} mJ/msg",
-            per_delivered_mj.unwrap_or(f64::NAN),
-        );
+        if measurable {
+            println!(
+                "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
+                 (idle {idle_watts:.2}W) | net={net_joules:.1}J | {:.2} mJ/msg",
+                per_delivered_mj.unwrap_or(f64::NAN),
+            );
+        } else {
+            println!(
+                "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s ran BELOW the \
+                 idle baseline ({idle_watts:.2}W) — net energy unmeasurable this run \
+                 (baseline drift), filed as pending",
+            );
+        }
     }
     println!(
         "\nSUMMARY scenario={} pairing={pairing_label} host={}\n\

@@ -223,6 +223,9 @@ def initiate(name, block, profile, duration):
         return RNS.Packet(destination, scratch[:size]).send(), size
 
     outstanding = [send_one() for _ in range(profile["window"])]
+    streak_limit = max(profile["window"] * 8, 64)
+    failure_streak = 0
+    died = False
     while outstanding and time.monotonic() < drain_deadline:
         still = []
         settled = 0
@@ -233,12 +236,17 @@ def initiate(name, block, profile, duration):
                 state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
                 settled += 1
-                if time.monotonic() < deadline:
+                failure_streak = 0
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
                 state["timeouts"] += 1
                 settled += 1
-                if time.monotonic() < deadline:
+                failure_streak += 1
+                if not died and failure_streak >= streak_limit:
+                    died = True
+                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             else:
                 still.append((receipt, size))
@@ -256,7 +264,8 @@ def initiate(name, block, profile, duration):
         f"timeouts={state['timeouts']} payload_bytes={payload_bytes} "
         f"elapsed_ms={elapsed_ms} delivered_per_sec={state['delivered'] / seconds:.1f} "
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
-        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}"
+        + (" died=1" if died else ""),
         flush=True,
     )
     os._exit(0)
@@ -337,6 +346,9 @@ def initiate_link(name, block, profile, duration):
         return RNS.Packet(link, scratch[:size]).send(), size
 
     outstanding = [send_one() for _ in range(profile["window"])]
+    streak_limit = max(profile["window"] * 8, 64)
+    failure_streak = 0
+    died = False
     while outstanding and time.monotonic() < drain_deadline:
         still = []
         settled = 0
@@ -347,12 +359,17 @@ def initiate_link(name, block, profile, duration):
                 state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
                 settled += 1
-                if time.monotonic() < deadline:
+                failure_streak = 0
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
                 state["timeouts"] += 1
                 settled += 1
-                if time.monotonic() < deadline:
+                failure_streak += 1
+                if not died and failure_streak >= streak_limit:
+                    died = True
+                    print(f"DIED failure_streak={failure_streak}", file=sys.stderr, flush=True)
+                if not died and time.monotonic() < deadline:
                     still.append(send_one())
             else:
                 still.append((receipt, size))
@@ -372,7 +389,8 @@ def initiate_link(name, block, profile, duration):
         f"timeouts={state['timeouts']} payload_bytes={payload_bytes} "
         f"elapsed_ms={elapsed_ms} delivered_per_sec={state['delivered'] / seconds:.1f} "
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
-        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}"
+        + (" died=1" if died else ""),
         flush=True,
     )
     os._exit(0)
