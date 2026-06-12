@@ -1,28 +1,21 @@
-//! The impl-neutral orchestrator: one driver for every scenario shape, energy bracketed on
-//! every run, every figure filed into the one substrate. A scenario's `profile.mechanism`
-//! picks the shape:
-//!   - `announce` — the **sustained** shape: spawn one node that replays a wire corpus on all
-//!     cores under continuous load (the verify-bound core efficiency). Subsumes the old
-//!     `energy/measure.sh`.
-//!   - `single` / `link` — the **interop** shape: spawn one process per role, point them at
-//!     each other over localhost TCP/UDP, and collect delivery + latency from the protocol's
-//!     own proofs.
-//! A *run* is an assignment of implementations to a scenario — `self/self` is both the ceiling
-//! measurement and the harness ceiling itself; other pairings join by naming a different
-//! participation binary. CPU and peak RSS are sampled *outside* the contestants (Linux from
-//! `/proc`, macOS from each child's `wait4` rusage), so a participation binary can't flatter
-//! itself.
+//! The impl-neutral orchestrator for the live scenarios: spawn one process per role, point
+//! them at each other over localhost TCP/UDP, collect the line protocol, and file result rows
+//! — throughput, conformance, latency, memory, and energy — into the one substrate. A *run* is
+//! an assignment of implementations to the scenario's roles; `self/self` is both the ceiling
+//! measurement and the harness ceiling itself, and other pairings join by naming a different
+//! participation binary for a role. Energy is bracketed on every run, so efficiency
+//! (millijoules per delivered message) falls out of the realistic firehose itself. CPU and
+//! peak RSS are sampled *outside* the contestants (Linux from `/proc`, macOS from each child's
+//! `wait4` rusage), so a participation binary can't flatter itself.
 //!
-//! usage: orchestrate [scenario]
-//!          interop:   [--initiator self|reference|…] [--responder …] [--duration-ms N] [--unpinned]
-//!          sustained: [--impl self|reference|…] [--duration-ms N]
+//! usage: orchestrate [scenario] [--initiator self|reference|…] [--responder …]
+//!                     [--duration-ms N] [--unpinned]
 //!
-//! The reproducibility profile is ON by default for interop, and what it means is the
-//! per-platform seam: Linux pins each role to one physical core's SMT siblings (`taskset`);
-//! Apple silicon has no per-core affinity (the arm64 API is a documented no-op), so the
-//! contestants run on the Performance cluster by default on a quiet box, with the P/E split
-//! recorded in `host.json`. `--unpinned` skips the profile and prints without filing — the
-//! sustained shape is all-cores by construction and always files.
+//! The reproducibility profile is ON by default: Linux pins each role to one physical core's
+//! SMT siblings (`taskset`); Apple silicon has no per-core affinity (the arm64 API is a
+//! documented no-op), so the contestants run on the Performance cluster by default on a quiet
+//! box, with the P/E split recorded in `host.json`. `--unpinned` skips the profile and prints
+//! without filing — unprofiled runs proved non-reproducible on hybrid-core silicon.
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
@@ -104,15 +97,13 @@ fn reference_python(script: &str) -> Command {
     c
 }
 
-/// A participating implementation: its registry name, the slug its result files key on, the
-/// display label its rows carry, and — for the sustained shape — whether its conformance
-/// figure is a resolved-route count or a verify-only count. Each shape's launch command is
-/// `Some` only when the impl actually fields a node for it.
+/// A participating implementation: its registry name, the slug its result files key on, and
+/// the display label its rows carry. Its interop command is `Some` only when the impl actually
+/// fields a node for the live scenarios.
 struct Implementation {
     name: &'static str,
     slug: &'static str,
     label: &'static str,
-    sustained_metric: &'static str,
 }
 
 fn implementation(name: &str) -> Implementation {
@@ -121,13 +112,11 @@ fn implementation(name: &str) -> Implementation {
             name: "self",
             slug: "personal-rns",
             label: "Prns",
-            sustained_metric: "routes_resolved",
         },
         "reference" => Implementation {
             name: "reference",
             slug: "rns-1.3.1",
             label: "RNS 1.3.1",
-            sustained_metric: "routes_resolved",
         },
         other => panic!("unknown implementation {other:?} (self|reference)"),
     }
@@ -140,28 +129,6 @@ impl Implementation {
         match self.name {
             "self" => Some(Command::new(sibling_binary("scenario_node"))),
             "reference" => Some(reference_python("scenario_node.py")),
-            _ => None,
-        }
-    }
-
-    /// The single-node sustained command — all-cores corpus replay over `corpus` for `secs`,
-    /// replicated to `working_set` where the node honours it — or `None` if this impl fields
-    /// no sustained node. The python ports read arg 3 as a thread count, so they take only
-    /// `corpus secs` and default their own all-cores fan-out.
-    fn sustained_command(&self, corpus: &Path, secs: u64, working_set: usize) -> Option<Command> {
-        match self.name {
-            "self" => {
-                let mut c = Command::new(sibling_binary("sustained"));
-                c.arg(corpus)
-                    .arg(secs.to_string())
-                    .arg(working_set.to_string());
-                Some(c)
-            }
-            "reference" => {
-                let mut c = reference_python("sustained.py");
-                c.arg(corpus).arg(secs.to_string());
-                Some(c)
-            }
             _ => None,
         }
     }
@@ -346,7 +313,6 @@ struct Args {
     scenario: String,
     initiator: String,
     responder: String,
-    impl_name: String,
     duration_ms: Option<u64>,
     pin: bool,
 }
@@ -356,7 +322,6 @@ fn parse_args() -> Args {
         scenario: "single-firehose".into(),
         initiator: "self".into(),
         responder: "self".into(),
-        impl_name: "self".into(),
         duration_ms: None,
         pin: true,
     };
@@ -365,7 +330,6 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--initiator" => args.initiator = argv.next().expect("impl name"),
             "--responder" => args.responder = argv.next().expect("impl name"),
-            "--impl" => args.impl_name = argv.next().expect("impl name"),
             "--duration-ms" => {
                 args.duration_ms = Some(argv.next().and_then(|v| v.parse().ok()).expect("ms"));
             }
@@ -431,154 +395,10 @@ fn main() {
     let manifest_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&manifest).expect("reads the manifest"))
             .expect("parses the manifest");
-    let mechanism = manifest_json["profile"]["mechanism"].as_str().unwrap_or("");
-    match mechanism {
-        "announce" => run_sustained(&args, &manifest_json),
-        "single" | "link" => run_interop(&args, &manifest_json, &manifest),
-        other => panic!(
-            "scenario {:?} has unknown profile.mechanism {other:?} (announce|single|link)",
-            args.scenario
-        ),
-    }
+    run_interop(&args, &manifest_json, &manifest);
 }
 
-/// The sustained shape: one node replays the corpus on all cores under continuous load while
-/// the energy bracket integrates package power. Files conformance, throughput, CPU power, and
-/// energy-per-announce — the four axes the energy table renders. Always files (all-cores by
-/// construction; energy degrades to *pending* without root).
-fn run_sustained(args: &Args, manifest_json: &serde_json::Value) {
-    let profile = &manifest_json["profile"];
-    let corpus_name = profile["corpus"].as_str().unwrap_or("packets.hex");
-    let corpus = scenario_dir(&args.scenario).join(corpus_name);
-    let secs = args
-        .duration_ms
-        .map(|ms| ms / 1000)
-        .unwrap_or_else(|| profile["duration_secs"].as_u64().unwrap_or(30));
-    let working_set = profile["working_set_bytes"].as_u64().unwrap_or(50_000) as usize;
-    let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
-
-    let subject = implementation(&args.impl_name);
-    let command = subject
-        .sustained_command(&corpus, secs, working_set)
-        .unwrap_or_else(|| panic!("implementation {:?} fields no sustained node", subject.name));
-
-    // Baseline the quiet box, then bracket the node's whole lifetime. The package-domain
-    // counter (RAPL on Linux, powermetrics on macOS) counts everything on the package, so
-    // (active − idle) ÷ throughput is the honest joules-per-announce a battery node pays.
-    let meter = PowerMeter::detect();
-    if meter.is_none() {
-        println!("{}", energy_unavailable_hint());
-    }
-    let idle_watts = meter
-        .as_ref()
-        .map(|m| m.idle_watts(Duration::from_millis(1500)));
-    let bracket = meter.as_ref().map(|m| m.start());
-
-    let (resolved, announces_per_sec) =
-        run_sustained_node(command, Duration::from_secs(secs + 30));
-
-    let energy = bracket.map(|b| b.finish());
-    let active_watts = energy.map(|(joules, wall)| if wall > 0.0 { joules / wall } else { 0.0 });
-    let energy_per_announce = match (active_watts, idle_watts, announces_per_sec) {
-        (Some(active), Some(idle), Some(rate)) if rate > 0.0 => {
-            Some((active - idle).max(0.0) * 1_000_000.0 / rate)
-        }
-        _ => None,
-    };
-
-    let stamp = run_stamp(args.pin);
-    let row = |axis: Axis, metric: &str, value: Option<f64>, unit: &str| ResultRow {
-        scenario: args.scenario.clone(),
-        scenario_version: version,
-        implementation: subject.label.to_string(),
-        commit: stamp.commit.clone(),
-        toolchain: stamp.toolchain.clone(),
-        host: stamp.host.clone(),
-        axis,
-        metric: metric.into(),
-        value,
-        unit: unit.into(),
-        device_id: stamp.device_id,
-        submitter_id: stamp.submitter_id,
-    };
-    let mut rows = vec![
-        row(Axis::Conformance, subject.sustained_metric, resolved, "count"),
-        row(
-            Axis::Throughput,
-            "sustained_announces_per_sec",
-            announces_per_sec,
-            "announce/s",
-        ),
-    ];
-    if let Some(active) = active_watts {
-        rows.push(row(Axis::Power, "cpu_power_watts", Some(active), "W"));
-        rows.push(row(
-            Axis::Energy,
-            "energy_microjoules_per_announce",
-            energy_per_announce,
-            "µJ/announce",
-        ));
-    }
-    write_rows(&stamp.host, &args.scenario, subject.slug, &rows);
-
-    println!(
-        "\nSUMMARY scenario={} impl={} host={}\n\
-         SUMMARY conformance {}={} | throughput {:.0} announce/s | power {} | energy {}\n\
-         SUMMARY rows filed under results/{}/{}/{}.jsonl",
-        args.scenario,
-        subject.label,
-        stamp.host,
-        subject.sustained_metric,
-        resolved.unwrap_or(f64::NAN),
-        announces_per_sec.unwrap_or(f64::NAN),
-        active_watts
-            .map(|w| format!("{w:.2} W"))
-            .unwrap_or_else(|| "pending".into()),
-        energy_per_announce
-            .map(|e| format!("{e:.0} µJ/announce"))
-            .unwrap_or_else(|| "pending".into()),
-        stamp.host,
-        args.scenario,
-        subject.slug,
-    );
-}
-
-/// Spawn a sustained node and harvest `(resolved, announces_per_sec)` from its line protocol
-/// (`CONFORMANCE resolved=…` then `THROUGHPUT announces_per_sec=…`). No launch wrapper — the
-/// sustained shape wants every core.
-fn run_sustained_node(mut command: Command, within: Duration) -> (Option<f64>, Option<f64>) {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn sustained node");
-    let stdout = child.stdout.take().expect("piped stdout");
-    let (tx, rx) = std_mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            println!("[sustained] {line}");
-            let _ = tx.send(line);
-        }
-    });
-    let mut resolved = None;
-    let mut rate = None;
-    let deadline = std::time::Instant::now() + within;
-    loop {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        match rx.recv_timeout(left) {
-            Ok(line) if line.starts_with("CONFORMANCE") => resolved = field(&line, "resolved"),
-            Ok(line) if line.starts_with("THROUGHPUT") => {
-                rate = field(&line, "announces_per_sec");
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => break,
-        }
-    }
-    let _ = child.wait();
-    (resolved, rate)
-}
-
-/// The interop shape: spawn one process per role over localhost TCP/UDP and collect delivery,
+/// Spawn one process per role over localhost TCP/UDP and collect delivery,
 /// latency, memory, and energy from the protocol's own proofs. Files under the `<initiator>--
 /// <responder>` pairing key; `--unpinned` prints without filing.
 fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::path::Path) {

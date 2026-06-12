@@ -20,17 +20,15 @@ ORCH="$HERE/target/release/orchestrate"
 # /var/root). So the energy run only measures; the build happens in your own shell.
 if [ "$(id -u)" -ne 0 ]; then
   cargo build --release --quiet --manifest-path "$HERE/Cargo.toml" \
-    --bin orchestrate --bin scenario_node --bin sustained
+    --bin orchestrate --bin scenario_node
 fi
 if [ ! -x "$ORCH" ]; then
   echo "orchestrate is not built — run \`cargo build --release\` as your user (not root) first." >&2
   exit 1
 fi
 
-# The roster. Phase 2 extends these lists as each external port's node lands.
-SUSTAINED_SCENARIOS=(announce-energy)
+# The roster. Phase 2 extends these lists as each external port's interop node lands.
 INTEROP_SCENARIOS=(single-firehose link-firehose-small-payload)
-SUSTAINED_IMPLS=(self reference)
 INTEROP_IMPLS=(self reference)
 
 # DURATION_MS overrides every scenario's wall-time for a quick smoke pass. Funnelled through
@@ -43,13 +41,6 @@ run_orch() {
     "$ORCH" "$@"
   fi
 }
-
-for scenario in "${SUSTAINED_SCENARIOS[@]}"; do
-  for impl in "${SUSTAINED_IMPLS[@]}"; do
-    echo "== sustained $scenario : $impl =="
-    run_orch "$scenario" --impl "$impl" || echo "  (failed: $scenario $impl)"
-  done
-done
 
 for scenario in "${INTEROP_SCENARIOS[@]}"; do
   for initiator in "${INTEROP_IMPLS[@]}"; do
