@@ -52,6 +52,9 @@ where
         DueLane::LinkDeadlines => {
             engine.fire_due_link_deadlines(now, interfaces, fill_entropy, on_reaction)
         }
+        DueLane::ResourceDeadlines => {
+            engine.fire_due_resource_deadlines(now, fill_entropy, on_reaction)
+        }
     }
 }
 

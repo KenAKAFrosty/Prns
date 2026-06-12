@@ -287,21 +287,26 @@ impl<S: EngineStorage> EngineState<S> {
                     requested,
                     exhausted_at,
                     source,
+                    now,
                     fill_entropy,
                     sink,
                 );
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
-                self.emit_resource_pull(&link_id, &hash, fill_entropy, sink);
+                self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
                 self.conclude_resource(&link_id, &hash, sink);
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResourceConcludedFailed { link_id, hash } => {
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id,
                     hash,
                 }));
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResourceRejectedByPeer { id } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
@@ -310,12 +315,14 @@ impl<S: EngineStorage> EngineState<S> {
                         crate::engine::SendResourceFailure::RejectedByPeer,
                     )),
                 }));
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResourceDelivered { id } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,
                     settlement: Settlement::SendResource(Ok(())),
                 }));
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::PeerIdentified { link_id, identity } => {
                 sink(EngineReaction::Journaled(Journaled::PeerIdentified {

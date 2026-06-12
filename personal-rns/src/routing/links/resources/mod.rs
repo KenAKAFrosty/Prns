@@ -56,6 +56,36 @@ pub const WINDOW_MAX_SLOW: usize = 10;
 /// of its floor before the floor follows it up.
 pub const WINDOW_FLEXIBILITY: usize = 4;
 
+/// RNS 1.3.1 `Resource.MAX_RETRIES`: how many part-request retries a
+/// receiver spends before giving up on a transfer.
+pub const MAX_RETRIES: u8 = 16;
+
+/// RNS 1.3.1 `Resource.MAX_ADV_RETRIES`: how many times a sender re-sends an
+/// unanswered advertisement.
+pub const MAX_ADV_RETRIES: u8 = 4;
+
+/// RNS 1.3.1 `Resource.PART_TIMEOUT_FACTOR`: the rtt multiple a receiver
+/// waits on outstanding parts before retrying.
+pub const PART_TIMEOUT_FACTOR: u64 = 4;
+
+/// RNS 1.3.1 `Resource.PROOF_TIMEOUT_FACTOR`: the smaller rtt multiple a
+/// sender waits on the proof — proof packets are far smaller than a full
+/// request round trip.
+pub const PROOF_TIMEOUT_FACTOR: u64 = 3;
+
+/// RNS 1.3.1 `Resource.PROCESSING_GRACE` (1 s), in the engine's millis.
+pub const PROCESSING_GRACE_MS: u64 = 1_000;
+
+/// RNS 1.3.1 `Resource.RETRY_GRACE_TIME` (0.25 s), in the engine's millis.
+pub const RETRY_GRACE_MS: u64 = 250;
+
+/// RNS 1.3.1 `Resource.PER_RETRY_DELAY` (0.5 s), in the engine's millis:
+/// every retry already spent stretches the next deadline by this much.
+pub const PER_RETRY_DELAY_MS: u64 = 500;
+
+/// RNS 1.3.1 `Resource.SENDER_GRACE_TIME` (10 s), in the engine's millis.
+pub const SENDER_GRACE_MS: u64 = 10_000;
+
 /// RNS 1.3.1 `ResourceAdvertisement.OVERHEAD`: the byte budget the reference reserves for everything in a packed advertisement except the map hashes.
 pub const ADVERTISEMENT_OVERHEAD: usize = 134;
 

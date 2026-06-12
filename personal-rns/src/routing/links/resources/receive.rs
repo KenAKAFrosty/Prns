@@ -26,8 +26,8 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy, MAP_HASH_LEN,
-    WINDOW_FLEXIBILITY, WINDOW_MAX,
+    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy, MAP_HASH_LEN, MAX_RETRIES,
+    PART_TIMEOUT_FACTOR, PER_RETRY_DELAY_MS, RETRY_GRACE_MS, WINDOW_FLEXIBILITY, WINDOW_MAX,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -136,9 +136,10 @@ impl<S: EngineStorage> EngineState<S> {
             request_id: advertisement.request_id,
             initial_names: advertisement.hashmap,
         };
-        if self.incoming_resources.accept(link_id, accepted).is_err() {
+        let Ok(index) = self.incoming_resources.accept(link_id, accepted) else {
             return IngestPacketOutcome::Ignored;
-        }
+        };
+        self.incoming_resources.state_mut(index).retries_left = MAX_RETRIES;
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::OwesResourcePull {
             link_id,
@@ -155,6 +156,7 @@ impl<S: EngineStorage> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
+        now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -208,6 +210,7 @@ impl<S: EngineStorage> EngineState<S> {
             key,
             mtu,
             attached_interface,
+            rtt_ms,
             ..
         }) = self.links.phase_for(link_id)
         else {
@@ -215,6 +218,11 @@ impl<S: EngineStorage> EngineState<S> {
         };
         let mtu = *mtu;
         let fire_on = *attached_interface;
+        let rtt_ms = *rtt_ms;
+        self.incoming_resources.set_timeout_at(
+            index,
+            Some(part_retry_deadline(now, rtt_ms, state.retries_left)),
+        );
         let mut iv = [0u8; 16];
         fill_entropy(&mut iv);
         let mut fill = |slot: &mut [u8]| -> Option<usize> {
@@ -292,6 +300,14 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         self.links.note_inbound(&link_id, arrived_at);
+        if let Some(LinkPhase::Active { rtt_ms, .. }) = self.links.phase_for(&link_id) {
+            let rtt_ms = *rtt_ms;
+            let retries_left = self.incoming_resources.state(index).retries_left;
+            self.incoming_resources.set_timeout_at(
+                index,
+                Some(part_retry_deadline(arrived_at, rtt_ms, retries_left)),
+            );
+        }
         let hash = *self.incoming_resources.hash_at(index);
         let state = *self.incoming_resources.state(index);
         if state.received_part_count == state.part_count {
@@ -447,6 +463,7 @@ impl<S: EngineStorage> EngineState<S> {
             if opened {
                 self.incoming_resources.state_mut(index).status =
                     IncomingResourceStatus::AwaitingDecompression;
+                self.incoming_resources.set_timeout_at(index, None);
             } else {
                 self.incoming_resources.remove(link_id, hash);
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
@@ -544,6 +561,85 @@ impl<S: EngineStorage> EngineState<S> {
             }
         }
     }
+}
+
+impl<S: EngineStorage> EngineState<S> {
+    /// The receiver's half of the resource deadline lane — RNS 1.3.1's
+    /// watchdog TRANSFERRING branch: a timed-out window shrinks (the window
+    /// eases down, its ceiling follows), the hashmap-exhausted wait clears,
+    /// and the pull goes out again until the retry budget runs dry. The
+    /// deadline is the pre-eifr rtt form; the measured-rate form lands with
+    /// the window dynamics. A receiver that gives up goes silent, like the
+    /// reference — the sender discovers through its own watchdog.
+    pub(crate) fn fire_due_incoming_resources<F>(
+        &mut self,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        while let Some(index) = self.incoming_resources.due_index(now) {
+            let link_id = *self.incoming_resources.link_at(index);
+            let hash = *self.incoming_resources.hash_at(index);
+            let state = *self.incoming_resources.state(index);
+            if state.retries_left == 0 || self.links.phase_for(&link_id).is_none() {
+                self.incoming_resources.remove(&link_id, &hash);
+                sink(EngineReaction::Journaled(Journaled::ResourceFailed {
+                    link_id,
+                    hash,
+                }));
+                continue;
+            }
+            {
+                let state = self.incoming_resources.state_mut(index);
+                if state.window > state.window_min {
+                    state.window -= 1;
+                    if state.window_max > state.window_min {
+                        state.window_max -= 1;
+                        if (state.window_max - state.window) > (WINDOW_FLEXIBILITY - 1) {
+                            state.window_max -= 1;
+                        }
+                    }
+                }
+                state.waiting_for_hmu = false;
+                state.outstanding_part_count = 0;
+                state.retries_left -= 1;
+            }
+            self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+        }
+    }
+
+    /// Drain both registers' due deadlines — the [`DueLane::ResourceDeadlines`]
+    /// arm.
+    pub fn fire_due_resource_deadlines<F>(
+        &mut self,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.fire_due_outgoing_resources(now, fill_entropy, sink);
+        self.fire_due_incoming_resources(now, fill_entropy, sink);
+        let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
+        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+        wake_schedule_changes
+    }
+}
+
+/// RNS 1.3.1's receiver part wait in its pre-eifr rtt form: a part-timeout
+/// factor of round trips, the retry grace, and half a second more for every
+/// retry already spent.
+fn part_retry_deadline(now: InstantMillis, rtt_ms: u64, retries_left: u8) -> InstantMillis {
+    let retries_used = (MAX_RETRIES.saturating_sub(retries_left)) as u64;
+    InstantMillis(
+        now.0
+            .saturating_add(rtt_ms.saturating_mul(PART_TIMEOUT_FACTOR))
+            .saturating_add(RETRY_GRACE_MS)
+            .saturating_add(retries_used.saturating_mul(PER_RETRY_DELAY_MS)),
+    )
 }
 
 struct ProofEmission {
@@ -669,6 +765,7 @@ mod tests_support {
             data,
             candidate,
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -965,6 +1062,7 @@ mod loop_tests {
             &data,
             None,
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -1028,6 +1126,7 @@ mod loop_tests {
             &data,
             None,
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -1223,6 +1322,7 @@ mod loop_tests {
             &data,
             None,
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -1322,6 +1422,7 @@ mod seam_tests {
             &plaintext,
             Some(&candidate),
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -1421,6 +1522,7 @@ mod seam_tests {
             &plaintext,
             Some(&candidate),
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -1497,6 +1599,7 @@ mod cancel_tests {
             &data,
             None,
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
@@ -1568,5 +1671,84 @@ mod cancel_tests {
             2_600,
         );
         assert!(unknown.settlements.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::engine::test_support::filled_frame;
+    use crate::engine::{Journaled, LaneWake};
+
+    struct WatchCapture {
+        frames: usize,
+        failed: usize,
+    }
+
+    fn fire(engine: &mut EngineState<crate::engine::test_support::Cap>, at: u64) -> WatchCapture {
+        let mut capture = WatchCapture {
+            frames: 0,
+            failed: 0,
+        };
+        engine.fire_due_resource_deadlines(
+            InstantMillis(at),
+            &mut |bytes: &mut [u8]| bytes.fill(0xF2),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if filled_frame(fill).is_some() {
+                        capture.frames += 1;
+                    }
+                }
+                EngineReaction::Journaled(Journaled::ResourceFailed { .. }) => {
+                    capture.failed += 1;
+                }
+                _ => {}
+            },
+        );
+        capture
+    }
+
+    #[test]
+    fn a_starved_pull_shrinks_its_window_and_asks_again() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let pull = feed(&mut receiver, &advertisement_frame(&four_part_payload(), None), 2_000);
+        assert_eq!(pull.frames.len(), 1);
+        assert_eq!(
+            receiver.resource_deadlines_wake(),
+            LaneWake::At(InstantMillis(2_000 + 250 * 4 + 250)),
+            "the pull arms the part-timeout rtt form",
+        );
+
+        let retried = fire(&mut receiver, 3_250);
+        assert_eq!(retried.frames, 1, "the pull goes out again");
+        let hash = *receiver.incoming_resources.hash_at(0);
+        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.window, 3, "the window eases down");
+        assert_eq!(state.window_max, 8, "and its ceiling follows twice");
+        assert_eq!(state.retries_left, 15);
+        assert!(
+            receiver.resource_deadlines_wake()
+                == LaneWake::At(InstantMillis(3_250 + 250 * 4 + 250 + 500)),
+            "the next deadline stretches by one per-retry delay",
+        );
+    }
+
+    #[test]
+    fn a_receiver_out_of_retries_goes_silent_and_fails() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        feed(&mut receiver, &advertisement_frame(&four_part_payload(), None), 2_000);
+        let hash = *receiver.incoming_resources.hash_at(0);
+        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        receiver.incoming_resources.state_mut(index).retries_left = 0;
+
+        let gave_up = fire(&mut receiver, 3_250);
+        assert_eq!(gave_up.frames, 0, "giving up sends nothing, like the reference");
+        assert_eq!(gave_up.failed, 1);
+        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(receiver.resource_deadlines_wake(), LaneWake::Idle);
     }
 }

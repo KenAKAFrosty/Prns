@@ -487,6 +487,10 @@ pub enum SendResourceFailure {
     /// The receiver's hashmap-exhausted request named a position that closes
     /// no segment (the reference's "sequencing error"), which cancels the transfer.
     Sequencing,
+    /// The transfer ran out its watchdog: an unanswered advertisement past
+    /// its retries, a stalled transfer past the fat wait, or a proof that
+    /// never came.
+    Timeout,
 }
 
 pub trait Settleable {

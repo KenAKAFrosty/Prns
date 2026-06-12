@@ -264,6 +264,14 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
         self.columns.part_names(index)[..count].as_flattened()
     }
 
+    pub fn link_at(&self, index: usize) -> &LinkId {
+        &self.columns.link_ids()[index]
+    }
+
+    pub fn hash_at(&self, index: usize) -> &ResourceHash {
+        &self.columns.hashes()[index]
+    }
+
     /// Note one part as sent, returning whether it was newly sent. This is the
     /// distinction RNS 1.3.1 draws between `part.send()` (counted toward
     /// `sent_parts`) and `part.resend()` (not).
@@ -288,6 +296,21 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
             }
             None => false,
         }
+    }
+
+    pub fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
+        self.columns.set_timeout_at(index, timeout_at);
+    }
+
+    pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
+        self.columns.timeout_ats().iter().flatten().min().copied()
+    }
+
+    pub fn due_index(&self, now: InstantMillis) -> Option<usize> {
+        self.columns
+            .timeout_ats()
+            .iter()
+            .position(|deadline| deadline.is_some_and(|at| at <= now))
     }
 
     pub fn transfer_capacity(&self) -> usize {
@@ -514,6 +537,21 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
             }
             None => false,
         }
+    }
+
+    pub fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
+        self.columns.set_timeout_at(index, timeout_at);
+    }
+
+    pub fn earliest_timeout_at(&self) -> Option<InstantMillis> {
+        self.columns.timeout_ats().iter().flatten().min().copied()
+    }
+
+    pub fn due_index(&self, now: InstantMillis) -> Option<usize> {
+        self.columns
+            .timeout_ats()
+            .iter()
+            .position(|deadline| deadline.is_some_and(|at| at <= now))
     }
 
     pub fn transfer_capacity(&self) -> usize {

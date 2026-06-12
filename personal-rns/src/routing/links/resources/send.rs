@@ -21,9 +21,11 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
+use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
 use crate::routing::links::resources::{
-    resource_sdu, ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN,
-    RESOURCE_NONCE_LEN,
+    resource_sdu, ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADV_RETRIES, MAX_RETRIES,
+    PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
+    RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -48,11 +50,14 @@ impl<S: EngineStorage> EngineState<S> {
         data: &[u8],
         compressed_candidate: Option<&[u8]>,
         request_id: Option<RequestId>,
+        now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
-    ) where
+    ) -> crate::engine::WakeSchedules
+    where
         F: FnMut(&mut [u8]),
     {
+        let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
@@ -64,12 +69,13 @@ impl<S: EngineStorage> EngineState<S> {
                 sink,
                 SendResourceFailure::Rejected(SendResourceError::NoSuchLink),
             );
-            return;
+            return wake_schedule_changes;
         };
         let LinkPhase::Active {
             key,
             mtu,
             attached_interface,
+            rtt_ms,
             ..
         } = phase
         else {
@@ -77,10 +83,11 @@ impl<S: EngineStorage> EngineState<S> {
                 sink,
                 SendResourceFailure::Rejected(SendResourceError::LinkNotActive),
             );
-            return;
+            return wake_schedule_changes;
         };
         let mtu = *mtu;
         let fire_on = *attached_interface;
+        let rtt_ms = *rtt_ms;
 
         let mut seal_iv = [0u8; 16];
         fill_entropy(&mut seal_iv);
@@ -112,62 +119,26 @@ impl<S: EngineStorage> EngineState<S> {
                     TrackOutgoingResourceError::Build(build) => SendResourceError::Build(build),
                 };
                 settle(sink, SendResourceFailure::Rejected(rejection));
-                return;
+                return wake_schedule_changes;
             }
         };
 
         let mut adv_iv = [0u8; 16];
         fill_entropy(&mut adv_iv);
-        let mut wrote = false;
-        let outgoing = &self.outgoing_resources;
-        let mut fill = |slot: &mut [u8]| -> Option<usize> {
-            let index = outgoing.lookup(&link_id, &hash)?;
-            let state = outgoing.state(index);
-            let names = outgoing.names_flat(index);
-            let first_segment = &names[..names.len().min(HASHMAP_MAX_LEN * MAP_HASH_LEN)];
-            let advertisement = ResourceAdvertisement {
-                transfer_size: state.sealed_transfer_len as u64,
-                data_size: state.uncompressed_data_len,
-                part_count: state.part_count as u64,
-                hash,
-                salt_nonce: state.salt_nonce,
-                original_hash: hash,
-                segment_index: 1,
-                total_segments: 1,
-                request_id: state.request_id,
-                flags: ResourceFlags {
-                    encrypted: true,
-                    compressed: state.compression.wire_flag(),
-                    split: false,
-                    is_request: false,
-                    is_response: state.request_id.is_some(),
-                    has_metadata: false,
-                },
-                hashmap: first_segment,
-            };
-            let mut plaintext = [0u8; LINK_MDU];
-            let plaintext_len = advertisement.write(&mut plaintext).ok()?;
-            let wire_len = write_link_packet(
-                &link_id,
-                key,
-                mtu,
-                WireContext::ResourceAdvertisement,
-                &plaintext[..plaintext_len],
-                &adv_iv,
-                slot,
-            )
-            .ok()?;
-            wrote = true;
-            Some(wire_len)
-        };
-        sink(EngineReaction::Directive(Directive::EmitFrame {
-            target: fire_on,
-            fill: &mut fill,
-        }));
-        if !wrote {
+        let wrote =
+            emit_resource_advertisement(&self.outgoing_resources, &link_id, &hash, key, mtu, fire_on, &adv_iv, sink);
+        if wrote {
+            if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
+                self.outgoing_resources.state_mut(index).retries_left = MAX_ADV_RETRIES;
+                self.outgoing_resources
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+            }
+        } else {
             self.outgoing_resources.remove(&link_id, &hash);
             settle(sink, SendResourceFailure::WriteFailed);
         }
+        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+        wake_schedule_changes
     }
 
     /// RNS 1.3.1 `Transport.packet_filter` exempts `RESOURCE_REQ` from
@@ -283,6 +254,7 @@ impl<S: EngineStorage> EngineState<S> {
     /// cancels the transfer the way the reference does — except we settle
     /// the command with the failure's name.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn serve_resource_request<F>(
         &mut self,
         link_id: &LinkId,
@@ -290,6 +262,7 @@ impl<S: EngineStorage> EngineState<S> {
         requested: &[u8],
         exhausted_at: Option<[u8; MAP_HASH_LEN]>,
         fire_on: InterfaceId,
+        now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
@@ -298,16 +271,23 @@ impl<S: EngineStorage> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
             return;
         };
-        let Some(LinkPhase::Active { key, mtu, .. }) = self.links.phase_for(link_id) else {
+        let Some(LinkPhase::Active {
+            key, mtu, rtt_ms, ..
+        }) = self.links.phase_for(link_id)
+        else {
             return;
         };
         let mtu = *mtu;
+        let rtt_ms = *rtt_ms;
         {
             let state = self.outgoing_resources.state_mut(index);
             if state.status == OutgoingResourceStatus::Advertised {
                 state.status = OutgoingResourceStatus::Transferring;
+                state.retries_left = MAX_RETRIES;
             }
         }
+        self.outgoing_resources
+            .set_timeout_at(index, Some(transferring_deadline(now, rtt_ms)));
 
         let scope_start = self.outgoing_resources.state(index).scope_start;
         let mut picked = [0usize; MAX_REQUESTED_PARTS];
@@ -389,35 +369,13 @@ impl<S: EngineStorage> EngineState<S> {
                     }));
                 }
                 Err(_) => {
-                    let id = self.outgoing_resources.state(index).command_id;
-                    self.outgoing_resources.remove(link_id, hash);
-                    let mut cancel_iv = [0u8; 16];
-                    fill_entropy(&mut cancel_iv);
-                    let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
-                    if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
-                        let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                            write_link_packet(
-                                link_id,
-                                key,
-                                mtu,
-                                WireContext::ResourceInitiatorCancel,
-                                &cancel_plaintext,
-                                &cancel_iv,
-                                slot,
-                            )
-                            .ok()
-                        };
-                        sink(EngineReaction::Directive(Directive::EmitFrame {
-                            target: fire_on,
-                            fill: &mut fill,
-                        }));
-                    }
-                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                        id,
-                        settlement: Settlement::SendResource(Err(
-                            SendResourceFailure::Sequencing,
-                        )),
-                    }));
+                    self.cancel_outgoing_resource(
+                        link_id,
+                        hash,
+                        SendResourceFailure::Sequencing,
+                        fill_entropy,
+                        sink,
+                    );
                     return;
                 }
             }
@@ -427,8 +385,251 @@ impl<S: EngineStorage> EngineState<S> {
         if state.sent_part_count == state.part_count {
             state.status = OutgoingResourceStatus::AwaitingProof;
             state.retries_left = AWAITING_PROOF_RETRIES;
+            self.outgoing_resources
+                .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_ms)));
         }
     }
+
+    /// Cancel one outgoing transfer the way RNS 1.3.1 `Resource.cancel` does
+    /// on the sending side: a sealed `RESOURCE_ICL` tells the receiver, the
+    /// register row drops, and the command settles with the failure's name.
+    pub(crate) fn cancel_outgoing_resource<F>(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        failure: SendResourceFailure,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
+            return;
+        };
+        let id = self.outgoing_resources.state(index).command_id;
+        self.outgoing_resources.remove(link_id, hash);
+        if let Some(LinkPhase::Active { key, mtu, attached_interface, .. }) =
+            self.links.phase_for(link_id)
+        {
+            let mtu = *mtu;
+            let fire_on = *attached_interface;
+            let mut cancel_iv = [0u8; 16];
+            fill_entropy(&mut cancel_iv);
+            let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
+            if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
+                let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                    write_link_packet(
+                        link_id,
+                        key,
+                        mtu,
+                        WireContext::ResourceInitiatorCancel,
+                        &cancel_plaintext,
+                        &cancel_iv,
+                        slot,
+                    )
+                    .ok()
+                };
+                sink(EngineReaction::Directive(Directive::EmitFrame {
+                    target: fire_on,
+                    fill: &mut fill,
+                }));
+            }
+        }
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id,
+            settlement: Settlement::SendResource(Err(failure)),
+        }));
+    }
+
+    /// The sender's half of the resource deadline lane — RNS 1.3.1's
+    /// watchdog states as deadlines on the register: an unanswered
+    /// advertisement re-sends up to its retry budget, a stalled transfer
+    /// cancels at the fat wait, and a missing proof re-arms its window
+    /// (the reference re-queries the network cache here — deferred with
+    /// `CACHE_REQUEST`) before giving up.
+    pub(crate) fn fire_due_outgoing_resources<F>(
+        &mut self,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        while let Some(index) = self.outgoing_resources.due_index(now) {
+            let link_id = *self.outgoing_resources.link_at(index);
+            let hash = *self.outgoing_resources.hash_at(index);
+            let state = *self.outgoing_resources.state(index);
+            let Some(LinkPhase::Active {
+                key, mtu, attached_interface, rtt_ms, ..
+            }) = self.links.phase_for(&link_id)
+            else {
+                let id = state.command_id;
+                self.outgoing_resources.remove(&link_id, &hash);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendResource(Err(SendResourceFailure::Timeout)),
+                }));
+                continue;
+            };
+            let mtu = *mtu;
+            let fire_on = *attached_interface;
+            let rtt_ms = *rtt_ms;
+            match state.status {
+                OutgoingResourceStatus::Advertised => {
+                    if state.retries_left == 0 {
+                        self.cancel_outgoing_resource(
+                            &link_id,
+                            &hash,
+                            SendResourceFailure::Timeout,
+                            fill_entropy,
+                            sink,
+                        );
+                        continue;
+                    }
+                    let mut adv_iv = [0u8; 16];
+                    fill_entropy(&mut adv_iv);
+                    emit_resource_advertisement(
+                        &self.outgoing_resources,
+                        &link_id,
+                        &hash,
+                        key,
+                        mtu,
+                        fire_on,
+                        &adv_iv,
+                        sink,
+                    );
+                    let state = self.outgoing_resources.state_mut(index);
+                    state.retries_left -= 1;
+                    self.outgoing_resources
+                        .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
+                }
+                OutgoingResourceStatus::Transferring => {
+                    self.cancel_outgoing_resource(
+                        &link_id,
+                        &hash,
+                        SendResourceFailure::Timeout,
+                        fill_entropy,
+                        sink,
+                    );
+                }
+                OutgoingResourceStatus::AwaitingProof => {
+                    if state.retries_left == 0 {
+                        self.cancel_outgoing_resource(
+                            &link_id,
+                            &hash,
+                            SendResourceFailure::Timeout,
+                            fill_entropy,
+                            sink,
+                        );
+                        continue;
+                    }
+                    let state = self.outgoing_resources.state_mut(index);
+                    state.retries_left -= 1;
+                    self.outgoing_resources
+                        .set_timeout_at(index, Some(awaiting_proof_deadline(now, rtt_ms)));
+                }
+            }
+        }
+    }
+}
+
+fn advertised_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
+    InstantMillis(
+        now.0
+            .saturating_add(rtt_ms.saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR))
+            .saturating_add(PROCESSING_GRACE_MS),
+    )
+}
+
+/// RNS 1.3.1's sender-side transferring wait: the full retry budget's worth
+/// of round trips plus the sender grace and every per-retry delay — one fat
+/// deadline re-armed on each request, after which the receiver is gone.
+fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
+    let retry_rtts = rtt_ms
+        .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
+        .saturating_mul(MAX_RETRIES as u64);
+    let max_extra_wait =
+        PER_RETRY_DELAY_MS * ((MAX_RETRIES as u64) * (MAX_RETRIES as u64 + 1) / 2);
+    InstantMillis(
+        now.0
+            .saturating_add(retry_rtts)
+            .saturating_add(SENDER_GRACE_MS)
+            .saturating_add(max_extra_wait),
+    )
+}
+
+fn awaiting_proof_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
+    InstantMillis(
+        now.0
+            .saturating_add(rtt_ms.saturating_mul(PROOF_TIMEOUT_FACTOR))
+            .saturating_add(SENDER_GRACE_MS),
+    )
+}
+
+/// Write one advertisement for a registered transfer into the link's wire
+/// slot — shared by the first send and every watchdog re-send.
+#[allow(clippy::too_many_arguments)]
+fn emit_resource_advertisement<C>(
+    outgoing: &crate::routing::links::resources::table::OutgoingResources<C>,
+    link_id: &LinkId,
+    hash: &ResourceHash,
+    key: &crate::routing::links::LinkKey,
+    mtu: usize,
+    fire_on: InterfaceId,
+    adv_iv: &[u8; 16],
+    sink: &mut impl FnMut(EngineReaction<'_>),
+) -> bool
+where
+    C: crate::routing::links::resources::table::ResourceColumns<
+        crate::routing::links::resources::table::OutgoingResourceState,
+    >,
+{
+    let mut wrote = false;
+    let mut fill = |slot: &mut [u8]| -> Option<usize> {
+        let index = outgoing.lookup(link_id, hash)?;
+        let state = outgoing.state(index);
+        let names = outgoing.names_flat(index);
+        let first_segment = &names[..names.len().min(HASHMAP_MAX_LEN * MAP_HASH_LEN)];
+        let advertisement = ResourceAdvertisement {
+            transfer_size: state.sealed_transfer_len as u64,
+            data_size: state.uncompressed_data_len,
+            part_count: state.part_count as u64,
+            hash: *hash,
+            salt_nonce: state.salt_nonce,
+            original_hash: *hash,
+            segment_index: 1,
+            total_segments: 1,
+            request_id: state.request_id,
+            flags: ResourceFlags {
+                encrypted: true,
+                compressed: state.compression.wire_flag(),
+                split: false,
+                is_request: false,
+                is_response: state.request_id.is_some(),
+                has_metadata: false,
+            },
+            hashmap: first_segment,
+        };
+        let mut plaintext = [0u8; LINK_MDU];
+        let plaintext_len = advertisement.write(&mut plaintext).ok()?;
+        let wire_len = write_link_packet(
+            link_id,
+            key,
+            mtu,
+            WireContext::ResourceAdvertisement,
+            &plaintext[..plaintext_len],
+            adv_iv,
+            slot,
+        )
+        .ok()?;
+        wrote = true;
+        Some(wire_len)
+    };
+    sink(EngineReaction::Directive(Directive::EmitFrame {
+        target: fire_on,
+        fill: &mut fill,
+    }));
+    wrote
 }
 
 /// The most names one part request can carry:
@@ -467,11 +668,11 @@ mod tests {
     const RESPONDER_PUBLIC: &str =
         "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b";
 
-    fn link_id() -> LinkId {
+    pub(crate) fn link_id() -> LinkId {
         LinkId::new(hx(LINK_ID).try_into().unwrap())
     }
 
-    fn link_key() -> LinkKey {
+    pub(crate) fn link_key() -> LinkKey {
         let scalar: [u8; 32] = hx(INITIATOR_SCALAR).try_into().unwrap();
         let public: [u8; 32] = hx(RESPONDER_PUBLIC).try_into().unwrap();
         let shared = x25519_diffie_hellman(&X25519SecretKey::new(scalar), &X25519PublicKey(public));
@@ -508,18 +709,44 @@ mod tests {
             .unwrap();
     }
 
-    fn sender_with_active_link() -> EngineState<Cap> {
+    pub(crate) fn sender_with_active_link() -> EngineState<Cap> {
         let mut engine = EngineState::<Cap>::default();
         install_active_link(&mut engine);
         engine
     }
 
-    struct SendCapture {
-        frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
-        settlements: std::vec::Vec<(CommandId, Settlement)>,
+    pub(crate) struct SendCapture {
+        pub(crate) frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
+        pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    fn send<S: EngineStorage>(
+    pub(crate) fn watch_capture(
+        engine: &mut EngineState<Cap>,
+        at: u64,
+    ) -> SendCapture {
+        let mut capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.fire_due_resource_deadlines(
+            InstantMillis(at),
+            &mut |bytes: &mut [u8]| bytes.fill(0xF1),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        capture
+    }
+
+    pub(crate) fn send<S: EngineStorage>(
         engine: &mut EngineState<S>,
         id: u64,
         data: &[u8],
@@ -535,6 +762,7 @@ mod tests {
             data,
             candidate,
             None,
+            InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
@@ -669,12 +897,12 @@ mod tests {
         assert!(engine.outgoing_resources.is_empty());
     }
 
-    struct InboundCapture {
-        frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
-        settlements: std::vec::Vec<(CommandId, Settlement)>,
+    pub(crate) struct InboundCapture {
+        pub(crate) frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
+        pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    fn feed<S: EngineStorage>(engine: &mut EngineState<S>, frame: &[u8], at: u64) -> InboundCapture {
+    pub(crate) fn feed<S: EngineStorage>(engine: &mut EngineState<S>, frame: &[u8], at: u64) -> InboundCapture {
         use crate::engine::test_support::{routable_descriptor, TEST_ENTROPY};
         use crate::interfaces::InboundPacket;
         let mut capture = InboundCapture {
@@ -708,7 +936,7 @@ mod tests {
         capture
     }
 
-    fn request_frame(
+    pub(crate) fn request_frame(
         hash: &ResourceHash,
         last_known: Option<&[u8; MAP_HASH_LEN]>,
         requested: &[u8],
@@ -990,6 +1218,102 @@ mod tests {
                         CryptoError::BufferTooShort,
                     )),
                 ))),
+            ),
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::tests::{
+        link_id, sender_with_active_link, watch_capture, SendCapture,
+    };
+    use super::*;
+    use crate::engine::commands::Settlement;
+    use crate::engine::{InstantMillis, LaneWake};
+    use crate::wire::WirePacketHeader;
+
+    fn advertised_sender() -> (crate::engine::EngineState<crate::engine::test_support::Cap>, SendCapture) {
+        let mut engine = sender_with_active_link();
+        let data = b"watchdogs keep the resource honest! ".repeat(40);
+        let capture = super::tests::send(&mut engine, 7, &data, None);
+        (engine, capture)
+    }
+
+    #[test]
+    fn an_unanswered_advertisement_retries_then_cancels_with_its_name() {
+        let (mut engine, _) = advertised_sender();
+        assert_eq!(
+            engine.resource_deadlines_wake(),
+            LaneWake::At(InstantMillis(1_500 + 250 * 6 + 1_000)),
+            "the advertisement arms rtt x traffic factor plus the processing grace",
+        );
+
+        let mut now = 4_000u64;
+        for retry in 0..4u64 {
+            let capture = watch_capture(&mut engine, now);
+            assert_eq!(capture.frames.len(), 1, "retry {retry} re-advertises");
+            let (header, _) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+            assert_eq!(header.context, WireContext::ResourceAdvertisement);
+            assert!(capture.settlements.is_empty());
+            now += 3_000;
+        }
+
+        let capture = watch_capture(&mut engine, now);
+        assert_eq!(capture.frames.len(), 1, "the cancel rides out");
+        let (header, _) = WirePacketHeader::parse(&capture.frames[0].1).unwrap();
+        assert_eq!(header.context, WireContext::ResourceInitiatorCancel);
+        assert!(matches!(
+            capture.settlements[0],
+            (
+                CommandId(7),
+                Settlement::SendResource(Err(SendResourceFailure::Timeout)),
+            ),
+        ));
+        assert!(engine.outgoing_resources.is_empty());
+        assert_eq!(engine.resource_deadlines_wake(), LaneWake::Idle);
+    }
+
+    #[test]
+    fn a_missing_proof_rearms_its_retries_then_cancels() {
+        let (mut engine, capture) = advertised_sender();
+        let (_, adv_frame) = &capture.frames[0];
+        let (_, payload) = WirePacketHeader::parse(adv_frame).unwrap();
+        let mut sealed = payload.to_vec();
+        let opened = super::tests::link_key().open_in_place(&mut sealed).unwrap();
+        let advertisement = ResourceAdvertisement::parse(opened).unwrap();
+        super::tests::feed(
+            &mut engine,
+            &super::tests::request_frame(&advertisement.hash, None, advertisement.hashmap),
+            2_000,
+        );
+        let index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &advertisement.hash)
+            .unwrap();
+        assert_eq!(
+            engine.outgoing_resources.state(index).status,
+            OutgoingResourceStatus::AwaitingProof,
+        );
+        assert_eq!(
+            engine.resource_deadlines_wake(),
+            LaneWake::At(InstantMillis(2_000 + 250 * 3 + 10_000)),
+        );
+
+        let mut now = 13_000u64;
+        for _ in 0..3 {
+            let capture = watch_capture(&mut engine, now);
+            assert!(capture.frames.is_empty(), "a proof retry sends nothing yet");
+            assert!(capture.settlements.is_empty());
+            now += 11_000;
+        }
+        let capture = watch_capture(&mut engine, now);
+        assert!(matches!(
+            capture.settlements[0],
+            (
+                CommandId(7),
+                Settlement::SendResource(Err(SendResourceFailure::Timeout)),
             ),
         ));
         assert!(engine.outgoing_resources.is_empty());

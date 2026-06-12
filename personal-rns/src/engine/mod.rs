@@ -95,6 +95,7 @@ pub enum DueLane {
     PathRequestTimeout,
     ExpiredRoutes,
     LinkDeadlines,
+    ResourceDeadlines,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +130,7 @@ pub struct WakeSchedules {
     pub path_request_timeout: LaneWake,
     pub expired_routes: LaneWake,
     pub link_deadlines: LaneWake,
+    pub resource_deadlines: LaneWake,
 }
 
 impl WakeSchedules {
@@ -138,6 +140,7 @@ impl WakeSchedules {
         path_request_timeout: LaneWake::Unchanged,
         expired_routes: LaneWake::Unchanged,
         link_deadlines: LaneWake::Unchanged,
+        resource_deadlines: LaneWake::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -147,6 +150,7 @@ impl WakeSchedules {
             (&mut self.path_request_timeout, delta.path_request_timeout),
             (&mut self.expired_routes, delta.expired_routes),
             (&mut self.link_deadlines, delta.link_deadlines),
+            (&mut self.resource_deadlines, delta.resource_deadlines),
         ] {
             match change {
                 LaneWake::Unchanged => {}
@@ -171,6 +175,7 @@ impl WakeSchedules {
             (self.path_request_timeout, DueLane::PathRequestTimeout),
             (self.expired_routes, DueLane::ExpiredRoutes),
             (self.link_deadlines, DueLane::LinkDeadlines),
+            (self.resource_deadlines, DueLane::ResourceDeadlines),
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
@@ -325,6 +330,19 @@ impl<S: EngineStorage> EngineState<S> {
         })
     }
 
+    pub fn resource_deadlines_wake(&self) -> LaneWake {
+        let outgoing = self.outgoing_resources.earliest_timeout_at();
+        let incoming = self.incoming_resources.earliest_timeout_at();
+        LaneWake::from_deadline(match (outgoing, incoming) {
+            (Some(outgoing), Some(incoming)) => Some(if outgoing.0 <= incoming.0 {
+                outgoing
+            } else {
+                incoming
+            }),
+            (deadline, None) | (None, deadline) => deadline,
+        })
+    }
+
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {
         LaneWake::from_deadline(self.routing_table.soonest_route_expiry(view))
     }
@@ -341,6 +359,7 @@ impl<S: EngineStorage> EngineState<S> {
             path_request_timeout: self.path_request_timeout_wake(),
             expired_routes: self.route_expiry_wake(view),
             link_deadlines: self.link_deadlines_wake(),
+            resource_deadlines: self.resource_deadlines_wake(),
         }
     }
 
@@ -471,6 +490,7 @@ mod tests {
             path_request_timeout: path,
             expired_routes: expired,
             link_deadlines: LaneWake::Unchanged,
+            resource_deadlines: LaneWake::Unchanged,
         }
     }
 
