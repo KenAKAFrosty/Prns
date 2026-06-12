@@ -6,8 +6,12 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, ProofRequest,
+    CommandId, Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
+    ProofRequest, WakeSchedules,
 };
+use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::ResourceHash;
+use crate::routing::links::LinkId;
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
@@ -369,6 +373,31 @@ impl InterfaceStatus for TokioInterfaceStatus {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// What a std host feeds the reactor: the queueable engine commands, plus
+/// the owned-bytes verbs that deliberately never ride `EngineCommand` — a
+/// resource payload can reach a mebibyte, so the std host owns the heap
+/// allocation and the engine borrows it for exactly one call. (An embedded
+/// host calls the borrow-taking entry points directly instead.)
+pub enum HostCommand {
+    Engine(IssuedCommand),
+    SendResource(SendResourceHostCommand),
+    ProvideDecompressed(ProvideDecompressedHostCommand),
+}
+
+pub struct SendResourceHostCommand {
+    pub id: CommandId,
+    pub link_id: LinkId,
+    pub data: std::vec::Vec<u8>,
+    pub compressed_candidate: Option<std::vec::Vec<u8>>,
+    pub request_id: Option<RequestId>,
+}
+
+pub struct ProvideDecompressedHostCommand {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub plaintext: std::vec::Vec<u8>,
+}
+
 pub async fn run<S, H, J>(
     engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,
@@ -376,7 +405,7 @@ pub async fn run<S, H, J>(
     host: H,
     notify: UnboundedReceiver<InterfaceId>,
     inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
-    commands: UnboundedReceiver<IssuedCommand>,
+    commands: UnboundedReceiver<HostCommand>,
     egress: Egress,
     on_journaled: J,
 ) where
@@ -407,7 +436,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     mut host: H,
     mut notify: UnboundedReceiver<InterfaceId>,
     mut inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
-    mut commands: UnboundedReceiver<IssuedCommand>,
+    mut commands: UnboundedReceiver<HostCommand>,
     egress: Egress,
     mut on_journaled: J,
     mut should_prove: P,
@@ -472,13 +501,34 @@ pub async fn run_with_proof_decider<S, H, J, P>(
             issued = commands.recv() => {
                 let Some(issued) = issued else { return };
                 let now = host.now();
-                let wake_schedules_delta = engine.ingest_command_into(
-                    issued,
-                    &interfaces,
-                    now,
-                    &mut |entropy| host.fill_entropy(entropy),
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
-                );
+                let wake_schedules_delta = match issued {
+                    HostCommand::Engine(issued) => engine.ingest_command_into(
+                        issued,
+                        &interfaces,
+                        now,
+                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                    ),
+                    HostCommand::SendResource(send) => engine.ingest_send_resource_into(
+                        send.id,
+                        send.link_id,
+                        &send.data,
+                        send.compressed_candidate.as_deref(),
+                        send.request_id,
+                        now,
+                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                    ),
+                    HostCommand::ProvideDecompressed(provide) => {
+                        engine.provide_decompressed(
+                            provide.link_id,
+                            provide.hash,
+                            &provide.plaintext,
+                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                        );
+                        WakeSchedules::UNCHANGED
+                    }
+                };
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
             lane = wait_for_due_lane(&host, wake) => {
@@ -866,7 +916,7 @@ mod tests {
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
 
-        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<()>();
         let app = move |journaled: Journaled<'_>| match journaled {
             Journaled::AnnounceHeard { .. } => {
@@ -986,7 +1036,7 @@ mod tests {
         drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
-        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
 
         tokio::spawn(run(
             engine,
@@ -1075,7 +1125,7 @@ mod tests {
         drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
-        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
 
         tokio::spawn(run(
             engine,
@@ -1196,7 +1246,7 @@ mod tests {
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
         let (mut source_in_tx, source_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (source_out_tx, mut source_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(source, source_out_tx)]);
 
@@ -1307,7 +1357,7 @@ mod tests {
         drop(notify_tx);
 
         let egress = Egress::new(std::vec![(source, source_out_tx), (peer, peer_out_tx)]);
-        let (_command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let app = move |journaled: Journaled<'_>| {
             if let Journaled::AnnounceHeard { destination, .. } = journaled {
@@ -1407,7 +1457,7 @@ mod tests {
         let seam = TokioInterfaceSeam::new(source, source_in_tx, notify_tx.clone(), out_rx);
         drop(notify_tx);
         let egress = Egress::new(std::vec![(source, out_tx)]);
-        let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
 
         let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
         let (expired_tx, mut expired_rx) = mpsc::unbounded_channel::<DestinationHash>();
@@ -1468,13 +1518,13 @@ mod tests {
         );
 
         command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(3),
                 command: EngineCommand::SendSingle(SendSingle {
                     destination,
                     payload: SendSinglePayload::from_slice(b"late").expect("fits the MDU"),
                 }),
-            })
+            }))
             .expect("the reactor task holds the receiver");
 
         let (settled_id, settlement) =
@@ -1522,7 +1572,7 @@ mod tests {
         let view = std::vec![descriptor(first), descriptor(second)];
 
         let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-        let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (first_out_tx, mut first_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (second_out_tx, mut second_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let egress = Egress::new(std::vec![(first, first_out_tx), (second, second_out_tx)]);
@@ -1560,14 +1610,14 @@ mod tests {
         ));
 
         command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(7),
                 command: EngineCommand::AnnounceNow(AnnounceNow {
                     destination,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
                 }),
-            })
+            }))
             .expect("the reactor task holds the receiver");
 
         let (settled_id, settlement) =
@@ -1616,7 +1666,7 @@ mod tests {
         };
         let a_seam = TokioInterfaceSeam::new(initiator_iface, a_in_tx, a_notify_tx, a_out_rx);
         let a_egress = Egress::new(std::vec![(initiator_iface, a_out_tx)]);
-        let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (a_heard_tx, mut a_heard_rx) = mpsc::unbounded_channel::<()>();
         let (a_settled_tx, mut a_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
         let (a_delivered_tx, mut a_delivered_rx) =
@@ -1660,7 +1710,7 @@ mod tests {
         };
         let b_seam = TokioInterfaceSeam::new(responder_iface, b_in_tx, b_notify_tx, b_out_rx);
         let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
-        let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (b_established_tx, mut b_established_rx) = mpsc::unbounded_channel::<LinkEstablished>();
         let (b_settled_tx, mut b_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
         let (b_delivered_tx, mut b_delivered_rx) =
@@ -1704,14 +1754,14 @@ mod tests {
         tokio::spawn(b_iface.run(b_seam));
 
         b_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(1),
                 command: EngineCommand::AnnounceNow(AnnounceNow {
                     destination: personal_node_destination(),
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
                 }),
-            })
+            }))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), a_heard_rx.recv())
             .await
@@ -1719,12 +1769,12 @@ mod tests {
             .expect("the initiator reactor is alive");
 
         a_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(7),
                 command: EngineCommand::EstablishLink(EstablishLink {
                     destination: personal_node_destination(),
                 }),
-            })
+            }))
             .unwrap();
 
         let (settled_id, settlement) =
@@ -1751,13 +1801,13 @@ mod tests {
         );
 
         a_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(8),
                 command: EngineCommand::SendLink(SendLink {
                     link_id: established.link_id,
                     payload: SendLinkPayload::from_slice(b"ping over the live link").unwrap(),
                 }),
-            })
+            }))
             .unwrap();
         let delivered = tokio::time::timeout(Duration::from_secs(5), b_delivered_rx.recv())
             .await
@@ -1777,13 +1827,13 @@ mod tests {
         };
 
         b_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(2),
                 command: EngineCommand::SendLink(SendLink {
                     link_id: established.link_id,
                     payload: SendLinkPayload::from_slice(b"pong right back").unwrap(),
                 }),
-            })
+            }))
             .unwrap();
         let sent = loop {
             let (sent_id, sent) = tokio::time::timeout(Duration::from_secs(5), b_settled_rx.recv())

@@ -21,7 +21,9 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::ifac::{IfacContext, InterfaceIfac, DEFAULT_IFAC_SIZE};
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::{run, Egress, TokioHost, TokioInterfaceSeam};
+use personal_rns::reactor::impls::tokio_reactor::{
+    run, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
+};
 use personal_rns::reactor::impls::tokio_reactor::tokio_grant_lane;
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::serial::impls::tokio::SerialInterface;
@@ -76,7 +78,7 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 }
 
 async fn announce_loop(
-    commands: mpsc::UnboundedSender<IssuedCommand>,
+    commands: mpsc::UnboundedSender<HostCommand>,
     destination: DestinationHash,
 ) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
@@ -92,7 +94,7 @@ async fn announce_loop(
                 app_data: AnnounceAppData::Registered,
             }),
         };
-        if commands.send(command).is_err() {
+        if commands.send(HostCommand::Engine(command)).is_err() {
             return;
         }
     }
@@ -304,7 +306,7 @@ async fn main() {
 
     // The reactor's three inputs: an inbound funnel every interface deposits into, a command
     // lane, and this interface's outbound queue routed back out by the egress.
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
     let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);

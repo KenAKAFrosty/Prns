@@ -416,7 +416,7 @@ mod tests {
         let (a_out_tx, a_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let a_seam = TokioInterfaceSeam::new(initiator_iface, a_in_tx, a_notify_tx, a_out_rx);
         let a_egress = Egress::new(std::vec![(initiator_iface, a_out_tx)]);
-        let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (a_heard_tx, mut a_heard_rx) = mpsc::unbounded_channel::<()>();
         let (a_settled_tx, mut a_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
         let (a_delivered_tx, mut a_delivered_rx) =
@@ -454,7 +454,7 @@ mod tests {
         let (b_out_tx, b_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let b_seam = TokioInterfaceSeam::new(responder_iface, b_in_tx, b_notify_tx, b_out_rx);
         let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
-        let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<IssuedCommand>();
+        let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<HostCommand>();
         let (b_established_tx, mut b_established_rx) = mpsc::unbounded_channel::<LinkEstablished>();
         let (b_settled_tx, mut b_settled_rx) = mpsc::unbounded_channel::<(CommandId, Settlement)>();
         let (b_delivered_tx, mut b_delivered_rx) =
@@ -504,14 +504,14 @@ mod tests {
         tokio::spawn(b_interface.run(b_seam));
 
         b_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(1),
                 command: EngineCommand::AnnounceNow(AnnounceNow {
                     destination: personal_node_destination(),
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
                 }),
-            })
+            }))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(5), a_heard_rx.recv())
             .await
@@ -519,12 +519,12 @@ mod tests {
             .expect("the initiator reactor is alive");
 
         a_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(7),
                 command: EngineCommand::EstablishLink(EstablishLink {
                     destination: personal_node_destination(),
                 }),
-            })
+            }))
             .unwrap();
 
         let (settled_id, settlement) =
@@ -547,13 +547,13 @@ mod tests {
         );
 
         a_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(8),
                 command: EngineCommand::SendLink(SendLink {
                     link_id: established.link_id,
                     payload: SendLinkPayload::from_slice(b"ping over real tcp").unwrap(),
                 }),
-            })
+            }))
             .unwrap();
         let delivered = tokio::time::timeout(Duration::from_secs(5), b_delivered_rx.recv())
             .await
@@ -573,13 +573,13 @@ mod tests {
         };
 
         b_command_tx
-            .send(IssuedCommand {
+            .send(HostCommand::Engine(IssuedCommand {
                 id: CommandId(2),
                 command: EngineCommand::SendLink(SendLink {
                     link_id: established.link_id,
                     payload: SendLinkPayload::from_slice(b"pong right back").unwrap(),
                 }),
-            })
+            }))
             .unwrap();
         let sent = loop {
             let (sent_id, sent) = tokio::time::timeout(Duration::from_secs(5), b_settled_rx.recv())
