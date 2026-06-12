@@ -7,7 +7,7 @@
 # and reports both leaves' RESULT lines plus each trunk node's CPU and peak RSS.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-MANIFEST="$HERE/scenarios/link-firehose-chain/manifest.json"
+MANIFEST="${MANIFEST:-$HERE/scenarios/link-firehose-chain/manifest.json}"
 TRUNK_LEN=5
 
 INIT_IMPL="${1:?usage: run_chain.sh <initiator-impl> <trunk-impl> <responder-impl>}"
