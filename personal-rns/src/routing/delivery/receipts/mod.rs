@@ -74,7 +74,14 @@ pub trait ReceiptColumns {
     fn timeout_ats(&self) -> &[InstantMillis];
 
     fn push(&mut self, receipt: OutstandingReceipt) -> Result<usize, TrackReceiptError>;
-    fn swap_remove(&mut self, index: usize);
+    /// Removal must preserve insertion order (shift, not swap): index order IS
+    /// the implicit-proof trial order, and proofs return in send order over a
+    /// FIFO wire — so the match is almost always the first trial. A swap-style
+    /// remove scrambles that order and was measured paying ~5 full Ed25519
+    /// verifies per proof at window depth where one suffices. The reference
+    /// holds the same invariant for free (`Transport.receipts` is an
+    /// append-only Python list).
+    fn remove(&mut self, index: usize);
 }
 
 #[derive(Debug, Default)]
@@ -113,7 +120,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             command_id: *self.columns.command_ids().get(index)?,
             kind: *self.columns.kinds().get(index)?,
         };
-        self.columns.swap_remove(index);
+        self.columns.remove(index);
         Some(culled)
     }
 
@@ -131,7 +138,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             command_id: *self.columns.command_ids().get(index)?,
             kind: *self.columns.kinds().get(index)?,
         };
-        self.columns.swap_remove(index);
+        self.columns.remove(index);
         Some(expired)
     }
 
@@ -151,7 +158,9 @@ impl<C: ReceiptColumns> Receipts<C> {
     }
 
     /// RNS 1.3.1 implicit proof: a bare signature, trial-verified against
-    /// every outstanding row (Packet.py validates against each receipt).
+    /// every outstanding row (Packet.py validates against each receipt), in
+    /// insertion order — which [`ReceiptColumns::remove`]'s ordering invariant
+    /// makes the send order, so a FIFO wire's proofs match on the first trial.
     pub fn settle_by_implicit_proof(
         &mut self,
         signature: &Ed25519Signature,
@@ -165,7 +174,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             kind: *self.columns.kinds().get(index)?,
             sent_at: *self.columns.sent_ats().get(index)?,
         };
-        self.columns.swap_remove(index);
+        self.columns.remove(index);
         Some(proven)
     }
 
@@ -186,7 +195,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             kind: *self.columns.kinds().get(index)?,
             sent_at: *self.columns.sent_ats().get(index)?,
         };
-        self.columns.swap_remove(index);
+        self.columns.remove(index);
         Some(proven)
     }
 
@@ -211,7 +220,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             kind: *self.columns.kinds().get(index)?,
             sent_at: *self.columns.sent_ats().get(index)?,
         };
-        self.columns.swap_remove(index);
+        self.columns.remove(index);
         Some(proven)
     }
 

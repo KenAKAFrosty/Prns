@@ -64,16 +64,16 @@ impl ReceiptColumns for HeapReceiptColumns {
         Ok(index)
     }
 
-    fn swap_remove(&mut self, index: usize) {
+    fn remove(&mut self, index: usize) {
         if index >= self.packet_hashes.len() {
             return;
         }
-        self.packet_hashes.swap_remove(index);
-        self.command_ids.swap_remove(index);
-        self.kinds.swap_remove(index);
-        self.signing_keys.swap_remove(index);
-        self.sent_ats.swap_remove(index);
-        self.timeout_ats.swap_remove(index);
+        self.packet_hashes.remove(index);
+        self.command_ids.remove(index);
+        self.kinds.remove(index);
+        self.signing_keys.remove(index);
+        self.sent_ats.remove(index);
+        self.timeout_ats.remove(index);
     }
 }
 
