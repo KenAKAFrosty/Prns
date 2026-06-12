@@ -4,6 +4,7 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::wire::DestinationHash;
@@ -57,6 +58,18 @@ pub enum Journaled<'a> {
     LinkClosed {
         link_id: LinkId,
         reason: LinkClosedReason,
+    },
+    /// RNS 1.3.1's  `resource_concluded` callback as data.
+    /// The bytes are borrowed from the register and gone after this reaction returns.
+    ResourceReceived {
+        link_id: LinkId,
+        hash: ResourceHash,
+        data: &'a [u8],
+    },
+
+    ResourceFailed {
+        link_id: LinkId,
+        hash: ResourceHash,
     },
     RouteExpired {
         destination: DestinationHash,

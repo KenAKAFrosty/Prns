@@ -769,7 +769,9 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
-            | Journaled::LinkClosed { .. } => {}
+            | Journaled::LinkClosed { .. }
+            | Journaled::ResourceReceived { .. }
+            | Journaled::ResourceFailed { .. } => {}
         };
 
         let outcome = block_on(async {

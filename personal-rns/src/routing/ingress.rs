@@ -294,6 +294,16 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
+    /// Every part of an inbound transfer has landed.
+    /// The engine owes the assembly: open, verify, prove, journal.
+    OwesResourceAssembly {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
+    ResourceConcludedFailed {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     /// A link request in transport booked a transported row — the rewritten
     /// request (re-headered, MTU signalling clamped to this path segment) is
     /// owed to the next hop.
@@ -545,6 +555,10 @@ impl<S: EngineStorage> EngineState<S> {
                         }
                         WireContext::ResourceAdvertisement => {
                             self.classify_resource_advertisement(data, arrived_at)
+                        }
+                        WireContext::Resource => self.classify_resource_part(data, arrived_at),
+                        WireContext::ResourceHashUpdate => {
+                            self.classify_resource_hashmap_update(data, arrived_at)
                         }
                         _ => IngestPacketOutcome::Ignored,
                     };

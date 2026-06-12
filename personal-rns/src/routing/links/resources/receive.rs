@@ -12,11 +12,21 @@ use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
-use crate::routing::links::resources::advertisement::ResourceAdvertisement;
-use crate::routing::links::resources::control::write_part_request_plaintext;
-use crate::routing::links::resources::table::AcceptedResource;
+use crate::engine::Journaled;
+use crate::routing::links::data::write_link_raw_packet;
+use crate::routing::links::resources::advertisement::{
+    parse_hashmap_update_plaintext, ResourceAdvertisement,
+};
+use crate::routing::links::resources::assemble_incoming::{
+    match_part_in_window, open_transfer, verify_and_prove,
+};
+use crate::routing::links::resources::control::{
+    write_part_request_plaintext, write_proof_plaintext, PROOF_PLAINTEXT_LEN,
+};
+use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy, MAP_HASH_LEN, WINDOW_MAX,
+    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy, MAP_HASH_LEN,
+    WINDOW_FLEXIBILITY, WINDOW_MAX,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -233,53 +243,244 @@ impl<S: EngineStorage> EngineState<S> {
     }
 }
 
+impl<S: EngineStorage> EngineState<S> {
+    /// RNS 1.3.1's link dispatch for context `RESOURCE`: a part names no
+    /// transfer and carries no index, so every incoming transfer on the link
+    /// tries to place it by its salted name. Exempt from duplicate filtering
+    /// like the request — a resent part is byte-identical. Placement decides
+    /// what is owed next: assembly when the transfer completed, the next
+    /// window when the outstanding count drained (growing the window the way
+    /// `receive_part` does), nothing while parts are still in flight.
+    pub(crate) fn classify_resource_part<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        if !matches!(
+            self.links.phase_for(&link_id),
+            Some(LinkPhase::Active { .. }),
+        ) {
+            return IngestPacketOutcome::Ignored;
+        }
+        let part: &[u8] = data.payload;
+        let mut placed = None;
+        for index in 0..self.incoming_resources.len() {
+            if self.incoming_resources.link_at(index) != &link_id {
+                continue;
+            }
+            let state = *self.incoming_resources.state(index);
+            if state.status != IncomingResourceStatus::Transferring {
+                continue;
+            }
+            let scan_from = state.consecutive_completed.unwrap_or(0);
+            let at = match_part_in_window(
+                part,
+                &state.salt_nonce,
+                self.incoming_resources.names_flat(index),
+                scan_from,
+                state.window,
+            );
+            if let Some(at) = at {
+                if self.incoming_resources.place_part(index, at, part) {
+                    placed = Some(index);
+                }
+            }
+        }
+        let Some(index) = placed else {
+            return IngestPacketOutcome::Ignored;
+        };
+        self.links.note_inbound(&link_id, arrived_at);
+        let hash = *self.incoming_resources.hash_at(index);
+        let state = *self.incoming_resources.state(index);
+        if state.received_part_count == state.part_count {
+            return IngestPacketOutcome::OwesResourceAssembly { link_id, hash };
+        }
+        if state.outstanding_part_count == 0 && !state.waiting_for_hmu {
+            let state = self.incoming_resources.state_mut(index);
+            if state.window < state.window_max {
+                state.window += 1;
+                if state.window - state.window_min > WINDOW_FLEXIBILITY - 1 {
+                    state.window_min += 1;
+                }
+            }
+            return IngestPacketOutcome::OwesResourcePull { link_id, hash };
+        }
+        IngestPacketOutcome::Ignored
+    }
+
+    /// RNS 1.3.1 `Resource.hashmap_update_packet`: a sealed segment of names
+    /// extends what the receiver can ask for, and the pull resumes. Stays
+    /// behind the duplicate filter. A segment that misfits the register —
+    /// past the part count, or skipping ahead of the height — cancels the
+    /// transfer where the reference would crash its link thread.
+    pub(crate) fn classify_resource_hashmap_update<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(update) = parse_hashmap_update_plaintext(plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(index) = self.incoming_resources.lookup(&link_id, &update.hash) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        self.links.note_inbound(&link_id, arrived_at);
+        match self
+            .incoming_resources
+            .apply_hashmap_update(index, update.segment, update.hashmap)
+        {
+            Ok(_) => IngestPacketOutcome::OwesResourcePull {
+                link_id,
+                hash: update.hash,
+            },
+            Err(_) => {
+                self.incoming_resources.remove(&link_id, &update.hash);
+                IngestPacketOutcome::ResourceConcludedFailed {
+                    link_id,
+                    hash: update.hash,
+                }
+            }
+        }
+    }
+
+    /// The closing move of RNS 1.3.1 `Resource.assemble` + `prove`: open the
+    /// completed transfer in place, verify the salted hash, send the 64-byte
+    /// proof back raw, journal the plaintext to the app, and retire the row.
+    /// A compressed transfer stops at AwaitingDecompression instead — the
+    /// host owns the inflate (the seam lands with the next slice). Corrupt
+    /// assemblies retire the row and journal the failure.
+    pub(crate) fn conclude_resource(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
+            return;
+        };
+        let state = *self.incoming_resources.state(index);
+        if state.compression == ResourceCompression::Bz2 {
+            self.incoming_resources.state_mut(index).status =
+                IncomingResourceStatus::AwaitingDecompression;
+            return;
+        }
+        let Some(LinkPhase::Active {
+            key,
+            mtu,
+            attached_interface,
+            ..
+        }) = self.links.phase_for(link_id)
+        else {
+            return;
+        };
+        let mtu = *mtu;
+        let fire_on = *attached_interface;
+
+        let mut delivered = false;
+        {
+            let transfer = self.incoming_resources.sealed_transfer_mut(index);
+            if let Ok(plaintext) = open_transfer(key, transfer) {
+                if let Ok(proof) = verify_and_prove(plaintext, &state.salt_nonce, hash) {
+                    let mut proof_plaintext = [0u8; PROOF_PLAINTEXT_LEN];
+                    if write_proof_plaintext(hash, &proof, &mut proof_plaintext).is_ok() {
+                        let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                            write_link_raw_packet(
+                                link_id,
+                                PacketType::Proof,
+                                WireContext::ResourceProof,
+                                mtu,
+                                &proof_plaintext,
+                                slot,
+                            )
+                            .ok()
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            fill: &mut fill,
+                        }));
+                        sink(EngineReaction::Journaled(Journaled::ResourceReceived {
+                            link_id: *link_id,
+                            hash: *hash,
+                            data: plaintext,
+                        }));
+                        delivered = true;
+                    }
+                }
+            }
+        }
+        self.incoming_resources.remove(link_id, hash);
+        if !delivered {
+            sink(EngineReaction::Journaled(Journaled::ResourceFailed {
+                link_id: *link_id,
+                hash: *hash,
+            }));
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod tests_support {
     use super::*;
     use crate::crypto::{
         x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
     };
-    use crate::engine::commands::{
-        EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement,
-    };
+    use crate::engine::commands::{EngineCommand, IssuedCommand, Settlement};
     use crate::engine::test_support::{filled_frame, routable_descriptor, Cap, TEST_ENTROPY};
     use crate::engine::Journaled;
     use crate::interfaces::{InboundPacket, InterfaceId};
-    use crate::routing::links::resources::control::parse_part_request_plaintext;
     use crate::routing::links::table::InitiatedLink;
     use crate::routing::links::LinkKey;
-    use crate::wire::{DestinationHash, WirePacketHeader, BROADCAST_MTU};
+    use crate::wire::{DestinationHash, BROADCAST_MTU};
 
-    fn hx(s: &str) -> std::vec::Vec<u8> {
+    pub(crate) fn hx(s: &str) -> std::vec::Vec<u8> {
         (0..s.len())
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("valid hex"))
             .collect()
     }
 
-    const LINK_ID: &str = "000102030405060708090a0b0c0d0e0f";
-    const INITIATOR_SCALAR: &str =
+    pub(crate) const LINK_ID: &str = "000102030405060708090a0b0c0d0e0f";
+    pub(crate) const INITIATOR_SCALAR: &str =
         "3333333333333333333333333333333333333333333333333333333333333333";
-    const RESPONDER_PUBLIC: &str =
+    pub(crate) const RESPONDER_PUBLIC: &str =
         "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b";
-    const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
+    pub(crate) const CASE1_BZ2: &str = "425a6839314159265359cf3017f4000207918040000e6f9e002000902980000a54a7a869ea794d3227c13a1382644e09a09a1342684f213f04c09b1382704ec2684d89e04c8ab61302604d09d09d89fc5dc914e142433cc05fd0";
 
-    fn link_id() -> LinkId {
+    pub(crate) fn link_id() -> LinkId {
         LinkId::new(hx(LINK_ID).try_into().unwrap())
     }
 
-    fn link_key() -> LinkKey {
+    pub(crate) fn link_key() -> LinkKey {
         let scalar: [u8; 32] = hx(INITIATOR_SCALAR).try_into().unwrap();
         let public: [u8; 32] = hx(RESPONDER_PUBLIC).try_into().unwrap();
         let shared = x25519_diffie_hellman(&X25519SecretKey::new(scalar), &X25519PublicKey(public));
         LinkKey::derive(&link_id(), &shared)
     }
 
-    fn lane() -> InterfaceId {
+    pub(crate) fn lane() -> InterfaceId {
         InterfaceId::new([0xEE; 16])
     }
 
-    fn engine_with_active_link() -> EngineState<Cap> {
+    pub(crate) fn engine_with_active_link() -> EngineState<Cap> {
         let mut engine = EngineState::<Cap>::default();
         engine
             .links
@@ -307,7 +508,7 @@ mod tests {
         engine
     }
 
-    fn advertisement_frame(data: &[u8], candidate: Option<&[u8]>) -> std::vec::Vec<u8> {
+    pub(crate) fn advertisement_frame(data: &[u8], candidate: Option<&[u8]>) -> std::vec::Vec<u8> {
         let mut sender = engine_with_active_link();
         let mut frame = None;
         sender.ingest_send_resource_into(
@@ -326,15 +527,19 @@ mod tests {
         frame.expect("the sender advertises")
     }
 
-    struct InboundCapture {
-        frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
-        settlements: std::vec::Vec<(CommandId, Settlement)>,
+    pub(crate) struct InboundCapture {
+        pub(crate) frames: std::vec::Vec<(InterfaceId, std::vec::Vec<u8>)>,
+        pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
+        pub(crate) received: std::vec::Vec<(ResourceHash, std::vec::Vec<u8>)>,
+        pub(crate) failed: std::vec::Vec<ResourceHash>,
     }
 
-    fn feed(engine: &mut EngineState<Cap>, frame: &[u8], at: u64) -> InboundCapture {
+    pub(crate) fn feed(engine: &mut EngineState<Cap>, frame: &[u8], at: u64) -> InboundCapture {
         let mut capture = InboundCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
+            received: std::vec::Vec::new(),
+            failed: std::vec::Vec::new(),
         };
         let mut raw = frame.to_vec();
         engine.ingest_packet_into(
@@ -357,13 +562,19 @@ mod tests {
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     capture.settlements.push((id, settlement));
                 }
+                EngineReaction::Journaled(Journaled::ResourceReceived { hash, data, .. }) => {
+                    capture.received.push((hash, data.to_vec()));
+                }
+                EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
+                    capture.failed.push(hash);
+                }
                 _ => {}
             },
         );
         capture
     }
 
-    fn accept_everything(engine: &mut EngineState<Cap>) {
+    pub(crate) fn accept_everything(engine: &mut EngineState<Cap>) {
         let mut settled = std::vec::Vec::new();
         engine.ingest_command_into(
             IssuedCommand {
@@ -393,9 +604,23 @@ mod tests {
         ));
     }
 
-    fn four_part_payload() -> std::vec::Vec<u8> {
+    pub(crate) fn four_part_payload() -> std::vec::Vec<u8> {
         b"resource parts ride raw on the wire! ".repeat(41)
     }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::engine::commands::{
+        EngineCommand, IssuedCommand, SetResourceStrategyFailure, Settlement,
+    };
+    use crate::engine::test_support::{routable_descriptor, Cap};
+    use crate::engine::Journaled;
+    use crate::routing::links::resources::control::parse_part_request_plaintext;
+    use crate::wire::WirePacketHeader;
 
     #[test]
     fn the_default_strategy_ignores_advertisements() {
@@ -556,5 +781,331 @@ mod tests {
         assert_eq!(first.frames.len(), 1);
         assert!(second.frames.is_empty());
         assert_eq!(receiver.incoming_resources.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::engine::commands::Settlement;
+    use crate::engine::test_support::filled_frame;
+    use crate::routing::links::data::write_link_packet;
+    use crate::routing::links::resources::advertisement::write_hashmap_update_plaintext;
+    use crate::routing::links::resources::control::write_part_request_plaintext;
+    use crate::routing::links::resources::SaltNonce;
+    use crate::wire::{PacketType as WirePacketType, WirePacketHeader, BROADCAST_MTU};
+
+    fn eight_part_payload() -> std::vec::Vec<u8> {
+        b"closing the resource loop one window at a time! ".repeat(75)
+    }
+
+    #[test]
+    fn a_full_uncompressed_transfer_crosses_two_live_engines() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = four_part_payload();
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &data,
+            None,
+            None,
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        assert_eq!(pull.frames.len(), 1, "the receiver asks for the first window");
+
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        assert_eq!(serve.frames.len(), 4, "the sender streams every requested part");
+
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.received.is_empty() || !capture.frames.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let conclusion = conclusion.expect("the last part concludes the transfer");
+        assert_eq!(conclusion.received.len(), 1);
+        assert_eq!(
+            conclusion.received[0].1, data,
+            "the journaled plaintext is the original payload",
+        );
+        assert!(
+            receiver.incoming_resources.is_empty(),
+            "a delivered transfer retires its row",
+        );
+        assert_eq!(conclusion.frames.len(), 1, "and the proof goes back");
+
+        let settled = feed(&mut sender, &conclusion.frames[0].1, 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+        assert!(sender.outgoing_resources.is_empty());
+    }
+
+    #[test]
+    fn a_drained_window_grows_and_pulls_the_next_slice() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = eight_part_payload();
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &data,
+            None,
+            None,
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        assert_eq!(serve.frames.len(), 4, "window four to start");
+
+        let mut next_pull = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.frames.is_empty() {
+                next_pull = Some(capture);
+            }
+        }
+        let next_pull = next_pull.expect("the drained window re-pulls");
+
+        let hash = *receiver.incoming_resources.hash_at(0);
+        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.window, 5, "an emptied window grows by one");
+        assert_eq!(state.consecutive_completed, Some(3));
+
+        let (_, request) = &next_pull.frames[0];
+        let (_, payload) = WirePacketHeader::parse(request).unwrap();
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        let request = crate::routing::links::resources::control::parse_part_request_plaintext(opened)
+            .unwrap();
+        assert_eq!(
+            request.requested,
+            &receiver.incoming_resources.names_flat(index)[4 * MAP_HASH_LEN..8 * MAP_HASH_LEN],
+            "the next pull asks for the remaining four parts",
+        );
+    }
+
+    fn crafted_partial_advertisement(names: &[u8], part_count: usize) -> std::vec::Vec<u8> {
+        use crate::routing::links::resources::advertisement::{
+            ResourceAdvertisement, ResourceFlags,
+        };
+        let advertisement = ResourceAdvertisement {
+            transfer_size: (part_count * 464) as u64,
+            data_size: 2_700,
+            part_count: part_count as u64,
+            hash: ResourceHash::new([0xAB; 32]),
+            salt_nonce: SaltNonce::new([0x61; 4]),
+            original_hash: ResourceHash::new([0xAB; 32]),
+            segment_index: 1,
+            total_segments: 1,
+            request_id: None,
+            flags: ResourceFlags {
+                encrypted: true,
+                compressed: false,
+                split: false,
+                is_request: false,
+                is_response: false,
+                has_metadata: false,
+            },
+            hashmap: names,
+        };
+        let mut plaintext = [0u8; 431];
+        let plaintext_len = advertisement.write(&mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceAdvertisement,
+            &plaintext[..plaintext_len],
+            &[0xD1; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    fn sealed_hashmap_update(segment: u64, names: &[u8], iv: u8) -> std::vec::Vec<u8> {
+        let mut plaintext = [0u8; 431];
+        let plaintext_len = write_hashmap_update_plaintext(
+            &ResourceHash::new([0xAB; 32]),
+            segment,
+            names,
+            &mut plaintext,
+        )
+        .unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceHashUpdate,
+            &plaintext[..plaintext_len],
+            &[iv; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    fn six_names() -> std::vec::Vec<u8> {
+        let mut names = std::vec::Vec::new();
+        for i in 1u32..=6 {
+            names.extend_from_slice(&i.to_be_bytes());
+        }
+        names
+    }
+
+    #[test]
+    fn an_exhausted_pull_resumes_when_the_hashmap_update_lands() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+
+        let names = six_names();
+        let pull = feed(&mut receiver, &crafted_partial_advertisement(&names[..8], 6), 2_000);
+        assert_eq!(pull.frames.len(), 1);
+        let (_, payload) = WirePacketHeader::parse(&pull.frames[0].1).unwrap();
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        let request = crate::routing::links::resources::control::parse_part_request_plaintext(opened)
+            .unwrap();
+        assert_eq!(request.requested, &names[..8], "only two parts are nameable");
+        assert_eq!(
+            request.last_known_map_hash,
+            Some(names[4..8].try_into().unwrap()),
+            "the request flags exhaustion at the last known name",
+        );
+
+        let resumed = feed(&mut receiver, &sealed_hashmap_update(0, &names, 0xD2), 2_100);
+        assert_eq!(resumed.frames.len(), 1, "the pull resumes");
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &ResourceHash::new([0xAB; 32]))
+            .unwrap();
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.hashmap_height, 6);
+        assert!(!state.waiting_for_hmu);
+    }
+
+    #[test]
+    fn a_misfit_hashmap_update_cancels_the_transfer() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let names = six_names();
+        feed(&mut receiver, &crafted_partial_advertisement(&names[..8], 6), 2_000);
+
+        let cancelled = feed(&mut receiver, &sealed_hashmap_update(5, &names, 0xD3), 2_100);
+        assert!(cancelled.frames.is_empty());
+        assert_eq!(cancelled.failed.len(), 1);
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
+    fn a_transfer_advertised_under_a_false_hash_fails_and_never_proves() {
+        use crate::routing::links::resources::advertisement::ResourceAdvertisement;
+
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = four_part_payload();
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &data,
+            None,
+            None,
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let advertisement = advertisement.unwrap();
+        let (_, payload) = WirePacketHeader::parse(&advertisement).unwrap();
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        let genuine = ResourceAdvertisement::parse(opened).unwrap();
+
+        let mut lying = genuine;
+        let mut wrong = *genuine.hash.as_bytes();
+        wrong[0] ^= 1;
+        lying.hash = ResourceHash::new(wrong);
+        let mut plaintext = [0u8; 431];
+        let plaintext_len = lying.write(&mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceAdvertisement,
+            &plaintext[..plaintext_len],
+            &[0xD4; 16],
+            &mut frame,
+        )
+        .unwrap();
+        feed(&mut receiver, &frame[..wire_len], 2_000);
+
+        let mut request_plaintext = [0u8; 337];
+        let request_len = write_part_request_plaintext(
+            &genuine.hash,
+            None,
+            genuine.hashmap,
+            &mut request_plaintext,
+        )
+        .unwrap();
+        let mut request_frame = [0u8; BROADCAST_MTU];
+        let request_wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceRequest,
+            &request_plaintext[..request_len],
+            &[0xD5; 16],
+            &mut request_frame,
+        )
+        .unwrap();
+        let serve = feed(&mut sender, &request_frame[..request_wire_len], 2_100);
+        assert_eq!(serve.frames.len(), 4);
+
+        let mut outcome = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.failed.is_empty() || !capture.frames.is_empty() {
+                outcome = Some(capture);
+            }
+        }
+        let outcome = outcome.expect("the last part concludes");
+        assert!(outcome.frames.is_empty(), "no proof for a corrupt transfer");
+        assert!(outcome.received.is_empty());
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(receiver.incoming_resources.is_empty());
+
+        let _ = WirePacketType::Proof;
     }
 }

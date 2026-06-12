@@ -486,6 +486,14 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         &mut self.columns.buffers_mut(index).transfer[..len]
     }
 
+    pub fn link_at(&self, index: usize) -> &LinkId {
+        &self.columns.link_ids()[index]
+    }
+
+    pub fn hash_at(&self, index: usize) -> &ResourceHash {
+        &self.columns.hashes()[index]
+    }
+
     /// Which parts have landed, by position.
     pub fn received_flags(&self, index: usize) -> &[bool] {
         let count = self.columns.states()[index].part_count;

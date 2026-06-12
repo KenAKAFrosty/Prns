@@ -205,6 +205,21 @@ fn log_journaled(journaled: Journaled<'_>) {
                 link_id.as_bytes(),
             );
         }
+        Journaled::ResourceReceived { link_id, hash, data } => {
+            println!(
+                "RNSD_RESOURCE_RECEIVED link_id={:02x?} hash={:02x?} len={}",
+                link_id.as_bytes(),
+                &hash.as_bytes()[..4],
+                data.len(),
+            );
+        }
+        Journaled::ResourceFailed { link_id, hash } => {
+            println!(
+                "RNSD_RESOURCE_FAILED link_id={:02x?} hash={:02x?}",
+                link_id.as_bytes(),
+                &hash.as_bytes()[..4],
+            );
+        }
         Journaled::CommandSettled { .. } => {}
     }
 }
