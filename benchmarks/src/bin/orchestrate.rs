@@ -133,7 +133,14 @@ fn implementation(name: &str) -> Implementation {
             slug: "go-reticulum",
             label: "go-reticulum",
         },
-        other => panic!("unknown implementation {other:?} (self|reference|go-reticulum)"),
+        "leviculum" => Implementation {
+            name: "leviculum",
+            slug: "leviculum",
+            label: "Leviculum 0.6.3",
+        },
+        other => {
+            panic!("unknown implementation {other:?} (self|reference|go-reticulum|leviculum)")
+        }
     }
 }
 
@@ -145,6 +152,7 @@ impl Implementation {
             "self" => Some(Command::new(sibling_binary("scenario_node"))),
             "reference" => Some(reference_python("scenario_node.py")),
             "go-reticulum" => Some(Command::new(external_node("go-reticulum", "go-node"))),
+            "leviculum" => Some(Command::new(external_node("leviculum", "leviculum-node"))),
             _ => None,
         }
     }

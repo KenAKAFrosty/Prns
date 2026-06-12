@@ -29,7 +29,7 @@ fi
 
 # The roster. Phase 2 extends these lists as each external port's interop node lands.
 INTEROP_SCENARIOS=(single-firehose link-firehose-small-payload)
-INTEROP_IMPLS=(self reference go-reticulum)
+INTEROP_IMPLS=(self reference go-reticulum leviculum)
 
 # DURATION_MS overrides every scenario's wall-time for a quick smoke pass. Funnelled through
 # one helper so an empty override never expands an empty array — macOS ships bash 3.2, where

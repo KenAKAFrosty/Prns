@@ -17,6 +17,18 @@ echo "== go-reticulum =="
 clone_pinned "https://github.com/svanichkin/go-reticulum.git" 06621cc "$HERE/external/go-reticulum/.upstream"
 ( cd "$HERE/external/go-reticulum/interop" && go build -o go-node . )
 
+echo "== Leviculum =="
+LEVICULUM="$HERE/external/leviculum/.upstream"
+clone_pinned "https://codeberg.org/Lew_Palm/leviculum.git" 6f366ca "$LEVICULUM"
+# The upstream's Local-IPC/RPC paths use Linux-only abstract Unix sockets unconditionally;
+# cfg-gate them so the crate compiles on macOS (the TCP-only node never touches them). Applied
+# idempotently — skip if it's already in the working tree.
+LEVICULUM_PATCH="$HERE/external/leviculum/macos-portability.patch"
+git -C "$LEVICULUM" apply --reverse --check "$LEVICULUM_PATCH" 2>/dev/null \
+  || git -C "$LEVICULUM" apply "$LEVICULUM_PATCH"
+( cd "$HERE/external/leviculum/interop" && cargo build --quiet --release \
+    && cp target/release/leviculum-node leviculum-node )
+
 echo
 echo "Built. Register this machine once with:  cargo run --release --bin describe_host"
 echo "Then measure:  sudo env \"PATH=\$PATH\" ./run.sh"

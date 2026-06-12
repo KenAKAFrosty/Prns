@@ -6,7 +6,7 @@ external/*/.upstream/
 .submitter.json
 
 # Built external interop nodes — build.sh regenerates them against the pinned upstreams.
-external/*/interop/go-node
+external/*/interop/*-node
 external/*/interop/target/
 external/*/interop/*.dwarf
 external/*/interop/lib/

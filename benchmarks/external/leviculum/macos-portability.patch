@@ -1,0 +1,116 @@
+diff --git a/reticulum-std/src/interfaces/local.rs b/reticulum-std/src/interfaces/local.rs
+index 9fffa49..021176d 100644
+--- a/reticulum-std/src/interfaces/local.rs
++++ b/reticulum-std/src/interfaces/local.rs
+@@ -55,6 +55,16 @@ pub(crate) fn spawn_local_server(
+     // Build abstract socket name: "rns/{instance_name}"
+     let abstract_name = format!("rns/{}", instance_name);
+ 
++    #[cfg(not(target_os = "linux"))]
++    {
++        let _ = (&next_id, &new_interface_tx, buffer_size, &abstract_name);
++        return Err(io::Error::new(
++            io::ErrorKind::Unsupported,
++            "abstract-namespace Local IPC server is Linux-only",
++        ));
++    }
++    #[cfg(target_os = "linux")]
++    {
+     use std::os::linux::net::SocketAddrExt;
+     let addr = std::os::unix::net::SocketAddr::from_abstract_name(abstract_name.as_bytes())
+         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+@@ -101,6 +111,7 @@ pub(crate) fn spawn_local_server(
+     });
+ 
+     Ok(())
++    }
+ }
+ 
+ /// Create channels, spawn the I/O task for an accepted Unix stream,
+@@ -160,6 +171,16 @@ pub(crate) fn spawn_local_client(
+ ) -> Result<InterfaceHandle, io::Error> {
+     let abstract_name = format!("rns/{}", instance_name);
+ 
++    #[cfg(not(target_os = "linux"))]
++    {
++        let _ = (id, buffer_size, &abstract_name);
++        return Err(io::Error::new(
++            io::ErrorKind::Unsupported,
++            "abstract-namespace Local IPC client is Linux-only",
++        ));
++    }
++    #[cfg(target_os = "linux")]
++    {
+     use std::os::linux::net::SocketAddrExt;
+     let addr = std::os::unix::net::SocketAddr::from_abstract_name(abstract_name.as_bytes())
+         .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+@@ -197,6 +218,7 @@ pub(crate) fn spawn_local_client(
+         // interface is ready immediately.
+         ready: super::ReadySignal::ready_immediate(),
+     })
++    }
+ }
+ 
+ /// I/O task owning the Unix stream.
+diff --git a/reticulum-std/src/rpc/mod.rs b/reticulum-std/src/rpc/mod.rs
+index c63073d..4acdc0d 100644
+--- a/reticulum-std/src/rpc/mod.rs
++++ b/reticulum-std/src/rpc/mod.rs
+@@ -42,6 +42,24 @@ pub(crate) fn spawn_rpc_server(
+ ) -> Result<(), std::io::Error> {
+     let abstract_name = format!("rns/{}/rpc", instance_name);
+ 
++    #[cfg(not(target_os = "linux"))]
++    {
++        let _ = (
++            &core,
++            &authkey,
++            &start_time,
++            &iface_stats_map,
++            &iface_online_map,
++            &auto_peer_count_rx,
++            &abstract_name,
++        );
++        return Err(std::io::Error::new(
++            std::io::ErrorKind::Unsupported,
++            "abstract-namespace RPC server is Linux-only",
++        ));
++    }
++    #[cfg(target_os = "linux")]
++    {
+     use std::os::linux::net::SocketAddrExt;
+     let addr = std::os::unix::net::SocketAddr::from_abstract_name(abstract_name.as_bytes())
+         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+@@ -68,6 +86,7 @@ pub(crate) fn spawn_rpc_server(
+     });
+ 
+     Ok(())
++    }
+ }
+ 
+ /// Accept loop: spawns a task per connection.
+@@ -171,6 +190,16 @@ pub(crate) async fn rpc_client_call(
+     authkey: &[u8; 32],
+     request: &serde_pickle::value::Value,
+ ) -> Result<serde_pickle::value::Value, RpcError> {
++    #[cfg(not(target_os = "linux"))]
++    {
++        let _ = (abstract_name, authkey, request);
++        return Err(RpcError::Io(std::io::Error::new(
++            std::io::ErrorKind::Unsupported,
++            "abstract-namespace RPC client is Linux-only",
++        )));
++    }
++    #[cfg(target_os = "linux")]
++    {
+     use std::os::linux::net::SocketAddrExt;
+     use tokio::net::UnixStream;
+ 
+@@ -207,6 +236,7 @@ pub(crate) async fn rpc_client_call(
+             ),
+         ))),
+     }
++    }
+ }
+ 
+ /// Issue a parameterless `get` query against a running shared-instance daemon's
