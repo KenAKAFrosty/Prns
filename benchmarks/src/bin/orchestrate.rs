@@ -119,8 +119,10 @@ struct Implementation {
     /// partial node (e.g. rns-cr, which sends one-shot singles but cannot prove them as a
     /// responder, nor field links) declares only the side it can honestly drive.
     interop_roles: &'static [&'static str],
-    /// The interop mechanisms this impl can field on the roles above.
-    interop_mechanisms: &'static [&'static str],
+    /// The interop mechanisms this impl can field on the roles above, or `None` for a full impl
+    /// that fields every mechanism (so new scenarios reach self/reference without a registry
+    /// edit). Only a partial external node whitelists the mechanisms it actually implements.
+    interop_mechanisms: Option<&'static [&'static str]>,
     /// When set, this impl only interoperates with itself — its wire sub-protocol for the
     /// mechanism diverges from the others, so cross-impl pairings are skipped. "link" is not one
     /// protocol across the family: go proves single-style link packets, Leviculum carries a
@@ -139,7 +141,7 @@ fn implementation(name: &str) -> Implementation {
             slug: "personal-rns",
             label: "Prns",
             interop_roles: BOTH_ROLES,
-            interop_mechanisms: BOTH_MECHANISMS,
+            interop_mechanisms: None,
             interop_self_only: false,
         },
         "reference" => Implementation {
@@ -147,7 +149,7 @@ fn implementation(name: &str) -> Implementation {
             slug: "rns-1.3.1",
             label: "RNS 1.3.1",
             interop_roles: BOTH_ROLES,
-            interop_mechanisms: BOTH_MECHANISMS,
+            interop_mechanisms: None,
             interop_self_only: false,
         },
         "go-reticulum" => Implementation {
@@ -155,7 +157,7 @@ fn implementation(name: &str) -> Implementation {
             slug: "go-reticulum",
             label: "go-reticulum",
             interop_roles: BOTH_ROLES,
-            interop_mechanisms: BOTH_MECHANISMS,
+            interop_mechanisms: Some(BOTH_MECHANISMS),
             interop_self_only: false,
         },
         "leviculum" => Implementation {
@@ -163,7 +165,7 @@ fn implementation(name: &str) -> Implementation {
             slug: "leviculum",
             label: "Leviculum 0.6.3",
             interop_roles: BOTH_ROLES,
-            interop_mechanisms: BOTH_MECHANISMS,
+            interop_mechanisms: Some(BOTH_MECHANISMS),
             interop_self_only: false,
         },
         // rns-cr (Crystal) fields only a single-mechanism initiator at its current commit: its
@@ -176,7 +178,7 @@ fn implementation(name: &str) -> Implementation {
             slug: "rns-cr",
             label: "rns-cr 0.1.0",
             interop_roles: &["initiator"],
-            interop_mechanisms: &["single"],
+            interop_mechanisms: Some(&["single"]),
             interop_self_only: false,
         },
         // LXMF-rs fields links (both roles) but not single-packet proofs, and its link wire —
@@ -190,7 +192,7 @@ fn implementation(name: &str) -> Implementation {
             slug: "lxmf-rs",
             label: "LXMF-rs 0.2.0",
             interop_roles: BOTH_ROLES,
-            interop_mechanisms: &["link"],
+            interop_mechanisms: Some(&["link"]),
             interop_self_only: true,
         },
         other => {
@@ -210,13 +212,13 @@ fn unsupported_pairing(
     responder: &Implementation,
     mechanism: &str,
 ) -> Option<String> {
-    if !initiator.interop_mechanisms.contains(&mechanism) {
+    if initiator.interop_mechanisms.is_some_and(|m| !m.contains(&mechanism)) {
         return Some(format!("{} fields no {mechanism} node", initiator.name));
     }
     if !initiator.interop_roles.contains(&"initiator") {
         return Some(format!("{} fields no initiator", initiator.name));
     }
-    if !responder.interop_mechanisms.contains(&mechanism) {
+    if responder.interop_mechanisms.is_some_and(|m| !m.contains(&mechanism)) {
         return Some(format!("{} fields no {mechanism} node", responder.name));
     }
     if !responder.interop_roles.contains(&"responder") {
