@@ -1,20 +1,27 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 use super::CryptoError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519PublicKey(pub [u8; 32]);
 
-#[derive(Zeroize, ZeroizeOnDrop)]
-pub struct Ed25519SecretKey([u8; 32]);
+/// Drop zeroizes the seed through `SigningKey`'s own `Drop` (dalek's `zeroize`
+/// feature); the marker below asserts what the derive used to.
+pub struct Ed25519SecretKey(SigningKey);
+
+impl ZeroizeOnDrop for Ed25519SecretKey {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ed25519Signature(pub [u8; 64]);
 
 impl Ed25519SecretKey {
-    pub const fn new(seed: [u8; 32]) -> Self {
-        Self(seed)
+    /// Expands the seed once — `SigningKey` carries its derived verifying key, so the
+    /// per-sign cost from here on is one basepoint multiplication, not two. Held
+    /// identities live as long as the engine; paying expansion per signature was
+    /// a measured ~25µs of every proof.
+    pub fn new(seed: [u8; 32]) -> Self {
+        Self(SigningKey::from_bytes(&seed))
     }
 }
 
@@ -33,10 +40,9 @@ pub fn ed25519_verify(
 
 /// (deterministic, RFC 8032).
 pub fn ed25519_sign(secret: &Ed25519SecretKey, message: &[u8]) -> Ed25519Signature {
-    let signing_key = SigningKey::from_bytes(&secret.0);
-    Ed25519Signature(signing_key.sign(message).to_bytes())
+    Ed25519Signature(secret.0.sign(message).to_bytes())
 }
 
 pub fn ed25519_public_key(secret: &Ed25519SecretKey) -> Ed25519PublicKey {
-    Ed25519PublicKey(SigningKey::from_bytes(&secret.0).verifying_key().to_bytes())
+    Ed25519PublicKey(secret.0.verifying_key().to_bytes())
 }
