@@ -25,9 +25,13 @@ use crate::routing::links::resources::control::{
     PROOF_PLAINTEXT_LEN,
 };
 use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
+use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy, MAP_HASH_LEN, MAX_RETRIES,
-    PART_TIMEOUT_FACTOR, PER_RETRY_DELAY_MS, RETRY_GRACE_MS, WINDOW_FLEXIBILITY, WINDOW_MAX,
+    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy,
+    ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN, MAX_RETRIES,
+    PART_TIMEOUT_FACTOR_AFTER_RTT, PER_RETRY_DELAY_MS, RATE_FAST_BYTES_PER_SECOND,
+    RATE_VERY_SLOW_BYTES_PER_SECOND, RETRY_GRACE_MS, VERY_SLOW_RATE_THRESHOLD,
+    WINDOW_FLEXIBILITY, WINDOW_MAX, WINDOW_MAX_VERY_SLOW,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -136,10 +140,25 @@ impl<S: EngineStorage> EngineState<S> {
             request_id: advertisement.request_id,
             initial_names: advertisement.hashmap,
         };
+        let inherited = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Active {
+                last_resource_window,
+                last_resource_eifr,
+                ..
+            }) => (*last_resource_window, *last_resource_eifr),
+            _ => (None, None),
+        };
         let Ok(index) = self.incoming_resources.accept(link_id, accepted) else {
             return IngestPacketOutcome::Ignored;
         };
-        self.incoming_resources.state_mut(index).retries_left = MAX_RETRIES;
+        {
+            let state = self.incoming_resources.state_mut(index);
+            state.retries_left = MAX_RETRIES;
+            if let Some(window) = inherited.0 {
+                state.window = window;
+            }
+            state.inherited_eifr = inherited.1;
+        }
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::OwesResourcePull {
             link_id,
@@ -219,12 +238,9 @@ impl<S: EngineStorage> EngineState<S> {
         let mtu = *mtu;
         let fire_on = *attached_interface;
         let rtt_ms = *rtt_ms;
-        self.incoming_resources.set_timeout_at(
-            index,
-            Some(part_retry_deadline(now, rtt_ms, state.retries_left)),
-        );
         let mut iv = [0u8; 16];
         fill_entropy(&mut iv);
+        let mut request_wire_len = 0u64;
         let mut fill = |slot: &mut [u8]| -> Option<usize> {
             let mut plaintext = [0u8; 1 + MAP_HASH_LEN + 32 + WINDOW_MAX * MAP_HASH_LEN];
             let plaintext_len = write_part_request_plaintext(
@@ -234,7 +250,7 @@ impl<S: EngineStorage> EngineState<S> {
                 &mut plaintext,
             )
             .ok()?;
-            write_link_packet(
+            let wire_len = write_link_packet(
                 link_id,
                 key,
                 mtu,
@@ -243,12 +259,24 @@ impl<S: EngineStorage> EngineState<S> {
                 &iv,
                 slot,
             )
-            .ok()
+            .ok()?;
+            request_wire_len = wire_len as u64;
+            Some(wire_len)
         };
         sink(EngineReaction::Directive(Directive::EmitFrame {
             target: fire_on,
             fill: &mut fill,
         }));
+        {
+            let state = self.incoming_resources.state_mut(index);
+            state.request_sent_at = Some(now);
+            state.request_sent_byte_len = request_wire_len;
+            state.received_byte_count_at_request = state.received_byte_count;
+            state.awaiting_round_first_response = true;
+        }
+        let state = *self.incoming_resources.state(index);
+        self.incoming_resources
+            .set_timeout_at(index, Some(part_round_deadline(&state, rtt_ms, now)));
     }
 }
 
@@ -259,7 +287,13 @@ impl<S: EngineStorage> EngineState<S> {
     /// like the request — a resent part is byte-identical. Placement decides
     /// what is owed next: assembly when the transfer completed, the next
     /// window when the outstanding count drained (growing the window the way
-    /// `receive_part` does), nothing while parts are still in flight.
+    /// `receive_part` does), nothing while parts are still in flight. The
+    /// round's first response also lands the measurements: the rtt eases
+    /// five percent toward each round, the timeout factor tightens, and the
+    /// request-response rate counts toward the fast-window lift (the cost
+    /// here is the part's payload plus the request's frame; the reference
+    /// counts both whole frames — nineteen header bytes that never move a
+    /// kilobyte-scale threshold).
     pub(crate) fn classify_resource_part<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -300,13 +334,51 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         self.links.note_inbound(&link_id, arrived_at);
-        if let Some(LinkPhase::Active { rtt_ms, .. }) = self.links.phase_for(&link_id) {
-            let rtt_ms = *rtt_ms;
-            let retries_left = self.incoming_resources.state(index).retries_left;
+        let Some(LinkPhase::Active { rtt_ms, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let link_rtt_ms = *rtt_ms;
+        {
+            let state = self.incoming_resources.state_mut(index);
+            state.received_byte_count = state.received_byte_count.saturating_add(part.len() as u64);
+            if state.awaiting_round_first_response {
+                state.awaiting_round_first_response = false;
+                state.part_timeout_factor = PART_TIMEOUT_FACTOR_AFTER_RTT;
+                if let Some(sent_at) = state.request_sent_at {
+                    let round_trip_ms = arrived_at.0.saturating_sub(sent_at.0);
+                    state.measured_rtt_ms = Some(match state.measured_rtt_ms {
+                        None => link_rtt_ms,
+                        Some(rtt) if round_trip_ms < rtt => {
+                            (rtt - rtt * 5 / 100).max(round_trip_ms)
+                        }
+                        Some(rtt) if round_trip_ms > rtt => {
+                            (rtt + rtt * 5 / 100).min(round_trip_ms)
+                        }
+                        Some(rtt) => rtt,
+                    });
+                    let round_cost =
+                        (part.len() as u64).saturating_add(state.request_sent_byte_len);
+                    if let Some(rate) = round_cost.saturating_mul(1_000).checked_div(round_trip_ms)
+                    {
+                        state.request_response_byte_rate = rate;
+                        if state.request_response_byte_rate > RATE_FAST_BYTES_PER_SECOND
+                            && state.fast_rate_rounds < FAST_RATE_THRESHOLD
+                        {
+                            state.fast_rate_rounds += 1;
+                            if state.fast_rate_rounds == FAST_RATE_THRESHOLD {
+                                state.window_max = WINDOW_MAX;
+                            }
+                        }
+                    }
+                }
+            }
+            let retries_left = state.retries_left;
+            let state = *state;
             self.incoming_resources.set_timeout_at(
                 index,
-                Some(part_retry_deadline(arrived_at, rtt_ms, retries_left)),
+                Some(part_round_deadline(&state, link_rtt_ms, arrived_at)),
             );
+            let _ = retries_left;
         }
         let hash = *self.incoming_resources.hash_at(index);
         let state = *self.incoming_resources.state(index);
@@ -319,6 +391,32 @@ impl<S: EngineStorage> EngineState<S> {
                 state.window += 1;
                 if state.window - state.window_min > WINDOW_FLEXIBILITY - 1 {
                     state.window_min += 1;
+                }
+            }
+            if let Some(sent_at) = state.request_sent_at {
+                let elapsed_ms = arrived_at.0.saturating_sub(sent_at.0);
+                let transferred = state
+                    .received_byte_count
+                    .saturating_sub(state.received_byte_count_at_request);
+                if let Some(rate) = transferred.saturating_mul(1_000).checked_div(elapsed_ms) {
+                    state.data_byte_rate = rate;
+                    if state.data_byte_rate > RATE_FAST_BYTES_PER_SECOND
+                        && state.fast_rate_rounds < FAST_RATE_THRESHOLD
+                    {
+                        state.fast_rate_rounds += 1;
+                        if state.fast_rate_rounds == FAST_RATE_THRESHOLD {
+                            state.window_max = WINDOW_MAX;
+                        }
+                    }
+                    if state.fast_rate_rounds == 0
+                        && state.data_byte_rate < RATE_VERY_SLOW_BYTES_PER_SECOND
+                        && state.very_slow_rate_rounds < VERY_SLOW_RATE_THRESHOLD
+                    {
+                        state.very_slow_rate_rounds += 1;
+                        if state.very_slow_rate_rounds == VERY_SLOW_RATE_THRESHOLD {
+                            state.window_max = WINDOW_MAX_VERY_SLOW;
+                        }
+                    }
                 }
             }
             return IngestPacketOutcome::OwesResourcePull { link_id, hash };
@@ -370,7 +468,7 @@ impl<S: EngineStorage> EngineState<S> {
                 hash: update.hash,
             },
             Err(_) => {
-                self.incoming_resources.remove(&link_id, &update.hash);
+                self.retire_incoming_resource(&link_id, &update.hash);
                 IngestPacketOutcome::ResourceConcludedFailed {
                     link_id,
                     hash: update.hash,
@@ -409,9 +507,10 @@ impl<S: EngineStorage> EngineState<S> {
         let Ok(hash) = parse_cancel_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored;
         };
-        if !self.incoming_resources.remove(&link_id, &hash) {
+        if self.incoming_resources.lookup(&link_id, &hash).is_none() {
             return IngestPacketOutcome::Ignored;
         }
+        self.retire_incoming_resource(&link_id, &hash);
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ResourceConcludedFailed { link_id, hash }
     }
@@ -465,7 +564,7 @@ impl<S: EngineStorage> EngineState<S> {
                     IncomingResourceStatus::AwaitingDecompression;
                 self.incoming_resources.set_timeout_at(index, None);
             } else {
-                self.incoming_resources.remove(link_id, hash);
+                self.retire_incoming_resource(link_id, hash);
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id: *link_id,
                     hash: *hash,
@@ -491,7 +590,7 @@ impl<S: EngineStorage> EngineState<S> {
                 }
             }
         }
-        self.incoming_resources.remove(link_id, hash);
+        self.retire_incoming_resource(link_id, hash);
         if !delivered {
             sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                 link_id: *link_id,
@@ -524,7 +623,7 @@ impl<S: EngineStorage> EngineState<S> {
         if state.status != IncomingResourceStatus::AwaitingDecompression {
             return;
         }
-        self.incoming_resources.remove(&link_id, &hash);
+        self.retire_incoming_resource(&link_id, &hash);
 
         let verified = u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_len)
             && self.links.phase_for(&link_id).is_some();
@@ -584,7 +683,7 @@ impl<S: EngineStorage> EngineState<S> {
             let hash = *self.incoming_resources.hash_at(index);
             let state = *self.incoming_resources.state(index);
             if state.retries_left == 0 || self.links.phase_for(&link_id).is_none() {
-                self.incoming_resources.remove(&link_id, &hash);
+                self.retire_incoming_resource(&link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id,
                     hash,
@@ -610,6 +709,23 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
+    /// Retire one incoming transfer and leave the link its memory — RNS
+    /// 1.3.1 `Link.resource_concluded` stores the final window and expected
+    /// rate for the next transfer to inherit, however this one ended.
+    pub(crate) fn retire_incoming_resource(&mut self, link_id: &LinkId, hash: &ResourceHash) {
+        if let Some(index) = self.incoming_resources.lookup(link_id, hash) {
+            let state = *self.incoming_resources.state(index);
+            let link_rtt_ms = match self.links.phase_for(link_id) {
+                Some(LinkPhase::Active { rtt_ms, .. }) => *rtt_ms,
+                _ => 1,
+            };
+            let eifr = expected_inflight_bits_per_second(&state, link_rtt_ms);
+            self.links
+                .note_resource_concluded(link_id, state.window, eifr);
+        }
+        self.incoming_resources.remove(link_id, hash);
+    }
+
     /// Drain both registers' due deadlines — the [`DueLane::ResourceDeadlines`]
     /// arm.
     pub fn fire_due_resource_deadlines<F>(
@@ -629,16 +745,58 @@ impl<S: EngineStorage> EngineState<S> {
     }
 }
 
-/// RNS 1.3.1's receiver part wait in its pre-eifr rtt form: a part-timeout
-/// factor of round trips, the retry grace, and half a second more for every
-/// retry already spent.
-fn part_retry_deadline(now: InstantMillis, rtt_ms: u64, retries_left: u8) -> InstantMillis {
-    let retries_used = (MAX_RETRIES.saturating_sub(retries_left)) as u64;
+/// RNS 1.3.1 `Resource.update_eifr`: the expected in-flight rate in bits
+/// per second — measured goodput when a round has completed, the previous
+/// transfer's rate when the link remembers one, and the establishment
+/// exchange's own rate before anything else has moved. Never zero: the
+/// deadline arithmetic divides by it.
+fn expected_inflight_bits_per_second(state: &IncomingResourceState, link_rtt_ms: u64) -> u64 {
+    let eifr = if state.data_byte_rate > 0 {
+        state.data_byte_rate.saturating_mul(8)
+    } else if let Some(inherited) = state.inherited_eifr {
+        inherited
+    } else {
+        let rtt_ms = state.measured_rtt_ms.unwrap_or(link_rtt_ms).max(1);
+        ESTABLISHMENT_COST_ESTIMATE_BYTES.saturating_mul(8_000) / rtt_ms
+    };
+    eifr.max(1)
+}
+
+/// RNS 1.3.1's receiver wait, the watchdog's TRANSFERRING arithmetic: the
+/// part-timeout factor over the expected time-of-flight of everything
+/// outstanding, an HMU allowance (x3.5, as x7/2) when waiting on names or
+/// idle, the retry grace, and half a second more per retry already spent.
+/// Until a round has measured a rate, the wait covers three sdu of flight —
+/// the reference's unmeasured fallback.
+fn part_round_deadline(
+    state: &IncomingResourceState,
+    link_rtt_ms: u64,
+    now: InstantMillis,
+) -> InstantMillis {
+    let eifr = expected_inflight_bits_per_second(state, link_rtt_ms);
+    let retries_used = (MAX_RETRIES.saturating_sub(state.retries_left)) as u64;
+    let extra_wait_ms = retries_used.saturating_mul(PER_RETRY_DELAY_MS);
+    let sdu_bits = (state.sdu as u64).saturating_mul(8);
+    let wait_ms = if state.request_response_byte_rate != 0 {
+        let flight_bits = (state.outstanding_part_count as u64).saturating_mul(sdu_bits);
+        let time_of_flight_ms = flight_bits.saturating_mul(1_000) / eifr;
+        let hmu_wait_ms = if state.waiting_for_hmu || state.outstanding_part_count == 0 {
+            sdu_bits.saturating_mul(7_000) / 2 / eifr
+        } else {
+            0
+        };
+        state
+            .part_timeout_factor
+            .saturating_mul(time_of_flight_ms)
+            .saturating_add(hmu_wait_ms)
+    } else {
+        state.part_timeout_factor.saturating_mul(sdu_bits.saturating_mul(3_000) / eifr)
+    };
     InstantMillis(
         now.0
-            .saturating_add(rtt_ms.saturating_mul(PART_TIMEOUT_FACTOR))
+            .saturating_add(wait_ms)
             .saturating_add(RETRY_GRACE_MS)
-            .saturating_add(retries_used.saturating_mul(PER_RETRY_DELAY_MS)),
+            .saturating_add(extra_wait_ms),
     )
 }
 
@@ -729,7 +887,11 @@ mod tests_support {
     }
 
     pub(crate) fn engine_with_active_link() -> EngineState<Cap> {
-        let mut engine = EngineState::<Cap>::default();
+        active_engine::<Cap>()
+    }
+
+    pub(crate) fn active_engine<S: EngineStorage>() -> EngineState<S> {
+        let mut engine = EngineState::<S>::default();
         engine
             .links
             .track_initiated(InitiatedLink {
@@ -758,6 +920,14 @@ mod tests_support {
 
     pub(crate) fn advertisement_frame(data: &[u8], candidate: Option<&[u8]>) -> std::vec::Vec<u8> {
         let mut sender = engine_with_active_link();
+        advertise_from(&mut sender, data, candidate)
+    }
+
+    pub(crate) fn advertise_from<S: EngineStorage>(
+        sender: &mut EngineState<S>,
+        data: &[u8],
+        candidate: Option<&[u8]>,
+    ) -> std::vec::Vec<u8> {
         let mut frame = None;
         sender.ingest_send_resource_into(
             CommandId(7),
@@ -783,7 +953,11 @@ mod tests_support {
         pub(crate) failed: std::vec::Vec<ResourceHash>,
     }
 
-    pub(crate) fn feed(engine: &mut EngineState<Cap>, frame: &[u8], at: u64) -> InboundCapture {
+    pub(crate) fn feed<S: EngineStorage>(
+        engine: &mut EngineState<S>,
+        frame: &[u8],
+        at: u64,
+    ) -> InboundCapture {
         let mut capture = InboundCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
@@ -823,7 +997,7 @@ mod tests_support {
         capture
     }
 
-    pub(crate) fn accept_everything(engine: &mut EngineState<Cap>) {
+    pub(crate) fn accept_everything<S: EngineStorage>(engine: &mut EngineState<S>) {
         let mut settled = std::vec::Vec::new();
         engine.ingest_command_into(
             IssuedCommand {
@@ -1715,13 +1889,15 @@ mod watchdog_tests {
         accept_everything(&mut receiver);
         let pull = feed(&mut receiver, &advertisement_frame(&four_part_payload(), None), 2_000);
         assert_eq!(pull.frames.len(), 1);
+        let bootstrap_eifr = 287 * 8_000 / 250;
+        let unmeasured_wait = 4 * (464 * 8 * 3_000 / bootstrap_eifr);
         assert_eq!(
             receiver.resource_deadlines_wake(),
-            LaneWake::At(InstantMillis(2_000 + 250 * 4 + 250)),
-            "the pull arms the part-timeout rtt form",
+            LaneWake::At(InstantMillis(2_000 + unmeasured_wait + 250)),
+            "an unmeasured pull waits three sdu of flight at the establishment-bootstrapped rate",
         );
 
-        let retried = fire(&mut receiver, 3_250);
+        let retried = fire(&mut receiver, 2_000 + unmeasured_wait + 250);
         assert_eq!(retried.frames, 1, "the pull goes out again");
         let hash = *receiver.incoming_resources.hash_at(0);
         let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
@@ -1729,9 +1905,11 @@ mod watchdog_tests {
         assert_eq!(state.window, 3, "the window eases down");
         assert_eq!(state.window_max, 8, "and its ceiling follows twice");
         assert_eq!(state.retries_left, 15);
-        assert!(
-            receiver.resource_deadlines_wake()
-                == LaneWake::At(InstantMillis(3_250 + 250 * 4 + 250 + 500)),
+        assert_eq!(
+            receiver.resource_deadlines_wake(),
+            LaneWake::At(InstantMillis(
+                2_000 + unmeasured_wait + 250 + unmeasured_wait + 250 + 500,
+            )),
             "the next deadline stretches by one per-retry delay",
         );
     }
@@ -1745,10 +1923,128 @@ mod watchdog_tests {
         let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
         receiver.incoming_resources.state_mut(index).retries_left = 0;
 
-        let gave_up = fire(&mut receiver, 3_250);
+        let gave_up = fire(&mut receiver, 60_000);
         assert_eq!(gave_up.frames, 0, "giving up sends nothing, like the reference");
         assert_eq!(gave_up.failed, 1);
         assert!(receiver.incoming_resources.is_empty());
         assert_eq!(receiver.resource_deadlines_wake(), LaneWake::Idle);
+    }
+}
+
+#[cfg(test)]
+mod dynamics_tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::routing::links::resources::table::IncomingResourceStatus;
+    use crate::routing::links::resources::{WINDOW_MAX, WINDOW_MAX_SLOW, WINDOW_MAX_VERY_SLOW};
+    use crate::routing::storage::GrowableHeap;
+
+    struct RoundOutcome {
+        concluded: bool,
+    }
+
+    fn run_rounds(
+        round_trip_ms: u64,
+        rounds: usize,
+        data: &[u8],
+    ) -> (crate::engine::EngineState<GrowableHeap>, ResourceHash, RoundOutcome) {
+        let mut sender = active_engine::<GrowableHeap>();
+        let mut receiver = active_engine::<GrowableHeap>();
+        accept_everything(&mut receiver);
+        let advertisement = advertise_from(&mut sender, data, None);
+
+        let mut now = 2_000u64;
+        let mut pull = feed(&mut receiver, &advertisement, now);
+        let hash = *receiver.incoming_resources.hash_at(0);
+        let mut concluded = false;
+        for _ in 0..rounds {
+            let Some((_, request)) = pull.frames.first() else {
+                break;
+            };
+            let serve = feed(&mut sender, request, now + 10);
+            now += round_trip_ms;
+            let mut next = InboundCapture {
+                frames: std::vec::Vec::new(),
+                settlements: std::vec::Vec::new(),
+                received: std::vec::Vec::new(),
+                failed: std::vec::Vec::new(),
+            };
+            for (_, part) in &serve.frames {
+                let capture = feed(&mut receiver, part, now);
+                if !capture.frames.is_empty() || !capture.received.is_empty() {
+                    next = capture;
+                }
+            }
+            if !next.received.is_empty() {
+                concluded = true;
+                break;
+            }
+            pull = next;
+        }
+        (receiver, hash, RoundOutcome { concluded })
+    }
+
+    fn twenty_four_part_payload() -> std::vec::Vec<u8> {
+        b"rate dynamics earn the window its ceiling!! ".repeat(248)
+    }
+
+    #[test]
+    fn four_fast_rounds_lift_the_window_ceiling() {
+        let data = twenty_four_part_payload();
+        let (receiver, hash, outcome) = run_rounds(50, 4, &data);
+        assert!(!outcome.concluded, "four rounds leave parts outstanding");
+        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.fast_rate_rounds, 4);
+        assert_eq!(
+            state.window_max, WINDOW_MAX,
+            "fifty-millisecond windows of whole parts run far past RATE_FAST",
+        );
+        assert_eq!(
+            state.part_timeout_factor, 2,
+            "a measured round trip tightens the timeout factor",
+        );
+        assert_eq!(
+            state.measured_rtt_ms,
+            Some(216),
+            "the first measurement adopts the link rtt (250), then eases five percent \
+             toward the real round trip each round: 250, 238, 227, 216",
+        );
+    }
+
+    #[test]
+    fn two_very_slow_rounds_drop_the_window_ceiling() {
+        let data = twenty_four_part_payload();
+        let (receiver, hash, _) = run_rounds(60_000, 2, &data);
+        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.fast_rate_rounds, 0);
+        assert_eq!(state.very_slow_rate_rounds, 2);
+        assert_eq!(state.window_max, WINDOW_MAX_VERY_SLOW);
+    }
+
+    #[test]
+    fn a_concluded_transfer_leaves_the_link_its_window_and_rate() {
+        let data = b"inheritance crosses transfers on one link! ".repeat(80);
+        let (mut receiver, _, outcome) = run_rounds(50, 8, &data);
+        assert!(outcome.concluded, "an eight-part transfer concludes within the budget");
+        assert!(receiver.incoming_resources.is_empty());
+
+        let mut second_sender = active_engine::<GrowableHeap>();
+        let advertisement = advertise_from(&mut second_sender, &twenty_four_part_payload(), None);
+        feed(&mut receiver, &advertisement, 90_000);
+        let index = 0;
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(
+            state.window, 5,
+            "the inherited window starts where the last transfer ended — \
+             grown once when its first round drained",
+        );
+        assert!(
+            state.inherited_eifr.is_some_and(|eifr| eifr > 0),
+            "the inherited rate seeds the first deadline",
+        );
+        assert_eq!(state.window_max, WINDOW_MAX_SLOW);
+        assert_eq!(state.status, IncomingResourceStatus::Transferring);
     }
 }

@@ -55,6 +55,8 @@ pub enum LinkPhase {
         peer_signing: Ed25519PublicKey,
         remote_identity: Option<IdentityHash>,
         resource_strategy: ResourceStrategy,
+        last_resource_window: Option<usize>,
+        last_resource_eifr: Option<u64>,
     },
 }
 
@@ -284,6 +286,8 @@ impl<C: LinkColumns> Links<C> {
         *self.columns.phase_mut(index) = LinkPhase::Active {
             remote_identity: None,
             resource_strategy: ResourceStrategy::default(),
+            last_resource_window: None,
+            last_resource_eifr: None,
             key,
             role: LinkRole::Initiator,
             rtt_ms,
@@ -331,6 +335,8 @@ impl<C: LinkColumns> Links<C> {
                 *phase = LinkPhase::Active {
                     remote_identity: None,
                     resource_strategy: ResourceStrategy::default(),
+                    last_resource_window: None,
+                    last_resource_eifr: None,
                     key,
                     role,
                     rtt_ms,
@@ -370,6 +376,24 @@ impl<C: LinkColumns> Links<C> {
         };
         *resource_strategy = strategy;
         Ok(())
+    }
+
+    /// RNS 1.3.1 `Link.resource_concluded`'s memory: the window and
+    /// expected in-flight rate an incoming transfer ended with, inherited by
+    /// the next transfer this link accepts.
+    pub fn note_resource_concluded(&mut self, link_id: &LinkId, window: usize, eifr: u64) {
+        let Some(index) = self.index_of(link_id) else {
+            return;
+        };
+        if let LinkPhase::Active {
+            last_resource_window,
+            last_resource_eifr,
+            ..
+        } = self.columns.phase_mut(index)
+        {
+            *last_resource_window = Some(window);
+            *last_resource_eifr = Some(eifr);
+        }
     }
 
     pub fn note_identified(&mut self, link_id: &LinkId, identity: IdentityHash) {

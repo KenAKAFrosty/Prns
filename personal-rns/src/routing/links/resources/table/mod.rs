@@ -16,7 +16,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::build_outgoing::{BuildOutgoingResourceError, BuiltResource};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceHash, ResourceProof, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN,
-    WINDOW, WINDOW_MAX_SLOW, WINDOW_MIN,
+    PART_TIMEOUT_FACTOR, WINDOW, WINDOW_MAX_SLOW, WINDOW_MIN,
 };
 use crate::routing::links::LinkId;
 
@@ -89,6 +89,18 @@ pub struct IncomingResourceState {
     pub status: IncomingResourceStatus,
     pub retries_left: u8,
     pub request_id: Option<RequestId>,
+    pub measured_rtt_ms: Option<u64>,
+    pub part_timeout_factor: u64,
+    pub request_sent_at: Option<InstantMillis>,
+    pub request_sent_byte_len: u64,
+    pub awaiting_round_first_response: bool,
+    pub received_byte_count: u64,
+    pub received_byte_count_at_request: u64,
+    pub request_response_byte_rate: u64,
+    pub data_byte_rate: u64,
+    pub inherited_eifr: Option<u64>,
+    pub fast_rate_rounds: u8,
+    pub very_slow_rate_rounds: u8,
 }
 
 impl Default for IncomingResourceState {
@@ -111,6 +123,18 @@ impl Default for IncomingResourceState {
             status: IncomingResourceStatus::Transferring,
             retries_left: 0,
             request_id: None,
+            measured_rtt_ms: None,
+            part_timeout_factor: PART_TIMEOUT_FACTOR,
+            request_sent_at: None,
+            request_sent_byte_len: 0,
+            awaiting_round_first_response: false,
+            received_byte_count: 0,
+            received_byte_count_at_request: 0,
+            request_response_byte_rate: 0,
+            data_byte_rate: 0,
+            inherited_eifr: None,
+            fast_rate_rounds: 0,
+            very_slow_rate_rounds: 0,
         }
     }
 }

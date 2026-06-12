@@ -68,6 +68,39 @@ pub const MAX_ADV_RETRIES: u8 = 4;
 /// waits on outstanding parts before retrying.
 pub const PART_TIMEOUT_FACTOR: u64 = 4;
 
+/// RNS 1.3.1 `Resource.PART_TIMEOUT_FACTOR_AFTER_RTT`: once a round trip has
+/// actually been measured, the wait tightens to this multiple.
+pub const PART_TIMEOUT_FACTOR_AFTER_RTT: u64 = 2;
+
+/// RNS 1.3.1 `Resource.RATE_FAST` (50 kbps as bytes/s): the measured rate
+/// past which a round counts toward lifting the window ceiling to
+/// [`WINDOW_MAX`].
+pub const RATE_FAST_BYTES_PER_SECOND: u64 = 50 * 1000 / 8;
+
+/// RNS 1.3.1 `Resource.RATE_VERY_SLOW` (2 kbps as bytes/s): the measured
+/// rate below which a round counts toward dropping the ceiling to
+/// [`WINDOW_MAX_VERY_SLOW`].
+pub const RATE_VERY_SLOW_BYTES_PER_SECOND: u64 = 2 * 1000 / 8;
+
+/// RNS 1.3.1 `Resource.WINDOW_MAX_VERY_SLOW`.
+pub const WINDOW_MAX_VERY_SLOW: usize = 4;
+
+/// RNS 1.3.1 `Resource.FAST_RATE_THRESHOLD` (`WINDOW_MAX_SLOW - WINDOW - 2`
+/// = 4): how many fast rounds earn the lift.
+pub const FAST_RATE_THRESHOLD: u8 = (WINDOW_MAX_SLOW - WINDOW - 2) as u8;
+
+/// RNS 1.3.1 `Resource.VERY_SLOW_RATE_THRESHOLD`: how many very-slow rounds
+/// (with no fast round ever seen) drop the ceiling.
+pub const VERY_SLOW_RATE_THRESHOLD: u8 = 2;
+
+/// What the three establishment frames cost on the wire at the broadcast
+/// MTU: a signalled LINKREQUEST (86), the LRPROOF (118), and the LRRTT (83).
+/// The reference accumulates the actual lengths per link
+/// (`Link.establishment_cost`); ours pins the deterministic total — it seeds
+/// only the very first expected-rate estimate, before any round has been
+/// measured, and converges identically from round one.
+pub const ESTABLISHMENT_COST_ESTIMATE_BYTES: u64 = 86 + 118 + 83;
+
 /// RNS 1.3.1 `Resource.PROOF_TIMEOUT_FACTOR`: the smaller rtt multiple a
 /// sender waits on the proof — proof packets are far smaller than a full
 /// request round trip.
