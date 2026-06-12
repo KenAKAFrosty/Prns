@@ -8,7 +8,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use personal_rns::crypto::{
     ed25519_public_key, ed25519_sign, ed25519_verify, token_open, token_seal,
     x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, TokenKey, X25519SecretKey,
@@ -218,12 +218,17 @@ impl Cycle {
     /// Act three, on the initiator: Ed25519 verify against the announced identity,
     /// and the receipt settles `Delivered`.
     fn settle(&mut self) {
+        let mut proof = core::mem::take(&mut self.proof);
+        self.settle_frame(&mut proof);
+        self.proof = proof;
+    }
+
+    fn settle_frame(&mut self, proof: &mut [u8]) {
         let mut settled = false;
         let Self {
             initiator,
             initiator_entropy,
             interfaces,
-            proof,
             ..
         } = self;
         initiator.ingest_packet_into(
@@ -311,6 +316,38 @@ fn single_cycle(c: &mut Criterion) {
     group.finish();
 }
 
+/// The settle stage with `depth` receipts outstanding — the live initiator's true
+/// position, where window-deep traffic keeps the receipt table populated. An implicit
+/// proof names no row, so the engine trial-verifies until one matches (reference
+/// parity); what this group measures is how many full verifies that trial order costs.
+fn settle_depth(c: &mut Criterion) {
+    let mut group = c.benchmark_group("settle_depth");
+    for depth in [1usize, 8, 16] {
+        group.throughput(Throughput::Elements(depth as u64));
+        group.bench_function(BenchmarkId::from_parameter(depth), |b| {
+            let mut cycle = Cycle::new();
+            b.iter_custom(|iters| {
+                let mut in_stage = Duration::ZERO;
+                for _ in 0..iters {
+                    let mut proofs: Vec<Vec<u8>> = Vec::with_capacity(depth);
+                    for _ in 0..depth {
+                        cycle.seal();
+                        cycle.deliver_prove();
+                        proofs.push(cycle.proof.clone());
+                    }
+                    let begun = Instant::now();
+                    for proof in &mut proofs {
+                        cycle.settle_frame(proof);
+                    }
+                    in_stage += begun.elapsed();
+                }
+                in_stage
+            })
+        });
+    }
+    group.finish();
+}
+
 fn primitives(c: &mut Criterion) {
     let mut group = c.benchmark_group("primitives");
 
@@ -323,8 +360,12 @@ fn primitives(c: &mut Criterion) {
     });
     group.bench_function("ed25519_verify", |b| {
         b.iter(|| {
-            ed25519_verify(black_box(&verifier), black_box(&message), black_box(&signature))
-                .expect("authentic")
+            ed25519_verify(
+                black_box(&verifier),
+                black_box(&message),
+                black_box(&signature),
+            )
+            .expect("authentic")
         })
     });
 
@@ -346,19 +387,23 @@ fn primitives(c: &mut Criterion) {
     group.bench_function("token_seal_300B", |b| {
         let mut out = [0u8; 512];
         b.iter(|| {
-            token_seal(black_box(&key), black_box(&iv), black_box(&plaintext), &mut out)
-                .expect("seals")
+            token_seal(
+                black_box(&key),
+                black_box(&iv),
+                black_box(&plaintext),
+                &mut out,
+            )
+            .expect("seals")
         })
     });
     group.bench_function("token_open_300B", |b| {
         let mut out = [0u8; 512];
         b.iter(|| {
-            token_open(black_box(&key), black_box(&sealed[..sealed_len]), &mut out)
-                .expect("opens")
+            token_open(black_box(&key), black_box(&sealed[..sealed_len]), &mut out).expect("opens")
         })
     });
     group.finish();
 }
 
-criterion_group!(benches, single_cycle, primitives);
+criterion_group!(benches, single_cycle, settle_depth, primitives);
 criterion_main!(benches);
