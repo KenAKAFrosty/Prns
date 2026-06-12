@@ -121,6 +121,12 @@ struct Implementation {
     interop_roles: &'static [&'static str],
     /// The interop mechanisms this impl can field on the roles above.
     interop_mechanisms: &'static [&'static str],
+    /// When set, this impl only interoperates with itself — its wire sub-protocol for the
+    /// mechanism diverges from the others, so cross-impl pairings are skipped. "link" is not one
+    /// protocol across the family: go proves single-style link packets, Leviculum carries a
+    /// Channel multiplexer, and Prns/LXMF-rs exchange plain link data. LXMF-rs's link only lines
+    /// up with itself (and one-directionally with Prns), so it runs as a self-pair ceiling.
+    interop_self_only: bool,
 }
 
 const BOTH_ROLES: &[&str] = &["initiator", "responder"];
@@ -134,6 +140,7 @@ fn implementation(name: &str) -> Implementation {
             label: "Prns",
             interop_roles: BOTH_ROLES,
             interop_mechanisms: BOTH_MECHANISMS,
+            interop_self_only: false,
         },
         "reference" => Implementation {
             name: "reference",
@@ -141,6 +148,7 @@ fn implementation(name: &str) -> Implementation {
             label: "RNS 1.3.1",
             interop_roles: BOTH_ROLES,
             interop_mechanisms: BOTH_MECHANISMS,
+            interop_self_only: false,
         },
         "go-reticulum" => Implementation {
             name: "go-reticulum",
@@ -148,6 +156,7 @@ fn implementation(name: &str) -> Implementation {
             label: "go-reticulum",
             interop_roles: BOTH_ROLES,
             interop_mechanisms: BOTH_MECHANISMS,
+            interop_self_only: false,
         },
         "leviculum" => Implementation {
             name: "leviculum",
@@ -155,6 +164,7 @@ fn implementation(name: &str) -> Implementation {
             label: "Leviculum 0.6.3",
             interop_roles: BOTH_ROLES,
             interop_mechanisms: BOTH_MECHANISMS,
+            interop_self_only: false,
         },
         // rns-cr (Crystal) fields only a single-mechanism initiator at its current commit: its
         // single responder never proves incoming packets (an unimplemented strategy) and its
@@ -167,10 +177,26 @@ fn implementation(name: &str) -> Implementation {
             label: "rns-cr 0.1.0",
             interop_roles: &["initiator"],
             interop_mechanisms: &["single"],
+            interop_self_only: false,
+        },
+        // LXMF-rs fields links (both roles) but not single-packet proofs, and its link wire —
+        // plain link data, no surfaced per-message proof — interoperates only with itself (and
+        // one-directionally with Prns). go's single-style link proofs and Leviculum's Channel
+        // multiplexer don't line up with it, so it runs as a self-pair link ceiling. See the
+        // `interop_self_only` note on the struct field for the wider "link isn't one protocol"
+        // dynamic this surfaces.
+        "lxmf-rs" => Implementation {
+            name: "lxmf-rs",
+            slug: "lxmf-rs",
+            label: "LXMF-rs 0.2.0",
+            interop_roles: BOTH_ROLES,
+            interop_mechanisms: &["link"],
+            interop_self_only: true,
         },
         other => {
             panic!(
-                "unknown implementation {other:?} (self|reference|go-reticulum|leviculum|rns-cr)"
+                "unknown implementation {other:?} \
+                 (self|reference|go-reticulum|leviculum|rns-cr|lxmf-rs)"
             )
         }
     }
@@ -196,6 +222,15 @@ fn unsupported_pairing(
     if !responder.interop_roles.contains(&"responder") {
         return Some(format!("{} fields no responder", responder.name));
     }
+    if (initiator.interop_self_only || responder.interop_self_only)
+        && initiator.name != responder.name
+    {
+        let odd = if initiator.interop_self_only { initiator.name } else { responder.name };
+        return Some(format!(
+            "{odd}'s {mechanism} wire interoperates only with itself (the mechanism is not one \
+             protocol across impls)"
+        ));
+    }
     None
 }
 
@@ -209,6 +244,7 @@ impl Implementation {
             "go-reticulum" => Some(Command::new(external_node("go-reticulum", "go-node"))),
             "leviculum" => Some(Command::new(external_node("leviculum", "leviculum-node"))),
             "rns-cr" => Some(Command::new(external_node("rns-cr", "rnscr-node"))),
+            "lxmf-rs" => Some(Command::new(external_node("lxmf-rs", "lxmf-node"))),
             _ => None,
         }
     }

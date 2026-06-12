@@ -40,6 +40,11 @@ clone_pinned "https://github.com/jtippett/rns-cr.git" 514c309 "$RNSCR"
     -o "$HERE/external/rns-cr/interop/rnscr-node" \
     "$HERE/external/rns-cr/interop/node.cr" )
 
+echo "== lxmf-rs =="
+clone_pinned "https://github.com/FreeTAKTeam/LXMF-rs.git" 30da190 "$HERE/external/lxmf-rs/.upstream"
+( cd "$HERE/external/lxmf-rs/interop" && cargo build --quiet --release \
+    && cp target/release/lxmf-node lxmf-node )
+
 echo
 echo "Built. Register this machine once with:  cargo run --release --bin describe_host"
 echo "Then measure:  sudo env \"PATH=\$PATH\" ./run.sh"

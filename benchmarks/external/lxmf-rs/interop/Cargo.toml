@@ -1,0 +1,27 @@
+[package]
+name = "lxmf-node"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "lxmf-node"
+path = "src/main.rs"
+
+[dependencies]
+# The pinned upstream's Reticulum stack, depended on by path. LXMF-rs implements links
+# (establish, channel data, per-message proof) but not single-packet proofs, so this node
+# fields the link mechanism only — the orchestrator gates it there.
+rns-transport = { package = "reticulum-rs-transport", path = "../.upstream/crates/libs/rns-transport" }
+rns-core = { package = "reticulum-rs-core", path = "../.upstream/crates/libs/rns-core" }
+tokio = { version = "1", features = ["full"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+serde_json = "1"
+env_logger = "0.11"
+
+# Standalone workspace root so this crate is never pulled into the upstream workspace under
+# ../.upstream (and never inherits its .cargo/config aliases).
+[workspace]
+
+[profile.release]
+opt-level = 3
