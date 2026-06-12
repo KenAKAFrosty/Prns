@@ -358,6 +358,10 @@ async fn main() {
         relay_node(&manifest).await;
         return;
     }
+    if role == "chain" {
+        chain_node(&addr).await;
+        return;
+    }
     match role.as_str() {
         "responder" => {
             let bound = if manifest.profile.topology == "relay" {
@@ -1247,6 +1251,64 @@ async fn relay_node(manifest: &Manifest) {
         |_: Journaled<'_>| {},
     ));
     println!("READY role=relay addr={addr_a}>{addr_b}");
+    std::future::pending::<()>().await;
+}
+
+/// A pure transport node in a trunk: listen for the next hop downstream, dial the
+/// previous hop upstream, switch everything between them.
+async fn chain_node(upstream: &str) {
+    let engine = EngineState::<GrowableHeap>::new(fresh_identity());
+
+    let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (in_down_tx, in_down_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (out_down_tx, out_down_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (in_up_tx, in_up_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (out_up_tx, out_up_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let seam_down =
+        TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_down_tx, notify_tx.clone(), out_down_rx);
+    let seam_up =
+        TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in_up_tx, notify_tx, out_up_rx);
+    let egress = Egress::new(vec![
+        (TCP_INTERFACE_ID, out_down_tx),
+        (RELAY_SECOND_INTERFACE_ID, out_up_tx),
+    ]);
+    let interfaces = vec![
+        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
+        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
+    ];
+
+    let downstream = TcpServerInterface::bind(
+        TCP_INTERFACE_ID,
+        "127.0.0.1:0",
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+    )
+    .await
+    .expect("binds downstream side");
+    let addr = downstream.local_addr().expect("bound address");
+    let up = TcpClientInterface::new(
+        RELAY_SECOND_INTERFACE_ID,
+        upstream.to_string(),
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+        Duration::from_millis(100),
+    );
+    tokio::spawn(downstream.run(seam_down));
+    tokio::spawn(up.run(seam_up));
+    tokio::spawn(run(
+        engine,
+        interfaces,
+        vec![],
+        TokioHost::new(),
+        notify_rx,
+        vec![
+            (TCP_INTERFACE_ID, in_down_rx),
+            (RELAY_SECOND_INTERFACE_ID, in_up_rx),
+        ],
+        command_rx,
+        egress,
+        |_: Journaled<'_>| {},
+    ));
+    println!("READY role=chain addr={addr}");
     std::future::pending::<()>().await;
 }
 

@@ -10,7 +10,9 @@
 //! the protocol's overhead ratio, measured where it can't lie. Forwarding happens in
 //! 64-byte slices with individual release times: a real wire delivers a clump's leading
 //! frame after only its own airtime, so chunk-atomic delivery would invent a convoy
-//! penalty the physics doesn't charge. The release schedule is absolute — each slice's
+//! penalty the physics doesn't charge — slices grow with the rate (one millisecond of
+//! airtime, 64 B to 2 KiB) since sub-millisecond granularity buys nothing once the fixed
+//! latency dominates. The release schedule is absolute — each slice's
 //! due time advances by exact airtime, the clock only re-clamps to now when the source
 //! went idle, and backpressure is the bounded queue — so timer rounding delays a write
 //! without ever stealing channel throughput.
@@ -115,7 +117,8 @@ async fn pump(
         };
         counter.fetch_add(read as u64, Ordering::Relaxed);
         channel_free_at = channel_free_at.max(tokio::time::Instant::now());
-        for slice in buffer[..read].chunks(64) {
+        let slice_len = (rate_bps as usize / 8_000).clamp(64, 2048);
+        for slice in buffer[..read].chunks(slice_len) {
             let airtime = Duration::from_secs_f64(slice.len() as f64 * 8.0 / rate_bps as f64);
             channel_free_at += airtime;
             if delayed_tx

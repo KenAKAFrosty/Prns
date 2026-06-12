@@ -1,0 +1,19 @@
+{
+  "name": "link-firehose-chain",
+  "version": 1,
+  "description": "The link firehose carried across a trunk of five pure transport nodes - six hops leaf to leaf, every packet switched five times each way. Same traffic as link-firehose-small-payload; the delta against the direct table IS the stacked per-hop transport tax: throughput lost to five switch decisions and rtt grown by five store-and-forwards, measured at the only place it matters - end to end.",
+  "roles": [
+    "responder",
+    "chain",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "link",
+    "window": 16,
+    "duration_ms": 30000,
+    "payload_min": 60,
+    "payload_max": 420,
+    "topology": "chain"
+  },
+  "conformance": "sent == delivered + timeouts end to end across six hops; the trunk neither drops nor reorders on a quiet box"
+}

@@ -101,6 +101,40 @@ def relay(name, _addr):
         time.sleep(3600)
 
 
+def chain(name, addr):
+    """A pure transport node in a trunk: listen for the next hop downstream, dial the
+    previous hop upstream, switch everything between them."""
+    port = free_port()
+    host, upstream_port = addr.rsplit(":", 1)
+    block = (
+        "  [[Chain Down]]\n"
+        "    type = TCPServerInterface\n"
+        "    enabled = True\n"
+        "    listen_ip = 127.0.0.1\n"
+        f"    listen_port = {port}\n"
+        "  [[Chain Up]]\n"
+        "    type = TCPClientInterface\n"
+        "    enabled = True\n"
+        f"    target_host = {host}\n"
+        f"    target_port = {upstream_port}\n"
+    )
+    configdir = tempfile.mkdtemp(prefix="rns-scenario-chain-")
+    with open(os.path.join(configdir, "config"), "w") as f:
+        f.write(
+            "[reticulum]\n"
+            "  enable_transport = True\n"
+            "  share_instance = No\n"
+            "  panic_on_interface_error = No\n"
+            "[logging]\n"
+            f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
+            "[interfaces]\n" + block
+        )
+    RNS.Reticulum(configdir=configdir)
+    print(f"READY role=chain addr=127.0.0.1:{port}", flush=True)
+    while True:
+        time.sleep(3600)
+
+
 def interface_block(wire, role, addr, topology="direct"):
     """One role's interface config plus the address its READY line should carry. UDP is
     symmetric (the orchestrator pre-assigns both ends as local>peer, the reference's
@@ -859,6 +893,9 @@ def main():
     topology = manifest["profile"].get("topology", "direct")
     if role == "relay":
         relay(manifest["name"], addr)
+        return
+    if role == "chain":
+        chain(manifest["name"], addr)
         return
     if role not in ("responder", "initiator"):
         sys.exit(usage)

@@ -1,0 +1,22 @@
+{
+  "name": "resource-internet",
+  "version": 1,
+  "description": "Sequential resource transfers (20-120 KB) through a shaped pipe at an internet wire: 50 Mbps with 25 ms one-way latency - the TCP hop to a remote community instance. Bandwidth is cheap, round trips are not: every handshake the protocol spends costs 50 ms.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "resource",
+    "payload_min": 20000,
+    "payload_max": 120000,
+    "window": 1,
+    "duration_ms": 30000,
+    "wire_shape": {
+      "label": "internet",
+      "rate_bps": 50000000,
+      "latency_ms": 25
+    }
+  },
+  "conformance": "settled == received with byte-identical totals and zero failures; the pipe delays, it never drops"
+}
