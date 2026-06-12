@@ -189,6 +189,10 @@ struct Pairing {
     rtt_p50: Option<f64>,
     rtt_p99: Option<f64>,
     mj_per_delivered: Option<f64>,
+    /// The combined energy apportioned to each role by its CPU-time share (initiator = sender,
+    /// responder = receiver/prover). Both `None` until an energy run files them.
+    init_mj_per_delivered: Option<f64>,
+    resp_mj_per_delivered: Option<f64>,
     init_rss_bytes: Option<f64>,
     resp_rss_bytes: Option<f64>,
 }
@@ -230,6 +234,8 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
         rtt_p50: Option<f64>,
         rtt_p99: Option<f64>,
         mj_per_delivered: Option<f64>,
+        init_mj_per_delivered: Option<f64>,
+        resp_mj_per_delivered: Option<f64>,
         init_rss_bytes: Option<f64>,
         resp_rss_bytes: Option<f64>,
     }
@@ -249,6 +255,12 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
             (Axis::Latency, "rtt_p50_ms") => acc.rtt_p50 = row.value,
             (Axis::Latency, "rtt_p99_ms") => acc.rtt_p99 = row.value,
             (Axis::Energy, "net_millijoules_per_delivered") => acc.mj_per_delivered = row.value,
+            (Axis::Energy, "initiator_net_millijoules_per_delivered") => {
+                acc.init_mj_per_delivered = row.value
+            }
+            (Axis::Energy, "responder_net_millijoules_per_delivered") => {
+                acc.resp_mj_per_delivered = row.value
+            }
             (Axis::Memory, "initiator_peak_rss_bytes") => acc.init_rss_bytes = row.value,
             (Axis::Memory, "responder_peak_rss_bytes") => acc.resp_rss_bytes = row.value,
             _ => {}
@@ -270,6 +282,8 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
                 rtt_p50: acc.rtt_p50,
                 rtt_p99: acc.rtt_p99,
                 mj_per_delivered: acc.mj_per_delivered,
+                init_mj_per_delivered: acc.init_mj_per_delivered,
+                resp_mj_per_delivered: acc.resp_mj_per_delivered,
                 init_rss_bytes: acc.init_rss_bytes,
                 resp_rss_bytes: acc.resp_rss_bytes,
             }
@@ -380,7 +394,7 @@ fn render_interop(
             goodput_cell(p.goodput_bytes_per_sec),
             rtt_cell(p.rtt_p50, p.rtt_p99),
             rss_cell(p.init_rss_bytes, p.resp_rss_bytes),
-            energy_cell(p.mj_per_delivered),
+            energy_cell(p.mj_per_delivered, p.init_mj_per_delivered, p.resp_mj_per_delivered),
         );
     }
 
@@ -451,9 +465,16 @@ fn rtt_cell(p50: Option<f64>, p99: Option<f64>) -> String {
 /// A delivered message can never cost zero joules — a non-positive figure means the run's
 /// package energy fell below the idle baseline (baseline drift), so it renders as pending
 /// rather than as an impossibly perfect number.
-fn energy_cell(value: Option<f64>) -> String {
-    match value {
-        Some(mj) if mj > 0.0 => format!("{mj:.2} mJ"),
+/// The combined energy per delivered message, with the CPU-apportioned sender/receiver split
+/// appended when an energy run filed it (`i` = initiator, `r` = responder).
+fn energy_cell(combined: Option<f64>, init: Option<f64>, resp: Option<f64>) -> String {
+    match combined {
+        Some(mj) if mj > 0.0 => match (init, resp) {
+            (Some(i), Some(r)) if i > 0.0 || r > 0.0 => {
+                format!("{mj:.2} mJ \u{00b7} i {i:.2} / r {r:.2}")
+            }
+            _ => format!("{mj:.2} mJ"),
+        },
         _ => pending(),
     }
 }
@@ -581,7 +602,7 @@ const HOST_FOOTNOTES: &str = "
 - _Goodput_ — delivered application payload per second (framing excluded).
 - _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.
 - _Peak RSS_ — peak resident set size (the physical RAM a process holds), initiator / responder, reaped from outside so a contestant can't under-report it.
-- _Energy / msg_ — (package energy − idle baseline) ÷ delivered: the joules a node actually pays per delivered message. Needs `sudo` for the power counters; renders pending without.
+- _Energy / msg_ — (package energy − idle baseline) ÷ delivered: the joules per delivered message. The power counters are package-domain, so this is the *combined* cost of both roles on the SoC; only the diagonal (a self-pair) is a single impl. The `i … / r …` split apportions it to initiator vs responder by their CPU-time share — the honest cross-platform proxy (Linux RAPL has no per-process counter), exact only insofar as power tracks CPU time. Needs `sudo` for the power counters; renders pending without.
 
 Regenerate: `sudo env \"PATH=$PATH\" ./run.sh` (root, for the power counters), then `cargo run --bin render_results`.
 ";

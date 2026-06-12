@@ -757,6 +757,11 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             Some(responder_rss as f64),
             "bytes",
         ),
+        // Per-role CPU seconds, sampled from outside each process — the raw signal that lets a
+        // package-domain energy figure (which the meter can only read for the whole SoC, both
+        // roles at once) be apportioned to sender vs receiver by their CPU-time share.
+        row(Axis::Energy, "initiator_cpu_seconds", Some(initiator_cpu), "s"),
+        row(Axis::Energy, "responder_cpu_seconds", Some(responder_cpu), "s"),
     ];
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
         let net_joules = raw_joules - idle_watts * wall_seconds;
@@ -787,11 +792,40 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             per_delivered_mj,
             "mJ/msg",
         ));
+        // Apportion the package energy to each role by its CPU-time share. The meter is
+        // package-domain (and on Linux RAPL there is no per-process counter at all), so
+        // CPU-share is the honest cross-platform proxy for splitting a pairing's cost into
+        // sender and receiver — exact only insofar as power tracks CPU time, which a sign-heavy
+        // initiator vs a verify-heavy responder bends, so read it as attribution, not ground
+        // truth. The combined figure above remains the measured one.
+        let total_cpu = initiator_cpu + responder_cpu;
+        let initiator_share = if total_cpu > 0.0 {
+            initiator_cpu / total_cpu
+        } else {
+            0.5
+        };
+        rows.push(row(
+            Axis::Energy,
+            "initiator_net_millijoules_per_delivered",
+            per_delivered_mj.map(|mj| mj * initiator_share),
+            "mJ/msg",
+        ));
+        rows.push(row(
+            Axis::Energy,
+            "responder_net_millijoules_per_delivered",
+            per_delivered_mj.map(|mj| mj * (1.0 - initiator_share)),
+            "mJ/msg",
+        ));
         if measurable {
+            let combined = per_delivered_mj.unwrap_or(f64::NAN);
             println!(
                 "\nSUMMARY energy raw={raw_joules:.1}J over {wall_seconds:.1}s \
-                 (idle {idle_watts:.2}W) | net={net_joules:.1}J | {:.2} mJ/msg",
-                per_delivered_mj.unwrap_or(f64::NAN),
+                 (idle {idle_watts:.2}W) | net={net_joules:.1}J | {combined:.2} mJ/msg \
+                 (initiator {:.2} / responder {:.2}, by cpu {:.0}%/{:.0}%)",
+                combined * initiator_share,
+                combined * (1.0 - initiator_share),
+                initiator_share * 100.0,
+                (1.0 - initiator_share) * 100.0,
             );
         } else {
             println!(
