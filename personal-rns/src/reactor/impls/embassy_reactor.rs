@@ -771,7 +771,8 @@ mod tests {
             | Journaled::ResponseReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
-            | Journaled::ResourceFailed { .. } => {}
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. } => {}
         };
 
         let outcome = block_on(async {

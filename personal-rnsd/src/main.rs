@@ -213,6 +213,14 @@ fn log_journaled(journaled: Journaled<'_>) {
                 data.len(),
             );
         }
+        Journaled::ResourceNeedsDecompression { link_id, hash, stream, uncompressed_data_len } => {
+            println!(
+                "RNSD_RESOURCE_NEEDS_DECOMPRESSION link_id={:02x?} hash={:02x?} stream_len={} data_len={uncompressed_data_len}",
+                link_id.as_bytes(),
+                &hash.as_bytes()[..4],
+                stream.len(),
+            );
+        }
         Journaled::ResourceFailed { link_id, hash } => {
             println!(
                 "RNSD_RESOURCE_FAILED link_id={:02x?} hash={:02x?}",

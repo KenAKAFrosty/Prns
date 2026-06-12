@@ -378,11 +378,6 @@ impl<S: EngineStorage> EngineState<S> {
             return;
         };
         let state = *self.incoming_resources.state(index);
-        if state.compression == ResourceCompression::Bz2 {
-            self.incoming_resources.state_mut(index).status =
-                IncomingResourceStatus::AwaitingDecompression;
-            return;
-        }
         let Some(LinkPhase::Active {
             key,
             mtu,
@@ -395,28 +390,42 @@ impl<S: EngineStorage> EngineState<S> {
         let mtu = *mtu;
         let fire_on = *attached_interface;
 
+        if state.compression == ResourceCompression::Bz2 {
+            let mut opened = false;
+            {
+                let transfer = self.incoming_resources.sealed_transfer_mut(index);
+                if let Ok(stream) = open_transfer(key, transfer) {
+                    sink(EngineReaction::Journaled(
+                        Journaled::ResourceNeedsDecompression {
+                            link_id: *link_id,
+                            hash: *hash,
+                            stream,
+                            uncompressed_data_len: state.uncompressed_data_len,
+                        },
+                    ));
+                    opened = true;
+                }
+            }
+            if opened {
+                self.incoming_resources.state_mut(index).status =
+                    IncomingResourceStatus::AwaitingDecompression;
+            } else {
+                self.incoming_resources.remove(link_id, hash);
+                sink(EngineReaction::Journaled(Journaled::ResourceFailed {
+                    link_id: *link_id,
+                    hash: *hash,
+                }));
+            }
+            return;
+        }
+
         let mut delivered = false;
         {
             let transfer = self.incoming_resources.sealed_transfer_mut(index);
             if let Ok(plaintext) = open_transfer(key, transfer) {
                 if let Ok(proof) = verify_and_prove(plaintext, &state.salt_nonce, hash) {
-                    let mut proof_plaintext = [0u8; PROOF_PLAINTEXT_LEN];
-                    if write_proof_plaintext(hash, &proof, &mut proof_plaintext).is_ok() {
-                        let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                            write_link_raw_packet(
-                                link_id,
-                                PacketType::Proof,
-                                WireContext::ResourceProof,
-                                mtu,
-                                &proof_plaintext,
-                                slot,
-                            )
-                            .ok()
-                        };
-                        sink(EngineReaction::Directive(Directive::EmitFrame {
-                            target: fire_on,
-                            fill: &mut fill,
-                        }));
+                    if let Some(prove) = proof_emission(link_id, hash, &proof, mtu) {
+                        emit_proof(prove, fire_on, sink);
                         sink(EngineReaction::Journaled(Journaled::ResourceReceived {
                             link_id: *link_id,
                             hash: *hash,
@@ -435,6 +444,109 @@ impl<S: EngineStorage> EngineState<S> {
             }));
         }
     }
+
+    /// The host's answer to [`Journaled::ResourceNeedsDecompression`]: the
+    /// inflated plaintext, in a buffer the host sized from the advertised
+    /// length. The engine verifies it exactly like an uncompressed assembly —
+    /// a wrong length, a wrong hash, or a vanished link all retire the row
+    /// as failed (the host signals its own inflate failure by answering with
+    /// an empty slice). A borrow-taking entry point beside the command
+    /// queue, like `ingest_send_resource_into`: a mebibyte never rides an
+    /// enum.
+    pub fn provide_decompressed(
+        &mut self,
+        link_id: LinkId,
+        hash: ResourceHash,
+        plaintext: &[u8],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(index) = self.incoming_resources.lookup(&link_id, &hash) else {
+            return;
+        };
+        let state = *self.incoming_resources.state(index);
+        if state.status != IncomingResourceStatus::AwaitingDecompression {
+            return;
+        }
+        self.incoming_resources.remove(&link_id, &hash);
+
+        let verified = u64::try_from(plaintext.len()) == Ok(state.uncompressed_data_len)
+            && self.links.phase_for(&link_id).is_some();
+        let proven = verified
+            .then(|| verify_and_prove(plaintext, &state.salt_nonce, &hash).ok())
+            .flatten();
+        let emission = proven.and_then(|proof| {
+            let LinkPhase::Active {
+                mtu,
+                attached_interface,
+                ..
+            } = self.links.phase_for(&link_id)?
+            else {
+                return None;
+            };
+            Some((proof, *mtu, *attached_interface))
+        });
+        match emission {
+            Some((proof, mtu, fire_on)) => {
+                if let Some(prove) = proof_emission(&link_id, &hash, &proof, mtu) {
+                    emit_proof(prove, fire_on, sink);
+                }
+                sink(EngineReaction::Journaled(Journaled::ResourceReceived {
+                    link_id,
+                    hash,
+                    data: plaintext,
+                }));
+            }
+            None => {
+                sink(EngineReaction::Journaled(Journaled::ResourceFailed {
+                    link_id,
+                    hash,
+                }));
+            }
+        }
+    }
+}
+
+struct ProofEmission {
+    link_id: LinkId,
+    plaintext: [u8; PROOF_PLAINTEXT_LEN],
+    mtu: usize,
+}
+
+fn proof_emission(
+    link_id: &LinkId,
+    hash: &ResourceHash,
+    proof: &crate::routing::links::resources::ResourceProof,
+    mtu: usize,
+) -> Option<ProofEmission> {
+    let mut plaintext = [0u8; PROOF_PLAINTEXT_LEN];
+    write_proof_plaintext(hash, proof, &mut plaintext).ok()?;
+    Some(ProofEmission {
+        link_id: *link_id,
+        plaintext,
+        mtu,
+    })
+}
+
+fn emit_proof(
+    prove: ProofEmission,
+    fire_on: crate::interfaces::InterfaceId,
+    sink: &mut impl FnMut(EngineReaction<'_>),
+) {
+    let mut fill = |slot: &mut [u8]| -> Option<usize> {
+        write_link_raw_packet(
+            &prove.link_id,
+            PacketType::Proof,
+            WireContext::ResourceProof,
+            prove.mtu,
+            &prove.plaintext,
+            slot,
+        )
+        .ok()
+    };
+    sink(EngineReaction::Directive(Directive::EmitFrame {
+        target: fire_on,
+        fill: &mut fill,
+    }));
 }
 
 #[cfg(test)]
@@ -1107,5 +1219,176 @@ mod loop_tests {
         assert!(receiver.incoming_resources.is_empty());
 
         let _ = WirePacketType::Proof;
+    }
+}
+
+#[cfg(test)]
+mod seam_tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::engine::commands::Settlement;
+    use crate::engine::test_support::filled_frame;
+    use crate::engine::Journaled;
+    use crate::routing::links::resources::table::IncomingResourceStatus;
+
+    fn case1_plaintext() -> std::vec::Vec<u8> {
+        b"reticulum resources ride the link ".repeat(40)
+    }
+
+    #[test]
+    fn a_compressed_transfer_crosses_through_the_host_inflate_seam() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let plaintext = case1_plaintext();
+        let candidate = hx(CASE1_BZ2);
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &plaintext,
+            Some(&candidate),
+            None,
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        assert_eq!(serve.frames.len(), 1, "the compressed stream is one part");
+
+        let mut needs = None;
+        let mut raw = serve.frames[0].1.clone();
+        receiver.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            crate::engine::test_support::TEST_ENTROPY,
+            &[crate::engine::test_support::routable_descriptor(lane())],
+            InstantMillis(2_200),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
+                    hash,
+                    stream,
+                    uncompressed_data_len,
+                    ..
+                }) = reaction
+                {
+                    needs = Some((hash, stream.to_vec(), uncompressed_data_len));
+                }
+            },
+        );
+        let (hash, stream, advertised_len) = needs.expect("the seam asks the host to inflate");
+        assert_eq!(
+            stream,
+            hx(CASE1_BZ2),
+            "the host receives exactly the bz2 stream the sender compressed",
+        );
+        assert_eq!(advertised_len, 1_360);
+        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        assert_eq!(
+            receiver.incoming_resources.state(index).status,
+            IncomingResourceStatus::AwaitingDecompression,
+        );
+
+        let mut frames = std::vec::Vec::new();
+        let mut received = std::vec::Vec::new();
+        receiver.provide_decompressed(link_id(), hash, &plaintext, &mut |reaction| {
+            match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        frames.push(frame);
+                    }
+                }
+                EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) => {
+                    received.push(data.to_vec());
+                }
+                _ => {}
+            }
+        });
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0], plaintext);
+        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(frames.len(), 1, "the proof rides back");
+
+        let settled = feed(&mut sender, &frames[0], 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+        assert!(sender.outgoing_resources.is_empty());
+    }
+
+    #[test]
+    fn a_wrong_or_empty_inflate_fails_the_transfer_by_hash() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let plaintext = case1_plaintext();
+        let candidate = hx(CASE1_BZ2);
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &plaintext,
+            Some(&candidate),
+            None,
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let conclusion = feed(&mut receiver, &serve.frames[0].1, 2_200);
+        assert!(conclusion.received.is_empty());
+        let hash = *receiver.incoming_resources.hash_at(0);
+
+        let mut corrupted = plaintext.clone();
+        corrupted[0] ^= 1;
+        let mut failed = std::vec::Vec::new();
+        let mut frames = 0usize;
+        receiver.provide_decompressed(link_id(), hash, &corrupted, &mut |reaction| {
+            match reaction {
+                EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
+                    failed.push(hash);
+                }
+                EngineReaction::Directive(_) => frames += 1,
+                _ => {}
+            }
+        });
+        assert_eq!(failed.len(), 1);
+        assert_eq!(frames, 0, "a failed inflate proves nothing");
+        assert!(receiver.incoming_resources.is_empty());
+
+        receiver.provide_decompressed(link_id(), hash, &plaintext, &mut |_| {
+            panic!("a retired transfer answers nothing");
+        });
+    }
+
+    #[test]
+    fn the_seam_only_answers_transfers_awaiting_decompression() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let mut touched = false;
+        receiver.provide_decompressed(
+            link_id(),
+            ResourceHash::new([0x42; 32]),
+            b"anything",
+            &mut |_| touched = true,
+        );
+        assert!(!touched, "an unknown transfer answers nothing");
     }
 }

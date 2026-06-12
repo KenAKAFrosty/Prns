@@ -883,7 +883,8 @@ mod tests {
             | Journaled::ResponseReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
-            | Journaled::ResourceFailed { .. } => {}
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1215,7 +1216,8 @@ mod tests {
             | Journaled::ResponseReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
-            | Journaled::ResourceFailed { .. } => {}
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1429,7 +1431,8 @@ mod tests {
             | Journaled::ResponseReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
-            | Journaled::ResourceFailed { .. } => {}
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1540,7 +1543,8 @@ mod tests {
             | Journaled::ResponseReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
-            | Journaled::ResourceFailed { .. } => {}
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. } => {}
         };
 
         tokio::spawn(run(

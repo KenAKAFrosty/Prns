@@ -71,6 +71,18 @@ pub enum Journaled<'a> {
         link_id: LinkId,
         hash: ResourceHash,
     },
+    /// A complete compressed transfer opened to its bz2 stream — the host
+    /// owns the inflate. It answers with `provide_decompressed`, sizing its
+    /// output buffer from `uncompressed_data_len` (the advertised size every
+    /// honest stream fills exactly — the engine's decompression-bomb guard).
+    /// The stream bytes are borrowed from the register and gone after this
+    /// reaction returns.
+    ResourceNeedsDecompression {
+        link_id: LinkId,
+        hash: ResourceHash,
+        stream: &'a [u8],
+        uncompressed_data_len: u64,
+    },
     RouteExpired {
         destination: DestinationHash,
     },
