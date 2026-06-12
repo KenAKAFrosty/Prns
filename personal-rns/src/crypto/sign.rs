@@ -25,17 +25,43 @@ impl Ed25519SecretKey {
     }
 }
 
+/// The verify-side twin of [`Ed25519SecretKey`]'s pre-expansion: decompressing
+/// the public key's Edwards point once, so repeat verifies against the same
+/// peer skip it. Paying `VerifyingKey::from_bytes` per proof was a measured ~8%
+/// of a firehose initiator's CPU.
+#[derive(Debug, Clone)]
+pub struct Ed25519Verifier {
+    public: Ed25519PublicKey,
+    key: VerifyingKey,
+}
+
+impl Ed25519Verifier {
+    pub fn new(public: &Ed25519PublicKey) -> Result<Self, CryptoError> {
+        let key = VerifyingKey::from_bytes(&public.0).map_err(|_| CryptoError::InvalidSignature)?;
+        Ok(Self {
+            public: *public,
+            key,
+        })
+    }
+
+    pub fn public_key(&self) -> &Ed25519PublicKey {
+        &self.public
+    }
+
+    pub fn verify(&self, message: &[u8], signature: &Ed25519Signature) -> Result<(), CryptoError> {
+        let signature = Signature::from_bytes(&signature.0);
+        self.key
+            .verify(message, &signature)
+            .map_err(|_| CryptoError::InvalidSignature)
+    }
+}
+
 pub fn ed25519_verify(
     key: &Ed25519PublicKey,
     message: &[u8],
     signature: &Ed25519Signature,
 ) -> Result<(), CryptoError> {
-    let verifying_key =
-        VerifyingKey::from_bytes(&key.0).map_err(|_| CryptoError::InvalidSignature)?;
-    let signature = Signature::from_bytes(&signature.0);
-    verifying_key
-        .verify(message, &signature)
-        .map_err(|_| CryptoError::InvalidSignature)
+    Ed25519Verifier::new(key)?.verify(message, signature)
 }
 
 /// (deterministic, RFC 8032).

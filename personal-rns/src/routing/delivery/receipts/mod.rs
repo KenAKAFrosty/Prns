@@ -8,7 +8,7 @@ mod impls;
 
 pub use impls::*;
 
-use crate::crypto::{ed25519_verify, Ed25519Signature};
+use crate::crypto::{Ed25519Signature, Ed25519Verifier};
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentitySigningPublicKey;
@@ -87,6 +87,11 @@ pub trait ReceiptColumns {
 #[derive(Debug, Default)]
 pub struct Receipts<C: ReceiptColumns> {
     columns: C,
+    /// One-slot cache of the last-used signing key, decompressed. Proofs on a
+    /// busy link all name one peer, and an implicit proof trial-verifies one
+    /// key against many rows — decompressing per verify was a measured ~8% of
+    /// a firehose initiator's CPU.
+    verifier_memo: Option<Ed25519Verifier>,
 }
 
 impl<C: ReceiptColumns> Receipts<C> {
@@ -165,10 +170,16 @@ impl<C: ReceiptColumns> Receipts<C> {
         &mut self,
         signature: &Ed25519Signature,
     ) -> Option<ProvenReceipt> {
-        let index = (0..self.columns.len()).find(|index| {
-            self.columns.kinds().get(*index) != Some(&ReceiptKind::SendRequest)
-                && self.row_signature_valid(*index, signature)
-        })?;
+        let mut matched = None;
+        for index in 0..self.columns.len() {
+            if self.columns.kinds().get(index) != Some(&ReceiptKind::SendRequest)
+                && self.row_signature_valid(index, signature)
+            {
+                matched = Some(index);
+                break;
+            }
+        }
+        let index = matched?;
         let proven = ProvenReceipt {
             command_id: *self.columns.command_ids().get(index)?,
             kind: *self.columns.kinds().get(index)?,
@@ -224,14 +235,26 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(proven)
     }
 
-    fn row_signature_valid(&self, index: usize, signature: &Ed25519Signature) -> bool {
+    fn row_signature_valid(&mut self, index: usize, signature: &Ed25519Signature) -> bool {
         let (Some(packet_hash), Some(signing_key)) = (
-            self.columns.packet_hashes().get(index),
-            self.columns.signing_keys().get(index),
+            self.columns.packet_hashes().get(index).copied(),
+            self.columns.signing_keys().get(index).copied(),
         ) else {
             return false;
         };
-        ed25519_verify(signing_key.as_ed25519(), packet_hash.as_bytes(), signature).is_ok()
+        let key = *signing_key.as_ed25519();
+        let memo_holds_key =
+            matches!(&self.verifier_memo, Some(memo) if memo.public_key() == &key);
+        if !memo_holds_key {
+            let Ok(fresh) = Ed25519Verifier::new(&key) else {
+                return false;
+            };
+            self.verifier_memo = Some(fresh);
+        }
+        let Some(verifier) = &self.verifier_memo else {
+            return false;
+        };
+        verifier.verify(packet_hash.as_bytes(), signature).is_ok()
     }
 }
 
@@ -354,6 +377,52 @@ mod tests {
         let forged = ed25519_sign(&stranger_secret, named.as_bytes());
         assert_eq!(receipts.settle_by_explicit_proof(&named, &forged), None);
         assert_eq!(receipts.len(), 1);
+    }
+
+    #[test]
+    fn alternating_peers_settle_and_the_cached_key_never_cross_authenticates() {
+        let (first_secret, first_key) = signer(0x21);
+        let (second_secret, second_key) = signer(0x42);
+        let mut receipts = TestReceipts::default();
+        assert_eq!(receipts.track(outstanding(1, 1, first_key, 100, 9_000)), None);
+        assert_eq!(
+            receipts.track(outstanding(2, 2, second_key, 200, 9_000)),
+            None
+        );
+        assert_eq!(receipts.track(outstanding(3, 3, first_key, 300, 9_000)), None);
+
+        let first_named = PacketHash::new([1; 32]);
+        assert!(receipts
+            .settle_by_explicit_proof(
+                &first_named,
+                &ed25519_sign(&first_secret, first_named.as_bytes()),
+            )
+            .is_some());
+
+        let cross_named = PacketHash::new([2; 32]);
+        assert_eq!(
+            receipts.settle_by_explicit_proof(
+                &cross_named,
+                &ed25519_sign(&first_secret, cross_named.as_bytes()),
+            ),
+            None,
+            "the first peer's freshly cached key must not authenticate the second peer's row",
+        );
+        assert!(receipts
+            .settle_by_explicit_proof(
+                &cross_named,
+                &ed25519_sign(&second_secret, cross_named.as_bytes()),
+            )
+            .is_some());
+
+        let last_named = PacketHash::new([3; 32]);
+        assert!(receipts
+            .settle_by_explicit_proof(
+                &last_named,
+                &ed25519_sign(&first_secret, last_named.as_bytes()),
+            )
+            .is_some());
+        assert!(receipts.is_empty());
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub use kdf::{hkdf_sha256, hkdf_sha256_into};
 pub use mac::{hmac_sha256, hmac_sha256_verify};
 pub use sign::{
     ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519PublicKey, Ed25519SecretKey,
-    Ed25519Signature,
+    Ed25519Signature, Ed25519Verifier,
 };
 pub use token::{
     token_is_authentic, token_open, token_open_in_place, token_seal, token_seal_chunks, TokenKey,
@@ -121,6 +121,25 @@ mod tests {
         bad.0[0] ^= 1;
         assert_eq!(
             ed25519_verify(&public, b"sign-this", &bad),
+            Err(CryptoError::InvalidSignature),
+        );
+    }
+
+    #[test]
+    fn ed25519_verifier_matches_the_one_shot_verify() {
+        let public = Ed25519PublicKey(a32(
+            "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        ));
+        let sig = Ed25519Signature(a64(
+            "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a\
+             36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+        ));
+
+        let verifier = Ed25519Verifier::new(&public).expect("canonical key");
+        assert_eq!(verifier.public_key(), &public);
+        assert!(verifier.verify(b"sign-this", &sig).is_ok());
+        assert_eq!(
+            verifier.verify(b"sign-thus", &sig),
             Err(CryptoError::InvalidSignature),
         );
     }
