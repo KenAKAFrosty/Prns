@@ -39,6 +39,7 @@ use personal_rns::wire::DestinationHash;
 use tokio::sync::mpsc;
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 16]);
+const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 16]);
 const LANE_DEPTH: usize = 64;
 const ANNOUNCE_EVERY: Duration = Duration::from_millis(500);
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
@@ -73,6 +74,12 @@ struct Profile {
     duration_ms: u64,
     #[serde(default = "default_size_seed")]
     size_seed: u64,
+    #[serde(default = "default_topology")]
+    topology: String,
+}
+
+fn default_topology() -> String {
+    "direct".into()
 }
 
 fn default_size_seed() -> u64 {
@@ -284,9 +291,22 @@ async fn main() {
         _ => {}
     };
 
+    if role == "relay" {
+        relay_node(&manifest).await;
+        return;
+    }
     match role.as_str() {
         "responder" => {
-            let bound = if manifest.profile.wire == "udp" {
+            let bound = if manifest.profile.topology == "relay" {
+                let interface = TcpClientInterface::new(
+                    TCP_INTERFACE_ID,
+                    addr.clone(),
+                    tcp_core::TCP_BITRATE_GUESS_BPS,
+                    Duration::from_millis(100),
+                );
+                tokio::spawn(interface.run(seam));
+                addr.clone()
+            } else if manifest.profile.wire == "udp" {
                 let (local, peer) = udp_halves(&addr);
                 let interface = UdpInterface::bind(
                     TCP_INTERFACE_ID,
@@ -1066,4 +1086,67 @@ async fn initiate_request(
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
     );
+}
+
+
+/// A pure transport node: no destinations, no app — just the engine with its
+/// transport identity, standing between two endpoints on two server
+/// interfaces. Everything it does (announce rebroadcast with the transport
+/// stamp, link request booking, blind ciphertext switching) is engine
+/// machinery under test.
+async fn relay_node(manifest: &Manifest) {
+    let engine = EngineState::<GrowableHeap>::new(fresh_identity());
+    let _ = manifest;
+
+    let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (in_a_tx, in_a_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (out_a_tx, out_a_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (in_b_tx, in_b_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (out_b_tx, out_b_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let seam_a = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_a_tx, notify_tx.clone(), out_a_rx);
+    let seam_b = TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in_b_tx, notify_tx, out_b_rx);
+    let egress = Egress::new(vec![
+        (TCP_INTERFACE_ID, out_a_tx),
+        (RELAY_SECOND_INTERFACE_ID, out_b_tx),
+    ]);
+    let interfaces = vec![
+        tcp_core::descriptor(TCP_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
+        tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
+    ];
+
+    let side_a = TcpServerInterface::bind(
+        TCP_INTERFACE_ID,
+        "127.0.0.1:0",
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+    )
+    .await
+    .expect("binds side a");
+    let addr_a = side_a.local_addr().expect("bound address");
+    let side_b = TcpServerInterface::bind(
+        RELAY_SECOND_INTERFACE_ID,
+        "127.0.0.1:0",
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+    )
+    .await
+    .expect("binds side b");
+    let addr_b = side_b.local_addr().expect("bound address");
+    tokio::spawn(side_a.run(seam_a));
+    tokio::spawn(side_b.run(seam_b));
+    tokio::spawn(run(
+        engine,
+        interfaces,
+        vec![],
+        TokioHost::new(),
+        notify_rx,
+        vec![
+            (TCP_INTERFACE_ID, in_a_rx),
+            (RELAY_SECOND_INTERFACE_ID, in_b_rx),
+        ],
+        command_rx,
+        egress,
+        |_: Journaled<'_>| {},
+    ));
+    println!("READY role=relay addr={addr_a}>{addr_b}");
+    std::future::pending::<()>().await;
 }

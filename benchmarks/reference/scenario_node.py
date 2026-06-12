@@ -61,7 +61,44 @@ def free_port():
     return port
 
 
-def interface_block(wire, role, addr):
+def relay_blocks():
+    port_a, port_b = free_port(), free_port()
+    block = (
+        "  [[Relay Side A]]\n"
+        "    type = TCPServerInterface\n"
+        "    enabled = True\n"
+        "    listen_ip = 127.0.0.1\n"
+        f"    listen_port = {port_a}\n"
+        "  [[Relay Side B]]\n"
+        "    type = TCPServerInterface\n"
+        "    enabled = True\n"
+        "    listen_ip = 127.0.0.1\n"
+        f"    listen_port = {port_b}\n"
+    )
+    return block, f"127.0.0.1:{port_a}>127.0.0.1:{port_b}"
+
+
+def relay(name, _addr):
+    """A pure transport node: enable_transport and nothing else."""
+    block, ready_addr = relay_blocks()
+    configdir = tempfile.mkdtemp(prefix="rns-scenario-relay-")
+    with open(os.path.join(configdir, "config"), "w") as f:
+        f.write(
+            "[reticulum]\n"
+            "  enable_transport = True\n"
+            "  share_instance = No\n"
+            "  panic_on_interface_error = No\n"
+            "[logging]\n"
+            f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
+            "[interfaces]\n" + block
+        )
+    RNS.Reticulum(configdir=configdir)
+    print(f"READY role=relay addr={ready_addr}", flush=True)
+    while True:
+        time.sleep(3600)
+
+
+def interface_block(wire, role, addr, topology="direct"):
     """One role's interface config plus the address its READY line should carry. UDP is
     symmetric (the orchestrator pre-assigns both ends as local>peer, the reference's
     fixed listen/forward model); TCP keeps the listen-then-connect flow."""
@@ -78,7 +115,7 @@ def interface_block(wire, role, addr):
             f"    forward_ip = {peer_host}\n"
             f"    forward_port = {peer_port}\n"
         ), addr
-    if role == "responder":
+    if role == "responder" and topology != "relay":
         port = free_port()
         return (
             "  [[Bench TCP Server]]\n"
@@ -623,9 +660,13 @@ def main():
 
     mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")
+    topology = manifest["profile"].get("topology", "direct")
+    if role == "relay":
+        relay(manifest["name"], addr)
+        return
     if role not in ("responder", "initiator"):
         sys.exit(usage)
-    block, ready_addr = interface_block(wire, role, addr)
+    block, ready_addr = interface_block(wire, role, addr, topology)
     responders = {
         "link": respond_link,
         "resource": respond_resource,
