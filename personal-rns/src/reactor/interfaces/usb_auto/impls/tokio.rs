@@ -22,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
@@ -40,6 +41,10 @@ const FALLBACK_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 /// How often a not-yet-confirmed port re-sends its `Hello` — covering a board that was still
 /// booting when first opened, with no replug needed.
 const PROBE_INTERVAL: Duration = Duration::from_millis(500);
+/// Briefly keep a just-confirmed host link in `Degraded` rather than dropping straight to
+/// `Disconnected`. Some Android USB host stacks close and reopen CDC pipes during otherwise
+/// healthy traffic; this keeps the app's liveness from flickering Dormant between re-handshakes.
+const RECENT_LINK_GRACE: Duration = Duration::from_secs(3);
 
 struct Port {
     id: String,
@@ -96,9 +101,14 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
         self.status.clone()
     }
 
-    fn refresh_connection(&self, ports: &[Port]) {
+    fn refresh_connection(&self, ports: &[Port], last_confirmed_at: Option<Instant>) {
         let connection = if ports.iter().any(|port| port.confirmed) {
             ConnectionState::Connected
+        } else if last_confirmed_at
+            .map(|confirmed_at| confirmed_at.elapsed() < RECENT_LINK_GRACE)
+            .unwrap_or(false)
+        {
+            ConnectionState::Degraded
         } else if ports.is_empty() {
             ConnectionState::Disconnected
         } else {
@@ -136,6 +146,7 @@ where
         let rescan = self.rescan.clone();
         let mut ports: Vec<Port> = Vec::new();
         let mut next_port_key: u64 = 0;
+        let mut last_confirmed_at: Option<Instant> = None;
         let mut fallback = tokio::time::interval(FALLBACK_SCAN_INTERVAL);
 
         loop {
@@ -143,12 +154,24 @@ where
             // inbound handoff borrows it; every other arm completes in place.
             let arrived = tokio::select! {
                 _ = fallback.tick() => {
-                    self.reconcile(&mut ports, &context, &port_notify_tx, &mut next_port_key)
+                    self.reconcile(
+                        &mut ports,
+                        &context,
+                        &port_notify_tx,
+                        &mut next_port_key,
+                        last_confirmed_at,
+                    )
                         .await;
                     None
                 }
                 () = rescan.notified() => {
-                    self.reconcile(&mut ports, &context, &port_notify_tx, &mut next_port_key)
+                    self.reconcile(
+                        &mut ports,
+                        &context,
+                        &port_notify_tx,
+                        &mut next_port_key,
+                        last_confirmed_at,
+                    )
                         .await;
                     None
                 }
@@ -157,13 +180,14 @@ where
                         PortEvent::Confirmed { id } => {
                             if let Some(port) = ports.iter_mut().find(|port| port.id == id) {
                                 port.confirmed = true;
+                                last_confirmed_at = Some(Instant::now());
                             }
                         }
                         PortEvent::Closed { id } => {
                             ports.retain(|port| port.id != id);
                         }
                     }
-                    self.refresh_connection(&ports);
+                    self.refresh_connection(&ports, last_confirmed_at);
                     None
                 }
                 Some(key) = port_notify_rx.recv() => Some(key),
@@ -208,6 +232,7 @@ where
         context: &PortContext,
         port_notify: &UnboundedSender<u64>,
         next_port_key: &mut u64,
+        last_confirmed_at: Option<Instant>,
     ) {
         let present = (self.scan)();
         ports.retain(|port| {
@@ -246,7 +271,7 @@ where
                 });
             }
         }
-        self.refresh_connection(ports);
+        self.refresh_connection(ports, last_confirmed_at);
     }
 }
 
@@ -490,5 +515,23 @@ mod tests {
             .expect("the announced frame is in the lane");
         assert_eq!(received.frame(), &inbound_packet);
         in_rx.release();
+    }
+
+    #[test]
+    fn recently_confirmed_link_lingers_degraded_instead_of_disconnected() {
+        let open = |_name: String| async {
+            Err::<tokio::io::DuplexStream, io::Error>(io::ErrorKind::NotConnected.into())
+        };
+        let host = UsbAutoHost::new(host_id(), Vec::<String>::new, open, Arc::new(Notify::new()));
+        let status = host.status();
+
+        host.refresh_connection(&[], Some(Instant::now()));
+        assert_eq!(status.connection(), ConnectionState::Degraded);
+
+        host.refresh_connection(
+            &[],
+            Some(Instant::now() - RECENT_LINK_GRACE - Duration::from_millis(1)),
+        );
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
     }
 }

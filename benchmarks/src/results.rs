@@ -7,6 +7,36 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// A stable, unique id for one physical machine — the *instance* under a `host` triple, which
+/// is only the *class* (an M1 and an M4 Max are both `aarch64-apple-darwin`). Minted once per
+/// machine and preserved in its `host.json`, so every figure that machine files can be joined
+/// back to the exact device. Random v4, not a hardware id — these results are public.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DeviceId(pub Uuid);
+
+impl DeviceId {
+    pub fn generate() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+/// A stable, unique id for whoever submits figures from this checkout — distinct from the
+/// device (one submitter can run on many machines) and from the implementation under test (a
+/// submitter files figures for several). Stamped on every row so results from different people
+/// or CI can be joined or filtered later. Lives in a gitignored local file; only the id itself
+/// travels, on the committed rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SubmitterId(pub Uuid);
+
+impl SubmitterId {
+    pub fn generate() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
 
 /// What a figure measures. The variant decides whether it compares honestly *across*
 /// implementations or only within one.
@@ -91,6 +121,12 @@ pub struct ResultRow {
     pub metric: String,
     pub value: Option<f64>,
     pub unit: String,
+    /// The machine and submitter that produced this figure — provenance join keys alongside
+    /// `host`/`commit`/`toolchain`. `None` on rows filed before identity tracking existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<DeviceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitter_id: Option<SubmitterId>,
 }
 
 /// The machine a host's figures were measured on. A `host` (rustc target triple) is the
@@ -102,6 +138,11 @@ pub struct ResultRow {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HostDescriptor {
     pub host: String,
+    /// This machine's stable identity (random v4), minted once and preserved across
+    /// `describe_host` runs. The `host` triple groups figures; this disambiguates two
+    /// distinct machines that share one triple.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<DeviceId>,
     pub cpu_model: Option<String>,
     pub physical_cores: Option<u32>,
     pub logical_cores: Option<u32>,
@@ -110,14 +151,24 @@ pub struct HostDescriptor {
     pub kernel_version: Option<String>,
     /// The scaling governor and max frequency in effect when measured — on laptop
     /// silicon these gate every figure, so a row without them can't be reproduced.
-    #[serde(default)]
+    /// Linux-only knobs (sysfs `cpufreq`); omitted entirely on hosts without them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_governor: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_max_mhz: Option<u32>,
     /// The SMT sibling sets the orchestrator pins contestants to — one physical core
     /// per role, so the filed figures are per-physical-core numbers by construction.
-    #[serde(default)]
+    /// The Linux reproducibility story (`taskset`); absent on hosts that don't pin by core.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_sibling_sets: Option<Vec<String>>,
+    /// The Apple-silicon reproducibility story instead of SMT sibling sets: arm64 has no
+    /// per-core affinity (the API is a documented no-op), so the orchestrator's contestants
+    /// run on the Performance cluster by default on a quiet box. Recording the P/E split is
+    /// what names the silicon a filed macOS figure ran on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance_cores: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub efficiency_cores: Option<u32>,
 }
 
 /// The substrate root: `<crate>/results`.
@@ -144,6 +195,34 @@ pub fn write_host(descriptor: &HostDescriptor) {
 pub fn load_host(host: &str) -> Option<HostDescriptor> {
     let text = std::fs::read_to_string(host_path(host)).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+#[derive(Serialize, Deserialize)]
+struct SubmitterIdentity {
+    submitter_id: SubmitterId,
+}
+
+/// This checkout's submitter identity file (`<crate>/.submitter.json`, gitignored).
+fn submitter_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(".submitter.json")
+}
+
+/// This checkout's submitter id, minting and persisting one on first use. The file is
+/// gitignored — each contributor mints their own; only the id travels, stamped onto the rows
+/// they file. Stable across runs so all of one person's figures share a join key.
+pub fn load_or_create_submitter_id() -> SubmitterId {
+    let path = submitter_path();
+    if let Some(identity) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<SubmitterIdentity>(&text).ok())
+    {
+        return identity.submitter_id;
+    }
+    let submitter_id = SubmitterId::generate();
+    let body = serde_json::to_string_pretty(&SubmitterIdentity { submitter_id })
+        .expect("serialize submitter identity");
+    std::fs::write(&path, body + "\n").unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+    submitter_id
 }
 
 /// Where an implementation sits in the comparison: the Python reference everything

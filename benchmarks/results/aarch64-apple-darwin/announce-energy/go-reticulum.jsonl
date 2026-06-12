@@ -1,4 +1,0 @@
-{"scenario":"announce-energy","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"conformance","metric":"routes_resolved","value":2560,"unit":"count"}
-{"scenario":"announce-energy","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"throughput","metric":"sustained_announces_per_sec","value":169926.4,"unit":"announce/s"}
-{"scenario":"announce-energy","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"power","metric":"cpu_power_watts","value":20.9045,"unit":"W"}
-{"scenario":"announce-energy","scenario_version":1,"implementation":"go-reticulum","commit":"06621cc","toolchain":"go1.26.4","host":"aarch64-apple-darwin","axis":"energy","metric":"energy_microjoules_per_announce","value":122.8,"unit":"µJ/announce"}

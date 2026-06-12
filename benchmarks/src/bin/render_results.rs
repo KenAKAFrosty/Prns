@@ -1,16 +1,15 @@
 //! Render the benchmark tables from the result substrate (`results/<host>/<scenario>/
-//! <impl>.jsonl`) joined with the implementation registry (`implementations/<slug>.json`).
-//! Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index that links to
-//! them. The website renders the same files, so the tables can't drift between GitHub and
-//! the site.
+//! <pairing>.jsonl`) joined with the implementation registry (`implementations/<slug>.json`).
+//! Each host gets its own `RESULTS-<host>.md`; `RESULTS.md` is the index that links to them.
+//! The website renders the same files, so the tables can't drift between GitHub and the site.
 //!
-//! The page is a **cross-implementation comparison**: every implementation that filed a
-//! figure for this host, with its language, Ed25519 backend, conformance, sustained
-//! throughput, CPU power, and energy per announce, sorted by energy. The announce path is
-//! ~97% Ed25519 verify, so the ranking is a crypto-backend story.
+//! The page is a **cross-implementation interop matrix**: every initiator→responder pairing
+//! that ran a scenario on this host, with its conformance, delivered throughput, goodput,
+//! settlement latency, and the energy spent per delivered message. Energy is bracketed on the
+//! live run, so efficiency is the realistic firehose's own figure, not a synthetic one.
 //!
-//! `--check` re-renders every file and diffs against what's committed — the drift gate,
-//! mirroring `gen_corpus --check`. Generated, never hand-edited.
+//! `--check` re-renders every file and diffs against what's committed — the drift gate.
+//! Generated, never hand-edited.
 //!
 //! Run: `cargo run --release --bin render_results [--check]`
 
@@ -177,21 +176,84 @@ fn gib(bytes: u64) -> String {
     format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
 }
 
-/// One implementation's figures for the energy scenario, joined with its descriptor.
-/// `conformance_metric` distinguishes a full route-store pass (`routes_resolved`) from a
-/// verify-only port (`announces_verified`).
-struct Comparison<'a> {
-    name: String,
-    descriptor: Option<&'a ImplementationDescriptor>,
-    conformance: Option<f64>,
-    conformance_metric: Option<String>,
-    throughput: Option<f64>,
-    power_watts: Option<f64>,
-    energy_uj: Option<f64>,
-    toolchain: String,
+/// One initiator→responder pairing's figures for an interop scenario, aggregated from its rows.
+struct Pairing {
+    initiator: String,
+    responder: String,
+    sent: Option<f64>,
+    delivered: Option<f64>,
+    timed_out: Option<f64>,
+    delivered_per_sec: Option<f64>,
+    goodput_bytes_per_sec: Option<f64>,
+    rtt_p50: Option<f64>,
+    rtt_p99: Option<f64>,
+    mj_per_delivered: Option<f64>,
+    init_rss_bytes: Option<f64>,
+    resp_rss_bytes: Option<f64>,
 }
 
-/// The cross-implementation comparison for a scenario — the energy table.
+/// Split a pairing label ("Prns → RNS 1.3.1") into its initiator and responder.
+fn split_pairing(label: &str) -> (String, String) {
+    match label.split_once(" \u{2192} ") {
+        Some((i, r)) => (i.trim().to_string(), r.trim().to_string()),
+        None => (label.to_string(), label.to_string()),
+    }
+}
+
+/// Aggregate the rows of one interop scenario into a pairing per initiator→responder.
+fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
+    #[derive(Default)]
+    struct Acc {
+        sent: Option<f64>,
+        delivered: Option<f64>,
+        timed_out: Option<f64>,
+        delivered_per_sec: Option<f64>,
+        goodput_bytes_per_sec: Option<f64>,
+        rtt_p50: Option<f64>,
+        rtt_p99: Option<f64>,
+        mj_per_delivered: Option<f64>,
+        init_rss_bytes: Option<f64>,
+        resp_rss_bytes: Option<f64>,
+    }
+    let mut by_pairing: BTreeMap<String, Acc> = BTreeMap::new();
+    for row in rows {
+        let acc = by_pairing.entry(row.implementation.clone()).or_default();
+        match (row.axis, row.metric.as_str()) {
+            (Axis::Conformance, "sent") => acc.sent = row.value,
+            (Axis::Conformance, "delivered") => acc.delivered = row.value,
+            (Axis::Conformance, "timed_out") => acc.timed_out = row.value,
+            (Axis::Throughput, "delivered_per_sec") => acc.delivered_per_sec = row.value,
+            (Axis::Throughput, "goodput_bytes_per_sec") => acc.goodput_bytes_per_sec = row.value,
+            (Axis::Latency, "rtt_p50_ms") => acc.rtt_p50 = row.value,
+            (Axis::Latency, "rtt_p99_ms") => acc.rtt_p99 = row.value,
+            (Axis::Energy, "net_millijoules_per_delivered") => acc.mj_per_delivered = row.value,
+            (Axis::Memory, "initiator_peak_rss_bytes") => acc.init_rss_bytes = row.value,
+            (Axis::Memory, "responder_peak_rss_bytes") => acc.resp_rss_bytes = row.value,
+            _ => {}
+        }
+    }
+    by_pairing
+        .into_iter()
+        .map(|(label, acc)| {
+            let (initiator, responder) = split_pairing(&label);
+            Pairing {
+                initiator,
+                responder,
+                sent: acc.sent,
+                delivered: acc.delivered,
+                timed_out: acc.timed_out,
+                delivered_per_sec: acc.delivered_per_sec,
+                goodput_bytes_per_sec: acc.goodput_bytes_per_sec,
+                rtt_p50: acc.rtt_p50,
+                rtt_p99: acc.rtt_p99,
+                mj_per_delivered: acc.mj_per_delivered,
+                init_rss_bytes: acc.init_rss_bytes,
+                resp_rss_bytes: acc.resp_rss_bytes,
+            }
+        })
+        .collect()
+}
+
 fn render_scenario(
     out: &mut String,
     scenario: &str,
@@ -199,25 +261,33 @@ fn render_scenario(
     impls: &[ImplementationDescriptor],
 ) {
     let manifest = Manifest::load(scenario);
-    let entries = comparisons(rows, impls);
-    render_energy(out, scenario, entries, &manifest);
+    render_interop(out, scenario, pairings(rows), &manifest, impls);
 }
 
-/// The energy comparison: sustained all-cores ingest, with the Ed25519 backend (the
-/// controlled variable) and conformance alongside throughput, CPU power, and the headline —
-/// energy per announce, the price a battery/solar node pays. Sorted by energy ascending.
-fn render_energy(
+/// The interop matrix: every initiator→responder pairing with its conformance, delivered
+/// throughput, goodput, settlement latency, peak RSS, and energy per delivered message.
+/// Ordered by energy per message ascending — the most efficient pairing on top, since the
+/// static GitHub table can't be re-sorted (the website's eventually will). Pairings without an
+/// energy figure (no root at run time) sort last, tie-broken by throughput.
+fn render_interop(
     out: &mut String,
     scenario: &str,
-    mut entries: Vec<Comparison<'_>>,
+    mut pairings: Vec<Pairing>,
     manifest: &Manifest,
+    impls: &[ImplementationDescriptor],
 ) {
-    entries.sort_by(|a, b| {
-        let ka = a.energy_uj.unwrap_or(f64::INFINITY);
-        let kb = b.energy_uj.unwrap_or(f64::INFINITY);
-        ka.partial_cmp(&kb)
+    pairings.sort_by(|a, b| {
+        let ea = a.mj_per_delivered.unwrap_or(f64::INFINITY);
+        let eb = b.mj_per_delivered.unwrap_or(f64::INFINITY);
+        ea.partial_cmp(&eb)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| {
+                let ta = a.delivered_per_sec.unwrap_or(0.0);
+                let tb = b.delivered_per_sec.unwrap_or(0.0);
+                tb.partial_cmp(&ta).unwrap_or(Ordering::Equal)
+            })
+            .then_with(|| a.initiator.cmp(&b.initiator))
+            .then_with(|| a.responder.cmp(&b.responder))
     });
 
     let _ = write!(out, "\n## {scenario} (v{})\n\n", manifest.version);
@@ -225,167 +295,159 @@ fn render_energy(
         let _ = writeln!(out, "{}\n", manifest.description);
     }
     out.push_str(
-        "Energy per announce = (active CPU power − idle baseline) ÷ throughput — it normalizes \
-         throughput and is fair across every runtime regardless of GC/JIT/interpreter, because \
-         it's the actual joules a user pays. The Ed25519 backend is the controlled variable; \
-         conformance confirms every implementation processed the same work. Measured on macOS \
-         via `powermetrics` (root), so it reproduces with `sudo`, not the one-command drivers.\n\n",
+        "Each row is one live pairing — the initiator drives a windowed firehose at the \
+         responder over loopback, and every figure is the protocol's own: delivery proven by \
+         receipt, latency from the proofs, energy bracketed around the run. Rows are ordered by \
+         energy per delivered message, the most efficient pairing first; energy needs `sudo` for \
+         the power counters and renders pending without it. Numbers compare within a host, never \
+         across.\n\n",
     );
 
     out.push_str(
-        "| Implementation | Language | Ed25519 backend | Conformance | Throughput | CPU power | Energy / announce |\n",
+        "| Initiator \u{2192} Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |\n",
     );
     out.push_str(
-        "|----------------|----------|-----------------|-------------|-----------:|---------:|------------------:|\n",
+        "|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|\n",
     );
-
-    let mut any_partial = false;
-    let mut any_verify_only = false;
-    for entry in &entries {
-        let language = entry.descriptor.map_or("—", |d| d.language.as_str());
-        let backend = entry.descriptor.map_or("—", |d| d.crypto_backend.as_str());
-        let is_reference = entry
-            .descriptor
-            .is_some_and(|d| d.role == ImplementationRole::Reference);
-        let partial = entry.descriptor.and_then(|d| d.maturity.as_deref()) == Some("partial");
-        let verify_only = entry.conformance_metric.as_deref() == Some("announces_verified");
-        any_partial |= partial;
-        any_verify_only |= verify_only;
-
-        let mut label = entry.name.clone();
-        if is_reference {
-            label.push_str(" _(reference)_");
-        }
-        if partial {
-            label.push_str(" †");
-        }
-        if verify_only {
-            label.push_str(" ‡");
-        }
-        let conformance = conformance_cell(entry.conformance, manifest.expected_routes);
-        let throughput = throughput_cell(entry.throughput);
-        let power = entry
-            .power_watts
-            .map(|w| format!("{w:.1} W"))
-            .unwrap_or_else(pending);
-        let energy = entry
-            .energy_uj
-            .map(|e| format!("{e:.0} µJ"))
-            .unwrap_or_else(pending);
+    for p in &pairings {
         let _ = writeln!(
             out,
-            "| {label} | {language} | {backend} | {conformance} | {throughput} | {power} | {energy} |"
+            "| {} \u{2192} {} | {} | {} | {} | {} | {} | {} |",
+            label_with_role(&p.initiator, impls),
+            label_with_role(&p.responder, impls),
+            interop_conformance_cell(p),
+            throughput_cell(p.delivered_per_sec),
+            goodput_cell(p.goodput_bytes_per_sec),
+            rtt_cell(p.rtt_p50, p.rtt_p99),
+            rss_cell(p.init_rss_bytes, p.resp_rss_bytes),
+            energy_cell(p.mj_per_delivered),
         );
     }
 
-    if any_partial {
-        out.push_str(
-            "\n† Marked partial / not-yet-feature-complete on the upstream maturity list — \
-             included as a data point, not part of the feature-complete tier.\n",
-        );
-    }
-    if any_verify_only {
-        out.push_str(
-            "\n‡ Measured verify-only (parse + Ed25519 verify, no route store) — its store isn't \
-             thread-safe; this axis is ~97% verify, so it isolates the dominant work.\n",
-        );
-    }
-    out.push_str(
-        "\nThroughput here is the sustained average under continuous all-cores load (the energy \
-         denominator). Python runs all-core threads but is GIL-bound, so its all-cores ≈ one core.\n",
-    );
-
-    render_provenance(out, &entries);
+    render_legend(out, &pairings, impls);
 }
 
-fn throughput_cell(value: Option<f64>) -> String {
-    value
-        .map(|t| format!("{} announce/s", humanize(t)))
-        .unwrap_or_else(pending)
-}
-
-/// Collect each implementation's conformance + throughput figures and join with its
-/// descriptor (unsorted — each table sorts by its own throughput column).
-fn comparisons<'a>(
-    rows: &[&ResultRow],
-    impls: &'a [ImplementationDescriptor],
-) -> Vec<Comparison<'a>> {
-    #[derive(Default)]
-    struct Acc {
-        conformance: Option<f64>,
-        conformance_metric: Option<String>,
-        throughput: Option<f64>,
-        power_watts: Option<f64>,
-        energy_uj: Option<f64>,
-        toolchain: String,
-    }
-    let mut figures: BTreeMap<String, Acc> = BTreeMap::new();
-    for row in rows {
-        let acc = figures.entry(row.implementation.clone()).or_default();
-        acc.toolchain = row.toolchain.clone();
-        match row.axis {
-            Axis::Conformance => {
-                acc.conformance = row.value;
-                acc.conformance_metric = Some(row.metric.clone());
-            }
-            Axis::Throughput => acc.throughput = row.value,
-            Axis::Power => acc.power_watts = row.value,
-            Axis::Energy => acc.energy_uj = row.value,
-            _ => {}
-        }
-    }
-
-    figures
-        .into_iter()
-        .map(|(name, acc)| Comparison {
-            descriptor: impls.iter().find(|d| d.implementation == name),
-            name,
-            conformance: acc.conformance,
-            conformance_metric: acc.conformance_metric,
-            throughput: acc.throughput,
-            power_watts: acc.power_watts,
-            energy_uj: acc.energy_uj,
-            toolchain: acc.toolchain,
-        })
-        .collect()
-}
-
-/// Where each figure came from: repo, pinned ref, license, and the toolchain that produced
-/// the row — enough to reproduce or audit any column.
-fn render_provenance(out: &mut String, entries: &[Comparison<'_>]) {
-    out.push_str("\n**Provenance.**\n\n");
-    for entry in entries {
-        let mut line = format!("- **{}** — ", entry.name);
-        match entry.descriptor.and_then(|d| d.repo.as_deref()) {
-            Some(repo) => {
-                let _ = write!(line, "[{repo}]({repo})");
-                if let Some(pin) = entry.descriptor.and_then(|d| d.pinned_ref.as_deref()) {
-                    let _ = write!(line, " @ `{pin}`");
-                }
-            }
-            None => line.push('—'),
-        }
-        if let Some(license) = entry.descriptor.and_then(|d| d.license.as_deref()) {
-            let _ = write!(line, " · {license}");
-        }
-        let _ = writeln!(line, " · {}", entry.toolchain);
-        out.push_str(&line);
+/// An implementation's display name, tagged `(ref)` when it is the parity reference.
+fn label_with_role(name: &str, impls: &[ImplementationDescriptor]) -> String {
+    let is_reference = impls
+        .iter()
+        .find(|d| d.implementation == name)
+        .is_some_and(|d| d.role == ImplementationRole::Reference);
+    if is_reference {
+        format!("{name} _(ref)_")
+    } else {
+        name.to_string()
     }
 }
 
-fn conformance_cell(value: Option<f64>, expected: u64) -> String {
-    match value {
-        None => pending(),
-        Some(v) => {
-            let got = v as u64;
-            let icon = if got == expected {
+/// `delivered / sent` with a pass/fail icon — clean only when every sent message proved and
+/// none timed out — and the timeout count called out when the deadline was missed.
+fn interop_conformance_cell(p: &Pairing) -> String {
+    match (p.sent, p.delivered) {
+        (Some(sent), Some(delivered)) => {
+            let timed_out = p.timed_out.unwrap_or(0.0);
+            let icon = if timed_out == 0.0 && sent == delivered {
                 PASS_ICON
             } else {
                 FAIL_ICON
             };
-            format!("{icon} {got} / {expected}")
+            let mut cell = format!("{icon} {} / {}", commas(delivered), commas(sent));
+            if timed_out > 0.0 {
+                let _ = write!(cell, " \u{00b7} {} timed out", commas(timed_out));
+            }
+            cell
         }
+        _ => pending(),
     }
+}
+
+fn throughput_cell(value: Option<f64>) -> String {
+    value
+        .map(|t| format!("{} msg/s", humanize(t)))
+        .unwrap_or_else(pending)
+}
+
+fn goodput_cell(value: Option<f64>) -> String {
+    value
+        .map(|b| {
+            if b >= 1e6 {
+                format!("{:.1} MB/s", b / 1e6)
+            } else {
+                format!("{:.0} kB/s", b / 1e3)
+            }
+        })
+        .unwrap_or_else(pending)
+}
+
+fn rtt_cell(p50: Option<f64>, p99: Option<f64>) -> String {
+    match (p50, p99) {
+        (Some(a), Some(b)) => format!("{a:.0} / {b:.0} ms"),
+        _ => pending(),
+    }
+}
+
+fn energy_cell(value: Option<f64>) -> String {
+    value
+        .map(|mj| format!("{mj:.2} mJ"))
+        .unwrap_or_else(pending)
+}
+
+fn rss_cell(init: Option<f64>, resp: Option<f64>) -> String {
+    let mib = |bytes: f64| bytes / (1024.0 * 1024.0);
+    match (init, resp) {
+        (Some(i), Some(r)) => format!("{:.1} / {:.1} MiB", mib(i), mib(r)),
+        _ => pending(),
+    }
+}
+
+/// Group an integer count with thousands separators — conformance shows exact `delivered /
+/// sent`, where `128,193 / 128,193` reads as proof and `128.2k` would hide a near miss.
+fn commas(v: f64) -> String {
+    let n = v.round() as i64;
+    let digits = n.abs().to_string();
+    let bytes = digits.as_bytes();
+    let mut out = String::new();
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(*b as char);
+    }
+    if n < 0 {
+        format!("-{out}")
+    } else {
+        out
+    }
+}
+
+/// Each implementation that appears in the matrix: its language, Ed25519 backend, and where it
+/// came from — enough to reproduce or audit any pairing.
+fn render_legend(out: &mut String, pairings: &[Pairing], impls: &[ImplementationDescriptor]) {
+    let mut names: Vec<String> = pairings
+        .iter()
+        .flat_map(|p| [p.initiator.clone(), p.responder.clone()])
+        .collect();
+    names.sort();
+    names.dedup();
+
+    out.push_str("\n**Implementations.**\n");
+    for name in &names {
+        let descriptor = impls.iter().find(|d| &d.implementation == name);
+        let language = descriptor.map_or("—", |d| d.language.as_str());
+        let backend = descriptor.map_or("—", |d| d.crypto_backend.as_str());
+        let mut line = format!("\n- **{name}** — {language}, {backend}");
+        if let Some(repo) = descriptor.and_then(|d| d.repo.as_deref()) {
+            let _ = write!(line, " \u{00b7} [{repo}]({repo})");
+            if let Some(pin) = descriptor.and_then(|d| d.pinned_ref.as_deref()) {
+                let _ = write!(line, " @ `{pin}`");
+            }
+        }
+        if let Some(license) = descriptor.and_then(|d| d.license.as_deref()) {
+            let _ = write!(line, " \u{00b7} {license}");
+        }
+        out.push_str(&line);
+    }
+    out.push('\n');
 }
 
 /// True if any figure for this host has actually been measured (vs. all-`pending`).
@@ -406,7 +468,6 @@ fn humanize(v: f64) -> String {
 struct Manifest {
     version: u64,
     description: String,
-    expected_routes: u64,
 }
 
 impl Manifest {
@@ -419,7 +480,6 @@ impl Manifest {
         Manifest {
             version: json["version"].as_u64().unwrap_or(0),
             description: json["description"].as_str().unwrap_or("").to_string(),
-            expected_routes: json["expected"]["route_count"].as_u64().unwrap_or(0),
         }
     }
 }
@@ -430,13 +490,13 @@ const INDEX_HEADER: &str = "<!-- Generated by `cargo run --bin render_results` f
 
 The suite runs on whatever machines we have; every host is its own column of the story, so
 results are filed per host. Each figure is stamped with the commit, toolchain, and host that
-produced it and lives as a row in `results/<host>/<scenario>/<impl>.jsonl` — the same schema
+produced it and lives as a row in `results/<host>/<scenario>/<pairing>.jsonl` — the same schema
 any implementation emits. These pages are rendered from those rows, and the website renders the
 same files, so the two never drift.
 
-**Comparability.** Conformance and throughput line up across implementations; memory and latency
-stay within one (a GC and a no-alloc core racing on RSS would be a dishonest column). Numbers are
-only comparable *within* a host — never race a laptop against a server.
+**Comparability.** Conformance, throughput, and latency line up across pairings *within* a host;
+energy is the package-domain figure that host's silicon actually reports. Numbers are only
+comparable within a host — never race a laptop against a server.
 ";
 
 const INDEX_FOOTER: &str = "
@@ -447,11 +507,12 @@ run the drivers there to fill it in.
 const HOST_FOOTNOTES: &str = "
 ---
 
-- _Conformance_ — distinct routes the engine resolves from the corpus (or announces verified, for a verify-only port), against the manifest's expected count.
-- _Throughput_ — sustained announces per second under continuous all-cores load (the energy denominator).
-- _CPU power_ — average active CPU power over that sustained run.
-- _Energy / announce_ — (active power − idle baseline) ÷ throughput; the cross-comparable price paid, sorted ascending.
+- _Conformance_ — settled clean: every sent message proved within the link's traffic timeout, shown as `delivered / sent`. A ✗ flags messages that timed out — a responder slower than `rtt × 6` misses the deadline by spec, not by fault.
+- _Throughput_ — delivered messages per second, initiator-bound.
+- _Goodput_ — delivered application payload per second (framing excluded).
+- _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.
+- _Peak RSS_ — peak resident set size (the physical RAM a process holds), initiator / responder, reaped from outside so a contestant can't under-report it.
+- _Energy / msg_ — (package energy − idle baseline) ÷ delivered: the joules a node actually pays per delivered message. Needs `sudo` for the power counters; renders pending without.
 
-Regenerate: `energy/build.sh` then `sudo energy/measure.sh` (root, for the power counters) to
-refresh `results/`, then `cargo run --bin render_results` to rewrite these tables.
+Regenerate: `sudo env \"PATH=$PATH\" ./run.sh` (root, for the power counters), then `cargo run --bin render_results`.
 ";

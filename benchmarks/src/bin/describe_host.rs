@@ -8,11 +8,18 @@
 
 use std::process::Command;
 
-use benchmarks::{write_host, HostDescriptor};
+use benchmarks::{load_host, load_or_create_submitter_id, write_host, DeviceId, HostDescriptor};
 use sysinfo::System;
 
 fn main() {
     let host = rustc_host().unwrap_or_else(|| "unknown".into());
+
+    // The device id is minted once and preserved across runs — re-describing a machine must
+    // not change its identity, or its older figures stop joining to it.
+    let device_id = load_host(&host)
+        .and_then(|existing| existing.device_id)
+        .unwrap_or_else(DeviceId::generate);
+    let submitter_id = load_or_create_submitter_id();
 
     let mut sys = System::new();
     sys.refresh_cpu_all();
@@ -20,6 +27,7 @@ fn main() {
 
     let descriptor = HostDescriptor {
         host: host.clone(),
+        device_id: Some(device_id),
         cpu_model: sys
             .cpus()
             .first()
@@ -35,6 +43,8 @@ fn main() {
             .and_then(|khz| khz.parse::<u32>().ok())
             .map(|khz| khz / 1000),
         pinned_sibling_sets: sibling_sets(),
+        performance_cores: sysctl_u32("hw.perflevel0.physicalcpu"),
+        efficiency_cores: sysctl_u32("hw.perflevel1.physicalcpu"),
     };
     write_host(&descriptor);
 
@@ -68,14 +78,41 @@ fn main() {
         opt(descriptor.cpu_max_mhz),
         descriptor.cpu_governor.as_deref().unwrap_or("unknown"),
     );
+    println!("  profile {}", describe_profile(&descriptor));
+    println!("  device  {}", device_id.0);
     println!(
-        "  pinning {}",
-        descriptor
-            .pinned_sibling_sets
-            .as_ref()
-            .map(|s| s.join(" | "))
-            .unwrap_or_else(|| "unknown".into()),
+        "  submitter {} (this checkout — .submitter.json, gitignored)",
+        submitter_id.0
     );
+}
+
+/// How the orchestrator makes this host's figures reproducible, in one line — the Linux
+/// `taskset` sibling sets, or the Apple-silicon Performance cluster (arm64 has no per-core
+/// affinity, so the P/E split is the reproducibility fact instead).
+fn describe_profile(d: &HostDescriptor) -> String {
+    if let Some(sets) = &d.pinned_sibling_sets {
+        return format!("taskset sibling sets {}", sets.join(" | "));
+    }
+    if let Some(performance) = d.performance_cores {
+        let efficiency = d
+            .efficiency_cores
+            .map(|e| format!(", {e} efficiency"))
+            .unwrap_or_default();
+        return format!(
+            "Performance cluster — {performance} cores{efficiency} (arm64 has no per-core affinity)"
+        );
+    }
+    "unknown".into()
+}
+
+/// One integer `sysctl` value (macOS topology like `hw.perflevel0.physicalcpu`); `None`
+/// elsewhere or when the key is absent.
+fn sysctl_u32(key: &str) -> Option<u32> {
+    let out = Command::new("sysctl").arg("-n").arg(key).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 /// One trimmed line out of /sys (Linux); None elsewhere or when absent.

@@ -9,8 +9,9 @@ window. This crate adds only the two platform adapters Android needs:
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `nativePostInput` entry point)
 
-`rust/` is the JNI `cdylib`. The Kotlin/Compose app shell that hosts it lands in
-`app/` next.
+`rust/` is the JNI `cdylib`. The Kotlin app shell in `app/` hosts it with a
+plain Android `View` so the same APK can run on old Android devices as well as
+modern phones.
 
 ## Native ABI — `com.personal.hopspot.NativeBridge`
 
@@ -35,18 +36,26 @@ Installed via Homebrew (no sudo) + sdkmanager; env is persisted in `~/.zshrc`:
 - JDK 17 (`openjdk@17`) — `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`
 - Android SDK at `ANDROID_HOME=/opt/homebrew/share/android-commandlinetools` (platform-tools, platform android-34, build-tools 34.0.0)
 - NDK r27c — `ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018`
-- Rust target `aarch64-linux-android` + `cargo-ndk`
+- Rust targets `aarch64-linux-android` and `armv7-linux-androideabi` + `cargo-ndk`
 - Gradle 8.7 via the committed wrapper (`./gradlew`); the system Gradle is 9.x, too new for AGP 8.5.2, so always use the wrapper
 
-## Build the `.so` (arm64)
+## Build the `.so`
 
 From `rust/`:
 
 ```
 cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release
+cargo ndk -t armeabi-v7a -P 21 -o ../app/src/main/jniLibs build --release
 ```
 
-Produces `app/src/main/jniLibs/arm64-v8a/libpersonal_hopspot_android.so`.
+Produces:
+
+- `app/src/main/jniLibs/arm64-v8a/libpersonal_hopspot_android.so`
+- `app/src/main/jniLibs/armeabi-v7a/libpersonal_hopspot_android.so`
+
+The `armeabi-v7a` build uses API 21 because NDK r27 no longer ships API 19
+native platform bits. The Rust bridge provides the one missing pre-21 loader
+symbol needed by the MF97B Android 4.4.4 projector path.
 
 ## Build, install, and launch on a device
 
@@ -55,7 +64,7 @@ USB debugging authorized (`adb devices` should list it):
 
 ```
 ./gradlew installDebug
-adb shell am start -n com.personal.hopspot/.MainActivity
+adb shell am start -n org.personal.hopspot/.MainActivity
 ```
 
 `installDebug` packages whatever `.so` is in `jniLibs/`, so rebuild the `.so`

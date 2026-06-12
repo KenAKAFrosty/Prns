@@ -11,10 +11,11 @@ use std::path::{Path, PathBuf};
 
 mod energy;
 mod results;
-pub use energy::{EnergySnapshot, RaplMeter};
+pub use energy::{unavailable_hint as energy_unavailable_hint, PowerMeter};
 pub use results::{
-    load_all_rows, load_host, load_implementations, results_dir, write_host, write_rows, Axis,
-    Comparability, HostDescriptor, ImplementationDescriptor, ImplementationRole, ResultRow,
+    load_all_rows, load_host, load_implementations, load_or_create_submitter_id, results_dir,
+    write_host, write_rows, Axis, Comparability, DeviceId, HostDescriptor,
+    ImplementationDescriptor, ImplementationRole, ResultRow, SubmitterId,
 };
 
 /// The on-disk home of scenario `name` (e.g. "link-firehose"), relative to this crate.

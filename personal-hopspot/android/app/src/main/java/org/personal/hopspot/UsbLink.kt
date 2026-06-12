@@ -7,8 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.hoho.android.usbserial.driver.CdcAcmSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.hoho.android.usbserial.driver.UsbSerialPort
@@ -20,11 +20,20 @@ class UsbLink(private val context: Context) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val rxBuffer = ByteBuffer.allocateDirect(RX_CAPACITY)
 
+    @Volatile
     private var port: UsbSerialPort? = null
+
+    @Volatile
     private var ioManager: SerialInputOutputManager? = null
 
     @Volatile
     private var running = false
+
+    @Volatile
+    private var pumpGeneration = 0
+
+    @Volatile
+    private var recoveryGeneration = 0
 
     @Volatile
     private var scanning = false
@@ -71,12 +80,7 @@ class UsbLink(private val context: Context) {
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
             addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
         }
-        ContextCompat.registerReceiver(
-            context,
-            receiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
+        context.registerReceiver(receiver, filter)
         Log.i(TAG, "start; scanning for a serial device")
         scanning = true
         Thread {
@@ -93,9 +97,10 @@ class UsbLink(private val context: Context) {
         runCatching { context.unregisterReceiver(receiver) }
     }
 
+    @Synchronized
     private fun connect() {
         if (port != null) return
-        val driver = prober().findAllDrivers(usbManager).firstOrNull() ?: return
+        val driver = findDriver() ?: return
         if (!usbManager.hasPermission(driver.device)) {
             if (!permissionPending) {
                 permissionPending = true
@@ -111,7 +116,9 @@ class UsbLink(private val context: Context) {
         open(driver)
     }
 
+    @Synchronized
     private fun open(driver: UsbSerialDriver) {
+        if (port != null) return
         val connection = usbManager.openDevice(driver.device)
         if (connection == null) {
             Log.w(TAG, "openDevice returned null")
@@ -162,7 +169,7 @@ class UsbLink(private val context: Context) {
 
                 override fun onRunError(e: Exception) {
                     Log.w(TAG, "io error: $e")
-                    disconnect()
+                    recoverAfterIoError()
                 }
             },
         )
@@ -170,10 +177,11 @@ class UsbLink(private val context: Context) {
         ioManager = io
 
         running = true
+        val generation = nextPumpGeneration()
         Thread {
             val txBuffer = ByteBuffer.allocateDirect(TX_CAPACITY)
             val scratch = ByteArray(TX_CAPACITY)
-            while (running) {
+            while (running && generation == pumpGeneration) {
                 txBuffer.clear()
                 val n = NativeBridge.nativeUsbTx(txBuffer)
                 if (n > 0) {
@@ -185,8 +193,12 @@ class UsbLink(private val context: Context) {
                     }
                     txBuffer.position(0)
                     txBuffer.get(scratch, 0, n)
-                    runCatching { port?.write(scratch.copyOf(n), WRITE_TIMEOUT_MS) }
-                        .onFailure { Log.w(TAG, "write: $it") }
+                    if (generation != pumpGeneration) break
+                    runCatching { serialPort.write(scratch.copyOf(n), WRITE_TIMEOUT_MS) }
+                        .onFailure {
+                            Log.w(TAG, "write: $it")
+                            if (generation == pumpGeneration) recoverAfterIoError()
+                        }
                 } else {
                     Thread.sleep(IDLE_SLEEP_MS)
                 }
@@ -195,20 +207,67 @@ class UsbLink(private val context: Context) {
     }
 
     private fun disconnect() {
-        if (port == null) return
-        Log.i(TAG, "disconnect (rx=$rxTotal tx=$txTotal)")
+        closePort(reportDisconnected = true, reason = "disconnect")
+    }
+
+    private fun recoverAfterIoError() {
+        closePort(reportDisconnected = false, reason = "recover")
+        val generation = nextRecoveryGeneration()
+        Thread {
+            Thread.sleep(RECONNECT_GRACE_MS)
+            if (!scanning || port != null || generation != recoveryGeneration) return@Thread
+            if (findDriver() == null) {
+                Log.i(TAG, "recovery grace expired; no serial device present")
+                NativeBridge.nativeUsbConnected(false)
+            } else {
+                Log.i(TAG, "recovery grace expired; serial device still present")
+                connect()
+            }
+        }.start()
+    }
+
+    @Synchronized
+    private fun closePort(reportDisconnected: Boolean, reason: String) {
+        val serialPort = port
+        if (serialPort == null) {
+            if (reportDisconnected) {
+                recoveryGeneration += 1
+                NativeBridge.nativeUsbConnected(false)
+            }
+            return
+        }
+        Log.i(TAG, "$reason (rx=$rxTotal tx=$txTotal reportDisconnected=$reportDisconnected)")
         running = false
-        NativeBridge.nativeUsbConnected(false)
+        pumpGeneration += 1
+        if (reportDisconnected) recoveryGeneration += 1
+        if (reportDisconnected) NativeBridge.nativeUsbConnected(false)
         ioManager?.stop()
         ioManager = null
-        runCatching { port?.close() }
+        runCatching { serialPort.close() }
         port = null
+    }
+
+    @Synchronized
+    private fun nextPumpGeneration(): Int {
+        pumpGeneration += 1
+        return pumpGeneration
+    }
+
+    @Synchronized
+    private fun nextRecoveryGeneration(): Int {
+        recoveryGeneration += 1
+        return recoveryGeneration
     }
 
     private fun requestPermission(device: UsbDevice) {
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(context.packageName)
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_MUTABLE
+        } else {
+            0
+        }
         val pending =
-            PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_MUTABLE)
+            PendingIntent.getBroadcast(context, 0, intent, flags)
         usbManager.requestPermission(device, pending)
     }
 
@@ -217,6 +276,9 @@ class UsbLink(private val context: Context) {
         table.addProduct(ESP_VENDOR_ID, ESP_PRODUCT_ID, CdcAcmSerialDriver::class.java)
         return UsbSerialProber(table)
     }
+
+    private fun findDriver(): UsbSerialDriver? =
+        prober().findAllDrivers(usbManager).firstOrNull()
 
     companion object {
         private const val TAG = "HopspotUsb"
@@ -227,6 +289,7 @@ class UsbLink(private val context: Context) {
         private const val WRITE_TIMEOUT_MS = 200
         private const val IDLE_SLEEP_MS = 2L
         private const val SCAN_INTERVAL_MS = 1000L
+        private const val RECONNECT_GRACE_MS = 3000L
         private const val ESP_VENDOR_ID = 0x303A
         private const val ESP_PRODUCT_ID = 0x1001
     }

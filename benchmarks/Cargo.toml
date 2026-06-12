@@ -28,6 +28,14 @@ getrandom = "0.2"
 # Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
 # the per-host reproducibility descriptor that sits beside each host's result rows.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+# Platform sampling for the live orchestrator: macOS reaps each role with `wait4` for its
+# peak RSS + CPU rusage (no /proc), and gates the powermetrics energy path on `geteuid`.
+# Linux keeps reading /proc, so the dep only carries weight off-Linux.
+libc = "0.2"
+# Stable identity for the result substrate: a per-device and per-submitter UUID stamped on
+# every row, so figures from different machines/people can be joined later (the `host` triple
+# is only a class — two M4s share it).
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 # Timing harness for the engine microscope (lean: no plotters/rayon).

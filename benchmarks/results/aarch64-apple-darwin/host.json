@@ -1,9 +1,12 @@
 {
   "host": "aarch64-apple-darwin",
+  "device_id": "4f1a3e2b-8d5c-4236-96e4-fe399b0bb8d2",
   "cpu_model": "Apple M4",
   "physical_cores": 10,
   "logical_cores": 10,
   "total_memory_bytes": 17179869184,
   "os_version": "macOS 26.4",
-  "kernel_version": "25.4.0"
+  "kernel_version": "25.4.0",
+  "performance_cores": 4,
+  "efficiency_cores": 6
 }

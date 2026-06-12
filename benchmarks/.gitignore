@@ -1,10 +1,12 @@
-# Pinned upstream clones for the energy harnesses — energy/build.sh re-fetches them.
+# Pinned upstream clones for the external ports — build.sh re-fetches them.
 external/*/.upstream/
 
-# Energy harness build artifacts — energy/build.sh regenerates them.
-energy/contestants/*/target/
-energy/contestants/*/Cargo.lock
-energy/contestants/go/sustained-go
-energy/contestants/rns-cr/bench_sustained
-energy/contestants/rns-cr/bench_sustained.dwarf
-energy/contestants/microreticulum/build/
+# This checkout's submitter identity — each contributor mints their own (results.rs);
+# only the resulting UUID travels, stamped onto committed rows.
+.submitter.json
+
+# Built external interop nodes — build.sh regenerates them against the pinned upstreams.
+external/*/interop/go-node
+external/*/interop/target/
+external/*/interop/*.dwarf
+external/*/interop/lib/
