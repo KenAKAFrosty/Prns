@@ -80,6 +80,16 @@ fn sibling_binary(name: &str) -> std::path::PathBuf {
     path
 }
 
+/// A built external-port interop node: `external/<impl>/interop/<binary>`, produced by
+/// `build.sh` against that port's pinned upstream.
+fn external_node(impl_dir: &str, binary: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("external")
+        .join(impl_dir)
+        .join("interop")
+        .join(binary)
+}
+
 /// The reference's pinned venv python (falling back to `python3`) running one of its
 /// `reference/*.py` participation scripts under `-u` — unbuffered, so the line protocol
 /// streams a line at a time.
@@ -118,7 +128,12 @@ fn implementation(name: &str) -> Implementation {
             slug: "rns-1.3.1",
             label: "RNS 1.3.1",
         },
-        other => panic!("unknown implementation {other:?} (self|reference)"),
+        "go-reticulum" => Implementation {
+            name: "go-reticulum",
+            slug: "go-reticulum",
+            label: "go-reticulum",
+        },
+        other => panic!("unknown implementation {other:?} (self|reference|go-reticulum)"),
     }
 }
 
@@ -129,6 +144,7 @@ impl Implementation {
         match self.name {
             "self" => Some(Command::new(sibling_binary("scenario_node"))),
             "reference" => Some(reference_python("scenario_node.py")),
+            "go-reticulum" => Some(Command::new(external_node("go-reticulum", "go-node"))),
             _ => None,
         }
     }
