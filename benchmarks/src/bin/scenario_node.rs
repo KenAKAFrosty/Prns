@@ -40,7 +40,6 @@ use tokio::sync::mpsc;
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 16]);
 const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 16]);
 const LANE_DEPTH: usize = 64;
-const ANNOUNCE_EVERY: Duration = Duration::from_millis(500);
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
 const QUIET_AFTER_TRAFFIC: Duration = Duration::from_millis(1500);
 
@@ -71,6 +70,8 @@ struct Profile {
     response_max: usize,
     window: usize,
     duration_ms: u64,
+    #[serde(default = "default_announce_every_ms")]
+    announce_every_ms: u64,
     #[serde(default = "default_size_seed")]
     size_seed: u64,
     #[serde(default = "default_topology")]
@@ -129,6 +130,10 @@ fn default_topology() -> String {
 
 fn default_size_seed() -> u64 {
     0x5EED_CAFE_F00D_0001
+}
+
+fn default_announce_every_ms() -> u64 {
+    500
 }
 
 /// The varied-size law every node speaks identically: a seeded xorshift draws
@@ -400,16 +405,17 @@ async fn main() {
                 journal,
             ));
             println!("READY role=responder addr={bound}");
+            let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
             if manifest.profile.mechanism == "churn" {
-                respond_churn(destination, command_tx, event_rx).await;
+                respond_churn(destination, announce_every, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "request" {
-                respond_request(destination, command_tx, event_rx).await;
+                respond_request(destination, announce_every, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "resource" {
-                respond_resource(destination, command_tx, event_rx).await;
+                respond_resource(destination, announce_every, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "link" {
-                respond_link(destination, command_tx, event_rx).await;
+                respond_link(destination, announce_every, command_tx, event_rx).await;
             } else {
-                respond(destination, command_tx, event_rx).await;
+                respond(destination, announce_every, command_tx, event_rx).await;
             }
         }
         "initiator" => {
@@ -466,18 +472,19 @@ async fn main() {
 /// singles have no teardown to signal the end with, so silence after traffic is it.
 async fn respond(
     destination: DestinationHash,
+    announce_every: Duration,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut announce = tokio::time::interval(announce_every);
     let mut idle = tokio::time::interval(Duration::from_millis(200));
     let mut delivered = 0u64;
     let mut payload_bytes = 0u64;
     let mut last_delivery: Option<tokio::time::Instant> = None;
     loop {
         tokio::select! {
-            _ = announce.tick() => {
+            _ = announce.tick(), if delivered == 0 => {
                 let command = IssuedCommand {
                     id: CommandId(next_id),
                     command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -622,16 +629,18 @@ async fn initiate(
 /// initiator closes the link.
 async fn respond_link(
     destination: DestinationHash,
+    announce_every: Duration,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
     let mut delivered = 0u64;
     let mut payload_bytes = 0u64;
     loop {
         tokio::select! {
-            _ = announce.tick() => {
+            _ = announce.tick(), if announcing => {
                 let command = IssuedCommand {
                     id: CommandId(next_id),
                     command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -647,6 +656,9 @@ async fn respond_link(
             }
             event = events.recv() => {
                 match event {
+                    Some(Event::LinkUp) => {
+                        announcing = false;
+                    }
                     Some(Event::Delivered(bytes)) => {
                         delivered += 1;
                         payload_bytes += bytes as u64;
@@ -803,16 +815,18 @@ async fn initiate_link(
 /// initiator closes the link.
 async fn respond_resource(
     destination: DestinationHash,
+    announce_every: Duration,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
     let mut received = 0u64;
     let mut payload_bytes = 0u64;
     loop {
         tokio::select! {
-            _ = announce.tick() => {
+            _ = announce.tick(), if announcing => {
                 let command = IssuedCommand {
                     id: CommandId(next_id),
                     command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -828,6 +842,9 @@ async fn respond_resource(
             }
             event = events.recv() => {
                 match event {
+                    Some(Event::LinkUp) => {
+                        announcing = false;
+                    }
                     Some(Event::ResourceIn(bytes)) => {
                         received += 1;
                         payload_bytes += bytes as u64;
@@ -964,17 +981,19 @@ async fn initiate_resource(
 /// realistic query/answer pattern, sizes varied by the initiator.
 async fn respond_request(
     destination: DestinationHash,
+    announce_every: Duration,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let scratch = incompressible_payload(512);
     let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
     let mut served = 0u64;
     let mut response_bytes = 0u64;
     loop {
         tokio::select! {
-            _ = announce.tick() => {
+            _ = announce.tick(), if announcing => {
                 let command = IssuedCommand {
                     id: CommandId(next_id),
                     command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -990,6 +1009,9 @@ async fn respond_request(
             }
             event = events.recv() => {
                 match event {
+                    Some(Event::LinkUp) => {
+                        announcing = false;
+                    }
                     Some(Event::Request { link_id, request_id, wanted }) => {
                         next_id += 1;
                         let wanted = wanted.min(scratch.len());
@@ -1233,18 +1255,20 @@ async fn relay_node(manifest: &Manifest) {
 /// been quiet — closed links are the cycle's normal end, not the run's.
 async fn respond_churn(
     destination: DestinationHash,
+    announce_every: Duration,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
     let mut idle = tokio::time::interval(Duration::from_millis(200));
     let mut received = 0u64;
     let mut payload_bytes = 0u64;
     let mut last_delivery: Option<tokio::time::Instant> = None;
     loop {
         tokio::select! {
-            _ = announce.tick() => {
+            _ = announce.tick(), if announcing => {
                 let command = IssuedCommand {
                     id: CommandId(next_id),
                     command: EngineCommand::AnnounceNow(AnnounceNow {
@@ -1266,6 +1290,9 @@ async fn respond_churn(
             }
             event = events.recv() => {
                 match event {
+                    Some(Event::LinkUp) => {
+                        announcing = false;
+                    }
                     Some(Event::Delivered(bytes)) | Some(Event::ResourceIn(bytes)) => {
                         received += 1;
                         payload_bytes += bytes as u64;

@@ -432,8 +432,10 @@ fn goodput_cell(value: Option<f64>) -> String {
         .map(|b| {
             if b >= 1e6 {
                 format!("{:.1} MB/s", b / 1e6)
-            } else {
+            } else if b >= 1e3 {
                 format!("{:.0} kB/s", b / 1e3)
+            } else {
+                format!("{b:.0} B/s")
             }
         })
         .unwrap_or_else(pending)

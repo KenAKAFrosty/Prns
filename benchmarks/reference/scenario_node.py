@@ -172,7 +172,8 @@ def respond(name, block, ready_addr):
     destination.set_packet_callback(on_packet)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while True:
-        destination.announce()
+        if state["delivered"] == 0:
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
         last = state["last_delivery"]
         if last is not None and time.monotonic() - last > QUIET_AFTER_TRAFFIC:
@@ -286,14 +287,17 @@ def respond_link(name, block, ready_addr):
         state["delivered"] += 1
         state["payload_bytes"] += len(message)
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_packet_callback(on_packet)
         link.set_link_closed_callback(lambda _link: done.set())
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
     print(
         f"RESULT delivered={state['delivered']} payload_bytes={state['payload_bytes']}",
@@ -416,7 +420,9 @@ def respond_resource(name, block, ready_addr):
             data = resource.data.read()
             state["payload_bytes"] += len(data)
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(on_concluded)
         link.set_link_closed_callback(lambda _link: done.set())
@@ -424,7 +430,8 @@ def respond_resource(name, block, ready_addr):
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
     time.sleep(0.5)
     print(
@@ -539,13 +546,16 @@ def respond_request(name, block, ready_addr):
         REQUEST_PATH, response_generator=answer, allow=RNS.Destination.ALLOW_ALL
     )
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_link_closed_callback(lambda _link: done.set())
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
     time.sleep(0.5)
     print(
@@ -709,7 +719,9 @@ def respond_churn(name, block, ready_addr):
             state["payload_bytes"] += len(resource.data.read())
             state["last"] = time.monotonic()
 
+    link_seen = threading.Event()
     def on_link(link):
+        link_seen.set()
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_packet_callback(on_packet)
         link.set_resource_concluded_callback(on_concluded)
@@ -718,7 +730,8 @@ def respond_churn(name, block, ready_addr):
     print(f"READY role=responder addr={ready_addr}", flush=True)
     done = threading.Event()
     while True:
-        destination.announce()
+        if not link_seen.is_set():
+            destination.announce()
         done.wait(ANNOUNCE_EVERY)
         last = state["last"]
         if last is not None and time.monotonic() - last > QUIET_AFTER_TRAFFIC:
@@ -837,6 +850,9 @@ def main():
         manifest = json.load(f)
     role, addr = sys.argv[2], sys.argv[3]
     duration_ms = int(sys.argv[4]) if len(sys.argv) > 4 else manifest["profile"]["duration_ms"]
+
+    global ANNOUNCE_EVERY
+    ANNOUNCE_EVERY = manifest["profile"].get("announce_every_ms", 500) / 1000.0
 
     mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")

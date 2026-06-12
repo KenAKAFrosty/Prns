@@ -486,6 +486,28 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             .to_string()
     });
 
+    // A manifest with a wire_shape gets the shaped pipe spliced between the endpoints:
+    // infrastructure, not a contestant — the initiator dials the pipe, the pipe dials the
+    // responder, and every wire byte is counted on the way through.
+    let (pipe, addr) = if manifest_json["profile"]["wire_shape"].is_object() {
+        assert!(wire != "udp", "wire_shape shapes tcp scenarios only");
+        let pipe_bin = std::env::current_exe()
+            .expect("own path")
+            .parent()
+            .expect("bin dir")
+            .join("shaped_pipe");
+        let pipe = spawn_role(Command::new(pipe_bin), manifest, "pipe", &addr, args);
+        let pipe_ready = await_line(&pipe, "READY", Duration::from_secs(10));
+        let pipe_addr = pipe_ready
+            .split_whitespace()
+            .find_map(|kv| kv.strip_prefix("addr="))
+            .expect("pipe READY carries addr")
+            .to_string();
+        (Some(pipe), pipe_addr)
+    } else {
+        (None, addr)
+    };
+
     let initiator = spawn_role(
         interop_command(&initiator_impl),
         manifest,
@@ -493,9 +515,16 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         &addr,
         args,
     );
-    let window = Duration::from_millis(args.duration_ms.unwrap_or(10_000) + 30_000);
+    let scenario_duration_ms = args
+        .duration_ms
+        .or_else(|| manifest_json["profile"]["duration_ms"].as_u64())
+        .unwrap_or(10_000);
+    let window = Duration::from_millis(scenario_duration_ms + 30_000);
     let result = await_line(&initiator, "RESULT", window);
     let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
+    let wire_line = pipe
+        .as_ref()
+        .map(|p| await_line(p, "WIRE", Duration::from_secs(15)));
 
     let energy = bracket.map(|b| b.finish());
 
@@ -584,7 +613,10 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Throughput,
             "delivered_per_sec",
-            field(&result, "delivered_per_sec").filter(|_| !died),
+            field(&result, "delivered_per_sec")
+                .or_else(|| field(&result, "requests_per_sec"))
+                .or_else(|| field(&result, "cycles_per_sec"))
+                .filter(|_| !died),
             "msgs/s",
         ),
         row(
@@ -660,6 +692,40 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
                  (baseline drift), filed as pending",
             );
         }
+    }
+    if let Some(wire_line) = &wire_line {
+        let wire_total = field(wire_line, "a_to_b_bytes").unwrap_or(0.0)
+            + field(wire_line, "b_to_a_bytes").unwrap_or(0.0);
+        let payload = field(&result, "payload_bytes").or_else(|| {
+            match (
+                field(&result, "request_bytes"),
+                field(&result, "response_bytes"),
+            ) {
+                (Some(requests), Some(responses)) => Some(requests + responses),
+                _ => None,
+            }
+        });
+        let efficiency = payload
+            .filter(|_| wire_total > 0.0 && !died)
+            .map(|p| p / wire_total);
+        rows.push(row(
+            Axis::Throughput,
+            "wire_bytes_total",
+            Some(wire_total),
+            "bytes",
+        ));
+        rows.push(row(
+            Axis::Throughput,
+            "payload_per_wire_byte",
+            efficiency,
+            "ratio",
+        ));
+        println!(
+            "\nSUMMARY wire bytes={wire_total:.0} | payload/wire={}",
+            efficiency
+                .map(|e| format!("{e:.3}"))
+                .unwrap_or_else(|| "unmeasured".into()),
+        );
     }
     println!(
         "\nSUMMARY scenario={} pairing={pairing_label} host={}\n\
