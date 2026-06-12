@@ -24,6 +24,8 @@ use personal_rns::reactor::interfaces::tcp::core as tcp_core;
 use personal_rns::reactor::interfaces::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
 };
+use personal_rns::reactor::interfaces::udp::core as udp_core;
+use personal_rns::reactor::interfaces::udp::impls::tokio::UdpInterface;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
@@ -45,9 +47,22 @@ struct Manifest {
 #[derive(serde::Deserialize)]
 struct Profile {
     mechanism: String,
+    #[serde(default = "default_wire")]
+    wire: String,
     payload_len: usize,
     window: usize,
     duration_ms: u64,
+}
+
+fn default_wire() -> String {
+    "tcp".into()
+}
+
+/// A UDP scenario's `addr` is the full fixed pairing, `local>peer` — datagrams have no
+/// connect, so the orchestrator pre-assigns both ends and each node binds its own half.
+fn udp_halves(addr: &str) -> (&str, &str) {
+    addr.split_once('>')
+        .expect("a udp addr is local>peer, both pre-assigned by the orchestrator")
 }
 
 enum Event {
@@ -104,10 +119,16 @@ async fn main() {
     let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx, out_rx);
     let egress = Egress::new(vec![(TCP_INTERFACE_ID, out_tx)]);
-    let interfaces = vec![tcp_core::descriptor(
-        TCP_INTERFACE_ID,
-        tcp_core::TCP_BITRATE_GUESS_BPS,
-    )];
+    let interfaces = match manifest.profile.wire.as_str() {
+        "udp" => vec![udp_core::descriptor(
+            TCP_INTERFACE_ID,
+            udp_core::UDP_BITRATE_GUESS_BPS,
+        )],
+        _ => vec![tcp_core::descriptor(
+            TCP_INTERFACE_ID,
+            tcp_core::TCP_BITRATE_GUESS_BPS,
+        )],
+    };
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let journal = move |journaled: Journaled<'_>| match journaled {
@@ -131,15 +152,30 @@ async fn main() {
 
     match role.as_str() {
         "responder" => {
-            let interface = TcpServerInterface::bind(
-                TCP_INTERFACE_ID,
-                addr.as_str(),
-                tcp_core::TCP_BITRATE_GUESS_BPS,
-            )
-            .await
-            .expect("binds the scenario port");
-            let bound = interface.local_addr().expect("bound address");
-            tokio::spawn(interface.run(seam));
+            let bound = if manifest.profile.wire == "udp" {
+                let (local, peer) = udp_halves(&addr);
+                let interface = UdpInterface::bind(
+                    TCP_INTERFACE_ID,
+                    local,
+                    peer,
+                    udp_core::UDP_BITRATE_GUESS_BPS,
+                )
+                .await
+                .expect("binds the scenario port");
+                tokio::spawn(interface.run(seam));
+                addr.clone()
+            } else {
+                let interface = TcpServerInterface::bind(
+                    TCP_INTERFACE_ID,
+                    addr.as_str(),
+                    tcp_core::TCP_BITRATE_GUESS_BPS,
+                )
+                .await
+                .expect("binds the scenario port");
+                let bound = interface.local_addr().expect("bound address");
+                tokio::spawn(interface.run(seam));
+                bound.to_string()
+            };
             tokio::spawn(run(
                 engine,
                 interfaces,
@@ -159,13 +195,26 @@ async fn main() {
             }
         }
         "initiator" => {
-            let interface = TcpClientInterface::new(
-                TCP_INTERFACE_ID,
-                addr.clone(),
-                tcp_core::TCP_BITRATE_GUESS_BPS,
-                Duration::from_millis(100),
-            );
-            tokio::spawn(interface.run(seam));
+            if manifest.profile.wire == "udp" {
+                let (local, peer) = udp_halves(&addr);
+                let interface = UdpInterface::bind(
+                    TCP_INTERFACE_ID,
+                    local,
+                    peer,
+                    udp_core::UDP_BITRATE_GUESS_BPS,
+                )
+                .await
+                .expect("binds the scenario port");
+                tokio::spawn(interface.run(seam));
+            } else {
+                let interface = TcpClientInterface::new(
+                    TCP_INTERFACE_ID,
+                    addr.clone(),
+                    tcp_core::TCP_BITRATE_GUESS_BPS,
+                    Duration::from_millis(100),
+                );
+                tokio::spawn(interface.run(seam));
+            }
             tokio::spawn(run(
                 engine,
                 interfaces,

@@ -1,0 +1,17 @@
+{
+  "name": "single-firehose-udp",
+  "version": 1,
+  "description": "single-firehose's exact traffic profile carried over UDP datagrams instead of a TCP stream - same loopback device, no connection, no stream framing, no ack clock. The delta against single-firehose is the TCP protocol cost; everything above the wire is identical.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "single",
+    "wire": "udp",
+    "payload_len": 300,
+    "window": 16,
+    "duration_ms": 10000
+  },
+  "conformance": "sent == delivered + timeouts; UDP may drop under pressure, so timeouts are the loss signal rather than a defect"
+}

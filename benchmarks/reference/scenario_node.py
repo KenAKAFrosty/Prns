@@ -28,6 +28,42 @@ def free_port():
     return port
 
 
+def interface_block(wire, role, addr):
+    """One role's interface config plus the address its READY line should carry. UDP is
+    symmetric (the orchestrator pre-assigns both ends as local>peer, the reference's
+    fixed listen/forward model); TCP keeps the listen-then-connect flow."""
+    if wire == "udp":
+        local, peer = addr.split(">")
+        local_host, local_port = local.rsplit(":", 1)
+        peer_host, peer_port = peer.rsplit(":", 1)
+        return (
+            "  [[Bench UDP]]\n"
+            "    type = UDPInterface\n"
+            "    enabled = True\n"
+            f"    listen_ip = {local_host}\n"
+            f"    listen_port = {local_port}\n"
+            f"    forward_ip = {peer_host}\n"
+            f"    forward_port = {peer_port}\n"
+        ), addr
+    if role == "responder":
+        port = free_port()
+        return (
+            "  [[Bench TCP Server]]\n"
+            "    type = TCPServerInterface\n"
+            "    enabled = True\n"
+            "    listen_ip = 127.0.0.1\n"
+            f"    listen_port = {port}\n"
+        ), f"127.0.0.1:{port}"
+    host, port = addr.rsplit(":", 1)
+    return (
+        "  [[Bench TCP Client]]\n"
+        "    type = TCPClientInterface\n"
+        "    enabled = True\n"
+        f"    target_host = {host}\n"
+        f"    target_port = {port}\n"
+    ), addr
+
+
 def start_reticulum(interface_block):
     configdir = tempfile.mkdtemp(prefix="rns-scenario-")
     with open(os.path.join(configdir, "config"), "w") as f:
@@ -43,15 +79,8 @@ def start_reticulum(interface_block):
     RNS.Reticulum(configdir=configdir)
 
 
-def respond(name):
-    port = free_port()
-    start_reticulum(
-        "  [[Bench TCP Server]]\n"
-        "    type = TCPServerInterface\n"
-        "    enabled = True\n"
-        "    listen_ip = 127.0.0.1\n"
-        f"    listen_port = {port}\n"
-    )
+def respond(name, block, ready_addr):
+    start_reticulum(block)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
@@ -68,7 +97,7 @@ def respond(name):
 
     state["last_delivery"] = None
     destination.set_packet_callback(on_packet)
-    print(f"READY role=responder addr=127.0.0.1:{port}", flush=True)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
     while True:
         destination.announce()
         done.wait(ANNOUNCE_EVERY)
@@ -82,15 +111,8 @@ def respond(name):
     os._exit(0)
 
 
-def initiate(name, addr, profile, duration):
-    host, port = addr.rsplit(":", 1)
-    start_reticulum(
-        "  [[Bench TCP Client]]\n"
-        "    type = TCPClientInterface\n"
-        "    enabled = True\n"
-        f"    target_host = {host}\n"
-        f"    target_port = {port}\n"
-    )
+def initiate(name, block, profile, duration):
+    start_reticulum(block)
 
     heard = {"hash": None, "identity": None}
     announced = threading.Event()
@@ -160,15 +182,8 @@ def initiate(name, addr, profile, duration):
     os._exit(0)
 
 
-def respond_link(name):
-    port = free_port()
-    start_reticulum(
-        "  [[Bench TCP Server]]\n"
-        "    type = TCPServerInterface\n"
-        "    enabled = True\n"
-        "    listen_ip = 127.0.0.1\n"
-        f"    listen_port = {port}\n"
-    )
+def respond_link(name, block, ready_addr):
+    start_reticulum(block)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
@@ -187,7 +202,7 @@ def respond_link(name):
         link.set_link_closed_callback(lambda _link: done.set())
 
     destination.set_link_established_callback(on_link)
-    print(f"READY role=responder addr=127.0.0.1:{port}", flush=True)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
         destination.announce()
         done.wait(ANNOUNCE_EVERY)
@@ -198,15 +213,8 @@ def respond_link(name):
     os._exit(0)
 
 
-def initiate_link(name, addr, profile, duration):
-    host, port = addr.rsplit(":", 1)
-    start_reticulum(
-        "  [[Bench TCP Client]]\n"
-        "    type = TCPClientInterface\n"
-        "    enabled = True\n"
-        f"    target_host = {host}\n"
-        f"    target_port = {port}\n"
-    )
+def initiate_link(name, block, profile, duration):
+    start_reticulum(block)
 
     heard = {"hash": None, "identity": None}
     announced = threading.Event()
@@ -293,15 +301,16 @@ def main():
     duration_ms = int(sys.argv[4]) if len(sys.argv) > 4 else manifest["profile"]["duration_ms"]
 
     link = manifest["profile"]["mechanism"] == "link"
-    if role == "responder":
-        (respond_link if link else respond)(manifest["name"])
-    elif role == "initiator":
-        if link:
-            initiate_link(manifest["name"], addr, manifest["profile"], duration_ms / 1000.0)
-        else:
-            initiate(manifest["name"], addr, manifest["profile"], duration_ms / 1000.0)
-    else:
+    wire = manifest["profile"].get("wire", "tcp")
+    if role not in ("responder", "initiator"):
         sys.exit(usage)
+    block, ready_addr = interface_block(wire, role, addr)
+    if role == "responder":
+        (respond_link if link else respond)(manifest["name"], block, ready_addr)
+    elif link:
+        initiate_link(manifest["name"], block, manifest["profile"], duration_ms / 1000.0)
+    else:
+        initiate(manifest["name"], block, manifest["profile"], duration_ms / 1000.0)
 
 
 if __name__ == "__main__":

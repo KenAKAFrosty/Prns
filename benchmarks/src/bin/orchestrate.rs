@@ -207,29 +207,59 @@ fn command_line(program: &str, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Two distinct OS-assigned UDP ports — datagrams have no connect, so a UDP pairing's
+/// both ends are fixed before either node starts (the reference's `forward_ip:port`
+/// model). Both sockets are held until both ports are read, so they can't collide.
+fn udp_port_pair() -> (u16, u16) {
+    let first = std::net::UdpSocket::bind("127.0.0.1:0").expect("probes a udp port");
+    let second = std::net::UdpSocket::bind("127.0.0.1:0").expect("probes a udp port");
+    (
+        first.local_addr().expect("bound").port(),
+        second.local_addr().expect("bound").port(),
+    )
+}
+
 fn main() {
     let args = parse_args();
     let manifest = scenario_dir(&args.scenario).join("manifest.json");
     assert!(manifest.exists(), "no manifest at {}", manifest.display());
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest).expect("reads the manifest"))
+            .expect("parses the manifest");
+    let wire = manifest_json["profile"]["wire"].as_str().unwrap_or("tcp");
 
     let (_, initiator_slug, initiator_label) = implementation(&args.initiator);
     let (_, responder_slug, responder_label) = implementation(&args.responder);
     let pairing_slug = format!("{initiator_slug}--{responder_slug}");
     let pairing_label = format!("{initiator_label} \u{2192} {responder_label}");
 
+    let (responder_addr, initiator_addr) = if wire == "udp" {
+        let (responder_port, initiator_port) = udp_port_pair();
+        (
+            format!("127.0.0.1:{responder_port}>127.0.0.1:{initiator_port}"),
+            Some(format!(
+                "127.0.0.1:{initiator_port}>127.0.0.1:{responder_port}"
+            )),
+        )
+    } else {
+        ("127.0.0.1:0".to_string(), None)
+    };
+
     let mut responder = spawn_role(
         &manifest,
         "responder",
         &args.responder,
-        "127.0.0.1:0",
+        &responder_addr,
         &args,
     );
     let ready = await_line(&responder, "READY", Duration::from_secs(10));
-    let addr = ready
-        .split_whitespace()
-        .find_map(|kv| kv.strip_prefix("addr="))
-        .expect("responder READY carries addr")
-        .to_string();
+    let addr = initiator_addr.unwrap_or_else(|| {
+        ready
+            .split_whitespace()
+            .find_map(|kv| kv.strip_prefix("addr="))
+            .expect("responder READY carries addr")
+            .to_string()
+    });
 
     let mut initiator = spawn_role(&manifest, "initiator", &args.initiator, &addr, &args);
     let window = Duration::from_millis(args.duration_ms.unwrap_or(10_000) + 30_000);

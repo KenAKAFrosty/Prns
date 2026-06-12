@@ -15,7 +15,7 @@ path = "src/lib.rs"
 bench = false
 
 [dependencies]
-personal-rns = { path = "../personal-rns", features = ["tcp"] }
+personal-rns = { path = "../personal-rns", features = ["tcp", "udp"] }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
