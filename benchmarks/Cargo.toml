@@ -30,7 +30,8 @@ getrandom = "0.2"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
-# Timing harness for the throughput/latency benches (lean: no plotters/rayon).
+# Timing harness for the engine microscope (lean: no plotters/rayon).
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 
 # --- Result substrate: our driver emits rows; the renderer turns rows into RESULTS.md ---
 [[bin]]
@@ -53,4 +54,10 @@ bench = false
 name = "render_results"
 path = "src/bin/render_results.rs"
 bench = false
+
+# --- Microscope: drive the engine directly, no I/O — the control baseline for crypto work ---
+[[bench]]
+name = "engine_cycle"
+path = "benches/engine_cycle.rs"
+harness = false
 
