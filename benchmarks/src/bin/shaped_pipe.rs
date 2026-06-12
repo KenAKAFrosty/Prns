@@ -7,7 +7,13 @@
 //! nothing more is read, so TCP flow control pushes back to the sender exactly like a radio's
 //! small buffer would. Every forwarded byte is counted, and when a session closes the totals
 //! go out on a `WIRE a_to_b_bytes=… b_to_a_bytes=…` line — payload divided by wire bytes is
-//! the protocol's overhead ratio, measured where it can't lie.
+//! the protocol's overhead ratio, measured where it can't lie. Forwarding happens in
+//! 64-byte slices with individual release times: a real wire delivers a clump's leading
+//! frame after only its own airtime, so chunk-atomic delivery would invent a convoy
+//! penalty the physics doesn't charge. The release schedule is absolute — each slice's
+//! due time advances by exact airtime, the clock only re-clamps to now when the source
+//! went idle, and backpressure is the bounded queue — so timer rounding delays a write
+//! without ever stealing channel throughput.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -102,22 +108,23 @@ async fn pump(
 
     let mut buffer = [0u8; 2048];
     let mut channel_free_at = tokio::time::Instant::now();
-    loop {
+    'session: loop {
         let read = match reader.read(&mut buffer).await {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
         counter.fetch_add(read as u64, Ordering::Relaxed);
-        let airtime = Duration::from_secs_f64(read as f64 * 8.0 / rate_bps as f64);
-        let now = tokio::time::Instant::now();
-        channel_free_at = channel_free_at.max(now) + airtime;
-        tokio::time::sleep_until(channel_free_at).await;
-        if delayed_tx
-            .send((channel_free_at + latency, buffer[..read].to_vec()))
-            .await
-            .is_err()
-        {
-            break;
+        channel_free_at = channel_free_at.max(tokio::time::Instant::now());
+        for slice in buffer[..read].chunks(64) {
+            let airtime = Duration::from_secs_f64(slice.len() as f64 * 8.0 / rate_bps as f64);
+            channel_free_at += airtime;
+            if delayed_tx
+                .send((channel_free_at + latency, slice.to_vec()))
+                .await
+                .is_err()
+            {
+                break 'session;
+            }
         }
     }
     drop(delayed_tx);
