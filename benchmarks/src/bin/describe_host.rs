@@ -30,6 +30,11 @@ fn main() {
         total_memory_bytes: (sys.total_memory() > 0).then(|| sys.total_memory()),
         os_version: System::long_os_version().filter(|v| !v.is_empty()),
         kernel_version: System::kernel_version().filter(|v| !v.is_empty()),
+        cpu_governor: sysfs("devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+        cpu_max_mhz: sysfs("devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+            .and_then(|khz| khz.parse::<u32>().ok())
+            .map(|khz| khz / 1000),
+        pinned_sibling_sets: sibling_sets(),
     };
     write_host(&descriptor);
 
@@ -58,6 +63,43 @@ fn main() {
         "  kernel  {}",
         descriptor.kernel_version.as_deref().unwrap_or("unknown")
     );
+    println!(
+        "  freq    {} MHz max, governor {}",
+        opt(descriptor.cpu_max_mhz),
+        descriptor.cpu_governor.as_deref().unwrap_or("unknown"),
+    );
+    println!(
+        "  pinning {}",
+        descriptor
+            .pinned_sibling_sets
+            .as_ref()
+            .map(|s| s.join(" | "))
+            .unwrap_or_else(|| "unknown".into()),
+    );
+}
+
+/// One trimmed line out of /sys (Linux); None elsewhere or when absent.
+fn sysfs(path: &str) -> Option<String> {
+    std::fs::read_to_string(format!("/sys/{path}"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// The first two distinct physical cores' SMT sibling sets — what the orchestrator pins
+/// the two roles to, recorded so a filed figure names the exact CPUs it ran on.
+fn sibling_sets() -> Option<Vec<String>> {
+    let first = sysfs("devices/system/cpu/cpu0/topology/thread_siblings_list")?;
+    let taken: Vec<u32> = first
+        .split(|c| c == ',' || c == '-')
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    let next = (0..64).filter(|n| !taken.contains(n)).find_map(|n| {
+        sysfs(&format!(
+            "devices/system/cpu/cpu{n}/topology/thread_siblings_list"
+        ))
+    })?;
+    Some(vec![first, next])
 }
 
 fn nonzero(n: u32) -> Option<u32> {

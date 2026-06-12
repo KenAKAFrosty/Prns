@@ -71,7 +71,7 @@ fn percentile(sorted: &[u64], p: f64) -> f64 {
     sorted[rank.min(sorted.len() - 1)] as f64
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn main() {
     let mut args = std::env::args().skip(1);
     let usage = "usage: scenario_node <manifest.json> <responder|initiator> <addr> [duration-ms]";

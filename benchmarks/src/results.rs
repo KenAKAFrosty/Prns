@@ -108,6 +108,16 @@ pub struct HostDescriptor {
     pub total_memory_bytes: Option<u64>,
     pub os_version: Option<String>,
     pub kernel_version: Option<String>,
+    /// The scaling governor and max frequency in effect when measured — on laptop
+    /// silicon these gate every figure, so a row without them can't be reproduced.
+    #[serde(default)]
+    pub cpu_governor: Option<String>,
+    #[serde(default)]
+    pub cpu_max_mhz: Option<u32>,
+    /// The SMT sibling sets the orchestrator pins contestants to — one physical core
+    /// per role, so the filed figures are per-physical-core numbers by construction.
+    #[serde(default)]
+    pub pinned_sibling_sets: Option<Vec<String>>,
 }
 
 /// The substrate root: `<crate>/results`.

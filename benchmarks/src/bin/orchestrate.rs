@@ -7,7 +7,10 @@
 //! participation binary can't flatter itself.
 //!
 //! usage: orchestrate [scenario] [--initiator self|reference] [--responder self|reference]
-//!                     [--duration-ms N] [--pin]
+//!                     [--duration-ms N] [--unpinned]
+//!
+//! Pinning is ON by default (one physical core's SMT siblings per role) — unpinned runs
+//! proved non-reproducible on hybrid-core silicon, so `--unpinned` prints but never files.
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
@@ -17,8 +20,28 @@ use std::time::Duration;
 use benchmarks::scenario_dir;
 use benchmarks::{write_rows, Axis, ResultRow};
 
-const RESPONDER_CORES: &str = "0,1";
-const INITIATOR_CORES: &str = "2,3";
+/// One physical core's SMT siblings per role, read from the live topology — pinned runs
+/// are per-physical-core figures by construction. Falls back to the first two thread
+/// pairs when /sys is absent.
+fn role_cores(role: &str) -> String {
+    let sets = benchmarks::load_host(&rustc_host_triple())
+        .and_then(|h| h.pinned_sibling_sets)
+        .unwrap_or_else(|| vec!["0,1".into(), "2,3".into()]);
+    if role == "responder" {
+        sets.first().cloned().unwrap_or_else(|| "0,1".into())
+    } else {
+        sets.get(1).cloned().unwrap_or_else(|| "2,3".into())
+    }
+}
+
+fn rustc_host_triple() -> String {
+    command_line("rustc", &["-vV"])
+        .and_then(|v| {
+            v.lines()
+                .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
+        })
+        .unwrap_or_else(|| "unknown-host".into())
+}
 
 struct RoleProcess {
     child: Child,
@@ -62,11 +85,7 @@ fn spawn_role(
     let (base, _, _) = implementation(impl_name);
     let mut command = if args.pin {
         let mut c = Command::new("taskset");
-        c.arg("-c").arg(if role == "responder" {
-            RESPONDER_CORES
-        } else {
-            INITIATOR_CORES
-        });
+        c.arg("-c").arg(role_cores(role));
         c.arg(base.get_program());
         c.args(base.get_args());
         c
@@ -163,7 +182,7 @@ fn parse_args() -> Args {
         initiator: "self".into(),
         responder: "self".into(),
         duration_ms: None,
-        pin: false,
+        pin: true,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
@@ -173,7 +192,7 @@ fn parse_args() -> Args {
             "--duration-ms" => {
                 args.duration_ms = Some(argv.next().and_then(|v| v.parse().ok()).expect("ms"));
             }
-            "--pin" => args.pin = true,
+            "--unpinned" => args.pin = false,
             other if !other.starts_with("--") => args.scenario = other.into(),
             other => panic!("unknown flag {other}"),
         }
@@ -235,12 +254,7 @@ fn main() {
          the initiator's receipt timeout, so the responder may see more than settles",
     );
 
-    let host = command_line("rustc", &["-vV"])
-        .and_then(|v| {
-            v.lines()
-                .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
-        })
-        .unwrap_or_else(|| "unknown-host".into());
+    let host = rustc_host_triple();
     let commit = command_line("git", &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
     let toolchain = command_line("rustc", &["--version"]).unwrap_or_default();
 
@@ -300,7 +314,11 @@ fn main() {
             "bytes",
         ),
     ];
-    write_rows(&host, &args.scenario, &pairing_slug, &rows);
+    if args.pin {
+        write_rows(&host, &args.scenario, &pairing_slug, &rows);
+    } else {
+        println!("UNPINNED run: rows printed, not filed (re-run without --unpinned to file)");
+    }
 
     println!(
         "\nSUMMARY scenario={} pairing={pairing_label} host={host}\n\
