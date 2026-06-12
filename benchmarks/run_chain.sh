@@ -22,6 +22,12 @@ node_cmd() {
   fi
 }
 
+PIN_CORES="${PIN_CORES:-$(cat /sys/devices/cpu_core/cpus 2>/dev/null || true)}"
+PIN=""
+if [ -n "$PIN_CORES" ] && command -v taskset >/dev/null 2>&1; then
+  PIN="taskset -c $PIN_CORES"
+fi
+
 TMP="$(mktemp -d /tmp/chain-run.XXXXXX)"
 PIDS=()
 cleanup() {
@@ -43,21 +49,21 @@ await_ready() {
   echo ""
 }
 
-$(node_cmd "$RESP_IMPL") "$MANIFEST" responder 127.0.0.1:0 > "$TMP/resp.log" 2>&1 &
+$PIN $(node_cmd "$RESP_IMPL") "$MANIFEST" responder 127.0.0.1:0 > "$TMP/resp.log" 2>&1 &
 PIDS+=($!)
 UPSTREAM="$(await_ready "$TMP/resp.log")"
 [ -n "$UPSTREAM" ] || { echo "CHAIN-FAIL responder never READY"; exit 1; }
 
 TRUNK_PIDS=()
 for i in $(seq 1 "$TRUNK_LEN"); do
-  $(node_cmd "$TRUNK_IMPL") "$MANIFEST" chain "$UPSTREAM" > "$TMP/t$i.log" 2>&1 &
+  $PIN $(node_cmd "$TRUNK_IMPL") "$MANIFEST" chain "$UPSTREAM" > "$TMP/t$i.log" 2>&1 &
   PIDS+=($!)
   TRUNK_PIDS+=($!)
   UPSTREAM="$(await_ready "$TMP/t$i.log")"
   [ -n "$UPSTREAM" ] || { echo "CHAIN-FAIL trunk node $i never READY"; exit 1; }
 done
 
-INIT_OUT="$($(node_cmd "$INIT_IMPL") "$MANIFEST" initiator "$UPSTREAM" 2>/dev/null | grep RESULT)"
+INIT_OUT="$($PIN $(node_cmd "$INIT_IMPL") "$MANIFEST" initiator "$UPSTREAM" 2>/dev/null | grep RESULT)"
 sleep 2
 RESP_OUT="$(grep RESULT "$TMP/resp.log" || true)"
 
