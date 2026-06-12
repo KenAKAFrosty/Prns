@@ -170,16 +170,30 @@ fn store<T>(slot: &mut Option<T>, value: T) -> Option<()> {
     Some(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceAdvertisementError {
+    HashmapTooLong,
+    HashmapRagged,
+    BufferTooShort,
+    Malformed,
+}
+
 impl<'a> ResourceAdvertisement<'a> {
     /// `ResourceAdvertisement.pack()` byte for byte: a fixmap of eleven
     /// one-character keys in the reference's insertion order, integers at
     /// umsgpack's minimal widths, an absent request id as nil.
-    pub fn write(&self, buf: &mut [u8]) -> Option<usize> {
-        if self.hashmap.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN
-            || !self.hashmap.len().is_multiple_of(MAP_HASH_LEN)
-        {
-            return None;
+    pub fn write(&self, buf: &mut [u8]) -> Result<usize, ResourceAdvertisementError> {
+        if self.hashmap.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
+            return Err(ResourceAdvertisementError::HashmapTooLong);
         }
+        if !self.hashmap.len().is_multiple_of(MAP_HASH_LEN) {
+            return Err(ResourceAdvertisementError::HashmapRagged);
+        }
+        self.write_fields(buf)
+            .ok_or(ResourceAdvertisementError::BufferTooShort)
+    }
+
+    fn write_fields(&self, buf: &mut [u8]) -> Option<usize> {
         let mut at = put(buf, 0, &[FIXMAP_11])?;
         at = put_key(buf, at, b't')?;
         at = put_uint(buf, at, self.transfer_size)?;
@@ -212,7 +226,11 @@ impl<'a> ResourceAdvertisement<'a> {
     /// the known keys once, in any order; trailing bytes after the map are
     /// ignored the way umsgpack ignores them. A request id must be nil or
     /// sixteen bytes; flag bits past the known six fall away.
-    pub fn parse(plaintext: &'a [u8]) -> Option<Self> {
+    pub fn parse(plaintext: &'a [u8]) -> Result<Self, ResourceAdvertisementError> {
+        Self::parse_fields(plaintext).ok_or(ResourceAdvertisementError::Malformed)
+    }
+
+    fn parse_fields(plaintext: &'a [u8]) -> Option<Self> {
         let mut reader = Reader {
             bytes: plaintext,
             at: 0,
@@ -274,6 +292,14 @@ impl<'a> ResourceAdvertisement<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceHashmapUpdateError {
+    HashmapTooLong,
+    HashmapRagged,
+    BufferTooShort,
+    Malformed,
+}
+
 /// The sender's reply when the receiver's hashmap runs dry. RNS 1.3.1
 /// `Resource.request`'s HMU branch: the resource hash, then
 /// `umsgpack.packb([segment, hashmap])` carrying the next run of map hashes.
@@ -282,24 +308,43 @@ pub fn write_hashmap_update_plaintext(
     segment: u64,
     hashmap: &[u8],
     buf: &mut [u8],
-) -> Option<usize> {
-    if hashmap.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN || !hashmap.len().is_multiple_of(MAP_HASH_LEN)
-    {
-        return None;
+) -> Result<usize, ResourceHashmapUpdateError> {
+    if hashmap.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
+        return Err(ResourceHashmapUpdateError::HashmapTooLong);
     }
+    if !hashmap.len().is_multiple_of(MAP_HASH_LEN) {
+        return Err(ResourceHashmapUpdateError::HashmapRagged);
+    }
+    write_hashmap_update_fields(hash, segment, hashmap, buf)
+        .ok_or(ResourceHashmapUpdateError::BufferTooShort)
+}
+
+fn write_hashmap_update_fields(
+    hash: &ResourceHash,
+    segment: u64,
+    hashmap: &[u8],
+    buf: &mut [u8],
+) -> Option<usize> {
     let mut at = put(buf, 0, hash.as_bytes())?;
     at = put(buf, at, &[FIXARRAY_2])?;
     at = put_uint(buf, at, segment)?;
     put_bin(buf, at, hashmap)
 }
 
+#[derive(Debug)]
 pub struct ParsedHashmapUpdate<'a> {
     pub hash: ResourceHash,
     pub segment: u64,
     pub hashmap: &'a [u8],
 }
 
-pub fn parse_hashmap_update_plaintext(plaintext: &[u8]) -> Option<ParsedHashmapUpdate<'_>> {
+pub fn parse_hashmap_update_plaintext(
+    plaintext: &[u8],
+) -> Result<ParsedHashmapUpdate<'_>, ResourceHashmapUpdateError> {
+    parse_hashmap_update_fields(plaintext).ok_or(ResourceHashmapUpdateError::Malformed)
+}
+
+fn parse_hashmap_update_fields(plaintext: &[u8]) -> Option<ParsedHashmapUpdate<'_>> {
     let mut reader = Reader {
         bytes: plaintext,
         at: 0,
@@ -487,11 +532,14 @@ mod tests {
     fn malformed_advertisements_refuse() {
         let wire = hx(V1);
         for cut in [0, 1, 5, 100, wire.len() - 1] {
-            assert!(ResourceAdvertisement::parse(&wire[..cut]).is_none());
+            assert_eq!(
+                ResourceAdvertisement::parse(&wire[..cut]).unwrap_err(),
+                ResourceAdvertisementError::Malformed,
+            );
         }
         let mut wrong_count = wire.clone();
         wrong_count[0] = 0x8A;
-        assert!(ResourceAdvertisement::parse(&wrong_count).is_none());
+        assert!(ResourceAdvertisement::parse(&wrong_count).is_err());
         let d_key_at = wire
             .windows(2)
             .position(|pair| pair == [FIXSTR_1, b'd'])
@@ -499,10 +547,10 @@ mod tests {
             + 1;
         let mut duplicate_key = wire.clone();
         duplicate_key[d_key_at] = b't';
-        assert!(ResourceAdvertisement::parse(&duplicate_key).is_none());
+        assert!(ResourceAdvertisement::parse(&duplicate_key).is_err());
         let mut unknown_key = wire.clone();
         unknown_key[2] = b'z';
-        assert!(ResourceAdvertisement::parse(&unknown_key).is_none());
+        assert!(ResourceAdvertisement::parse(&unknown_key).is_err());
 
         let hashmap = full_hashmap();
         let mut buf = [0u8; LINK_MDU];
@@ -516,17 +564,30 @@ mod tests {
             .unwrap()
             + 3;
         wire[q_len_at] = 15;
-        assert!(ResourceAdvertisement::parse(&wire).is_none());
+        assert!(ResourceAdvertisement::parse(&wire).is_err());
     }
 
     #[test]
     fn oversize_or_ragged_hashmaps_refuse_to_write() {
         let mut buf = [0u8; 2 * LINK_MDU];
         let too_long = std::vec![0u8; (HASHMAP_MAX_LEN + 1) * MAP_HASH_LEN];
-        assert!(v1_adv(&too_long).write(&mut buf).is_none());
+        assert_eq!(
+            v1_adv(&too_long).write(&mut buf).unwrap_err(),
+            ResourceAdvertisementError::HashmapTooLong,
+        );
         let ragged = std::vec![0u8; MAP_HASH_LEN + 1];
-        assert!(v1_adv(&ragged).write(&mut buf).is_none());
-        assert!(write_hashmap_update_plaintext(&h(), 1, &too_long, &mut buf).is_none());
+        assert_eq!(
+            v1_adv(&ragged).write(&mut buf).unwrap_err(),
+            ResourceAdvertisementError::HashmapRagged,
+        );
+        assert_eq!(
+            v1_adv(&full_hashmap()).write(&mut buf[..64]).unwrap_err(),
+            ResourceAdvertisementError::BufferTooShort,
+        );
+        assert_eq!(
+            write_hashmap_update_plaintext(&h(), 1, &too_long, &mut buf).unwrap_err(),
+            ResourceHashmapUpdateError::HashmapTooLong,
+        );
     }
 
     #[test]
@@ -566,7 +627,10 @@ mod tests {
             &buf[RESOURCE_HASH_LEN..n],
             &hx("9200c4080102030405060708")[..]
         );
-        assert!(parse_hashmap_update_plaintext(&buf[..RESOURCE_HASH_LEN + 1]).is_none());
+        assert_eq!(
+            parse_hashmap_update_plaintext(&buf[..RESOURCE_HASH_LEN + 1]).unwrap_err(),
+            ResourceHashmapUpdateError::Malformed,
+        );
     }
 
     #[test]

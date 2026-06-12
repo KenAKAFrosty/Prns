@@ -74,6 +74,12 @@ impl RequestId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestPlaintextError {
+    BufferTooShort,
+    Malformed,
+}
+
 /// `umsgpack.packb([time.time(), request_path_hash, data])` — the float lives
 /// and dies inside this codec; the engine clock stays u64 millis. Empty `data`
 /// packs the reference's `None` as nil.
@@ -82,11 +88,11 @@ pub fn write_request_plaintext(
     path_hash: &RequestPathHash,
     data: &[u8],
     buf: &mut [u8],
-) -> Option<usize> {
+) -> Result<usize, RequestPlaintextError> {
     let data_len = if data.is_empty() { 1 } else { data.len() };
     let total = REQUEST_WIRE_OVERHEAD + data_len;
     if buf.len() < total {
-        return None;
+        return Err(RequestPlaintextError::BufferTooShort);
     }
     buf[0] = FIXARRAY_3;
     buf[1] = FLOAT_64;
@@ -100,9 +106,10 @@ pub fn write_request_plaintext(
     } else {
         buf[REQUEST_WIRE_OVERHEAD..total].copy_from_slice(data);
     }
-    Some(total)
+    Ok(total)
 }
 
+#[derive(Debug)]
 pub struct ParsedRequest<'a> {
     pub requested_at: InstantMillis,
     pub path_hash: RequestPathHash,
@@ -112,12 +119,14 @@ pub struct ParsedRequest<'a> {
 /// The responder's read — hostile floats saturate the way the LRRTT parse
 /// does, and anything not shaped like the reference's three-element pack is
 /// refused.
-pub fn parse_request_plaintext(plaintext: &[u8]) -> Option<ParsedRequest<'_>> {
+pub fn parse_request_plaintext(
+    plaintext: &[u8],
+) -> Result<ParsedRequest<'_>, RequestPlaintextError> {
     if plaintext.len() < REQUEST_WIRE_OVERHEAD + 1 {
-        return None;
+        return Err(RequestPlaintextError::Malformed);
     }
     if plaintext[0] != FIXARRAY_3 || plaintext[1] != FLOAT_64 {
-        return None;
+        return Err(RequestPlaintextError::Malformed);
     }
     let mut seconds = [0u8; 8];
     seconds.copy_from_slice(&plaintext[2..10]);
@@ -128,15 +137,21 @@ pub fn parse_request_plaintext(plaintext: &[u8]) -> Option<ParsedRequest<'_>> {
         (seconds * 1_000.0 + 0.5) as u64
     };
     if plaintext[10] != BIN_8 || plaintext[11] != TRUNCATED_HASH_BYTE_LEN as u8 {
-        return None;
+        return Err(RequestPlaintextError::Malformed);
     }
     let mut path_hash = [0u8; TRUNCATED_HASH_BYTE_LEN];
     path_hash.copy_from_slice(&plaintext[12..12 + TRUNCATED_HASH_BYTE_LEN]);
-    Some(ParsedRequest {
+    Ok(ParsedRequest {
         requested_at: InstantMillis(requested_at),
         path_hash: RequestPathHash::new(path_hash),
         data: &plaintext[REQUEST_WIRE_OVERHEAD..],
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponsePlaintextError {
+    BufferTooShort,
+    Malformed,
 }
 
 /// `umsgpack.packb([request_id, response])`.
@@ -144,11 +159,11 @@ pub fn write_response_plaintext(
     request_id: &RequestId,
     data: &[u8],
     buf: &mut [u8],
-) -> Option<usize> {
+) -> Result<usize, ResponsePlaintextError> {
     let data_len = if data.is_empty() { 1 } else { data.len() };
     let total = RESPONSE_WIRE_OVERHEAD + data_len;
     if buf.len() < total {
-        return None;
+        return Err(ResponsePlaintextError::BufferTooShort);
     }
     buf[0] = FIXARRAY_2;
     buf[1] = BIN_8;
@@ -159,22 +174,24 @@ pub fn write_response_plaintext(
     } else {
         buf[RESPONSE_WIRE_OVERHEAD..total].copy_from_slice(data);
     }
-    Some(total)
+    Ok(total)
 }
 
-pub fn parse_response_plaintext(plaintext: &[u8]) -> Option<(RequestId, &[u8])> {
+pub fn parse_response_plaintext(
+    plaintext: &[u8],
+) -> Result<(RequestId, &[u8]), ResponsePlaintextError> {
     if plaintext.len() < RESPONSE_WIRE_OVERHEAD + 1 {
-        return None;
+        return Err(ResponsePlaintextError::Malformed);
     }
     if plaintext[0] != FIXARRAY_2
         || plaintext[1] != BIN_8
         || plaintext[2] != TRUNCATED_HASH_BYTE_LEN as u8
     {
-        return None;
+        return Err(ResponsePlaintextError::Malformed);
     }
     let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
     id.copy_from_slice(&plaintext[3..3 + TRUNCATED_HASH_BYTE_LEN]);
-    Some((RequestId(id), &plaintext[RESPONSE_WIRE_OVERHEAD..]))
+    Ok((RequestId(id), &plaintext[RESPONSE_WIRE_OVERHEAD..]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +305,7 @@ impl<S: EngineStorage> EngineState<S> {
         let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
             write_request_plaintext(now, &request.path_hash, &request.data, &mut plaintext)
-                .ok_or(LinkRequestWriteError::BufferTooShort)?;
+                .map_err(|_| LinkRequestWriteError::BufferTooShort)?;
         if plain_len > link_mdu(*mtu) {
             return Err(LinkRequestWriteError::PayloadTooLong);
         }
@@ -345,7 +362,7 @@ impl<S: EngineStorage> EngineState<S> {
         let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
             write_response_plaintext(&respond.request_id, &respond.data, &mut plaintext)
-                .ok_or(LinkRequestWriteError::BufferTooShort)?;
+                .map_err(|_| LinkRequestWriteError::BufferTooShort)?;
         if plain_len > link_mdu(*mtu) {
             return Err(LinkRequestWriteError::PayloadTooLong);
         }
@@ -427,7 +444,13 @@ mod tests {
             InstantMillis(0),
         );
         buf[0] = 0x92;
-        assert!(parse_request_plaintext(&buf[..n]).is_none());
-        assert!(parse_response_plaintext(&[0x92, 0xC4]).is_none());
+        assert_eq!(
+            parse_request_plaintext(&buf[..n]).unwrap_err(),
+            RequestPlaintextError::Malformed,
+        );
+        assert_eq!(
+            parse_response_plaintext(&[0x92, 0xC4]).unwrap_err(),
+            ResponsePlaintextError::Malformed,
+        );
     }
 }

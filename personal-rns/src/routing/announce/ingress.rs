@@ -1024,7 +1024,7 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let plaintext: &'p [u8] = plaintext;
-        let Some(parsed) = parse_request_plaintext(plaintext) else {
+        let Ok(parsed) = parse_request_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored;
         };
         if !self
@@ -1067,7 +1067,7 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let plaintext: &'p [u8] = plaintext;
-        let Some((request_id, response_data)) = parse_response_plaintext(plaintext) else {
+        let Ok((request_id, response_data)) = parse_response_plaintext(plaintext) else {
             return IngestPacketOutcome::Ignored;
         };
         let Some(proven) = self.receipts.settle_by_request_id(request_id.as_bytes()) else {
