@@ -303,6 +303,14 @@ impl<S: EngineStorage> EngineState<S> {
                     hash,
                 }));
             }
+            IngestPacketOutcome::ResourceRejectedByPeer { id } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendResource(Err(
+                        crate::engine::SendResourceFailure::RejectedByPeer,
+                    )),
+                }));
+            }
             IngestPacketOutcome::ResourceDelivered { id } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id,

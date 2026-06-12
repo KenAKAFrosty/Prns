@@ -8,11 +8,11 @@
 use crate::engine::commands::{
     CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyError,
 };
+use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
-use crate::engine::Journaled;
 use crate::routing::links::data::write_link_raw_packet;
 use crate::routing::links::resources::advertisement::{
     parse_hashmap_update_plaintext, ResourceAdvertisement,
@@ -21,7 +21,8 @@ use crate::routing::links::resources::assemble_incoming::{
     match_part_in_window, open_transfer, verify_and_prove,
 };
 use crate::routing::links::resources::control::{
-    write_part_request_plaintext, write_proof_plaintext, PROOF_PLAINTEXT_LEN,
+    parse_cancel_plaintext, write_part_request_plaintext, write_proof_plaintext,
+    PROOF_PLAINTEXT_LEN,
 };
 use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
@@ -362,6 +363,43 @@ impl<S: EngineStorage> EngineState<S> {
         }
     }
 
+    /// RNS 1.3.1's link dispatch for `RESOURCE_ICL`: the sender cancelled an
+    /// inbound transfer — the matching row drops and the app hears the
+    /// failure. Sealed, and behind the duplicate filter like the
+    /// advertisement.
+    pub(crate) fn classify_resource_cancel<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(hash) = parse_cancel_plaintext(plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        if !self.incoming_resources.remove(&link_id, &hash) {
+            return IngestPacketOutcome::Ignored;
+        }
+        self.links.note_inbound(&link_id, arrived_at);
+        IngestPacketOutcome::ResourceConcludedFailed { link_id, hash }
+    }
+
     /// The closing move of RNS 1.3.1 `Resource.assemble` + `prove`: open the
     /// completed transfer in place, verify the salted hash, send the 64-byte
     /// proof back raw, journal the plaintext to the app, and retire the row.
@@ -447,12 +485,14 @@ impl<S: EngineStorage> EngineState<S> {
 
     /// The host's answer to [`Journaled::ResourceNeedsDecompression`]: the
     /// inflated plaintext, in a buffer the host sized from the advertised
-    /// length. The engine verifies it exactly like an uncompressed assembly —
+    /// length. The engine verifies it exactly like an uncompressed assembly:
     /// a wrong length, a wrong hash, or a vanished link all retire the row
     /// as failed (the host signals its own inflate failure by answering with
-    /// an empty slice). A borrow-taking entry point beside the command
-    /// queue, like `ingest_send_resource_into`: a mebibyte never rides an
-    /// enum.
+    /// an empty slice).
+    ///
+    /// A borrow-taking entry point beside the command
+    /// queue, like `ingest_send_resource_into` (a mebibyte never rides an
+    /// enum).
     pub fn provide_decompressed(
         &mut self,
         link_id: LinkId,
@@ -719,7 +759,6 @@ mod tests_support {
     pub(crate) fn four_part_payload() -> std::vec::Vec<u8> {
         b"resource parts ride raw on the wire! ".repeat(41)
     }
-
 }
 
 #[cfg(test)]
@@ -935,10 +974,18 @@ mod loop_tests {
         );
 
         let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
-        assert_eq!(pull.frames.len(), 1, "the receiver asks for the first window");
+        assert_eq!(
+            pull.frames.len(),
+            1,
+            "the receiver asks for the first window"
+        );
 
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        assert_eq!(serve.frames.len(), 4, "the sender streams every requested part");
+        assert_eq!(
+            serve.frames.len(),
+            4,
+            "the sender streams every requested part"
+        );
 
         let mut conclusion = None;
         for (arrived, (_, part)) in serve.frames.iter().enumerate() {
@@ -1002,7 +1049,10 @@ mod loop_tests {
         let next_pull = next_pull.expect("the drained window re-pulls");
 
         let hash = *receiver.incoming_resources.hash_at(0);
-        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.window, 5, "an emptied window grows by one");
         assert_eq!(state.consecutive_completed, Some(3));
@@ -1011,8 +1061,9 @@ mod loop_tests {
         let (_, payload) = WirePacketHeader::parse(request).unwrap();
         let mut sealed = payload.to_vec();
         let opened = link_key().open_in_place(&mut sealed).unwrap();
-        let request = crate::routing::links::resources::control::parse_part_request_plaintext(opened)
-            .unwrap();
+        let request =
+            crate::routing::links::resources::control::parse_part_request_plaintext(opened)
+                .unwrap();
         assert_eq!(
             request.requested,
             &receiver.incoming_resources.names_flat(index)[4 * MAP_HASH_LEN..8 * MAP_HASH_LEN],
@@ -1097,21 +1148,34 @@ mod loop_tests {
         accept_everything(&mut receiver);
 
         let names = six_names();
-        let pull = feed(&mut receiver, &crafted_partial_advertisement(&names[..8], 6), 2_000);
+        let pull = feed(
+            &mut receiver,
+            &crafted_partial_advertisement(&names[..8], 6),
+            2_000,
+        );
         assert_eq!(pull.frames.len(), 1);
         let (_, payload) = WirePacketHeader::parse(&pull.frames[0].1).unwrap();
         let mut sealed = payload.to_vec();
         let opened = link_key().open_in_place(&mut sealed).unwrap();
-        let request = crate::routing::links::resources::control::parse_part_request_plaintext(opened)
-            .unwrap();
-        assert_eq!(request.requested, &names[..8], "only two parts are nameable");
+        let request =
+            crate::routing::links::resources::control::parse_part_request_plaintext(opened)
+                .unwrap();
+        assert_eq!(
+            request.requested,
+            &names[..8],
+            "only two parts are nameable"
+        );
         assert_eq!(
             request.last_known_map_hash,
             Some(names[4..8].try_into().unwrap()),
             "the request flags exhaustion at the last known name",
         );
 
-        let resumed = feed(&mut receiver, &sealed_hashmap_update(0, &names, 0xD2), 2_100);
+        let resumed = feed(
+            &mut receiver,
+            &sealed_hashmap_update(0, &names, 0xD2),
+            2_100,
+        );
         assert_eq!(resumed.frames.len(), 1, "the pull resumes");
         let index = receiver
             .incoming_resources
@@ -1127,9 +1191,17 @@ mod loop_tests {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let names = six_names();
-        feed(&mut receiver, &crafted_partial_advertisement(&names[..8], 6), 2_000);
+        feed(
+            &mut receiver,
+            &crafted_partial_advertisement(&names[..8], 6),
+            2_000,
+        );
 
-        let cancelled = feed(&mut receiver, &sealed_hashmap_update(5, &names, 0xD3), 2_100);
+        let cancelled = feed(
+            &mut receiver,
+            &sealed_hashmap_update(5, &names, 0xD3),
+            2_100,
+        );
         assert!(cancelled.frames.is_empty());
         assert_eq!(cancelled.failed.len(), 1);
         assert!(receiver.incoming_resources.is_empty());
@@ -1294,7 +1366,10 @@ mod seam_tests {
             "the host receives exactly the bz2 stream the sender compressed",
         );
         assert_eq!(advertised_len, 1_360);
-        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
         assert_eq!(
             receiver.incoming_resources.state(index).status,
             IncomingResourceStatus::AwaitingDecompression,
@@ -1302,8 +1377,11 @@ mod seam_tests {
 
         let mut frames = std::vec::Vec::new();
         let mut received = std::vec::Vec::new();
-        receiver.provide_decompressed(link_id(), hash, &plaintext, &mut |reaction| {
-            match reaction {
+        receiver.provide_decompressed(
+            link_id(),
+            hash,
+            &plaintext,
+            &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         frames.push(frame);
@@ -1313,8 +1391,8 @@ mod seam_tests {
                     received.push(data.to_vec());
                 }
                 _ => {}
-            }
-        });
+            },
+        );
         assert_eq!(received.len(), 1);
         assert_eq!(received[0], plaintext);
         assert!(receiver.incoming_resources.is_empty());
@@ -1360,15 +1438,18 @@ mod seam_tests {
         corrupted[0] ^= 1;
         let mut failed = std::vec::Vec::new();
         let mut frames = 0usize;
-        receiver.provide_decompressed(link_id(), hash, &corrupted, &mut |reaction| {
-            match reaction {
+        receiver.provide_decompressed(
+            link_id(),
+            hash,
+            &corrupted,
+            &mut |reaction| match reaction {
                 EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
                     failed.push(hash);
                 }
                 EngineReaction::Directive(_) => frames += 1,
                 _ => {}
-            }
-        });
+            },
+        );
         assert_eq!(failed.len(), 1);
         assert_eq!(frames, 0, "a failed inflate proves nothing");
         assert!(receiver.incoming_resources.is_empty());
@@ -1390,5 +1471,102 @@ mod seam_tests {
             &mut |_| touched = true,
         );
         assert!(!touched, "an unknown transfer answers nothing");
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::tests_support::*;
+    use super::*;
+    use crate::engine::commands::{SendResourceFailure, Settlement};
+    use crate::engine::test_support::filled_frame;
+    use crate::routing::links::data::write_link_packet;
+    use crate::routing::links::resources::control::write_cancel_plaintext;
+    use crate::routing::links::resources::RESOURCE_HASH_LEN;
+    use crate::wire::BROADCAST_MTU;
+
+    fn four_part_setup() -> (EngineState<crate::engine::test_support::Cap>, EngineState<crate::engine::test_support::Cap>, ResourceHash) {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = four_part_payload();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &data,
+            None,
+            None,
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let hash = *receiver.incoming_resources.hash_at(0);
+        (sender, receiver, hash)
+    }
+
+    fn sealed_cancel(hash: &ResourceHash, context: WireContext, iv: u8) -> std::vec::Vec<u8> {
+        let mut plaintext = [0u8; RESOURCE_HASH_LEN];
+        write_cancel_plaintext(hash, &mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            context,
+            &plaintext,
+            &[iv; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    #[test]
+    fn the_senders_cancel_drops_the_receivers_transfer() {
+        let (_, mut receiver, hash) = four_part_setup();
+        let cancelled = feed(
+            &mut receiver,
+            &sealed_cancel(&hash, WireContext::ResourceInitiatorCancel, 0xE1),
+            2_500,
+        );
+        assert_eq!(cancelled.failed.len(), 1);
+        assert!(receiver.incoming_resources.is_empty());
+
+        let again = feed(
+            &mut receiver,
+            &sealed_cancel(&hash, WireContext::ResourceInitiatorCancel, 0xE2),
+            2_600,
+        );
+        assert!(again.failed.is_empty(), "a cancel for nothing journals nothing");
+    }
+
+    #[test]
+    fn the_receivers_reject_settles_the_send_by_its_name() {
+        let (mut sender, _, hash) = four_part_setup();
+        let rejected = feed(
+            &mut sender,
+            &sealed_cancel(&hash, WireContext::ResourceReceiverCancel, 0xE3),
+            2_500,
+        );
+        assert!(matches!(
+            rejected.settlements[0],
+            (
+                CommandId(7),
+                Settlement::SendResource(Err(SendResourceFailure::RejectedByPeer)),
+            ),
+        ));
+        assert!(sender.outgoing_resources.is_empty());
+
+        let unknown = feed(
+            &mut sender,
+            &sealed_cancel(&ResourceHash::new([0x5A; 32]), WireContext::ResourceReceiverCancel, 0xE4),
+            2_600,
+        );
+        assert!(unknown.settlements.is_empty());
     }
 }

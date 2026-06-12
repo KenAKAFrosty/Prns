@@ -304,6 +304,11 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
+    /// The receiver refused an offered transfer with `RESOURCE_RCL` — the
+    /// send settles rejected-by-peer; the register row is already gone.
+    ResourceRejectedByPeer {
+        id: CommandId,
+    },
     /// A link request in transport booked a transported row — the rewritten
     /// request (re-headered, MTU signalling clamped to this path segment) is
     /// owed to the next hop.
@@ -559,6 +564,12 @@ impl<S: EngineStorage> EngineState<S> {
                         WireContext::Resource => self.classify_resource_part(data, arrived_at),
                         WireContext::ResourceHashUpdate => {
                             self.classify_resource_hashmap_update(data, arrived_at)
+                        }
+                        WireContext::ResourceInitiatorCancel => {
+                            self.classify_resource_cancel(data, arrived_at)
+                        }
+                        WireContext::ResourceReceiverCancel => {
+                            self.classify_resource_receiver_cancel(data, arrived_at)
                         }
                         _ => IngestPacketOutcome::Ignored,
                     };

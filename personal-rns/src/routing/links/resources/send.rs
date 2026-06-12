@@ -16,7 +16,8 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::build_outgoing::build_outgoing_resource;
 use crate::routing::links::resources::control::{
-    parse_part_request_plaintext, parse_proof_plaintext, PART_REQUEST_PLAINTEXT_CAP,
+    parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
+    write_cancel_plaintext, PART_REQUEST_PLAINTEXT_CAP,
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
@@ -25,10 +26,11 @@ use crate::routing::links::resources::{
     RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::table::LinkPhase;
+use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::LinkId;
 use crate::routing::storage::EngineStorage;
-use crate::wire::{DestinationHash, PacketType, WireContext};
+use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
 
 impl<S: EngineStorage> EngineState<S> {
     /// Build and advertise one resource over an active link. `data` is the
@@ -234,6 +236,45 @@ impl<S: EngineStorage> EngineState<S> {
         Some(IngestPacketOutcome::ResourceDelivered { id })
     }
 
+    /// RNS 1.3.1's link dispatch for `RESOURCE_RCL` — `Resource._rejected`:
+    /// the receiver refused the offered transfer outright. The register row
+    /// drops and the send settles rejected-by-peer. Sealed, and behind the
+    /// duplicate filter.
+    pub(crate) fn classify_resource_receiver_cancel<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        match self.packet_hash_history.remember(packet_hash) {
+            RememberPacketOutcome::AlreadyKnown => return IngestPacketOutcome::Ignored,
+            RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
+        }
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(hash) = parse_cancel_plaintext(plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let id = self.outgoing_resources.state(index).command_id;
+        self.outgoing_resources.remove(&link_id, &hash);
+        self.links.note_inbound(&link_id, arrived_at);
+        IngestPacketOutcome::ResourceRejectedByPeer { id }
+    }
+
     /// Answer one part request from the outgoing register — RNS 1.3.1
     /// `Resource.request`: the requested parts go back raw on the arrival
     /// lane (slices of the sealed stream, no token around them), a
@@ -350,6 +391,27 @@ impl<S: EngineStorage> EngineState<S> {
                 Err(_) => {
                     let id = self.outgoing_resources.state(index).command_id;
                     self.outgoing_resources.remove(link_id, hash);
+                    let mut cancel_iv = [0u8; 16];
+                    fill_entropy(&mut cancel_iv);
+                    let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
+                    if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
+                        let mut fill = |slot: &mut [u8]| -> Option<usize> {
+                            write_link_packet(
+                                link_id,
+                                key,
+                                mtu,
+                                WireContext::ResourceInitiatorCancel,
+                                &cancel_plaintext,
+                                &cancel_iv,
+                                slot,
+                            )
+                            .ok()
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            fill: &mut fill,
+                        }));
+                    }
                     sink(EngineReaction::Journaled(Journaled::CommandSettled {
                         id,
                         settlement: Settlement::SendResource(Err(
@@ -805,7 +867,16 @@ mod tests {
             2_000,
         );
 
-        assert!(capture.frames.is_empty());
+        assert_eq!(capture.frames.len(), 1, "the cancel rides to the receiver");
+        let (_, cancel) = &capture.frames[0];
+        let (header, payload) = WirePacketHeader::parse(cancel).unwrap();
+        assert_eq!(header.context, WireContext::ResourceInitiatorCancel);
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        assert_eq!(
+            crate::routing::links::resources::control::parse_cancel_plaintext(opened).unwrap(),
+            hash,
+        );
         assert!(matches!(
             capture.settlements[0],
             (
