@@ -106,7 +106,7 @@ def start_reticulum(interface_block):
             "  share_instance = No\n"
             "  panic_on_interface_error = No\n"
             "[logging]\n"
-            "  loglevel = 0\n"
+            f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
             "[interfaces]\n" + interface_block
         )
     RNS.Reticulum(configdir=configdir)
@@ -582,6 +582,14 @@ def initiate_request(name, block, profile, duration):
         settled.wait(0.05)
         settled.clear()
     elapsed_ms = int((time.monotonic() - started) * 1000)
+    print(
+        "DEBUG pending=" + str(len(link.pending_requests))
+        + " link_status=" + str(link.status)
+        + " inactive_for=" + str(round(link.inactive_for(), 3))
+        + " pending_ids=" + str([RNS.prettyhexrep(r.request_id) for r in link.pending_requests]),
+        file=sys.stderr,
+        flush=True,
+    )
     link.teardown()
     time.sleep(0.5)
     print(

@@ -11,7 +11,7 @@
     "payload_min": 20000,
     "payload_max": 120000,
     "window": 1,
-    "duration_ms": 10000
+    "duration_ms": 30000
   },
   "conformance": "settled == received at the far end with byte-identical totals; every transfer hash-proved before it settles"
 }
