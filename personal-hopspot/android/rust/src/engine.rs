@@ -12,6 +12,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
+    HostCommand,
     run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
     TokioInterfaceStatus,
 };
@@ -99,7 +100,7 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>, bridge: AndroidUsbBridge) 
             )
             .expect("registers the lxmf.delivery destination");
 
-        let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
+        let (command_tx, command_rx) = unbounded_channel::<HostCommand>();
         let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
         let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
         let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
@@ -151,7 +152,7 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>, bridge: AndroidUsbBridge) 
 
 /// The face's announce cadence: the engine does not originate announces, so the app fires a scheduled
 /// `lxmf.delivery` announce on its own timer.
-async fn announce_loop(commands: UnboundedSender<IssuedCommand>, destination: DestinationHash) {
+async fn announce_loop(commands: UnboundedSender<HostCommand>, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
     let mut next_id = 0u64;
     loop {
@@ -165,7 +166,7 @@ async fn announce_loop(commands: UnboundedSender<IssuedCommand>, destination: De
                 app_data: AnnounceAppData::Registered,
             }),
         };
-        if commands.send(command).is_err() {
+        if commands.send(HostCommand::Engine(command)).is_err() {
             return;
         }
     }

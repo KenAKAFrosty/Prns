@@ -25,6 +25,9 @@ import (
 type profile struct {
 	Mechanism  string `json:"mechanism"`
 	PayloadLen int    `json:"payload_len"`
+	PayloadMin int    `json:"payload_min"`
+	PayloadMax int    `json:"payload_max"`
+	SizeSeed   uint64 `json:"size_seed"`
 	Window     int    `json:"window"`
 	DurationMs uint64 `json:"duration_ms"`
 }
@@ -101,6 +104,34 @@ func main() {
 	default:
 		fmt.Println("RESULT error=unknown-role")
 	}
+}
+
+// The varied-size law every node speaks identically: a seeded xorshift draws
+// each message's size in [min, max] — the same sequence the Rust and Python
+// nodes draw, so byte totals stay comparable without exchanging anything.
+type sizeSequence struct {
+	state    uint64
+	min, max int
+}
+
+func newSizeSequence(m manifest) *sizeSequence {
+	seed := m.Profile.SizeSeed
+	if seed == 0 {
+		seed = 0x5EEDCAFEF00D0001
+	}
+	lo, hi := m.Profile.PayloadMin, m.Profile.PayloadMax
+	if hi == 0 {
+		lo, hi = m.Profile.PayloadLen, m.Profile.PayloadLen
+	}
+	return &sizeSequence{state: seed, min: lo, max: hi}
+}
+
+func (s *sizeSequence) nextLen() int {
+	s.state ^= s.state << 13
+	s.state ^= s.state >> 7
+	s.state ^= s.state << 17
+	span := uint64(s.max - s.min + 1)
+	return s.min + int(s.state%span)
 }
 
 func responder(cfgDir string, m manifest) {
@@ -213,29 +244,37 @@ func initiator(cfgDir string, m manifest, addr string, duration time.Duration) {
 		target = link
 	}
 
-	payload := make([]byte, m.Profile.PayloadLen)
-	for i := range payload {
-		payload[i] = 0xAB
+	sizes := newSizeSequence(m)
+	scratchLen := m.Profile.PayloadMax
+	if scratchLen < m.Profile.PayloadLen {
+		scratchLen = m.Profile.PayloadLen
+	}
+	scratch := make([]byte, scratchLen)
+	for i := range scratch {
+		scratch[i] = 0xAB
 	}
 	type res struct {
 		delivered bool
 		rttMs     uint64
+		size      uint64
 	}
 	resolved := make(chan res, m.Profile.Window*8)
-	var sent, delivered, timeouts uint64
+	var sent, delivered, timeouts, deliveredBytes uint64
 	var rtts []uint64
 
 	sendOne := func() {
-		p := rns.NewPacket(target, payload, rns.PacketTypeData, rns.PacketCtxNone, rns.Broadcast, rns.HeaderType1, nil, nil, true, rns.FlagUnset)
+		size := sizes.nextLen()
+		p := rns.NewPacket(target, scratch[:size], rns.PacketTypeData, rns.PacketCtxNone, rns.Broadcast, rns.HeaderType1, nil, nil, true, rns.FlagUnset)
 		r := p.Send()
 		if r == nil {
 			return
 		}
 		sent++
+		sentSize := uint64(size)
 		r.Callbacks.Delivery = func(rc *rns.PacketReceipt) {
-			resolved <- res{true, uint64(rc.GetRTT() * 1000.0)}
+			resolved <- res{true, uint64(rc.GetRTT() * 1000.0), sentSize}
 		}
-		r.Callbacks.Timeout = func(_ *rns.PacketReceipt) { resolved <- res{false, 0} }
+		r.Callbacks.Timeout = func(_ *rns.PacketReceipt) { resolved <- res{false, 0, 0} }
 	}
 
 	started := time.Now()
@@ -256,6 +295,7 @@ func initiator(cfgDir string, m manifest, addr string, duration time.Duration) {
 			inFlight--
 			if r.delivered {
 				delivered++
+				deliveredBytes += r.size
 				rtts = append(rtts, r.rttMs)
 			} else {
 				timeouts++
@@ -274,7 +314,7 @@ func initiator(cfgDir string, m manifest, addr string, duration time.Duration) {
 	}
 
 	sort.Slice(rtts, func(i, j int) bool { return rtts[i] < rtts[j] })
-	payloadBytes := delivered * uint64(m.Profile.PayloadLen)
+	payloadBytes := deliveredBytes
 	seconds := float64(elapsedMs) / 1000.0
 	if seconds <= 0 {
 		seconds = 0.001
