@@ -9,7 +9,7 @@
 
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::{
-    ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN,
+    ResourceHash, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN,
 };
 use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
@@ -66,7 +66,7 @@ pub struct ResourceAdvertisement<'a> {
     pub data_size: u64,
     pub part_count: u64,
     pub hash: ResourceHash,
-    pub nonce: [u8; RESOURCE_NONCE_LEN],
+    pub salt_nonce: SaltNonce,
     pub original_hash: ResourceHash,
     pub segment_index: u64,
     pub total_segments: u64,
@@ -204,7 +204,7 @@ impl<'a> ResourceAdvertisement<'a> {
         at = put_key(buf, at, b'h')?;
         at = put_bin(buf, at, self.hash.as_bytes())?;
         at = put_key(buf, at, b'r')?;
-        at = put_bin(buf, at, &self.nonce)?;
+        at = put_bin(buf, at, self.salt_nonce.as_bytes())?;
         at = put_key(buf, at, b'o')?;
         at = put_bin(buf, at, self.original_hash.as_bytes())?;
         at = put_key(buf, at, b'i')?;
@@ -242,7 +242,7 @@ impl<'a> ResourceAdvertisement<'a> {
         let mut data_size = None;
         let mut part_count = None;
         let mut hash = None;
-        let mut nonce = None;
+        let mut salt_nonce = None;
         let mut original_hash = None;
         let mut segment_index = None;
         let mut total_segments = None;
@@ -258,7 +258,7 @@ impl<'a> ResourceAdvertisement<'a> {
                 b'd' => store(&mut data_size, reader.uint()?)?,
                 b'n' => store(&mut part_count, reader.uint()?)?,
                 b'h' => store(&mut hash, ResourceHash::new(fixed(reader.bin()?)?))?,
-                b'r' => store(&mut nonce, fixed::<RESOURCE_NONCE_LEN>(reader.bin()?)?)?,
+                b'r' => store(&mut salt_nonce, fixed::<RESOURCE_NONCE_LEN>(reader.bin()?)?)?,
                 b'o' => store(&mut original_hash, ResourceHash::new(fixed(reader.bin()?)?))?,
                 b'i' => store(&mut segment_index, reader.uint()?)?,
                 b'l' => store(&mut total_segments, reader.uint()?)?,
@@ -281,7 +281,7 @@ impl<'a> ResourceAdvertisement<'a> {
             data_size: data_size?,
             part_count: part_count?,
             hash: hash?,
-            nonce: nonce?,
+            salt_nonce: SaltNonce::new(salt_nonce?),
             original_hash: original_hash?,
             segment_index: segment_index?,
             total_segments: total_segments?,
@@ -422,7 +422,7 @@ mod tests {
             data_size: 1_048_575,
             part_count: 803,
             hash: h(),
-            nonce: NONCE,
+            salt_nonce: SaltNonce::new(NONCE),
             original_hash: o(),
             segment_index: 1,
             total_segments: 1,
@@ -450,7 +450,7 @@ mod tests {
             data_size: 900,
             part_count: 2,
             hash: h(),
-            nonce: NONCE,
+            salt_nonce: SaltNonce::new(NONCE),
             original_hash: h(),
             segment_index: 1,
             total_segments: 1,
@@ -477,7 +477,7 @@ mod tests {
             data_size: 5_000_000_000,
             part_count: 2_434,
             hash: h(),
-            nonce: NONCE,
+            salt_nonce: SaltNonce::new(NONCE),
             original_hash: o(),
             segment_index: 7,
             total_segments: 5_000,
@@ -513,7 +513,7 @@ mod tests {
         at = put_key(&mut reversed, at, b'o').unwrap();
         at = put_bin(&mut reversed, at, expected.original_hash.as_bytes()).unwrap();
         at = put_key(&mut reversed, at, b'r').unwrap();
-        at = put_bin(&mut reversed, at, &expected.nonce).unwrap();
+        at = put_bin(&mut reversed, at, expected.salt_nonce.as_bytes()).unwrap();
         at = put_key(&mut reversed, at, b'h').unwrap();
         at = put_bin(&mut reversed, at, expected.hash.as_bytes()).unwrap();
         at = put_key(&mut reversed, at, b'n').unwrap();

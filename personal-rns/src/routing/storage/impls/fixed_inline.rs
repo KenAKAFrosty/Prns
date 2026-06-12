@@ -5,6 +5,9 @@ use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::links::resources::table::{
+    FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
+};
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
@@ -100,6 +103,12 @@ impl<
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type TransportedLinks = FixedTransportedLinkColumns<MAX_LINKS>;
     type Links = FixedLinkColumns<MAX_LINKS>;
+    // One in-flight transfer per direction at a deliberate 4 KiB floor: the
+    // engine queries these capacities and refuses larger offers by name, so
+    // a target wanting real transfers assembles its own bundle with the
+    // sizes its RAM affords.
+    type OutgoingResources = FixedResourceColumns<OutgoingResourceState, 1, 4096, 9>;
+    type IncomingResources = FixedResourceColumns<IncomingResourceState, 1, 4096, 9>;
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 
 use crate::crypto::{sha256_chunks, CryptoError};
 use crate::routing::links::resources::{
-    map_hash, ResourceHash, ResourceProof, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
+    map_hash, ResourceHash, ResourceProof, SaltNonce, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
 
@@ -44,10 +44,10 @@ pub fn open_transfer<'t>(
 /// reference's CORRUPT verdict.
 pub fn verify_and_prove(
     plaintext: &[u8],
-    salt_nonce: &[u8; RESOURCE_NONCE_LEN],
+    salt_nonce: &SaltNonce,
     advertised: &ResourceHash,
 ) -> Result<ResourceProof, VerifyResourceError> {
-    let hash = sha256_chunks(&[plaintext, salt_nonce]);
+    let hash = sha256_chunks(&[plaintext, salt_nonce.as_bytes()]);
     if &hash != advertised.as_bytes() {
         return Err(VerifyResourceError::HashMismatch);
     }
@@ -61,7 +61,7 @@ pub fn verify_and_prove(
 /// silently, exactly as the reference drops it.
 pub fn match_part_in_window(
     part: &[u8],
-    salt_nonce: &[u8; RESOURCE_NONCE_LEN],
+    salt_nonce: &SaltNonce,
     hashmap: &[u8],
     scan_from: usize,
     window: usize,
@@ -162,14 +162,24 @@ mod tests {
     #[test]
     fn the_decompressed_plaintext_verifies_and_yields_the_reference_proof() {
         let proof =
-            verify_and_prove(&case1_plaintext(), &SALT_NONCE, &resource_hash(CASE1_HASH)).unwrap();
+            verify_and_prove(
+            &case1_plaintext(),
+            &SaltNonce::new(SALT_NONCE),
+            &resource_hash(CASE1_HASH),
+        )
+        .unwrap();
         assert_eq!(proof.as_bytes(), &hx(CASE1_PROOF)[..]);
     }
 
     #[test]
     fn an_uncompressed_plaintext_verifies_against_its_reference_vectors_too() {
         let proof =
-            verify_and_prove(&case2_plaintext(), &SALT_NONCE, &resource_hash(CASE2_HASH)).unwrap();
+            verify_and_prove(
+            &case2_plaintext(),
+            &SaltNonce::new(SALT_NONCE),
+            &resource_hash(CASE2_HASH),
+        )
+        .unwrap();
         assert_eq!(proof.as_bytes(), &hx(CASE2_PROOF)[..]);
     }
 
@@ -190,7 +200,7 @@ mod tests {
             &mut hashmap,
         )
         .unwrap();
-        let sealed = &transfer[..built.transfer_len];
+        let sealed = &transfer[..built.sealed_transfer_len];
         let names = &hashmap[..built.part_count * MAP_HASH_LEN];
 
         let mut reassembled = [0u8; 2_048];
@@ -201,7 +211,8 @@ mod tests {
             reassembled[at * sdu..at * sdu + part.len()].copy_from_slice(part);
         }
 
-        let opened = open_transfer(&link_key(), &mut reassembled[..built.transfer_len]).unwrap();
+        let opened =
+            open_transfer(&link_key(), &mut reassembled[..built.sealed_transfer_len]).unwrap();
         assert_eq!(opened, &plaintext[..]);
         let proof = verify_and_prove(opened, &built.salt_nonce, &built.hash).unwrap();
         assert_eq!(proof, built.expected_proof);
@@ -224,7 +235,7 @@ mod tests {
             &mut hashmap,
         )
         .unwrap();
-        let sealed = &transfer[..built.transfer_len];
+        let sealed = &transfer[..built.sealed_transfer_len];
         let names = &hashmap[..built.part_count * MAP_HASH_LEN];
         let part = |index: usize| &sealed[index * sdu..((index + 1) * sdu).min(sealed.len())];
 
@@ -275,13 +286,18 @@ mod tests {
         let mut corrupted = case1_plaintext();
         corrupted[0] ^= 1;
         assert_eq!(
-            verify_and_prove(&corrupted, &SALT_NONCE, &resource_hash(CASE1_HASH)).unwrap_err(),
+            verify_and_prove(
+                &corrupted,
+                &SaltNonce::new(SALT_NONCE),
+                &resource_hash(CASE1_HASH),
+            )
+            .unwrap_err(),
             VerifyResourceError::HashMismatch,
         );
         assert_eq!(
             verify_and_prove(
                 &case1_plaintext(),
-                &[0x61, 0x62, 0x63, 0x65],
+                &SaltNonce::new([0x61, 0x62, 0x63, 0x65]),
                 &resource_hash(CASE1_HASH),
             )
             .unwrap_err(),

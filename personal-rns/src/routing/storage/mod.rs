@@ -13,6 +13,9 @@ use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, R
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
 use crate::routing::group_keys::GroupKeyColumns;
+use crate::routing::links::resources::table::{
+    IncomingResourceState, OutgoingResourceState, ResourceColumns,
+};
 use crate::routing::links::table::LinkColumns;
 use crate::routing::links::transported::TransportedLinkColumns;
 use crate::routing::path_requests::pending::PendingPathRequestColumns;
@@ -193,4 +196,6 @@ pub trait EngineStorage {
     type RequestHandlers: RequestHandlerColumns + Default;
     type TransportedLinks: TransportedLinkColumns + Default;
     type Links: LinkColumns + Default;
+    type OutgoingResources: ResourceColumns<OutgoingResourceState> + Default;
+    type IncomingResources: ResourceColumns<IncomingResourceState> + Default;
 }

@@ -5,6 +5,9 @@ use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
 use crate::routing::group_keys::HeapGroupKeyColumns;
+use crate::routing::links::resources::table::{
+    HeapResourceColumns, IncomingResourceState, OutgoingResourceState,
+};
 use crate::routing::links::table::HeapLinkColumns;
 use crate::routing::links::transported::HeapTransportedLinkColumns;
 use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
@@ -38,6 +41,8 @@ impl EngineStorage for GrowableHeap {
     type RequestHandlers = HeapRequestHandlerColumns;
     type TransportedLinks = HeapTransportedLinkColumns;
     type Links = HeapLinkColumns;
+    type OutgoingResources = HeapResourceColumns<OutgoingResourceState>;
+    type IncomingResources = HeapResourceColumns<IncomingResourceState>;
 }
 
 #[cfg(test)]

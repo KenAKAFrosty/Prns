@@ -13,8 +13,8 @@
 
 use crate::crypto::CryptoError;
 use crate::routing::links::resources::{
-    map_hash, ResourceHash, ResourceProof, COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
-    RESOURCE_NONCE_LEN,
+    map_hash, ResourceCompression, ResourceHash, ResourceProof, SaltNonce, COLLISION_GUARD_SIZE,
+    MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
 
@@ -38,13 +38,13 @@ pub enum BuildOutgoingResourceError {
 /// transfer buffer, its part names in the caller's hashmap buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltResource {
-    pub transfer_len: usize,
+    pub sealed_transfer_len: usize,
     pub part_count: usize,
     pub hash: ResourceHash,
-    pub salt_nonce: [u8; RESOURCE_NONCE_LEN],
+    pub salt_nonce: SaltNonce,
     pub expected_proof: ResourceProof,
-    pub compressed: bool,
-    pub data_size: u64,
+    pub compression: ResourceCompression,
+    pub uncompressed_data_len: u64,
 }
 
 /// `fresh_nonce` is drawn once for the stream nonce, then once per salt
@@ -66,23 +66,25 @@ pub fn build_outgoing_resource(
     if sdu == 0 {
         return Err(BuildOutgoingResourceError::SduTooSmall);
     }
-    let (stream, compressed) = match compressed_candidate {
-        Some(candidate) if candidate.len() < plaintext.len() => (candidate, true),
-        _ => (plaintext, false),
+    let (stream, compression) = match compressed_candidate {
+        Some(candidate) if candidate.len() < plaintext.len() => {
+            (candidate, ResourceCompression::Bz2)
+        }
+        _ => (plaintext, ResourceCompression::Uncompressed),
     };
     let stream_nonce = fresh_nonce();
-    let transfer_len = key
+    let sealed_transfer_len = key
         .seal_chunks(seal_iv, &[&stream_nonce, stream], transfer)
         .map_err(BuildOutgoingResourceError::Seal)?;
-    let part_count = transfer_len.div_ceil(sdu);
+    let part_count = sealed_transfer_len.div_ceil(sdu);
     let hashmap_len = part_count * MAP_HASH_LEN;
     if hashmap.len() < hashmap_len {
         return Err(BuildOutgoingResourceError::HashmapBufferTooShort);
     }
 
-    let sealed = &transfer[..transfer_len];
+    let sealed = &transfer[..sealed_transfer_len];
     for _ in 0..SALT_REROLL_CAP {
-        let salt_nonce = fresh_nonce();
+        let salt_nonce = SaltNonce::new(fresh_nonce());
         for (index, part) in sealed.chunks(sdu).enumerate() {
             let name = map_hash(part, &salt_nonce);
             hashmap[index * MAP_HASH_LEN..(index + 1) * MAP_HASH_LEN].copy_from_slice(&name);
@@ -90,17 +92,20 @@ pub fn build_outgoing_resource(
         if hashmap_has_collision(&hashmap[..hashmap_len]) {
             continue;
         }
-        let hash = ResourceHash::new(crate::crypto::sha256_chunks(&[plaintext, &salt_nonce]));
+        let hash = ResourceHash::new(crate::crypto::sha256_chunks(&[
+            plaintext,
+            salt_nonce.as_bytes(),
+        ]));
         let expected_proof =
             ResourceProof::new(crate::crypto::sha256_chunks(&[plaintext, hash.as_bytes()]));
         return Ok(BuiltResource {
-            transfer_len,
+            sealed_transfer_len,
             part_count,
             hash,
             salt_nonce,
             expected_proof,
-            compressed,
-            data_size: plaintext.len() as u64,
+            compression,
+            uncompressed_data_len: plaintext.len() as u64,
         });
     }
     Err(BuildOutgoingResourceError::SaltRerollsExhausted)
@@ -221,14 +226,17 @@ mod tests {
             &mut hashmap,
         )
         .unwrap();
-        assert!(built.compressed);
-        assert_eq!(built.transfer_len, 144);
+        assert_eq!(built.compression, ResourceCompression::Bz2);
+        assert_eq!(built.sealed_transfer_len, 144);
         assert_eq!(built.part_count, 1);
-        assert_eq!(built.data_size, 1_360);
-        assert_eq!(&transfer[..built.transfer_len], &hx(CASE1_TRANSFER)[..]);
+        assert_eq!(built.uncompressed_data_len, 1_360);
+        assert_eq!(
+            &transfer[..built.sealed_transfer_len],
+            &hx(CASE1_TRANSFER)[..]
+        );
         assert_eq!(built.hash.as_bytes(), &hx(CASE1_HASH)[..]);
         assert_eq!(built.expected_proof.as_bytes(), &hx(CASE1_PROOF)[..]);
-        assert_eq!(built.salt_nonce, SALT_NONCE);
+        assert_eq!(built.salt_nonce, SaltNonce::new(SALT_NONCE));
         assert_eq!(&hashmap[..MAP_HASH_LEN], &hx(CASE1_HASHMAP)[..]);
     }
 
@@ -249,13 +257,13 @@ mod tests {
             &mut hashmap,
         )
         .unwrap();
-        assert!(!built.compressed);
-        assert_eq!(built.transfer_len, 1_568);
+        assert_eq!(built.compression, ResourceCompression::Uncompressed);
+        assert_eq!(built.sealed_transfer_len, 1_568);
         assert_eq!(built.part_count, 4);
-        assert_eq!(built.data_size, 1_500);
+        assert_eq!(built.uncompressed_data_len, 1_500);
         assert_eq!(&transfer[..32], &hx(CASE2_TRANSFER_HEAD)[..]);
         assert_eq!(
-            &transfer[built.transfer_len - 11..built.transfer_len],
+            &transfer[built.sealed_transfer_len - 11..built.sealed_transfer_len],
             &hx(CASE2_TRANSFER_TAIL)[..]
         );
         assert_eq!(built.hash.as_bytes(), &hx(CASE2_HASH)[..]);
@@ -291,10 +299,10 @@ mod tests {
             &mut hashmap,
         )
         .unwrap();
-        assert!(!without.compressed);
+        assert_eq!(without.compression, ResourceCompression::Uncompressed);
         assert_eq!(with.hash, without.hash);
         assert_eq!(with.expected_proof, without.expected_proof);
-        assert_ne!(with.transfer_len, without.transfer_len);
+        assert_ne!(with.sealed_transfer_len, without.sealed_transfer_len);
     }
 
     #[test]
