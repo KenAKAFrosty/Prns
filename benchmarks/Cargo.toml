@@ -47,6 +47,12 @@ name = "describe_host"
 path = "src/bin/describe_host.rs"
 bench = false
 
+# --- Sustained shape: our single-node all-cores corpus replay (the verify-bound core) ---
+[[bin]]
+name = "sustained"
+path = "src/bin/sustained.rs"
+bench = false
+
 # --- Live scenarios: the pairing harness (one node binary, one orchestrator) ---
 [[bin]]
 name = "scenario_node"

@@ -1,20 +1,28 @@
-//! The impl-neutral orchestrator for live scenarios: spawn one process per role, point
-//! them at each other over localhost TCP, collect the line protocol, and file result
-//! rows into the substrate. A *run* is an assignment of implementations to the
-//! scenario's roles — `self/self` is both the ceiling measurement and the harness
-//! ceiling itself; other pairings join by naming a different participation binary for a
-//! role. CPU and peak RSS are sampled *outside* the contestants (Linux from `/proc`,
-//! macOS from each child's `wait4` rusage), so a participation binary can't flatter itself.
+//! The impl-neutral orchestrator: one driver for every scenario shape, energy bracketed on
+//! every run, every figure filed into the one substrate. A scenario's `profile.mechanism`
+//! picks the shape:
+//!   - `announce` — the **sustained** shape: spawn one node that replays a wire corpus on all
+//!     cores under continuous load (the verify-bound core efficiency). Subsumes the old
+//!     `energy/measure.sh`.
+//!   - `single` / `link` — the **interop** shape: spawn one process per role, point them at
+//!     each other over localhost TCP/UDP, and collect delivery + latency from the protocol's
+//!     own proofs.
+//! A *run* is an assignment of implementations to a scenario — `self/self` is both the ceiling
+//! measurement and the harness ceiling itself; other pairings join by naming a different
+//! participation binary. CPU and peak RSS are sampled *outside* the contestants (Linux from
+//! `/proc`, macOS from each child's `wait4` rusage), so a participation binary can't flatter
+//! itself.
 //!
-//! usage: orchestrate [scenario] [--initiator self|reference] [--responder self|reference]
-//!                     [--duration-ms N] [--unpinned]
+//! usage: orchestrate [scenario]
+//!          interop:   [--initiator self|reference|…] [--responder …] [--duration-ms N] [--unpinned]
+//!          sustained: [--impl self|reference|…] [--duration-ms N]
 //!
-//! The reproducibility profile is ON by default, and what it means is the per-platform seam:
-//! Linux pins each role to one physical core's SMT siblings (`taskset`); Apple silicon has no
-//! per-core affinity (the arm64 API is a documented no-op), so the contestants run on the
-//! Performance cluster by default on a quiet box, with the P/E split recorded in `host.json`.
-//! Either way `--unpinned` skips the profile and prints without filing — unprofiled runs
-//! proved non-reproducible on hybrid-core silicon.
+//! The reproducibility profile is ON by default for interop, and what it means is the
+//! per-platform seam: Linux pins each role to one physical core's SMT siblings (`taskset`);
+//! Apple silicon has no per-core affinity (the arm64 API is a documented no-op), so the
+//! contestants run on the Performance cluster by default on a quiet box, with the P/E split
+//! recorded in `host.json`. `--unpinned` skips the profile and prints without filing — the
+//! sustained shape is all-cores by construction and always files.
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
@@ -25,8 +33,8 @@ use std::time::Duration;
 
 use benchmarks::scenario_dir;
 use benchmarks::{
-    energy_unavailable_hint, load_host, load_or_create_submitter_id, write_rows, Axis, PowerMeter,
-    ResultRow,
+    energy_unavailable_hint, load_host, load_or_create_submitter_id, write_rows, Axis, DeviceId,
+    PowerMeter, ResultRow, SubmitterId,
 };
 
 /// One physical core's SMT siblings per role, read from the live topology — pinned runs
@@ -73,10 +81,90 @@ struct RoleMetrics {
     peak_rss_bytes: u64,
 }
 
-fn node_binary() -> std::path::PathBuf {
+fn sibling_binary(name: &str) -> std::path::PathBuf {
     let mut path = std::env::current_exe().expect("own path");
-    path.set_file_name("scenario_node");
+    path.set_file_name(name);
     path
+}
+
+/// The reference's pinned venv python (falling back to `python3`) running one of its
+/// `reference/*.py` participation scripts under `-u` — unbuffered, so the line protocol
+/// streams a line at a time.
+fn reference_python(script: &str) -> Command {
+    let reference = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference");
+    let venv_python = reference.join(".venv").join("bin").join("python");
+    let python: OsString = if venv_python.exists() {
+        venv_python.into_os_string()
+    } else {
+        OsString::from("python3")
+    };
+    let mut c = Command::new(python);
+    c.arg("-u");
+    c.arg(reference.join(script));
+    c
+}
+
+/// A participating implementation: its registry name, the slug its result files key on, the
+/// display label its rows carry, and — for the sustained shape — whether its conformance
+/// figure is a resolved-route count or a verify-only count. Each shape's launch command is
+/// `Some` only when the impl actually fields a node for it.
+struct Implementation {
+    name: &'static str,
+    slug: &'static str,
+    label: &'static str,
+    sustained_metric: &'static str,
+}
+
+fn implementation(name: &str) -> Implementation {
+    match name {
+        "self" => Implementation {
+            name: "self",
+            slug: "personal-rns",
+            label: "Prns",
+            sustained_metric: "routes_resolved",
+        },
+        "reference" => Implementation {
+            name: "reference",
+            slug: "rns-1.3.1",
+            label: "RNS 1.3.1",
+            sustained_metric: "routes_resolved",
+        },
+        other => panic!("unknown implementation {other:?} (self|reference)"),
+    }
+}
+
+impl Implementation {
+    /// The two-node interop participation command (initiator/responder over the wire), or
+    /// `None` if this impl fields no interop node.
+    fn interop_command(&self) -> Option<Command> {
+        match self.name {
+            "self" => Some(Command::new(sibling_binary("scenario_node"))),
+            "reference" => Some(reference_python("scenario_node.py")),
+            _ => None,
+        }
+    }
+
+    /// The single-node sustained command — all-cores corpus replay over `corpus` for `secs`,
+    /// replicated to `working_set` where the node honours it — or `None` if this impl fields
+    /// no sustained node. The python ports read arg 3 as a thread count, so they take only
+    /// `corpus secs` and default their own all-cores fan-out.
+    fn sustained_command(&self, corpus: &Path, secs: u64, working_set: usize) -> Option<Command> {
+        match self.name {
+            "self" => {
+                let mut c = Command::new(sibling_binary("sustained"));
+                c.arg(corpus)
+                    .arg(secs.to_string())
+                    .arg(working_set.to_string());
+                Some(c)
+            }
+            "reference" => {
+                let mut c = reference_python("sustained.py");
+                c.arg(corpus).arg(secs.to_string());
+                Some(c)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// The wrapper that applies the reproducibility profile to a role's command, or `None` to
@@ -98,36 +186,13 @@ fn role_launch_wrapper(_role: &str, _profile: bool) -> Option<(OsString, Vec<OsS
     None
 }
 
-/// One named implementation's participation command, slug, and label — `self` is our
-/// sibling binary, `reference` is RNS 1.3.1 over the same contract via its Python script.
-fn implementation(name: &str) -> (Command, &'static str, &'static str) {
-    match name {
-        "self" => (Command::new(node_binary()), "personal-rns", "Prns"),
-        "reference" => {
-            let reference = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference");
-            let venv_python = reference.join(".venv").join("bin").join("python");
-            let python: OsString = if venv_python.exists() {
-                venv_python.into_os_string()
-            } else {
-                OsString::from("python3")
-            };
-            let mut c = Command::new(python);
-            c.arg("-u");
-            c.arg(reference.join("scenario_node.py"));
-            (c, "rns-1.3.1", "RNS 1.3.1")
-        }
-        other => panic!("unknown implementation {other:?} (self|reference)"),
-    }
-}
-
 fn spawn_role(
+    base: Command,
     manifest: &std::path::Path,
     role: &str,
-    impl_name: &str,
     addr: &str,
     args: &Args,
 ) -> RoleProcess {
-    let (base, _, _) = implementation(impl_name);
     let mut command = match role_launch_wrapper(role, args.pin) {
         Some((wrapper, wrapper_args)) => {
             let mut c = Command::new(wrapper);
@@ -281,6 +346,7 @@ struct Args {
     scenario: String,
     initiator: String,
     responder: String,
+    impl_name: String,
     duration_ms: Option<u64>,
     pin: bool,
 }
@@ -290,6 +356,7 @@ fn parse_args() -> Args {
         scenario: "single-firehose".into(),
         initiator: "self".into(),
         responder: "self".into(),
+        impl_name: "self".into(),
         duration_ms: None,
         pin: true,
     };
@@ -298,6 +365,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--initiator" => args.initiator = argv.next().expect("impl name"),
             "--responder" => args.responder = argv.next().expect("impl name"),
+            "--impl" => args.impl_name = argv.next().expect("impl name"),
             "--duration-ms" => {
                 args.duration_ms = Some(argv.next().and_then(|v| v.parse().ok()).expect("ms"));
             }
@@ -328,6 +396,34 @@ fn udp_port_pair() -> (u16, u16) {
     )
 }
 
+/// The reproducibility stamp every row carries: the host triple, the engine commit and
+/// toolchain that produced the figure, and the device + submitter join keys.
+struct RunStamp {
+    host: String,
+    commit: String,
+    toolchain: String,
+    device_id: Option<DeviceId>,
+    submitter_id: Option<SubmitterId>,
+}
+
+fn run_stamp(pin: bool) -> RunStamp {
+    let host = rustc_host_triple();
+    assert!(
+        !(pin && host == "unknown-host"),
+        "host triple unresolved — `rustc` is not on PATH (common under `sudo`, which resets it). \
+         Re-run as `sudo env \"PATH=$PATH\" ...` so rows don't file under `unknown-host`.",
+    );
+    RunStamp {
+        // The device id rides along from `host.json` (run `describe_host` to register a
+        // machine); the submitter id is this checkout's own. Both stamp every row.
+        device_id: load_host(&host).and_then(|descriptor| descriptor.device_id),
+        submitter_id: Some(load_or_create_submitter_id()),
+        commit: command_line("git", &["rev-parse", "--short", "HEAD"]).unwrap_or_default(),
+        toolchain: command_line("rustc", &["--version"]).unwrap_or_default(),
+        host,
+    }
+}
+
 fn main() {
     let args = parse_args();
     let manifest = scenario_dir(&args.scenario).join("manifest.json");
@@ -335,12 +431,169 @@ fn main() {
     let manifest_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&manifest).expect("reads the manifest"))
             .expect("parses the manifest");
-    let wire = manifest_json["profile"]["wire"].as_str().unwrap_or("tcp");
+    let mechanism = manifest_json["profile"]["mechanism"].as_str().unwrap_or("");
+    match mechanism {
+        "announce" => run_sustained(&args, &manifest_json),
+        "single" | "link" => run_interop(&args, &manifest_json, &manifest),
+        other => panic!(
+            "scenario {:?} has unknown profile.mechanism {other:?} (announce|single|link)",
+            args.scenario
+        ),
+    }
+}
 
-    let (_, initiator_slug, initiator_label) = implementation(&args.initiator);
-    let (_, responder_slug, responder_label) = implementation(&args.responder);
-    let pairing_slug = format!("{initiator_slug}--{responder_slug}");
-    let pairing_label = format!("{initiator_label} \u{2192} {responder_label}");
+/// The sustained shape: one node replays the corpus on all cores under continuous load while
+/// the energy bracket integrates package power. Files conformance, throughput, CPU power, and
+/// energy-per-announce — the four axes the energy table renders. Always files (all-cores by
+/// construction; energy degrades to *pending* without root).
+fn run_sustained(args: &Args, manifest_json: &serde_json::Value) {
+    let profile = &manifest_json["profile"];
+    let corpus_name = profile["corpus"].as_str().unwrap_or("packets.hex");
+    let corpus = scenario_dir(&args.scenario).join(corpus_name);
+    let secs = args
+        .duration_ms
+        .map(|ms| ms / 1000)
+        .unwrap_or_else(|| profile["duration_secs"].as_u64().unwrap_or(30));
+    let working_set = profile["working_set_bytes"].as_u64().unwrap_or(50_000) as usize;
+    let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
+
+    let subject = implementation(&args.impl_name);
+    let command = subject
+        .sustained_command(&corpus, secs, working_set)
+        .unwrap_or_else(|| panic!("implementation {:?} fields no sustained node", subject.name));
+
+    // Baseline the quiet box, then bracket the node's whole lifetime. The package-domain
+    // counter (RAPL on Linux, powermetrics on macOS) counts everything on the package, so
+    // (active − idle) ÷ throughput is the honest joules-per-announce a battery node pays.
+    let meter = PowerMeter::detect();
+    if meter.is_none() {
+        println!("{}", energy_unavailable_hint());
+    }
+    let idle_watts = meter
+        .as_ref()
+        .map(|m| m.idle_watts(Duration::from_millis(1500)));
+    let bracket = meter.as_ref().map(|m| m.start());
+
+    let (resolved, announces_per_sec) =
+        run_sustained_node(command, Duration::from_secs(secs + 30));
+
+    let energy = bracket.map(|b| b.finish());
+    let active_watts = energy.map(|(joules, wall)| if wall > 0.0 { joules / wall } else { 0.0 });
+    let energy_per_announce = match (active_watts, idle_watts, announces_per_sec) {
+        (Some(active), Some(idle), Some(rate)) if rate > 0.0 => {
+            Some((active - idle).max(0.0) * 1_000_000.0 / rate)
+        }
+        _ => None,
+    };
+
+    let stamp = run_stamp(args.pin);
+    let row = |axis: Axis, metric: &str, value: Option<f64>, unit: &str| ResultRow {
+        scenario: args.scenario.clone(),
+        scenario_version: version,
+        implementation: subject.label.to_string(),
+        commit: stamp.commit.clone(),
+        toolchain: stamp.toolchain.clone(),
+        host: stamp.host.clone(),
+        axis,
+        metric: metric.into(),
+        value,
+        unit: unit.into(),
+        device_id: stamp.device_id,
+        submitter_id: stamp.submitter_id,
+    };
+    let mut rows = vec![
+        row(Axis::Conformance, subject.sustained_metric, resolved, "count"),
+        row(
+            Axis::Throughput,
+            "sustained_announces_per_sec",
+            announces_per_sec,
+            "announce/s",
+        ),
+    ];
+    if let Some(active) = active_watts {
+        rows.push(row(Axis::Power, "cpu_power_watts", Some(active), "W"));
+        rows.push(row(
+            Axis::Energy,
+            "energy_microjoules_per_announce",
+            energy_per_announce,
+            "µJ/announce",
+        ));
+    }
+    write_rows(&stamp.host, &args.scenario, subject.slug, &rows);
+
+    println!(
+        "\nSUMMARY scenario={} impl={} host={}\n\
+         SUMMARY conformance {}={} | throughput {:.0} announce/s | power {} | energy {}\n\
+         SUMMARY rows filed under results/{}/{}/{}.jsonl",
+        args.scenario,
+        subject.label,
+        stamp.host,
+        subject.sustained_metric,
+        resolved.unwrap_or(f64::NAN),
+        announces_per_sec.unwrap_or(f64::NAN),
+        active_watts
+            .map(|w| format!("{w:.2} W"))
+            .unwrap_or_else(|| "pending".into()),
+        energy_per_announce
+            .map(|e| format!("{e:.0} µJ/announce"))
+            .unwrap_or_else(|| "pending".into()),
+        stamp.host,
+        args.scenario,
+        subject.slug,
+    );
+}
+
+/// Spawn a sustained node and harvest `(resolved, announces_per_sec)` from its line protocol
+/// (`CONFORMANCE resolved=…` then `THROUGHPUT announces_per_sec=…`). No launch wrapper — the
+/// sustained shape wants every core.
+fn run_sustained_node(mut command: Command, within: Duration) -> (Option<f64>, Option<f64>) {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn sustained node");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let (tx, rx) = std_mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            println!("[sustained] {line}");
+            let _ = tx.send(line);
+        }
+    });
+    let mut resolved = None;
+    let mut rate = None;
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(line) if line.starts_with("CONFORMANCE") => resolved = field(&line, "resolved"),
+            Ok(line) if line.starts_with("THROUGHPUT") => {
+                rate = field(&line, "announces_per_sec");
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    let _ = child.wait();
+    (resolved, rate)
+}
+
+/// The interop shape: spawn one process per role over localhost TCP/UDP and collect delivery,
+/// latency, memory, and energy from the protocol's own proofs. Files under the `<initiator>--
+/// <responder>` pairing key; `--unpinned` prints without filing.
+fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::path::Path) {
+    let wire = manifest_json["profile"]["wire"].as_str().unwrap_or("tcp");
+    let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
+
+    let initiator_impl = implementation(&args.initiator);
+    let responder_impl = implementation(&args.responder);
+    let pairing_slug = format!("{}--{}", initiator_impl.slug, responder_impl.slug);
+    let pairing_label = format!("{} \u{2192} {}", initiator_impl.label, responder_impl.label);
+    let interop_command = |subject: &Implementation| {
+        subject
+            .interop_command()
+            .unwrap_or_else(|| panic!("implementation {:?} fields no interop node", subject.name))
+    };
 
     let (responder_addr, initiator_addr) = if wire == "udp" {
         let (responder_port, initiator_port) = udp_port_pair();
@@ -354,10 +607,8 @@ fn main() {
         ("127.0.0.1:0".to_string(), None)
     };
 
-    // The energy prong: baseline the quiet box BEFORE any contestant exists, then
-    // bracket the contestants' whole lifetime. The package-domain counter (RAPL on Linux,
-    // powermetrics on macOS) counts everything on the package, so the baseline-net figure
-    // is the honest one; both are filed.
+    // The energy prong: baseline the quiet box BEFORE any contestant exists, then bracket the
+    // contestants' whole lifetime; the baseline-net figure is the honest one.
     let meter = PowerMeter::detect();
     if meter.is_none() {
         println!("{}", energy_unavailable_hint());
@@ -368,11 +619,11 @@ fn main() {
     let bracket = meter.as_ref().map(|m| m.start());
 
     let responder = spawn_role(
-        &manifest,
+        interop_command(&responder_impl),
+        manifest,
         "responder",
-        &args.responder,
         &responder_addr,
-        &args,
+        args,
     );
     let ready = await_line(&responder, "READY", Duration::from_secs(10));
     let addr = initiator_addr.unwrap_or_else(|| {
@@ -383,7 +634,13 @@ fn main() {
             .to_string()
     });
 
-    let initiator = spawn_role(&manifest, "initiator", &args.initiator, &addr, &args);
+    let initiator = spawn_role(
+        interop_command(&initiator_impl),
+        manifest,
+        "initiator",
+        &addr,
+        args,
+    );
     let window = Duration::from_millis(args.duration_ms.unwrap_or(10_000) + 30_000);
     let result = await_line(&initiator, "RESULT", window);
     let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
@@ -408,34 +665,22 @@ fn main() {
          the initiator's receipt timeout, so the responder may see more than settles",
     );
 
-    let host = rustc_host_triple();
-    assert!(
-        !(args.pin && host == "unknown-host"),
-        "host triple unresolved — `rustc` is not on PATH (common under `sudo`, which resets it). \
-         Re-run as `sudo env \"PATH=$PATH\" ...` so rows don't file under `unknown-host`.",
-    );
-    let commit = command_line("git", &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
-    let toolchain = command_line("rustc", &["--version"]).unwrap_or_default();
-    // The device id rides along from `host.json` (run `describe_host` to register a machine);
-    // the submitter id is this checkout's own. Both stamp every row as join keys.
-    let device_id = load_host(&host).and_then(|descriptor| descriptor.device_id);
-    let submitter_id = Some(load_or_create_submitter_id());
-
+    let stamp = run_stamp(args.pin);
     let row = |axis: Axis, metric: &str, value: Option<f64>, unit: &str| ResultRow {
         scenario: args.scenario.clone(),
-        scenario_version: 1,
+        scenario_version: version,
         implementation: pairing_label.clone(),
-        commit: commit.clone(),
-        toolchain: toolchain.clone(),
-        host: host.clone(),
+        commit: stamp.commit.clone(),
+        toolchain: stamp.toolchain.clone(),
+        host: stamp.host.clone(),
         axis,
         metric: metric.into(),
         value,
         unit: unit.into(),
-        device_id,
-        submitter_id,
+        device_id: stamp.device_id,
+        submitter_id: stamp.submitter_id,
     };
-    let rows = vec![
+    let mut rows = vec![
         row(
             Axis::Conformance,
             "settled_clean",
@@ -488,7 +733,6 @@ fn main() {
             "bytes",
         ),
     ];
-    let mut rows = rows;
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
         let net_joules = (raw_joules - idle_watts * wall_seconds).max(0.0);
         let per_delivered_mj = (delivered > 0.0).then(|| net_joules * 1_000.0 / delivered);
@@ -518,21 +762,22 @@ fn main() {
         );
     }
     println!(
-        "\nSUMMARY scenario={} pairing={pairing_label} host={host}\n\
+        "\nSUMMARY scenario={} pairing={pairing_label} host={}\n\
          SUMMARY conformance sent={sent:.0} delivered={delivered:.0} \
          responder_seen={responder_delivered:.0} timed_out={timeouts:.0} settled_clean={}\n\
          SUMMARY initiator cpu={initiator_cpu:.2}s peak_rss={:.1}MiB | \
          responder cpu={responder_cpu:.2}s peak_rss={:.1}MiB",
         args.scenario,
+        stamp.host,
         sent == delivered && timeouts == 0.0,
         initiator_rss as f64 / (1024.0 * 1024.0),
         responder_rss as f64 / (1024.0 * 1024.0),
     );
     if args.pin {
-        write_rows(&host, &args.scenario, &pairing_slug, &rows);
+        write_rows(&stamp.host, &args.scenario, &pairing_slug, &rows);
         println!(
-            "SUMMARY rows filed under results/{host}/{}/{pairing_slug}.jsonl",
-            args.scenario,
+            "SUMMARY rows filed under results/{}/{}/{pairing_slug}.jsonl",
+            stamp.host, args.scenario,
         );
     } else {
         println!("UNPINNED run: rows printed, not filed (re-run without --unpinned to file)");
