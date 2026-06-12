@@ -18,6 +18,39 @@ import RNS
 ANNOUNCE_EVERY = 0.5
 DRAIN_GRACE = 5.0
 QUIET_AFTER_TRAFFIC = 1.5
+REQUEST_PATH = "/bench/query"
+DEFAULT_SIZE_SEED = 0x5EEDCAFEF00D0001
+MASK64 = 0xFFFFFFFFFFFFFFFF
+
+
+class SizeSequence:
+    """The varied-size law every node speaks identically: a seeded xorshift
+    draws each message's size in [min, max] — the same sequence the Rust node
+    draws, so byte totals stay comparable without exchanging anything."""
+
+    def __init__(self, seed, lo, hi, fixed):
+        if not hi:
+            lo, hi = fixed, fixed
+        self.state = seed & MASK64
+        self.lo = lo
+        self.hi = hi
+
+    def next_len(self):
+        s = self.state
+        s = (s ^ (s << 13)) & MASK64
+        s = (s ^ (s >> 7)) & MASK64
+        s = (s ^ (s << 17)) & MASK64
+        self.state = s
+        return self.lo + (s % (self.hi - self.lo + 1))
+
+
+def sizes_from(profile, lo_key, hi_key, fixed_key, seed_xor=0):
+    return SizeSequence(
+        profile.get("size_seed", DEFAULT_SIZE_SEED) ^ seed_xor,
+        profile.get(lo_key, 0),
+        profile.get(hi_key, 0),
+        profile.get(fixed_key, 0),
+    )
 
 
 def free_port():
@@ -133,8 +166,9 @@ def initiate(name, block, profile, duration):
     destination = RNS.Destination(
         heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
     )
-    payload = bytes([0xAB]) * profile["payload_len"]
-    state = {"sent": 0, "delivered": 0, "timeouts": 0}
+    sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
+    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    state = {"sent": 0, "delivered": 0, "timeouts": 0, "delivered_bytes": 0}
     rtts = []
     started = time.monotonic()
     deadline = started + duration
@@ -145,15 +179,17 @@ def initiate(name, block, profile, duration):
     # never fires callbacks retroactively.
     def send_one():
         state["sent"] += 1
-        return RNS.Packet(destination, payload).send()
+        size = sizes.next_len()
+        return RNS.Packet(destination, scratch[:size]).send(), size
 
     outstanding = [send_one() for _ in range(profile["window"])]
     while outstanding and time.monotonic() < drain_deadline:
         still = []
-        for receipt in outstanding:
+        for receipt, size in outstanding:
             status = receipt.status if receipt else RNS.PacketReceipt.FAILED
             if status == RNS.PacketReceipt.DELIVERED:
                 state["delivered"] += 1
+                state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
                 if time.monotonic() < deadline:
                     still.append(send_one())
@@ -162,14 +198,14 @@ def initiate(name, block, profile, duration):
                 if time.monotonic() < deadline:
                     still.append(send_one())
             else:
-                still.append(receipt)
+                still.append((receipt, size))
         outstanding = still
         time.sleep(0.0005)
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     rtts = sorted(rtts)
     pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
-    payload_bytes = state["delivered"] * profile["payload_len"]
+    payload_bytes = state["delivered_bytes"]
     seconds = max(elapsed_ms / 1000.0, 1e-9)
     print(
         f"RESULT sent={state['sent']} delivered={state['delivered']} "
@@ -240,8 +276,9 @@ def initiate_link(name, block, profile, duration):
     if not up.wait(30):
         sys.exit("link did not establish")
 
-    payload = bytes([0xAB]) * profile["payload_len"]
-    state = {"sent": 0, "delivered": 0, "timeouts": 0}
+    sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
+    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    state = {"sent": 0, "delivered": 0, "timeouts": 0, "delivered_bytes": 0}
     rtts = []
     started = time.monotonic()
     deadline = started + duration
@@ -252,15 +289,17 @@ def initiate_link(name, block, profile, duration):
     # never fires callbacks retroactively.
     def send_one():
         state["sent"] += 1
-        return RNS.Packet(link, payload).send()
+        size = sizes.next_len()
+        return RNS.Packet(link, scratch[:size]).send(), size
 
     outstanding = [send_one() for _ in range(profile["window"])]
     while outstanding and time.monotonic() < drain_deadline:
         still = []
-        for receipt in outstanding:
+        for receipt, size in outstanding:
             status = receipt.status if receipt else RNS.PacketReceipt.FAILED
             if status == RNS.PacketReceipt.DELIVERED:
                 state["delivered"] += 1
+                state["delivered_bytes"] += size
                 rtts.append(receipt.get_rtt() * 1000.0)
                 if time.monotonic() < deadline:
                     still.append(send_one())
@@ -269,7 +308,7 @@ def initiate_link(name, block, profile, duration):
                 if time.monotonic() < deadline:
                     still.append(send_one())
             else:
-                still.append(receipt)
+                still.append((receipt, size))
         outstanding = still
         time.sleep(0.0005)
     elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -278,7 +317,7 @@ def initiate_link(name, block, profile, duration):
 
     rtts = sorted(rtts)
     pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
-    payload_bytes = state["delivered"] * profile["payload_len"]
+    payload_bytes = state["delivered_bytes"]
     seconds = max(elapsed_ms / 1000.0, 1e-9)
     print(
         f"RESULT sent={state['sent']} delivered={state['delivered']} "
@@ -359,8 +398,9 @@ def initiate_resource(name, block, profile, duration):
     if not up.wait(30):
         sys.exit("link did not establish")
 
-    data = os.urandom(profile["payload_len"])
-    state = {"sent": 0, "settled": 0, "failures": 0}
+    sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
+    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    state = {"sent": 0, "settled": 0, "failures": 0, "settled_bytes": 0}
     transfer_ms = []
     started = time.monotonic()
     deadline = started + duration
@@ -373,13 +413,15 @@ def initiate_resource(name, block, profile, duration):
             concluded.set()
 
         state["sent"] += 1
+        size = sizes.next_len()
         transfer_started = time.monotonic()
-        RNS.Resource(data, link, callback=callback)
+        RNS.Resource(scratch[:size], link, callback=callback)
         if not concluded.wait(120):
             state["failures"] += 1
             break
         if outcome["status"] == RNS.Resource.COMPLETE:
             state["settled"] += 1
+            state["settled_bytes"] += size
             transfer_ms.append((time.monotonic() - transfer_started) * 1000.0)
         else:
             state["failures"] += 1
@@ -393,7 +435,7 @@ def initiate_resource(name, block, profile, duration):
         if transfer_ms
         else float("nan")
     )
-    payload_bytes = state["settled"] * profile["payload_len"]
+    payload_bytes = state["settled_bytes"]
     seconds = max(elapsed_ms / 1000.0, 1e-9)
     print(
         f"RESULT sent={state['sent']} settled={state['settled']} "
@@ -402,6 +444,152 @@ def initiate_resource(name, block, profile, duration):
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
         f"goodput_mbits_per_sec={payload_bytes * 8.0 / seconds / 1e6:.2f} "
         f"transfer_p50_ms={pct(0.50):.0f} transfer_p99_ms={pct(0.99):.0f}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def respond_request(name, block, ready_addr):
+    """The serving end of the RPC shape: the registered handler answers every
+    allowed request with exactly the byte count the request names."""
+    start_reticulum(block)
+    identity = RNS.Identity()
+    destination = RNS.Destination(
+        identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
+    )
+    destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
+    state = {"served": 0, "response_bytes": 0}
+    done = threading.Event()
+    scratch = os.urandom(512)
+
+    def answer(path, data, request_id, link_id, remote_identity, requested_at):
+        wanted = int.from_bytes(data[:2], "big") if data and len(data) >= 2 else 0
+        wanted = min(wanted, len(scratch))
+        state["served"] += 1
+        state["response_bytes"] += wanted
+        return scratch[:wanted]
+
+    destination.register_request_handler(
+        REQUEST_PATH, response_generator=answer, allow=RNS.Destination.ALLOW_ALL
+    )
+
+    def on_link(link):
+        link.set_link_closed_callback(lambda _link: done.set())
+
+    destination.set_link_established_callback(on_link)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
+    while not done.is_set():
+        destination.announce()
+        done.wait(ANNOUNCE_EVERY)
+    time.sleep(0.5)
+    print(
+        f"RESULT served={state['served']} response_bytes={state['response_bytes']}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def initiate_request(name, block, profile, duration):
+    """The asking end: windowed requests of varied sizes, each naming the
+    varied response size it wants back."""
+    start_reticulum(block)
+
+    heard = {"hash": None, "identity": None}
+    announced = threading.Event()
+
+    class Handler:
+        aspect_filter = f"bench.{name}"
+
+        def received_announce(self, destination_hash, announced_identity, app_data):
+            heard["hash"] = destination_hash
+            heard["identity"] = announced_identity
+            announced.set()
+
+    RNS.Transport.register_announce_handler(Handler())
+    print("READY role=initiator", flush=True)
+    if not announced.wait(30):
+        sys.exit("no announce heard")
+
+    destination = RNS.Destination(
+        heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
+    )
+    up = threading.Event()
+    link = RNS.Link(destination, established_callback=lambda _l: up.set())
+    if not up.wait(30):
+        sys.exit("link did not establish")
+
+    request_sizes = sizes_from(profile, "request_min", "request_max", "request_min")
+    response_sizes = sizes_from(
+        profile, "response_min", "response_max", "response_min", seed_xor=0xA5A5A5A5A5A5A5A5
+    )
+    scratch = os.urandom(max(profile.get("request_max", 2), 2))
+    state = {
+        "sent": 0,
+        "delivered": 0,
+        "timeouts": 0,
+        "request_bytes": 0,
+        "response_bytes": 0,
+        "in_flight": 0,
+    }
+    rtts = []
+    lock = threading.Lock()
+    settled = threading.Event()
+    started = time.monotonic()
+    deadline = started + duration
+
+    def on_response(receipt):
+        with lock:
+            state["delivered"] += 1
+            state["in_flight"] -= 1
+            state["response_bytes"] += len(receipt.response or b"")
+            rtts.append((time.monotonic() - receipt.sent_at_wall) * 1000.0)
+        settled.set()
+
+    def on_failed(receipt):
+        with lock:
+            state["timeouts"] += 1
+            state["in_flight"] -= 1
+        settled.set()
+
+    def send_one():
+        request_len = max(request_sizes.next_len(), 2)
+        wanted = response_sizes.next_len()
+        data = wanted.to_bytes(2, "big") + scratch[: request_len - 2]
+        state["sent"] += 1
+        state["request_bytes"] += request_len
+        state["in_flight"] += 1
+        receipt = link.request(
+            REQUEST_PATH, data, response_callback=on_response, failed_callback=on_failed
+        )
+        receipt.sent_at_wall = time.monotonic()
+
+    with lock:
+        for _ in range(profile["window"]):
+            send_one()
+    drain_deadline = deadline + DRAIN_GRACE
+    while time.monotonic() < drain_deadline:
+        with lock:
+            in_flight = state["in_flight"]
+            if in_flight < profile["window"] and time.monotonic() < deadline:
+                send_one()
+                continue
+            if in_flight == 0:
+                break
+        settled.wait(0.05)
+        settled.clear()
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    link.teardown()
+    time.sleep(0.5)
+
+    rtts = sorted(rtts)
+    pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
+    seconds = max(elapsed_ms / 1000.0, 1e-9)
+    print(
+        f"RESULT sent={state['sent']} delivered={state['delivered']} "
+        f"timeouts={state['timeouts']} request_bytes={state['request_bytes']} "
+        f"response_bytes={state['response_bytes']} elapsed_ms={elapsed_ms} "
+        f"requests_per_sec={state['delivered'] / seconds:.1f} "
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",
         flush=True,
     )
     os._exit(0)
@@ -421,8 +609,16 @@ def main():
     if role not in ("responder", "initiator"):
         sys.exit(usage)
     block, ready_addr = interface_block(wire, role, addr)
-    responders = {"link": respond_link, "resource": respond_resource}
-    initiators = {"link": initiate_link, "resource": initiate_resource}
+    responders = {
+        "link": respond_link,
+        "resource": respond_resource,
+        "request": respond_request,
+    }
+    initiators = {
+        "link": initiate_link,
+        "resource": initiate_resource,
+        "request": initiate_request,
+    }
     if role == "responder":
         responders.get(mechanism, respond)(manifest["name"], block, ready_addr)
     else:

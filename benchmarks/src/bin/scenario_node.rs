@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendLink, SendLinkPayload, SendSingle,
-    SendSinglePayload, SetResourceStrategy, Settlement,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, Respond, RespondData, SendLink,
+    SendLinkPayload, SendRequest, SendRequestData, SendSingle, SendSinglePayload,
+    SetResourceStrategy, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
@@ -28,8 +29,10 @@ use personal_rns::reactor::interfaces::tcp::impls::tokio::{
 use personal_rns::reactor::interfaces::udp::core as udp_core;
 use personal_rns::reactor::interfaces::udp::impls::tokio::UdpInterface;
 use personal_rns::routing::delivery::Delivery;
+use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
+use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
@@ -52,9 +55,56 @@ struct Profile {
     mechanism: String,
     #[serde(default = "default_wire")]
     wire: String,
+    #[serde(default)]
     payload_len: usize,
+    #[serde(default)]
+    payload_min: usize,
+    #[serde(default)]
+    payload_max: usize,
+    #[serde(default)]
+    request_min: usize,
+    #[serde(default)]
+    request_max: usize,
+    #[serde(default)]
+    response_min: usize,
+    #[serde(default)]
+    response_max: usize,
     window: usize,
     duration_ms: u64,
+    #[serde(default = "default_size_seed")]
+    size_seed: u64,
+}
+
+fn default_size_seed() -> u64 {
+    0x5EED_CAFE_F00D_0001
+}
+
+/// The varied-size law every node speaks identically: a seeded xorshift draws
+/// each message's size in `[min, max]`, so both ends — and both
+/// implementations — agree on every byte total without exchanging anything.
+struct SizeSequence {
+    state: u64,
+    min: usize,
+    max: usize,
+}
+
+impl SizeSequence {
+    fn new(seed: u64, min: usize, max: usize, fixed: usize) -> Self {
+        let (min, max) = if max > 0 { (min, max) } else { (fixed, fixed) };
+        Self {
+            state: seed,
+            min,
+            max,
+        }
+    }
+
+    fn next_len(&mut self) -> usize {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 7;
+        self.state ^= self.state << 17;
+        let span = (self.max - self.min + 1) as u64;
+        self.min + (self.state % span) as usize
+    }
 }
 
 fn default_wire() -> String {
@@ -74,7 +124,40 @@ enum Event {
     Delivered(usize),
     LinkUp(LinkId),
     ResourceIn(usize),
+    Request {
+        link_id: LinkId,
+        request_id: RequestId,
+        wanted: usize,
+    },
+    Response(usize),
     Closed,
+}
+
+const REQUEST_PATH: &str = "/bench/query";
+
+/// The engine's request/response codec carries the app's data as RAW msgpack
+/// value bytes — byte-true pass-through. The reference packs and unpacks its
+/// side natively, so this bench frames every payload as a msgpack bin value
+/// to speak across.
+fn msgpack_bin(payload: &[u8]) -> Vec<u8> {
+    let mut framed = Vec::with_capacity(payload.len() + 3);
+    if payload.len() <= 0xFF {
+        framed.push(0xC4);
+        framed.push(payload.len() as u8);
+    } else {
+        framed.push(0xC5);
+        framed.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    }
+    framed.extend_from_slice(payload);
+    framed
+}
+
+fn msgpack_bin_payload(framed: &[u8]) -> &[u8] {
+    match framed.first() {
+        Some(0xC4) => &framed[2..],
+        Some(0xC5) => &framed[3..],
+        _ => framed,
+    }
 }
 
 fn fresh_identity() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -134,6 +217,11 @@ async fn main() {
         )
         .expect("registers the bench destination");
 
+    if manifest.profile.mechanism == "request" && role == "responder" {
+        engine
+            .register_request_handler(&destination, REQUEST_PATH, RequestPolicy::AllowAll)
+            .expect("registers the bench handler");
+    }
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
@@ -173,6 +261,25 @@ async fn main() {
         }
         Journaled::ResourceReceived { data, .. } => {
             let _ = event_tx.send(Event::ResourceIn(data.len()));
+        }
+        Journaled::RequestReceived {
+            link_id,
+            request_id,
+            data,
+            ..
+        } => {
+            let wanted = msgpack_bin_payload(data)
+                .get(..2)
+                .map(|len| u16::from_be_bytes([len[0], len[1]]) as usize)
+                .unwrap_or(0);
+            let _ = event_tx.send(Event::Request {
+                link_id,
+                request_id,
+                wanted,
+            });
+        }
+        Journaled::ResponseReceived { data, .. } => {
+            let _ = event_tx.send(Event::Response(msgpack_bin_payload(data).len()));
         }
         _ => {}
     };
@@ -215,7 +322,9 @@ async fn main() {
                 journal,
             ));
             println!("READY role=responder addr={bound}");
-            if manifest.profile.mechanism == "resource" {
+            if manifest.profile.mechanism == "request" {
+                respond_request(destination, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "resource" {
                 respond_resource(destination, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "link" {
                 respond_link(destination, command_tx, event_rx).await;
@@ -256,7 +365,9 @@ async fn main() {
                 journal,
             ));
             println!("READY role=initiator");
-            if manifest.profile.mechanism == "resource" {
+            if manifest.profile.mechanism == "request" {
+                initiate_request(&manifest.profile, duration, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "resource" {
                 initiate_resource(&manifest.profile, duration, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "link" {
                 initiate_link(&manifest.profile, duration, command_tx, event_rx).await;
@@ -335,7 +446,13 @@ async fn initiate(
         }
     };
 
-    let payload = vec![0xAB; profile.payload_len];
+    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut next_id = 1u64;
@@ -343,13 +460,20 @@ async fn initiate(
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
     let mut in_flight = 0usize;
+    let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut delivered_bytes = 0u64;
     let mut rtts: Vec<u64> = Vec::new();
-    let send_one = |in_flight: &mut usize, sent: &mut u64, next_id: &mut u64| {
+    let mut send_one = |in_flight: &mut usize,
+                        sent: &mut u64,
+                        next_id: &mut u64,
+                        sent_sizes: &mut std::collections::HashMap<u64, usize>| {
+        let len = sizes.next_len();
+        sent_sizes.insert(*next_id, len);
         let command = IssuedCommand {
             id: CommandId(*next_id),
             command: EngineCommand::SendSingle(SendSingle {
                 destination,
-                payload: SendSinglePayload::from_slice(&payload).expect("payload fits"),
+                payload: SendSinglePayload::from_slice(&scratch[..len]).expect("payload fits"),
             }),
         };
         *next_id += 1;
@@ -359,30 +483,32 @@ async fn initiate(
     };
 
     for _ in 0..profile.window {
-        send_one(&mut in_flight, &mut sent, &mut next_id);
+        send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
     }
     let drain_deadline = deadline + DRAIN_GRACE;
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
-        if let Event::Settled(_, Settlement::SendSingle(result)) = event {
+        if let Event::Settled(id, Settlement::SendSingle(result)) = event {
             in_flight -= 1;
+            let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
             match result {
                 Ok(receipt) => {
                     delivered += 1;
+                    delivered_bytes += size;
                     rtts.push(receipt.rtt_ms);
                 }
                 Err(_) => timeouts += 1,
             }
             if tokio::time::Instant::now() < deadline {
-                send_one(&mut in_flight, &mut sent, &mut next_id);
+                send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
             }
         }
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     rtts.sort_unstable();
-    let payload_bytes = delivered * profile.payload_len as u64;
+    let payload_bytes = delivered_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     println!(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
@@ -474,7 +600,13 @@ async fn initiate_link(
         }
     };
 
-    let payload = vec![0xAB; profile.payload_len];
+    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut next_id = 2u64;
@@ -482,13 +614,20 @@ async fn initiate_link(
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
     let mut in_flight = 0usize;
+    let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut delivered_bytes = 0u64;
     let mut rtts: Vec<u64> = Vec::new();
-    let send_one = |in_flight: &mut usize, sent: &mut u64, next_id: &mut u64| {
+    let mut send_one = |in_flight: &mut usize,
+                        sent: &mut u64,
+                        next_id: &mut u64,
+                        sent_sizes: &mut std::collections::HashMap<u64, usize>| {
+        let len = sizes.next_len();
+        sent_sizes.insert(*next_id, len);
         let command = IssuedCommand {
             id: CommandId(*next_id),
             command: EngineCommand::SendLink(SendLink {
                 link_id,
-                payload: SendLinkPayload::from_slice(&payload).expect("payload fits"),
+                payload: SendLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
             }),
         };
         *next_id += 1;
@@ -498,23 +637,25 @@ async fn initiate_link(
     };
 
     for _ in 0..profile.window {
-        send_one(&mut in_flight, &mut sent, &mut next_id);
+        send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
     }
     let drain_deadline = deadline + DRAIN_GRACE;
     while in_flight > 0 {
         let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
         let Ok(Some(event)) = event else { break };
-        if let Event::Settled(_, Settlement::SendLink(result)) = event {
+        if let Event::Settled(id, Settlement::SendLink(result)) = event {
             in_flight -= 1;
+            let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
             match result {
                 Ok(receipt) => {
                     delivered += 1;
+                    delivered_bytes += size;
                     rtts.push(receipt.rtt_ms);
                 }
                 Err(_) => timeouts += 1,
             }
             if tokio::time::Instant::now() < deadline {
-                send_one(&mut in_flight, &mut sent, &mut next_id);
+                send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
             }
         }
     }
@@ -535,7 +676,7 @@ async fn initiate_link(
     }
 
     rtts.sort_unstable();
-    let payload_bytes = delivered * profile.payload_len as u64;
+    let payload_bytes = delivered_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     println!(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
@@ -648,23 +789,31 @@ async fn initiate_resource(
     // command a moment to land before the first advertisement races it.
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let data = incompressible_payload(profile.payload_len);
+    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
     let mut next_id = 2u64;
     let mut sent = 0u64;
     let mut settled = 0u64;
     let mut failures = 0u64;
+    let mut settled_bytes = 0u64;
     let mut transfer_ms: Vec<u64> = Vec::new();
     while tokio::time::Instant::now() < deadline {
         next_id += 1;
         let id = CommandId(next_id);
+        let len = sizes.next_len();
         let transfer_started = tokio::time::Instant::now();
         commands
             .send(HostCommand::SendResource(SendResourceHostCommand {
                 id,
                 link_id,
-                data: data.clone(),
+                data: scratch[..len].to_vec(),
                 compressed_candidate: None,
                 request_id: None,
             }))
@@ -678,6 +827,7 @@ async fn initiate_resource(
                     match result {
                         Ok(()) => {
                             settled += 1;
+                            settled_bytes += len as u64;
                             transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
                         }
                         Err(failure) => {
@@ -708,7 +858,7 @@ async fn initiate_resource(
     }
 
     transfer_ms.sort_unstable();
-    let payload_bytes = settled * profile.payload_len as u64;
+    let payload_bytes = settled_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     println!(
         "RESULT sent={sent} settled={settled} failures={failures} \
@@ -719,5 +869,201 @@ async fn initiate_resource(
         payload_bytes as f64 * 8.0 / seconds / 1_000_000.0,
         percentile(&transfer_ms, 0.50),
         percentile(&transfer_ms, 0.99),
+    );
+}
+
+
+/// The serving end of the RPC shape: a registered handler answers every
+/// allowed request with exactly the byte count the request named — the
+/// realistic query/answer pattern, sizes varied by the initiator.
+async fn respond_request(
+    destination: DestinationHash,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let scratch = incompressible_payload(512);
+    let mut next_id = 1u64;
+    let mut announce = tokio::time::interval(ANNOUNCE_EVERY);
+    let mut served = 0u64;
+    let mut response_bytes = 0u64;
+    loop {
+        tokio::select! {
+            _ = announce.tick() => {
+                let command = IssuedCommand {
+                    id: CommandId(next_id),
+                    command: EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }),
+                };
+                next_id += 1;
+                if commands.send(HostCommand::Engine(command)).is_err() {
+                    return;
+                }
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::Request { link_id, request_id, wanted }) => {
+                        next_id += 1;
+                        let wanted = wanted.min(scratch.len());
+                        let framed = msgpack_bin(&scratch[..wanted]);
+                        let respond = IssuedCommand {
+                            id: CommandId(next_id),
+                            command: EngineCommand::Respond(Respond {
+                                link_id,
+                                request_id,
+                                data: RespondData::from_slice(&framed).expect("response fits"),
+                            }),
+                        };
+                        if commands.send(HostCommand::Engine(respond)).is_err() {
+                            return;
+                        }
+                        served += 1;
+                        response_bytes += wanted as u64;
+                    }
+                    Some(Event::Closed) | None => {
+                        println!("RESULT served={served} response_bytes={response_bytes}");
+                        return;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+/// The asking end: one link, then `window` requests in flight until the
+/// wall-time elapses — each request a varied size, each naming a varied
+/// response size it wants back. Latency from the settled receipts.
+async fn initiate_request(
+    profile: &Profile,
+    duration: Duration,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+    commands
+        .send(HostCommand::Engine(IssuedCommand {
+            id: CommandId(1),
+            command: EngineCommand::EstablishLink(EstablishLink { destination }),
+        }))
+        .expect("reactor alive");
+    let link_id = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
+                break established.link_id;
+            }
+            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
+                panic!("link refused: {failure:?}");
+            }
+            _ => {}
+        }
+    };
+
+    let scratch = incompressible_payload(profile.request_max.max(2));
+    let mut request_sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.request_min.max(2),
+        profile.request_max,
+        profile.request_min.max(2),
+    );
+    let mut response_sizes = SizeSequence::new(
+        profile.size_seed ^ 0xA5A5_A5A5_A5A5_A5A5,
+        profile.response_min,
+        profile.response_max,
+        profile.response_min,
+    );
+    let path_hash = RequestPathHash::of(REQUEST_PATH);
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut next_id = 2u64;
+    let mut sent = 0u64;
+    let mut delivered = 0u64;
+    let mut timeouts = 0u64;
+    let mut in_flight = 0usize;
+    let mut request_bytes = 0u64;
+    let mut response_bytes = 0u64;
+    let mut rtts: Vec<u64> = Vec::new();
+    let mut send_one = |in_flight: &mut usize, sent: &mut u64, next_id: &mut u64| {
+        let request_len = request_sizes.next_len();
+        let wanted = response_sizes.next_len() as u16;
+        let mut data = Vec::with_capacity(request_len);
+        data.extend_from_slice(&wanted.to_be_bytes());
+        data.extend_from_slice(&scratch[..request_len - 2]);
+        let framed = msgpack_bin(&data);
+        request_bytes += request_len as u64;
+        let command = IssuedCommand {
+            id: CommandId(*next_id),
+            command: EngineCommand::SendRequest(SendRequest {
+                link_id,
+                path_hash,
+                data: SendRequestData::from_slice(&framed).expect("request fits"),
+            }),
+        };
+        *next_id += 1;
+        *sent += 1;
+        *in_flight += 1;
+        commands.send(HostCommand::Engine(command)).is_ok()
+    };
+
+    for _ in 0..profile.window {
+        send_one(&mut in_flight, &mut sent, &mut next_id);
+    }
+    let drain_deadline = deadline + DRAIN_GRACE;
+    while in_flight > 0 {
+        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
+        let Ok(Some(event)) = event else { break };
+        match event {
+            Event::Settled(_, Settlement::SendRequest(result)) => {
+                in_flight -= 1;
+                match result {
+                    Ok(receipt) => {
+                        delivered += 1;
+                        rtts.push(receipt.rtt_ms);
+                    }
+                    Err(_) => timeouts += 1,
+                }
+                if tokio::time::Instant::now() < deadline {
+                    send_one(&mut in_flight, &mut sent, &mut next_id);
+                }
+            }
+            Event::Response(bytes) => {
+                response_bytes += bytes as u64;
+            }
+            _ => {}
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    commands
+        .send(HostCommand::Engine(IssuedCommand {
+            id: CommandId(next_id + 1),
+            command: EngineCommand::CloseLink(CloseLink { link_id }),
+        }))
+        .expect("reactor alive");
+    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
+    loop {
+        match tokio::time::timeout_at(close_deadline, events.recv()).await {
+            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+
+    rtts.sort_unstable();
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+         request_bytes={request_bytes} response_bytes={response_bytes} \
+         elapsed_ms={elapsed_ms} requests_per_sec={:.1} \
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}",
+        delivered as f64 / seconds,
+        percentile(&rtts, 0.50),
+        percentile(&rtts, 0.99),
     );
 }
