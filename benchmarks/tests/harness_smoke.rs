@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 
 #[test]
 fn a_short_firehose_run_settles_clean_end_to_end() {
-    let manifest = benchmarks::scenario_dir("link-firehose").join("manifest.json");
+    let manifest = benchmarks::scenario_dir("single-firehose").join("manifest.json");
     let manifest = manifest.to_str().expect("utf8 path");
 
     let mut responder = Command::new(env!("CARGO_BIN_EXE_scenario_node"))

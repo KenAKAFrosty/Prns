@@ -1,0 +1,16 @@
+{
+  "name": "link-firehose-small-payload",
+  "version": 1,
+  "description": "One link saturated with windowed small single-packet sends for a fixed wall-time - the same data shape as single-firehose carried by the other mechanism: a session key amortizes the per-message crypto that singles pay per packet, while ProveAll still proves every delivery. The contrast between the two firehoses is the measurement.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "link",
+    "payload_len": 300,
+    "window": 16,
+    "duration_ms": 10000
+  },
+  "conformance": "sent == delivered + timeouts; the link traffic timeout (rtt*6) makes deep windows self-defeating by design"
+}

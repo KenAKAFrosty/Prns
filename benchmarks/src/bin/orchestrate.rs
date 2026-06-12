@@ -159,7 +159,7 @@ struct Args {
 
 fn parse_args() -> Args {
     let mut args = Args {
-        scenario: "link-firehose".into(),
+        scenario: "single-firehose".into(),
         initiator: "self".into(),
         responder: "self".into(),
         duration_ms: None,
@@ -198,7 +198,13 @@ fn main() {
     let pairing_slug = format!("{initiator_slug}--{responder_slug}");
     let pairing_label = format!("{initiator_label} \u{2192} {responder_label}");
 
-    let mut responder = spawn_role(&manifest, "responder", &args.responder, "127.0.0.1:0", &args);
+    let mut responder = spawn_role(
+        &manifest,
+        "responder",
+        &args.responder,
+        "127.0.0.1:0",
+        &args,
+    );
     let ready = await_line(&responder, "READY", Duration::from_secs(10));
     let addr = ready
         .split_whitespace()

@@ -1,0 +1,16 @@
+{
+  "name": "single-firehose",
+  "version": 1,
+  "description": "A ProveAll destination saturated with windowed SINGLE packets for a fixed wall-time: sustained one-shot message throughput, goodput, and settlement latency from the protocol's own proofs. No link - singles are the protocol's native shape for high-volume small one-shots, each proof carrying the RTT.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "single",
+    "payload_len": 300,
+    "window": 16,
+    "duration_ms": 10000
+  },
+  "conformance": "sent == delivered + timeouts, and a healthy pair settles zero timeouts"
+}
