@@ -40,7 +40,7 @@ use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::reactor::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
-use personal_rns::storage::FixedInline;
+use personal_rns::storage::Esp32C6;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 
@@ -67,7 +67,7 @@ type UsbLaneRing =
     zerocopy_channel::Channel<'static, CriticalSectionRawMutex, FrameSlot<USB_LANE_SLOT>>;
 type UsbSeam = EmbassyInterfaceSeam<'static, CriticalSectionRawMutex, INBOUND_CAP, USB_LANE_SLOT>;
 
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>;
+type EngineStorageType = Esp32C6;
 
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);

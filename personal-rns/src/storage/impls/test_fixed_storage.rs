@@ -21,7 +21,7 @@ use crate::routing::routes::FixedArrayRouteColumns;
 use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 
-pub struct FixedInline<
+pub struct TestFixedStorage<
     const MAX_TRACKED_DESTINATIONS: usize,
     const MAX_ANNOUNCE_IDS_PER_DESTINATION: usize,
     const ANNOUNCE_APP_DATA_ARENA_BYTES: usize,
@@ -54,7 +54,7 @@ impl<
         const MAX_SEEN_PATH_REQUESTS: usize,
         const MAX_LINKS: usize,
     > StorageLayout
-    for FixedInline<
+    for TestFixedStorage<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
         ANNOUNCE_APP_DATA_ARENA_BYTES,
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
-        type S = FixedInline<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
+        type S = TestFixedStorage<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
         let routes = <S as StorageLayout>::Routes::default();
         let announces = <S as StorageLayout>::Announces::default();
         let _history = <S as StorageLayout>::History::default();

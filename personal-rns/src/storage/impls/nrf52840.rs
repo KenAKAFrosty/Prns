@@ -22,16 +22,16 @@ use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::storage::StorageLayout;
 
-pub struct Esp32S3;
+pub struct Nrf52840;
 
-impl Esp32S3 {
+impl Nrf52840 {
     const TRACKED_DESTINATIONS: usize = 24;
     const UPSTREAM_APP_DESTINATIONS: usize = 4;
     const LINKS: usize = 4;
     const RESOURCE_TRANSFER_BYTES: usize = 4096;
 }
 
-impl StorageLayout for Esp32S3 {
+impl StorageLayout for Nrf52840 {
     type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
     type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
     type History = TieredAnnounceIdHistory<4, 128, { Self::TRACKED_DESTINATIONS }, 32>;
@@ -67,14 +67,14 @@ impl StorageLayout for Esp32S3 {
 
 #[cfg(test)]
 mod tests {
-    use super::Esp32S3;
+    use super::Nrf52840;
     use crate::storage::impls::assert_same_storage;
     use crate::storage::TestFixedStorage;
 
     #[test]
-    fn esp32s3_is_type_identical_to_its_positional_config() {
+    fn nrf52840_is_type_identical_to_its_positional_config() {
         assert_same_storage::<
-            Esp32S3,
+            Nrf52840,
             TestFixedStorage<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>,
         >();
     }

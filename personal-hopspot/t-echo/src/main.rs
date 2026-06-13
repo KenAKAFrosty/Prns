@@ -33,12 +33,12 @@ use epd_waveshare::epd1in54_v2::Display1in54;
 
 use personal_hopspot_ui as hopspot;
 use personal_rns::engine::EngineState;
-use personal_rns::storage::FixedInline;
+use personal_rns::storage::Nrf52840;
 
 mod ssd1681;
 use ssd1681::Ssd1681;
 
-type TEchoEngineState = EngineState<FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8>>;
+type TEchoEngineState = EngineState<Nrf52840>;
 
 const PANEL_SIZE: i32 = 200;
 const SCREEN_WIDTH: i32 = 64;

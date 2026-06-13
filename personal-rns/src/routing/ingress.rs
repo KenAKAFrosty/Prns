@@ -1886,7 +1886,7 @@ mod tests {
     use crate::identity::IdentitySigner;
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::delivery::{Delivery, PlainDelivery, SingleDelivery};
-    use crate::storage::FixedInline;
+    use crate::storage::TestFixedStorage;
     use crate::routing::upstream_app_destinations::ProofStrategy;
 
     #[test]
@@ -3853,7 +3853,7 @@ mod tests {
     fn an_announce_whose_app_data_can_never_fit_is_ignored() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state =
-            EngineState::<FixedInline<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
+            EngineState::<TestFixedStorage<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
 
         let out = state.ingest_packet(
             InboundPacket {

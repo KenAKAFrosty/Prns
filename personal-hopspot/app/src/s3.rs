@@ -46,7 +46,7 @@ use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::reactor::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
-use personal_rns::storage::FixedInline;
+use personal_rns::storage::Esp32S3;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 
@@ -71,7 +71,7 @@ const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
 /// The engine's fixed inline storage (no heap): the same shape the firmware has always run.
-type EngineStorageType = FixedInline<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>;
+type EngineStorageType = Esp32S3;
 
 /// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
 /// painted stacks whenever the engine grows.
