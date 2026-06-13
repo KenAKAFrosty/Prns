@@ -1,6 +1,8 @@
 use std::hint::black_box;
 
-use iai_callgrind::{library_benchmark, library_benchmark_group, main};
+use iai_callgrind::{
+    library_benchmark, library_benchmark_group, main, Callgrind, LibraryBenchmarkConfig,
+};
 use personal_rns::crypto::{
     ed25519_public_key, ed25519_sign, ed25519_verify, token_open, token_seal,
     x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature,
@@ -260,4 +262,8 @@ library_benchmark_group!(
     benchmarks = relay_forward
 );
 
-main!(library_benchmark_groups = primitives, engine_cycle, dedup, framing, forwarding);
+main!(
+    config = LibraryBenchmarkConfig::default()
+        .tool(Callgrind::with_args(["--cache-sim=yes", "--branch-sim=yes"]));
+    library_benchmark_groups = primitives, engine_cycle, dedup, framing, forwarding
+);
