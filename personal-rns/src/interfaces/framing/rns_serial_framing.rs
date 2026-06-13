@@ -28,6 +28,29 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+    const FLAG_REP: u64 = (FLAG as u64) * ONES;
+    const ESC_REP: u64 = (ESC as u64) * ONES;
+
+    let (chunks, _) = haystack.as_chunks::<8>();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let word = u64::from_le_bytes(*chunk);
+        let f = word ^ FLAG_REP;
+        let e = word ^ ESC_REP;
+        let marks = ((f.wrapping_sub(ONES) & !f) | (e.wrapping_sub(ONES) & !e)) & HIGHS;
+        if marks != 0 {
+            return Some(chunk_index * 8 + (marks.trailing_zeros() / 8) as usize);
+        }
+    }
+    let scanned = chunks.len() * 8;
+    haystack[scanned..]
+        .iter()
+        .position(|&byte| byte == FLAG || byte == ESC)
+        .map(|offset| scanned + offset)
+}
+
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
     let mut written = 0usize;
 
@@ -39,7 +62,7 @@ pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
 
     let mut rest = input;
     loop {
-        let split = rest.iter().position(|&byte| byte == FLAG || byte == ESC);
+        let split = find_special(rest);
         let run = &rest[..split.unwrap_or(rest.len())];
         if written + run.len() > output.len() {
             return Err(EncodeError::OutputTooSmall);
@@ -120,10 +143,8 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
         let mut i = 0;
         while i < input.len() {
             if self.in_frame && !self.saw_escape {
-                let run_end = input[i..]
-                    .iter()
-                    .position(|&byte| byte == FLAG || byte == ESC)
-                    .map_or(input.len(), |offset| i + offset);
+                let run_end =
+                    find_special(&input[i..]).map_or(input.len(), |offset| i + offset);
                 let run = &input[i..run_end];
                 if !run.is_empty() && run.len() <= self.buffer.capacity() - self.buffer.len() {
                     let _ = self.buffer.extend_from_slice(run);
@@ -240,6 +261,23 @@ mod tests {
         let mut out = [0u8; 4];
         let n = encode(&[], &mut out).unwrap();
         assert_eq!(&out[..n], &[FLAG, FLAG]);
+    }
+
+    #[test]
+    fn find_special_locates_first_flag_or_esc_including_across_word_boundaries() {
+        assert_eq!(find_special(&[0x01, 0x02, 0x03]), None);
+        assert_eq!(find_special(&[0x01, FLAG, 0x03]), Some(1));
+        assert_eq!(find_special(&[0x01, 0x02, ESC]), Some(2));
+        let mut in_second_word = [0x00u8; 20];
+        in_second_word[13] = FLAG;
+        assert_eq!(find_special(&in_second_word), Some(13));
+        let mut only_in_remainder = [0x11u8; 19];
+        only_in_remainder[17] = ESC;
+        assert_eq!(find_special(&only_in_remainder), Some(17));
+        let mut flag_before_esc = [0x22u8; 16];
+        flag_before_esc[3] = FLAG;
+        flag_before_esc[5] = ESC;
+        assert_eq!(find_special(&flag_before_esc), Some(3));
     }
 
     #[test]
