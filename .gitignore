@@ -5,6 +5,7 @@ godot-smoke/
 .wifi-env
 # Parked standalone crate builds into its own target dir
 personal-rnsd/target/
+cli-smoke/target/
 dhat-heap.json
 benchmarks/target/
 benchmarks/reference/.venv/
