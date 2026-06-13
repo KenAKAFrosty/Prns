@@ -61,7 +61,8 @@ await_ready() {
   echo ""
 }
 
-$PIN_RESP $(node_cmd "$RESP_IMPL") "$MANIFEST" responder 127.0.0.1:0 > "$TMP/resp.log" 2>&1 &
+RESP_WORKERS="${RESP_WORKERS:-2}"
+SCENARIO_WORKERS="$RESP_WORKERS" $PIN_RESP $(node_cmd "$RESP_IMPL") "$MANIFEST" responder 127.0.0.1:0 > "$TMP/resp.log" 2>&1 &
 RESP_PID=$!
 PIDS+=($!)
 (
@@ -86,10 +87,10 @@ done
 
 for pid in "${SEND_PIDS[@]}"; do wait "$pid"; done
 WALL=$((SECONDS - START_S))
-sleep 2
+sleep "${POST_WAIT_S:-2}"
 RESP_CPU_S="$(awk '{ printf "%.1f", ($1 + $2) / 100 }' "$TMP/resp_ticks" 2>/dev/null)"
 
-echo "DAKKA responder=$RESP_IMPL senders=${SEND_IMPL}x${SEND_COUNT} wall_s=$WALL resp_cpu_s=${RESP_CPU_S:-unknown} resp_cores=$RESP_CORES send_cores=$SEND_CORES"
+echo "DAKKA responder=$RESP_IMPL senders=${SEND_IMPL}x${SEND_COUNT} wall_s=$WALL resp_cpu_s=${RESP_CPU_S:-unknown} resp_cores=$RESP_CORES resp_workers=$RESP_WORKERS send_cores=$SEND_CORES"
 for i in $(seq 0 $((SEND_COUNT - 1))); do
   echo "DAKKA-SEND$i $(grep RESULT "$TMP/s$i.log" || echo "no RESULT")"
 done

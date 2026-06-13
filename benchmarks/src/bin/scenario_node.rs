@@ -263,8 +263,20 @@ fn percentile(sorted: &[u64], p: f64) -> f64 {
     sorted[rank.min(sorted.len() - 1)] as f64
 }
 
-#[tokio::main(worker_threads = 2)]
-async fn main() {
+fn main() {
+    let worker_threads = std::env::var("SCENARIO_WORKERS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(2);
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .expect("builds the scenario runtime")
+        .block_on(scenario_main());
+}
+
+async fn scenario_main() {
     let mut args = std::env::args().skip(1);
     let usage = "usage: scenario_node <manifest.json> <responder|initiator> <addr> [duration-ms]";
     let manifest_path = args.next().expect(usage);
@@ -540,6 +552,10 @@ async fn main() {
             } else {
                 initiate(&manifest.profile, duration, command_tx, event_rx).await;
             }
+            // Close settlement is engine-state, not wire-state: give the egress lane a
+            // beat to flush the close frame, or the responder only learns via its 10s
+            // stale reaper.
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
         other => panic!("unknown role {other:?} — {usage}"),
     }
