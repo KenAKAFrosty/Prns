@@ -76,3 +76,9 @@ name = "engine_cycle_iai"
 path = "benches/engine_cycle_iai.rs"
 harness = false
 
+[profile.release]
+debug = true
+
+[profile.bench]
+debug = true
+
