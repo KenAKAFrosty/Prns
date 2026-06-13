@@ -69,7 +69,7 @@ impl AnnounceAcceptanceInput<'_> {
             return Accept(FirstSighting);
         };
 
-        let is_longer_hops = self.packet_hops > existing.hops;
+        let is_longer_hops = self.packet_hops > existing.hops.0;
         let route_is_expired = self.arrived_at >= existing.expires;
         let announce_emitted_at = self.announce_id.timebase;
 
@@ -201,7 +201,7 @@ mod tests {
             announce_id: announce_id(0x56, 200),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 3,
+                hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -225,7 +225,7 @@ mod tests {
             announce_id: stored,
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 3,
+                hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -249,7 +249,7 @@ mod tests {
             announce_id: announce_id(0x56, 200),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 3,
+                hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -273,7 +273,7 @@ mod tests {
             announce_id: announce_id(0x56, 150),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 3,
+                hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -297,7 +297,7 @@ mod tests {
             announce_id: announce_id(0x67, 50),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 2,
+                hops: crate::units::HopCount(2),
                 expires: InstantMillis(1_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -323,7 +323,7 @@ mod tests {
             announce_id: stored,
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 2,
+                hops: crate::units::HopCount(2),
                 expires: InstantMillis(1_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -347,7 +347,7 @@ mod tests {
             announce_id: announce_id(0x78, 500),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 2,
+                hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -371,7 +371,7 @@ mod tests {
             announce_id: announce_id(0x89, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 2,
+                hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -395,7 +395,7 @@ mod tests {
             announce_id: announce_id(0x9a, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 2,
+                hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -419,7 +419,7 @@ mod tests {
             announce_id: announce_id(0xab, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 2,
+                hops: crate::units::HopCount(2),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(
                     core::slice::from_ref(&stored),
@@ -445,7 +445,7 @@ mod tests {
             announce_id: replayed,
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 3,
+                hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(&floor, &overflow),
                 responsiveness: RouteResponsiveness::Responsive,
@@ -467,7 +467,7 @@ mod tests {
             announce_id: announce_id(0xC, 300),
             destination_is_self_or_upstream: false,
             existing_route: Some(ExistingRoute {
-                hops: 3,
+                hops: crate::units::HopCount(3),
                 expires: InstantMillis(10_000),
                 announce_id_history: AnnounceIdHistoryView::from_slices(&floor, &overflow),
                 responsiveness: RouteResponsiveness::Responsive,

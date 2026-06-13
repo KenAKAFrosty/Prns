@@ -2,6 +2,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
 use crate::routing::storage::AnnounceIdHistoryView;
+use crate::units::HopCount;
 use crate::wire::TransportId;
 
 /// RNS 1.3.1 `path_table` `received_from` (Transport.py:1714/1739).
@@ -13,7 +14,7 @@ pub enum NextHop {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ForwardingRoute {
-    pub hops: u8,
+    pub hops: HopCount,
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
 }
@@ -27,7 +28,7 @@ pub enum RouteResponsiveness {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExistingRoute<'a> {
-    pub hops: u8,
+    pub hops: HopCount,
     pub expires: InstantMillis,
     pub announce_id_history: AnnounceIdHistoryView<'a>,
     pub responsiveness: RouteResponsiveness,

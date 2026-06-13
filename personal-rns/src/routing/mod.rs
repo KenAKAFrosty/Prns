@@ -81,7 +81,7 @@ where
     ) -> Option<ExistingRoute<'_>> {
         let i = self.index_of(destination)?;
         Some(ExistingRoute {
-            hops: self.routes.hops()[i],
+            hops: crate::units::HopCount(self.routes.hops()[i]),
             expires: self.expiry_of(i, view),
             announce_id_history: self.announce_id_history.history(i),
             responsiveness: self.routes.responsiveness()[i],
@@ -111,7 +111,7 @@ where
     pub fn forwarding_route_for(&self, destination: &DestinationHash) -> Option<ForwardingRoute> {
         let i = self.index_of(destination)?;
         Some(ForwardingRoute {
-            hops: self.routes.hops()[i],
+            hops: crate::units::HopCount(self.routes.hops()[i]),
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
         })

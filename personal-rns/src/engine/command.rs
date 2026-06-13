@@ -178,7 +178,7 @@ impl<S: EngineStorage> EngineState<S> {
                     PathRequestWriteOutcome::AlreadyReachable { hops } => {
                         sink(EngineReaction::Journaled(Journaled::CommandSettled {
                             id,
-                            settlement: Settlement::RequestPath(Ok(PathFound { hops })),
+                            settlement: Settlement::RequestPath(Ok(PathFound { hops: crate::units::HopCount(hops) })),
                         }));
                     }
                     PathRequestWriteOutcome::Written { wire_len, culled } => {

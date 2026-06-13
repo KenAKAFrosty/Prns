@@ -817,7 +817,7 @@ impl<S: EngineStorage> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let fire_on = route.receiving_interface;
-        let forwarded_header = if route.hops > 1 {
+        let forwarded_header = if route.hops.0 > 1 {
             let NextHop::Via(next) = route.next_hop else {
                 return IngestPacketOutcome::Ignored;
             };
@@ -870,7 +870,7 @@ impl<S: EngineStorage> EngineState<S> {
                 .0
                 .saturating_add(extra_link_proof_timeout_ms(bitrate))
                 .saturating_add(
-                    DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(route.hops.max(1))),
+                    DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(route.hops.0.max(1))),
                 ),
         );
         if self
@@ -885,7 +885,7 @@ impl<S: EngineStorage> EngineState<S> {
                 next_hop_interface: fire_on,
                 received_interface: source_interface,
                 taken_hops: received_hops,
-                remaining_hops: route.hops,
+                remaining_hops: route.hops.0,
                 validated: false,
                 last_active: arrived_at,
                 proof_timeout,
@@ -1451,7 +1451,7 @@ impl<S: EngineStorage> EngineState<S> {
             request.destination,
             due_at,
             source_interface,
-            route.hops,
+            route.hops.0,
         );
         IngestPacketOutcome::ScheduledPathResponse {
             destination: request.destination,
@@ -1490,7 +1490,7 @@ impl<S: EngineStorage> EngineState<S> {
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
 
-        let forwarded_header = if route.hops == 1 {
+        let forwarded_header = if route.hops.0 == 1 {
             WirePacketHeader {
                 ifac_flag: IfacFlag::Open,
                 context_flag: ContextFlag::Unset,

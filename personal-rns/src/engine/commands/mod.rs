@@ -18,6 +18,7 @@ use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::LinkId;
+use crate::units::HopCount;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
@@ -383,7 +384,7 @@ pub enum Settlement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PathFound {
-    pub hops: u8,
+    pub hops: HopCount,
 }
 
 /// RNS 1.3.1 `PacketReceipt.DELIVERED`, with the round trip it measured.
@@ -1050,8 +1051,8 @@ mod tests {
 
         assert_eq!(verb.into_command(), EngineCommand::RequestPath(verb));
         assert_eq!(
-            RequestPath::from_settlement(Settlement::RequestPath(Ok(PathFound { hops: 2 }))),
-            Some(Ok(PathFound { hops: 2 })),
+            RequestPath::from_settlement(Settlement::RequestPath(Ok(PathFound { hops: crate::units::HopCount(2) }))),
+            Some(Ok(PathFound { hops: crate::units::HopCount(2) })),
         );
         assert_eq!(
             RequestPath::from_settlement(Settlement::AnnounceNow(Ok(()))),

@@ -76,7 +76,7 @@ impl<S: EngineStorage> EngineState<S> {
                     sink(EngineReaction::Journaled(Journaled::CommandSettled {
                         id: settled.command_id,
                         settlement: Settlement::RequestPath(Ok(PathFound {
-                            hops: accepted.hops,
+                            hops: crate::units::HopCount(accepted.hops),
                         })),
                     }));
                 }
