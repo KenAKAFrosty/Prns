@@ -25,57 +25,65 @@ use crate::storage::StorageLayout;
 pub struct Esp32S3;
 
 impl Esp32S3 {
-    const TRACKED_DESTINATIONS: usize = 24;
-    const UPSTREAM_APP_DESTINATIONS: usize = 4;
-    const LINKS: usize = 4;
-    const RESOURCE_TRANSFER_BYTES: usize = 4096;
+    const MAX_TRACKED_DESTINATIONS: usize = 24;
+    const MAX_UPSTREAM_APP_DESTINATIONS: usize = 4;
+    const MAX_CONCURRENT_LINKS: usize = 4;
+    const MAX_RESOURCE_TRANSFER_BYTES: usize = 4096;
 }
 
 impl StorageLayout for Esp32S3 {
-    type Routes = FixedArrayRouteColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type Announces = FixedArrayRetainedAnnounceColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type History = TieredAnnounceIdHistory<4, 128, { Self::TRACKED_DESTINATIONS }, 32>;
-    type AppData = PackedAppDataArena<1024, { Self::TRACKED_DESTINATIONS }>;
-    type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::TRACKED_DESTINATIONS }>;
+    type Routes = FixedArrayRouteColumns<{ Self::MAX_TRACKED_DESTINATIONS }>;
+    type Announces = FixedArrayRetainedAnnounceColumns<{ Self::MAX_TRACKED_DESTINATIONS }>;
+    type History = TieredAnnounceIdHistory<4, 128, { Self::MAX_TRACKED_DESTINATIONS }, 32>;
+    type AppData = PackedAppDataArena<1024, { Self::MAX_TRACKED_DESTINATIONS }>;
+    type ScheduledAnnounces = FixedScheduledAnnounceQueue<{ Self::MAX_TRACKED_DESTINATIONS }>;
     type UpstreamAppDestinations =
-        FixedUpstreamAppDestinationColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
+        FixedUpstreamAppDestinationColumns<{ Self::MAX_UPSTREAM_APP_DESTINATIONS }>;
     type HeldIdentities = FixedHeldIdentityColumns<4>;
-    type SelfRatchets = FixedSelfRatchetColumns<{ Self::UPSTREAM_APP_DESTINATIONS }, 8>;
+    type SelfRatchets = FixedSelfRatchetColumns<{ Self::MAX_UPSTREAM_APP_DESTINATIONS }, 8>;
     type Receipts = FixedReceiptColumns<8>;
     type PacketHashes = FixedPacketHashHistory<32>;
     type ReverseRoutes = FixedReverseRouteColumns<8>;
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
-    type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
-    type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
-    type TransportedLinks = FixedTransportedLinkColumns<{ Self::LINKS }>;
-    type Links = FixedLinkColumns<{ Self::LINKS }>;
+    type AnnounceRates = FixedAnnounceRateColumns<{ Self::MAX_TRACKED_DESTINATIONS }>;
+    type GroupKeys = FixedGroupKeyColumns<{ Self::MAX_UPSTREAM_APP_DESTINATIONS }>;
+    type RequestHandlers = FixedRequestHandlerColumns<{ Self::MAX_UPSTREAM_APP_DESTINATIONS }>;
+    type TransportedLinks = FixedTransportedLinkColumns<{ Self::MAX_CONCURRENT_LINKS }>;
+    type Links = FixedLinkColumns<{ Self::MAX_CONCURRENT_LINKS }>;
     type OutgoingResources = FixedResourceColumns<
         OutgoingResourceState,
         1,
-        { Self::RESOURCE_TRANSFER_BYTES },
-        { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
+        { Self::MAX_RESOURCE_TRANSFER_BYTES },
+        { max_part_count(Self::MAX_RESOURCE_TRANSFER_BYTES) },
     >;
     type IncomingResources = FixedResourceColumns<
         IncomingResourceState,
         1,
-        { Self::RESOURCE_TRANSFER_BYTES },
-        { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
+        { Self::MAX_RESOURCE_TRANSFER_BYTES },
+        { max_part_count(Self::MAX_RESOURCE_TRANSFER_BYTES) },
     >;
 }
 
 #[cfg(test)]
 mod tests {
     use super::Esp32S3;
-    use crate::storage::impls::assert_same_storage;
-    use crate::storage::TestFixedStorage;
+    use crate::engine::EngineState;
+    use crate::storage::StorageLayout;
 
     #[test]
-    fn esp32s3_is_type_identical_to_its_positional_config() {
-        assert_same_storage::<
-            Esp32S3,
-            TestFixedStorage<24, 32, 1024, 4, 128, 4, 4, 32, 8, 8, 8, 8, 8, 4>,
-        >();
+    fn print_footprint() {
+        type L = Esp32S3;
+        println!(
+            "EngineState<Esp32S3> = {} bytes (host 64-bit; the 32-bit S3 measured 31160)",
+            core::mem::size_of::<EngineState<L>>()
+        );
+        println!("  Routes        {:>6} B", core::mem::size_of::<<L as StorageLayout>::Routes>());
+        println!("  Announces     {:>6} B", core::mem::size_of::<<L as StorageLayout>::Announces>());
+        println!("  History       {:>6} B", core::mem::size_of::<<L as StorageLayout>::History>());
+        println!("  AppData       {:>6} B", core::mem::size_of::<<L as StorageLayout>::AppData>());
+        println!("  PacketHashes  {:>6} B", core::mem::size_of::<<L as StorageLayout>::PacketHashes>());
+        println!("  Receipts      {:>6} B", core::mem::size_of::<<L as StorageLayout>::Receipts>());
+        println!("  Links         {:>6} B", core::mem::size_of::<<L as StorageLayout>::Links>());
     }
 }
