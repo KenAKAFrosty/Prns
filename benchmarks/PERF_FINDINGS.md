@@ -23,7 +23,7 @@ Self-time is split between **our code** (fixable), the **tokio async floor**
 
 | # | Cluster | self-time | Fix | Lands in |
 |---|---|---|---|---|
-| 1 | **Dedup structure** | **~9%** | BTreeMap → open-addressing Lemire side-index | `routing/dedup` |
+| 1 | **Dedup structure** ✅ | ~9% → ~3.6% | BTreeMap → open-addressing Lemire side-index — **landed (31b4f16)** | `routing/dedup` |
 | 2 | Framing + serve loop | ~5.8% serve + ~3.7% encode/decode + ~1.1% memmove | SIMD escape-scan; drill serve/memmove; forward-without-re-encode? | `interfaces/framing`, `reactor/interfaces` |
 | 3 | Per-packet bookkeeping | ~1% | cache running totals; lighter on relay role | `reactor` |
 
@@ -48,7 +48,7 @@ window).
 
 **Fix:** the dedup is a *set of hashes* (no columns), so adopt the building block
 the path table already proved in
-[`routing/storage/impls/heap_route_columns.rs:60–127`](../personal-rns/src/routing/storage/impls/heap_route_columns.rs)
+[`routing/routes/impls/heap_route_columns.rs:60–127`](../personal-rns/src/routing/routes/impls/heap_route_columns.rs)
 (`bucket` / `index_of` / insert / resize):
 
 - Two open-addressing generations (current + previous), each an array of hash slots.
@@ -62,6 +62,13 @@ the path table already proved in
 This removes `remember` + `insert` + the `memcmp` (~9%) and reuses an existing
 pattern rather than inventing one. The `fixed_*` backend can keep its linear scan
 (wins at small N), mirroring `fixed_array_route_columns`.
+
+**✅ Landed (commit 31b4f16).** iai gate `dedup_remember_fresh`: 11,658,772 →
+2,100,469 instructions (−81.98%, −5.55x). On the relay the dedup cluster fell
+~9.1% → ~3.6% — the `memcmp` and `BTreeMap::insert` frames are gone; `contains`
+3.30% + `insert` 0.25% + `remember` 0.03% remain. Chain throughput rose
+18,842 → 19,976 pkt/s (+6%), goodput 4.52 → 4.79 MB/s. Parity held: 655 tests
+green. With dedup shrunk, **framing (#2) is now the top relay engine frame**.
 
 **Parity constraints (do not change):** the SHA-256 *packet hash* itself
 (reference-defined) and the dedup *window policy* (generation capacity / what
