@@ -15,10 +15,13 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "alloc")]
+pub mod control;
 pub mod crypto;
 pub mod engine;
 pub mod identity;
 pub mod interfaces;
 pub mod reactor;
 pub mod routing;
+pub mod units;
 pub mod wire;
