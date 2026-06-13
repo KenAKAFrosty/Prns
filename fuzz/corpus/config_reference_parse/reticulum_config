@@ -1,0 +1,35 @@
+# Reticulum config seed for the ConfigObj parser fuzzer
+[reticulum]
+  enable_transport = Yes
+  share_instance = Yes
+  shared_instance_port = 37428
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+
+  [[Default Interface]]
+    type = AutoInterface
+    enabled = Yes
+    devices = eth0, wlan0
+
+  [[Hub]]
+    type = TCPClientInterface
+    interface_enabled = True
+    target_host = hub.example.com
+    target_port = 4965
+    mode = gateway
+
+  [[Radio]]
+    type = RNodeMultiInterface
+    enabled = Yes
+    port = /dev/ttyUSB0
+    [[[Fast]]]
+      vport = 0
+      frequency = 867200000
+      bandwidth = 125000
+      spreadingfactor = 7
+    [[[Slow]]]
+      vport = 1
+      spreadingfactor = 12

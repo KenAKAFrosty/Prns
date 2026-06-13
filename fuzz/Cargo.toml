@@ -12,6 +12,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 personal-rns = { path = "../personal-rns" }
+personal-rns-config = { path = "../personal-rns-config" }
 
 [[bin]]
 name = "wire_announce_parse"
@@ -37,6 +38,20 @@ bench = false
 [[bin]]
 name = "engine_ingest_never_panics"
 path = "fuzz_targets/engine_ingest_never_panics.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_configobj_parse"
+path = "fuzz_targets/config_configobj_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_reference_parse"
+path = "fuzz_targets/config_reference_parse.rs"
 test = false
 doc = false
 bench = false

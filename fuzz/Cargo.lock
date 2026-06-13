@@ -283,6 +283,7 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "personal-rns",
+ "personal-rns-config",
 ]
 
 [[package]]
@@ -300,6 +301,13 @@ dependencies = [
  "sha2",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "personal-rns-config"
+version = "0.1.0"
+dependencies = [
+ "personal-rns",
 ]
 
 [[package]]
