@@ -76,6 +76,12 @@ name = "engine_cycle_iai"
 path = "benches/engine_cycle_iai.rs"
 harness = false
 
+# --- Route-lookup crossover: linear scan vs. Lemire-indexed columns across N ---
+[[bench]]
+name = "route_index"
+path = "benches/route_index.rs"
+harness = false
+
 [profile.release]
 debug = true
 
