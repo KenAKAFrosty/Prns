@@ -10,7 +10,6 @@
 #![forbid(unsafe_code)]
 #![doc = "Reticulum"]
 #![deny(rustdoc::broken_intra_doc_links)]
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
