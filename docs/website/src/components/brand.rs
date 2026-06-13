@@ -13,7 +13,7 @@ pub fn PrnsMark(#[props(default = 22)] size: u32) -> Element {
             role: "img",
             "aria-label": "Prns",
             circle { cx: "50", cy: "50", r: "37", fill: "none", stroke: "#6ee7b7", stroke_width: "3" }
-            g { stroke: "#6ee7b7", stroke_width: "3", stroke_linecap: "round",
+            g { stroke: "#6ee7b7", stroke_width: "3", stroke_linecap: "round", transform: "rotate(46 50 50)",
                 line { x1: "50", y1: "7", x2: "50", y2: "16" }
                 line { x1: "50", y1: "84", x2: "50", y2: "93" }
                 line { x1: "7", y1: "50", x2: "16", y2: "50" }

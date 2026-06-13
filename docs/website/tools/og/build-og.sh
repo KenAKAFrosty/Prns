@@ -62,7 +62,7 @@ cat > "$OUT_HTML" <<HTMLEOF
   <div class="topline"></div>
   <svg class="ghost" viewBox="0 0 100 100">
     <circle cx="50" cy="50" r="37" fill="none" stroke="#6ee7b7" stroke-width="2.4"/>
-    <g stroke="#6ee7b7" stroke-width="2.4" stroke-linecap="round">
+    <g stroke="#6ee7b7" stroke-width="2.4" stroke-linecap="round" transform="rotate(46 50 50)">
       <line x1="50" y1="7" x2="50" y2="16"/><line x1="50" y1="84" x2="50" y2="93"/>
       <line x1="7" y1="50" x2="16" y2="50"/><line x1="84" y1="50" x2="93" y2="50"/></g>
     <g fill="none" stroke="#6ee7b7" stroke-linecap="round" stroke-width="2.2">
@@ -74,7 +74,7 @@ cat > "$OUT_HTML" <<HTMLEOF
     <div class="lockup">
       <svg width="50" height="50" viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="37" fill="none" stroke="#6ee7b7" stroke-width="3"/>
-        <g stroke="#6ee7b7" stroke-width="3" stroke-linecap="round">
+        <g stroke="#6ee7b7" stroke-width="3" stroke-linecap="round" transform="rotate(46 50 50)">
           <line x1="50" y1="7" x2="50" y2="16"/><line x1="50" y1="84" x2="50" y2="93"/>
           <line x1="7" y1="50" x2="16" y2="50"/><line x1="84" y1="50" x2="93" y2="50"/></g>
         <g fill="none" stroke="#6ee7b7" stroke-linecap="round" stroke-width="2.6">
