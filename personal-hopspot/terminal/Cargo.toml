@@ -1,0 +1,18 @@
+[package]
+name = "personal-hopspot-terminal"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Scratch terminal face for the shared Personal Hopspot pixel renderer."
+
+[workspace]
+resolver = "2"
+
+[[bin]]
+name = "personal-hopspot-terminal"
+path = "src/main.rs"
+
+[dependencies]
+personal-hopspot-ui = { path = "../ui", default-features = false }
+embedded-graphics = "0.8"
+crossterm = "0.28"
