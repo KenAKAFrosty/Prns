@@ -39,6 +39,12 @@ use tokio::sync::mpsc;
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 16]);
 const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 16]);
+
+fn fanin_listener_id(index: usize) -> InterfaceId {
+    let mut id = [0xC0u8; 16];
+    id[15] = index as u8;
+    InterfaceId::new(id)
+}
 const LANE_DEPTH: usize = 64;
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
 const QUIET_AFTER_TRAFFIC: Duration = Duration::from_millis(1500);
@@ -303,19 +309,25 @@ async fn main() {
     let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
     let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx.clone(), out_rx);
-    let dual_listener = role == "responder"
-        && manifest.profile.initiator_count > 1
+    let extra_listener_count = if role == "responder"
         && manifest.profile.wire != "udp"
-        && manifest.profile.topology != "relay";
+        && manifest.profile.topology != "relay"
+    {
+        manifest.profile.initiator_count.saturating_sub(1)
+    } else {
+        0
+    };
     let mut egress_lanes = vec![(TCP_INTERFACE_ID, out_tx)];
-    let mut second_listener = None;
-    if dual_listener {
-        let (in2_tx, in2_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-        let (out2_tx, out2_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-        egress_lanes.push((RELAY_SECOND_INTERFACE_ID, out2_tx));
-        second_listener = Some((
-            TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in2_tx, notify_tx.clone(), out2_rx),
-            in2_rx,
+    let mut extra_listeners = Vec::new();
+    for index in 0..extra_listener_count {
+        let id = fanin_listener_id(index);
+        let (extra_in_tx, extra_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        let (extra_out_tx, extra_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        egress_lanes.push((id, extra_out_tx));
+        extra_listeners.push((
+            id,
+            TokioInterfaceSeam::new(id, extra_in_tx, notify_tx.clone(), extra_out_rx),
+            extra_in_rx,
         ));
     }
     let egress = Egress::new(egress_lanes);
@@ -329,11 +341,8 @@ async fn main() {
             tcp_core::TCP_BITRATE_GUESS_BPS,
         )],
     };
-    if dual_listener {
-        interfaces.push(tcp_core::descriptor(
-            RELAY_SECOND_INTERFACE_ID,
-            tcp_core::TCP_BITRATE_GUESS_BPS,
-        ));
+    for (id, _, _) in &extra_listeners {
+        interfaces.push(tcp_core::descriptor(*id, tcp_core::TCP_BITRATE_GUESS_BPS));
     }
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
@@ -423,22 +432,22 @@ async fn main() {
                 .expect("binds the scenario port");
                 let bound = interface.local_addr().expect("bound address");
                 tokio::spawn(interface.run(seam));
-                match second_listener.take() {
-                    Some((second_seam, in2_rx)) => {
-                        let second = TcpServerInterface::bind(
-                            RELAY_SECOND_INTERFACE_ID,
-                            "127.0.0.1:0",
-                            tcp_core::TCP_BITRATE_GUESS_BPS,
-                        )
-                        .await
-                        .expect("binds the second listener");
-                        let second_bound = second.local_addr().expect("bound address");
-                        tokio::spawn(second.run(second_seam));
-                        in_lanes.push((RELAY_SECOND_INTERFACE_ID, in2_rx));
-                        format!("{bound}+{second_bound}")
-                    }
-                    None => bound.to_string(),
+                let mut addresses = bound.to_string();
+                for (id, extra_seam, extra_in_rx) in extra_listeners.drain(..) {
+                    let extra = TcpServerInterface::bind(
+                        id,
+                        "127.0.0.1:0",
+                        tcp_core::TCP_BITRATE_GUESS_BPS,
+                    )
+                    .await
+                    .expect("binds an extra listener");
+                    let extra_bound = extra.local_addr().expect("bound address");
+                    tokio::spawn(extra.run(extra_seam));
+                    in_lanes.push((id, extra_in_rx));
+                    addresses.push('+');
+                    addresses.push_str(&extra_bound.to_string());
                 }
+                addresses
             };
             tokio::spawn(run(
                 engine,
@@ -457,13 +466,32 @@ async fn main() {
             if manifest.profile.mechanism == "churn" {
                 respond_churn(destination, announce_every, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "request" {
-                respond_request(destination, announce_every, initiators, command_tx, event_rx)
-                    .await;
+                respond_request(
+                    destination,
+                    announce_every,
+                    initiators,
+                    command_tx,
+                    event_rx,
+                )
+                .await;
             } else if manifest.profile.mechanism == "resource" {
-                respond_resource(destination, announce_every, initiators, command_tx, event_rx)
-                    .await;
+                respond_resource(
+                    destination,
+                    announce_every,
+                    initiators,
+                    command_tx,
+                    event_rx,
+                )
+                .await;
             } else if manifest.profile.mechanism == "link" {
-                respond_link(destination, announce_every, initiators, command_tx, event_rx).await;
+                respond_link(
+                    destination,
+                    announce_every,
+                    initiators,
+                    command_tx,
+                    event_rx,
+                )
+                .await;
             } else {
                 respond(destination, announce_every, command_tx, event_rx).await;
             }

@@ -1,7 +1,7 @@
 {
   "name": "request-fanin",
   "version": 1,
-  "description": "One responder, two independent closed-loop requesters dialing it directly - the server shape (a popular nomadnet page; every web bench's N-connection model). The profile matches request-response exactly so contention is the only variable: the observables are aggregate requests per second against the 1:1 baseline, fairness between the two senders, and what fan-in does to rtt p99. Closed-loop latency carries the coordinated-omission bias (a stalling responder slows its own askers, hiding stall time from the percentiles - wrk2's founding lesson); the receipt timeout bounds that blind spot, so timeouts are part of the latency story, not a separate column.",
+  "description": "One responder, two independent closed-loop requesters dialing it directly - the server shape (a popular nomadnet page; every web bench's N-connection model). The profile matches request-response exactly so contention is the only variable: the observables are aggregate requests per second against the 1:1 baseline, fairness between the two senders, and what fan-in does to rtt p99. Closed-loop latency carries the coordinated-omission bias (a stalling responder slows its own askers, hiding stall time from the percentiles - wrk2's founding lesson); the receipt timeout bounds that blind spot, so timeouts are part of the latency story, not a separate column. run_dakka.sh scales this same shape to N senders (it rewrites initiator_count), pinning the responder and the senders to disjoint core sets so added clients never steal server CPU - the saturation curve must belong to the server, not the machine.",
   "roles": [
     "responder",
     "initiator",
