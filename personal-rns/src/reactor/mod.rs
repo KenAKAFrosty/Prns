@@ -13,11 +13,9 @@ use crate::engine::InstantMillis;
 /// impls; that std-vs-no_std split is the only host distinction left.
 #[allow(async_fn_in_trait)]
 pub trait Host {
-    /// Read the monotonic clock.
     fn now(&self) -> InstantMillis;
     /// Suspend until `deadline` — the timer racer in the reactor's select.
     async fn sleep_until(&self, deadline: InstantMillis);
-    /// Fill `bytes` with entropy.
     fn fill_entropy(&mut self, bytes: &mut [u8]);
 }
 

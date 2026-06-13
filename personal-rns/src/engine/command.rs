@@ -508,10 +508,6 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
-/// Fan one self-originated payload to its targets: every interface (`only` = `None`) or a
-/// single named one, taking each that is live and may transmit. The same gate the legacy
-/// runtime's `fan_to_handles` applied with `FanoutClass::SelfOriginated`; the bytes are
-/// lent to each `Send` in turn, never copied into a staging buffer.
 /// A culled receipt settles as the kind of send that tracked it — a full table
 /// can evict one kind's stalest send to admit another kind's fresh one.
 fn culled_settlement(culled: CulledReceipt) -> Settlement {
@@ -522,6 +518,10 @@ fn culled_settlement(culled: CulledReceipt) -> Settlement {
     }
 }
 
+/// Fan one self-originated payload to its targets: every interface (`only` = `None`) or a
+/// single named one, taking each that is live and may transmit. The same gate the legacy
+/// runtime's `fan_to_handles` applied with `FanoutClass::SelfOriginated`; the bytes are
+/// lent to each `Send` in turn, never copied into a staging buffer.
 fn fan_self_originated(
     interfaces: &[InterfaceConfig],
     only: Option<InterfaceId>,

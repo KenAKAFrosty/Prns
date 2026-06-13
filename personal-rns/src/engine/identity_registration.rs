@@ -119,10 +119,6 @@ impl<S: StorageLayout> EngineState<S> {
         self.upstream_app_destinations.iter()
     }
 
-    /// RNS 1.3.1 `Destination.register_request_handler`: requests arriving
-    /// over this destination's links at `truncated_hash(path)` pass the
-    /// registry's gate and journal to the app; everything else dies silently.
-    /// Last write wins, and a re-registration starts from an empty allow list.
     /// The destination's standing answer to inbound resource offers — RNS
     /// 1.3.1 apps set `Link.resource_strategy` inside the link-established
     /// callback on every link, which makes it a de facto per-destination
@@ -138,6 +134,10 @@ impl<S: StorageLayout> EngineState<S> {
             .set_default_resource_strategy(destination, strategy)
     }
 
+    /// RNS 1.3.1 `Destination.register_request_handler`: requests arriving
+    /// over this destination's links at `truncated_hash(path)` pass the
+    /// registry's gate and journal to the app; everything else dies silently.
+    /// Last write wins, and a re-registration starts from an empty allow list.
     pub fn register_request_handler(
         &mut self,
         destination: &DestinationHash,

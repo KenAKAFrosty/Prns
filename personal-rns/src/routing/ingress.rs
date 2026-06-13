@@ -122,7 +122,8 @@ impl<'a> Ingress<'a> {
                     return Self::Unparseable;
                 }
 
-                //erase mutable since it's not needed in this arm
+                // Shared so it stays `Copy`: `from_wire` lends `&'a` into the announce and
+                // the debug round-trip reads payload again — a `&mut` would move on first use.
                 let payload: &'a [u8] = payload;
                 let Ok(announce) = Announce::from_wire(&header, payload) else {
                     return Self::Unparseable;

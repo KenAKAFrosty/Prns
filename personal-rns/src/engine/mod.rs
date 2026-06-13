@@ -166,8 +166,9 @@ impl WakeSchedules {
     pub fn soonest(&self, now: InstantMillis) -> ScheduledWake {
         let mut earliest: Option<(InstantMillis, DueLane)> = None;
         for (wake, lane) in [
-            //An implicit priority is here. Items higher in this list will trigger their 'due' before the later items
-            //If we need to manage this, the WakeSchedules might need some more light bookkeeping to better distribute that. Marked here for later REVIEW
+            // List order is the deliberate tie-break: when several lanes are due at `now`,
+            // `soonest` returns the first in this order — announces, then receipt and
+            // path-request timeouts, then route, link, and resource deadlines.
             (self.scheduled_announces, DueLane::ScheduledAnnounces),
             (self.receipt_timeouts, DueLane::ReceiptTimeouts),
             (self.path_request_timeout, DueLane::PathRequestTimeout),
