@@ -20,7 +20,7 @@ required-features = ["tokio-host"]
 default = ["tokio-host"]
 alloc = ["personal-rns/alloc"]
 std = ["alloc", "personal-rns/std"]
-tokio-host = ["std", "personal-rns/tokio-host", "dep:tokio", "dep:tokio-serial"]
+tokio-host = ["std", "personal-rns/tokio-host", "dep:tokio", "dep:tokio-serial", "dep:clap"]
 fixture-identity = []
 
 [dependencies]
@@ -30,6 +30,8 @@ personal-rns = { path = "../personal-rns", default-features = false }
 # off drops the libudev enumeration dep — we open ports by path, never enumerate.
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"], optional = true }
 tokio-serial = { version = "5", default-features = false, optional = true }
+# The daemon's command-line front door (tokio-host only): typed args, --help, --version.
+clap = { version = "4", features = ["derive"], optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).
 getrandom = "0.2"

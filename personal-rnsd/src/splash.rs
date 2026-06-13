@@ -147,10 +147,10 @@ fn canvas() -> Vec<Vec<Option<Rgb>>> {
 
     let mut origin = MARK_DOTS + GUTTER_DOTS;
     for letter in &letters {
-        for y in 0..CANVAS_ROWS {
+        for (y, row) in grid.iter_mut().enumerate() {
             for local_x in 0..letter.advance {
                 if (letter.covers)(local_x as f32, y as f32) {
-                    grid[y][origin + local_x] = Some(letter.color);
+                    row[origin + local_x] = Some(letter.color);
                 }
             }
         }
