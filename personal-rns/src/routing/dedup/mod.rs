@@ -9,6 +9,13 @@ use crate::wire::{
 
 pub const PACKET_HASH_LEN: usize = 32;
 
+pub const fn dedup_index_buckets(generation_capacity: usize) -> usize {
+    if generation_capacity == 0 {
+        return 1;
+    }
+    (generation_capacity * 3).div_ceil(2)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketHash([u8; PACKET_HASH_LEN]);
 
