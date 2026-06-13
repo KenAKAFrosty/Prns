@@ -7,6 +7,7 @@ pub mod mode;
 pub mod substrate;
 
 mod config;
+mod definition;
 mod framing;
 pub mod impls;
 mod packet;
@@ -25,6 +26,7 @@ pub use config::{
     hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
     InterfaceConfig,
 };
+pub use definition::{InterfaceDefinitionView, InterfaceKind};
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::{AirtimeUtilization, InterfaceStatus, TransferRates};
 
