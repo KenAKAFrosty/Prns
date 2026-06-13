@@ -65,6 +65,7 @@ pub fn write_link_request(
 
 pub const LINK_REQUEST_KEYS_LEN: usize = 64;
 pub const SIGNALLED_LINK_REQUEST_LEN: usize = LINK_REQUEST_KEYS_LEN + 3;
+pub const LINK_PROOF_SIGNED_DATA_LEN: usize = TRUNCATED_HASH_BYTE_LEN + 32 + 32 + 3;
 
 fn decode_signalling_bytes(bytes: &[u8; 3]) -> (usize, u8) {
     let value = ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32);
@@ -145,7 +146,7 @@ pub fn write_link_proof(
     let signalling = signalling_bytes_from(mtu, mode);
     let responder_signing = signer.signing_public_key();
 
-    let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 32 + 32 + 3];
+    let mut signed_data = [0u8; LINK_PROOF_SIGNED_DATA_LEN];
     let mut o = 0;
     signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
     o += TRUNCATED_HASH_BYTE_LEN;
@@ -240,7 +241,7 @@ pub fn link_proof_from(
     responder.copy_from_slice(&body[64..96]);
     let responder_encryption = X25519PublicKey(responder);
 
-    let mut signed_data = [0u8; TRUNCATED_HASH_BYTE_LEN + 32 + 32 + 3];
+    let mut signed_data = [0u8; LINK_PROOF_SIGNED_DATA_LEN];
     let mut o = 0;
     signed_data[o..o + TRUNCATED_HASH_BYTE_LEN].copy_from_slice(link_id.as_bytes());
     o += TRUNCATED_HASH_BYTE_LEN;
@@ -388,6 +389,20 @@ mod tests {
                                      b3fb123c9e5280a5d08e5c0ebee0b02b7ea57d3f5791a99ab69f9cf102dd5002\
                                      bf18d33e4d3400ea2c4307296b89dd85da180ca81b1590be97f26d34d45cc26f\
                                      2001f4";
+    // Minted from RNS 1.3.1: the pre-signalling LRPROOF form (signature ‖
+    // encryption key, no signalling bytes) that `Link.validate_proof` still
+    // accepts from older peers — signed over link_id ‖ pub ‖ sig_pub by a
+    // reference `Identity` and self-checked through `Identity.validate`
+    // before pinning.
+    const UNSIGNALLED_PROOF_LINK_ID: &str = "4242aa55c3e1d20f8badf00d5ca1ab1e";
+    const UNSIGNALLED_RESPONDER_ENCRYPTION_PUBLIC: &str =
+        "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c";
+    const UNSIGNALLED_RESPONDER_SIGNING_PUBLIC: &str =
+        "da29e95b02e00ffa15645775fb1d2ba222a1943395eea06b94e2c057b7be69d0";
+    const UNSIGNALLED_LINK_PROOF_PACKET: &str = "0f004242aa55c3e1d20f8badf00d5ca1ab1eff\
+        5b80243ce3c437a59e25ac2de5ee0c99857a83cd17548e7261f86da4511189d0\
+        b536064c8a9db3f83718d0a402ead809cb4af90869607d6cc1dc822caf37990c\
+        07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7c";
     const RTT_LINK_ID: &str = "000102030405060708090a0b0c0d0e0f";
     const RTT_INITIATOR_SCALAR: &str =
         "3333333333333333333333333333333333333333333333333333333333333333";
@@ -454,9 +469,9 @@ mod tests {
     }
 
     #[test]
-    fn write_link_request_rejects_a_buffer_too_small_for_the_payload() {
-        let mut tiny = [0u8; 40];
-        assert_eq!(
+    fn write_link_request_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let exact = hx(REQUEST_PACKET).len();
+        let request = |buf: &mut [u8]| {
             write_link_request(
                 &DestinationHash::new(a16(LINK_DEST)),
                 None,
@@ -464,10 +479,13 @@ mod tests {
                 &Ed25519PublicKey(a32(INITIATOR_SIGNING_PUBLIC)),
                 500,
                 LinkMode::Aes256Cbc,
-                &mut tiny,
-            ),
-            Err(WireError::BufferTooShort),
-        );
+                buf,
+            )
+        };
+        let mut fits = std::vec![0u8; exact];
+        assert_eq!(request(&mut fits), Ok(exact));
+        let mut short = std::vec![0u8; exact - 1];
+        assert_eq!(request(&mut short), Err(WireError::BufferTooShort));
     }
 
     #[test]
@@ -546,19 +564,22 @@ mod tests {
     }
 
     #[test]
-    fn write_link_proof_rejects_a_buffer_too_small_for_the_proof() {
-        let mut tiny = [0u8; 40];
-        assert_eq!(
+    fn write_link_proof_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let exact = hx(LINK_PROOF_PACKET).len();
+        let proof = |buf: &mut [u8]| {
             write_link_proof(
                 &LinkId::new(a16(PROOF_LINK_ID)),
                 &X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC)),
                 &responder_identity(),
                 500,
                 LinkMode::Aes256Cbc,
-                &mut tiny,
-            ),
-            Err(WireError::BufferTooShort),
-        );
+                buf,
+            )
+        };
+        let mut fits = std::vec![0u8; exact];
+        assert_eq!(proof(&mut fits), Ok(exact));
+        let mut short = std::vec![0u8; exact - 1];
+        assert_eq!(proof(&mut short), Err(WireError::BufferTooShort));
     }
 
     #[test]
@@ -574,6 +595,19 @@ mod tests {
             X25519PublicKey(a32(RESPONDER_ENCRYPTION_PUBLIC))
         );
         assert_eq!(proof.mtu, 500);
+        assert_eq!(proof.mode, LinkMode::Aes256Cbc);
+    }
+
+    #[test]
+    fn validate_link_proof_accepts_the_reference_unsignalled_form() {
+        let signing = Ed25519PublicKey(a32(UNSIGNALLED_RESPONDER_SIGNING_PUBLIC));
+        let proof = validate_link_proof(&hx(UNSIGNALLED_LINK_PROOF_PACKET), &signing).unwrap();
+        assert_eq!(proof.link_id, LinkId::new(a16(UNSIGNALLED_PROOF_LINK_ID)));
+        assert_eq!(
+            proof.responder_encryption,
+            X25519PublicKey(a32(UNSIGNALLED_RESPONDER_ENCRYPTION_PUBLIC))
+        );
+        assert_eq!(proof.mtu, BROADCAST_MTU);
         assert_eq!(proof.mode, LinkMode::Aes256Cbc);
     }
 

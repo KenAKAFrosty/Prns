@@ -150,6 +150,22 @@ mod tests {
     }
 
     #[test]
+    fn write_keepalive_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let link_id = LinkId::new([0x33; 16]);
+        let exact = write_keepalive(&link_id, KEEPALIVE_REQUEST, &mut [0u8; 64]).unwrap();
+        let mut fits = std::vec![0u8; exact];
+        assert_eq!(
+            write_keepalive(&link_id, KEEPALIVE_REQUEST, &mut fits),
+            Ok(exact)
+        );
+        let mut short = std::vec![0u8; exact - 1];
+        assert_eq!(
+            write_keepalive(&link_id, KEEPALIVE_REQUEST, &mut short),
+            Err(WireError::BufferTooShort)
+        );
+    }
+
+    #[test]
     fn the_link_close_seals_the_link_id_under_the_session_key() {
         let link_id = LinkId::new([0x11; 16]);
         let shared = x25519_diffie_hellman(

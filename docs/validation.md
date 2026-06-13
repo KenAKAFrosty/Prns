@@ -115,7 +115,14 @@ cargo mutants
 
 Treat survivors as review prompts, not automatic failures, until the team has
 triaged enough runs to decide which mutants are equivalent and which are true
-coverage gaps.
+coverage gaps. The Links-era triage worked exactly this way: a first run over
+the link surfaces left 45 survivors, which resolved into boundary tests (every
+wire writer now has an exact-fit/one-byte-short pair), per-gate malformed
+vectors for the request/response parsers, an active-link MDU test for the
+commanded send/respond paths, a reference-minted vector for the pre-signalling
+link proof older peers send, and a handful of genuine equivalents — some
+excluded with justification, some made unrepresentable by hoisting a shared
+length const or dropping a guard already subsumed by the saturating cast.
 
 ## Local Build Cleanup
 

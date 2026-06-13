@@ -26,17 +26,32 @@ examine_globs = [
 ]
 
 # These bit-pack fields occupy disjoint positions; replacing OR with XOR in
-# `WirePacketHeader::write` is equivalent for all constructible headers.
+# `WirePacketHeader::write` is equivalent for all constructible headers. The
+# link signalling pack and unpack are the same shape: the MTU mask owns bits
+# 0-20, the mode owns bits 21-23, and the three decode shifts never overlap.
 #
 # The fixed in-place queues intentionally use manual shrinking loops. These
 # mutants remove loop progress or length reduction and are covered as hangs by
 # the tests, but excluding them keeps the mutation lane focused on actionable
 # assertion failures.
+#
+# WRAPPED_PLAINTEXT_CAP sizes a scratch buffer that is always sliced to the
+# bytes actually written, so over-sizing it (+ -> *) is harmless; and it picks
+# the larger of two caps that are equal by construction (28 + 403 == 19 + 412
+# == 431), so every comparison operator selects the same value. Both kinds are
+# equivalent and pinned by line/column because the const carries no function
+# name to anchor on.
 exclude_re = [
     'replace \| with \^ in WirePacketHeader::write',
+    'replace \| with \^ in signalling_bytes_from',
+    'replace \| with \^ in decode_signalling_bytes',
     'replace \+= with \*= in FixedRebroadcastQueue<MAX_PENDING>::drain_due',
     'replace FixedHeldAnnounces<CAPACITY>::swap_remove_at with \(\)',
     'replace - with / in FixedHeldAnnounces<CAPACITY>::swap_remove_at',
+    'links/request\.rs:41:\d+: replace \+ with \*',
+    'links/request\.rs:42:\d+: replace \+ with \*',
+    'links/request\.rs:50:\d+: replace \+ with \*',
+    'links/request\.rs:43:\d+: replace > with',
 ]
 
 additional_cargo_test_args = ["-p", "personal-rns"]

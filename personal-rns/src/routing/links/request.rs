@@ -131,11 +131,7 @@ pub fn parse_request_plaintext(
     let mut seconds = [0u8; 8];
     seconds.copy_from_slice(&plaintext[2..10]);
     let seconds = f64::from_be_bytes(seconds);
-    let requested_at = if seconds.is_nan() || seconds < 0.0 {
-        0
-    } else {
-        (seconds * 1_000.0 + 0.5) as u64
-    };
+    let requested_at = (seconds * 1_000.0 + 0.5) as u64;
     if plaintext[10] != BIN_8 || plaintext[11] != TRUNCATED_HASH_BYTE_LEN as u8 {
         return Err(RequestPlaintextError::Malformed);
     }
@@ -452,5 +448,175 @@ mod tests {
             parse_response_plaintext(&[0x92, 0xC4]).unwrap_err(),
             ResponsePlaintextError::Malformed,
         );
+    }
+
+    #[test]
+    fn write_request_plaintext_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let exact = REQUEST_WIRE_OVERHEAD + 1;
+        let mut fits = std::vec![0u8; exact];
+        assert_eq!(
+            write_request_plaintext(InstantMillis(1_000), &PATH_HASH, &[], &mut fits),
+            Ok(exact),
+        );
+        let mut short = std::vec![0u8; exact - 1];
+        assert_eq!(
+            write_request_plaintext(InstantMillis(1_000), &PATH_HASH, &[], &mut short),
+            Err(RequestPlaintextError::BufferTooShort),
+        );
+    }
+
+    #[test]
+    fn write_response_plaintext_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let id = RequestId([0x7E; 16]);
+        let exact = RESPONSE_WIRE_OVERHEAD + 1;
+        let mut fits = std::vec![0u8; exact];
+        assert_eq!(write_response_plaintext(&id, &[], &mut fits), Ok(exact));
+        let mut short = std::vec![0u8; exact - 1];
+        assert_eq!(
+            write_response_plaintext(&id, &[], &mut short),
+            Err(ResponsePlaintextError::BufferTooShort),
+        );
+    }
+
+    fn valid_request_plaintext() -> [u8; REQUEST_WIRE_OVERHEAD + 1] {
+        let mut buf = [0u8; REQUEST_WIRE_OVERHEAD + 1];
+        write_request_plaintext(InstantMillis(1_000), &PATH_HASH, &[], &mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn parse_request_plaintext_refuses_each_header_gate_independently() {
+        assert!(parse_request_plaintext(&valid_request_plaintext()).is_ok());
+        // One byte below the minimum length is malformed; the exact minimum parses.
+        assert_eq!(
+            parse_request_plaintext(&valid_request_plaintext()[..REQUEST_WIRE_OVERHEAD])
+                .unwrap_err(),
+            RequestPlaintextError::Malformed,
+        );
+        for (index, wrong) in [(0, 0x92u8), (1, 0xC4), (10, 0xCB), (11, 0x0F)] {
+            let mut bytes = valid_request_plaintext();
+            bytes[index] = wrong;
+            assert_eq!(
+                parse_request_plaintext(&bytes).unwrap_err(),
+                RequestPlaintextError::Malformed,
+                "byte {index} must be checked on its own",
+            );
+        }
+    }
+
+    fn engine_with_an_active_link_at(
+        link_id: LinkId,
+        mtu: usize,
+    ) -> EngineState<crate::routing::storage::GrowableHeap> {
+        use crate::crypto::{
+            x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+        };
+        use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+        use crate::routing::links::table::InitiatedLink;
+
+        let mut engine = EngineState::<crate::routing::storage::GrowableHeap>::new(Zeroizing::new(
+            [0x07; IDENTITY_SECRET_KEY_LEN],
+        ));
+        engine
+            .links
+            .track_initiated(InitiatedLink {
+                link_id,
+                destination: DestinationHash::new([0x11; 16]),
+                initiator_secret: X25519SecretKey::new([0x21; 32]),
+                requested_at: InstantMillis(0),
+                timeout_at: InstantMillis(600_000),
+                command_id: CommandId(1),
+            })
+            .unwrap();
+        let key = LinkKey::derive(
+            &link_id,
+            &x25519_diffie_hellman(
+                &X25519SecretKey::new([0x21; 32]),
+                &X25519PublicKey([0x63; 32]),
+            ),
+        );
+        engine
+            .links
+            .activate_initiated(
+                &link_id,
+                key,
+                100,
+                mtu,
+                InterfaceId::new([0xEE; 16]),
+                InstantMillis(1_000),
+                Ed25519PublicKey([0x5A; 32]),
+            )
+            .unwrap();
+        engine
+    }
+
+    #[test]
+    fn write_commanded_send_request_admits_an_exact_mdu_payload_and_refuses_one_byte_past() {
+        use crate::engine::commands::SendRequestData;
+        let link_id = LinkId::new([0x42; 16]);
+        let mdu = link_mdu(300);
+        let send = |data_len: usize| {
+            let request = SendRequest {
+                link_id,
+                path_hash: RequestPathHash::of("/q"),
+                data: SendRequestData::from_slice(&std::vec![0xAA; data_len]).unwrap(),
+            };
+            let mut buf = [0u8; 600];
+            engine_with_an_active_link_at(link_id, 300).write_commanded_send_request(
+                CommandId(2),
+                &request,
+                InstantMillis(2_000),
+                &[0u8; 16],
+                &mut buf,
+            )
+        };
+        assert!(send(mdu - REQUEST_WIRE_OVERHEAD).is_ok());
+        assert_eq!(
+            send(mdu - REQUEST_WIRE_OVERHEAD + 1).map(|_| ()),
+            Err(LinkRequestWriteError::PayloadTooLong),
+        );
+    }
+
+    #[test]
+    fn write_commanded_respond_admits_an_exact_mdu_payload_and_refuses_one_byte_past() {
+        use crate::engine::commands::RespondData;
+        let link_id = LinkId::new([0x43; 16]);
+        let mdu = link_mdu(300);
+        let respond = |data_len: usize| {
+            let respond = Respond {
+                link_id,
+                request_id: RequestId([0x7E; 16]),
+                data: RespondData::from_slice(&std::vec![0xBB; data_len]).unwrap(),
+            };
+            let mut buf = [0u8; 600];
+            engine_with_an_active_link_at(link_id, 300)
+                .write_commanded_respond(&respond, &[0u8; 16], &mut buf)
+        };
+        assert!(respond(mdu - RESPONSE_WIRE_OVERHEAD).is_ok());
+        assert_eq!(
+            respond(mdu - RESPONSE_WIRE_OVERHEAD + 1).map(|_| ()),
+            Err(LinkRequestWriteError::PayloadTooLong),
+        );
+    }
+
+    #[test]
+    fn parse_response_plaintext_refuses_each_header_gate_independently() {
+        let id = RequestId([0x7E; 16]);
+        let mut valid = [0u8; RESPONSE_WIRE_OVERHEAD + 1];
+        write_response_plaintext(&id, &[], &mut valid).unwrap();
+        assert!(parse_response_plaintext(&valid).is_ok());
+        assert_eq!(
+            parse_response_plaintext(&valid[..RESPONSE_WIRE_OVERHEAD]).unwrap_err(),
+            ResponsePlaintextError::Malformed,
+        );
+        for (index, wrong) in [(0, 0x93u8), (1, 0xCB), (2, 0x0F)] {
+            let mut bytes = valid;
+            bytes[index] = wrong;
+            assert_eq!(
+                parse_response_plaintext(&bytes).unwrap_err(),
+                ResponsePlaintextError::Malformed,
+                "byte {index} must be checked on its own",
+            );
+        }
     }
 }

@@ -510,6 +510,31 @@ mod tests {
         assert_eq!(re_header.hops, 5);
         assert_eq!(re_announce, orig_announce);
     }
+
+    #[test]
+    fn write_link_proof_wire_packet_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let link_id = LinkId::new([0x42; 16]);
+        let packet_hash = PacketHash::new([0x7E; PACKET_HASH_LEN]);
+        let signature = Ed25519Signature([0xC3; 64]);
+        let write =
+            |buf: &mut [u8]| write_link_proof_wire_packet(&link_id, &packet_hash, &signature, buf);
+        let mut fits = [0u8; LINK_PROOF_WIRE_LEN];
+        assert_eq!(write(&mut fits), Ok(LINK_PROOF_WIRE_LEN));
+        let mut short = [0u8; LINK_PROOF_WIRE_LEN - 1];
+        assert_eq!(write(&mut short), Err(EgressSerializeError::BufferTooShort));
+    }
+
+    #[test]
+    fn write_implicit_proof_wire_packet_fills_an_exact_buffer_and_rejects_one_byte_short() {
+        let packet_hash = PacketHash::new([0x7E; PACKET_HASH_LEN]);
+        let signature = Ed25519Signature([0xC3; 64]);
+        let write =
+            |buf: &mut [u8]| write_implicit_proof_wire_packet(&packet_hash, &signature, buf);
+        let mut fits = [0u8; IMPLICIT_PROOF_WIRE_LEN];
+        assert_eq!(write(&mut fits), Ok(IMPLICIT_PROOF_WIRE_LEN));
+        let mut short = [0u8; IMPLICIT_PROOF_WIRE_LEN - 1];
+        assert_eq!(write(&mut short), Err(EgressSerializeError::BufferTooShort));
+    }
 }
 
 #[cfg_attr(mutants, mutants::skip)]

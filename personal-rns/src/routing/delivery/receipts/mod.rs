@@ -243,8 +243,7 @@ impl<C: ReceiptColumns> Receipts<C> {
             return false;
         };
         let key = *signing_key.as_ed25519();
-        let memo_holds_key =
-            matches!(&self.verifier_memo, Some(memo) if memo.public_key() == &key);
+        let memo_holds_key = matches!(&self.verifier_memo, Some(memo) if memo.public_key() == &key);
         if !memo_holds_key {
             let Ok(fresh) = Ed25519Verifier::new(&key) else {
                 return false;
@@ -311,6 +310,17 @@ mod tests {
                 .map(|r| r.command_id),
             Some(CommandId(1)),
         );
+    }
+
+    #[test]
+    fn a_fresh_table_is_empty_and_a_tracked_receipt_fills_it() {
+        let (_, key) = signer(0x21);
+        let mut receipts = TestReceipts::default();
+        assert!(receipts.is_empty());
+        assert_eq!(receipts.len(), 0);
+        assert_eq!(receipts.track(outstanding(1, 1, key, 100, 7_000)), None);
+        assert!(!receipts.is_empty());
+        assert_eq!(receipts.len(), 1);
     }
 
     #[test]
@@ -384,12 +394,18 @@ mod tests {
         let (first_secret, first_key) = signer(0x21);
         let (second_secret, second_key) = signer(0x42);
         let mut receipts = TestReceipts::default();
-        assert_eq!(receipts.track(outstanding(1, 1, first_key, 100, 9_000)), None);
+        assert_eq!(
+            receipts.track(outstanding(1, 1, first_key, 100, 9_000)),
+            None
+        );
         assert_eq!(
             receipts.track(outstanding(2, 2, second_key, 200, 9_000)),
             None
         );
-        assert_eq!(receipts.track(outstanding(3, 3, first_key, 300, 9_000)), None);
+        assert_eq!(
+            receipts.track(outstanding(3, 3, first_key, 300, 9_000)),
+            None
+        );
 
         let first_named = PacketHash::new([1; 32]);
         assert!(receipts
