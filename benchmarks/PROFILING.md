@@ -78,9 +78,11 @@ instrumented allocator only exists inside that one example binary — the lib, i
 and Criterion paths are never perturbed. Same `Cycle` harness.
 
 ```sh
-# allocations-per-roundtrip readout (testing mode — instant, no file)
+# endpoint SINGLE roundtrip — allocations-per-roundtrip (testing mode, instant)
 cargo run --release --example dhat_cycle
-# dump dhat-heap.json for the call-site viewer (heap mode)
+# relay forward path — allocations-per-forward (initiator seal kept out of the window)
+cargo run --release --example dhat_forward
+# either example: dump dhat-heap.json for the call-site viewer
 cargo run --release --example dhat_cycle heap
 ```
 
@@ -90,8 +92,16 @@ across runs is retention, not a leak), and peak live. The `heap` arg writes
 `dhat-heap.json` — open it at <https://nnethercote.github.io/dh_view/dh_view.html>
 to rank allocation call sites by total bytes/blocks and drill the stack of each.
 
-Steady-state finding (endpoint SINGLE roundtrip): ~0.01 allocs/cycle — the crypto
-seal/open/prove/verify path allocates nothing per cycle; the only heap traffic is
-the dedup history's two `Vec`s doubling as they fill (`Generation::insert` + index
-resize), which is amortized and bounded by rotate-on-full. Use this to hold a
-**no-per-packet-allocation** line on the hot paths as they grow.
+Steady-state findings:
+- **Endpoint SINGLE roundtrip** (`dhat_cycle`): ~0.01 allocs/cycle — the crypto
+  seal/open/prove/verify path allocates nothing per cycle; the only heap traffic
+  is the dedup history's two `Vec`s doubling as they fill (`Generation::insert` +
+  index resize), amortized and bounded by rotate-on-full.
+- **Relay forward path** (`dhat_forward`): ~0.025 allocs/forward — a transport
+  node switches blind ciphertext with **no per-packet allocation**; its only heap
+  traffic is amortized growth of the dedup, reverse-route, and receipt stores.
+
+Both invariants are gated under `tests/` (`forward_path_alloc`,
+`dedup_rotation_alloc`): a per-packet-allocation regression turns the
+handful-of-blocks figure into one-block-per-packet and trips the assertion. Use
+these to hold a **no-per-packet-allocation** line on the hot paths as they grow.

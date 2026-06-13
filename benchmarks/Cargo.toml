@@ -91,6 +91,10 @@ harness = false
 name = "dhat_cycle"
 path = "examples/dhat_cycle.rs"
 
+[[example]]
+name = "dhat_forward"
+path = "examples/dhat_forward.rs"
+
 [profile.release]
 debug = true
 
