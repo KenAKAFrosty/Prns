@@ -8,7 +8,7 @@ use personal_rns::crypto::{
 };
 use personal_rns::identity::ENCRYPTION_IV_LEN;
 
-use benchmarks::microscope::Cycle;
+use benchmarks::microscope::{Cycle, Forward};
 use personal_rns::routing::dedup::{HeapPacketHashHistory, PacketHash, PacketHashHistory};
 use personal_rns::interfaces::rns_serial_framing;
 
@@ -190,6 +190,45 @@ fn framing_encode(payload: Vec<u8>) {
     }
 }
 
+fn framed_payload() -> Vec<u8> {
+    let payload = framing_payload();
+    let mut framed = vec![0u8; rns_serial_framing::max_encoded_len(PAYLOAD_LEN)];
+    let n = rns_serial_framing::encode(&payload, &mut framed).expect("encodes");
+    framed.truncate(n);
+    framed
+}
+
+#[library_benchmark]
+#[bench::p300(setup = framed_payload)]
+fn framing_decode(framed: Vec<u8>) {
+    let mut decoded = 0usize;
+    for _ in 0..FRAMING_ITERS {
+        let mut decoder = rns_serial_framing::RnsSerialDecoder::<512>::new();
+        decoder.feed_slice(black_box(&framed), |frame| {
+            decoded += frame.len();
+        });
+    }
+    black_box(decoded);
+}
+
+const FORWARD_BATCH: usize = 64;
+
+fn forward_batch() -> (Forward, Vec<Vec<u8>>) {
+    let mut forward = Forward::new();
+    let frames = forward.seal_many(FORWARD_BATCH);
+    (forward, frames)
+}
+
+#[library_benchmark]
+#[bench::batch(setup = forward_batch)]
+fn relay_forward(input: (Forward, Vec<Vec<u8>>)) {
+    let (mut forward, mut frames) = input;
+    for frame in frames.iter_mut() {
+        black_box(forward.forward_frame(black_box(frame)));
+    }
+    black_box(&forward);
+}
+
 library_benchmark_group!(
     name = primitives;
     benchmarks =
@@ -213,7 +252,12 @@ library_benchmark_group!(
 
 library_benchmark_group!(
     name = framing;
-    benchmarks = framing_encode
+    benchmarks = framing_encode, framing_decode
 );
 
-main!(library_benchmark_groups = primitives, engine_cycle, dedup, framing);
+library_benchmark_group!(
+    name = forwarding;
+    benchmarks = relay_forward
+);
+
+main!(library_benchmark_groups = primitives, engine_cycle, dedup, framing, forwarding);

@@ -64,11 +64,13 @@ re-run reports the delta vs. the previous run (`N regressed`). Raw Callgrind
 output lands under `target/iai/`; open it in KCachegrind or `callgrind_annotate`
 for the full annotated call graph.
 
-Covers both the crypto primitives (sign / verify / DH / seal / open) and the
-engine-cycle stages (roundtrip / seal / deliver+prove / settle), via the shared
-`Cycle` harness in `src/microscope.rs` — the same harness the Criterion bench
-drives. Track the **instruction** counts for regressions (bit-exact run-to-run);
-the estimated-cycle figures wobble slightly with cache state.
+Covers the crypto primitives (sign / verify / DH / seal / open), the engine-cycle
+stages (roundtrip / seal / deliver+prove / settle) via the shared `Cycle` harness,
+the HDLC framing both ways (`framing_encode` / `framing_decode` — the SWAR
+escape-scan on both sides), and the transport relay (`relay_forward` — a batch of
+distinct SINGLEs switched through the `Forward` harness). Track the **instruction**
+counts for regressions (bit-exact run-to-run); the estimated-cycle figures wobble
+slightly with cache state.
 
 ## 4. dhat — heap allocations per operation
 

@@ -465,13 +465,28 @@ impl Forward {
         assert!(!self.single.is_empty(), "initiator sealed a single via the relay");
     }
 
+    pub fn seal_many(&mut self, count: usize) -> Vec<Vec<u8>> {
+        let mut frames = Vec::with_capacity(count);
+        for _ in 0..count {
+            self.seal_single();
+            frames.push(self.single.clone());
+        }
+        frames
+    }
+
     pub fn forward(&mut self) -> bool {
+        let mut single = core::mem::take(&mut self.single);
+        let forwarded = self.forward_frame(&mut single);
+        self.single = single;
+        forwarded
+    }
+
+    pub fn forward_frame(&mut self, frame: &mut [u8]) -> bool {
         let mut forwarded = false;
         let Self {
             relay,
             relay_entropy,
             relay_view,
-            single,
             scratch,
             ..
         } = self;
@@ -479,7 +494,7 @@ impl Forward {
             InboundPacket {
                 arrived_at: FORWARD_NOW,
                 source_interface: IF_DOWN,
-                bytes: single,
+                bytes: frame,
             },
             JITTER,
             relay_view,
