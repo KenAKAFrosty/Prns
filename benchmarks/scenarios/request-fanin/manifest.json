@@ -1,0 +1,21 @@
+{
+  "name": "request-fanin",
+  "version": 1,
+  "description": "One responder, two independent closed-loop requesters dialing it directly - the server shape (a popular nomadnet page; every web bench's N-connection model). The profile matches request-response exactly so contention is the only variable: the observables are aggregate requests per second against the 1:1 baseline, fairness between the two senders, and what fan-in does to rtt p99. Closed-loop latency carries the coordinated-omission bias (a stalling responder slows its own askers, hiding stall time from the percentiles - wrk2's founding lesson); the receipt timeout bounds that blind spot, so timeouts are part of the latency story, not a separate column.",
+  "roles": [
+    "responder",
+    "initiator",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "request",
+    "request_min": 16,
+    "request_max": 300,
+    "response_min": 32,
+    "response_max": 350,
+    "window": 4,
+    "duration_ms": 30000,
+    "initiator_count": 2
+  },
+  "conformance": "Per sender: sent == delivered + timeouts + raced, every response exactly the byte count its request named (the reference's register-race asymmetry from request-response applies per reference initiator). Responder: served == both senders' delivered combined. The responder announces until initiator_count links are up and reports only after that many close - one sender finishing first must not end the run. KNOWN GAP, found by this scenario's first run (2026-06-12): Prns's TcpServerInterface is point-to-point - its own doc says 'multi-client fan-out is deferred and a second client waits in the accept backlog until the first drops' - so a single listener serves two senders SEQUENTIALLY (each a solo run; aggregate meaningless, rtt shows no contention, and a sender that bounds its announce wait dies in the backlog - the reference initiator gives up at 30s, ours waits forever). The bench sidesteps it: when initiator_count > 1 the Prns responder binds one listener interface PER SENDER (READY addr=A+B, the runner deals each sender its own port), so one engine truly serves both concurrently. The reference responder fans in natively (child interface per client, one port). Single-interface server fan-out remains a deferred engine capability."
+}

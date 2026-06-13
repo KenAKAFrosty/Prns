@@ -16,6 +16,7 @@ import time
 import RNS
 
 ANNOUNCE_EVERY = 0.5
+INITIATOR_COUNT = 1
 DRAIN_GRACE = 5.0
 QUIET_AFTER_TRAFFIC = 1.5
 REQUEST_PATH = "/bench/query"
@@ -321,16 +322,25 @@ def respond_link(name, block, ready_addr):
         state["delivered"] += 1
         state["payload_bytes"] += len(message)
 
-    link_seen = threading.Event()
+    links = {"up": 0, "closed": 0}
+    links_lock = threading.Lock()
+
+    def on_closed(_link):
+        with links_lock:
+            links["closed"] += 1
+        if links["closed"] >= INITIATOR_COUNT:
+            done.set()
+
     def on_link(link):
-        link_seen.set()
+        with links_lock:
+            links["up"] += 1
         link.set_packet_callback(on_packet)
-        link.set_link_closed_callback(lambda _link: done.set())
+        link.set_link_closed_callback(on_closed)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        if not link_seen.is_set():
+        if links["up"] < INITIATOR_COUNT:
             destination.announce()
         done.wait(ANNOUNCE_EVERY)
     print(
@@ -454,17 +464,26 @@ def respond_resource(name, block, ready_addr):
             data = resource.data.read()
             state["payload_bytes"] += len(data)
 
-    link_seen = threading.Event()
+    links = {"up": 0, "closed": 0}
+    links_lock = threading.Lock()
+
+    def on_closed(_link):
+        with links_lock:
+            links["closed"] += 1
+        if links["closed"] >= INITIATOR_COUNT:
+            done.set()
+
     def on_link(link):
-        link_seen.set()
+        with links_lock:
+            links["up"] += 1
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(on_concluded)
-        link.set_link_closed_callback(lambda _link: done.set())
+        link.set_link_closed_callback(on_closed)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        if not link_seen.is_set():
+        if links["up"] < INITIATOR_COUNT:
             destination.announce()
         done.wait(ANNOUNCE_EVERY)
     time.sleep(0.5)
@@ -580,15 +599,24 @@ def respond_request(name, block, ready_addr):
         REQUEST_PATH, response_generator=answer, allow=RNS.Destination.ALLOW_ALL
     )
 
-    link_seen = threading.Event()
+    links = {"up": 0, "closed": 0}
+    links_lock = threading.Lock()
+
+    def on_closed(_link):
+        with links_lock:
+            links["closed"] += 1
+        if links["closed"] >= INITIATOR_COUNT:
+            done.set()
+
     def on_link(link):
-        link_seen.set()
-        link.set_link_closed_callback(lambda _link: done.set())
+        with links_lock:
+            links["up"] += 1
+        link.set_link_closed_callback(on_closed)
 
     destination.set_link_established_callback(on_link)
     print(f"READY role=responder addr={ready_addr}", flush=True)
     while not done.is_set():
-        if not link_seen.is_set():
+        if links["up"] < INITIATOR_COUNT:
             destination.announce()
         done.wait(ANNOUNCE_EVERY)
     time.sleep(0.5)
@@ -885,8 +913,9 @@ def main():
     role, addr = sys.argv[2], sys.argv[3]
     duration_ms = int(sys.argv[4]) if len(sys.argv) > 4 else manifest["profile"]["duration_ms"]
 
-    global ANNOUNCE_EVERY
+    global ANNOUNCE_EVERY, INITIATOR_COUNT
     ANNOUNCE_EVERY = manifest["profile"].get("announce_every_ms", 500) / 1000.0
+    INITIATOR_COUNT = int(manifest["profile"].get("initiator_count", 1))
 
     mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")

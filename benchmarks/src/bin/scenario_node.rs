@@ -72,6 +72,8 @@ struct Profile {
     duration_ms: u64,
     #[serde(default = "default_announce_every_ms")]
     announce_every_ms: u64,
+    #[serde(default = "default_initiator_count")]
+    initiator_count: usize,
     #[serde(default = "default_size_seed")]
     size_seed: u64,
     #[serde(default = "default_topology")]
@@ -134,6 +136,10 @@ fn default_size_seed() -> u64 {
 
 fn default_announce_every_ms() -> u64 {
     500
+}
+
+fn default_initiator_count() -> usize {
+    1
 }
 
 /// The varied-size law every node speaks identically: a seeded xorshift draws
@@ -296,9 +302,24 @@ async fn main() {
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
     let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx, out_rx);
-    let egress = Egress::new(vec![(TCP_INTERFACE_ID, out_tx)]);
-    let interfaces = match manifest.profile.wire.as_str() {
+    let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx.clone(), out_rx);
+    let dual_listener = role == "responder"
+        && manifest.profile.initiator_count > 1
+        && manifest.profile.wire != "udp"
+        && manifest.profile.topology != "relay";
+    let mut egress_lanes = vec![(TCP_INTERFACE_ID, out_tx)];
+    let mut second_listener = None;
+    if dual_listener {
+        let (in2_tx, in2_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        let (out2_tx, out2_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        egress_lanes.push((RELAY_SECOND_INTERFACE_ID, out2_tx));
+        second_listener = Some((
+            TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in2_tx, notify_tx.clone(), out2_rx),
+            in2_rx,
+        ));
+    }
+    let egress = Egress::new(egress_lanes);
+    let mut interfaces = match manifest.profile.wire.as_str() {
         "udp" => vec![udp_core::descriptor(
             TCP_INTERFACE_ID,
             udp_core::UDP_BITRATE_GUESS_BPS,
@@ -308,6 +329,12 @@ async fn main() {
             tcp_core::TCP_BITRATE_GUESS_BPS,
         )],
     };
+    if dual_listener {
+        interfaces.push(tcp_core::descriptor(
+            RELAY_SECOND_INTERFACE_ID,
+            tcp_core::TCP_BITRATE_GUESS_BPS,
+        ));
+    }
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let journal = move |journaled: Journaled<'_>| match journaled {
@@ -364,6 +391,7 @@ async fn main() {
     }
     match role.as_str() {
         "responder" => {
+            let mut in_lanes = vec![(TCP_INTERFACE_ID, in_rx)];
             let bound = if manifest.profile.topology == "relay" {
                 let interface = TcpClientInterface::new(
                     TCP_INTERFACE_ID,
@@ -395,7 +423,22 @@ async fn main() {
                 .expect("binds the scenario port");
                 let bound = interface.local_addr().expect("bound address");
                 tokio::spawn(interface.run(seam));
-                bound.to_string()
+                match second_listener.take() {
+                    Some((second_seam, in2_rx)) => {
+                        let second = TcpServerInterface::bind(
+                            RELAY_SECOND_INTERFACE_ID,
+                            "127.0.0.1:0",
+                            tcp_core::TCP_BITRATE_GUESS_BPS,
+                        )
+                        .await
+                        .expect("binds the second listener");
+                        let second_bound = second.local_addr().expect("bound address");
+                        tokio::spawn(second.run(second_seam));
+                        in_lanes.push((RELAY_SECOND_INTERFACE_ID, in2_rx));
+                        format!("{bound}+{second_bound}")
+                    }
+                    None => bound.to_string(),
+                }
             };
             tokio::spawn(run(
                 engine,
@@ -403,21 +446,24 @@ async fn main() {
                 vec![],
                 TokioHost::new(),
                 notify_rx,
-                vec![(TCP_INTERFACE_ID, in_rx)],
+                in_lanes,
                 command_rx,
                 egress,
                 journal,
             ));
             println!("READY role=responder addr={bound}");
             let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+            let initiators = manifest.profile.initiator_count;
             if manifest.profile.mechanism == "churn" {
                 respond_churn(destination, announce_every, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "request" {
-                respond_request(destination, announce_every, command_tx, event_rx).await;
+                respond_request(destination, announce_every, initiators, command_tx, event_rx)
+                    .await;
             } else if manifest.profile.mechanism == "resource" {
-                respond_resource(destination, announce_every, command_tx, event_rx).await;
+                respond_resource(destination, announce_every, initiators, command_tx, event_rx)
+                    .await;
             } else if manifest.profile.mechanism == "link" {
-                respond_link(destination, announce_every, command_tx, event_rx).await;
+                respond_link(destination, announce_every, initiators, command_tx, event_rx).await;
             } else {
                 respond(destination, announce_every, command_tx, event_rx).await;
             }
@@ -634,9 +680,12 @@ async fn initiate(
 async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
+    initiator_count: usize,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
+    let mut links_up = 0usize;
+    let mut closed_links = 0usize;
     let mut next_id = 1u64;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
@@ -661,11 +710,17 @@ async fn respond_link(
             event = events.recv() => {
                 match event {
                     Some(Event::LinkUp) => {
-                        announcing = false;
+                        links_up += 1;
+                        if links_up >= initiator_count {
+                            announcing = false;
+                        }
                     }
                     Some(Event::Delivered(bytes)) => {
                         delivered += 1;
                         payload_bytes += bytes as u64;
+                    }
+                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
+                        closed_links += 1;
                     }
                     Some(Event::Closed) | None => {
                         println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
@@ -820,9 +875,12 @@ async fn initiate_link(
 async fn respond_resource(
     destination: DestinationHash,
     announce_every: Duration,
+    initiator_count: usize,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
+    let mut links_up = 0usize;
+    let mut closed_links = 0usize;
     let mut next_id = 1u64;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
@@ -847,11 +905,17 @@ async fn respond_resource(
             event = events.recv() => {
                 match event {
                     Some(Event::LinkUp) => {
-                        announcing = false;
+                        links_up += 1;
+                        if links_up >= initiator_count {
+                            announcing = false;
+                        }
                     }
                     Some(Event::ResourceIn(bytes)) => {
                         received += 1;
                         payload_bytes += bytes as u64;
+                    }
+                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
+                        closed_links += 1;
                     }
                     Some(Event::Closed) | None => {
                         println!("RESULT received={received} payload_bytes={payload_bytes}");
@@ -986,9 +1050,12 @@ async fn initiate_resource(
 async fn respond_request(
     destination: DestinationHash,
     announce_every: Duration,
+    initiator_count: usize,
     commands: mpsc::UnboundedSender<HostCommand>,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
+    let mut links_up = 0usize;
+    let mut closed_links = 0usize;
     let scratch = incompressible_payload(512);
     let mut next_id = 1u64;
     let mut announce = tokio::time::interval(announce_every);
@@ -1014,7 +1081,10 @@ async fn respond_request(
             event = events.recv() => {
                 match event {
                     Some(Event::LinkUp) => {
-                        announcing = false;
+                        links_up += 1;
+                        if links_up >= initiator_count {
+                            announcing = false;
+                        }
                     }
                     Some(Event::Request { link_id, request_id, wanted }) => {
                         next_id += 1;
@@ -1033,6 +1103,9 @@ async fn respond_request(
                         }
                         served += 1;
                         response_bytes += wanted as u64;
+                    }
+                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
+                        closed_links += 1;
                     }
                     Some(Event::Closed) | None => {
                         println!("RESULT served={served} response_bytes={response_bytes}");
