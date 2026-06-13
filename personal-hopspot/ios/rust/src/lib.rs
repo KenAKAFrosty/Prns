@@ -1,4 +1,3 @@
-//WIP NEEDS REVIEW
 mod cards;
 mod engine;
 mod face;

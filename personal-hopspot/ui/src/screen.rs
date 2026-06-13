@@ -872,7 +872,8 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 color,
             );
         }
-        //WIP NEEDS REVIEW
+        // TCP: a two-way exchange — a right-arrow over a left-arrow for the
+        // reliable bidirectional stream.
         CardKind::Tcp => {
             draw_pattern_colored(
                 display,

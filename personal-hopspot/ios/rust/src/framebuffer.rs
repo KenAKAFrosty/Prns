@@ -1,4 +1,3 @@
-//WIP NEEDS REVIEW
 use embedded_graphics::geometry::{OriginDimensions, Size};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;

@@ -1,4 +1,3 @@
-//WIP NEEDS REVIEW
 pub const MAX_CARDS: usize = 8;
 
 #[cfg(test)]
