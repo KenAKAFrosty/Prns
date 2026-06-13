@@ -1,6 +1,6 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::str::FromStr;
 
 use crate::configobj::{self, ConfigError, Section, Value};
 
@@ -493,39 +493,65 @@ fn opt<T>(
     }
 }
 
-fn scalar_text<'a>(value: &'a Value, interface: &str, key: &str) -> Result<&'a str, ReferenceError> {
-    value.as_scalar().ok_or_else(|| ReferenceError::BadValue {
+fn bad_value(interface: &str, key: &str, reason: &'static str) -> ReferenceError {
+    ReferenceError::BadValue {
         interface: interface.to_string(),
         key: key.to_string(),
-        reason: "expected a single value, found a list",
-    })
+        reason,
+    }
 }
 
-fn coerce_parsed<T: FromStr>(
+fn scalar_text<'a>(value: &'a Value, interface: &str, key: &str) -> Result<&'a str, ReferenceError> {
+    value
+        .as_scalar()
+        .ok_or_else(|| bad_value(interface, key, "expected a single value, found a list"))
+}
+
+fn cleaned_number(raw: &str) -> Option<Cow<'_, str>> {
+    if raw.contains('_') {
+        strip_digit_underscores(raw).map(Cow::Owned)
+    } else {
+        Some(Cow::Borrowed(raw))
+    }
+}
+
+fn coerce_int<T: TryFrom<i128>>(
     value: &Value,
     interface: &str,
     key: &str,
     reason: &'static str,
 ) -> Result<T, ReferenceError> {
-    scalar_text(value, interface, key)?
-        .trim()
-        .parse::<T>()
-        .map_err(|_| ReferenceError::BadValue {
-            interface: interface.to_string(),
-            key: key.to_string(),
-            reason,
-        })
+    let raw = scalar_text(value, interface, key)?.trim();
+    let cleaned = cleaned_number(raw).ok_or_else(|| bad_value(interface, key, reason))?;
+    let parsed: i128 = cleaned.parse().map_err(|_| bad_value(interface, key, reason))?;
+    T::try_from(parsed).map_err(|_| bad_value(interface, key, reason))
+}
+
+fn strip_digit_underscores(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    for (index, &byte) in bytes.iter().enumerate() {
+        if byte == b'_' {
+            let left = index.checked_sub(1).map(|i| bytes[i]);
+            let right = bytes.get(index + 1).copied();
+            let between_digits =
+                left.is_some_and(|b| b.is_ascii_digit()) && right.is_some_and(|b| b.is_ascii_digit());
+            if !between_digits {
+                return None;
+            }
+        }
+    }
+    Some(text.chars().filter(|c| *c != '_').collect())
 }
 
 fn coerce_bool(value: &Value, interface: &str, key: &str) -> Result<bool, ReferenceError> {
     match scalar_text(value, interface, key)?.to_ascii_lowercase().as_str() {
         "true" | "yes" | "on" | "1" => Ok(true),
         "false" | "no" | "off" | "0" => Ok(false),
-        _ => Err(ReferenceError::BadValue {
-            interface: interface.to_string(),
-            key: key.to_string(),
-            reason: "expected a boolean (yes/no/true/false/on/off/1/0)",
-        }),
+        _ => Err(bad_value(
+            interface,
+            key,
+            "expected a boolean (yes/no/true/false/on/off/1/0)",
+        )),
     }
 }
 
@@ -537,11 +563,7 @@ fn coerce_mode(value: &Value, interface: &str) -> Result<ReferenceMode, Referenc
         "roaming" => Ok(ReferenceMode::Roaming),
         "boundary" => Ok(ReferenceMode::Boundary),
         "gateway" | "gw" => Ok(ReferenceMode::Gateway),
-        _ => Err(ReferenceError::BadValue {
-            interface: interface.to_string(),
-            key: "mode".to_string(),
-            reason: "unrecognized interface mode",
-        }),
+        _ => Err(bad_value(interface, "mode", "unrecognized interface mode")),
     }
 }
 
@@ -554,31 +576,35 @@ fn coerce_list(value: &Value, _interface: &str, _key: &str) -> Result<Vec<String
 }
 
 fn coerce_u64(value: &Value, interface: &str, key: &str) -> Result<u64, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected a non-negative integer")
+    coerce_int(value, interface, key, "expected a non-negative integer")
 }
 
 fn coerce_u32(value: &Value, interface: &str, key: &str) -> Result<u32, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected a non-negative integer")
+    coerce_int(value, interface, key, "expected a non-negative integer")
 }
 
 fn coerce_u16(value: &Value, interface: &str, key: &str) -> Result<u16, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected a port or small integer (0-65535)")
+    coerce_int(value, interface, key, "expected a port or small integer (0-65535)")
 }
 
 fn coerce_u8(value: &Value, interface: &str, key: &str) -> Result<u8, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected a small integer (0-255)")
+    coerce_int(value, interface, key, "expected a small integer (0-255)")
 }
 
 fn coerce_i16(value: &Value, interface: &str, key: &str) -> Result<i16, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected an integer")
+    coerce_int(value, interface, key, "expected an integer")
 }
 
 fn coerce_usize(value: &Value, interface: &str, key: &str) -> Result<usize, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected a non-negative integer")
+    coerce_int(value, interface, key, "expected a non-negative integer")
 }
 
 fn coerce_f64(value: &Value, interface: &str, key: &str) -> Result<f64, ReferenceError> {
-    coerce_parsed(value, interface, key, "expected a number")
+    let raw = scalar_text(value, interface, key)?.trim();
+    let cleaned = cleaned_number(raw).ok_or_else(|| bad_value(interface, key, "expected a number"))?;
+    cleaned
+        .parse::<f64>()
+        .map_err(|_| bad_value(interface, key, "expected a number"))
 }
 
 #[cfg(test)]
@@ -707,6 +733,37 @@ mod tests {
                  target_port = not-a-number\n",
         );
         assert!(matches!(result, Err(ReferenceError::BadValue { .. })));
+    }
+
+    #[test]
+    fn digit_grouping_underscores_parse_like_python_int() {
+        let config = parse(
+            "[interfaces]\n\
+               [[Hub]]\n\
+                 type = TCPClientInterface\n\
+                 bitrate = 1_000_000\n\
+                 target_port = 4_965\n",
+        )
+        .unwrap();
+        let hub = &config.interfaces[0];
+        assert_eq!(hub.bitrate, Some(1_000_000));
+        assert!(matches!(
+            hub.params,
+            ReferenceParams::TcpClient { target_port: Some(4965), .. }
+        ));
+    }
+
+    #[test]
+    fn malformed_underscores_are_rejected_like_python_int() {
+        for bad in ["1__0", "_5", "5_", "1_"] {
+            let config = format!(
+                "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nbitrate = {bad}\n"
+            );
+            assert!(
+                matches!(parse(&config), Err(ReferenceError::BadValue { .. })),
+                "expected {bad} to be rejected"
+            );
+        }
     }
 
     #[test]
