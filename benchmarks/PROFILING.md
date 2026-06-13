@@ -63,7 +63,8 @@ re-run reports the delta vs. the previous run (`N regressed`). Raw Callgrind
 output lands under `target/iai/`; open it in KCachegrind or `callgrind_annotate`
 for the full annotated call graph.
 
-Scope: today this target covers the crypto floor (sign, verify, DH, seal, open).
-Extending it to the engine-cycle stages (seal / deliver+prove / settle) needs the
-`Cycle` harness shared out of `engine_cycle.rs` into the `benchmarks` lib so both
-the Criterion and iai benches can drive it.
+Covers both the crypto primitives (sign / verify / DH / seal / open) and the
+engine-cycle stages (roundtrip / seal / deliver+prove / settle), via the shared
+`Cycle` harness in `src/microscope.rs` — the same harness the Criterion bench
+drives. Track the **instruction** counts for regressions (bit-exact run-to-run);
+the estimated-cycle figures wobble slightly with cache state.

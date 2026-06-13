@@ -8,6 +8,8 @@ use personal_rns::crypto::{
 };
 use personal_rns::identity::ENCRYPTION_IV_LEN;
 
+use benchmarks::microscope::Cycle;
+
 const PAYLOAD_LEN: usize = 300;
 
 #[library_benchmark]
@@ -82,6 +84,53 @@ fn token_open_300b(sealed: Vec<u8>) {
     black_box(token_open(black_box(&key), black_box(&sealed), &mut out).expect("opens"));
 }
 
+fn fresh_cycle() -> Cycle {
+    Cycle::new()
+}
+
+fn sealed_cycle() -> Cycle {
+    let mut cycle = Cycle::new();
+    cycle.seal();
+    cycle
+}
+
+fn delivered_cycle() -> Cycle {
+    let mut cycle = Cycle::new();
+    cycle.seal();
+    cycle.deliver_prove();
+    cycle
+}
+
+#[library_benchmark]
+#[bench::single(setup = fresh_cycle)]
+fn cycle_roundtrip(mut cycle: Cycle) -> Cycle {
+    cycle.seal();
+    cycle.deliver_prove();
+    cycle.settle();
+    cycle
+}
+
+#[library_benchmark]
+#[bench::single(setup = fresh_cycle)]
+fn cycle_seal(mut cycle: Cycle) -> Cycle {
+    cycle.seal();
+    cycle
+}
+
+#[library_benchmark]
+#[bench::single(setup = sealed_cycle)]
+fn cycle_deliver_prove(mut cycle: Cycle) -> Cycle {
+    cycle.deliver_prove();
+    cycle
+}
+
+#[library_benchmark]
+#[bench::single(setup = delivered_cycle)]
+fn cycle_settle(mut cycle: Cycle) -> Cycle {
+    cycle.settle();
+    cycle
+}
+
 library_benchmark_group!(
     name = primitives;
     benchmarks =
@@ -93,4 +142,9 @@ library_benchmark_group!(
         token_open_300b
 );
 
-main!(library_benchmark_groups = primitives);
+library_benchmark_group!(
+    name = engine_cycle;
+    benchmarks = cycle_roundtrip, cycle_seal, cycle_deliver_prove, cycle_settle
+);
+
+main!(library_benchmark_groups = primitives, engine_cycle);

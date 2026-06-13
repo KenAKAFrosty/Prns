@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 mod energy;
+pub mod microscope;
 mod results;
 pub use energy::{unavailable_hint as energy_unavailable_hint, PowerMeter};
 pub use results::{
