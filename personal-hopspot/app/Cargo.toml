@@ -11,6 +11,9 @@ resolver = "2"
 [features]
 default = []
 fixture-identity = []
+# Diagnostics: a pre-frame boot line reporting the engine's static SRAM footprint and
+# free heap, with a settle delay so a USB-serial-JTAG monitor catches it past re-enumeration.
+footprint = []
 
 [[bin]]
 name = "personal-hopspot-app"

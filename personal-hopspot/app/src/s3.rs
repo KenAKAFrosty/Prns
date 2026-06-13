@@ -233,6 +233,15 @@ pub async fn run(spawner: Spawner) {
     // The only thing on the usb-serial-jtag before frames flow — the desktop's decoder skips it
     // as pre-frame noise. Nothing else may print after this: the wire IS the link.
     println!("HOPSPOT_S3 boot — USB-auto on the reactor");
+    #[cfg(feature = "footprint")]
+    {
+        Timer::after(Duration::from_millis(2000)).await;
+        println!(
+            "FOOTPRINT engine_state={} bytes (Esp32S3 layout)",
+            core::mem::size_of::<EngineState<EngineStorageType>>()
+        );
+        println!("FOOTPRINT heap_free={} bytes", esp_alloc::HEAP.free());
+    }
 
     // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
     let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
