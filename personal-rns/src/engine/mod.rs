@@ -31,6 +31,7 @@ pub use identity_registration::SetTransportIdentityError;
 pub use reaction::{Directive, EngineReaction, Journaled};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
+pub use crate::units::InstantMillis;
 pub use crate::routing::announce::emit::{
     AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
     PathResponseWriteOutcome, WriteAnnounceError,
@@ -84,9 +85,6 @@ use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
 use crate::wire::TransportId;
 use zeroize::Zeroizing;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstantMillis(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DueLane {

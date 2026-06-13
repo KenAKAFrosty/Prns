@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::engine::InstantMillis;
+use crate::units::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceMode, TransferRates};
 use crate::routing::types::{NextHop, RouteResponsiveness};
