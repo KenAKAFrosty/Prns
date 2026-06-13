@@ -10,3 +10,6 @@ external/*/interop/*-node
 external/*/interop/target/
 external/*/interop/*.dwarf
 external/*/interop/lib/
+
+# dhat heap-profiling output (examples/dhat_*.rs); regenerated on demand.
+dhat-heap.json

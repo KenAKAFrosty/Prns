@@ -1,6 +1,6 @@
 # Profiling the engine microscope
 
-Three complementary tools for profiling the **pure-Prns** paths — the Rust engine
+Four complementary tools for profiling the **pure-Prns** paths — the Rust engine
 under `benches/engine_cycle.rs` and the scenario binaries (`scenario_node`,
 `shaped_pipe`). These profile our own code; they have nothing to do with the
 reference-implementation scenarios. Pick by the question you're asking:
@@ -10,6 +10,7 @@ reference-implementation scenarios. Pick by the question you're asking:
 | **pprof + Criterion** | Where does wall-clock go inside a bench? (flamegraph) | sampled | built in (dev-dep) |
 | **samply** | Let me explore the call tree / timeline interactively | sampled | `cargo install samply` |
 | **iai-callgrind** | Exactly how many instructions per function, reproducibly? | deterministic | `cargo install iai-callgrind-runner` + `valgrind` |
+| **dhat** | How many heap allocations / bytes per operation? Which call sites? | deterministic | built in (dev-dep) |
 
 All commands run from `benchmarks/`.
 
@@ -68,3 +69,29 @@ engine-cycle stages (roundtrip / seal / deliver+prove / settle), via the shared
 `Cycle` harness in `src/microscope.rs` — the same harness the Criterion bench
 drives. Track the **instruction** counts for regressions (bit-exact run-to-run);
 the estimated-cycle figures wobble slightly with cache state.
+
+## 4. dhat — heap allocations per operation
+
+`examples/dhat_*.rs` measure the *other* axis: not cycles but **allocations**.
+Each example owns its own `#[global_allocator] = dhat::Alloc`, so the
+instrumented allocator only exists inside that one example binary — the lib, iai,
+and Criterion paths are never perturbed. Same `Cycle` harness.
+
+```sh
+# allocations-per-roundtrip readout (testing mode — instant, no file)
+cargo run --release --example dhat_cycle
+# dump dhat-heap.json for the call-site viewer (heap mode)
+cargo run --release --example dhat_cycle heap
+```
+
+The readout reports allocation **blocks** and **bytes** per operation (delta over
+N cycles, post-warmup), live-block flatness (a non-zero delta that doesn't grow
+across runs is retention, not a leak), and peak live. The `heap` arg writes
+`dhat-heap.json` — open it at <https://nnethercote.github.io/dh_view/dh_view.html>
+to rank allocation call sites by total bytes/blocks and drill the stack of each.
+
+Steady-state finding (endpoint SINGLE roundtrip): ~0.01 allocs/cycle — the crypto
+seal/open/prove/verify path allocates nothing per cycle; the only heap traffic is
+the dedup history's two `Vec`s doubling as they fill (`Generation::insert` + index
+resize), which is amortized and bounded by rotate-on-full. Use this to hold a
+**no-per-packet-allocation** line on the hot paths as they grow.

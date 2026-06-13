@@ -42,6 +42,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 iai-callgrind = "0.16.1"
+# Heap-allocation profiling for the engine microscope examples. Each example owns its
+# own `#[global_allocator] = dhat::Alloc`, so the lib / iai / criterion paths are
+# untouched — the instrumented allocator only exists inside that one example binary.
+dhat = "0.3"
 
 # --- Result substrate: our driver emits rows; the renderer turns rows into RESULTS.md ---
 [[bin]]
@@ -82,9 +86,13 @@ name = "route_index"
 path = "benches/route_index.rs"
 harness = false
 
+# --- Heap profiling: dhat-instrumented microscopes (own global allocator each) ---
+[[example]]
+name = "dhat_cycle"
+path = "examples/dhat_cycle.rs"
+
 [profile.release]
 debug = true
 
 [profile.bench]
 debug = true
-
