@@ -81,6 +81,11 @@ impl Generation {
         self.index_insert(slot);
     }
 
+    fn clear_retaining_capacity(&mut self) {
+        self.hashes.clear();
+        self.index.fill(EMPTY);
+    }
+
     fn len(&self) -> usize {
         self.hashes.len()
     }
@@ -115,7 +120,8 @@ impl PacketHashHistory for HeapPacketHashHistory {
             return RememberPacketOutcome::StoredFresh;
         }
 
-        self.previous = core::mem::take(&mut self.current);
+        core::mem::swap(&mut self.current, &mut self.previous);
+        self.current.clear_retaining_capacity();
         self.current.insert(*hash.as_bytes());
         RememberPacketOutcome::StoredAfterRotation
     }
