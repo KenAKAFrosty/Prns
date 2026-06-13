@@ -59,7 +59,7 @@ impl HeapRouteColumns {
     }
 
     fn bucket(&self, key: u64) -> usize {
-        ((key as u128 * self.index.len() as u128) >> 64) as usize
+        ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
     }
 
     fn index_position(&self, destination: &DestinationHash) -> Option<usize> {

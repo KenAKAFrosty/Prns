@@ -36,7 +36,7 @@ impl Generation {
     }
 
     fn bucket(&self, key: u64) -> usize {
-        ((key as u128 * self.index.len() as u128) >> 64) as usize
+        ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
     }
 
     fn contains(&self, hash: &[u8; PACKET_HASH_LEN]) -> bool {
