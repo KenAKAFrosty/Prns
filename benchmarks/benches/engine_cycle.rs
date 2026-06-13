@@ -9,6 +9,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use pprof::criterion::{Output, PProfProfiler};
 use personal_rns::crypto::{
     ed25519_public_key, ed25519_sign, ed25519_verify, token_open, token_seal,
     x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, TokenKey, X25519SecretKey,
@@ -405,5 +406,9 @@ fn primitives(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, single_cycle, settle_depth, primitives);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    targets = single_cycle, settle_depth, primitives
+}
 criterion_main!(benches);
