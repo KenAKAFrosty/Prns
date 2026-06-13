@@ -3,12 +3,12 @@ mod impls;
 pub use impls::*;
 
 use crate::identity::IdentityHash;
-use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, DottedNameHash,
     ExpandNameError,
 };
+use crate::routing::links::resources::ResourceStrategy;
 use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, DestinationType};
 

@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::storage::ColumnsFull;
 use crate::routing::{NextHop, RouteResponsiveness};
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 mod impls;

@@ -151,7 +151,9 @@ mod tests {
         for _ in 0..10_000 {
             let mut bytes = [0u8; 32];
             for chunk in bytes.chunks_mut(8) {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 chunk.copy_from_slice(&state.to_le_bytes());
             }
             let hash = PacketHash::new(bytes);

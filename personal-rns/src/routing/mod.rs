@@ -14,14 +14,14 @@ pub mod upstream_app_destinations;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
-use announce::Announce;
 pub use announce::retained::AnnounceIdHistoryView;
-use crate::storage::ColumnsFull;
 use announce::retained::{
     AnnounceIdHistory, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
 };
+use announce::Announce;
 use routes::{RouteColumns, RouteEntry};
 pub use types::{
     DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RetainedAnnounce,

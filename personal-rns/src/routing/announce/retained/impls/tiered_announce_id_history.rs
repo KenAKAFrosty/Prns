@@ -17,8 +17,10 @@
 //! determinism check. Like `PackedAppDataArena`, this is **not** "same set of ids".
 //! Comparing two stores built by different routes is a misuse.
 
+use crate::routing::announce::retained::{
+    AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome,
+};
 use crate::routing::announce::AnnounceId;
-use crate::routing::announce::retained::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TieredAnnounceIdHistory<

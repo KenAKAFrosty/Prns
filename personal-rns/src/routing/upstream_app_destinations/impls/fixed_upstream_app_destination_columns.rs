@@ -2,10 +2,10 @@ use heapless::Vec as HeaplessVec;
 
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::DottedNameHash;
-use crate::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
 };
+use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,8 +92,8 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationColumns
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::links::resources::ResourceStrategy;
     use crate::identity::IdentityHash;
+    use crate::routing::links::resources::ResourceStrategy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
 
     fn dest(byte: u8) -> DestinationHash {

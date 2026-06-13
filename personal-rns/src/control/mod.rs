@@ -1,10 +1,10 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::units::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceMode, TransferRates};
 use crate::routing::types::{NextHop, RouteResponsiveness};
+use crate::units::InstantMillis;
 use crate::units::{BitsPerSecond, ByteCount, DurationMillis, HopCount, LinkCount};
 use crate::wire::{DestinationHash, TransportId};
 

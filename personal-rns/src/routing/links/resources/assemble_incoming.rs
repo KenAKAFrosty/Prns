@@ -161,8 +161,7 @@ mod tests {
 
     #[test]
     fn the_decompressed_plaintext_verifies_and_yields_the_reference_proof() {
-        let proof =
-            verify_and_prove(
+        let proof = verify_and_prove(
             &case1_plaintext(),
             &SaltNonce::new(SALT_NONCE),
             &resource_hash(CASE1_HASH),
@@ -173,8 +172,7 @@ mod tests {
 
     #[test]
     fn an_uncompressed_plaintext_verifies_against_its_reference_vectors_too() {
-        let proof =
-            verify_and_prove(
+        let proof = verify_and_prove(
             &case2_plaintext(),
             &SaltNonce::new(SALT_NONCE),
             &resource_hash(CASE2_HASH),

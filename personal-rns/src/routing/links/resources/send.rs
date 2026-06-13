@@ -9,6 +9,9 @@
 use crate::engine::commands::{CommandId, SendResourceError, SendResourceFailure, Settlement};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::interfaces::InterfaceId;
+use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
+use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
+use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
 use crate::routing::links::data::{write_link_packet, write_link_raw_packet, LINK_MDU};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::advertisement::{
@@ -21,15 +24,12 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
-use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
 use crate::routing::links::resources::{
     resource_sdu, ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADV_RETRIES, MAX_RETRIES,
     PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
     RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
-use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
-use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
@@ -125,8 +125,16 @@ impl<S: StorageLayout> EngineState<S> {
 
         let mut adv_iv = [0u8; 16];
         fill_entropy(&mut adv_iv);
-        let wrote =
-            emit_resource_advertisement(&self.outgoing_resources, &link_id, &hash, key, mtu, fire_on, &adv_iv, sink);
+        let wrote = emit_resource_advertisement(
+            &self.outgoing_resources,
+            &link_id,
+            &hash,
+            key,
+            mtu,
+            fire_on,
+            &adv_iv,
+            sink,
+        );
         if wrote {
             if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADV_RETRIES;
@@ -408,8 +416,12 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let id = self.outgoing_resources.state(index).command_id;
         self.outgoing_resources.remove(link_id, hash);
-        if let Some(LinkPhase::Active { key, mtu, attached_interface, .. }) =
-            self.links.phase_for(link_id)
+        if let Some(LinkPhase::Active {
+            key,
+            mtu,
+            attached_interface,
+            ..
+        }) = self.links.phase_for(link_id)
         {
             let mtu = *mtu;
             let fire_on = *attached_interface;
@@ -460,7 +472,11 @@ impl<S: StorageLayout> EngineState<S> {
             let hash = *self.outgoing_resources.hash_at(index);
             let state = *self.outgoing_resources.state(index);
             let Some(LinkPhase::Active {
-                key, mtu, attached_interface, rtt_ms, ..
+                key,
+                mtu,
+                attached_interface,
+                rtt_ms,
+                ..
             }) = self.links.phase_for(&link_id)
             else {
                 let id = state.command_id;
@@ -548,8 +564,7 @@ fn transferring_deadline(now: InstantMillis, rtt_ms: u64) -> InstantMillis {
     let retry_rtts = rtt_ms
         .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
         .saturating_mul(MAX_RETRIES as u64);
-    let max_extra_wait =
-        PER_RETRY_DELAY_MS * ((MAX_RETRIES as u64) * (MAX_RETRIES as u64 + 1) / 2);
+    let max_extra_wait = PER_RETRY_DELAY_MS * ((MAX_RETRIES as u64) * (MAX_RETRIES as u64 + 1) / 2);
     InstantMillis(
         now.0
             .saturating_add(retry_rtts)
@@ -720,10 +735,7 @@ mod tests {
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    pub(crate) fn watch_capture(
-        engine: &mut EngineState<Cap>,
-        at: u64,
-    ) -> SendCapture {
+    pub(crate) fn watch_capture(engine: &mut EngineState<Cap>, at: u64) -> SendCapture {
         let mut capture = SendCapture {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
@@ -902,7 +914,11 @@ mod tests {
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    pub(crate) fn feed<S: StorageLayout>(engine: &mut EngineState<S>, frame: &[u8], at: u64) -> InboundCapture {
+    pub(crate) fn feed<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        frame: &[u8],
+        at: u64,
+    ) -> InboundCapture {
         use crate::engine::test_support::{routable_descriptor, TEST_ENTROPY};
         use crate::interfaces::InboundPacket;
         let mut capture = InboundCapture {
@@ -1037,7 +1053,11 @@ mod tests {
         let (_, names) = advertised_resource(&mut engine, &data);
 
         let unknown = ResourceHash::new([0x5A; 32]);
-        let capture = feed(&mut engine, &request_frame(&unknown, None, &names[..4]), 2_000);
+        let capture = feed(
+            &mut engine,
+            &request_frame(&unknown, None, &names[..4]),
+            2_000,
+        );
         assert!(capture.frames.is_empty());
         assert!(capture.settlements.is_empty());
     }
@@ -1051,7 +1071,11 @@ mod tests {
         install_active_link(&mut engine);
         let data = std::vec![0x42u8; 100 * 464 - 100];
         let (hash, names) = advertised_resource(&mut engine, &data);
-        assert_eq!(names.len(), 74 * MAP_HASH_LEN, "the advertisement carries one segment");
+        assert_eq!(
+            names.len(),
+            74 * MAP_HASH_LEN,
+            "the advertisement carries one segment"
+        );
 
         let last_known: [u8; 4] = names[73 * 4..74 * 4].try_into().unwrap();
         let capture = feed(
@@ -1115,7 +1139,10 @@ mod tests {
         assert!(engine.outgoing_resources.is_empty());
     }
 
-    fn proof_frame(hash: &ResourceHash, proof: &crate::routing::links::resources::ResourceProof) -> std::vec::Vec<u8> {
+    fn proof_frame(
+        hash: &ResourceHash,
+        proof: &crate::routing::links::resources::ResourceProof,
+    ) -> std::vec::Vec<u8> {
         use crate::routing::links::resources::control::write_proof_plaintext;
         let mut plaintext = [0u8; 64];
         write_proof_plaintext(hash, proof, &mut plaintext).unwrap();
@@ -1134,7 +1161,9 @@ mod tests {
 
     #[test]
     fn the_receivers_proof_settles_the_send_and_retires_the_transfer() {
-        use crate::routing::links::resources::assemble_incoming::{open_transfer, verify_and_prove};
+        use crate::routing::links::resources::assemble_incoming::{
+            open_transfer, verify_and_prove,
+        };
 
         let mut engine = sender_with_active_link();
         let data = four_part_payload();
@@ -1156,11 +1185,19 @@ mod tests {
             reassembled.extend_from_slice(part);
         }
         let plaintext = open_transfer(&link_key(), &mut reassembled).unwrap();
-        assert_eq!(plaintext, &data[..], "the receiver assembles the original data");
+        assert_eq!(
+            plaintext,
+            &data[..],
+            "the receiver assembles the original data"
+        );
         let proof =
             verify_and_prove(plaintext, &advertisement.salt_nonce, &advertisement.hash).unwrap();
 
-        let settled = feed(&mut engine, &proof_frame(&advertisement.hash, &proof), 3_000);
+        let settled = feed(
+            &mut engine,
+            &proof_frame(&advertisement.hash, &proof),
+            3_000,
+        );
         assert!(matches!(
             settled.settlements[0],
             (CommandId(7), Settlement::SendResource(Ok(()))),
@@ -1189,7 +1226,10 @@ mod tests {
 
         let unknown = feed(
             &mut engine,
-            &proof_frame(&ResourceHash::new([0x66; 32]), &ResourceProof::new([0x5A; 32])),
+            &proof_frame(
+                &ResourceHash::new([0x66; 32]),
+                &ResourceProof::new([0x5A; 32]),
+            ),
             3_100,
         );
         assert!(unknown.settlements.is_empty());
@@ -1226,15 +1266,16 @@ mod tests {
 
 #[cfg(test)]
 mod watchdog_tests {
-    use super::tests::{
-        link_id, sender_with_active_link, watch_capture, SendCapture,
-    };
+    use super::tests::{link_id, sender_with_active_link, watch_capture, SendCapture};
     use super::*;
     use crate::engine::commands::Settlement;
     use crate::engine::{InstantMillis, LaneWake};
     use crate::wire::WirePacketHeader;
 
-    fn advertised_sender() -> (crate::engine::EngineState<crate::engine::test_support::Cap>, SendCapture) {
+    fn advertised_sender() -> (
+        crate::engine::EngineState<crate::engine::test_support::Cap>,
+        SendCapture,
+    ) {
         let mut engine = sender_with_active_link();
         let data = b"watchdogs keep the resource honest! ".repeat(40);
         let capture = super::tests::send(&mut engine, 7, &data, None);

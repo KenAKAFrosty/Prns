@@ -44,7 +44,9 @@ pub fn serve_part_indices<'a>(
     let end = scope_start.saturating_add(COLLISION_GUARD_SIZE).min(known);
     (scope_start..end).filter(move |&i| {
         let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
-        requested.chunks_exact(MAP_HASH_LEN).any(|asked| asked == name)
+        requested
+            .chunks_exact(MAP_HASH_LEN)
+            .any(|asked| asked == name)
     })
 }
 

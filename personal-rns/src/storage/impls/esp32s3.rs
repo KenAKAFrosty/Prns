@@ -78,12 +78,33 @@ mod tests {
             "EngineState<Esp32S3> = {} bytes (host 64-bit; the 32-bit S3 measured 31160)",
             core::mem::size_of::<EngineState<L>>()
         );
-        println!("  Routes        {:>6} B", core::mem::size_of::<<L as StorageLayout>::Routes>());
-        println!("  Announces     {:>6} B", core::mem::size_of::<<L as StorageLayout>::Announces>());
-        println!("  History       {:>6} B", core::mem::size_of::<<L as StorageLayout>::History>());
-        println!("  AppData       {:>6} B", core::mem::size_of::<<L as StorageLayout>::AppData>());
-        println!("  PacketHashes  {:>6} B", core::mem::size_of::<<L as StorageLayout>::PacketHashes>());
-        println!("  Receipts      {:>6} B", core::mem::size_of::<<L as StorageLayout>::Receipts>());
-        println!("  Links         {:>6} B", core::mem::size_of::<<L as StorageLayout>::Links>());
+        println!(
+            "  Routes        {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::Routes>()
+        );
+        println!(
+            "  Announces     {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::Announces>()
+        );
+        println!(
+            "  History       {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::History>()
+        );
+        println!(
+            "  AppData       {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::AppData>()
+        );
+        println!(
+            "  PacketHashes  {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::PacketHashes>()
+        );
+        println!(
+            "  Receipts      {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::Receipts>()
+        );
+        println!(
+            "  Links         {:>6} B",
+            core::mem::size_of::<<L as StorageLayout>::Links>()
+        );
     }
 }

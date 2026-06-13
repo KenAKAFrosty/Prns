@@ -143,8 +143,7 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
         let mut i = 0;
         while i < input.len() {
             if self.in_frame && !self.saw_escape {
-                let run_end =
-                    find_special(&input[i..]).map_or(input.len(), |offset| i + offset);
+                let run_end = find_special(&input[i..]).map_or(input.len(), |offset| i + offset);
                 let run = &input[i..run_end];
                 if !run.is_empty() && run.len() <= self.buffer.capacity() - self.buffer.len() {
                     let _ = self.buffer.extend_from_slice(run);

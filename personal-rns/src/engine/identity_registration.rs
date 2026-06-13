@@ -8,10 +8,10 @@ use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
-use crate::storage::{ColumnsFull, StorageLayout};
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
+use crate::storage::{ColumnsFull, StorageLayout};
 use crate::wire::{DestinationHash, TransportId};
 use zeroize::Zeroizing;
 

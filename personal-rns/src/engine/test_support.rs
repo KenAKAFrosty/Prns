@@ -12,8 +12,8 @@ use crate::interfaces::{
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
-use crate::storage::TestFixedStorage;
 use crate::routing::upstream_app_destinations::ProofStrategy;
+use crate::storage::TestFixedStorage;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WirePacketHeader, BROADCAST_MTU,

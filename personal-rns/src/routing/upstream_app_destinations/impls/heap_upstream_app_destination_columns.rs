@@ -2,10 +2,10 @@ use alloc::vec::Vec;
 
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::DottedNameHash;
-use crate::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
 };
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Default)]
@@ -70,8 +70,8 @@ impl UpstreamAppDestinationColumns for HeapUpstreamAppDestinationColumns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::links::resources::ResourceStrategy;
     use crate::identity::IdentityHash;
+    use crate::routing::links::resources::ResourceStrategy;
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::{DOTTED_NAME_HASH_LEN, TRUNCATED_HASH_BYTE_LEN};
 

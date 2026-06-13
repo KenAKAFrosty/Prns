@@ -16,12 +16,11 @@ pub use commands::{
     IdentifyFailure, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
     RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, SendGroup,
     SendGroupFailure, SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload,
-    SendRequest, SendRequestData, SendRequestError, SendRequestFailure, SendSingle,
-    SendSingleError, SendSingleFailure, SendSinglePayload, SendResourceError,
-    SendResourceFailure, SetResourceStrategy, SetResourceStrategyError,
-    SetResourceStrategyFailure, Settleable, Settlement,
-    MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN, MAX_SEND_SINGLE_PLAINTEXT_LEN,
-    PATH_REQUEST_ID_LEN,
+    SendRequest, SendRequestData, SendRequestError, SendRequestFailure, SendResourceError,
+    SendResourceFailure, SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
+    SetResourceStrategy, SetResourceStrategyError, SetResourceStrategyFailure, Settleable,
+    Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN,
+    MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
     write_path_request_wire_packet, EgressDirective, EgressSerializeError,
@@ -31,19 +30,18 @@ pub use identity_registration::SetTransportIdentityError;
 pub use reaction::{Directive, EngineReaction, Journaled};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
-pub use crate::units::InstantMillis;
 pub use crate::routing::announce::emit::{
     AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
     PathResponseWriteOutcome, WriteAnnounceError,
-};
-pub use crate::routing::ingress::{
-    AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
-    RebroadcastDecision,
 };
 pub use crate::routing::delivery::send_group::WriteSendGroupError;
 pub use crate::routing::delivery::send_single::{
     SendSingleDispatch, SendSingleEntropy, SendSingleRejection, SendSingleWriteOutcome,
     WriteSendSingleError,
+};
+pub use crate::routing::ingress::{
+    AcceptedAnnounce, AnnounceIngest, DataPacket, IngestPacketOutcome, Ingress, PacketToForward,
+    RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendLinkDispatch, SendLinkWriteError, LINK_MDU,
@@ -64,6 +62,7 @@ pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
     ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
 };
+pub use crate::units::InstantMillis;
 
 use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
@@ -80,9 +79,9 @@ use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
-use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
+use crate::storage::StorageLayout;
 use crate::wire::TransportId;
 use zeroize::Zeroizing;
 
