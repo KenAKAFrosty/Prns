@@ -5,7 +5,7 @@ use personal_rns::engine::egress::{EgressDirective, EgressSerializeError};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::announce::Announce;
 use personal_rns::wire::{
-    DestinationType, PacketType, PropagationType, WirePacketHeader, HEADER_LEN,
+    DestinationType, PacketType, PropagationType, TransportId, WirePacketHeader, HEADER_MAX_LEN,
 };
 
 const RAW_ANNOUNCE_HEX: &[u8] =
@@ -26,14 +26,14 @@ fn decode_hex(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
-fn interface_id(data: &[u8], offset: usize, fallback: u8) -> InterfaceId {
+fn hash_bytes(data: &[u8], offset: usize, fallback: u8) -> [u8; 16] {
     let mut bytes = [fallback; personal_rns::wire::TRUNCATED_HASH_BYTE_LEN];
     for (idx, byte) in bytes.iter_mut().enumerate() {
         if let Some(input) = data.get(offset + idx) {
             *byte = *input;
         }
     }
-    InterfaceId::new(bytes)
+    bytes
 }
 
 fn exercise_reemit(data: &[u8]) {
@@ -47,9 +47,8 @@ fn exercise_reemit(data: &[u8]) {
         return;
     };
 
-    let targets = [interface_id(data, 1, 0xA1), interface_id(data, 17, 0xB2)];
-    let target_count = 1 + data.get(33).map_or(0, |byte| usize::from(*byte & 0x01));
-    let fire_on = &targets[..target_count];
+    let via = TransportId::new(hash_bytes(data, 1, 0xA1));
+    let target = InterfaceId::new(hash_bytes(data, 17, 0xB2));
     let emit_hops = data
         .first()
         .copied()
@@ -57,17 +56,18 @@ fn exercise_reemit(data: &[u8]) {
     let directive = EgressDirective::ReemitAnnounce {
         announce: announce.clone(),
         emit_hops,
-        fire_on,
+        via,
+        target,
     };
 
-    let total_len = HEADER_LEN + announce.wire_len();
+    let total_len = HEADER_MAX_LEN + announce.wire_len();
     let mut short_buf = vec![0u8; total_len - 1];
     assert_eq!(
         directive.to_wire(&mut short_buf),
         Err(EgressSerializeError::BufferTooShort)
     );
 
-    let extra_capacity = data.get(34).map_or(0, |byte| usize::from(*byte % 8));
+    let extra_capacity = data.get(33).map_or(0, |byte| usize::from(*byte % 8));
     let mut out = vec![0u8; total_len + extra_capacity];
     let written = directive.to_wire(&mut out).expect("egress serializes");
     assert_eq!(written, total_len);
@@ -75,12 +75,12 @@ fn exercise_reemit(data: &[u8]) {
     let (header, payload) = WirePacketHeader::parse(&out[..written]).expect("egress parses");
     assert_eq!(header.packet_type, PacketType::Announce);
     assert_eq!(header.destination_type, DestinationType::Single);
-    assert_eq!(header.propagation, PropagationType::Broadcast);
-    assert_eq!(header.transport_id, None);
+    assert_eq!(header.propagation, PropagationType::Transport);
+    assert_eq!(header.transport_id, Some(via));
     assert_eq!(header.hops, emit_hops);
     assert_eq!(header.destination, orig_header.destination);
     assert_eq!(payload, orig_payload);
-    assert_eq!(directive.fire_on(), fire_on);
+    assert_eq!(directive.target(), target);
 }
 
 fuzz_target!(|data: &[u8]| {

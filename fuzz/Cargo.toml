@@ -26,3 +26,17 @@ path = "fuzz_targets/egress_reemit_round_trip.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "link_handshake_parse"
+path = "fuzz_targets/link_handshake_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine_ingest_never_panics"
+path = "fuzz_targets/engine_ingest_never_panics.rs"
+test = false
+doc = false
+bench = false

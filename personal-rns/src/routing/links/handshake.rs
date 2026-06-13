@@ -720,3 +720,31 @@ mod tests {
         );
     }
 }
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn decoded_signalling_bytes_always_land_in_range() {
+        let bytes: [u8; 3] = kani::any();
+        let (mtu, mode_bits) = decode_signalling_bytes(&bytes);
+        assert!(mtu <= LINK_MTU_BYTEMASK as usize);
+        assert!(mode_bits <= 0x07);
+    }
+
+    #[kani::proof]
+    fn signalling_bytes_round_trip_for_every_in_range_mtu_and_mode() {
+        let mtu: u32 = kani::any();
+        kani::assume(mtu <= LINK_MTU_BYTEMASK);
+        let mode_bits: u8 = kani::any();
+        let Some(mode) = LinkMode::from_bits(mode_bits) else {
+            return;
+        };
+        let bytes = signalling_bytes_from(mtu as usize, mode);
+        let (decoded_mtu, decoded_bits) = decode_signalling_bytes(&bytes);
+        assert_eq!(decoded_mtu, mtu as usize);
+        assert_eq!(decoded_bits, mode.to_bits());
+    }
+}

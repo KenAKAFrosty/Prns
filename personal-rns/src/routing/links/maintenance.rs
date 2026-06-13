@@ -164,3 +164,24 @@ mod tests {
         assert_eq!(opened, link_id.as_bytes());
     }
 }
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    fn keepalive_for_any_rtt_stays_inside_the_reference_clamp() {
+        let rtt_ms: u64 = kani::any();
+        let keepalive_ms = keepalive_ms_from(rtt_ms);
+        assert!(keepalive_ms >= 5_000);
+        assert!(keepalive_ms <= 360_000);
+    }
+
+    #[kani::proof]
+    fn stale_is_exactly_twice_any_clamped_keepalive() {
+        let rtt_ms: u64 = kani::any();
+        let keepalive_ms = keepalive_ms_from(rtt_ms);
+        assert_eq!(stale_ms_from(keepalive_ms), keepalive_ms * 2);
+    }
+}

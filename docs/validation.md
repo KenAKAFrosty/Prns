@@ -41,18 +41,28 @@ them. Run the focused proofs with:
 
 ```sh
 cargo kani -p personal-rns --harness hops_above_pathfinder_m_always_reject_before_any_other_gate
-cargo kani -p personal-rns --harness local_destination_rejects_when_hops_are_in_range
+cargo kani -p personal-rns --harness an_upstream_app_destination_rejects_when_hops_are_in_range
 cargo kani -p personal-rns --harness reemit_announce_exact_buffer_serializes_header_and_payload_length
 cargo kani -p personal-rns --harness reemit_announce_short_buffer_rejects_before_a_full_packet_is_written
+cargo kani -p personal-rns --harness decoded_signalling_bytes_always_land_in_range
+cargo kani -p personal-rns --harness signalling_bytes_round_trip_for_every_in_range_mtu_and_mode
+cargo kani -p personal-rns --harness keepalive_for_any_rtt_stays_inside_the_reference_clamp
+cargo kani -p personal-rns --harness stale_is_exactly_twice_any_clamped_keepalive
 ```
 
 Current proof coverage:
 
-- `announce::acceptance`: max-hop rejection wins before later gates, and local
-  destinations reject once hops are in range.
+- `announce::acceptance`: max-hop rejection wins before later gates, and
+  upstream app destinations reject once hops are in range.
 - `engine::egress`: a re-emitted announce with an exact buffer always produces
-  a well-formed broadcast announce packet, and a one-byte-short buffer rejects
-  before claiming a full packet was written.
+  a well-formed transport announce packet carrying the via transport id, and a
+  one-byte-short buffer rejects before claiming a full packet was written.
+- `links::handshake`: any three signalling bytes decode to an in-range MTU and
+  mode bits, and every in-range MTU/mode pair survives the encode/decode round
+  trip.
+- `links::maintenance`: any RTT yields a keepalive inside the reference clamp
+  `[5_000, 360_000]`, and staleness is exactly twice that keepalive with no
+  overflow.
 
 ## Fuzzing
 
@@ -63,6 +73,8 @@ workspace build. Use a nightly toolchain:
 cargo +nightly fuzz check
 cargo +nightly fuzz run wire_announce_parse -- -max_total_time=30
 cargo +nightly fuzz run egress_reemit_round_trip -- -max_total_time=30
+cargo +nightly fuzz run link_handshake_parse -- -max_total_time=30
+cargo +nightly fuzz run engine_ingest_never_panics -- -max_total_time=30
 ```
 
 Current targets:
@@ -70,19 +82,31 @@ Current targets:
 - `wire_announce_parse`: arbitrary bytes enter the wire parser; any parsed
   header is re-encoded, and announce-shaped payloads are passed through announce
   validation. The corpus includes a real RNS announce vector as a hex seed.
-- `egress_reemit_round_trip`: fuzzed hop counts, fanout targets, and output
-  slack exercise re-emitted real announces. Serialization must preserve the
-  announce payload, produce the expected broadcast header, retain
-  engine-computed `fire_on` targets, and reject one-byte-short buffers.
+- `egress_reemit_round_trip`: fuzzed hop counts, via transport ids, targets, and
+  output slack exercise re-emitted real announces. Serialization must preserve
+  the announce payload, produce the expected transport header carrying the via,
+  retain the engine-named target interface, and reject one-byte-short buffers.
+- `link_handshake_parse`: arbitrary bytes enter the three link establishment
+  parsers an open network can reach - `parse_link_request` (unsigned, so every
+  byte is attacker-controlled), `validate_link_proof` against a fixed responder
+  key, and `parse_link_rtt` against a fixed link key. The corpus seeds are the
+  pinned RNS 1.3.1 handshake vectors.
+- `engine_ingest_never_panics`: the deterministic core's whole inbound edge.
+  Each input is split into length-prefixed frames fed sequentially into
+  `EngineState::ingest_packet_into` on a two-interface engine with a registered
+  destination and request handler, so cross-packet state (announce then link
+  request) is reachable. The engine must never panic on any inbound byte
+  sequence; reactions are deliberately discarded.
 
 ## Mutation Testing
 
 `cargo-mutants` reads `.cargo/mutants.toml` from the source-tree root. The
-checked-in config narrows the first lane to contract-heavy surfaces: wire
-parsing, RNS serial framing, interface capabilities and interface-set storage,
-typed ingress/egress, self-announce scheduling, engine directive buffers,
-routing defaults, announce IDs, announce acceptance, held-announce caches, and
-rebroadcast queues:
+checked-in config narrows the lane to contract-heavy surfaces: wire parsing,
+RNS serial framing, interface capabilities and interface-set storage, typed
+ingress/egress, self-announce scheduling, engine directive buffers, routing
+defaults, announce IDs, announce acceptance, held-announce caches, rebroadcast
+queues, link handshake framing, link maintenance math, the request/response
+codec, delivery receipts, and Ed25519 signing:
 
 ```sh
 cargo mutants --list-files

@@ -18,6 +18,11 @@ examine_globs = [
     "personal-rns/src/routing/held_cache/impls/heap_held_announces.rs",
     "personal-rns/src/routing/schedule/impls/fixed_rebroadcast_queue.rs",
     "personal-rns/src/routing/schedule/impls/heap_rebroadcast_queue.rs",
+    "personal-rns/src/routing/links/handshake.rs",
+    "personal-rns/src/routing/links/maintenance.rs",
+    "personal-rns/src/routing/links/request.rs",
+    "personal-rns/src/routing/delivery/receipts/mod.rs",
+    "personal-rns/src/crypto/sign.rs",
 ]
 
 # These bit-pack fields occupy disjoint positions; replacing OR with XOR in

@@ -480,12 +480,13 @@ mod tests {
 
         let directive = EgressDirective::ReemitAnnounce {
             announce,
-            emit_hops: header.hops + 1,
+            emit_hops: header.hops + 9,
             via: TEST_VIA,
             target: iface(0xCD),
         };
 
         assert_eq!(directive.target(), iface(0xCD));
+        assert_eq!(directive.emit_hops(), header.hops + 9);
     }
 
     #[test]
@@ -524,7 +525,7 @@ mod kani_proofs {
 
     const APP_DATA_LEN: usize = 2;
     const ANNOUNCE_WIRE_LEN: usize = ANNOUNCE_FIXED_FIELDS_LEN + APP_DATA_LEN;
-    const EXACT_REEMIT_LEN: usize = HEADER_MIN_LEN + ANNOUNCE_WIRE_LEN;
+    const EXACT_REEMIT_LEN: usize = HEADER_MAX_LEN + ANNOUNCE_WIRE_LEN;
     static APP_DATA: [u8; APP_DATA_LEN] = [0xA5, 0x5A];
 
     fn arbitrary_announce() -> Announce<'static> {
@@ -546,11 +547,12 @@ mod kani_proofs {
     fn reemit_announce_exact_buffer_serializes_header_and_payload_length() {
         let announce = arbitrary_announce();
         let emit_hops: u8 = kani::any();
+        let via = TransportId::new(kani::any());
         let target = InterfaceId::new(kani::any());
         let directive = EgressDirective::ReemitAnnounce {
             announce: announce.clone(),
             emit_hops,
-            via: TEST_VIA,
+            via,
             target,
         };
 
@@ -561,13 +563,13 @@ mod kani_proofs {
         let (header, payload) = WirePacketHeader::parse(&buf).unwrap();
         assert_eq!(header.ifac_flag, IfacFlag::Open);
         assert_eq!(header.context_flag, ContextFlag::Unset);
-        assert_eq!(header.propagation, PropagationType::Broadcast);
+        assert_eq!(header.propagation, PropagationType::Transport);
         assert_eq!(header.destination_type, DestinationType::Single);
         assert_eq!(header.packet_type, PacketType::Announce);
         assert_eq!(header.hops, emit_hops);
-        assert_eq!(header.transport_id, None);
+        assert_eq!(header.transport_id, Some(via));
         assert_eq!(header.destination, announce.destination);
-        assert_eq!(header.context, Context::None);
+        assert_eq!(header.context, WireContext::None);
         assert_eq!(payload.len(), ANNOUNCE_WIRE_LEN);
         assert_eq!(directive.target(), target);
     }
@@ -578,7 +580,7 @@ mod kani_proofs {
         let directive = EgressDirective::ReemitAnnounce {
             announce,
             emit_hops: kani::any(),
-            via: TEST_VIA,
+            via: TransportId::new(kani::any()),
             target: InterfaceId::new(kani::any()),
         };
 

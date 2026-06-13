@@ -10,3 +10,5 @@ benchmarks/target/
 benchmarks/reference/.venv/
 **/__pycache__/
 hosts/*/target/
+# cargo-mutants run artifacts (mutants.out + the rotated mutants.out.old)
+/mutants.out*/
