@@ -1,45 +1,47 @@
 # Navigering
-nav-ethos = Design
+nav-contributing = Bidra
 nav-crates = Crates
 nav-api = API
 
 # Sidfot
-footer-tagline = Skapad av Personal-teamet.
+footer-tagline = Levererat av Personal-teamet.
 
 # Landing
-landing-kicker = Ostoppbara mesh-nätverk — för folket
-landing-title = En produktionsklar port av Reticulum (RNS) skriven i Rust.
-landing-subtitle = En deterministisk kärna utan std och utan allokerare. Fullständig täckning av RNS och LXMF. Byggd med den prestanda och batteritid i åtanke som varje Reticulum-stack behöver — från en mikrokontroller för fem dollar ända till en molnnod.
+landing-kicker = Ostoppbara mesh-nätverk för människor
+landing-kicker-prefix = Ostoppbara mesh-nätverk för
+landing-title = En produktionsklar port av Reticulum (RNS) skriven i säker Rust.
+landing-subtitle = En deterministisk, no_std, allokeringsfri kärna. Byggd för den prestanda och stabilitet varje Reticulum-nod behöver, från en femdollars mikrokontroller till en molnserver.
 landing-cta-ethos = Välj en crate
-landing-cta-crates = Så bygger vi det
+landing-cta-contributing = Bidra
 
-# Pull quote
+# Citat
 landing-quote-label = Det vi bygger mot
-landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastrukturen i den ljusa framtid vi kan ha — om vi bygger den. Detta är vår insats för att lägga den i händerna på fler utvecklare och hjälpa den framtiden på väg.
+landing-quote-body = Reticulum är den grundläggande kommunikationsinfrastrukturen för en ljus framtid vi kan få, så länge vi alla bygger den. Det här är Personal-teamets arbete för att lägga RNS i händerna på fler byggare och hjälpa den framtiden att bli verklig.
 
-# What you can count on
+# Det du kan räkna med
 standards-section-label = Våra standarder
 standards-section-title = Det du kan räkna med
 standards-license-label = Licens
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = Dubbellicensierad och tillåtande. Ingen copyleft och inga icke-kommersiella villkor.
-standards-coverage-label = Täckning
-standards-coverage-headline = Fullt RNS och LXMF
-standards-coverage-body = Inte bara RNS. Och LXMF är ingen bifigur. Båda, hela vägen.
-standards-core-label = Kärna
-standards-core-headline = no_std, ingen allokerare
-standards-core-body = En deterministisk kärna som kör där allokerare inte kan.
-standards-verification-label = Verifiering
-standards-verification-headline = Diff-testad mot RNS
-standards-verification-body = Varje ändring stäms av mot referensen, och där det verkligen spelar roll följer formella bevis med.
+standards-license-body = Dubbellicensierat och permissivt. Ingen copyleft eller kommersiella begränsningar.
+standards-safety-label = Säkerhet
+standards-safety-headline = #![forbid(unsafe_code)]
+standards-safety-body = Våra crates innehåller noll unsafe, framtvingat av kompilatorn. Unsafe i beroenden kontrolleras för UB under Miri och granskas med cargo-geiger.
+standards-correctness-label = Korrekthet
+standards-correctness-headline = Diff-testat mot RNS
+standards-correctness-body = Varje ändring kontrolleras mot referensen och körs sedan genom property-, fuzz- och mutationstester, med Kani-bevis där de spelar roll.
+standards-benchmarked-label = Prestanda
+standards-benchmarked-headline = Mätt, inte bara påstådd
+standards-benchmarked-body = Prestanda följs öppet, mätt av ett harness som du kan köra själv.
+standards-benchmarked-cta = Se benchmarks →
 
-# Where do I start?
+# Var börjar jag?
 start-section-label = Vägar in
 start-section-title = Var börjar jag?
-start-section-lead = Välj vägen som matchar det du bygger. Var och en landar i en enda crate idag, och dedikerade guider följer i samma takt.
+start-section-lead = Välj den väg som matchar det du bygger. Varje väg landar på en enda crate idag; fler guider kommer bredvid dem.
 
-start-daemon-headline = Jag vill ha en Reticulum-nod igång
-start-daemon-body = Färdigbyggd daemon. Drop-in för rnsd. Ställ den bredvid noderna du redan har och låt dem köra tillsammans.
+start-daemon-headline = Jag vill köra en Reticulum-nod
+start-daemon-body = Färdigbyggd daemon. Drop-in för rnsd. Kör den bredvid noderna du redan har.
 start-daemon-code = apt install personal-rnsd
 start-daemon-target = personal-rnsd
 
@@ -49,58 +51,71 @@ start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
 start-mobile-target = personal-rns-ffi
 
-start-game-headline = Jag levererar det i ett spel
-start-game-body = C#/.NET-bindningar för Unity, Godot och MonoGame. Multiplayer utan att behöva sätta upp en server.
+start-game-headline = Jag shippar i ett spel
+start-game-body = C# / .NET-bindningar för Unity, Godot och MonoGame. Multiplayer utan att sätta upp en server.
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
 start-embedded-headline = Jag siktar på mikrokontroller
-start-embedded-body = Motorn plus en Host-trait med bara tre metoder. ESP32-C6 är referensen; S3, nRF, RP2040 och STM32 står näst på tur.
+start-embedded-body = Motorn plus ett Host-trait med tre metoder. ESP32-C6 är referensen; S3, nRF, RP2040 och STM32 är näst på tur.
 start-embedded-code = cargo add personal-rns --no-default-features
 start-embedded-target = personal-rns + personal-hopspot
 
-start-web-headline = Jag bygger för webb eller edge
+start-web-headline = Jag bygger för webben eller edge
 start-web-body = En WebAssembly-build som kör i webbläsaren och på edge-runtimes som Cloudflare Workers, Fastly och Spin.
 start-web-code = npm install personal-rns
 start-web-target = personal-rns (wasm32)
 
-start-rust-headline = Jag bäddar in det i en Rust-app
-start-rust-body = En komplett RNS-runtime direkt ur lådan, eller den rena kärnan att bygga din egen runtime omkring. Välj det som passar dig.
+start-rust-headline = Jag bäddar in i en Rust-app
+start-rust-body = En komplett RNS-runtime direkt ur lådan, eller den rena kärnan för att bygga din egen runtime runt.
 start-rust-code = cargo add personal-rnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = personal-rnsd or personal-rns
 
 start-lxmf-headline = Jag vill skicka meddelanden över meshet
-start-lxmf-body = LXMF ovanpå Reticulum — identiteter, adresser, leverans. Det lager som Sideband och Nomadnet vilar på.
+start-lxmf-body = LXMF ovanpå Reticulum — identiteter, adresser, leverans. Lagret som Sideband och Nomadnet vilar på.
 start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
-# License signal (footer)
-footer-license = Open source. MIT / Apache 2.0.
+# Plattformar ("Runs on") — hero marquee label + CTA och dedikerad sida
+landing-platforms-label = Kör på
+landing-platforms-cta = Se alla →
+platforms-title = Där Prns kör
+platforms-lead = En motor, många hem. Några av dessa levereras idag; resten finns på roadmapen — nordstjärnan vi bygger mot. Fyllda chip kör nu; streckade är nästa.
+platforms-legend-shipping = Levereras idag
+platforms-legend-roadmap = Roadmap
 
-# Ethos page
-ethos-kicker = Disciplinen
-ethos-title = Så bygger vi det
-ethos-lead = En anteckning från ingenjör till ingenjör om disciplinen bakom projektet — ren motor, kärna utan allokerare, varje ändring verifierad mot RNS-referensen. Bläddra igenom innan du gör dig beroende av det; vi vill att du vet vad du ger dig in på.
+# Benchmarksida
+benchmarks-kicker = Prestanda
+benchmarks-title = Benchmarkat öppet
+benchmarks-lead = Vi behandlar prestanda som ett tal, inte ett adjektiv. Varje siffra här kommer från ett deterministiskt harness i repot, mätt på riktig hårdvara och kontrollerad mot RNS-referensen där jämförelsen är rättvis. Siffrorna landar medan sviten stabiliseras; nedan finns metodiken de håller sig till.
 
-# Crates index
+# Licenssignal (sidfot)
+footer-license = Öppen källkod. MIT / Apache 2.0.
+
+# Bidragssida
+contributing-kicker = Ribban
+contributing-title = Bidra
+contributing-lead = Så här bidrar du — vad vi värdesätter, konventionerna din kod följer och standarden varje ändring klarar. För både mänskliga och automatiserade bidragsgivare.
+
+# Crates-index
 crates-kicker = Delarna
-crates-title = Välj den som passar det du bygger.
-crates-lead = Varje crate är byggd för att vara användbar på egen hand, även om du inte drar in resten. Motorn är substratet; allt annat staplas ovanpå, och fler delar landar i takt med att sviten växer.
+crates-title = Välj det som matchar det du bygger.
+crates-lead = Varje crate är byggd för att vara användbar på egen hand, även om du inte drar in resten. Motorn är substratet; allt annat staplas ovanpå, och fler delar landar när sviten växer.
 crates-card-cta = Vad den gör →
 crates-back = Alla crates
 crates-not-found = Ingen crate med det namnet
 
-# Per-crate cards
+# Kort per crate
 crate-rns-role = Motorn
-crate-rns-blurb = Lägg in Reticulum i vilket Rust-projekt som helst. Deterministisk, no_std, utan allokerare; ingen global state, ingen inbyggd I/O — du tar med dig klocka och kabel.
+crate-rns-blurb = Släpp in Reticulum i vilket Rust-projekt som helst. Deterministisk, no_std, allokeringsfri; inget globalt tillstånd, ingen inbyggd I/O — ta med din egen klocka och wire.
 crate-rnsd-role = Daemonen
-crate-rnsd-blurb = En drop-in för rnsd som kör var som helst där Linux kör. Samma protokoll som RNS-referensen; använd den vid sidan av eller istället för noderna du redan har.
+crate-rnsd-blurb = En drop-in för rnsd som kör överallt där Linux kör. Samma wire som RNS-referensen; använd den bredvid eller istället för noderna du redan har.
 crate-lxmf-role = Meddelanden
-crate-lxmf-blurb = LXMF ovanpå Reticulum — det lager som Sideband och Nomadnet vilar på. Identiteter, adresser, leverans av meddelanden.
-crate-ffi-role = Mobil- + Python-bindningar
+crate-lxmf-blurb = LXMF ovanpå Reticulum — lagret som Sideband och Nomadnet vilar på. Identiteter, adresser, meddelandeleverans.
+crate-ffi-role = Mobil- och Python-bindningar
 crate-ffi-blurb = Ett uniffi-gränssnitt genererar Kotlin (.aar), Swift (.xcframework) och Python (.whl). Använd Reticulum från Android, iOS eller en Jupyter-notebook — samma form, samma motor.
 
 # 404
-not-found-title = Här finns ingenting än.
+not-found-title = Här finns inget än.
 not-found-cta = Tillbaka till startsidan

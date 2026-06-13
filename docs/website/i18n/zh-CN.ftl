@@ -1,106 +1,121 @@
 # 导航
-nav-ethos = 设计
+nav-contributing = 贡献
 nav-crates = Crates
 nav-api = API
 
 # 页脚
-footer-tagline = 由 Personal 团队打造。
+footer-tagline = 由 Personal 团队带来。
 
-# 着陆页
-landing-kicker = 属于每个人的、势不可挡的网状网络
-landing-title = 用 Rust 重写的 Reticulum (RNS) 生产级移植。
-landing-subtitle = 确定性、no_std、无分配器的内核。完整覆盖 RNS 与 LXMF。每一个 Reticulum 栈所需的性能与续航都被认真照顾——从五美元的单片机一路到云端节点。
-landing-cta-ethos = 选一个 crate
-landing-cta-crates = 我们如何构建
+# 首页
+landing-kicker = 为人们而生的不可阻挡的 mesh 网络
+landing-kicker-prefix = 为人们而生的不可阻挡的 mesh 网络
+landing-title = 用安全 Rust 编写的生产级 Reticulum (RNS) 移植。
+landing-subtitle = 一个确定性的 no_std、无分配器核心。为每个 Reticulum 节点所需的性能与稳定性而构建，从五美元的微控制器到云服务器都能覆盖。
+landing-cta-ethos = 选择一个 crate
+landing-cta-contributing = 贡献
 
-# 引用
-landing-quote-label = 我们正朝向的远方
-landing-quote-body = Reticulum 是那个值得共同构筑的光明未来的基础通信设施——只要我们把它建出来。这正是我们的努力：把它送到更多开发者手中，与大家一同把那未来变成真实。
+# 引文
+landing-quote-label = 我们正在构建的方向
+landing-quote-body = Reticulum 是通向一个明亮未来的基础通信设施，只要我们所有人一起构建，那个未来就可以实现。这是 Personal 团队的努力：把 RNS 交到更多 builder 手中，帮助那个未来成真。
 
-# 你可以放心依赖的事情
+# 可以依靠的标准
 standards-section-label = 我们的标准
-standards-section-title = 你可以放心依赖的事情
+standards-section-title = 你可以依靠什么
 standards-license-label = 许可证
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = 双许可证、宽松授权。没有 copyleft，没有非商业限制。
-standards-coverage-label = 覆盖范围
-standards-coverage-headline = RNS 与 LXMF 全覆盖
-standards-coverage-body = 不只是 RNS，也不是把 LXMF 当配角。两者，皆完整。
-standards-core-label = 内核
-standards-core-headline = no_std、无分配器
-standards-core-body = 一颗在分配器都跑不动的地方依然能继续工作的确定性内核。
-standards-verification-label = 验证
-standards-verification-headline = 与 RNS 对照差分测试
-standards-verification-body = 每一处改动都与参考实现对照核验；要紧之处还备有形式化证明。
+standards-license-body = 双许可证，宽松授权。没有 copyleft 或商业限制。
+standards-safety-label = 安全性
+standards-safety-headline = #![forbid(unsafe_code)]
+standards-safety-body = 我们的 crate 不包含任何 unsafe，并由编译器强制保证。依赖中的 unsafe 会在 Miri 下检查 UB，并用 cargo-geiger 审计。
+standards-correctness-label = 正确性
+standards-correctness-headline = 与 RNS 做差异测试
+standards-correctness-body = 每一次改动都会与参考实现核对，然后经过属性测试、模糊测试和 mutation 测试，在关键之处还会加入 Kani 证明。
+standards-benchmarked-label = 性能
+standards-benchmarked-headline = 测量，而不只是宣称
+standards-benchmarked-body = 性能以公开方式跟踪，由你可以自己运行的 harness 测量。
+standards-benchmarked-cta = 查看 benchmarks →
 
-# 我该从哪里开始？
-start-section-label = 入口
-start-section-title = 我该从哪里开始？
-start-section-lead = 挑一条与你正在构建的事物相称的路。今天每一条路都通向一个具体的 crate；专门的指南会随之跟上。
+# 从哪里开始？
+start-section-label = 进入路径
+start-section-title = 从哪里开始？
+start-section-lead = 选择与你正在构建的东西相匹配的路径。现在每条路径都落到一个单独的 crate；更多指南会陆续补上。
 
-start-daemon-headline = 我想跑一个 Reticulum 节点
-start-daemon-body = 预先构建好的守护进程。rnsd 即插即用替代。把它摆到你已有的节点旁，一起跑就行。
+start-daemon-headline = 我想运行一个 Reticulum 节点
+start-daemon-body = 预构建 daemon。rnsd 的 drop-in。把它放在你已有的节点旁边运行。
 start-daemon-code = apt install personal-rnsd
 start-daemon-target = personal-rnsd
 
-start-mobile-headline = 我在做移动 App
-start-mobile-body = Kotlin (.aar)、Swift (.xcframework) 或 Python (.whl)——和你守护进程跑的是同一台引擎，直接嵌进你的 App 里。
+start-mobile-headline = 我在构建移动 app
+start-mobile-body = Kotlin (.aar)、Swift (.xcframework) 或 Python (.whl) — 与 daemon 相同的引擎，直接嵌入你的 app。
 start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
 start-mobile-target = personal-rns-ffi
 
-start-game-headline = 我要把它放进游戏里
-start-game-body = 面向 Unity、Godot、MonoGame 的 C# / .NET 绑定。不必架服务器，也能多人联机。
+start-game-headline = 我要在游戏里发布
+start-game-body = 面向 Unity、Godot 和 MonoGame 的 C# / .NET bindings。不用架服务器也能做多人。
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
-start-embedded-headline = 我要把它跑在单片机上
-start-embedded-body = 引擎加上一个仅含三个方法的 Host trait。ESP32-C6 是参考实现，接下来是 S3、nRF、RP2040 与 STM32。
+start-embedded-headline = 我面向微控制器
+start-embedded-body = 引擎加上只有三个方法的 Host trait。ESP32-C6 是参考平台；S3、nRF、RP2040 和 STM32 接下来会跟上。
 start-embedded-code = cargo add personal-rns --no-default-features
 start-embedded-target = personal-rns + personal-hopspot
 
-start-web-headline = 我在为 Web 或边缘构建
-start-web-body = 一个既能在浏览器中、又能在 Cloudflare Workers、Fastly、Spin 这类边缘运行时上跑的 WebAssembly 构建。
+start-web-headline = 我为 web 或 edge 构建
+start-web-body = 一个 WebAssembly build，可在浏览器以及 Cloudflare Workers、Fastly、Spin 等 edge runtime 上运行。
 start-web-code = npm install personal-rns
 start-web-target = personal-rns (wasm32)
 
-start-rust-headline = 我要嵌入到一个 Rust 应用里
-start-rust-body = 开箱即用的完整 RNS 运行时，或者只取纯净的内核，自己围绕它搭出运行时——任选其一。
+start-rust-headline = 我要嵌入 Rust app
+start-rust-body = 开箱即用的完整 RNS runtime，或用于围绕它构建你自己的 runtime 的纯核心。
 start-rust-code = cargo add personal-rnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = personal-rnsd or personal-rns
 
-start-lxmf-headline = 我想在网状网络上发送消息
-start-lxmf-body = 位于 Reticulum 之上的 LXMF——身份、地址、投递。Sideband 与 Nomadnet 所栖身的那一层。
+start-lxmf-headline = 我想在 mesh 上发送消息
+start-lxmf-body = Reticulum 之上的 LXMF — identities、addresses、delivery。Sideband 和 Nomadnet 所处的那一层。
 start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
-# 许可（页脚）
+# 平台（"Runs on"）— hero marquee 标签 + CTA，以及专门页面
+landing-platforms-label = 可运行于
+landing-platforms-cta = 查看全部 →
+platforms-title = Prns 可运行的地方
+platforms-lead = 一个引擎，许多归宿。有些今天已经可用；其余在 roadmap 上 — 这是我们构建时追向的北极星。实心芯片现在可运行；虚线芯片随后到来。
+platforms-legend-shipping = 今日可用
+platforms-legend-roadmap = Roadmap
+
+# Benchmarks 页面
+benchmarks-kicker = 性能
+benchmarks-title = 公开 benchmark
+benchmarks-lead = 我们把性能当作数字，而不是形容词。这里的每个数字都来自 repo 中的确定性 harness，在真实硬件上测得，并在比较公平时与 RNS 参考实现核对。随着 suite 稳定，数字会陆续补齐；下面是它们遵循的方法论。
+
+# 许可证信号（页脚）
 footer-license = 开源。MIT / Apache 2.0。
 
-# 设计思想页
-ethos-kicker = 我们的规矩
-ethos-title = 我们如何构建
-ethos-lead = 这是一封工程师写给工程师的备忘，谈这个项目背后的工作纪律：纯净的引擎、无分配器的内核、每一次改动都与 RNS 参考实现对照核验。在决定依赖它之前不妨先扫一眼——我们希望你心里清楚，自己将要走进的是一个什么样的项目。
+# 贡献页面
+contributing-kicker = 标准
+contributing-title = 贡献
+contributing-lead = 如何贡献 — 我们重视什么、你的代码遵循哪些约定，以及每个改动需要达到的标准。人类贡献者和自动化贡献者一视同仁。
 
 # Crates 索引
-crates-kicker = 构件
-crates-title = 挑一块与你正在构建的事物相称的。
-crates-lead = 每个 crate 都被设计成单独使用也能派上用场，即便你并不打算把其他部分一并带入。引擎是基底，其余在其之上层层叠加；随着套件的成长，会有更多构件加入。
-crates-card-cta = 它能做什么 →
-crates-back = 全部 crates
+crates-kicker = 组件
+crates-title = 选择与你正在构建的东西相匹配的部分。
+crates-lead = 每个 crate 都被设计成可以独立发挥作用，即使你不引入其余部分。引擎是底座；其他东西都叠在其上，随着 suite 成长，会有更多组件落地。
+crates-card-cta = 它做什么 →
+crates-back = 所有 crates
 crates-not-found = 没有这个名字的 crate
 
-# 各 crate 卡片
+# 每个 crate 的卡片
 crate-rns-role = 引擎
-crate-rns-blurb = 把 Reticulum 放进任何一个 Rust 项目里。确定性、no_std、无分配器；没有全局状态，没有内置 I/O——时钟与线路由你自带。
-crate-rnsd-role = 守护进程
-crate-rnsd-blurb = 凡 Linux 跑得起来的地方都跑得起来的 rnsd 替代品。与 RNS 参考实现走同一根线，可与你已有的节点并排部署，也可顶替它们。
-crate-lxmf-role = 消息层
-crate-lxmf-blurb = 位于 Reticulum 之上的 LXMF——Sideband 与 Nomadnet 所栖身的那一层。身份、地址、消息投递。
-crate-ffi-role = 移动与 Python 绑定
-crate-ffi-blurb = 一份 uniffi 接口同时生成 Kotlin (.aar)、Swift (.xcframework) 与 Python (.whl)。在 Android、iOS 或 Jupyter Notebook 里调用 Reticulum——同样的形态、同一台引擎。
+crate-rns-blurb = 把 Reticulum 放进任何 Rust 项目。确定性、no_std、无分配器；没有全局状态，没有内置 I/O — 你自带时钟和 wire。
+crate-rnsd-role = Daemon
+crate-rnsd-blurb = rnsd 的 drop-in，可在任何运行 Linux 的地方运行。与 RNS 参考实现使用同样的 wire；可以和你已有的节点并排使用，也可以替代它们。
+crate-lxmf-role = 消息
+crate-lxmf-blurb = Reticulum 之上的 LXMF — Sideband 和 Nomadnet 所处的那一层。Identities、addresses、message delivery。
+crate-ffi-role = 移动端 + Python bindings
+crate-ffi-blurb = 一个 uniffi interface 生成 Kotlin (.aar)、Swift (.xcframework) 和 Python (.whl)。从 Android、iOS 或 Jupyter notebook 使用 Reticulum — 相同形状，相同引擎。
 
 # 404
 not-found-title = 这里还什么都没有。
-not-found-cta = 返回首页
+not-found-cta = 回到首页

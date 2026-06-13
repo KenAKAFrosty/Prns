@@ -1,106 +1,121 @@
 # Navegação
-nav-ethos = Design
+nav-contributing = Contribuir
 nav-crates = Crates
 nav-api = API
 
 # Rodapé
-footer-tagline = Construído pelo time Personal.
+footer-tagline = Criado pelo time Personal.
 
-# Página inicial
-landing-kicker = Redes mesh imparáveis — para as pessoas
-landing-title = Uma portação de produção do Reticulum (RNS) escrita em Rust.
-landing-subtitle = Um núcleo determinístico, sem std e sem alocador. Cobertura completa de RNS e LXMF. Pensado para o desempenho e a autonomia que qualquer stack Reticulum exige — de um microcontrolador de cinco dólares a um nó na nuvem.
+# Landing
+landing-kicker = Redes mesh imparáveis para as pessoas
+landing-kicker-prefix = Redes mesh imparáveis para as
+landing-title = Um port de Reticulum (RNS) pronto para produção, escrito em Rust seguro.
+landing-subtitle = Um núcleo determinístico, no_std e sem alocador. Construído para a performance e a estabilidade de que todo nó Reticulum precisa, de um microcontrolador de cinco dólares a um servidor na nuvem.
 landing-cta-ethos = Escolha um crate
-landing-cta-crates = Como construímos isto
+landing-cta-contributing = Contribuir
 
 # Citação
-landing-quote-label = Para onde estamos indo
-landing-quote-body = Reticulum é a infraestrutura de comunicação fundadora do futuro luminoso que podemos ter — se a gente construir. Este é o nosso esforço para colocá-la nas mãos de mais desenvolvedores e ajudar a fazer esse futuro acontecer.
+landing-quote-label = O que estamos construindo
+landing-quote-body = Reticulum é a infraestrutura de comunicação fundamental de um futuro brilhante que podemos ter, desde que todos nós o construamos. Este é o esforço do time Personal para colocar RNS nas mãos de mais builders e ajudar esse futuro a acontecer.
 
-# Em que você pode contar
+# Com o que você pode contar
 standards-section-label = Nossos padrões
-standards-section-title = Em que você pode contar
+standards-section-title = Com o que você pode contar
 standards-license-label = Licença
 standards-license-headline = MIT / Apache 2.0
-standards-license-body = Licença dupla e permissiva. Sem copyleft e sem restrições não comerciais.
-standards-coverage-label = Cobertura
-standards-coverage-headline = RNS e LXMF, completos
-standards-coverage-body = Não só RNS. E LXMF não é coadjuvante. Os dois, por inteiro.
-standards-core-label = Núcleo
-standards-core-headline = no_std, sem alocador
-standards-core-body = Um núcleo determinístico que roda onde alocadores não conseguem.
-standards-verification-label = Verificação
-standards-verification-headline = Diff-testado contra o RNS
-standards-verification-body = Toda mudança é conferida contra a referência, e onde faz diferença mesmo, vêm junto provas formais.
+standards-license-body = Dupla licença permissiva. Sem copyleft ou restrições comerciais.
+standards-safety-label = Segurança
+standards-safety-headline = #![forbid(unsafe_code)]
+standards-safety-body = Nossos crates contêm zero unsafe, imposto pelo compilador. O unsafe dentro das dependências é verificado contra UB no Miri e auditado com cargo-geiger.
+standards-correctness-label = Correção
+standards-correctness-headline = Diff-testado contra RNS
+standards-correctness-body = Cada mudança é checada contra a referência e depois passa por testes de propriedades, fuzz e mutação, com provas Kani onde importam.
+standards-benchmarked-label = Performance
+standards-benchmarked-headline = Medida, não só afirmada
+standards-benchmarked-body = A performance é acompanhada em aberto, medida por um harness que você pode executar por conta própria.
+standards-benchmarked-cta = Ver benchmarks →
 
-# Por onde começo?
+# Por onde eu começo?
 start-section-label = Caminhos de entrada
-start-section-title = Por onde começo?
-start-section-lead = Escolha o caminho que combina com o que você está construindo. Hoje cada um aterrissa em um único crate; os guias dedicados vêm logo atrás.
+start-section-title = Por onde eu começo?
+start-section-lead = Escolha o caminho que combina com o que você está construindo. Hoje cada um leva a um único crate; mais guias chegarão junto deles.
 
 start-daemon-headline = Quero um nó Reticulum rodando
-start-daemon-body = Daemon pronto pra usar. Drop-in para o rnsd. Coloque do lado dos nós que você já tem e deixe rodar junto.
+start-daemon-body = Daemon pré-compilado. Drop-in para rnsd. Rode junto dos nós que você já tem.
 start-daemon-code = apt install personal-rnsd
 start-daemon-target = personal-rnsd
 
 start-mobile-headline = Estou construindo um app mobile
-start-mobile-body = Kotlin (.aar), Swift (.xcframework) ou Python (.whl) — o mesmo motor que roda no seu daemon, embarcado direto dentro do app.
+start-mobile-body = Kotlin (.aar), Swift (.xcframework) ou Python (.whl) — o mesmo motor que roda no seu daemon, embutido direto no app.
 start-mobile-code = implementation("org.staypersonal:rns:0.1")
     pod 'PersonalRns', '~> 0.1'
 start-mobile-target = personal-rns-ffi
 
-start-game-headline = Estou levando para dentro de um jogo
-start-game-body = Bindings C#/.NET para Unity, Godot e MonoGame. Multiplayer sem precisar subir um servidor.
+start-game-headline = Vou lançar dentro de um jogo
+start-game-body = Bindings C# / .NET para Unity, Godot e MonoGame. Multiplayer sem subir um servidor.
 start-game-code = dotnet add package Personal.Rns
 start-game-target = personal-rns-ffi
 
 start-embedded-headline = Estou mirando microcontroladores
-start-embedded-body = O motor mais uma trait Host com só três métodos. O ESP32-C6 é a referência; em seguida vêm S3, nRF, RP2040 e STM32.
+start-embedded-body = O motor mais um trait Host de três métodos. ESP32-C6 é a referência; S3, nRF, RP2040 e STM32 vêm depois.
 start-embedded-code = cargo add personal-rns --no-default-features
 start-embedded-target = personal-rns + personal-hopspot
 
-start-web-headline = Construo para web ou edge
+start-web-headline = Estou construindo para web ou edge
 start-web-body = Um build WebAssembly que roda no navegador e em runtimes edge como Cloudflare Workers, Fastly e Spin.
 start-web-code = npm install personal-rns
 start-web-target = personal-rns (wasm32)
 
-start-rust-headline = Embuto em um app Rust
-start-rust-body = Um runtime RNS completo direto da caixa, ou o núcleo puro para você montar seu próprio runtime em volta. Escolha o que cabe.
+start-rust-headline = Vou embutir em um app Rust
+start-rust-body = Um runtime RNS completo pronto para uso, ou o núcleo puro para construir seu próprio runtime em volta.
 start-rust-code = cargo add personal-rnsd   # complete RNS runtime
     cargo add personal-rns      # pure core only
 start-rust-target = personal-rnsd or personal-rns
 
 start-lxmf-headline = Quero enviar mensagens pela mesh
-start-lxmf-body = LXMF em cima do Reticulum — identidades, endereços, entrega. A camada onde Sideband e Nomadnet se apoiam.
+start-lxmf-body = LXMF sobre Reticulum — identidades, endereços, entrega. A camada em que Sideband e Nomadnet se apoiam.
 start-lxmf-code = cargo add personal-lxmf
 start-lxmf-target = personal-lxmf
 
-# Rodapé (licença)
+# Plataformas ("Runs on") — rótulo do marquee do hero + CTA e página dedicada
+landing-platforms-label = Roda em
+landing-platforms-cta = Ver tudo →
+platforms-title = Onde o Prns roda
+platforms-lead = Um motor, muitos lares. Alguns já são entregues hoje; o resto está no roadmap — a estrela-guia para onde estamos construindo. Chips sólidos rodam agora; os tracejados vêm depois.
+platforms-legend-shipping = Disponível hoje
+platforms-legend-roadmap = Roadmap
+
+# Página de benchmarks
+benchmarks-kicker = Performance
+benchmarks-title = Benchmarks em aberto
+benchmarks-lead = Tratamos performance como número, não como adjetivo. Cada valor aqui vem de um harness determinístico no repo, medido em hardware real e checado contra a referência RNS quando a comparação é justa. Os números chegam conforme a suite se estabiliza; abaixo está a metodologia que eles seguem.
+
+# Sinal de licença (rodapé)
 footer-license = Código aberto. MIT / Apache 2.0.
 
-# Página de filosofia
-ethos-kicker = A disciplina
-ethos-title = Como construímos isto
-ethos-lead = Uma nota de engenheiro pra engenheiro sobre a disciplina por trás deste projeto — motor puro, núcleo sem alocador, cada mudança verificada contra a referência RNS. Dá uma passada antes de depender; queremos que você saiba no que está se metendo.
+# Página de contribuição
+contributing-kicker = O padrão
+contributing-title = Contribuir
+contributing-lead = Como contribuir — o que valorizamos, as convenções que seu código segue e o padrão que cada mudança precisa cumprir. Para contribuidores humanos e automatizados do mesmo jeito.
 
 # Índice de crates
 crates-kicker = As peças
-crates-title = Pegue o que combina com o que você está construindo.
-crates-lead = Cada crate é feito pra ser útil sozinho, mesmo se você não puxar o resto. O motor é o substrato; o resto empilha em cima, e mais peças vão chegando conforme a suíte cresce.
-crates-card-cta = O que ele faz →
+crates-title = Escolha o que combina com o que você está construindo.
+crates-lead = Cada crate foi feito para ser útil sozinho, mesmo que você não traga o resto junto. O motor é o substrato; todo o resto se empilha em cima, e mais peças chegam conforme a suite cresce.
+crates-card-cta = O que faz →
 crates-back = Todos os crates
 crates-not-found = Nenhum crate com esse nome
 
 # Cards por crate
 crate-rns-role = O motor
-crate-rns-blurb = Encaixa o Reticulum em qualquer projeto Rust. Determinístico, no_std, sem alocador; sem estado global, sem I/O embutido — traga seu relógio e seu fio.
+crate-rns-blurb = Coloque Reticulum em qualquer projeto Rust. Determinístico, no_std, sem alocador; sem estado global, sem I/O embutido — traga seu próprio clock e wire.
 crate-rnsd-role = O daemon
-crate-rnsd-blurb = Um drop-in para o rnsd que roda em qualquer lugar onde o Linux roda. Mesmo fio da referência RNS; use junto ou no lugar dos nós que você já tem.
+crate-rnsd-blurb = Um drop-in para rnsd que roda onde Linux roda. Mesmo wire da referência RNS; use junto ou no lugar dos nós que você já tem.
 crate-lxmf-role = Mensageria
-crate-lxmf-blurb = LXMF em cima do Reticulum — a camada onde Sideband e Nomadnet se apoiam. Identidades, endereços, entrega de mensagens.
+crate-lxmf-blurb = LXMF sobre Reticulum — a camada em que Sideband e Nomadnet se apoiam. Identidades, endereços, entrega de mensagens.
 crate-ffi-role = Bindings mobile + Python
-crate-ffi-blurb = Uma única interface uniffi gera Kotlin (.aar), Swift (.xcframework) e Python (.whl). Use o Reticulum do Android, iOS ou de um notebook Jupyter — mesma forma, mesmo motor.
+crate-ffi-blurb = Uma interface uniffi gera Kotlin (.aar), Swift (.xcframework) e Python (.whl). Use Reticulum do Android, iOS ou de um notebook Jupyter — mesmo formato, mesmo motor.
 
 # 404
-not-found-title = Aqui ainda não tem nada.
+not-found-title = Ainda não há nada aqui.
 not-found-cta = Voltar para o início
