@@ -7,8 +7,16 @@ use crate::wire::DestinationHash;
 mod impls;
 
 pub use impls::FixedArrayRouteColumns;
+pub use impls::FixedIndexedRouteColumns;
 #[cfg(feature = "alloc")]
 pub use impls::HeapRouteColumns;
+
+pub const fn route_index_buckets(destinations: usize) -> usize {
+    if destinations == 0 {
+        return 1;
+    }
+    (destinations * 3).div_ceil(2)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteEntry {
