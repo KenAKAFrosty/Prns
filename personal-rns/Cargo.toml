@@ -42,11 +42,6 @@ embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-asyn
 # AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
 # old LoRa/ESP-NOW radio shells were removed with the device host examples.
 embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
-# The plug-and-play USB-auto host interface: the std worker machinery plus
-# serialport, which enumerates + opens USB CDC ports cross-platform (it cfg-gates
-# libudev / IOKit / SetupAPI internally). Opt-in, so std hosts that don't want it
-# never link serialport.
-usb-auto = ["std-sync-host", "dep:serialport", "dep:mio", "dep:mio-serial"]
 # The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) for std hosts:
 # the std worker machinery plus socket2 (IPv6 multicast egress + address reuse) and
 # if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
@@ -97,18 +92,6 @@ rtrb = { version = "0.3", optional = true }
 # `select!` over its three inputs. Workers bring their own I/O features; the seam
 # itself needs no runtime flavor.
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
-
-# The USB-auto host interface's portable USB-serial layer (under `usb-auto`):
-# enumerate, open, and raw byte I/O on Linux/macOS/Windows. Default features keep
-# enumeration (libudev on Linux, IOKit/SetupAPI elsewhere — serialport cfg-gates
-# its own per-OS backends).
-serialport = { version = "4", optional = true }
-# Readiness-driven I/O for the USB-auto host worker (under `usb-auto`): one
-# `mio::Poll` over every open serial fd plus a `Waker` the runtime pokes on egress,
-# so the worker blocks until a port is readable or the engine has a packet to send —
-# no self-clocked polling. `mio-serial` adapts `serialport` ports into `mio` sources.
-mio = { version = "1", optional = true, features = ["os-poll", "os-ext"] }
-mio-serial = { version = "5", optional = true }
 
 # The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
 # egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —
