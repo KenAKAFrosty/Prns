@@ -30,30 +30,41 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
 
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
     let mut written = 0usize;
-    let mut put = |byte: u8, written: &mut usize| -> Result<(), EncodeError> {
-        if *written >= output.len() {
+
+    if output.is_empty() {
+        return Err(EncodeError::OutputTooSmall);
+    }
+    output[written] = FLAG;
+    written += 1;
+
+    let mut rest = input;
+    loop {
+        let split = rest.iter().position(|&byte| byte == FLAG || byte == ESC);
+        let run = &rest[..split.unwrap_or(rest.len())];
+        if written + run.len() > output.len() {
             return Err(EncodeError::OutputTooSmall);
         }
-        output[*written] = byte;
-        *written += 1;
-        Ok(())
-    };
+        output[written..written + run.len()].copy_from_slice(run);
+        written += run.len();
 
-    put(FLAG, &mut written)?;
-    for &byte in input {
-        match byte {
-            FLAG => {
-                put(ESC, &mut written)?;
-                put(FLAG ^ ESC_MASK, &mut written)?;
-            }
-            ESC => {
-                put(ESC, &mut written)?;
-                put(ESC ^ ESC_MASK, &mut written)?;
-            }
-            other => put(other, &mut written)?,
+        let Some(pos) = split else {
+            break;
+        };
+        if written + 2 > output.len() {
+            return Err(EncodeError::OutputTooSmall);
         }
+        output[written] = ESC;
+        output[written + 1] = rest[pos] ^ ESC_MASK;
+        written += 2;
+        rest = &rest[pos + 1..];
     }
-    put(FLAG, &mut written)?;
+
+    if written >= output.len() {
+        return Err(EncodeError::OutputTooSmall);
+    }
+    output[written] = FLAG;
+    written += 1;
+
     Ok(written)
 }
 
