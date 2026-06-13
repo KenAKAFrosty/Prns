@@ -10,6 +10,7 @@ use personal_rns::identity::ENCRYPTION_IV_LEN;
 
 use benchmarks::microscope::Cycle;
 use personal_rns::routing::dedup::{HeapPacketHashHistory, PacketHash, PacketHashHistory};
+use personal_rns::interfaces::rns_serial_framing;
 
 const PAYLOAD_LEN: usize = 300;
 
@@ -162,6 +163,33 @@ fn dedup_remember_fresh(hashes: Vec<PacketHash>) {
     black_box(history);
 }
 
+const FRAMING_ITERS: usize = 1024;
+
+fn framing_payload() -> Vec<u8> {
+    let mut out = Vec::with_capacity(PAYLOAD_LEN);
+    let mut state = 0xC0FF_EE00_1234_5678_u64;
+    while out.len() < PAYLOAD_LEN {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        for byte in state.to_le_bytes() {
+            if out.len() < PAYLOAD_LEN {
+                out.push(byte);
+            }
+        }
+    }
+    out
+}
+
+#[library_benchmark]
+#[bench::p300(setup = framing_payload)]
+fn framing_encode(payload: Vec<u8>) {
+    let mut out = [0u8; rns_serial_framing::max_encoded_len(PAYLOAD_LEN)];
+    for _ in 0..FRAMING_ITERS {
+        let n = rns_serial_framing::encode(black_box(&payload), black_box(&mut out))
+            .expect("encodes");
+        black_box(n);
+    }
+}
+
 library_benchmark_group!(
     name = primitives;
     benchmarks =
@@ -183,4 +211,9 @@ library_benchmark_group!(
     benchmarks = dedup_remember_fresh
 );
 
-main!(library_benchmark_groups = primitives, engine_cycle, dedup);
+library_benchmark_group!(
+    name = framing;
+    benchmarks = framing_encode
+);
+
+main!(library_benchmark_groups = primitives, engine_cycle, dedup, framing);
