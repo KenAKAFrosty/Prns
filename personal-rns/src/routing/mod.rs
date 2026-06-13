@@ -8,6 +8,7 @@ pub mod path_requests;
 pub mod proof;
 pub mod request_handlers;
 pub mod reverse_routes;
+pub mod routes;
 pub mod storage;
 pub mod types;
 pub mod upstream_app_destinations;

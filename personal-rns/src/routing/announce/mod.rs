@@ -3,6 +3,7 @@ pub mod defaults;
 pub mod emit;
 mod id;
 pub mod rate_limit;
+pub mod retained;
 pub mod schedule;
 
 pub use acceptance::{
