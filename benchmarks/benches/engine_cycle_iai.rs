@@ -9,6 +9,7 @@ use personal_rns::crypto::{
 use personal_rns::identity::ENCRYPTION_IV_LEN;
 
 use benchmarks::microscope::Cycle;
+use personal_rns::routing::dedup::{HeapPacketHashHistory, PacketHash, PacketHashHistory};
 
 const PAYLOAD_LEN: usize = 300;
 
@@ -131,6 +132,36 @@ fn cycle_settle(mut cycle: Cycle) -> Cycle {
     cycle
 }
 
+const DEDUP_BATCH: usize = 8192;
+
+fn dedup_hashes() -> Vec<PacketHash> {
+    let mut out = Vec::with_capacity(DEDUP_BATCH);
+    let mut state = 0x1234_5678_9ABC_DEF0_u64;
+    for _ in 0..DEDUP_BATCH {
+        let mut bytes = [0u8; 32];
+        for chunk in bytes.chunks_mut(8) {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut word = state;
+            word = (word ^ (word >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            word = (word ^ (word >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            word ^= word >> 31;
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        out.push(PacketHash::new(bytes));
+    }
+    out
+}
+
+#[library_benchmark]
+#[bench::fresh(setup = dedup_hashes)]
+fn dedup_remember_fresh(hashes: Vec<PacketHash>) {
+    let mut history = HeapPacketHashHistory::default();
+    for hash in hashes {
+        black_box(history.remember(black_box(hash)));
+    }
+    black_box(history);
+}
+
 library_benchmark_group!(
     name = primitives;
     benchmarks =
@@ -147,4 +178,9 @@ library_benchmark_group!(
     benchmarks = cycle_roundtrip, cycle_seal, cycle_deliver_prove, cycle_settle
 );
 
-main!(library_benchmark_groups = primitives, engine_cycle);
+library_benchmark_group!(
+    name = dedup;
+    benchmarks = dedup_remember_fresh
+);
+
+main!(library_benchmark_groups = primitives, engine_cycle, dedup);
