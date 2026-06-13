@@ -1,4 +1,4 @@
-3 directives + 1 bonus: Hopspot, interfaces, control API; bonus: pure engine work
+3 directives: Hopspot, interfaces, control API;
 
 
 Hopspot has 4 roles: 
@@ -36,10 +36,6 @@ Following that trend, the next few I expect will be (not necessarily in this ord
     - Related, just allowing for adjusting the LoRa settings from the Hopspot menu
 
 (Other interfaces will be needed, but aren't the high-priority, top-of-mind ones, for now)
-
-Pure engine work: 
-There's still plenty more to go, but after we have some multi-platform devices running Hopspot with a few good interfaces, we'll be able to see and feel this work so much faster. However, we can use it, at any point in the process, as a relief valve on the pressure of doing the other three above. Those are unbounded problems we're trying to wrangle in, which can take a lot of focus and energy. Continuing reference-parity-matching work in our deterministic isolated no_std core should feel relatively sane and easy by comparison.
-
 
 Principles & Ethos
 
