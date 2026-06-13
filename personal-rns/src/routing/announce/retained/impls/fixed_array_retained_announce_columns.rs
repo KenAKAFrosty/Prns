@@ -5,9 +5,10 @@
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
-use crate::routing::storage::{
-    AppDataHandle, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
+use crate::routing::announce::retained::{
+    AppDataHandle, RetainedAnnounceColumns, RetainedAnnounceEntry,
 };
+use crate::storage::ColumnsFull;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixedArrayRetainedAnnounceColumns<const MAX_TRACKED_DESTINATIONS: usize> {

@@ -14,7 +14,7 @@ use crate::identity::{
 use crate::interfaces::InterfaceId;
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
@@ -37,7 +37,7 @@ pub enum IdentifyWriteError {
     BufferTooShort,
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_identify(&self, id: CommandId, identify: Identify) -> CommandOutcome {
         match self.links.phase_for(&identify.link_id) {
             None => CommandOutcome::IdentifyRejected {

@@ -24,7 +24,7 @@ use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use personal_rns::reactor::interfaces::tcp::core as tcp_core;
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::routing::storage::GrowableHeap;
+use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 

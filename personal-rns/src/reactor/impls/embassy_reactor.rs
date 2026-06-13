@@ -34,7 +34,7 @@ use crate::reactor::grant::{
 };
 use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 
 /// A [`Host`] backed by embassy's clock and a caller-supplied entropy source. Mirrors the
 /// legacy `EmbassyContractHost`: an [`EmbassyTimebase`] owns the clock and `draw_entropy`
@@ -367,7 +367,7 @@ pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     egress: EmbassyEgress<'_>,
     on_journaled: impl FnMut(Journaled<'_>),
 ) where
-    S: EngineStorage,
+    S: StorageLayout,
     H: Host,
     M: RawMutex,
 {
@@ -399,7 +399,7 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
     mut on_journaled: impl FnMut(Journaled<'_>),
     mut should_prove: impl FnMut(&ProofRequest) -> bool,
 ) where
-    S: EngineStorage,
+    S: StorageLayout,
     H: Host,
     M: RawMutex,
 {

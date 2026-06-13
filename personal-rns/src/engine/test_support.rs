@@ -12,7 +12,7 @@ use crate::interfaces::{
 };
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
-use crate::routing::storage::FixedInline;
+use crate::storage::FixedInline;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
@@ -193,7 +193,7 @@ pub(crate) struct TickSnapshot {
     pub(crate) egress_directive_count: usize,
 }
 
-pub(crate) fn tick_capture<S: EngineStorage>(
+pub(crate) fn tick_capture<S: StorageLayout>(
     state: &mut EngineState<S>,
     now: InstantMillis,
     interfaces: &[InterfaceConfig],
@@ -211,7 +211,7 @@ pub(crate) fn tick_capture<S: EngineStorage>(
     (snapshot, emitted)
 }
 
-pub(crate) fn observable_state<S: EngineStorage>(state: &EngineState<S>) -> (u64, usize, usize) {
+pub(crate) fn observable_state<S: StorageLayout>(state: &EngineState<S>) -> (u64, usize, usize) {
     (
         state.ingested_packet_count(),
         state.route_count(),

@@ -3,7 +3,7 @@ use crate::engine::EngineState;
 use crate::interfaces::InterfaceId;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WireError, WirePacketHeader,
@@ -68,7 +68,7 @@ pub enum WriteLinkCloseError {
     Serialize,
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_close_link(&self, id: CommandId, close: CloseLink) -> CommandOutcome {
         match self.links.phase_for(&close.link_id) {
             None => CommandOutcome::CloseLinkRejected {

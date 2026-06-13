@@ -2,7 +2,7 @@ use crate::crypto::{token_seal, TokenKey};
 use crate::engine::commands::{CommandId, CommandOutcome, SendGroup};
 use crate::engine::EngineState;
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
     WirePacketHeader,
@@ -15,7 +15,7 @@ pub enum WriteSendGroupError {
     Serialize,
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_group(&self, id: CommandId, send: SendGroup) -> CommandOutcome {
         if self.group_keys.key_for(&send.destination).is_some() {
             CommandOutcome::OwesSendGroup { id, send }

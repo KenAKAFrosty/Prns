@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use crate::identity::IdentityHash;
 use crate::routing::request_handlers::{RequestHandlerColumns, RequestPathHash, RequestPolicy};
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 pub const DEFAULT_MAX_REQUEST_HANDLERS: usize = 1024;

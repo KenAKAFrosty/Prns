@@ -8,7 +8,7 @@ use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
-use crate::routing::storage::{ColumnsFull, EngineStorage};
+use crate::storage::{ColumnsFull, StorageLayout};
 use crate::routing::upstream_app_destinations::{
     ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
 };
@@ -20,7 +20,7 @@ pub enum SetTransportIdentityError {
     UnknownIdentity,
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn register_plain_destination(
         &mut self,
         app_name: &str,

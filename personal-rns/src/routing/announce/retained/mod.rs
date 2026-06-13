@@ -1,6 +1,6 @@
 use crate::crypto::Ed25519Signature;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 
 mod impls;
 

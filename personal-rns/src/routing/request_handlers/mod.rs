@@ -11,7 +11,7 @@ mod impls;
 pub use impls::*;
 
 use crate::identity::IdentityHash;
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
 /// The digest a request routes by — RNS 1.3.1

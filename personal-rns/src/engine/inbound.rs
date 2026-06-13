@@ -15,7 +15,7 @@ use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::proof::{
     ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::wire::BROADCAST_MTU;
 
@@ -33,7 +33,7 @@ pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
     }
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
     /// facts (announce heard, delivery, the settlements a learned route closes) and the
     /// `Directive`s it owes — a proof back on the arrival lane, a packet forwarded onward,

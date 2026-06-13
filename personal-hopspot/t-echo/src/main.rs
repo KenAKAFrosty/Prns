@@ -33,7 +33,7 @@ use epd_waveshare::epd1in54_v2::Display1in54;
 
 use personal_hopspot_ui as hopspot;
 use personal_rns::engine::EngineState;
-use personal_rns::routing::storage::FixedInline;
+use personal_rns::storage::FixedInline;
 
 mod ssd1681;
 use ssd1681::Ssd1681;

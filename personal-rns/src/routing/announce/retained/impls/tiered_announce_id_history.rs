@@ -18,7 +18,7 @@
 //! Comparing two stores built by different routes is a misuse.
 
 use crate::routing::announce::AnnounceId;
-use crate::routing::storage::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
+use crate::routing::announce::retained::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TieredAnnounceIdHistory<

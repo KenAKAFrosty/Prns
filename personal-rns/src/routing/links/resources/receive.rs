@@ -35,10 +35,10 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{DestinationType, PacketType, WireContext};
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_set_resource_strategy(
         &mut self,
         id: CommandId,
@@ -280,7 +280,7 @@ impl<S: EngineStorage> EngineState<S> {
     }
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.3.1's link dispatch for context `RESOURCE`: a part names no
     /// transfer and carries no index, so every incoming transfer on the link
     /// tries to place it by its salted name. Exempt from duplicate filtering
@@ -662,7 +662,7 @@ impl<S: EngineStorage> EngineState<S> {
     }
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// The receiver's half of the resource deadline lane — RNS 1.3.1's
     /// watchdog TRANSFERRING branch: a timed-out window shrinks (the window
     /// eases down, its ceiling follows), the hashmap-exhausted wait clears,
@@ -890,7 +890,7 @@ mod tests_support {
         active_engine::<Cap>()
     }
 
-    pub(crate) fn active_engine<S: EngineStorage>() -> EngineState<S> {
+    pub(crate) fn active_engine<S: StorageLayout>() -> EngineState<S> {
         let mut engine = EngineState::<S>::default();
         engine
             .links
@@ -923,7 +923,7 @@ mod tests_support {
         advertise_from(&mut sender, data, candidate)
     }
 
-    pub(crate) fn advertise_from<S: EngineStorage>(
+    pub(crate) fn advertise_from<S: StorageLayout>(
         sender: &mut EngineState<S>,
         data: &[u8],
         candidate: Option<&[u8]>,
@@ -953,7 +953,7 @@ mod tests_support {
         pub(crate) failed: std::vec::Vec<ResourceHash>,
     }
 
-    pub(crate) fn feed<S: EngineStorage>(
+    pub(crate) fn feed<S: StorageLayout>(
         engine: &mut EngineState<S>,
         frame: &[u8],
         at: u64,
@@ -997,7 +997,7 @@ mod tests_support {
         capture
     }
 
-    pub(crate) fn accept_everything<S: EngineStorage>(engine: &mut EngineState<S>) {
+    pub(crate) fn accept_everything<S: StorageLayout>(engine: &mut EngineState<S>) {
         let mut settled = std::vec::Vec::new();
         engine.ingest_command_into(
             IssuedCommand {
@@ -1937,7 +1937,7 @@ mod dynamics_tests {
     use super::*;
     use crate::routing::links::resources::table::IncomingResourceStatus;
     use crate::routing::links::resources::{WINDOW_MAX, WINDOW_MAX_SLOW, WINDOW_MAX_VERY_SLOW};
-    use crate::routing::storage::GrowableHeap;
+    use crate::storage::GrowableHeap;
 
     struct RoundOutcome {
         concluded: bool,

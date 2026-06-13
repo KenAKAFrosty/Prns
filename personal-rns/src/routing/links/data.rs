@@ -6,7 +6,7 @@ use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, ReceiptKind};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN, IFAC_MIN_LEN,
@@ -132,7 +132,7 @@ pub struct SendLinkDispatch {
     pub culled: Option<CulledReceipt>,
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_link(&self, id: CommandId, send: SendLink) -> CommandOutcome {
         match self.links.phase_for(&send.link_id) {
             None => CommandOutcome::SendLinkRejected {

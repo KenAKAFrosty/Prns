@@ -80,7 +80,7 @@ use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
 use crate::wire::TransportId;
@@ -192,7 +192,7 @@ impl WakeSchedules {
     }
 }
 
-pub struct EngineState<S: EngineStorage> {
+pub struct EngineState<S: StorageLayout> {
     pub(crate) ingested_packet_count: u64,
     pub(crate) ingested_command_count: u64,
     pub(crate) routing_table: RoutingTable<S::Routes, S::Announces, S::History, S::AppData>,
@@ -215,7 +215,7 @@ pub struct EngineState<S: EngineStorage> {
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
 }
 
-impl<S: EngineStorage> Default for EngineState<S> {
+impl<S: StorageLayout> Default for EngineState<S> {
     fn default() -> Self {
         Self {
             ingested_packet_count: 0,
@@ -242,7 +242,7 @@ impl<S: EngineStorage> Default for EngineState<S> {
     }
 }
 
-impl<S: EngineStorage> core::fmt::Debug for EngineState<S>
+impl<S: StorageLayout> core::fmt::Debug for EngineState<S>
 where
     S::Routes: core::fmt::Debug,
     S::Announces: core::fmt::Debug,
@@ -267,7 +267,7 @@ where
     }
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// The one-identity convenience constructor: the held identity's hash is also
     /// this node's transport id, so a `new(key)` node can relay. The deliberate
     /// alternative is `default()` plus explicit verbs — `set_transport_id` for an
@@ -393,7 +393,7 @@ mod tests {
     use super::*;
     use crate::interfaces::InboundPacket;
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
-    use crate::routing::storage::FixedInline;
+    use crate::storage::FixedInline;
 
     #[test]
     fn next_scheduled_wake_is_idle_with_no_scheduled_work() {

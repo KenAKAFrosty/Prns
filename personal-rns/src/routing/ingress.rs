@@ -39,7 +39,7 @@ use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, UpsertRouteOutcome};
@@ -465,7 +465,7 @@ fn path_response_grace_ms(source_interface: InterfaceId, view: &[InterfaceConfig
     }
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     #[must_use]
     pub fn ingest_packet<'p>(
         &mut self,
@@ -1886,7 +1886,7 @@ mod tests {
     use crate::identity::IdentitySigner;
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::delivery::{Delivery, PlainDelivery, SingleDelivery};
-    use crate::routing::storage::FixedInline;
+    use crate::storage::FixedInline;
     use crate::routing::upstream_app_destinations::ProofStrategy;
 
     #[test]

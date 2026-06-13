@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use crate::routing::storage::{AppDataHandle, RetainedAppData, RetainedAppDataError};
+use crate::routing::announce::retained::{AppDataHandle, RetainedAppData, RetainedAppDataError};
 
 #[derive(Debug, Default)]
 pub struct HeapRetainedAppData {

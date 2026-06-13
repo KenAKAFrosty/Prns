@@ -20,7 +20,7 @@
 //! in the same order and assert byte-identical results. Do not use `==` to ask
 //! whether two stores built by different routes hold the same payloads.
 
-use crate::routing::storage::{AppDataHandle, RetainedAppData, RetainedAppDataError};
+use crate::routing::announce::retained::{AppDataHandle, RetainedAppData, RetainedAppDataError};
 use heapless::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

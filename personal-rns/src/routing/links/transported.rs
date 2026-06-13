@@ -3,7 +3,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::links::LinkId;
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, TransportId};
 
 /// RNS 1.3.1 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched

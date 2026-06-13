@@ -31,10 +31,10 @@ use crate::routing::links::table::LinkPhase;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::LinkId;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// Build and advertise one resource over an active link. `data` is the
     /// uncompressed payload; `compressed_candidate` is the host's bz2 attempt
     /// (or `None` — an embedded host never links a compressor) and the
@@ -683,7 +683,7 @@ mod tests {
         InterfaceId::new([0xEE; 16])
     }
 
-    fn install_active_link<S: EngineStorage>(engine: &mut EngineState<S>) {
+    fn install_active_link<S: StorageLayout>(engine: &mut EngineState<S>) {
         engine
             .links
             .track_initiated(InitiatedLink {
@@ -746,7 +746,7 @@ mod tests {
         capture
     }
 
-    pub(crate) fn send<S: EngineStorage>(
+    pub(crate) fn send<S: StorageLayout>(
         engine: &mut EngineState<S>,
         id: u64,
         data: &[u8],
@@ -902,7 +902,7 @@ mod tests {
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
     }
 
-    pub(crate) fn feed<S: EngineStorage>(engine: &mut EngineState<S>, frame: &[u8], at: u64) -> InboundCapture {
+    pub(crate) fn feed<S: StorageLayout>(engine: &mut EngineState<S>, frame: &[u8], at: u64) -> InboundCapture {
         use crate::engine::test_support::{routable_descriptor, TEST_ENTROPY};
         use crate::interfaces::InboundPacket;
         let mut capture = InboundCapture {
@@ -959,7 +959,7 @@ mod tests {
         frame[..wire_len].to_vec()
     }
 
-    fn advertised_resource<S: EngineStorage>(
+    fn advertised_resource<S: StorageLayout>(
         engine: &mut EngineState<S>,
         data: &[u8],
     ) -> (ResourceHash, std::vec::Vec<u8>) {
@@ -1045,7 +1045,7 @@ mod tests {
     #[test]
     fn an_exhausted_request_earns_the_next_hashmap_segment() {
         use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
-        use crate::routing::storage::GrowableHeap;
+        use crate::storage::GrowableHeap;
 
         let mut engine = EngineState::<GrowableHeap>::default();
         install_active_link(&mut engine);
@@ -1081,7 +1081,7 @@ mod tests {
 
     #[test]
     fn a_sequencing_break_cancels_the_transfer_by_name() {
-        use crate::routing::storage::GrowableHeap;
+        use crate::storage::GrowableHeap;
 
         let mut engine = EngineState::<GrowableHeap>::default();
         install_active_link(&mut engine);

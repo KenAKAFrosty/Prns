@@ -17,7 +17,8 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::routing::storage::{ColumnsFull, RouteColumns, RouteEntry};
+use crate::storage::ColumnsFull;
+use crate::routing::routes::{RouteColumns, RouteEntry};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::wire::DestinationHash;
 

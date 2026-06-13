@@ -10,7 +10,7 @@ use crate::engine::{
 };
 use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::defaults::JitterSeed;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 
 pub async fn wait_for_due_lane<H: Host>(host: &H, scheduled_wake: ScheduledWake) -> DueLane {
     match scheduled_wake {
@@ -39,7 +39,7 @@ pub fn fire_due_lane<S, F>(
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) -> WakeSchedules
 where
-    S: EngineStorage,
+    S: StorageLayout,
     F: FnMut(&mut [u8]),
 {
     match lane {
@@ -64,7 +64,7 @@ pub fn draw_jitter<H: Host>(host: &mut H) -> JitterSeed {
     JitterSeed(u64::from_le_bytes(bytes))
 }
 
-pub fn merge_wake_schedules_delta<S: EngineStorage>(
+pub fn merge_wake_schedules_delta<S: StorageLayout>(
     source_wake_schedules: &mut WakeSchedules,
     delta: WakeSchedules,
     engine: &EngineState<S>,

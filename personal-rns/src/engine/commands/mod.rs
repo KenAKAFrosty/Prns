@@ -775,10 +775,10 @@ impl Settleable for SetResourceStrategy {
 use crate::engine::EngineState;
 use crate::interfaces::InterfaceConfig;
 use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::DestinationType;
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     #[must_use]
     pub fn ingest_command(
         &mut self,

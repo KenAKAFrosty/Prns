@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::DottedNameHash;
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinationKind,
 };

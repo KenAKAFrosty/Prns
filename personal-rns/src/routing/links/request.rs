@@ -22,7 +22,7 @@ use crate::routing::links::data::{
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::request_handlers::RequestPathHash;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader, TRUNCATED_HASH_BYTE_LEN,
@@ -235,7 +235,7 @@ fn seal_link_frame(
     Some((header_len, header_len + sealed))
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_request(&self, id: CommandId, request: SendRequest) -> CommandOutcome {
         match self.links.phase_for(&request.link_id) {
             None => CommandOutcome::SendRequestRejected {
@@ -507,14 +507,14 @@ mod tests {
     fn engine_with_an_active_link_at(
         link_id: LinkId,
         mtu: usize,
-    ) -> EngineState<crate::routing::storage::GrowableHeap> {
+    ) -> EngineState<crate::storage::GrowableHeap> {
         use crate::crypto::{
             x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
         };
         use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
         use crate::routing::links::table::InitiatedLink;
 
-        let mut engine = EngineState::<crate::routing::storage::GrowableHeap>::new(Zeroizing::new(
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::new(Zeroizing::new(
             [0x07; IDENTITY_SECRET_KEY_LEN],
         ));
         engine

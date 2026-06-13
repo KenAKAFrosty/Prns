@@ -6,7 +6,7 @@ mod impls;
 
 pub use impls::*;
 
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 

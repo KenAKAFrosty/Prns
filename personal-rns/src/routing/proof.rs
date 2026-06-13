@@ -76,9 +76,9 @@ use crate::engine::egress::{write_implicit_proof_wire_packet, write_link_proof_w
 use crate::engine::EngineState;
 use crate::identity::IdentitySigner;
 use crate::routing::delivery::receipts::ReceiptKind;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// Sign and frame the proof a delivered packet earned ([`ProofOwed`], from
     /// this same cycle's ingest outcome) into `buf`, returning the wire length.
     /// Best-effort by RNS 1.3.1 parity: a proof that can't be written is simply

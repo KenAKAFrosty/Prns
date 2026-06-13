@@ -46,7 +46,7 @@ use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::reactor::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
-use personal_rns::routing::storage::FixedInline;
+use personal_rns::storage::FixedInline;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 

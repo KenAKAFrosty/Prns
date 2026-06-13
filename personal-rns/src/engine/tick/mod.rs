@@ -7,10 +7,10 @@ use crate::routing::announce::defaults::{
     MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
 };
 use crate::routing::announce::schedule::ScheduledAnnounceQueue as _;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// One [`EgressDirective`] per (scheduled announce due at `now` × interface it fires on):
     /// a `directed_to` entry answers only its one target, else the engine's flood fan-out
     /// ([`firable_on`]). The caller takes each named target to its handle. The reactor's

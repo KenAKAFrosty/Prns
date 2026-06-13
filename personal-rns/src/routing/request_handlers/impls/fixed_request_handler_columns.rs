@@ -2,7 +2,7 @@ use heapless::Vec as HeaplessVec;
 
 use crate::identity::IdentityHash;
 use crate::routing::request_handlers::{RequestHandlerColumns, RequestPathHash, RequestPolicy};
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 /// How many identities one handler's allow list holds on the fixed backend —

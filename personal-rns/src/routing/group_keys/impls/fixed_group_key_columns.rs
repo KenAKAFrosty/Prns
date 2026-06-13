@@ -1,5 +1,5 @@
 use crate::routing::group_keys::{GroupKey, GroupKeyColumns};
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 #[derive(Debug)]

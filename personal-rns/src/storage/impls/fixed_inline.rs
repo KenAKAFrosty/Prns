@@ -14,10 +14,11 @@ use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
-use crate::routing::storage::{
-    EngineStorage, FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
-    TieredAnnounceIdHistory,
+use crate::routing::announce::retained::{
+    FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
 };
+use crate::routing::routes::FixedArrayRouteColumns;
+use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 
 pub struct FixedInline<
@@ -52,7 +53,7 @@ impl<
         const MAX_PENDING_PATH_REQUESTS: usize,
         const MAX_SEEN_PATH_REQUESTS: usize,
         const MAX_LINKS: usize,
-    > EngineStorage
+    > StorageLayout
     for FixedInline<
         MAX_TRACKED_DESTINATIONS,
         MAX_ANNOUNCE_IDS_PER_DESTINATION,
@@ -118,29 +119,30 @@ mod tests {
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::delivery::receipts::ReceiptColumns;
     use crate::routing::links::table::LinkColumns;
-    use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
+    use crate::routing::announce::retained::RetainedAnnounceColumns;
+    use crate::routing::routes::RouteColumns;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_fixed_array_backends_sized_by_the_consts() {
         type S = FixedInline<8, 16, 256, 2, 8, 2, 2, 4, 3, 5, 8, 4, 8, 6>;
-        let routes = <S as EngineStorage>::Routes::default();
-        let announces = <S as EngineStorage>::Announces::default();
-        let _history = <S as EngineStorage>::History::default();
-        let _app_data = <S as EngineStorage>::AppData::default();
-        let _pending = <S as EngineStorage>::ScheduledAnnounces::default();
-        let upstream_app_destinations = <S as EngineStorage>::UpstreamAppDestinations::default();
-        let packet_hashes = <S as EngineStorage>::PacketHashes::default();
-        let self_ratchets = <S as EngineStorage>::SelfRatchets::default();
+        let routes = <S as StorageLayout>::Routes::default();
+        let announces = <S as StorageLayout>::Announces::default();
+        let _history = <S as StorageLayout>::History::default();
+        let _app_data = <S as StorageLayout>::AppData::default();
+        let _pending = <S as StorageLayout>::ScheduledAnnounces::default();
+        let upstream_app_destinations = <S as StorageLayout>::UpstreamAppDestinations::default();
+        let packet_hashes = <S as StorageLayout>::PacketHashes::default();
+        let self_ratchets = <S as StorageLayout>::SelfRatchets::default();
         assert_eq!(routes.capacity(), 8);
         assert_eq!(announces.capacity(), 8);
         assert_eq!(upstream_app_destinations.capacity(), 2);
         assert_eq!(packet_hashes.generation_capacity(), 4);
         assert_eq!(self_ratchets.capacity(), 2);
         assert_eq!(self_ratchets.retained_per_destination(), 3);
-        let receipts = <S as EngineStorage>::Receipts::default();
+        let receipts = <S as StorageLayout>::Receipts::default();
         assert_eq!(receipts.capacity(), 5);
-        let links = <S as EngineStorage>::Links::default();
+        let links = <S as StorageLayout>::Links::default();
         assert_eq!(links.capacity(), 6);
     }
 }

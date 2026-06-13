@@ -16,7 +16,7 @@ use crate::routing::links::table::{
     InitiatedLink, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::NextHop;
 use crate::wire::BROADCAST_MTU;
@@ -102,7 +102,7 @@ pub enum WriteLinkRttError {
     Serialize,
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_establish_link(&self, id: CommandId, establish: EstablishLink) -> CommandOutcome {
         if self
             .routing_table

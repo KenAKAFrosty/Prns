@@ -19,7 +19,7 @@ use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::FixedArrayRouteColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
-use crate::storage::{EngineStorage, StorageCapacities};
+use crate::storage::{StorageLayout, StorageCapacities};
 
 pub struct Esp32S3;
 
@@ -40,7 +40,7 @@ impl StorageCapacities for Esp32S3 {
     const MAX_LINKS: usize = 4;
 }
 
-impl EngineStorage for Esp32S3 {
+impl StorageLayout for Esp32S3 {
     type Routes = FixedArrayRouteColumns<{ <Self as StorageCapacities>::MAX_TRACKED_DESTINATIONS }>;
     type Announces =
         FixedArrayRetainedAnnounceColumns<{ <Self as StorageCapacities>::MAX_TRACKED_DESTINATIONS }>;
@@ -90,12 +90,12 @@ impl EngineStorage for Esp32S3 {
 #[cfg(test)]
 mod tests {
     use super::Esp32S3;
-    use crate::storage::{EngineStorage, FixedInline};
+    use crate::storage::{StorageLayout, FixedInline};
 
     fn assert_same_storage<A, B>()
     where
-        A: EngineStorage,
-        B: EngineStorage<
+        A: StorageLayout,
+        B: StorageLayout<
             Routes = A::Routes,
             Announces = A::Announces,
             History = A::History,

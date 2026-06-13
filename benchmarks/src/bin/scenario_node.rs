@@ -32,7 +32,7 @@ use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
-use personal_rns::routing::storage::GrowableHeap;
+use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 use tokio::sync::mpsc;

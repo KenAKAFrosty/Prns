@@ -5,7 +5,7 @@ use crate::routing::path_requests::pending::{
     CulledPathRequest, ExpiredPathRequest, PendingPathRequest, SettledPathRequest,
     PATH_REQUEST_TIMEOUT_MS,
 };
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
 #[must_use]
@@ -20,7 +20,7 @@ pub enum PathRequestWriteOutcome {
     SerializeFailed(EgressSerializeError),
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub fn write_commanded_path_request(
         &mut self,
         id: CommandId,

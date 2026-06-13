@@ -24,7 +24,7 @@ use crate::reactor::driver::{
 use crate::reactor::grant::{FrameSlot, GrantConsumer, GrantProducer};
 use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 
 pub struct TokioHost {
     base: Instant,
@@ -409,7 +409,7 @@ pub async fn run<S, H, J>(
     egress: Egress,
     on_journaled: J,
 ) where
-    S: EngineStorage,
+    S: StorageLayout,
     H: Host,
     J: FnMut(Journaled<'_>),
 {
@@ -441,7 +441,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     mut on_journaled: J,
     mut should_prove: P,
 ) where
-    S: EngineStorage,
+    S: StorageLayout,
     H: Host,
     J: FnMut(Journaled<'_>),
     P: FnMut(&ProofRequest) -> bool,

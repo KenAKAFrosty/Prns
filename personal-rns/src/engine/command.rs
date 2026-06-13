@@ -19,10 +19,10 @@ use crate::routing::links::identify::IdentifyWriteError;
 use crate::routing::links::request::LinkRequestWriteError;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// The interface an Active link fires on — resolved before grant-first emission so the
     /// driver knows which lane to grant from; the write itself re-resolves and stays the
     /// source of truth.

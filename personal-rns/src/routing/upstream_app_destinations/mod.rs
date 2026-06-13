@@ -9,7 +9,7 @@ use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, DottedNameHash,
     ExpandNameError,
 };
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::{DestinationHash, DestinationType};
 
 /// RNS 1.3.1 `Destination.PROVE_NONE` / `PROVE_ALL` / `PROVE_APP`

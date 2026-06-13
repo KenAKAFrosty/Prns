@@ -7,7 +7,7 @@ use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{
     CulledReceipt, ExpiredReceipt, OutstandingReceipt, ReceiptKind,
 };
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::routing::NextHop;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
@@ -84,7 +84,7 @@ pub enum SendSingleWriteOutcome {
     },
 }
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_send_single(&self, id: CommandId, send: SendSingle) -> CommandOutcome {
         let Some(retained) = self.routing_table.retained_announce_for(&send.destination) else {
             return CommandOutcome::SendSingleRejected {

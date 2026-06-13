@@ -9,7 +9,7 @@ use personal_rns::interfaces::{
 };
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::request_handlers::RequestPolicy;
-use personal_rns::routing::storage::GrowableHeap;
+use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 
 const FRAME_CAP: usize = 512;

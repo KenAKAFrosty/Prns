@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::Announce;
-use crate::routing::storage::AnnounceIdHistoryView;
+use crate::routing::announce::retained::AnnounceIdHistoryView;
 use crate::units::HopCount;
 use crate::wire::TransportId;
 

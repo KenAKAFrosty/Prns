@@ -10,10 +10,10 @@ use crate::interfaces::InterfaceConfig;
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
-use crate::routing::storage::EngineStorage;
+use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
-impl<S: EngineStorage> EngineState<S> {
+impl<S: StorageLayout> EngineState<S> {
     /// Settle every tracked send whose proof deadline has passed: each gives up
     /// and closes its own kind's `Timeout`. Returns the receipt-timeout lane's
     /// new soonest deadline.

@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use crate::routing::group_keys::{GroupKey, GroupKeyColumns};
-use crate::routing::storage::ColumnsFull;
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 pub const DEFAULT_MAX_GROUP_KEYS: usize = 1024;

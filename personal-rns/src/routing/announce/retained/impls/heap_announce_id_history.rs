@@ -8,7 +8,7 @@
 use alloc::vec::Vec;
 
 use crate::routing::announce::AnnounceId;
-use crate::routing::storage::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
+use crate::routing::announce::retained::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
 
 #[derive(Debug, Default)]
 pub struct HeapAnnounceIdHistory {

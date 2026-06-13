@@ -9,7 +9,6 @@ pub mod proof;
 pub mod request_handlers;
 pub mod reverse_routes;
 pub mod routes;
-pub mod storage;
 pub mod types;
 pub mod upstream_app_destinations;
 
@@ -18,11 +17,12 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::wire::DestinationHash;
 use announce::defaults::route_expiry_millis;
 use announce::Announce;
-pub use storage::AnnounceIdHistoryView;
-use storage::{
-    AnnounceIdHistory, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
-    RetainedAppData, RouteColumns, RouteEntry,
+pub use announce::retained::AnnounceIdHistoryView;
+use crate::storage::ColumnsFull;
+use announce::retained::{
+    AnnounceIdHistory, RetainedAnnounceColumns, RetainedAnnounceEntry, RetainedAppData,
 };
+use routes::{RouteColumns, RouteEntry};
 pub use types::{
     DropCause, ExistingRoute, ForwardingRoute, NextHop, RemovedRoute, RetainedAnnounce,
     RouteRemovalCause, RouteResponsiveness, UpsertRouteOutcome,
@@ -363,10 +363,10 @@ mod tests {
     use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
     use crate::interfaces::InterfaceMode;
     use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
-    use crate::routing::storage::{
-        FixedArrayRetainedAnnounceColumns, FixedArrayRouteColumns, PackedAppDataArena,
-        TieredAnnounceIdHistory,
+    use crate::routing::announce::retained::{
+        FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
     };
+    use crate::routing::routes::FixedArrayRouteColumns;
 
     type TestRoutingTable<
         const MAX_TRACKED_DESTINATIONS: usize,
@@ -1175,10 +1175,10 @@ mod tests {
 
     #[test]
     fn cull_expired_routes_behaves_identically_on_the_heap_backend() {
-        use crate::routing::storage::{
+        use crate::routing::announce::retained::{
             HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
-            HeapRouteColumns,
         };
+        use crate::routing::routes::HeapRouteColumns;
         let mut table: RoutingTable<
             HeapRouteColumns,
             HeapRetainedAnnounceColumns,

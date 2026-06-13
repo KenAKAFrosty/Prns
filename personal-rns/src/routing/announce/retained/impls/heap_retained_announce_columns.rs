@@ -8,9 +8,10 @@ use alloc::vec::Vec;
 
 use crate::crypto::Ed25519Signature;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
-use crate::routing::storage::{
-    AppDataHandle, ColumnsFull, RetainedAnnounceColumns, RetainedAnnounceEntry,
+use crate::routing::announce::retained::{
+    AppDataHandle, RetainedAnnounceColumns, RetainedAnnounceEntry,
 };
+use crate::storage::ColumnsFull;
 
 #[derive(Debug, Default)]
 pub struct HeapRetainedAnnounceColumns {

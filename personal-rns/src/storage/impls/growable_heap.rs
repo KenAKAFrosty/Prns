@@ -14,15 +14,16 @@ use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
 use crate::routing::path_requests::seen::HeapSeenPathRequestColumns;
 use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
-use crate::routing::storage::{
-    EngineStorage, HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
-    HeapRouteColumns,
+use crate::routing::announce::retained::{
+    HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
 };
+use crate::routing::routes::HeapRouteColumns;
+use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
 
 pub struct GrowableHeap;
 
-impl EngineStorage for GrowableHeap {
+impl StorageLayout for GrowableHeap {
     type Routes = HeapRouteColumns;
     type Announces = HeapRetainedAnnounceColumns;
     type History = HeapAnnounceIdHistory;
@@ -49,19 +50,20 @@ impl EngineStorage for GrowableHeap {
 mod tests {
     use super::*;
     use crate::routing::dedup::PacketHashHistory;
-    use crate::routing::storage::{RetainedAnnounceColumns, RouteColumns};
+    use crate::routing::announce::retained::RetainedAnnounceColumns;
+    use crate::routing::routes::RouteColumns;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
     #[test]
     fn bundles_unbounded_heap_backends() {
-        let routes = <GrowableHeap as EngineStorage>::Routes::default();
-        let announces = <GrowableHeap as EngineStorage>::Announces::default();
-        let _history = <GrowableHeap as EngineStorage>::History::default();
-        let _app_data = <GrowableHeap as EngineStorage>::AppData::default();
-        let _pending = <GrowableHeap as EngineStorage>::ScheduledAnnounces::default();
+        let routes = <GrowableHeap as StorageLayout>::Routes::default();
+        let announces = <GrowableHeap as StorageLayout>::Announces::default();
+        let _history = <GrowableHeap as StorageLayout>::History::default();
+        let _app_data = <GrowableHeap as StorageLayout>::AppData::default();
+        let _pending = <GrowableHeap as StorageLayout>::ScheduledAnnounces::default();
         let upstream_app_destinations =
-            <GrowableHeap as EngineStorage>::UpstreamAppDestinations::default();
-        let packet_hashes = <GrowableHeap as EngineStorage>::PacketHashes::default();
+            <GrowableHeap as StorageLayout>::UpstreamAppDestinations::default();
+        let packet_hashes = <GrowableHeap as StorageLayout>::PacketHashes::default();
         assert_eq!(routes.capacity(), usize::MAX);
         assert_eq!(announces.capacity(), usize::MAX);
         assert_eq!(upstream_app_destinations.capacity(), usize::MAX);
