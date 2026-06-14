@@ -3,7 +3,9 @@
 //! into a bounded channel (the runner copies the request bytes, so a dispatch outlives the
 //! borrowed reaction that surfaced it), and the runner multiplexes every in-flight handler with a
 //! `FuturesUnordered`: a handler that awaits — a database round trip, an outbound HTTP call — yields
-//! and the rest keep moving. Each answer rides the auto-upgrading [`TokioCommands::respond`].
+//! and the rest keep moving. The runner grants each handler a `Vec` to fill, then ships it by move
+//! through [`TokioCommands::respond_owned`] — the auto-upgrading answer (a packet under the link
+//! MDU, a resource past it), in one copy with no clone of the body.
 //!
 //! [`Prns::serve`] is the one call an app makes: it pairs a [`Router`] with the reactor
 //! [`Prns::run`] drives, so requests are answered by the router while every other event still
@@ -19,8 +21,8 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 
 use super::{
-    InboundRequest, Message, Prns, PrnsEvent, Recipe, Responder, RouteSet, Router,
-    StartingDestination, TokioBind, TokioCommands,
+    InboundRequest, Message, Prns, PrnsEvent, Recipe, RouteSet, Router, StartingDestination,
+    TokioBind, TokioCommands,
 };
 
 /// How many requests can wait for the runner before new ones are dropped. Drop-on-full *is* the
@@ -44,9 +46,9 @@ struct RunnerRequest {
 }
 
 /// Drive `router` against the request stream until the node stops, multiplexing in-flight handlers
-/// so a slow one never blocks the rest, and issuing each `Response::Data` through `commands`.
-/// `biased` drains ready answers before accepting new work, keeping the in-flight set tight; a
-/// handler that is still awaiting simply polls `Pending` and the runner accepts more meanwhile.
+/// so a slow one never blocks the rest, and shipping each answer the handler fills through
+/// `commands`. `biased` drains ready answers before accepting new work, keeping the in-flight set
+/// tight; a handler still awaiting simply polls `Pending` and the runner accepts more meanwhile.
 async fn run_router<S, R>(
     router: Router<S, R>,
     mut requests: mpsc::Receiver<RunnerRequest>,
@@ -68,9 +70,9 @@ async fn run_router<S, R>(
     }
 }
 
-/// Route one request and issue its answer. Borrows `router` and `commands` for the life of the
-/// future, so the runner owns each once and every in-flight handler shares them — no `Arc`, no
-/// clone per request.
+/// Route one request: grant the handler a buffer to fill, then ship it. Borrows `router` and
+/// `commands` for the life of the future, so the runner owns each once and every in-flight handler
+/// shares them — no `Arc`, no clone per request.
 async fn dispatch<S, R>(router: &Router<S, R>, commands: &TokioCommands, request: RunnerRequest)
 where
     R: RouteSet<S>,
@@ -82,14 +84,9 @@ where
         request.requested_at,
         &request.data,
     );
-    if let Some(out) = router.dispatch(request.path_hash, inbound).await {
-        commands.respond(
-            Responder {
-                link_id: out.link_id,
-                request_id: out.request_id,
-            },
-            out.body,
-        );
+    let mut body = std::vec::Vec::new();
+    if let Some(responder) = router.dispatch(request.path_hash, inbound, &mut body).await {
+        commands.respond_owned(responder, body);
     }
 }
 
@@ -148,8 +145,9 @@ mod tests {
     impl RequestRoute<App> for Echo {
         const PATH: &'static str = "/echo";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle(cx: RequestCx<'_, App>) -> Response<'_> {
-            Response::Data(cx.state.body)
+        async fn handle(mut cx: RequestCx<'_, App>) -> Response {
+            let body = cx.state.body;
+            cx.reply(body)
         }
     }
 
@@ -159,35 +157,35 @@ mod tests {
         let commands = TokioCommands::over(cmd_tx);
         let router = Router::new(App { body: b"pong" }, crate::routes![Echo]);
         let (req_tx, req_rx) = mpsc::channel(8);
-        let runner = tokio::spawn(run_router(router, req_rx, commands));
 
-        req_tx
-            .send(RunnerRequest {
-                link_id: LinkId::new([7; 16]),
-                request_id: RequestId([9; 16]),
-                path_hash: RequestPathHash::of("/echo"),
-                requested_at: InstantMillis(0),
-                data: std::vec::Vec::new(),
-            })
-            .await
-            .expect("runner accepts the request");
+        let driver = async {
+            req_tx
+                .send(RunnerRequest {
+                    link_id: LinkId::new([7; 16]),
+                    request_id: RequestId([9; 16]),
+                    path_hash: RequestPathHash::of("/echo"),
+                    requested_at: InstantMillis(0),
+                    data: std::vec::Vec::new(),
+                })
+                .await
+                .expect("runner accepts the request");
 
-        let command = cmd_rx
-            .recv()
-            .await
-            .expect("the runner issues a response command");
-        match command {
-            HostCommand::RespondAny(respond) => {
-                assert_eq!(respond.data.as_slice(), b"pong");
-                assert_eq!(respond.link_id, LinkId::new([7; 16]));
-                assert_eq!(respond.request_id, RequestId([9; 16]));
+            let command = cmd_rx
+                .recv()
+                .await
+                .expect("the runner issues a response command");
+            match command {
+                HostCommand::RespondAny(respond) => {
+                    assert_eq!(respond.data.as_slice(), b"pong");
+                    assert_eq!(respond.link_id, LinkId::new([7; 16]));
+                    assert_eq!(respond.request_id, RequestId([9; 16]));
+                }
+                _ => panic!("the runner must issue its answer as RespondAny"),
             }
-            _ => panic!("the runner must issue its answer as RespondAny"),
-        }
 
-        drop(req_tx);
-        runner
-            .await
-            .expect("the runner stops cleanly when its queue closes");
+            drop(req_tx);
+        };
+
+        tokio::join!(run_router(router, req_rx, commands), driver);
     }
 }
