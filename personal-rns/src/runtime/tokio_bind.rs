@@ -12,13 +12,14 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::engine::{CommandId, EngineState, IssuedCommand};
+use crate::engine::{CloseLink, CommandId, EngineCommand, EngineState, IssuedCommand};
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, RespondAnyHostCommand,
     TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
 use super::{Bind, PrnsEvent, Responder};
@@ -69,8 +70,8 @@ impl TokioCommands {
     /// Answer a request with `body` of any length: the engine picks the rung — a single RESPONSE
     /// packet when it fits the link MDU, an outgoing resource named back to the request when it
     /// doesn't. This is the app's defer path — keep the [`Responder`] a handler hands back when it
-    /// returns `Response::None` and answer later, off the runner's task. `body` is copied; when you
-    /// already own the bytes, [`respond_owned`](Self::respond_owned) moves them. Returns `false`
+    /// returns `Err(Decline::Drop)` and answer later, off the runner's task. `body` is copied; when
+    /// you already own the bytes, [`respond_owned`](Self::respond_owned) moves them. Returns `false`
     /// once the node has stopped and the channel is closed.
     pub fn respond(&self, responder: Responder, body: &[u8]) -> bool {
         self.send_response(responder, body.to_vec().into())
@@ -80,6 +81,19 @@ impl TokioCommands {
     /// the response with no copy. Same auto-upgrade and id discipline as [`respond`](Self::respond).
     pub fn respond_owned(&self, responder: Responder, body: std::vec::Vec<u8>) -> bool {
         self.send_response(responder, body.into())
+    }
+
+    /// Sever an active link — the runner's path for a handler that returns `Err(Decline::CloseLink)`,
+    /// and usable directly to tear a link down. Queues RNS 1.3.1's `Link.teardown` (the sealed
+    /// LINKCLOSE) for the next reactor cycle. Same id discipline as [`respond`](Self::respond).
+    pub fn close_link(&self, link_id: LinkId) -> bool {
+        let id = CommandId(self.respond_ids.fetch_add(1, Ordering::Relaxed));
+        self.tx
+            .send(HostCommand::Engine(IssuedCommand {
+                id,
+                command: EngineCommand::CloseLink(CloseLink { link_id }),
+            }))
+            .is_ok()
     }
 }
 

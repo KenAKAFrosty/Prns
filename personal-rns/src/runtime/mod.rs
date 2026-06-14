@@ -15,7 +15,7 @@ pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
 pub use recipe::{Recipe, StartingDestination};
 pub use request_router::{
-    InboundRequest, RequestCx, RequestRoute, Responder, Response, ResponseSink, RoutePolicy,
+    Decline, InboundRequest, RequestCx, RequestRoute, Responder, ResponseSink, RoutePolicy,
     RouteSet, Router,
 };
 

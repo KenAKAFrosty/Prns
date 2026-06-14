@@ -21,8 +21,8 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 
 use super::{
-    InboundRequest, Message, Prns, PrnsEvent, Recipe, RouteSet, Router, StartingDestination,
-    TokioBind, TokioCommands,
+    Decline, InboundRequest, Message, Prns, PrnsEvent, Recipe, RouteSet, Router,
+    StartingDestination, TokioBind, TokioCommands,
 };
 
 /// How many requests can wait for the runner before new ones are dropped. Drop-on-full *is* the
@@ -70,9 +70,9 @@ async fn run_router<S, R>(
     }
 }
 
-/// Route one request: grant the handler a buffer to fill, then ship it. Borrows `router` and
-/// `commands` for the life of the future, so the runner owns each once and every in-flight handler
-/// shares them — no `Arc`, no clone per request.
+/// Route one request: grant the handler a buffer, then ship its answer, drop it, or sever the link
+/// per the handler's `Result`. Borrows `router` and `commands` for the life of the future, so the
+/// runner owns each once and every in-flight handler shares them — no `Arc`, no clone per request.
 async fn dispatch<S, R>(router: &Router<S, R>, commands: &TokioCommands, request: RunnerRequest)
 where
     R: RouteSet<S>,
@@ -84,9 +84,16 @@ where
         request.requested_at,
         &request.data,
     );
+    let responder = inbound.responder();
     let mut body = std::vec::Vec::new();
-    if let Some(responder) = router.dispatch(request.path_hash, inbound, &mut body).await {
-        commands.respond_owned(responder, body);
+    match router.dispatch(request.path_hash, inbound, &mut body).await {
+        Ok(()) => {
+            commands.respond_owned(responder, body);
+        }
+        Err(Decline::Drop) => {}
+        Err(Decline::CloseLink) => {
+            commands.close_link(responder.link_id);
+        }
     }
 }
 
@@ -135,7 +142,7 @@ impl Prns {
 mod tests {
     use super::*;
     use crate::reactor::impls::tokio_reactor::HostCommand;
-    use crate::runtime::{RequestCx, RequestRoute, Response, RoutePolicy};
+    use crate::runtime::{RequestCx, RequestRoute, RoutePolicy};
 
     struct App {
         body: &'static [u8],
@@ -145,9 +152,9 @@ mod tests {
     impl RequestRoute<App> for Echo {
         const PATH: &'static str = "/echo";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle(mut cx: RequestCx<'_, App>) -> Response {
+        async fn handle(mut cx: RequestCx<'_, App>) -> Result<(), Decline> {
             let body = cx.state.body;
-            cx.reply(body)
+            cx.respond(body)
         }
     }
 
@@ -186,6 +193,8 @@ mod tests {
             drop(req_tx);
         };
 
+        // join! rather than spawn: a dispatch future borrows the grant (`&mut dyn ResponseSink`),
+        // so it is not `Send` — exactly as it runs joined with the reactor under `Prns::serve`.
         tokio::join!(run_router(router, req_rx, commands), driver);
     }
 }

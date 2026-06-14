@@ -4,15 +4,19 @@
 //! to the matching route's `async fn handle` without the app ever touching `link_id`/`request_id`
 //! or the packet-vs-resource decision.
 //!
-//! Three things define a route: its `PATH` (the contract string — it never crosses the wire; both
-//! ends meet at `RequestPathHash::of(PATH)`), its `POLICY`, and its `handle`. Handlers take `&S`
+//! A route is its `PATH` (the contract string — it never crosses the wire; both ends meet at
+//! `RequestPathHash::of(PATH)`), its `POLICY` (who may ask), and its `handle`. A handler takes `&S`
 //! (shared app state — concurrency is cooperative, so mutation rides interior mutability, never a
-//! `Mutex`) and *fill* their answer into the grant the runner hands them — `cx.reply(bytes)` for a
-//! one-shot body, `cx.write(..)` chained for a built-up one — then return [`Response::Reply`]. The
-//! runtime ships what was written through the engine's auto-upgrading respond (a packet under the
-//! link MDU, a resource past it). Grant-then-fill, like the egress lanes: the runner owns the
-//! buffer, the handler fills it, and the answer reaches the wire in one copy with no per-request
-//! alloc in the handler — the single shape both the tokio heap and an embedded bounded buffer honor.
+//! `Mutex`), builds its answer however it likes — a stack buffer, a computed value, a slice of
+//! state — and hands it over with `cx.respond(bytes)`, which copies it into the runner's grant and
+//! returns `Ok(())`. The runtime ships it through the engine's auto-upgrading respond (a packet
+//! under the link MDU, a resource past it).
+//!
+//! The handler returns `Result<(), Decline>`. `Ok(())` *always* answers — even an empty body is a
+//! valid answer — so the return is the seal: the type system won't let a handler forget to answer
+//! or refuse. `Err(Decline)` is the only non-data outcome, a deliberate refusal. App-level failures
+//! do not live here; they ride the response *data* (HTTP-style), and `Decline`'s lack of any `From`
+//! impl keeps a stray `?` from coercing an ordinary error into a refusal.
 //!
 //! Composition is a `routes!` set, not a `dyn` table: each arm awaits a concrete handler future,
 //! so nothing is boxed and the whole thing stays `no_std`.
@@ -63,21 +67,23 @@ impl RoutePolicy {
     }
 }
 
-/// Whether a handler answered. The bytes themselves go into the grant via [`RequestCx::reply`] /
-/// [`RequestCx::write`]; this only says send-or-not, so it carries no lifetime. `Reply` ships
-/// whatever was written (writing nothing is a valid empty answer); `None` is a deliberate
-/// non-answer — fire-and-forget, or "I kept the [`Responder`] and will answer later".
+/// A handler's only non-data outcome: a deliberate refusal to answer. App-level failures do *not*
+/// belong here — they ride the response data (`cx.respond(error_bytes)`), HTTP-style. `Decline` is
+/// reachable only by naming it; with no `From` impls, an ordinary `?` can never coerce a database
+/// or parse error into a refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Response {
-    None,
-    Reply,
+pub enum Decline {
+    /// Send no response and leave the link open — the requester's request times out. RNS 1.3.1's
+    /// `None` return, exactly: that one request fails, the link survives for other traffic.
+    Drop,
+    /// Send no response and sever the link.
+    CloseLink,
 }
 
 /// The buffer the runner grants a handler to fill — grant-then-fill, so the handler never allocates
-/// and its bytes reach the engine in one move. `put` appends; a bounded sink (an embedded buffer)
-/// appends what fits and may drop the rest. The tokio runner grants a `Vec<u8>`; an embassy runner
-/// grants a fixed buffer. Handlers reach it only through [`RequestCx::reply`] / [`RequestCx::write`],
-/// never directly.
+/// and its bytes reach the engine in one move. `put` appends. The tokio runner grants a `Vec<u8>`;
+/// an embassy runner grants a fixed buffer. Handlers reach it only through [`RequestCx::respond`] /
+/// [`RequestCx::write`], never directly.
 pub trait ResponseSink {
     fn put(&mut self, bytes: &[u8]);
 }
@@ -138,10 +144,10 @@ impl<'a> InboundRequest<'a> {
 }
 
 /// Everything a handler needs, in one borrow: the shared app `state`, the inbound request, and the
-/// grant it fills its answer into. The single lifetime is why the handler signature elides it —
-/// `async fn handle(cx: RequestCx<'_, S>) -> Response`. Mutation of `state` rides interior
-/// mutability (the dispatch task is cooperative, so a `RefCell`/atomic suffices — never a `Mutex`);
-/// the answer rides [`reply`](Self::reply) / [`write`](Self::write), never an owned return value.
+/// grant it hands its answer to. The single lifetime is why the handler signature elides it —
+/// `async fn handle(cx: RequestCx<'_, S>) -> Result<(), Decline>`. Mutation of `state` rides
+/// interior mutability (the dispatch task is cooperative, so a `RefCell`/atomic suffices — never a
+/// `Mutex`); the answer rides [`respond`](Self::respond).
 pub struct RequestCx<'a, S> {
     pub state: &'a S,
     pub data: &'a [u8],
@@ -152,23 +158,25 @@ pub struct RequestCx<'a, S> {
 }
 
 impl<S> RequestCx<'_, S> {
-    /// Answer with `bytes` and send it — the one-shot case, equivalent to a [`write`](Self::write)
-    /// then returning [`Response::Reply`]: `cx.reply(body)`.
-    pub fn reply(&mut self, bytes: &[u8]) -> Response {
+    /// Answer with `bytes` and finish — copies them into the grant and returns `Ok(())`, so the
+    /// whole happy path is the one expression `cx.respond(data)`. An empty `bytes` is a valid empty
+    /// answer; to refuse instead, return `Err(Decline::…)`.
+    pub fn respond(&mut self, bytes: &[u8]) -> Result<(), Decline> {
         self.sink.put(bytes);
-        Response::Reply
+        Ok(())
     }
 
-    /// Append `bytes` to the answer, returning `self` so a multi-part body chains — a header then a
-    /// payload reads `cx.write(&header).reply(&body)`. Nothing is sent until the handler returns
-    /// [`Response::Reply`] (or a terminal [`reply`](Self::reply)).
+    /// Append `bytes` without finishing — for assembling a multi-part body (a header then a
+    /// payload) straight into the grant when you'd otherwise build it in your own buffer first.
+    /// Finish with a bare `Ok(())`. Most handlers never need this; reach for
+    /// [`respond`](Self::respond).
     pub fn write(&mut self, bytes: &[u8]) -> &mut Self {
         self.sink.put(bytes);
         self
     }
 
-    /// The token to answer this request later — when `handle` returns [`Response::None`] now and
-    /// the answer comes from an offloaded task.
+    /// The token to answer this request later — keep it, return `Err(Decline::Drop)` now, and
+    /// answer from another task through the platform command handle.
     #[must_use]
     pub fn responder(&self) -> Responder {
         self.responder
@@ -180,7 +188,7 @@ impl<S> RequestCx<'_, S> {
 pub trait RequestRoute<S> {
     const PATH: &'static str;
     const POLICY: RoutePolicy;
-    async fn handle(cx: RequestCx<'_, S>) -> Response;
+    async fn handle(cx: RequestCx<'_, S>) -> Result<(), Decline>;
 }
 
 /// A compile-time set of routes, produced by [`routes!`]. The registrations the recipe stands up
@@ -191,10 +199,10 @@ pub trait RequestRoute<S> {
 pub trait RouteSet<S> {
     /// `(path, policy)` per route — the recipe registers each, seeding any `AllowList`.
     const REGISTRATIONS: &'static [(&'static str, RoutePolicy)];
-    /// Run the route whose path hashes to `path_hash`, or `None` if the set doesn't match it
-    /// (a gate-admitted path the set somehow misses — with [`Self::REGISTRATIONS`] deriving the
-    /// gate, a near-dead branch).
-    async fn dispatch(cx: RequestCx<'_, S>, path_hash: RequestPathHash) -> Option<Response>;
+    /// Run the route whose path hashes to `path_hash` and return its outcome. A `path_hash` the
+    /// set doesn't carry yields `Err(Decline::Drop)` — a near-dead branch, since
+    /// [`Self::REGISTRATIONS`] *is* the gate the engine admits against.
+    async fn dispatch(cx: RequestCx<'_, S>, path_hash: RequestPathHash) -> Result<(), Decline>;
 }
 
 /// Owns the app state and a [`RouteSet`]; the app's request-handling surface. Built once with
@@ -233,27 +241,23 @@ impl<S, R: RouteSet<S>> Router<S, R> {
     }
 
     /// Route `request` to its handler, which fills its answer into `sink`. `&self`, so many requests
-    /// dispatch concurrently against shared `&S`. Returns the [`Responder`] to ship the filled
-    /// `sink` to, or `None` when the handler declined (or the set didn't match the path).
+    /// dispatch concurrently against shared `&S`. Returns the handler's outcome: `Ok(())` to ship
+    /// the filled `sink`, `Err(Decline)` to refuse (drop the request, or sever the link).
     pub async fn dispatch<'a>(
         &'a self,
         path_hash: RequestPathHash,
         request: InboundRequest<'a>,
         sink: &'a mut dyn ResponseSink,
-    ) -> Option<Responder> {
-        let responder = request.responder();
+    ) -> Result<(), Decline> {
         let cx = RequestCx {
             state: &self.state,
             data: request.data,
             requester: request.requester,
             requested_at: request.requested_at,
-            responder,
+            responder: request.responder(),
             sink,
         };
-        match R::dispatch(cx, path_hash).await {
-            Some(Response::Reply) => Some(responder),
-            Some(Response::None) | None => None,
-        }
+        R::dispatch(cx, path_hash).await
     }
 }
 
@@ -278,19 +282,17 @@ macro_rules! routes {
             async fn dispatch(
                 cx: $crate::runtime::RequestCx<'_, S>,
                 path_hash: $crate::routing::request_handlers::RequestPathHash,
-            ) -> ::core::option::Option<$crate::runtime::Response> {
+            ) -> ::core::result::Result<(), $crate::runtime::Decline> {
                 $(
                     if path_hash
                         == $crate::routing::request_handlers::RequestPathHash::of(
                             <$route as $crate::runtime::RequestRoute<S>>::PATH,
                         )
                     {
-                        return ::core::option::Option::Some(
-                            <$route as $crate::runtime::RequestRoute<S>>::handle(cx).await,
-                        );
+                        return <$route as $crate::runtime::RequestRoute<S>>::handle(cx).await;
                     }
                 )+
-                ::core::option::Option::None
+                ::core::result::Result::Err($crate::runtime::Decline::Drop)
             }
         }
         RouteSetImpl
@@ -309,8 +311,8 @@ mod tests {
     impl RequestRoute<App> for Health {
         const PATH: &'static str = "/health";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle(mut cx: RequestCx<'_, App>) -> Response {
-            cx.reply(b"ok")
+        async fn handle(mut cx: RequestCx<'_, App>) -> Result<(), Decline> {
+            cx.respond(b"ok")
         }
     }
 
@@ -318,9 +320,9 @@ mod tests {
     impl RequestRoute<App> for Greet {
         const PATH: &'static str = "/greet";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle(mut cx: RequestCx<'_, App>) -> Response {
+        async fn handle(mut cx: RequestCx<'_, App>) -> Result<(), Decline> {
             let greeting = cx.state.greeting;
-            cx.reply(greeting)
+            cx.respond(greeting)
         }
     }
 
@@ -330,15 +332,24 @@ mod tests {
     impl RequestRoute<App> for Admin {
         const PATH: &'static str = "/admin";
         const POLICY: RoutePolicy = RoutePolicy::AllowList(&[ADMIN]);
-        async fn handle(_cx: RequestCx<'_, App>) -> Response {
-            Response::None
+        async fn handle(_cx: RequestCx<'_, App>) -> Result<(), Decline> {
+            Err(Decline::CloseLink)
+        }
+    }
+
+    struct Ack;
+    impl RequestRoute<App> for Ack {
+        const PATH: &'static str = "/ack";
+        const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+        async fn handle(mut cx: RequestCx<'_, App>) -> Result<(), Decline> {
+            cx.respond(&[])
         }
     }
 
     fn bench_router() -> Router<App, impl RouteSet<App>> {
         Router::new(
             App { greeting: b"hi" },
-            crate::routes![Health, Greet, Admin],
+            crate::routes![Health, Greet, Admin, Ack],
         )
     }
 
@@ -346,10 +357,9 @@ mod tests {
     fn the_route_set_is_the_registration_set_the_recipe_stands_up() {
         let router = bench_router();
         let registrations = router.registrations();
-        assert_eq!(registrations.len(), 3);
+        assert_eq!(registrations.len(), 4);
         assert_eq!(registrations[0], ("/health", RoutePolicy::AllowAll));
         assert_eq!(registrations[2].0, "/admin");
-        // The compile-time AllowList becomes an engine AllowList plus its seed identities.
         assert_eq!(registrations[2].1.engine_policy(), RequestPolicy::AllowList);
         assert_eq!(registrations[2].1.seed_list(), &[ADMIN]);
         assert_eq!(registrations[0].1.engine_policy(), RequestPolicy::AllowAll);
@@ -358,7 +368,7 @@ mod tests {
 
     #[cfg(feature = "tokio-host")]
     #[tokio::test]
-    async fn dispatch_routes_by_path_and_fills_the_grant() {
+    async fn dispatch_routes_by_path_then_answers_or_declines() {
         let router = bench_router();
         let request = || {
             InboundRequest::new(
@@ -371,32 +381,46 @@ mod tests {
         };
 
         let mut greet = std::vec::Vec::new();
-        let answered = router
-            .dispatch(RequestPathHash::of("/greet"), request(), &mut greet)
-            .await;
-        assert!(answered.is_some());
+        assert_eq!(
+            router
+                .dispatch(RequestPathHash::of("/greet"), request(), &mut greet)
+                .await,
+            Ok(())
+        );
         assert_eq!(greet.as_slice(), b"hi");
 
         let mut health = std::vec::Vec::new();
-        let answered = router
-            .dispatch(RequestPathHash::of("/health"), request(), &mut health)
-            .await;
-        assert!(answered.is_some());
+        assert_eq!(
+            router
+                .dispatch(RequestPathHash::of("/health"), request(), &mut health)
+                .await,
+            Ok(())
+        );
         assert_eq!(health.as_slice(), b"ok");
 
-        // A route that answers `None` fills nothing and ships nothing.
-        let mut admin = std::vec::Vec::new();
-        let answered = router
-            .dispatch(RequestPathHash::of("/admin"), request(), &mut admin)
-            .await;
-        assert!(answered.is_none());
-        assert!(admin.is_empty());
+        let mut ack = std::vec::Vec::new();
+        assert_eq!(
+            router
+                .dispatch(RequestPathHash::of("/ack"), request(), &mut ack)
+                .await,
+            Ok(())
+        );
+        assert!(ack.is_empty());
 
-        // A path the set does not carry ships nothing (the gate keeps unknowns silent).
+        let mut admin = std::vec::Vec::new();
+        assert_eq!(
+            router
+                .dispatch(RequestPathHash::of("/admin"), request(), &mut admin)
+                .await,
+            Err(Decline::CloseLink)
+        );
+
         let mut miss = std::vec::Vec::new();
-        let answered = router
-            .dispatch(RequestPathHash::of("/nope"), request(), &mut miss)
-            .await;
-        assert!(answered.is_none());
+        assert_eq!(
+            router
+                .dispatch(RequestPathHash::of("/nope"), request(), &mut miss)
+                .await,
+            Err(Decline::Drop)
+        );
     }
 }
