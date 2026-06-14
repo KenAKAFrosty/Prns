@@ -207,7 +207,7 @@ mod tests {
     use super::*;
     use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder, ESC, FLAG};
     use crate::reactor::grant::{GrantConsumer, GrantProducer};
-    use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
+    use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, HostCommand, TokioGrantConsumer};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::mpsc::{self, UnboundedSender};
 
