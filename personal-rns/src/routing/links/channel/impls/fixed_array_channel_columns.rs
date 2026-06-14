@@ -9,7 +9,7 @@ use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::columns::{
-    BufferOutcome, ChannelColumns, EnsureChannelError, TxOutcome,
+    BufferOutcome, ChannelColumns, EnsureChannelError, OutstandingSend, TxOutcome,
 };
 use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::LinkId;
@@ -32,6 +32,13 @@ pub struct FixedArrayChannelColumns<
     outstanding_packet_hashes: [[PacketHash; REORDER_CAP]; SLOTS],
     outstanding_command_ids: [[CommandId; REORDER_CAP]; SLOTS],
     outstanding_sent_ats: [[InstantMillis; REORDER_CAP]; SLOTS],
+    outstanding_timeout_ats: [[InstantMillis; REORDER_CAP]; SLOTS],
+    outstanding_tries: [[u8; REORDER_CAP]; SLOTS],
+    outstanding_sequences: [[ChannelSequence; REORDER_CAP]; SLOTS],
+    outstanding_message_types: [[MessageType; REORDER_CAP]; SLOTS],
+    outstanding_body_lens: [[usize; REORDER_CAP]; SLOTS],
+    outstanding_bodies: [[[u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
+    outstanding_ivs: [[[u8; 16]; REORDER_CAP]; SLOTS],
 }
 
 impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Default
@@ -52,6 +59,13 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Def
             outstanding_packet_hashes: [[PacketHash::new([0u8; 32]); REORDER_CAP]; SLOTS],
             outstanding_command_ids: [[CommandId(0); REORDER_CAP]; SLOTS],
             outstanding_sent_ats: [[InstantMillis(0); REORDER_CAP]; SLOTS],
+            outstanding_timeout_ats: [[InstantMillis(0); REORDER_CAP]; SLOTS],
+            outstanding_tries: [[0; REORDER_CAP]; SLOTS],
+            outstanding_sequences: [[ChannelSequence(0); REORDER_CAP]; SLOTS],
+            outstanding_message_types: [[MessageType(0); REORDER_CAP]; SLOTS],
+            outstanding_body_lens: [[0; REORDER_CAP]; SLOTS],
+            outstanding_bodies: [[[0u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
+            outstanding_ivs: [[[0u8; 16]; REORDER_CAP]; SLOTS],
         }
     }
 }
@@ -68,6 +82,9 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
 
     fn index_of(&self, link: &LinkId) -> Option<usize> {
         self.link_ids[..self.len].iter().position(|id| id == link)
+    }
+    fn link_at(&self, index: usize) -> LinkId {
+        self.link_ids[index]
     }
 
     fn ensure(&mut self, link: &LinkId) -> Result<usize, EnsureChannelError> {
@@ -104,6 +121,13 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_packet_hashes.swap(index, last);
         self.outstanding_command_ids.swap(index, last);
         self.outstanding_sent_ats.swap(index, last);
+        self.outstanding_timeout_ats.swap(index, last);
+        self.outstanding_tries.swap(index, last);
+        self.outstanding_sequences.swap(index, last);
+        self.outstanding_message_types.swap(index, last);
+        self.outstanding_body_lens.swap(index, last);
+        self.outstanding_bodies.swap(index, last);
+        self.outstanding_ivs.swap(index, last);
         self.len = last;
     }
 
@@ -171,21 +195,46 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
     fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis {
         self.outstanding_sent_ats[index][sub]
     }
+    fn outstanding_timeout_at(&self, index: usize, sub: usize) -> InstantMillis {
+        self.outstanding_timeout_ats[index][sub]
+    }
+    fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
+        self.outstanding_timeout_ats[index][sub] = timeout_at;
+    }
+    fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
+        self.outstanding_tries[index][sub]
+    }
+    fn set_outstanding_tries(&mut self, index: usize, sub: usize, tries: u8) {
+        self.outstanding_tries[index][sub] = tries;
+    }
+    fn outstanding_sequence(&self, index: usize, sub: usize) -> ChannelSequence {
+        self.outstanding_sequences[index][sub]
+    }
+    fn outstanding_message_type(&self, index: usize, sub: usize) -> MessageType {
+        self.outstanding_message_types[index][sub]
+    }
+    fn outstanding_body(&self, index: usize, sub: usize) -> &[u8] {
+        &self.outstanding_bodies[index][sub][..self.outstanding_body_lens[index][sub]]
+    }
+    fn outstanding_iv(&self, index: usize, sub: usize) -> [u8; 16] {
+        self.outstanding_ivs[index][sub]
+    }
 
-    fn push_outstanding(
-        &mut self,
-        index: usize,
-        packet_hash: PacketHash,
-        command_id: CommandId,
-        sent_at: InstantMillis,
-    ) -> TxOutcome {
+    fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome {
         let count = self.outstanding_count[index];
-        if count >= REORDER_CAP {
+        if count >= REORDER_CAP || send.body.len() > MAX_PAYLOAD {
             return TxOutcome::Full;
         }
-        self.outstanding_packet_hashes[index][count] = packet_hash;
-        self.outstanding_command_ids[index][count] = command_id;
-        self.outstanding_sent_ats[index][count] = sent_at;
+        self.outstanding_packet_hashes[index][count] = send.packet_hash;
+        self.outstanding_command_ids[index][count] = send.command_id;
+        self.outstanding_sent_ats[index][count] = send.sent_at;
+        self.outstanding_timeout_ats[index][count] = send.timeout_at;
+        self.outstanding_tries[index][count] = 0;
+        self.outstanding_sequences[index][count] = send.sequence;
+        self.outstanding_message_types[index][count] = send.message_type;
+        self.outstanding_body_lens[index][count] = send.body.len();
+        self.outstanding_bodies[index][count][..send.body.len()].copy_from_slice(send.body);
+        self.outstanding_ivs[index][count] = send.iv;
         self.outstanding_count[index] = count + 1;
         TxOutcome::Tracked
     }
@@ -195,6 +244,13 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.outstanding_packet_hashes[index].swap(sub, last);
         self.outstanding_command_ids[index].swap(sub, last);
         self.outstanding_sent_ats[index].swap(sub, last);
+        self.outstanding_timeout_ats[index].swap(sub, last);
+        self.outstanding_tries[index].swap(sub, last);
+        self.outstanding_sequences[index].swap(sub, last);
+        self.outstanding_message_types[index].swap(sub, last);
+        self.outstanding_body_lens[index].swap(sub, last);
+        self.outstanding_bodies[index].swap(sub, last);
+        self.outstanding_ivs[index].swap(sub, last);
         self.outstanding_count[index] = last;
     }
 }
@@ -309,16 +365,16 @@ mod tests {
     }
 
     #[test]
-    fn outstanding_sends_track_match_by_hash_and_retire() {
+    fn outstanding_sends_track_their_resend_material_match_by_hash_and_retire() {
         let mut columns = Columns::default();
         let i = columns.ensure(&link(1)).unwrap();
         assert_eq!(columns.outstanding_count(i), 0);
         assert_eq!(
-            columns.push_outstanding(i, hash(5), CommandId(50), InstantMillis(500)),
+            columns.push_outstanding(i, outstanding(5, 50)),
             TxOutcome::Tracked
         );
         assert_eq!(
-            columns.push_outstanding(i, hash(6), CommandId(60), InstantMillis(600)),
+            columns.push_outstanding(i, outstanding(6, 60)),
             TxOutcome::Tracked
         );
         assert_eq!(columns.outstanding_count(i), 2);
@@ -330,6 +386,17 @@ mod tests {
             .unwrap();
         assert_eq!(columns.outstanding_command_id(i, sub), CommandId(50));
         assert_eq!(columns.outstanding_sent_at(i, sub), InstantMillis(500));
+        assert_eq!(columns.outstanding_tries(i, sub), 0);
+        assert_eq!(columns.outstanding_sequence(i, sub), ChannelSequence(5));
+        assert_eq!(columns.outstanding_message_type(i, sub), MessageType(0x07));
+        assert_eq!(columns.outstanding_body(i, sub), b"body");
+        assert_eq!(columns.outstanding_iv(i, sub), [5u8; 16]);
+
+        columns.set_outstanding_tries(i, sub, 2);
+        columns.set_outstanding_timeout_at(i, sub, InstantMillis(9_999));
+        assert_eq!(columns.outstanding_tries(i, sub), 2);
+        assert_eq!(columns.outstanding_timeout_at(i, sub), InstantMillis(9_999));
+
         columns.retire_outstanding(i, sub);
         assert_eq!(columns.outstanding_count(i), 1);
         assert_eq!(columns.outstanding_packet_hashes(i), &[hash(6)]);
@@ -341,12 +408,12 @@ mod tests {
         let i = columns.ensure(&link(1)).unwrap();
         for n in 0..4u8 {
             assert_eq!(
-                columns.push_outstanding(i, hash(n), CommandId(u64::from(n)), InstantMillis(0)),
+                columns.push_outstanding(i, outstanding(n, u64::from(n))),
                 TxOutcome::Tracked
             );
         }
         assert_eq!(
-            columns.push_outstanding(i, hash(99), CommandId(99), InstantMillis(0)),
+            columns.push_outstanding(i, outstanding(99, 99)),
             TxOutcome::Full,
             "REORDER_CAP bounds the outstanding ring too",
         );
@@ -354,5 +421,18 @@ mod tests {
 
     fn hash(byte: u8) -> PacketHash {
         PacketHash::new([byte; 32])
+    }
+
+    fn outstanding(byte: u8, command: u64) -> OutstandingSend<'static> {
+        OutstandingSend {
+            packet_hash: hash(byte),
+            command_id: CommandId(command),
+            sequence: ChannelSequence(u16::from(byte)),
+            message_type: MessageType(0x07),
+            body: b"body",
+            iv: [byte; 16],
+            sent_at: InstantMillis(command * 10),
+            timeout_at: InstantMillis(command * 10 + 1_000),
+        }
     }
 }

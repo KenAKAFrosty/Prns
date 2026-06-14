@@ -19,7 +19,7 @@ use crate::wire::{
     TransportId, WireContext, WirePacketHeader, BROADCAST_MTU,
 };
 
-pub(crate) type Cap = TestFixedStorage<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>;
+pub(crate) type Cap = TestFixedStorage<64, 64, 4096, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 8>;
 
 pub(crate) const TEST_ENTROPY: JitterSeed = JitterSeed(0xCAFE_F00D_DEAD_BEEF);
 pub(crate) const TEST_ANNOUNCE_ENTROPY: AnnounceEntropy =

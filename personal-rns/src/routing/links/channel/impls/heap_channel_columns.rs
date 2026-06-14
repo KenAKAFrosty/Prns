@@ -9,7 +9,7 @@ use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::columns::{
-    BufferOutcome, ChannelColumns, EnsureChannelError, TxOutcome,
+    BufferOutcome, ChannelColumns, EnsureChannelError, OutstandingSend, TxOutcome,
 };
 use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::LinkId;
@@ -26,6 +26,12 @@ struct OutstandingRing {
     packet_hashes: Vec<PacketHash>,
     command_ids: Vec<CommandId>,
     sent_ats: Vec<InstantMillis>,
+    timeout_ats: Vec<InstantMillis>,
+    tries: Vec<u8>,
+    sequences: Vec<ChannelSequence>,
+    message_types: Vec<MessageType>,
+    bodies: Vec<Vec<u8>>,
+    ivs: Vec<[u8; 16]>,
 }
 
 #[derive(Debug, Default)]
@@ -47,6 +53,9 @@ impl ChannelColumns for HeapChannelColumns {
 
     fn index_of(&self, link: &LinkId) -> Option<usize> {
         self.link_ids.iter().position(|id| id == link)
+    }
+    fn link_at(&self, index: usize) -> LinkId {
+        self.link_ids[index]
     }
 
     fn ensure(&mut self, link: &LinkId) -> Result<usize, EnsureChannelError> {
@@ -128,18 +137,42 @@ impl ChannelColumns for HeapChannelColumns {
     fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis {
         self.outstanding[index].sent_ats[sub]
     }
+    fn outstanding_timeout_at(&self, index: usize, sub: usize) -> InstantMillis {
+        self.outstanding[index].timeout_ats[sub]
+    }
+    fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
+        self.outstanding[index].timeout_ats[sub] = timeout_at;
+    }
+    fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
+        self.outstanding[index].tries[sub]
+    }
+    fn set_outstanding_tries(&mut self, index: usize, sub: usize, tries: u8) {
+        self.outstanding[index].tries[sub] = tries;
+    }
+    fn outstanding_sequence(&self, index: usize, sub: usize) -> ChannelSequence {
+        self.outstanding[index].sequences[sub]
+    }
+    fn outstanding_message_type(&self, index: usize, sub: usize) -> MessageType {
+        self.outstanding[index].message_types[sub]
+    }
+    fn outstanding_body(&self, index: usize, sub: usize) -> &[u8] {
+        &self.outstanding[index].bodies[sub]
+    }
+    fn outstanding_iv(&self, index: usize, sub: usize) -> [u8; 16] {
+        self.outstanding[index].ivs[sub]
+    }
 
-    fn push_outstanding(
-        &mut self,
-        index: usize,
-        packet_hash: PacketHash,
-        command_id: CommandId,
-        sent_at: InstantMillis,
-    ) -> TxOutcome {
+    fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome {
         let ring = &mut self.outstanding[index];
-        ring.packet_hashes.push(packet_hash);
-        ring.command_ids.push(command_id);
-        ring.sent_ats.push(sent_at);
+        ring.packet_hashes.push(send.packet_hash);
+        ring.command_ids.push(send.command_id);
+        ring.sent_ats.push(send.sent_at);
+        ring.timeout_ats.push(send.timeout_at);
+        ring.tries.push(0);
+        ring.sequences.push(send.sequence);
+        ring.message_types.push(send.message_type);
+        ring.bodies.push(send.body.to_vec());
+        ring.ivs.push(send.iv);
         TxOutcome::Tracked
     }
 
@@ -148,6 +181,12 @@ impl ChannelColumns for HeapChannelColumns {
         ring.packet_hashes.swap_remove(sub);
         ring.command_ids.swap_remove(sub);
         ring.sent_ats.swap_remove(sub);
+        ring.timeout_ats.swap_remove(sub);
+        ring.tries.swap_remove(sub);
+        ring.sequences.swap_remove(sub);
+        ring.message_types.swap_remove(sub);
+        ring.bodies.swap_remove(sub);
+        ring.ivs.swap_remove(sub);
     }
 }
 

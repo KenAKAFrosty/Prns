@@ -29,6 +29,22 @@ pub enum TxOutcome {
     Full,
 }
 
+/// Everything a channel keeps about a sent message so it can match the proof
+/// that acks it and re-seal an identical packet if it has to retransmit: the
+/// envelope's sequence/type/body and the IV it was sealed under reproduce the
+/// exact ciphertext (and so the same packet hash), while `timeout_at` arms the
+/// retry watchdog.
+pub struct OutstandingSend<'a> {
+    pub packet_hash: PacketHash,
+    pub command_id: CommandId,
+    pub sequence: ChannelSequence,
+    pub message_type: MessageType,
+    pub body: &'a [u8],
+    pub iv: [u8; 16],
+    pub sent_at: InstantMillis,
+    pub timeout_at: InstantMillis,
+}
+
 /// The channel table had no slot for a new link's channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnsureChannelError {
@@ -46,6 +62,9 @@ pub trait ChannelColumns {
 
     /// The slot index of `link`'s channel, if it has one.
     fn index_of(&self, link: &LinkId) -> Option<usize>;
+    /// The link the channel at `index` belongs to — the timeout watchdog scans by
+    /// index and needs the link back to re-seal and to tear down.
+    fn link_at(&self, index: usize) -> LinkId;
     /// `link`'s channel slot, creating it (next-expected `0`, empty buffer) on
     /// first use. Returns the existing slot if one is already open.
     fn ensure(&mut self, link: &LinkId) -> Result<usize, EnsureChannelError>;
@@ -85,16 +104,22 @@ pub trait ChannelColumns {
     fn outstanding_packet_hashes(&self, index: usize) -> &[PacketHash];
     /// The command id of the outstanding send at sub-index `sub`.
     fn outstanding_command_id(&self, index: usize, sub: usize) -> CommandId;
-    /// When the outstanding send at sub-index `sub` was transmitted.
+    /// When the outstanding send at sub-index `sub` was first transmitted.
     fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis;
+    /// When the outstanding send at sub-index `sub` next times out.
+    fn outstanding_timeout_at(&self, index: usize, sub: usize) -> InstantMillis;
+    fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis);
+    /// How many times the outstanding send at sub-index `sub` has been retransmitted.
+    fn outstanding_tries(&self, index: usize, sub: usize) -> u8;
+    fn set_outstanding_tries(&mut self, index: usize, sub: usize, tries: u8);
+    /// The envelope sequence/type/body and IV of the outstanding send at sub-index
+    /// `sub`, enough to re-seal a byte-identical retransmission.
+    fn outstanding_sequence(&self, index: usize, sub: usize) -> ChannelSequence;
+    fn outstanding_message_type(&self, index: usize, sub: usize) -> MessageType;
+    fn outstanding_body(&self, index: usize, sub: usize) -> &[u8];
+    fn outstanding_iv(&self, index: usize, sub: usize) -> [u8; 16];
     /// Track a freshly sent message awaiting its proof.
-    fn push_outstanding(
-        &mut self,
-        index: usize,
-        packet_hash: PacketHash,
-        command_id: CommandId,
-        sent_at: InstantMillis,
-    ) -> TxOutcome;
+    fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome;
     /// Remove the outstanding send at sub-index `sub` (its proof arrived).
     fn retire_outstanding(&mut self, index: usize, sub: usize);
 }

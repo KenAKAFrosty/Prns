@@ -13,7 +13,7 @@ use crate::engine::commands::{
 };
 use crate::engine::{EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
-use crate::routing::links::channel::columns::{ChannelColumns, TxOutcome};
+use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{write_envelope, ENVELOPE_HEADER_LEN};
 use crate::routing::links::data::{write_link_packet, LinkDataError};
 use crate::routing::links::table::LinkPhase;
@@ -30,6 +30,19 @@ pub const CHANNEL_TX_WINDOW: usize = 2;
 /// The scratch an outbound envelope needs before sealing: the 6-byte header plus
 /// the largest body a channel message carries at the broadcast MTU.
 const CHANNEL_PLAINTEXT_CAP: usize = ENVELOPE_HEADER_LEN + MAX_SEND_CHANNEL_BODY_LEN;
+
+/// RNS 1.3.1 `Channel._max_tries`: how many times a send is retransmitted before
+/// the link is torn down for being unresponsive.
+pub const CHANNEL_MAX_TRIES: u8 = 5;
+
+/// How long a send on its `tries`-th attempt waits for its proof before the
+/// watchdog retransmits — an integer reformulation of RNS Channel's
+/// `_get_packet_timeout_time` (local pacing, no parity cost): a base of
+/// `max(rtt × 2.5, 25 ms)` widened with each retry.
+pub fn channel_retry_timeout_ms(rtt_ms: u64, tries: u8) -> u64 {
+    let base = rtt_ms.saturating_mul(5).saturating_div(2).max(25);
+    base.saturating_mul(u64::from(tries) + 1)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SendChannelDispatch {
@@ -102,9 +115,13 @@ impl<S: StorageLayout> EngineState<S> {
         let plaintext_len = write_envelope(send.message_type, sequence, &send.body, &mut envelope)
             .map_err(|_| SendChannelWriteError::Frame(LinkDataError::PayloadTooLong))?;
 
-        let Some(LinkPhase::Active { key, mtu, .. }) = self.links.phase_for(&send.link_id) else {
+        let Some(LinkPhase::Active {
+            key, mtu, rtt_ms, ..
+        }) = self.links.phase_for(&send.link_id)
+        else {
             return Err(SendChannelWriteError::LinkVanished);
         };
+        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(*rtt_ms, 0)));
         let wire_len = write_link_packet(
             &send.link_id,
             key,
@@ -122,7 +139,20 @@ impl<S: StorageLayout> EngineState<S> {
             WireContext::Channel,
             &buf[HEADER_MIN_LEN..wire_len],
         );
-        match self.channels.push_outstanding(index, packet_hash, id, now) {
+        let outcome = self.channels.push_outstanding(
+            index,
+            OutstandingSend {
+                packet_hash,
+                command_id: id,
+                sequence,
+                message_type: send.message_type,
+                body: &send.body,
+                iv: *iv,
+                sent_at: now,
+                timeout_at,
+            },
+        );
+        match outcome {
             TxOutcome::Tracked => {
                 self.channels.set_next_tx_sequence(index, sequence.next());
                 Ok(SendChannelDispatch { wire_len })
