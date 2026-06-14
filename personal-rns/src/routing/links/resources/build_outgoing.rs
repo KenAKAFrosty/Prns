@@ -92,12 +92,10 @@ pub fn build_outgoing_resource(
         if hashmap_has_collision(&hashmap[..hashmap_len]) {
             continue;
         }
-        let hash = ResourceHash::new(crate::crypto::sha256_chunks(&[
-            plaintext,
-            salt_nonce.as_bytes(),
-        ]));
-        let expected_proof =
-            ResourceProof::new(crate::crypto::sha256_chunks(&[plaintext, hash.as_bytes()]));
+        let (hash, expected_proof) =
+            crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes());
+        let hash = ResourceHash::new(hash);
+        let expected_proof = ResourceProof::new(expected_proof);
         return Ok(BuiltResource {
             sealed_transfer_len,
             part_count,

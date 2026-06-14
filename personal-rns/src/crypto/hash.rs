@@ -14,6 +14,18 @@ pub fn sha256_chunks(chunks: &[&[u8]]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+pub fn sha256_prefix_and_digest_suffix(prefix: &[u8], first_suffix: &[u8]) -> ([u8; 32], [u8; 32]) {
+    let mut base = Sha256::new();
+    base.update(prefix);
+
+    let mut first = base.clone();
+    first.update(first_suffix);
+    let first = first.finalize().into();
+
+    base.update(first);
+    (first, base.finalize().into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -24,5 +36,13 @@ mod tests {
         let chunked = sha256_chunks(&[b"personal", b"-", b"reticulum"]);
         assert_eq!(joined, chunked);
         assert_eq!(sha256_chunks(&[b"personal-reticulum"]), joined);
+    }
+
+    #[test]
+    fn prefix_and_digest_suffix_hashes_match_independent_hashes() {
+        let (first, second) = sha256_prefix_and_digest_suffix(b"shared payload", b" salt");
+
+        assert_eq!(first, sha256_chunks(&[b"shared payload", b" salt"]));
+        assert_eq!(second, sha256_chunks(&[b"shared payload", &first]));
     }
 }

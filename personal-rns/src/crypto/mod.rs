@@ -17,7 +17,7 @@ mod token;
 pub use exchange::{
     x25519_diffie_hellman, x25519_public_key, X25519PublicKey, X25519SecretKey, X25519SharedSecret,
 };
-pub use hash::{sha256, sha256_chunks};
+pub use hash::{sha256, sha256_chunks, sha256_prefix_and_digest_suffix};
 pub use kdf::{hkdf_sha256, hkdf_sha256_into};
 pub use mac::{hmac_sha256, hmac_sha256_verify};
 pub use sign::{

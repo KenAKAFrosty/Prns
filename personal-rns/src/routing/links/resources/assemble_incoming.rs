@@ -1,7 +1,7 @@
 //! The receiver's mirror of [`build_outgoing`](super::build_outgoing).
 //! RNS 1.3.1 `Resource.receive_part`/`assemble`/`prove`
 
-use crate::crypto::{sha256_chunks, CryptoError};
+use crate::crypto::{sha256_prefix_and_digest_suffix, CryptoError};
 use crate::routing::links::resources::{
     map_hash, ResourceHash, ResourceProof, SaltNonce, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
@@ -47,11 +47,11 @@ pub fn verify_and_prove(
     salt_nonce: &SaltNonce,
     advertised: &ResourceHash,
 ) -> Result<ResourceProof, VerifyResourceError> {
-    let hash = sha256_chunks(&[plaintext, salt_nonce.as_bytes()]);
+    let (hash, proof) = sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes());
     if &hash != advertised.as_bytes() {
         return Err(VerifyResourceError::HashMismatch);
     }
-    Ok(ResourceProof::new(sha256_chunks(&[plaintext, &hash])))
+    Ok(ResourceProof::new(proof))
 }
 
 /// RNS 1.3.1 `Resource.receive_part`: a part arrives carrying no index, so
