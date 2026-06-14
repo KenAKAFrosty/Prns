@@ -84,17 +84,53 @@ mod tests {
             "EngineState<Esp32S3<Global>> = {} bytes SRAM-resident (host 64-bit; the cold bulk lives behind boxes in PSRAM and is not counted here)",
             core::mem::size_of::<EngineState<L>>()
         );
-        println!("  Routes        {:>6} B (index inline; rows boxed)", core::mem::size_of::<<L as StorageLayout>::Routes>());
-        println!("  Announces     {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::Announces>());
-        println!("  History       {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::History>());
-        println!("  AppData       {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::AppData>());
-        println!("  ScheduledAnn  {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::ScheduledAnnounces>());
-        println!("  AnnounceRates {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::AnnounceRates>());
-        println!("  ReverseRoutes {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::ReverseRoutes>());
-        println!("  PacketHashes  {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::PacketHashes>());
-        println!("  Receipts      {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::Receipts>());
-        println!("  Links         {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::Links>());
-        println!("  OutResources  {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::OutgoingResources>());
-        println!("  InResources   {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::IncomingResources>());
+        println!(
+            "  Routes        {:>6} B (index inline; rows boxed)",
+            core::mem::size_of::<<L as StorageLayout>::Routes>()
+        );
+        println!(
+            "  Announces     {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::Announces>()
+        );
+        println!(
+            "  History       {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::History>()
+        );
+        println!(
+            "  AppData       {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::AppData>()
+        );
+        println!(
+            "  ScheduledAnn  {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::ScheduledAnnounces>()
+        );
+        println!(
+            "  AnnounceRates {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::AnnounceRates>()
+        );
+        println!(
+            "  ReverseRoutes {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::ReverseRoutes>()
+        );
+        println!(
+            "  PacketHashes  {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::PacketHashes>()
+        );
+        println!(
+            "  Receipts      {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::Receipts>()
+        );
+        println!(
+            "  Links         {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::Links>()
+        );
+        println!(
+            "  OutResources  {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::OutgoingResources>()
+        );
+        println!(
+            "  InResources   {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::IncomingResources>()
+        );
     }
 }

@@ -8,7 +8,9 @@ use allocator_api2::alloc::{Allocator, Global};
 use allocator_api2::boxed::Box;
 use allocator_api2::vec::Vec;
 
-use crate::routing::announce::retained::{AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome};
+use crate::routing::announce::retained::{
+    AnnounceIdHistory, AnnounceIdHistoryView, RememberOutcome,
+};
 use crate::routing::announce::AnnounceId;
 
 fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
@@ -48,7 +50,11 @@ impl<
     fn default() -> Self {
         let zero = AnnounceId::from_wire([0u8; 10]);
         Self {
-            floor: filled([zero; FLOOR_PER_DESTINATION], MAX_DESTINATIONS, A::default()),
+            floor: filled(
+                [zero; FLOOR_PER_DESTINATION],
+                MAX_DESTINATIONS,
+                A::default(),
+            ),
             floor_len: filled(0u8, MAX_DESTINATIONS, A::default()),
             overflow: filled(zero, OVERFLOW_CAPACITY, A::default()),
             overflow_len: filled(0u8, MAX_DESTINATIONS, A::default()),

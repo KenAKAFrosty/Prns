@@ -194,10 +194,15 @@ mod tests {
     fn a_full_table_still_terminates_an_absent_lookup() {
         let mut columns = Routes8::default();
         for n in 0..8u32 {
-            columns.push(dest_n(n), row(1, n as u64, iface(n as u8))).unwrap();
+            columns
+                .push(dest_n(n), row(1, n as u64, iface(n as u8)))
+                .unwrap();
         }
         assert_eq!(columns.len(), 8);
-        assert_eq!(columns.push(dest_n(8), row(1, 8, iface(8))), Err(ColumnsFull));
+        assert_eq!(
+            columns.push(dest_n(8), row(1, 8, iface(8))),
+            Err(ColumnsFull)
+        );
         assert_eq!(columns.index_of(&dest_n(8)), None);
         assert_eq!(columns.index_of(&dest_n(12345)), None);
     }
@@ -222,7 +227,9 @@ mod tests {
     fn churn_keeps_every_surviving_key_findable() {
         let mut columns = Routes8::default();
         for n in 0..8u32 {
-            columns.push(dest_n(n), row(1, n as u64, iface(n as u8))).unwrap();
+            columns
+                .push(dest_n(n), row(1, n as u64, iface(n as u8)))
+                .unwrap();
         }
         for _ in 0..4 {
             let victim = columns.index_of(&dest_n(0)).unwrap();
@@ -240,7 +247,9 @@ mod tests {
         type Routes4096 = FixedHeapRouteColumns<4096, { route_index_buckets(4096) }>;
         let mut columns = Routes4096::default();
         for n in 0..4096u32 {
-            columns.push(dest_n(n), row(1, n as u64, iface(n as u8))).unwrap();
+            columns
+                .push(dest_n(n), row(1, n as u64, iface(n as u8)))
+                .unwrap();
         }
         assert_eq!(columns.len(), 4096);
         assert_eq!(columns.index_of(&dest_n(4095)), Some(4095));

@@ -57,7 +57,8 @@ impl<const BUCKETS: usize> LemireIndex<BUCKETS> {
     }
 
     pub fn get<K: IndexKey>(&self, target: &K, keys: &[K]) -> Option<usize> {
-        self.position(target, keys).map(|pos| self.slots[pos] as usize)
+        self.position(target, keys)
+            .map(|pos| self.slots[pos] as usize)
     }
 
     pub fn contains<K: IndexKey>(&self, target: &K, keys: &[K]) -> bool {
