@@ -28,11 +28,8 @@ pub trait Bind {
     type Storage: StorageLayout;
 
     /// Wire this binding's interfaces, lanes, and channels, then drive the assembled engine on
-    /// the platform reactor until the node stops (it does not). Each `Journaled` the reactor
-    /// emits is forwarded to `on_event`.
-    async fn drive(
-        self,
-        engine: EngineState<Self::Storage>,
-        on_event: impl FnMut(PrnsEvent<'_>),
-    ) -> !;
+    /// the platform reactor until the node stops (the reactor loops indefinitely, so in practice
+    /// this never returns). Each engine event is mapped to a [`PrnsEvent`] and forwarded to
+    /// `on_event`.
+    async fn drive(self, engine: EngineState<Self::Storage>, on_event: impl FnMut(PrnsEvent<'_>));
 }

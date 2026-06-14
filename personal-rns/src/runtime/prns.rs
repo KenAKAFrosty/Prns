@@ -11,10 +11,11 @@ use super::{Bind, PrnsEvent, Recipe, StartingDestination};
 pub struct Prns;
 
 impl Prns {
-    /// Stand up a node from `recipe` and run it until it stops (it does not). Every engine event
-    /// is mapped to a [`PrnsEvent`] and handed to `on_event`; the app issues commands through the
-    /// sender it kept when it built the recipe's [`Bind`].
-    pub async fn run<'a, B, D>(recipe: Recipe<B, D>, on_event: impl FnMut(PrnsEvent<'_>)) -> !
+    /// Stand up a node from `recipe` and run it until it stops (the reactor loops indefinitely,
+    /// so in practice this never returns). Every engine event is mapped to a [`PrnsEvent`] and
+    /// handed to `on_event`; the app issues commands through the sender it kept when it built the
+    /// recipe's [`Bind`].
+    pub async fn run<'a, B, D>(recipe: Recipe<B, D>, on_event: impl FnMut(PrnsEvent<'_>))
     where
         B: Bind,
         D: IntoIterator<Item = StartingDestination<'a>>,

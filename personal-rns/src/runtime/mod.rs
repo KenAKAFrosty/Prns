@@ -13,3 +13,8 @@ pub use bind::Bind;
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
 pub use recipe::{Recipe, StartingDestination};
+
+#[cfg(feature = "tokio-host")]
+mod tokio_bind;
+#[cfg(feature = "tokio-host")]
+pub use tokio_bind::{TokioBind, TokioCommands};
