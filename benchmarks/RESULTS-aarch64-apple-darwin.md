@@ -45,6 +45,60 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 - **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
 - **go-reticulum** — Go, Go stdlib crypto/ed25519 · [https://github.com/svanichkin/go-reticulum](https://github.com/svanichkin/go-reticulum) @ `06621cc` · MIT
 
+## resource-local-wifi (v1)
+
+Sequential resource transfers (20-120 KB) through a shaped pipe at a local-WiFi wire: 25 Mbps with 3 ms one-way latency - the hop between a phone and the node across the room. Fast enough that the engine is visible again, slow enough that the wire still meters it.
+
+Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+
+| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
+|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 708 / 708 | 24 msg/s | 1.6 MB/s | 42 / 60 ms | 12.4 / 11.4 MiB | _pending_ |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 654 / 654 | 22 msg/s | 1.5 MB/s | 43 / 70 ms | 50.8 / 8.0 MiB | _pending_ |
+| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 649 / 649 | 22 msg/s | 1.4 MB/s | 42 / 70 ms | 8.4 / 45.3 MiB | _pending_ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 632 / 632 | 21 msg/s | 1.4 MB/s | 44 / 73 ms | 50.5 / 45.2 MiB | _pending_ |
+
+**Implementations.**
+
+- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
+- **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
+
+## resource-local-wifi-bulk (v1)
+
+Sequential maximum-size resource transfers through a shaped pipe at a local-WiFi wire: 25 Mbps with 3 ms one-way latency. This is the high-speed bulk-resource canary: one large sealed stream sliced into parts, pulled by the receiver inside its AIMD window, and hash-proved whole before the next resource starts.
+
+Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+
+| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
+|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 83 / 83 | 3 msg/s | 2.9 MB/s | 364 / 367 ms | 28.7 / 25.2 MiB | _pending_ |
+| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 77 / 77 | 3 msg/s | 2.7 MB/s | 388 / 440 ms | 12.7 / 53.7 MiB | _pending_ |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 76 / 76 | 3 msg/s | 2.6 MB/s | 391 / 437 ms | 60.0 / 9.7 MiB | _pending_ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 75 / 75 | 2 msg/s | 2.6 MB/s | 396 / 446 ms | 59.8 / 53.9 MiB | _pending_ |
+
+**Implementations.**
+
+- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
+- **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
+
+## resource-transfer (v1)
+
+Sequential maximum-size resource transfers over one link for a fixed wall-time - the bulk mechanism: one sealed stream sliced into parts, pulled by the receiver inside its AIMD window, proved whole by hash. Goodput counts settled transfers' payload bytes; the protocol itself hash-verifies every byte that arrives.
+
+Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+
+| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
+|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 4,311 / 4,311 | 144 msg/s | 150.7 MB/s | 6 / 7 ms | 27.8 / 25.6 MiB | _pending_ |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 3,520 / 3,520 | 117 msg/s | 123.0 MB/s | 8 / 12 ms | 427.9 / 10.2 MiB | _pending_ |
+| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 3,151 / 3,151 | 105 msg/s | 110.1 MB/s | 9 / 10 ms | 12.8 / 146.5 MiB | _pending_ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 2,824 / 2,824 | 94 msg/s | 98.7 MB/s | 11 / 12 ms | 345.9 / 133.9 MiB | _pending_ |
+
+**Implementations.**
+
+- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
+- **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
+
 ## single-firehose (v2)
 
 A ProveAll destination saturated with windowed SINGLE packets for a fixed wall-time: sustained one-shot message throughput, goodput, and settlement latency from the protocol's own proofs. No link - singles are the protocol's native shape for high-volume small one-shots, each proof carrying the RTT.
@@ -54,7 +108,6 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
 | rns-cr 0.1.0 → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 7,972 / 7,972 | 266 msg/s | 59 kB/s | 1 / 3 ms | 31.0 / 8.0 MiB | 0.24 mJ |
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 405,393 / 405,393 | 13.5k msg/s | 3.0 MB/s | 1 / 2 ms | 14.0 / 28.5 MiB | 0.56 mJ |
 | Prns → Leviculum 0.6.3 | <img src="assets/check.svg" width="14" alt="conformant" /> 377,951 / 377,951 | 12.6k msg/s | 2.8 MB/s | 1 / 2 ms | 13.3 / 14.8 MiB | 0.60 mJ |
 | go-reticulum → Leviculum 0.6.3 | <img src="assets/check.svg" width="14" alt="conformant" /> 499,205 / 499,205 | 16.6k msg/s | 3.7 MB/s | 0 / 0 ms | 65.6 / 14.9 MiB | 0.75 mJ |
 | go-reticulum → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 305,407 / 305,407 | 10.2k msg/s | 2.2 MB/s | 0 / 0 ms | 45.2 / 23.3 MiB | 0.86 mJ |
@@ -69,6 +122,7 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 32,188 / 32,188 | 1.1k msg/s | 236 kB/s | 5 / 25 ms | 47.5 / 9.2 MiB | 7.22 mJ |
 | RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/check.svg" width="14" alt="conformant" /> 25,429 / 25,429 | 847 msg/s | 186 kB/s | 11 / 28 ms | 47.1 / 22.2 MiB | 8.58 mJ |
 | RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 28,327 / 28,327 | 944 msg/s | 208 kB/s | 8 / 26 ms | 47.1 / 48.5 MiB | 9.22 mJ |
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 69,958 / 69,958 | 14.0k msg/s | 3.1 MB/s | 1 / 2 ms | 9.5 / 8.9 MiB | _pending_ |
 | rns-cr 0.1.0 → go-reticulum | <img src="assets/check.svg" width="14" alt="conformant" /> 7,489 / 7,489 | 250 msg/s | 55 kB/s | 1 / 4 ms | 30.6 / 21.3 MiB | _pending_ |
 | go-reticulum → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 26,496 / 26,544 · 32 timed out | 757 msg/s | 166 kB/s | 0 / 0 ms | 22.8 / 22.5 MiB | 0.08 mJ |
 | Prns → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 71,783 / 71,831 · 32 timed out | 2.1k msg/s | 451 kB/s | 1 / 1 ms | 9.0 / 28.5 MiB | 0.57 mJ |

@@ -702,6 +702,16 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         device_id: stamp.device_id,
         submitter_id: stamp.submitter_id,
     };
+    let elapsed_seconds = field(&result, "elapsed_ms")
+        .map(|ms| ms / 1_000.0)
+        .filter(|seconds| *seconds > 0.0);
+    let delivered_per_sec = field(&result, "delivered_per_sec")
+        .or_else(|| field(&result, "requests_per_sec"))
+        .or_else(|| field(&result, "cycles_per_sec"))
+        .or_else(|| elapsed_seconds.map(|seconds| delivered / seconds));
+    let rtt_p50_ms = field(&result, "rtt_p50_ms").or_else(|| field(&result, "transfer_p50_ms"));
+    let rtt_p99_ms = field(&result, "rtt_p99_ms").or_else(|| field(&result, "transfer_p99_ms"));
+
     let mut rows = vec![
         row(
             Axis::Conformance,
@@ -721,10 +731,7 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Throughput,
             "delivered_per_sec",
-            field(&result, "delivered_per_sec")
-                .or_else(|| field(&result, "requests_per_sec"))
-                .or_else(|| field(&result, "cycles_per_sec"))
-                .filter(|_| !died),
+            delivered_per_sec.filter(|_| !died),
             "msgs/s",
         ),
         row(
@@ -736,13 +743,13 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Latency,
             "rtt_p50_ms",
-            field(&result, "rtt_p50_ms").filter(|_| !died),
+            rtt_p50_ms.filter(|_| !died),
             "ms",
         ),
         row(
             Axis::Latency,
             "rtt_p99_ms",
-            field(&result, "rtt_p99_ms").filter(|_| !died),
+            rtt_p99_ms.filter(|_| !died),
             "ms",
         ),
         row(

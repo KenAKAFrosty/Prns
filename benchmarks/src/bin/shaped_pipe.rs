@@ -10,9 +10,10 @@
 //! the protocol's overhead ratio, measured where it can't lie. Forwarding happens in
 //! 64-byte slices with individual release times: a real wire delivers a clump's leading
 //! frame after only its own airtime, so chunk-atomic delivery would invent a convoy
-//! penalty the physics doesn't charge — slices grow with the rate (one millisecond of
-//! airtime, 64 B to 2 KiB) since sub-millisecond granularity buys nothing once the fixed
-//! latency dominates. The release schedule is absolute — each slice's
+//! penalty the physics doesn't charge — slices grow with the rate (about four milliseconds of
+//! airtime, 64 B to 64 KiB) since sub-millisecond sleeps collapse into scheduler granularity
+//! on high-rate pipes and silently meter the benchmark below the configured wire rate. The
+//! release schedule is absolute — each slice's
 //! due time advances by exact airtime, the clock only re-clamps to now when the source
 //! went idle, and backpressure is the bounded queue — so timer rounding delays a write
 //! without ever stealing channel throughput.
@@ -58,9 +59,11 @@ async fn main() {
     let b_to_a = Arc::new(AtomicU64::new(0));
     loop {
         let (inbound, _) = listener.accept().await.expect("accepts");
-        let outbound = TcpStream::connect(target.as_str())
-            .await
-            .expect("reaches the target");
+        let Ok(outbound) = TcpStream::connect(target.as_str()).await else {
+            eprintln!("pipe target closed; exiting");
+            drop(inbound);
+            break;
+        };
         inbound.set_nodelay(true).ok();
         outbound.set_nodelay(true).ok();
         let (in_read, in_write) = inbound.into_split();
@@ -108,7 +111,7 @@ async fn pump(
         let _ = writer.shutdown().await;
     });
 
-    let mut buffer = [0u8; 2048];
+    let mut buffer = [0u8; 65_536];
     let mut channel_free_at = tokio::time::Instant::now();
     'session: loop {
         let read = match reader.read(&mut buffer).await {
@@ -117,7 +120,7 @@ async fn pump(
         };
         counter.fetch_add(read as u64, Ordering::Relaxed);
         channel_free_at = channel_free_at.max(tokio::time::Instant::now());
-        let slice_len = (rate_bps as usize / 8_000).clamp(64, 2048);
+        let slice_len = (rate_bps as usize / 2_000).clamp(64, 65_536);
         for slice in buffer[..read].chunks(slice_len) {
             let airtime = Duration::from_secs_f64(slice.len() as f64 * 8.0 / rate_bps as f64);
             channel_free_at += airtime;

@@ -496,8 +496,8 @@ def respond_resource(name, block, ready_addr):
 
 def initiate_resource(name, block, profile, duration):
     """The measuring end: one link, then maximum-size resources back to back
-    until the wall-time elapses — incompressible payload so auto-compress
-    keeps the full stream on the wire."""
+    until the wall-time elapses — incompressible payload with compression work
+    disabled, so the measurement is the resource/link machinery."""
     start_reticulum(block)
 
     heard = {"hash": None, "identity": None}
@@ -541,7 +541,7 @@ def initiate_resource(name, block, profile, duration):
         state["sent"] += 1
         size = sizes.next_len()
         transfer_started = time.monotonic()
-        RNS.Resource(scratch[:size], link, callback=callback)
+        RNS.Resource(scratch[:size], link, auto_compress=False, callback=callback)
         if not concluded.wait(120):
             state["failures"] += 1
             break
@@ -868,7 +868,7 @@ def initiate_churn(name, block, profile, duration):
                 outcome["status"] = resource.status
                 concluded.set()
 
-            RNS.Resource(scratch[:size], link, callback=callback)
+            RNS.Resource(scratch[:size], link, auto_compress=False, callback=callback)
             if concluded.wait(30):
                 moved = outcome["status"] == RNS.Resource.COMPLETE
 

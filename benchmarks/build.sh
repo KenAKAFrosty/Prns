@@ -8,6 +8,8 @@ export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 source "$HERE/external/lib.sh"
+source "$HERE/host-rustflags.sh"
+append_benchmark_host_rustflags
 
 echo "== Prns (orchestrator + scenario_node + renderer) =="
 ( cd "$HERE" && cargo build --quiet --release \

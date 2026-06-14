@@ -14,13 +14,15 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ORCH="$HERE/target/release/orchestrate"
+source "$HERE/host-rustflags.sh"
+append_benchmark_host_rustflags
 
 # Build our own bins as the invoking user. Under sudo the binaries are already built —
 # building as root would scribble root-owned artifacts into target/ (and rebuild deps under
 # /var/root). So the energy run only measures; the build happens in your own shell.
 if [ "$(id -u)" -ne 0 ]; then
   cargo build --release --quiet --manifest-path "$HERE/Cargo.toml" \
-    --bin orchestrate --bin scenario_node
+    --bin orchestrate --bin scenario_node --bin shaped_pipe
 fi
 if [ ! -x "$ORCH" ]; then
   echo "orchestrate is not built — run \`cargo build --release\` as your user (not root) first." >&2
@@ -30,6 +32,8 @@ fi
 # The roster. Phase 2 extends these lists as each external port's interop node lands.
 INTEROP_SCENARIOS=(single-firehose link-firehose-small-payload)
 INTEROP_IMPLS=(self reference go-reticulum leviculum rns-cr lxmf-rs)
+RESOURCE_SCENARIOS=(resource-local-wifi resource-local-wifi-bulk)
+RESOURCE_IMPLS=(self reference)
 
 # DURATION_MS overrides every scenario's wall-time for a quick smoke pass. Funnelled through
 # one helper so an empty override never expands an empty array — macOS ships bash 3.2, where
@@ -46,6 +50,16 @@ for scenario in "${INTEROP_SCENARIOS[@]}"; do
   for initiator in "${INTEROP_IMPLS[@]}"; do
     for responder in "${INTEROP_IMPLS[@]}"; do
       echo "== interop $scenario : $initiator -> $responder =="
+      run_orch "$scenario" --initiator "$initiator" --responder "$responder" \
+        || echo "  (failed: $scenario $initiator -> $responder)"
+    done
+  done
+done
+
+for scenario in "${RESOURCE_SCENARIOS[@]}"; do
+  for initiator in "${RESOURCE_IMPLS[@]}"; do
+    for responder in "${RESOURCE_IMPLS[@]}"; do
+      echo "== resource $scenario : $initiator -> $responder =="
       run_orch "$scenario" --initiator "$initiator" --responder "$responder" \
         || echo "  (failed: $scenario $initiator -> $responder)"
     done

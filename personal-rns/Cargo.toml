@@ -70,9 +70,9 @@ serde_json = { workspace = true, optional = true }
 
 # Crypto: no_std, no internal RNG (entropy is supplied as data by the host),
 # so these must build alloc-free
-sha2 = { version = "0.10", default-features = false }
-hmac = { version = "0.12", default-features = false }
-hkdf = { version = "0.12", default-features = false }
+sha2 = { version = "0.11", default-features = false }
+hmac = { version = "0.13", default-features = false }
+hkdf = { version = "0.13", default-features = false }
 aes = { version = "0.8", default-features = false }
 cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["zeroize", "fast"] }
