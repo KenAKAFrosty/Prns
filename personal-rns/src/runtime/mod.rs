@@ -1,0 +1,15 @@
+//! The high-level Prns runtime: declare a [`Recipe`] (identity, transport role, starting
+//! destinations, and a platform [`Bind`]) and `Prns::run` stands the node up on the reactor.
+//! This is the consumer-facing layer every app sits on — Hopspot, the benchmarks, future apps —
+//! revived on top of the current reactor + `StorageLayout`. The platform-neutral assembly lives
+//! in `prns.rs`; the one place embassy and tokio diverge is the [`Bind`] seam.
+
+mod bind;
+mod event;
+mod prns;
+mod recipe;
+
+pub use bind::Bind;
+pub use event::PrnsEvent;
+pub use prns::Prns;
+pub use recipe::{Announce, Recipe, StartingDestination, Transport};
