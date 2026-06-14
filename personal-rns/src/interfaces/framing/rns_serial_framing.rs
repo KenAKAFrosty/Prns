@@ -29,6 +29,31 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     2 + 2 * payload_len
 }
 
+#[cfg(target_pointer_width = "64")]
+fn find_special(haystack: &[u8]) -> Option<usize> {
+    const ONES: u128 = 0x0101_0101_0101_0101_0101_0101_0101_0101;
+    const HIGHS: u128 = 0x8080_8080_8080_8080_8080_8080_8080_8080;
+    const FLAG_REP: u128 = (FLAG as u128) * ONES;
+    const ESC_REP: u128 = (ESC as u128) * ONES;
+
+    let (chunks, _) = haystack.as_chunks::<16>();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let word = u128::from_le_bytes(*chunk);
+        let f = word ^ FLAG_REP;
+        let e = word ^ ESC_REP;
+        let marks = ((f.wrapping_sub(ONES) & !f) | (e.wrapping_sub(ONES) & !e)) & HIGHS;
+        if marks != 0 {
+            return Some(chunk_index * 16 + (marks.trailing_zeros() / 8) as usize);
+        }
+    }
+    let scanned = chunks.len() * 16;
+    haystack[scanned..]
+        .iter()
+        .position(|&byte| byte == FLAG || byte == ESC)
+        .map(|offset| scanned + offset)
+}
+
+#[cfg(not(target_pointer_width = "64"))]
 fn find_special(haystack: &[u8]) -> Option<usize> {
     const ONES: u64 = 0x0101_0101_0101_0101;
     const HIGHS: u64 = 0x8080_8080_8080_8080;
