@@ -883,7 +883,7 @@ async fn initiate(
                     failure_streak = 0;
                     delivered += 1;
                     delivered_bytes += size;
-                    rtts.push(receipt.rtt_ms);
+                    rtts.push(receipt.rtt.millis());
                 }
                 Err(_) => {
                     timeouts += 1;
@@ -1065,7 +1065,7 @@ async fn initiate_link(
                     failure_streak = 0;
                     delivered += 1;
                     delivered_bytes += size;
-                    rtts.push(receipt.rtt_ms);
+                    rtts.push(receipt.rtt.millis());
                 }
                 Err(_) => {
                     timeouts += 1;
@@ -1207,7 +1207,7 @@ async fn initiate_channel(
                     sent += 1;
                     delivered += 1;
                     delivered_bytes += size;
-                    rtts.push(receipt.rtt_ms);
+                    rtts.push(receipt.rtt.millis());
                 }
                 Err(SendChannelFailure::WindowFull) => {}
                 Err(_) => {
@@ -1605,7 +1605,7 @@ async fn initiate_request(
                     Ok(receipt) => {
                         failure_streak = 0;
                         delivered += 1;
-                        rtts.push(receipt.rtt_ms);
+                        rtts.push(receipt.rtt.millis());
                     }
                     Err(_) => {
                         timeouts += 1;

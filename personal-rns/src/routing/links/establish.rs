@@ -1317,7 +1317,9 @@ mod tests {
             journaled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Ok(Delivered { rtt_ms: 200 })),
+                Settlement::SendLink(Ok(Delivered {
+                    rtt: Rtt::from_millis(200)
+                })),
             )],
             "the receipt settles the send with the proof's round trip",
         );
@@ -1702,7 +1704,9 @@ mod tests {
             settled,
             std::vec![(
                 CommandId(9),
-                Settlement::SendLink(Ok(crate::engine::Delivered { rtt_ms: 400 })),
+                Settlement::SendLink(Ok(crate::engine::Delivered {
+                    rtt: Rtt::from_millis(400),
+                })),
             )],
             "the proof crossed two hops and settled the send",
         );
@@ -2082,7 +2086,9 @@ mod tests {
             concluded,
             std::vec![(
                 CommandId(22),
-                Settlement::SendRequest(Ok(Delivered { rtt_ms: 300 })),
+                Settlement::SendRequest(Ok(Delivered {
+                    rtt: Rtt::from_millis(300)
+                })),
             )],
             "the response settles the request with the measured round trip",
         );

@@ -1241,7 +1241,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
             delivered: Delivered {
-                rtt_ms: arrived_at.0.saturating_sub(proven.sent_at.0),
+                rtt: Rtt::measured_between(proven.sent_at, arrived_at),
             },
             link_id,
             request_id,

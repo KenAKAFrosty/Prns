@@ -219,6 +219,7 @@ impl<S: StorageLayout> Bind for TokioBind<S> {
 mod tests {
     use super::*;
     use crate::engine::MAX_SEND_SINGLE_PLAINTEXT_LEN;
+    use crate::units::Rtt;
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -265,13 +266,17 @@ mod tests {
         };
         let settled = Journaled::CommandSettled {
             id: issued.id,
-            settlement: Settlement::SendSingle(Ok(Delivered { rtt_ms: 7 })),
+            settlement: Settlement::SendSingle(Ok(Delivered {
+                rtt: Rtt::from_millis(7),
+            })),
         };
         assert!(intercept_settlement(&pending, settled).is_none());
 
         assert_eq!(
             send.await.expect("the send task joins"),
-            Ok(Delivered { rtt_ms: 7 }),
+            Ok(Delivered {
+                rtt: Rtt::from_millis(7)
+            }),
         );
     }
 
@@ -280,7 +285,9 @@ mod tests {
         let pending: PendingSettlements = Mutex::new(HashMap::new());
         let settled = Journaled::CommandSettled {
             id: CommandId(7),
-            settlement: Settlement::SendSingle(Ok(Delivered { rtt_ms: 1 })),
+            settlement: Settlement::SendSingle(Ok(Delivered {
+                rtt: Rtt::from_millis(1),
+            })),
         };
         assert!(intercept_settlement(&pending, settled).is_some());
     }
