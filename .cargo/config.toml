@@ -1,0 +1,7 @@
+# Enlarge the stack of the threads the test harness spawns. Under `giga-links` the link MTU is
+# 512 KiB (see routing/links/mod.rs), so a fixed-storage `EngineState` is several megabytes; a
+# unit test that builds one on the stack overflows the default 2 MiB test-thread stack. This
+# only touches processes cargo itself runs (tests, examples, `cargo run`) — a released binary,
+# built and launched without cargo's environment, is unaffected.
+[env]
+RUST_MIN_STACK = "268435456"
