@@ -18,3 +18,8 @@ pub use recipe::{Recipe, StartingDestination};
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{TokioBind, TokioCommands};
+
+#[cfg(feature = "embassy-contract")]
+mod embassy_bind;
+#[cfg(feature = "embassy-contract")]
+pub use embassy_bind::EmbassyBind;
