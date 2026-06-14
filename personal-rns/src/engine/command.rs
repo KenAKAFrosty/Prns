@@ -1,14 +1,14 @@
 use crate::engine::{
+    AllowRequesterFailure, CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError,
+    RespondFailure, SendChannelError, SendChannelFailure, SendLinkError, SendLinkFailure,
+    SendRequestError, SendRequestFailure, SetResourceStrategyFailure,
+};
+use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
     EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, InstantMillis,
     IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RatchetEntropy,
     RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
-};
-use crate::engine::{
-    CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError, RespondFailure,
-    SendChannelError, SendChannelFailure, SendLinkError, SendLinkFailure, SendRequestError,
-    SendRequestFailure, SetResourceStrategyFailure,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
@@ -542,6 +542,20 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::SetResourceStrategy(Err(
                         SetResourceStrategyFailure::Rejected(error),
                     )),
+                }));
+            }
+            CommandOutcome::RequesterAllowed { id } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::AllowRequester(Ok(())),
+                }));
+            }
+            CommandOutcome::AllowRequesterRejected { id, error } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
+                        error,
+                    ))),
                 }));
             }
             CommandOutcome::EstablishLinkRejected { id, error } => {

@@ -3,6 +3,7 @@
 //! engine core; other registration kinds may earn their own homes later.
 
 use crate::crypto::ratchets::TrackRatchetsError;
+use crate::engine::commands::{AllowRequester, AllowRequesterError, CommandId, CommandOutcome};
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
@@ -169,12 +170,98 @@ impl<S: StorageLayout> EngineState<S> {
         self.request_handlers
             .disallow(destination, &RequestPathHash::of(path), identity)
     }
+
+    /// [`allow_requester`](Self::allow_requester) as a settling command: the runtime allow-list
+    /// path the typed request router issues, keyed by the already-hashed path so it carries no
+    /// string over the command channel. Settles `NoSuchHandler` (no such registered handler) or
+    /// `AllowListFull`, mirroring the direct method's errors.
+    pub(crate) fn ingest_allow_requester(
+        &mut self,
+        id: CommandId,
+        allow: AllowRequester,
+    ) -> CommandOutcome {
+        match self
+            .request_handlers
+            .allow(&allow.destination, &allow.path_hash, allow.identity)
+        {
+            Ok(()) => CommandOutcome::RequesterAllowed { id },
+            Err(RequestHandlerError::NoSuchHandler) => CommandOutcome::AllowRequesterRejected {
+                id,
+                error: AllowRequesterError::NoSuchHandler,
+            },
+            Err(RequestHandlerError::AllowListFull) => CommandOutcome::AllowRequesterRejected {
+                id,
+                error: AllowRequesterError::AllowListFull,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::test_support::*;
+
+    #[test]
+    fn the_allow_requester_command_opens_the_list_gate_for_one_peer() {
+        let mut state = personal_node_announcer();
+        let node = state.held_identity_hashes()[0];
+        let destination = state
+            .register_single_destination(
+                &node,
+                "bench",
+                &["query"],
+                b"",
+                ProofStrategy::ProveAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .expect("registers the bench destination");
+        state
+            .register_request_handler(&destination, "/q", RequestPolicy::AllowList)
+            .expect("registers the list handler");
+
+        let path_hash = RequestPathHash::of("/q");
+        let peer = IdentityHash::new([0x7A; 16]);
+        assert!(
+            !state
+                .request_handlers
+                .permits(&destination, &path_hash, Some(&peer)),
+            "an empty list admits no one",
+        );
+
+        assert_eq!(
+            state.ingest_allow_requester(
+                CommandId(1),
+                AllowRequester {
+                    destination,
+                    path_hash,
+                    identity: peer,
+                },
+            ),
+            CommandOutcome::RequesterAllowed { id: CommandId(1) },
+        );
+        assert!(
+            state
+                .request_handlers
+                .permits(&destination, &path_hash, Some(&peer)),
+            "the command admitted the peer to the gate",
+        );
+
+        assert_eq!(
+            state.ingest_allow_requester(
+                CommandId(2),
+                AllowRequester {
+                    destination,
+                    path_hash: RequestPathHash::of("/unregistered"),
+                    identity: peer,
+                },
+            ),
+            CommandOutcome::AllowRequesterRejected {
+                id: CommandId(2),
+                error: AllowRequesterError::NoSuchHandler,
+            },
+        );
+    }
 
     #[test]
     fn re_registering_the_announced_name_is_idempotent() {

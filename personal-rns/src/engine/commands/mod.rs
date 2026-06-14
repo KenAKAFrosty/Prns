@@ -50,6 +50,7 @@ pub enum EngineCommand {
     Respond(Respond),
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
+    AllowRequester(AllowRequester),
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -158,6 +159,13 @@ pub enum CommandOutcome {
     SetResourceStrategyRejected {
         id: CommandId,
         error: SetResourceStrategyError,
+    },
+    RequesterAllowed {
+        id: CommandId,
+    },
+    AllowRequesterRejected {
+        id: CommandId,
+        error: AllowRequesterError,
     },
     OwesLinkClose {
         id: CommandId,
@@ -428,6 +436,7 @@ pub enum Settlement {
     SendResource(Result<(), SendResourceFailure>),
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
     SendChannel(Result<Delivered, SendChannelFailure>),
+    AllowRequester(Result<(), AllowRequesterFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -514,6 +523,27 @@ pub enum SetResourceStrategyFailure {
     Rejected(SetResourceStrategyError),
 }
 
+/// RNS 1.3.1 `Destination.register_request_handler(..., allowed_list=…)` mutated while the node
+/// runs: admit one identified peer to a destination's `AllowList` request handler. A route's
+/// compile-time list seeds this at registration; this command adds to it afterward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllowRequester {
+    pub destination: DestinationHash,
+    pub path_hash: RequestPathHash,
+    pub identity: IdentityHash,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllowRequesterError {
+    NoSuchHandler,
+    AllowListFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllowRequesterFailure {
+    Rejected(AllowRequesterError),
+}
+
 /// Why a `send_resource` never started: the link, the register, or the build
 /// itself refused. Unlike the queueable commands this settles straight from
 /// the borrow-taking entry point — the payload never rides a command.
@@ -572,7 +602,8 @@ impl Settleable for AnnounceNow {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -599,7 +630,8 @@ impl Settleable for SendGroup {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -626,7 +658,8 @@ impl Settleable for SendSingle {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -653,7 +686,8 @@ impl Settleable for RequestPath {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -682,7 +716,8 @@ impl Settleable for EstablishLink {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -709,7 +744,8 @@ impl Settleable for SendLink {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -736,7 +772,8 @@ impl Settleable for Identify {
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -795,7 +832,8 @@ impl Settleable for CloseLink {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -822,7 +860,8 @@ impl Settleable for SetResourceStrategy {
             | Settlement::Respond(_)
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::AllowRequester(_) => None,
         }
     }
 }
@@ -849,7 +888,36 @@ impl Settleable for SendChannel {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::AllowRequester(_) => None,
+        }
+    }
+}
+
+impl Settleable for AllowRequester {
+    type Success = ();
+    type Failure = AllowRequesterFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::AllowRequester(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), AllowRequesterFailure>> {
+        match settlement {
+            Settlement::AllowRequester(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -884,6 +952,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
+            EngineCommand::AllowRequester(allow) => self.ingest_allow_requester(id, allow),
         }
     }
 
