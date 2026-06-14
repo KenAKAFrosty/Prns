@@ -9,9 +9,6 @@ use crate::engine::{
     CommandId, Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
     ProofRequest, WakeSchedules,
 };
-use crate::routing::links::request::RequestId;
-use crate::routing::links::resources::ResourceHash;
-use crate::routing::links::LinkId;
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
@@ -24,6 +21,9 @@ use crate::reactor::driver::{
 use crate::reactor::grant::{FrameSlot, GrantConsumer, GrantProducer};
 use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
+use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::ResourceHash;
+use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
 pub struct TokioHost {

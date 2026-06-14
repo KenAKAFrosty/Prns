@@ -1,6 +1,9 @@
 use crate::crypto::ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
 use crate::routing::announce::rate_limit::HeapAnnounceRateColumns;
+use crate::routing::announce::retained::{
+    HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
+};
 use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
@@ -14,12 +17,9 @@ use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
 use crate::routing::path_requests::seen::HeapSeenPathRequestColumns;
 use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
-use crate::routing::announce::retained::{
-    HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
-};
 use crate::routing::routes::HeapRouteColumns;
-use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
+use crate::storage::StorageLayout;
 
 pub struct GrowableHeap;
 
@@ -49,8 +49,8 @@ impl StorageLayout for GrowableHeap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routing::dedup::PacketHashHistory;
     use crate::routing::announce::retained::RetainedAnnounceColumns;
+    use crate::routing::dedup::PacketHashHistory;
     use crate::routing::routes::RouteColumns;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 

@@ -15,8 +15,8 @@ use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::proof::{
     ProofObligation, ProofRequest, IMPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
 };
-use crate::storage::StorageLayout;
 use crate::routing::{RemovedRoute, RouteRemovalCause};
+use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {

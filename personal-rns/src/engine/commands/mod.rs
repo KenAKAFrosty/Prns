@@ -18,8 +18,8 @@ use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::LinkId;
-use crate::units::HopCount;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::units::HopCount;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
@@ -752,9 +752,7 @@ impl Settleable for SetResourceStrategy {
         EngineCommand::SetResourceStrategy(self)
     }
 
-    fn from_settlement(
-        settlement: Settlement,
-    ) -> Option<Result<(), SetResourceStrategyFailure>> {
+    fn from_settlement(settlement: Settlement) -> Option<Result<(), SetResourceStrategyFailure>> {
         match settlement {
             Settlement::SetResourceStrategy(result) => Some(result),
             Settlement::AnnounceNow(_)
@@ -800,9 +798,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
-            EngineCommand::SetResourceStrategy(set) => {
-                self.ingest_set_resource_strategy(id, set)
-            }
+            EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
         }
     }
 
@@ -1051,8 +1047,12 @@ mod tests {
 
         assert_eq!(verb.into_command(), EngineCommand::RequestPath(verb));
         assert_eq!(
-            RequestPath::from_settlement(Settlement::RequestPath(Ok(PathFound { hops: crate::units::HopCount(2) }))),
-            Some(Ok(PathFound { hops: crate::units::HopCount(2) })),
+            RequestPath::from_settlement(Settlement::RequestPath(Ok(PathFound {
+                hops: crate::units::HopCount(2)
+            }))),
+            Some(Ok(PathFound {
+                hops: crate::units::HopCount(2)
+            })),
         );
         assert_eq!(
             RequestPath::from_settlement(Settlement::AnnounceNow(Ok(()))),

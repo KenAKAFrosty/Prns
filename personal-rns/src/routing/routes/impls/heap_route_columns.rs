@@ -17,9 +17,9 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::storage::ColumnsFull;
 use crate::routing::routes::{RouteColumns, RouteEntry};
 use crate::routing::{NextHop, RouteResponsiveness};
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 const EMPTY: usize = usize::MAX;
@@ -310,14 +310,14 @@ mod tests {
     fn the_index_stays_consistent_through_many_inserts_and_removes() {
         let mut columns = HeapRouteColumns::default();
         let mut live: std::vec::Vec<u32> = std::vec::Vec::new();
-        let mut rng = 0x1234_5678_9ABC_DEFu64;
+        let mut rng = 0x0123_4567_89AB_CDEFu64;
         let mut next_id = 0u32;
 
         for _ in 0..1_000 {
             rng = rng
                 .wrapping_mul(6364136223846793005)
                 .wrapping_add(1442695040888963407);
-            let insert = live.len() < 2 || (rng >> 33) % 3 != 0;
+            let insert = live.len() < 2 || !(rng >> 33).is_multiple_of(3);
             if insert {
                 let id = next_id;
                 next_id += 1;

@@ -39,10 +39,10 @@ use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
-use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, UpsertRouteOutcome};
+use crate::storage::StorageLayout;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
@@ -991,9 +991,7 @@ impl<S: StorageLayout> EngineState<S> {
             let default_strategy = self
                 .upstream_app_destinations
                 .default_resource_strategy(&destination);
-            let _ = self
-                .links
-                .set_resource_strategy(&link_id, default_strategy);
+            let _ = self.links.set_resource_strategy(&link_id, default_strategy);
         }
         IngestPacketOutcome::LinkActivated { link_id, rtt_ms }
     }
@@ -1887,8 +1885,8 @@ mod tests {
     use crate::identity::IdentitySigner;
     use crate::routing::announce::derive_destination_hash;
     use crate::routing::delivery::{Delivery, PlainDelivery, SingleDelivery};
-    use crate::storage::TestFixedStorage;
     use crate::routing::upstream_app_destinations::ProofStrategy;
+    use crate::storage::TestFixedStorage;
 
     #[test]
     fn a_path_request_for_a_local_destination_owes_an_answer() {
@@ -2213,7 +2211,7 @@ mod tests {
             ..routable_descriptor(requester)
         }];
         let mut wire = path_request_wire(cached);
-        relay.ingest_packet(
+        let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: requester,
@@ -2232,7 +2230,7 @@ mod tests {
     fn a_flood_schedule_supersedes_a_directed_answer_for_the_same_destination() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
-        relay.ingest_packet(
+        let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0xA1),
@@ -2270,7 +2268,7 @@ mod tests {
         ];
 
         let mut wire = path_request_wire(cached);
-        relay.ingest_packet(
+        let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: requester,
@@ -3853,8 +3851,9 @@ mod tests {
     #[test]
     fn an_announce_whose_app_data_can_never_fit_is_ignored() {
         let mut raw = hx(RAW_ANNOUNCE);
-        let mut state =
-            EngineState::<TestFixedStorage<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
+        let mut state = EngineState::<
+            TestFixedStorage<4, 64, 8, 4, 512, 8, 8, 128, 8, 8, 8, 8, 16, 16>,
+        >::default();
 
         let out = state.ingest_packet(
             InboundPacket {

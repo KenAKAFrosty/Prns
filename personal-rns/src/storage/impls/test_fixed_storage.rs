@@ -1,6 +1,9 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
 use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
+use crate::routing::announce::retained::{
+    FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
+};
 use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
@@ -14,12 +17,9 @@ use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
-use crate::routing::announce::retained::{
-    FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
-};
 use crate::routing::routes::FixedArrayRouteColumns;
-use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
+use crate::storage::StorageLayout;
 
 pub struct TestFixedStorage<
     const MAX_TRACKED_DESTINATIONS: usize,
@@ -116,10 +116,10 @@ impl<
 mod tests {
     use super::*;
     use crate::crypto::ratchets::SelfRatchetColumns;
+    use crate::routing::announce::retained::RetainedAnnounceColumns;
     use crate::routing::dedup::PacketHashHistory;
     use crate::routing::delivery::receipts::ReceiptColumns;
     use crate::routing::links::table::LinkColumns;
-    use crate::routing::announce::retained::RetainedAnnounceColumns;
     use crate::routing::routes::RouteColumns;
     use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 

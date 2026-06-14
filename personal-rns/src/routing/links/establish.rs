@@ -16,9 +16,9 @@ use crate::routing::links::table::{
     InitiatedLink, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
-use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::NextHop;
+use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
@@ -2817,4 +2817,3 @@ mod tests {
         assert_eq!(state.links.len(), 1, "the original establishment stands");
     }
 }
-

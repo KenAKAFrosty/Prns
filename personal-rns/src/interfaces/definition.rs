@@ -6,11 +6,23 @@ use crate::interfaces::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterfaceKind<'a> {
-    Auto { group: Option<&'a str> },
-    TcpClient { target: &'a str },
-    TcpServer { listen: &'a str },
-    Udp { listen: &'a str, forward: Option<&'a str> },
-    Serial { device: &'a str, baud: u32 },
+    Auto {
+        group: Option<&'a str>,
+    },
+    TcpClient {
+        target: &'a str,
+    },
+    TcpServer {
+        listen: &'a str,
+    },
+    Udp {
+        listen: &'a str,
+        forward: Option<&'a str>,
+    },
+    Serial {
+        device: &'a str,
+        baud: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +94,10 @@ mod tests {
         assert_eq!(view.mode, InterfaceMode::Full);
         assert_eq!(view.bitrate_bps, None);
         assert_eq!(view.hardware_mtu, None);
-        assert_eq!(view.announce_bandwidth_cap, AnnounceBandwidthCap::RNS_DEFAULT);
+        assert_eq!(
+            view.announce_bandwidth_cap,
+            AnnounceBandwidthCap::RNS_DEFAULT
+        );
     }
 
     #[test]

@@ -1,16 +1,17 @@
 //! Heap-backed, growable retained-announce columns (the typical std/alloc backend).
 //!
-//! The announce-coherent twin of [`HeapRouteColumns`](super::HeapRouteColumns),
+//! The announce-coherent twin of
+//! [`HeapRouteColumns`](crate::routing::routes::HeapRouteColumns),
 //! one `Vec` per column, pushed in lockstep so slot indices stay synchronized.
 //! `capacity()` is `usize::MAX`; `push` is infallible.
 
 use alloc::vec::Vec;
 
 use crate::crypto::Ed25519Signature;
-use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::announce::retained::{
     AppDataHandle, RetainedAnnounceColumns, RetainedAnnounceEntry,
 };
+use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::storage::ColumnsFull;
 
 #[derive(Debug, Default)]

@@ -7,8 +7,8 @@ use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{
     CulledReceipt, ExpiredReceipt, OutstandingReceipt, ReceiptKind,
 };
-use crate::storage::StorageLayout;
 use crate::routing::NextHop;
+use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WireContext,
     WirePacketHeader,

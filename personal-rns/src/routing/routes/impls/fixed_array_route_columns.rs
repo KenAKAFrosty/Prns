@@ -1,8 +1,8 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
-use crate::storage::ColumnsFull;
 use crate::routing::routes::{RouteColumns, RouteEntry};
 use crate::routing::{NextHop, RouteResponsiveness};
+use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
 /// `PartialEq` is structural — every slot compares, including unused tail

@@ -4,10 +4,10 @@
 
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
-use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::routing::announce::retained::{
     AppDataHandle, RetainedAnnounceColumns, RetainedAnnounceEntry,
 };
+use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey};
 use crate::storage::ColumnsFull;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

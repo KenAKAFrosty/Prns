@@ -87,7 +87,7 @@ const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peers", "Channel"
 const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peer", "Drop", "Back"];
 
 /// What interface a card represents — the single source for its icon. Add a
-/// variant (and its `match` arm in [`draw_interface_icon`]) as new interface
+/// variant (and its `match` arm in `draw_interface_icon`) as new interface
 /// kinds land; never a wildcard, so the compiler flags the missing glyph.
 #[derive(Clone, Copy)]
 pub enum CardKind {
@@ -872,7 +872,8 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
                 color,
             );
         }
-        //WIP NEEDS REVIEW
+        // TCP: a two-way exchange — a right-arrow over a left-arrow for the
+        // reliable bidirectional stream.
         CardKind::Tcp => {
             draw_pattern_colored(
                 display,

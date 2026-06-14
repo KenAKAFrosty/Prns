@@ -99,8 +99,10 @@ impl<State: Default> ResourceColumns<State> for HeapResourceColumns<State> {
         self.timeout_ats.push(None);
         self.states.push(state);
         self.transfers.push(vec![0u8; HEAP_TRANSFER_CAPACITY]);
-        self.part_names
-            .push(vec![[0u8; MAP_HASH_LEN]; max_part_count(HEAP_TRANSFER_CAPACITY)]);
+        self.part_names.push(vec![
+            [0u8; MAP_HASH_LEN];
+            max_part_count(HEAP_TRANSFER_CAPACITY)
+        ]);
         self.part_flags
             .push(vec![false; max_part_count(HEAP_TRANSFER_CAPACITY)]);
         Ok(self.link_ids.len() - 1)

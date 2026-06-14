@@ -24,14 +24,14 @@ use crate::routing::links::resources::control::{
     parse_cancel_plaintext, write_part_request_plaintext, write_proof_plaintext,
     PROOF_PLAINTEXT_LEN,
 };
-use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::table::IncomingResourceState;
+use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
     resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy,
     ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN, MAX_RETRIES,
     PART_TIMEOUT_FACTOR_AFTER_RTT, PER_RETRY_DELAY_MS, RATE_FAST_BYTES_PER_SECOND,
-    RATE_VERY_SLOW_BYTES_PER_SECOND, RETRY_GRACE_MS, VERY_SLOW_RATE_THRESHOLD,
-    WINDOW_FLEXIBILITY, WINDOW_MAX, WINDOW_MAX_VERY_SLOW,
+    RATE_VERY_SLOW_BYTES_PER_SECOND, RETRY_GRACE_MS, VERY_SLOW_RATE_THRESHOLD, WINDOW_FLEXIBILITY,
+    WINDOW_MAX, WINDOW_MAX_VERY_SLOW,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -726,8 +726,8 @@ impl<S: StorageLayout> EngineState<S> {
         self.incoming_resources.remove(link_id, hash);
     }
 
-    /// Drain both registers' due deadlines — the [`DueLane::ResourceDeadlines`]
-    /// arm.
+    /// Drain both registers' due deadlines — the
+    /// [`crate::engine::DueLane::ResourceDeadlines`] arm.
     pub fn fire_due_resource_deadlines<F>(
         &mut self,
         now: InstantMillis,
@@ -790,7 +790,9 @@ fn part_round_deadline(
             .saturating_mul(time_of_flight_ms)
             .saturating_add(hmu_wait_ms)
     } else {
-        state.part_timeout_factor.saturating_mul(sdu_bits.saturating_mul(3_000) / eifr)
+        state
+            .part_timeout_factor
+            .saturating_mul(sdu_bits.saturating_mul(3_000) / eifr)
     };
     InstantMillis(
         now.0
@@ -1761,7 +1763,11 @@ mod cancel_tests {
     use crate::routing::links::resources::RESOURCE_HASH_LEN;
     use crate::wire::BROADCAST_MTU;
 
-    fn four_part_setup() -> (EngineState<crate::engine::test_support::Cap>, EngineState<crate::engine::test_support::Cap>, ResourceHash) {
+    fn four_part_setup() -> (
+        EngineState<crate::engine::test_support::Cap>,
+        EngineState<crate::engine::test_support::Cap>,
+        ResourceHash,
+    ) {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
@@ -1819,7 +1825,10 @@ mod cancel_tests {
             &sealed_cancel(&hash, WireContext::ResourceInitiatorCancel, 0xE2),
             2_600,
         );
-        assert!(again.failed.is_empty(), "a cancel for nothing journals nothing");
+        assert!(
+            again.failed.is_empty(),
+            "a cancel for nothing journals nothing"
+        );
     }
 
     #[test]
@@ -1841,7 +1850,11 @@ mod cancel_tests {
 
         let unknown = feed(
             &mut sender,
-            &sealed_cancel(&ResourceHash::new([0x5A; 32]), WireContext::ResourceReceiverCancel, 0xE4),
+            &sealed_cancel(
+                &ResourceHash::new([0x5A; 32]),
+                WireContext::ResourceReceiverCancel,
+                0xE4,
+            ),
             2_600,
         );
         assert!(unknown.settlements.is_empty());
@@ -1887,7 +1900,11 @@ mod watchdog_tests {
     fn a_starved_pull_shrinks_its_window_and_asks_again() {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
-        let pull = feed(&mut receiver, &advertisement_frame(&four_part_payload(), None), 2_000);
+        let pull = feed(
+            &mut receiver,
+            &advertisement_frame(&four_part_payload(), None),
+            2_000,
+        );
         assert_eq!(pull.frames.len(), 1);
         let bootstrap_eifr = 287 * 8_000 / 250;
         let unmeasured_wait = 4 * (464 * 8 * 3_000 / bootstrap_eifr);
@@ -1900,7 +1917,10 @@ mod watchdog_tests {
         let retried = fire(&mut receiver, 2_000 + unmeasured_wait + 250);
         assert_eq!(retried.frames, 1, "the pull goes out again");
         let hash = *receiver.incoming_resources.hash_at(0);
-        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.window, 3, "the window eases down");
         assert_eq!(state.window_max, 8, "and its ceiling follows twice");
@@ -1918,13 +1938,23 @@ mod watchdog_tests {
     fn a_receiver_out_of_retries_goes_silent_and_fails() {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
-        feed(&mut receiver, &advertisement_frame(&four_part_payload(), None), 2_000);
+        feed(
+            &mut receiver,
+            &advertisement_frame(&four_part_payload(), None),
+            2_000,
+        );
         let hash = *receiver.incoming_resources.hash_at(0);
-        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
         receiver.incoming_resources.state_mut(index).retries_left = 0;
 
         let gave_up = fire(&mut receiver, 60_000);
-        assert_eq!(gave_up.frames, 0, "giving up sends nothing, like the reference");
+        assert_eq!(
+            gave_up.frames, 0,
+            "giving up sends nothing, like the reference"
+        );
         assert_eq!(gave_up.failed, 1);
         assert!(receiver.incoming_resources.is_empty());
         assert_eq!(receiver.resource_deadlines_wake(), LaneWake::Idle);
@@ -1947,7 +1977,11 @@ mod dynamics_tests {
         round_trip_ms: u64,
         rounds: usize,
         data: &[u8],
-    ) -> (crate::engine::EngineState<GrowableHeap>, ResourceHash, RoundOutcome) {
+    ) -> (
+        crate::engine::EngineState<GrowableHeap>,
+        ResourceHash,
+        RoundOutcome,
+    ) {
         let mut sender = active_engine::<GrowableHeap>();
         let mut receiver = active_engine::<GrowableHeap>();
         accept_everything(&mut receiver);
@@ -1993,7 +2027,10 @@ mod dynamics_tests {
         let data = twenty_four_part_payload();
         let (receiver, hash, outcome) = run_rounds(50, 4, &data);
         assert!(!outcome.concluded, "four rounds leave parts outstanding");
-        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.fast_rate_rounds, 4);
         assert_eq!(
@@ -2016,7 +2053,10 @@ mod dynamics_tests {
     fn two_very_slow_rounds_drop_the_window_ceiling() {
         let data = twenty_four_part_payload();
         let (receiver, hash, _) = run_rounds(60_000, 2, &data);
-        let index = receiver.incoming_resources.lookup(&link_id(), &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
         let state = receiver.incoming_resources.state(index);
         assert_eq!(state.fast_rate_rounds, 0);
         assert_eq!(state.very_slow_rate_rounds, 2);
@@ -2027,7 +2067,10 @@ mod dynamics_tests {
     fn a_concluded_transfer_leaves_the_link_its_window_and_rate() {
         let data = b"inheritance crosses transfers on one link! ".repeat(80);
         let (mut receiver, _, outcome) = run_rounds(50, 8, &data);
-        assert!(outcome.concluded, "an eight-part transfer concludes within the budget");
+        assert!(
+            outcome.concluded,
+            "an eight-part transfer concludes within the budget"
+        );
         assert!(receiver.incoming_resources.is_empty());
 
         let mut second_sender = active_engine::<GrowableHeap>();

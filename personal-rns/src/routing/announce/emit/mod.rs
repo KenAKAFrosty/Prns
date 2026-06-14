@@ -10,11 +10,11 @@ use crate::routing::announce::ANNOUNCE_FIXED_FIELDS_LEN;
 use crate::routing::announce::{
     Announce, AnnounceBuildError, AnnounceEntropy, AnnounceId, DottedNameHash, RatchetKey,
 };
-use crate::storage::StorageLayout;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::routing::upstream_app_destinations::{
     UpstreamAppDestinationColumns, UpstreamAppDestinations,
 };
+use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, MDU, RATCHET_LEN};
 use heapless::Vec as HeaplessVec;
 
