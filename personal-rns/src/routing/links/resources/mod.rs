@@ -15,9 +15,9 @@ pub mod send;
 pub mod serve_outgoing;
 pub mod table;
 
-use crate::crypto::sha256_chunks;
 use crate::routing::links::data::LINK_MDU;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN, IFAC_MIN_LEN};
+use sha2::{Digest, Sha256};
 
 /// RNS 1.3.1 `Resource.MAPHASH_LEN`: a part is named by the first four bytes
 /// of `full_hash(part ‖ salt nonce)`.
@@ -166,10 +166,11 @@ pub const fn max_part_count(transfer_capacity: usize) -> usize {
 /// RNS 1.3.1 `Resource.get_map_hash`: the four-byte name a part is requested
 /// by — `full_hash(part ‖ salt nonce)` truncated.
 pub fn map_hash(part: &[u8], salt_nonce: &SaltNonce) -> [u8; MAP_HASH_LEN] {
-    let digest = sha256_chunks(&[part, salt_nonce.as_bytes()]);
-    let mut name = [0u8; MAP_HASH_LEN];
-    name.copy_from_slice(&digest[..MAP_HASH_LEN]);
-    name
+    let mut hasher = Sha256::new();
+    hasher.update(part);
+    hasher.update(salt_nonce.as_bytes());
+    let digest = hasher.finalize();
+    [digest[0], digest[1], digest[2], digest[3]]
 }
 
 pub(crate) fn map_hash_name_word(name: &[u8]) -> u32 {
