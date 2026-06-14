@@ -112,9 +112,10 @@ mod tests {
     }
 
     fn entry_at(ms: u64) -> AnnounceRateEntry {
-        let mut entry = AnnounceRateEntry::default();
-        entry.last_allowed_announce_at = InstantMillis(ms);
-        entry
+        AnnounceRateEntry {
+            last_allowed_announce_at: InstantMillis(ms),
+            ..AnnounceRateEntry::default()
+        }
     }
 
     #[test]
