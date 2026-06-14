@@ -31,12 +31,6 @@ use super::{Bind, PrnsEvent, Responder};
 
 const LANE_DEPTH: usize = 64;
 
-/// Response command ids are minted from the top of the id space so a runner answering requests
-/// never collides with an awaited command's id (the [`settle`](TokioCommands::settle) counter
-/// climbs from zero). A response is fire-and-forget — nobody parks on its settlement — so it only
-/// needs an id no awaiter is waiting on, and the high half guarantees that.
-const RESPONSE_COMMAND_ID_BASE: u64 = 1 << 63;
-
 /// Why an awaited send never reached `Delivered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendError<F> {
@@ -49,17 +43,16 @@ pub enum SendError<F> {
 /// Obtained from [`TokioBind::new`]; usable inline (before the final `Prns::run`) or moved into
 /// other tasks. Clones share one node, so an awaited send on one resolves wherever it settles.
 ///
-/// Three surfaces, one channel. [`issue`](Self::issue) is the fire-and-forget escape hatch: the
-/// caller mints the [`CommandId`] and watches `on_event` for the matching settlement. A command
-/// whose outcome you want to await — like [`send_single`](Self::send_single) — rides a oneshot the
-/// reactor fires; no shared registry, the completion travels with the command. And
-/// [`respond`](Self::respond) / [`close_link`](Self::close_link) are the request runner's answer
-/// paths, minting from the top of the id space so they never collide with an awaited command.
+/// The handle mints every [`CommandId`] from one counter — the app never picks ids, so a
+/// fire-and-forget [`issue`](Self::issue) can never collide with an awaited
+/// [`send_single`](Self::send_single) or a runner's [`respond`](Self::respond). `issue` returns the
+/// id it minted (watch `on_event` for that settlement); `send_single` parks on a oneshot the reactor
+/// fires, the completion riding the command with no shared registry; `respond` / `close_link` are
+/// the request runner's answer paths.
 #[derive(Clone)]
 pub struct TokioCommands {
     commands: UnboundedSender<HostCommand>,
-    next_id: Arc<AtomicU64>,
-    respond_ids: Arc<AtomicU64>,
+    ids: Arc<AtomicU64>,
 }
 
 impl TokioCommands {
@@ -67,17 +60,24 @@ impl TokioCommands {
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
         Self {
             commands,
-            next_id: Arc::new(AtomicU64::new(0)),
-            respond_ids: Arc::new(AtomicU64::new(RESPONSE_COMMAND_ID_BASE)),
+            ids: Arc::new(AtomicU64::new(0)),
         }
     }
 
+    fn mint(&self) -> CommandId {
+        CommandId(self.ids.fetch_add(1, Ordering::Relaxed))
+    }
+
     /// Queue an engine command (announce, send single, establish link, …) for the next reactor
-    /// cycle. Returns `false` once the node has stopped and the channel is closed. The caller
-    /// mints the [`CommandId`] and watches `on_event` for the matching settlement; to await the
-    /// outcome instead, prefer the typed methods.
-    pub fn issue(&self, command: IssuedCommand) -> bool {
-        self.commands.send(HostCommand::Engine(command)).is_ok()
+    /// cycle and return the [`CommandId`] it was minted under — watch `on_event` for the settlement
+    /// tagged with it. `None` once the node has stopped and the channel is closed. This is the
+    /// fire-and-forget escape hatch; to await the outcome instead, prefer the typed methods.
+    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+        let id = self.mint();
+        self.commands
+            .send(HostCommand::Engine(IssuedCommand { id, command }))
+            .ok()?;
+        Some(id)
     }
 
     /// Send one Single data packet to `destination` and await its delivery proof. The future
@@ -107,7 +107,7 @@ impl TokioCommands {
     /// dropped the completion). The completion rides the command, so the correlation registry lives
     /// on the single reactor task with no lock.
     async fn settle(&self, command: EngineCommand) -> Option<Settlement> {
-        let id = CommandId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
             .send(HostCommand::AwaitedEngine {
@@ -119,7 +119,7 @@ impl TokioCommands {
     }
 
     fn send_response(&self, responder: Responder, data: HostResourcePayload) -> bool {
-        let id = CommandId(self.respond_ids.fetch_add(1, Ordering::Relaxed));
+        let id = self.mint();
         self.commands
             .send(HostCommand::RespondAny(RespondAnyHostCommand {
                 id,
@@ -149,15 +149,10 @@ impl TokioCommands {
 
     /// Sever an active link — the runner's path for a handler that returns `Err(Decline::CloseLink)`,
     /// and usable directly to tear a link down. Queues RNS 1.3.1's `Link.teardown` (the sealed
-    /// LINKCLOSE) for the next reactor cycle. Same id discipline as [`respond`](Self::respond).
+    /// LINKCLOSE) for the next reactor cycle. Returns `false` once the node has stopped.
     pub fn close_link(&self, link_id: LinkId) -> bool {
-        let id = CommandId(self.respond_ids.fetch_add(1, Ordering::Relaxed));
-        self.commands
-            .send(HostCommand::Engine(IssuedCommand {
-                id,
-                command: EngineCommand::CloseLink(CloseLink { link_id }),
-            }))
-            .is_ok()
+        self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
+            .is_some()
     }
 }
 
@@ -190,8 +185,7 @@ impl<S: StorageLayout> TokioBind<S> {
             },
             TokioCommands {
                 commands: command_tx,
-                next_id: Arc::new(AtomicU64::new(0)),
-                respond_ids: Arc::new(AtomicU64::new(RESPONSE_COMMAND_ID_BASE)),
+                ids: Arc::new(AtomicU64::new(0)),
             },
         )
     }

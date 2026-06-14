@@ -769,7 +769,6 @@ async fn respond(
     commands: &TokioCommands,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
-    let mut next_id = 1u64;
     let mut announce = tokio::time::interval(announce_every);
     let mut idle = tokio::time::interval(Duration::from_millis(200));
     let mut delivered = 0u64;
@@ -778,16 +777,14 @@ async fn respond(
     loop {
         tokio::select! {
             _ = announce.tick(), if delivered == 0 => {
-                let command = IssuedCommand {
-                    id: CommandId(next_id),
-                    command: EngineCommand::AnnounceNow(AnnounceNow {
+                if commands
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
-                    }),
-                };
-                next_id += 1;
-                if !commands.issue(command) {
+                    }))
+                    .is_none()
+                {
                     return;
                 }
             }
@@ -837,7 +834,6 @@ async fn initiate(
     );
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
-    let mut next_id = 1u64;
     let mut sent = 0u64;
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
@@ -848,25 +844,20 @@ async fn initiate(
     let mut send_one =
         |in_flight: &mut usize,
          sent: &mut u64,
-         next_id: &mut u64,
          sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            sent_sizes.insert(*next_id, len);
-            let command = IssuedCommand {
-                id: CommandId(*next_id),
-                command: EngineCommand::SendSingle(SendSingle {
-                    destination,
-                    payload: SendSinglePayload::from_slice(&scratch[..len]).expect("payload fits"),
-                }),
-            };
-            *next_id += 1;
-            *sent += 1;
-            *in_flight += 1;
-            commands.issue(command)
+            if let Some(id) = commands.issue(EngineCommand::SendSingle(SendSingle {
+                destination,
+                payload: SendSinglePayload::from_slice(&scratch[..len]).expect("payload fits"),
+            })) {
+                sent_sizes.insert(id.0, len);
+                *sent += 1;
+                *in_flight += 1;
+            }
         };
 
     for _ in 0..profile.window {
-        send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
+        send_one(&mut in_flight, &mut sent, &mut sent_sizes);
     }
     let drain_deadline = deadline + DRAIN_GRACE;
     let failure_streak_limit = failure_streak_limit(profile.window);
@@ -895,7 +886,7 @@ async fn initiate(
                 eprintln!("DIED mechanism=single failure_streak={failure_streak}");
             }
             if !died && tokio::time::Instant::now() < deadline {
-                send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
+                send_one(&mut in_flight, &mut sent, &mut sent_sizes);
             }
         }
     }
@@ -929,7 +920,6 @@ async fn respond_link(
 ) {
     let mut links_up = 0usize;
     let mut closed_links = 0usize;
-    let mut next_id = 1u64;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
     let mut delivered = 0u64;
@@ -937,16 +927,14 @@ async fn respond_link(
     loop {
         tokio::select! {
             _ = announce.tick(), if announcing => {
-                let command = IssuedCommand {
-                    id: CommandId(next_id),
-                    command: EngineCommand::AnnounceNow(AnnounceNow {
+                if commands
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
                         destination,
                         target: AnnounceTarget::AllInterfaces,
                         app_data: AnnounceAppData::Registered,
-                    }),
-                };
-                next_id += 1;
-                if !commands.issue(command) {
+                    }))
+                    .is_none()
+                {
                     return;
                 }
             }
@@ -991,19 +979,15 @@ async fn initiate_link(
             _ => {}
         }
     };
-    assert!(
-        commands.issue(IssuedCommand {
-            id: CommandId(1),
-            command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        }),
-        "reactor alive"
-    );
+    let establish = commands
+        .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+        .expect("reactor alive");
     let link_id = loop {
         match events.recv().await.expect("reactor alive") {
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
+            Event::Settled(id, Settlement::EstablishLink(Ok(established))) if id == establish => {
                 break established.link_id;
             }
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
+            Event::Settled(id, Settlement::EstablishLink(Err(failure))) if id == establish => {
                 panic!("link refused: {failure:?}");
             }
             _ => {}
@@ -1019,7 +1003,6 @@ async fn initiate_link(
     );
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
-    let mut next_id = 2u64;
     let mut sent = 0u64;
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
@@ -1030,25 +1013,20 @@ async fn initiate_link(
     let mut send_one =
         |in_flight: &mut usize,
          sent: &mut u64,
-         next_id: &mut u64,
          sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            sent_sizes.insert(*next_id, len);
-            let command = IssuedCommand {
-                id: CommandId(*next_id),
-                command: EngineCommand::SendLink(SendLink {
-                    link_id,
-                    payload: SendLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
-                }),
-            };
-            *next_id += 1;
-            *sent += 1;
-            *in_flight += 1;
-            commands.issue(command)
+            if let Some(id) = commands.issue(EngineCommand::SendLink(SendLink {
+                link_id,
+                payload: SendLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
+            })) {
+                sent_sizes.insert(id.0, len);
+                *sent += 1;
+                *in_flight += 1;
+            }
         };
 
     for _ in 0..profile.window {
-        send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
+        send_one(&mut in_flight, &mut sent, &mut sent_sizes);
     }
     let drain_deadline = deadline + DRAIN_GRACE;
     let failure_streak_limit = failure_streak_limit(profile.window);
@@ -1077,19 +1055,13 @@ async fn initiate_link(
                 eprintln!("DIED mechanism=link failure_streak={failure_streak}");
             }
             if !died && tokio::time::Instant::now() < deadline {
-                send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
+                send_one(&mut in_flight, &mut sent, &mut sent_sizes);
             }
         }
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
-    assert!(
-        commands.issue(IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::CloseLink(CloseLink { link_id }),
-        }),
-        "reactor alive"
-    );
+    assert!(commands.close_link(link_id), "reactor alive");
     let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
     loop {
         match tokio::time::timeout_at(close_deadline, events.recv()).await {
@@ -1133,19 +1105,15 @@ async fn initiate_channel(
             _ => {}
         }
     };
-    assert!(
-        commands.issue(IssuedCommand {
-            id: CommandId(1),
-            command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        }),
-        "reactor alive"
-    );
+    let establish = commands
+        .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+        .expect("reactor alive");
     let link_id = loop {
         match events.recv().await.expect("reactor alive") {
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
+            Event::Settled(id, Settlement::EstablishLink(Ok(established))) if id == establish => {
                 break established.link_id;
             }
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
+            Event::Settled(id, Settlement::EstablishLink(Err(failure))) if id == establish => {
                 panic!("link refused: {failure:?}");
             }
             _ => {}
@@ -1161,7 +1129,6 @@ async fn initiate_channel(
     );
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
-    let mut next_id = 2u64;
     let mut sent = 0u64;
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
@@ -1170,26 +1137,20 @@ async fn initiate_channel(
     let mut delivered_bytes = 0u64;
     let mut rtts: Vec<u64> = Vec::new();
     let mut emit_one =
-        |in_flight: &mut usize,
-         next_id: &mut u64,
-         sent_sizes: &mut std::collections::HashMap<u64, usize>| {
+        |in_flight: &mut usize, sent_sizes: &mut std::collections::HashMap<u64, usize>| {
             let len = sizes.next_len();
-            sent_sizes.insert(*next_id, len);
-            let command = IssuedCommand {
-                id: CommandId(*next_id),
-                command: EngineCommand::SendChannel(SendChannel {
-                    link_id,
-                    message_type: BENCH_CHANNEL_MSGTYPE,
-                    body: SendChannelBody::from_slice(&scratch[..len]).expect("payload fits"),
-                }),
-            };
-            *next_id += 1;
-            *in_flight += 1;
-            commands.issue(command)
+            if let Some(id) = commands.issue(EngineCommand::SendChannel(SendChannel {
+                link_id,
+                message_type: BENCH_CHANNEL_MSGTYPE,
+                body: SendChannelBody::from_slice(&scratch[..len]).expect("payload fits"),
+            })) {
+                sent_sizes.insert(id.0, len);
+                *in_flight += 1;
+            }
         };
 
     for _ in 0..profile.window {
-        emit_one(&mut in_flight, &mut next_id, &mut sent_sizes);
+        emit_one(&mut in_flight, &mut sent_sizes);
     }
     let drain_deadline = deadline + DRAIN_GRACE;
     let failure_streak_limit = failure_streak_limit(profile.window);
@@ -1221,19 +1182,13 @@ async fn initiate_channel(
                 eprintln!("DIED mechanism=channel failure_streak={failure_streak}");
             }
             if !died && tokio::time::Instant::now() < deadline {
-                emit_one(&mut in_flight, &mut next_id, &mut sent_sizes);
+                emit_one(&mut in_flight, &mut sent_sizes);
             }
         }
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
-    assert!(
-        commands.issue(IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::CloseLink(CloseLink { link_id }),
-        }),
-        "reactor alive"
-    );
+    assert!(commands.close_link(link_id), "reactor alive");
     let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
     loop {
         match tokio::time::timeout_at(close_deadline, events.recv()).await {

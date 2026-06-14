@@ -12,7 +12,7 @@ use core::time::Duration;
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EstablishLink,
-    IssuedCommand, RatchetPolicy, SendRequest, SendRequestData, Settlement,
+    RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
@@ -88,21 +88,18 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     let announcer = commands_a.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
-        let mut id = 1u64;
         loop {
             ticker.tick().await;
-            let issued = announcer.issue(IssuedCommand {
-                id: CommandId(id),
-                command: EngineCommand::AnnounceNow(AnnounceNow {
+            if announcer
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
-                }),
-            });
-            if !issued {
+                }))
+                .is_none()
+            {
                 break;
             }
-            id += 1;
         }
     });
 
@@ -161,30 +158,30 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         };
         assert_eq!(destination, dest_a, "heard the responder's destination");
 
-        commands_b.issue(IssuedCommand {
-            id: CommandId(1),
-            command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        });
+        let link_cmd = commands_b
+            .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+            .expect("the initiator node is running");
         let link_id = loop {
             match heard_rx.recv().await.expect("initiator stays alive") {
-                Heard::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
+                Heard::Settled(id, Settlement::EstablishLink(Ok(established)))
+                    if id == link_cmd =>
+                {
                     break established.link_id;
                 }
-                Heard::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
+                Heard::Settled(id, Settlement::EstablishLink(Err(failure))) if id == link_cmd => {
                     panic!("link refused: {failure:?}");
                 }
                 _ => {}
             }
         };
 
-        commands_b.issue(IssuedCommand {
-            id: CommandId(2),
-            command: EngineCommand::SendRequest(SendRequest {
+        commands_b
+            .issue(EngineCommand::SendRequest(SendRequest {
                 link_id,
                 path_hash: RequestPathHash::of(QUERY_PATH),
                 data: SendRequestData::from_slice(b"ping").expect("request fits a single packet"),
-            }),
-        });
+            }))
+            .expect("the initiator node is running");
         loop {
             match heard_rx.recv().await.expect("initiator stays alive") {
                 Heard::Response(data) => break data,

@@ -8,8 +8,7 @@
 use core::time::Duration;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
-    RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
@@ -89,21 +88,18 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     // A announces on a cadence — pure app policy — until B hears it.
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
-        let mut id = 1u64;
         loop {
             ticker.tick().await;
-            let issued = commands_a.issue(IssuedCommand {
-                id: CommandId(id),
-                command: EngineCommand::AnnounceNow(AnnounceNow {
+            if commands_a
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
                     destination: dest_a,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
-                }),
-            });
-            if !issued {
+                }))
+                .is_none()
+            {
                 break;
             }
-            id += 1;
         }
     });
 
