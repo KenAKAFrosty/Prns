@@ -8,6 +8,8 @@ mod impls;
 
 pub use impls::FixedArrayRouteColumns;
 pub use impls::FixedIndexedRouteColumns;
+#[cfg(feature = "external-alloc")]
+pub use impls::FixedHeapRouteColumns;
 #[cfg(feature = "alloc")]
 pub use impls::HeapRouteColumns;
 

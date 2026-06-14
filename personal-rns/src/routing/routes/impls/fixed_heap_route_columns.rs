@@ -1,3 +1,7 @@
+use allocator_api2::alloc::{Allocator, Global};
+use allocator_api2::boxed::Box;
+use allocator_api2::vec::Vec;
+
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::lemire_index::LemireIndex;
@@ -6,19 +10,26 @@ use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
-#[derive(Debug)]
-pub struct FixedIndexedRouteColumns<const N: usize, const BUCKETS: usize> {
-    len: usize,
-    destination: [DestinationHash; N],
-    hops: [u8; N],
-    learned_at: [InstantMillis; N],
-    responsiveness: [RouteResponsiveness; N],
-    receiving_interface: [InterfaceId; N],
-    next_hop: [NextHop; N],
-    index: LemireIndex<BUCKETS>,
+fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
+    let mut column = Vec::with_capacity_in(len, alloc);
+    column.resize(len, value);
+    column.into_boxed_slice()
 }
 
-impl<const N: usize, const BUCKETS: usize> Default for FixedIndexedRouteColumns<N, BUCKETS> {
+pub struct FixedHeapRouteColumns<const N: usize, const BUCKETS: usize, A: Allocator = Global> {
+    len: usize,
+    index: LemireIndex<BUCKETS>,
+    destination: Box<[DestinationHash], A>,
+    hops: Box<[u8], A>,
+    learned_at: Box<[InstantMillis], A>,
+    responsiveness: Box<[RouteResponsiveness], A>,
+    receiving_interface: Box<[InterfaceId], A>,
+    next_hop: Box<[NextHop], A>,
+}
+
+impl<const N: usize, const BUCKETS: usize, A: Allocator + Default> Default
+    for FixedHeapRouteColumns<N, BUCKETS, A>
+{
     fn default() -> Self {
         const {
             assert!(
@@ -27,23 +38,25 @@ impl<const N: usize, const BUCKETS: usize> Default for FixedIndexedRouteColumns<
             );
             assert!(
                 N < u16::MAX as usize,
-                "FixedIndexedRouteColumns indexes slots as u16; keep N below 65535",
+                "FixedHeapRouteColumns indexes slots as u16; keep N below 65535",
             );
         }
         Self {
             len: 0,
-            destination: [DestinationHash::new([0u8; 16]); N],
-            hops: [0u8; N],
-            learned_at: [InstantMillis(0); N],
-            responsiveness: [RouteResponsiveness::Responsive; N],
-            receiving_interface: [InterfaceId::new([0u8; 16]); N],
-            next_hop: [NextHop::Direct; N],
             index: LemireIndex::default(),
+            destination: filled(DestinationHash::new([0u8; 16]), N, A::default()),
+            hops: filled(0u8, N, A::default()),
+            learned_at: filled(InstantMillis(0), N, A::default()),
+            responsiveness: filled(RouteResponsiveness::Responsive, N, A::default()),
+            receiving_interface: filled(InterfaceId::new([0u8; 16]), N, A::default()),
+            next_hop: filled(NextHop::Direct, N, A::default()),
         }
     }
 }
 
-impl<const N: usize, const BUCKETS: usize> RouteColumns for FixedIndexedRouteColumns<N, BUCKETS> {
+impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteColumns
+    for FixedHeapRouteColumns<N, BUCKETS, A>
+{
     fn capacity(&self) -> usize {
         N
     }
@@ -121,12 +134,18 @@ mod tests {
     use super::*;
     use crate::routing::routes::route_index_buckets;
 
-    fn dest(byte: u8) -> DestinationHash {
-        DestinationHash::new([byte; 16])
+    fn dest_n(n: u32) -> DestinationHash {
+        let key = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut b = [0u8; 16];
+        b[..8].copy_from_slice(&key.to_be_bytes());
+        b[8..12].copy_from_slice(&n.to_be_bytes());
+        DestinationHash::new(b)
     }
+
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 16])
     }
+
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {
             hops,
@@ -137,15 +156,7 @@ mod tests {
         }
     }
 
-    fn dest_n(n: u32) -> DestinationHash {
-        let key = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let mut b = [0u8; 16];
-        b[..8].copy_from_slice(&key.to_be_bytes());
-        b[8..12].copy_from_slice(&n.to_be_bytes());
-        DestinationHash::new(b)
-    }
-
-    type Routes8 = FixedIndexedRouteColumns<8, { route_index_buckets(8) }>;
+    type Routes8 = FixedHeapRouteColumns<8, { route_index_buckets(8) }>;
 
     #[test]
     fn push_exposes_only_pushed_rows_and_finds_them_by_index() {
@@ -153,22 +164,25 @@ mod tests {
         assert_eq!(columns.capacity(), 8);
         assert!(columns.is_empty());
 
-        assert_eq!(columns.push(dest(0xA1), row(1, 10, iface(0xE1))), Ok(0));
-        assert_eq!(columns.push(dest(0xB2), row(2, 20, iface(0xE2))), Ok(1));
+        assert_eq!(columns.push(dest_n(1), row(1, 10, iface(0xE1))), Ok(0));
+        assert_eq!(columns.push(dest_n(2), row(2, 20, iface(0xE2))), Ok(1));
 
         assert_eq!(columns.len(), 2);
-        assert_eq!(columns.destinations(), &[dest(0xA1), dest(0xB2)]);
+        assert_eq!(columns.destinations(), &[dest_n(1), dest_n(2)]);
         assert_eq!(columns.hops(), &[1, 2]);
-        assert_eq!(columns.index_of(&dest(0xA1)), Some(0));
-        assert_eq!(columns.index_of(&dest(0xB2)), Some(1));
-        assert_eq!(columns.index_of(&dest(0xFF)), None);
+        assert_eq!(columns.index_of(&dest_n(1)), Some(0));
+        assert_eq!(columns.index_of(&dest_n(2)), Some(1));
+        assert_eq!(columns.index_of(&dest_n(999)), None);
     }
 
     #[test]
     fn the_index_resolves_every_key_through_probe_collisions() {
         let mut columns = Routes8::default();
         for n in 0..8u32 {
-            assert_eq!(columns.push(dest_n(n), row(1, n as u64, iface(n as u8))), Ok(n as usize));
+            assert_eq!(
+                columns.push(dest_n(n), row(1, n as u64, iface(n as u8))),
+                Ok(n as usize)
+            );
         }
         for n in 0..8u32 {
             assert_eq!(columns.index_of(&dest_n(n)), Some(n as usize));
@@ -183,10 +197,7 @@ mod tests {
             columns.push(dest_n(n), row(1, n as u64, iface(n as u8))).unwrap();
         }
         assert_eq!(columns.len(), 8);
-        assert_eq!(
-            columns.push(dest_n(8), row(1, 8, iface(8))),
-            Err(ColumnsFull)
-        );
+        assert_eq!(columns.push(dest_n(8), row(1, 8, iface(8))), Err(ColumnsFull));
         assert_eq!(columns.index_of(&dest_n(8)), None);
         assert_eq!(columns.index_of(&dest_n(12345)), None);
     }
@@ -222,5 +233,22 @@ mod tests {
             columns.push(dest_n(0), row(7, 70, iface(0))).unwrap();
             assert_eq!(columns.hops()[columns.index_of(&dest_n(0)).unwrap()], 7);
         }
+    }
+
+    #[test]
+    fn the_bulk_columns_carry_a_large_table_the_inline_index_keys() {
+        type Routes4096 = FixedHeapRouteColumns<4096, { route_index_buckets(4096) }>;
+        let mut columns = Routes4096::default();
+        for n in 0..4096u32 {
+            columns.push(dest_n(n), row(1, n as u64, iface(n as u8))).unwrap();
+        }
+        assert_eq!(columns.len(), 4096);
+        assert_eq!(columns.index_of(&dest_n(4095)), Some(4095));
+        assert_eq!(columns.index_of(&dest_n(2048)), Some(2048));
+        assert_eq!(columns.index_of(&dest_n(99999)), None);
+        assert_eq!(
+            columns.push(dest_n(4096), row(1, 4096, iface(0))),
+            Err(ColumnsFull)
+        );
     }
 }

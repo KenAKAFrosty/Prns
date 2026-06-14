@@ -1,13 +1,12 @@
 use crate::routing::dedup::{
     dedup_index_buckets, PacketHash, PacketHashHistory, RememberPacketOutcome, PACKET_HASH_LEN,
 };
-
-const EMPTY: usize = usize::MAX;
+use crate::routing::lemire_index::LemireIndex;
 
 struct Generation<const CAP: usize, const BUCKETS: usize> {
     len: usize,
     hashes: [PacketHash; CAP],
-    index: [usize; BUCKETS],
+    index: LemireIndex<BUCKETS>,
 }
 
 impl<const CAP: usize, const BUCKETS: usize> Default for Generation<CAP, BUCKETS> {
@@ -17,53 +16,34 @@ impl<const CAP: usize, const BUCKETS: usize> Default for Generation<CAP, BUCKETS
                 BUCKETS >= dedup_index_buckets(CAP),
                 "BUCKETS must give the dedup index its 2/3-load headroom over CAP: size it with dedup_index_buckets(CAP)",
             );
+            assert!(
+                CAP < u16::MAX as usize,
+                "FixedIndexedPacketHashHistory indexes slots as u16; keep CAP below 65535",
+            );
         }
         Self {
             len: 0,
             hashes: [PacketHash::new([0u8; PACKET_HASH_LEN]); CAP],
-            index: [EMPTY; BUCKETS],
+            index: LemireIndex::default(),
         }
     }
 }
 
 impl<const CAP: usize, const BUCKETS: usize> Generation<CAP, BUCKETS> {
-    fn key(hash: &PacketHash) -> u64 {
-        let b = hash.as_bytes();
-        u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
-    }
-
-    fn bucket(key: u64) -> usize {
-        ((key as u128 * BUCKETS as u128) >> u64::BITS) as usize
-    }
-
     fn contains(&self, hash: &PacketHash) -> bool {
-        let mut pos = Self::bucket(Self::key(hash));
-        loop {
-            let slot = self.index[pos];
-            if slot == EMPTY {
-                return false;
-            }
-            if self.hashes[slot] == *hash {
-                return true;
-            }
-            pos = (pos + 1) % BUCKETS;
-        }
+        self.index.contains(hash, &self.hashes[..])
     }
 
     fn insert(&mut self, hash: PacketHash) {
         let slot = self.len;
         self.hashes[slot] = hash;
-        let mut pos = Self::bucket(Self::key(&hash));
-        while self.index[pos] != EMPTY {
-            pos = (pos + 1) % BUCKETS;
-        }
-        self.index[pos] = slot;
+        self.index.insert(slot, &self.hashes[..]);
         self.len += 1;
     }
 
     fn clear(&mut self) {
         self.len = 0;
-        self.index = [EMPTY; BUCKETS];
+        self.index.clear();
     }
 
     fn len(&self) -> usize {

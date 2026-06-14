@@ -15,6 +15,11 @@ path = "src/lib.rs"
 [features]
 default = ["std", "std-sync-host"]
 alloc = []
+# Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom
+# `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic
+# `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default — ordinary hosts
+# never link the backport, they use the inline or growable residences.
+external-alloc = ["alloc", "dep:allocator-api2"]
 std = ["alloc"]
 std-sync-host = ["std", "dep:getrandom", "dep:rtrb"]
 # The async-std lane: the same owned rtrb rings as `std-sync-host` (drop-clean
@@ -81,6 +86,12 @@ zeroize = { version = "1", default-features = false, features = ["derive"] }
 
 # Fixed-capacity collections for retained engine state (alloc-free, inline storage)
 heapless = { version = "0.8", default-features = false }
+
+# Stable backport of the nightly `allocator_api` (`Allocator` + allocator-aware
+# `Box`/`Vec`), under `external-alloc` only. Lets the fixed-heap columns be generic over
+# the allocator — `Global` on a host, esp-alloc's `ExternalMemory` (PSRAM) on the S3.
+# Version-matched to what esp-alloc 0.10 carries.
+allocator-api2 = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
 
 # OS CSPRNG for the std host catalogue (LinuxSync, under `std-sync-host`). The no_std
 # core never sees an RNG — entropy is data the host supplies — so this is optional
