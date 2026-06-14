@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
-use crate::reactor::airtime::{AirtimeLedger, frame_airtime_us};
+use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::InterfaceSeam;
 use crate::reactor::throughput::ThroughputLedger;

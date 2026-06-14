@@ -8,8 +8,8 @@
 
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability, hardware_mtu_for_bitrate,
+    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
+    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::routing::links::MAX_LINK_MTU;
