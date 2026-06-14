@@ -167,10 +167,10 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.3.1 `Resource.request_next`: scan one window of part slots from
-    /// the consecutive-completed height, request every missing part whose
-    /// name is known, and flag the request hashmap-exhausted — carrying the
-    /// last known name — when the window runs past the names received so
-    /// far. Nothing is emitted when the window holds nothing to ask for.
+    /// the next missing height, request every missing part whose name is
+    /// known, and flag the request hashmap-exhausted — carrying the last
+    /// known name — when the window runs past the names received so far.
+    /// Nothing is emitted when the window holds nothing to ask for.
     pub(crate) fn emit_resource_pull<F>(
         &mut self,
         link_id: &LinkId,
@@ -316,7 +316,7 @@ impl<S: StorageLayout> EngineState<S> {
             if state.status != IncomingResourceStatus::Transferring {
                 continue;
             }
-            let scan_from = state.consecutive_completed.unwrap_or(0);
+            let scan_from = state.consecutive_completed.map_or(0, |height| height + 1);
             let at = match_part_in_window(
                 part,
                 &state.salt_nonce,
@@ -1345,6 +1345,68 @@ mod loop_tests {
             &receiver.incoming_resources.names_flat(index)[4 * MAP_HASH_LEN..8 * MAP_HASH_LEN],
             "the next pull asks for the remaining four parts",
         );
+    }
+
+    #[test]
+    fn a_full_window_accepts_its_far_edge_when_parts_reorder() {
+        let mut sender = active_engine::<crate::storage::GrowableHeap>();
+        let mut receiver = active_engine::<crate::storage::GrowableHeap>();
+        accept_everything(&mut receiver);
+        let data = b"out-of-order resource windows still owe the edge! ".repeat(140);
+
+        let advertisement = advertise_from(&mut sender, &data, None);
+        let first_pull = feed(&mut receiver, &advertisement, 2_000);
+        let first_serve = feed(&mut sender, &first_pull.frames[0].1, 2_100);
+        assert_eq!(first_serve.frames.len(), 4);
+
+        let hash = *receiver.incoming_resources.hash_at(0);
+        let mut next_pull = None;
+        for (arrived, (_, part)) in first_serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.frames.is_empty() {
+                next_pull = Some(capture);
+            }
+        }
+        let next_pull = next_pull.expect("the first window drains");
+        let next_serve = feed(&mut sender, &next_pull.frames[0].1, 2_300);
+        assert_eq!(next_serve.frames.len(), 5, "the grown window is full");
+
+        let (_, far_edge) = next_serve.frames.last().expect("far-edge part");
+        let reordered = feed(&mut receiver, far_edge, 2_400);
+        assert!(reordered.frames.is_empty());
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
+        let state = receiver.incoming_resources.state(index);
+        assert_eq!(state.consecutive_completed, Some(3));
+        assert_eq!(state.received_part_count, 5);
+        assert_eq!(state.outstanding_part_count, 4);
+        assert!(
+            receiver.incoming_resources.received_flags(index)[8],
+            "the far edge of the requested window lands even before 4..7",
+        );
+
+        let mut after_gap = None;
+        for (arrived, (_, part)) in next_serve.frames[..4].iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_500 + arrived as u64);
+            if !capture.frames.is_empty() {
+                after_gap = Some(capture);
+            }
+        }
+        let after_gap = after_gap.expect("filling the gap drains the request");
+        let index = receiver
+            .incoming_resources
+            .lookup(&link_id(), &hash)
+            .unwrap();
+        assert_eq!(
+            receiver
+                .incoming_resources
+                .state(index)
+                .consecutive_completed,
+            Some(8),
+        );
+        assert_eq!(after_gap.frames.len(), 1, "the next pull goes out promptly");
     }
 
     fn crafted_partial_advertisement(names: &[u8], part_count: usize) -> std::vec::Vec<u8> {

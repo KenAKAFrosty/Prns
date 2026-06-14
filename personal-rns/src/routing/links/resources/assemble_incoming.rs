@@ -54,11 +54,10 @@ pub fn verify_and_prove(
     Ok(ResourceProof::new(proof))
 }
 
-/// RNS 1.3.1 `Resource.receive_part`: a part arrives carrying no index, so
-/// the receiver names it with [`map_hash`] and scans the known part names
-/// from the consecutive-completed height (clamped to zero) through the
-/// current window. `None` is a part that matches nothing there — dropped
-/// silently, exactly as the reference drops it.
+/// Resource part placement: a part arrives carrying no index, so the receiver
+/// names it with [`map_hash`] and scans the caller's current acceptance
+/// window. `None` is a part that matches nothing there — dropped silently,
+/// exactly as the reference drops it.
 pub fn match_part_in_window(
     part: &[u8],
     salt_nonce: &SaltNonce,
