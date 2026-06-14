@@ -148,6 +148,28 @@ impl TokioCommands {
     }
 }
 
+impl super::Commands for TokioCommands {
+    fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+        self.issue(command)
+    }
+
+    async fn send_single(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+        self.send_single(destination, data).await
+    }
+
+    fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+        self.respond(responder, body)
+    }
+
+    fn close_link(&self, link_id: LinkId) -> bool {
+        self.close_link(link_id)
+    }
+}
+
 pub struct TokioBind<S: StorageLayout> {
     host: TokioHost,
     interfaces: std::vec::Vec<InterfaceConfig>,
@@ -280,6 +302,23 @@ mod tests {
             Ok(Delivered {
                 rtt: crate::units::Rtt::from_millis(7),
             }),
+        );
+    }
+
+    #[test]
+    fn the_commands_trait_dispatches_to_the_handle() {
+        use crate::routing::links::LinkId;
+        use crate::runtime::Commands;
+
+        let (prns, mut command_rx) = handle();
+        let id = Commands::close_link(&prns, LinkId::new([3; 16]));
+        assert!(
+            id,
+            "the trait method reaches the handle and queues the close"
+        );
+        assert!(
+            matches!(command_rx.try_recv(), Ok(HostCommand::Engine(_))),
+            "dispatched through Commands, the close rode the channel"
         );
     }
 }

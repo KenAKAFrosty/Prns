@@ -12,7 +12,7 @@ mod recipe;
 mod request_router;
 
 pub use bind::Bind;
-pub use command::SendError;
+pub use command::{Commands, SendError};
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
 pub use recipe::{Recipe, StartingDestination};

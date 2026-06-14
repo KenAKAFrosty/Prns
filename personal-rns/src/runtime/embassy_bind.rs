@@ -231,6 +231,30 @@ impl<M: RawMutex, const N: usize> Drop for SlotGuard<'_, M, N> {
     }
 }
 
+impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::Commands
+    for EmbassyCommands<'_, M, COMMANDS, N>
+{
+    fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+        self.issue(command)
+    }
+
+    async fn send_single(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+        self.send_single(destination, data).await
+    }
+
+    fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+        self.respond(responder, body)
+    }
+
+    fn close_link(&self, link_id: LinkId) -> bool {
+        self.close_link(link_id)
+    }
+}
+
 pub struct EmbassyBind<'a, S, E, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>
 where
     S: StorageLayout,
