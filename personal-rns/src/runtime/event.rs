@@ -16,6 +16,7 @@ use crate::engine::{InstantMillis, Journaled};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
@@ -52,6 +53,11 @@ pub enum Message<'a> {
         hash: ResourceHash,
         stream: &'a [u8],
         uncompressed_data_len: u64,
+    },
+    ChannelMessage {
+        link_id: LinkId,
+        message_type: MessageType,
+        data: &'a [u8],
     },
 }
 
@@ -136,6 +142,15 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 hash,
                 stream,
                 uncompressed_data_len,
+            }),
+            Journaled::ChannelMessageReceived {
+                link_id,
+                message_type,
+                data,
+            } => PrnsEvent::Message(Message::ChannelMessage {
+                link_id,
+                message_type,
+                data,
             }),
             Journaled::AnnounceHeard {
                 destination,

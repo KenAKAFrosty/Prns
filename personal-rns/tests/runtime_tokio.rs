@@ -16,7 +16,9 @@ use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN}
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::reactor::interface_seam::Interface;
-use personal_rns::reactor::interfaces::tcp::impls::tokio::{TcpClientInterface, TcpServerInterface};
+use personal_rns::reactor::interfaces::tcp::impls::tokio::{
+    TcpClientInterface, TcpServerInterface,
+};
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind};
@@ -114,5 +116,8 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .await
         .expect("B hears A's announce within 5s")
         .expect("the announce channel stays open");
-    assert_eq!(heard, dest_a, "B heard A's destination through the revived runtime");
+    assert_eq!(
+        heard, dest_a,
+        "B heard A's destination through the revived runtime"
+    );
 }
