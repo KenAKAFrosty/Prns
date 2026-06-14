@@ -11,8 +11,9 @@ use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, Respond, RespondData, SendLink,
-    SendLinkPayload, SendRequest, SendRequestData, SendSingle, SendSinglePayload, Settlement,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, Respond, RespondData, SendChannel,
+    SendChannelBody, SendChannelFailure, SendLink, SendLinkPayload, SendRequest, SendRequestData,
+    SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
@@ -28,6 +29,7 @@ use personal_rns::reactor::interfaces::tcp::impls::tokio::{
 use personal_rns::reactor::interfaces::udp::core as udp_core;
 use personal_rns::reactor::interfaces::udp::impls::tokio::UdpInterface;
 use personal_rns::routing::delivery::Delivery;
+use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
@@ -54,6 +56,7 @@ fn fanin_listener_id(index: usize) -> InterfaceId {
 const LANE_DEPTH: usize = 64;
 const DRAIN_GRACE: Duration = Duration::from_secs(5);
 const QUIET_AFTER_TRAFFIC: Duration = Duration::from_millis(1500);
+const BENCH_CHANNEL_MSGTYPE: MessageType = MessageType(0x0042);
 
 #[derive(serde::Deserialize)]
 struct Manifest {
@@ -309,7 +312,10 @@ async fn scenario_main() {
     // and churn still hand-roll the reactor below: they need responder-side registration
     // (request handlers, resource strategies) and the resource host command that the recipe and
     // the command handle do not yet surface.
-    if matches!(manifest.profile.mechanism.as_str(), "single" | "link") {
+    if matches!(
+        manifest.profile.mechanism.as_str(),
+        "single" | "link" | "channel"
+    ) {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
         return;
     }
@@ -616,6 +622,9 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
             PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
                 Some(Event::Delivered(delivery.plaintext.len()))
             }
+            PrnsEvent::Message(Message::ChannelMessage { data, .. }) => {
+                Some(Event::Delivered(data.len()))
+            }
             _ => None,
         };
         if let Some(event) = mapped {
@@ -643,7 +652,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
 
     if role == "responder" {
         println!("READY role=responder addr={bound}");
-        if mechanism == "link" {
+        if mechanism == "link" || mechanism == "channel" {
             respond_link(destination, announce_every, initiators, &commands, event_rx).await;
         } else {
             respond(destination, announce_every, &commands, event_rx).await;
@@ -652,6 +661,8 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         println!("READY role=initiator");
         if mechanism == "link" {
             initiate_link(&manifest.profile, duration, &commands, event_rx).await;
+        } else if mechanism == "channel" {
+            initiate_channel(&manifest.profile, duration, &commands, event_rx).await;
         } else {
             initiate(&manifest.profile, duration, &commands, event_rx).await;
         }
@@ -1066,6 +1077,150 @@ async fn initiate_link(
             }
             if !died && tokio::time::Instant::now() < deadline {
                 send_one(&mut in_flight, &mut sent, &mut next_id, &mut sent_sizes);
+            }
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    assert!(
+        commands.issue(IssuedCommand {
+            id: CommandId(next_id),
+            command: EngineCommand::CloseLink(CloseLink { link_id }),
+        }),
+        "reactor alive"
+    );
+    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
+    loop {
+        match tokio::time::timeout_at(close_deadline, events.recv()).await {
+            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+
+    rtts.sort_unstable();
+    let payload_bytes = delivered_bytes;
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+         payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
+         delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}",
+        delivered as f64 / seconds,
+        payload_bytes as f64 / seconds,
+        percentile(&rtts, 0.50),
+        percentile(&rtts, 0.99),
+        died_marker(died),
+    );
+}
+
+/// The measuring end of the channel firehose: establish one link, then keep the
+/// channel's send window full until the wall-time elapses, drain, close, and report.
+/// Unlike the bare link, the channel paces its own emission with a grow-on-proof /
+/// shrink-on-loss window, so a window-full settlement is backpressure — the slot is
+/// refilled and the attempt goes uncounted — while only an exhausted retransmit budget
+/// settles a real timeout. `sent` therefore counts the emissions the channel accepted,
+/// so it stays equal to delivered + timeouts.
+async fn initiate_channel(
+    profile: &Profile,
+    duration: Duration,
+    commands: &TokioCommands,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+    assert!(
+        commands.issue(IssuedCommand {
+            id: CommandId(1),
+            command: EngineCommand::EstablishLink(EstablishLink { destination }),
+        }),
+        "reactor alive"
+    );
+    let link_id = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
+                break established.link_id;
+            }
+            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
+                panic!("link refused: {failure:?}");
+            }
+            _ => {}
+        }
+    };
+
+    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut next_id = 2u64;
+    let mut sent = 0u64;
+    let mut delivered = 0u64;
+    let mut timeouts = 0u64;
+    let mut in_flight = 0usize;
+    let mut sent_sizes: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut delivered_bytes = 0u64;
+    let mut rtts: Vec<u64> = Vec::new();
+    let mut emit_one =
+        |in_flight: &mut usize,
+         next_id: &mut u64,
+         sent_sizes: &mut std::collections::HashMap<u64, usize>| {
+            let len = sizes.next_len();
+            sent_sizes.insert(*next_id, len);
+            let command = IssuedCommand {
+                id: CommandId(*next_id),
+                command: EngineCommand::SendChannel(SendChannel {
+                    link_id,
+                    message_type: BENCH_CHANNEL_MSGTYPE,
+                    body: SendChannelBody::from_slice(&scratch[..len]).expect("payload fits"),
+                }),
+            };
+            *next_id += 1;
+            *in_flight += 1;
+            commands.issue(command)
+        };
+
+    for _ in 0..profile.window {
+        emit_one(&mut in_flight, &mut next_id, &mut sent_sizes);
+    }
+    let drain_deadline = deadline + DRAIN_GRACE;
+    let failure_streak_limit = failure_streak_limit(profile.window);
+    let mut failure_streak = 0u64;
+    let mut died = false;
+    while in_flight > 0 {
+        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
+        let Ok(Some(event)) = event else { break };
+        if let Event::Settled(id, Settlement::SendChannel(result)) = event {
+            in_flight -= 1;
+            let size = sent_sizes.remove(&id.0).unwrap_or(0) as u64;
+            match result {
+                Ok(receipt) => {
+                    failure_streak = 0;
+                    sent += 1;
+                    delivered += 1;
+                    delivered_bytes += size;
+                    rtts.push(receipt.rtt_ms);
+                }
+                Err(SendChannelFailure::WindowFull) => {}
+                Err(_) => {
+                    sent += 1;
+                    timeouts += 1;
+                    failure_streak += 1;
+                }
+            }
+            if !died && failure_streak >= failure_streak_limit {
+                died = true;
+                eprintln!("DIED mechanism=channel failure_streak={failure_streak}");
+            }
+            if !died && tokio::time::Instant::now() < deadline {
+                emit_one(&mut in_flight, &mut next_id, &mut sent_sizes);
             }
         }
     }
