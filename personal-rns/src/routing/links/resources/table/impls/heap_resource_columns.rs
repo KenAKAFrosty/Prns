@@ -15,9 +15,9 @@ use crate::routing::links::LinkId;
 /// -case memory at roughly a mebibyte per slot.
 pub const DEFAULT_MAX_RESOURCES: usize = 64;
 
-/// Heap columns for a std host: every slot can hold the largest transfer the
-/// protocol allows (a sealed [`MAX_EFFICIENT_SIZE`] stream), and its buffers
-/// are allocated when the slot is pushed and freed when it is removed.
+/// Heap columns for a std host: every active slot can hold the largest transfer
+/// the protocol allows (a sealed [`MAX_EFFICIENT_SIZE`] stream), and retired
+/// slot buffers are kept for reuse by later transfers.
 #[derive(Debug, Default)]
 pub struct HeapResourceColumns<State> {
     link_ids: Vec<LinkId>,
@@ -27,9 +27,36 @@ pub struct HeapResourceColumns<State> {
     transfers: Vec<Vec<u8>>,
     part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
     part_flags: Vec<Vec<bool>>,
+    free_transfers: Vec<Vec<u8>>,
+    free_part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
+    free_part_flags: Vec<Vec<bool>>,
 }
 
 const HEAP_TRANSFER_CAPACITY: usize = sealed_transfer_len(MAX_EFFICIENT_SIZE);
+const HEAP_PART_CAPACITY: usize = max_part_count(HEAP_TRANSFER_CAPACITY);
+
+impl<State> HeapResourceColumns<State> {
+    fn take_transfer(&mut self) -> Vec<u8> {
+        self.free_transfers
+            .pop()
+            .unwrap_or_else(|| vec![0u8; HEAP_TRANSFER_CAPACITY])
+    }
+
+    fn take_part_names(&mut self) -> Vec<[u8; MAP_HASH_LEN]> {
+        self.free_part_names
+            .pop()
+            .unwrap_or_else(|| vec![[0u8; MAP_HASH_LEN]; HEAP_PART_CAPACITY])
+    }
+
+    fn take_part_flags(&mut self) -> Vec<bool> {
+        let mut flags = self
+            .free_part_flags
+            .pop()
+            .unwrap_or_else(|| vec![false; HEAP_PART_CAPACITY]);
+        flags.fill(false);
+        flags
+    }
+}
 
 impl<State: Default> ResourceColumns<State> for HeapResourceColumns<State> {
     fn capacity(&self) -> usize {
@@ -39,7 +66,7 @@ impl<State: Default> ResourceColumns<State> for HeapResourceColumns<State> {
         HEAP_TRANSFER_CAPACITY
     }
     fn part_capacity(&self) -> usize {
-        max_part_count(HEAP_TRANSFER_CAPACITY)
+        HEAP_PART_CAPACITY
     }
     fn len(&self) -> usize {
         self.link_ids.len()
@@ -94,17 +121,16 @@ impl<State: Default> ResourceColumns<State> for HeapResourceColumns<State> {
         if self.len() >= self.capacity() {
             return Err(ResourceTablePushError::TableFull);
         }
+        let transfer = self.take_transfer();
+        let part_names = self.take_part_names();
+        let part_flags = self.take_part_flags();
         self.link_ids.push(link_id);
         self.hashes.push(hash);
         self.timeout_ats.push(None);
         self.states.push(state);
-        self.transfers.push(vec![0u8; HEAP_TRANSFER_CAPACITY]);
-        self.part_names.push(vec![
-            [0u8; MAP_HASH_LEN];
-            max_part_count(HEAP_TRANSFER_CAPACITY)
-        ]);
-        self.part_flags
-            .push(vec![false; max_part_count(HEAP_TRANSFER_CAPACITY)]);
+        self.transfers.push(transfer);
+        self.part_names.push(part_names);
+        self.part_flags.push(part_flags);
         Ok(self.link_ids.len() - 1)
     }
 
@@ -113,8 +139,42 @@ impl<State: Default> ResourceColumns<State> for HeapResourceColumns<State> {
         self.hashes.swap_remove(index);
         self.timeout_ats.swap_remove(index);
         self.states.swap_remove(index);
-        self.transfers.swap_remove(index);
-        self.part_names.swap_remove(index);
-        self.part_flags.swap_remove(index);
+        self.free_transfers.push(self.transfers.swap_remove(index));
+        self.free_part_names
+            .push(self.part_names.swap_remove(index));
+        self.free_part_flags
+            .push(self.part_flags.swap_remove(index));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link(byte: u8) -> LinkId {
+        LinkId::new([byte; 16])
+    }
+
+    fn hash(byte: u8) -> ResourceHash {
+        ResourceHash::new([byte; 32])
+    }
+
+    #[test]
+    fn swap_removed_slot_buffers_are_reused_with_cleared_part_flags() {
+        let mut columns = HeapResourceColumns::<u8>::default();
+        let first = columns.push(link(1), hash(1), 11).unwrap();
+        let transfer = columns.transfer(first).as_ptr();
+        let names = columns.part_names(first).as_ptr();
+        let flags = columns.part_flags(first).as_ptr();
+        columns.buffers_mut(first).part_flags[0] = true;
+
+        columns.swap_remove(first);
+        let second = columns.push(link(2), hash(2), 22).unwrap();
+
+        assert_eq!(columns.transfer(second).as_ptr(), transfer);
+        assert_eq!(columns.part_names(second).as_ptr(), names);
+        assert_eq!(columns.part_flags(second).as_ptr(), flags);
+        assert!(!columns.part_flags(second).iter().any(|flag| *flag));
+        assert_eq!(columns.states(), &[22]);
     }
 }
