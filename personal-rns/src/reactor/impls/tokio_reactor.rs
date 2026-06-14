@@ -375,27 +375,94 @@ impl InterfaceStatus for TokioInterfaceStatus {
 #[allow(clippy::too_many_arguments)]
 /// What a std host feeds the reactor: the queueable engine commands, plus
 /// the owned-bytes verbs that deliberately never ride `EngineCommand` — a
-/// resource payload can reach a mebibyte, so the std host owns the heap
-/// allocation and the engine borrows it for exactly one call. (An embedded
-/// host calls the borrow-taking entry points directly instead.)
+/// resource payload can reach a mebibyte, so the std host owns or shares the
+/// heap allocation and the engine borrows it for exactly one call. (An
+/// embedded host calls the borrow-taking entry points directly instead.)
 pub enum HostCommand {
     Engine(IssuedCommand),
     SendResource(SendResourceHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
 }
 
+#[derive(Debug)]
+enum HostResourceStorage {
+    Owned(std::vec::Vec<u8>),
+    Shared(Arc<[u8]>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostResourcePayloadError {
+    PrefixOutOfRange,
+}
+
+#[derive(Debug)]
+pub struct HostResourcePayload {
+    storage: HostResourceStorage,
+    len: usize,
+}
+
+impl HostResourcePayload {
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        match &self.storage {
+            HostResourceStorage::Owned(bytes) => &bytes[..self.len],
+            HostResourceStorage::Shared(bytes) => &bytes[..self.len],
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn shared_prefix(bytes: Arc<[u8]>, len: usize) -> Result<Self, HostResourcePayloadError> {
+        if len > bytes.len() {
+            return Err(HostResourcePayloadError::PrefixOutOfRange);
+        }
+        Ok(Self {
+            storage: HostResourceStorage::Shared(bytes),
+            len,
+        })
+    }
+}
+
+impl From<std::vec::Vec<u8>> for HostResourcePayload {
+    fn from(bytes: std::vec::Vec<u8>) -> Self {
+        let len = bytes.len();
+        Self {
+            storage: HostResourceStorage::Owned(bytes),
+            len,
+        }
+    }
+}
+
+impl From<Arc<[u8]>> for HostResourcePayload {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        let len = bytes.len();
+        Self {
+            storage: HostResourceStorage::Shared(bytes),
+            len,
+        }
+    }
+}
+
 pub struct SendResourceHostCommand {
     pub id: CommandId,
     pub link_id: LinkId,
-    pub data: std::vec::Vec<u8>,
-    pub compressed_candidate: Option<std::vec::Vec<u8>>,
+    pub data: HostResourcePayload,
+    pub compressed_candidate: Option<HostResourcePayload>,
     pub request_id: Option<RequestId>,
 }
 
 pub struct ProvideDecompressedHostCommand {
     pub link_id: LinkId,
     pub hash: ResourceHash,
-    pub plaintext: std::vec::Vec<u8>,
+    pub plaintext: HostResourcePayload,
 }
 
 pub async fn run<S, H, J>(
@@ -512,8 +579,10 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     HostCommand::SendResource(send) => engine.ingest_send_resource_into(
                         send.id,
                         send.link_id,
-                        &send.data,
-                        send.compressed_candidate.as_deref(),
+                        send.data.as_slice(),
+                        send.compressed_candidate
+                            .as_ref()
+                            .map(HostResourcePayload::as_slice),
                         send.request_id,
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
@@ -523,7 +592,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         engine.provide_decompressed(
                             provide.link_id,
                             provide.hash,
-                            &provide.plaintext,
+                            provide.plaintext.as_slice(),
                             &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
                         );
                         WakeSchedules::UNCHANGED
@@ -713,6 +782,22 @@ mod tests {
     use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
     use tokio::sync::mpsc;
+
+    #[test]
+    fn host_resource_payload_supports_owned_and_shared_prefix_bytes() {
+        let owned: HostResourcePayload = std::vec![1, 2, 3].into();
+        assert_eq!(owned.as_slice(), &[1, 2, 3]);
+        assert_eq!(owned.len(), 3);
+
+        let shared: Arc<[u8]> = std::vec![4, 5, 6, 7].into();
+        let prefix = HostResourcePayload::shared_prefix(Arc::clone(&shared), 3).unwrap();
+        assert_eq!(prefix.as_slice(), &[4, 5, 6]);
+        assert_eq!(prefix.len(), 3);
+        assert_eq!(
+            HostResourcePayload::shared_prefix(shared, 5).unwrap_err(),
+            HostResourcePayloadError::PrefixOutOfRange
+        );
+    }
 
     fn descriptor(id: InterfaceId) -> InterfaceConfig {
         InterfaceConfig {
@@ -931,6 +1016,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
@@ -1264,6 +1350,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
@@ -1479,6 +1566,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
@@ -1591,6 +1679,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }

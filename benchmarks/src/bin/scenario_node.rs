@@ -7,7 +7,7 @@
 //! throughput from the settlement counts, latency straight from the proofs (`rtt_ms`).
 //! Another implementation joins a pairing by speaking this same surface, nothing more.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, EngineCommand, EngineState,
@@ -17,8 +17,8 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
-    run, tokio_grant_lane, Egress, HostCommand, SendResourceHostCommand, TokioHost,
-    TokioInterfaceSeam,
+    run, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, SendResourceHostCommand,
+    TokioHost, TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::tcp::core as tcp_core;
@@ -1008,7 +1008,8 @@ async fn initiate_resource(
             _ => {}
         }
     };
-    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
+    let scratch: Arc<[u8]> =
+        incompressible_payload(profile.payload_max.max(profile.payload_len)).into();
     let mut sizes = SizeSequence::new(
         profile.size_seed,
         profile.payload_min,
@@ -1032,7 +1033,8 @@ async fn initiate_resource(
             .send(HostCommand::SendResource(SendResourceHostCommand {
                 id,
                 link_id,
-                data: scratch[..len].to_vec(),
+                data: HostResourcePayload::shared_prefix(Arc::clone(&scratch), len)
+                    .expect("profile size stays within scratch"),
                 compressed_candidate: None,
                 request_id: None,
             }))
@@ -1505,7 +1507,7 @@ async fn initiate_churn(
         }
     };
 
-    let scratch = incompressible_payload(profile.file_max.max(profile.page_max));
+    let scratch: Arc<[u8]> = incompressible_payload(profile.file_max.max(profile.page_max)).into();
     let mut sizes = SizeSequence::new(profile.size_seed, 0, 0, 1);
     let started = tokio::time::Instant::now();
     let deadline = started + duration;
@@ -1585,7 +1587,8 @@ async fn initiate_churn(
                     .send(HostCommand::SendResource(SendResourceHostCommand {
                         id: transfer_id,
                         link_id,
-                        data: scratch[..len].to_vec(),
+                        data: HostResourcePayload::shared_prefix(Arc::clone(&scratch), len)
+                            .expect("profile size stays within scratch"),
                         compressed_candidate: None,
                         request_id: None,
                     }))
