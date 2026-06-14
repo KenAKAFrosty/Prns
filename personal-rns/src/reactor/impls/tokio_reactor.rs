@@ -603,24 +603,26 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     ),
                     HostCommand::RespondAny(respond) => {
                         let data = respond.data.as_slice();
-                        if engine.response_fits_packet(&respond.link_id, data) {
-                            engine.ingest_command_into(
+                        let as_packet = engine
+                            .response_fits_packet(&respond.link_id, data)
+                            .then(|| RespondData::from_slice(data).ok())
+                            .flatten();
+                        match as_packet {
+                            Some(data) => engine.ingest_command_into(
                                 IssuedCommand {
                                     id: respond.id,
                                     command: EngineCommand::Respond(Respond {
                                         link_id: respond.link_id,
                                         request_id: respond.request_id,
-                                        data: RespondData::from_slice(data)
-                                            .expect("response_fits_packet bounds data to the respond cap"),
+                                        data,
                                     }),
                                 },
                                 &interfaces,
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
-                            )
-                        } else {
-                            engine.ingest_send_resource_into(
+                            ),
+                            None => engine.ingest_send_resource_into(
                                 respond.id,
                                 respond.link_id,
                                 data,
@@ -632,7 +634,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
-                            )
+                            ),
                         }
                     }
                     HostCommand::ProvideDecompressed(provide) => {
