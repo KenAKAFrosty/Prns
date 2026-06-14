@@ -146,6 +146,8 @@ pub trait RequestRoute<S> {
 
 /// A compile-time set of routes, produced by [`routes!`]. The registrations the recipe stands up
 /// are *this* set's, so they can't drift from what dispatch matches.
+///
+/// [`routes!`]: crate::routes
 #[allow(async_fn_in_trait)]
 pub trait RouteSet<S> {
     /// `(path, policy)` per route — the recipe registers each, seeding any `AllowList`.
@@ -170,6 +172,7 @@ pub struct OutboundResponse<'a> {
 /// [`dispatch`] — driven by the platform runner on its own task, so a slow handler never blocks
 /// the engine.
 ///
+/// [`routes!`]: crate::routes
 /// [`registrations`]: Self::registrations
 /// [`dispatch`]: Self::dispatch
 pub struct Router<S, R: RouteSet<S>> {
