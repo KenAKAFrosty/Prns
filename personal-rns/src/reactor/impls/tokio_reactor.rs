@@ -6,8 +6,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
 use crate::engine::{
-    CommandId, Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled,
-    ProofRequest, WakeSchedules,
+    CommandId, Directive, EngineCommand, EngineReaction, EngineState, InstantMillis, IssuedCommand,
+    Journaled, ProofRequest, Respond, RespondData, WakeSchedules,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -381,6 +381,7 @@ impl InterfaceStatus for TokioInterfaceStatus {
 pub enum HostCommand {
     Engine(IssuedCommand),
     SendResource(SendResourceHostCommand),
+    RespondAny(RespondAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
 }
 
@@ -457,6 +458,18 @@ pub struct SendResourceHostCommand {
     pub data: HostResourcePayload,
     pub compressed_candidate: Option<HostResourcePayload>,
     pub request_id: Option<RequestId>,
+}
+
+/// Answer a request with `data` of any length: the engine picks the rung — a single RESPONSE
+/// packet when it fits the link MDU, an outgoing resource (named back to `request_id`) when it
+/// doesn't. The payload is host-held for the same reason [`SendResourceHostCommand`]'s is — a
+/// large answer never rides an enum. This is the verb the request router issues.
+pub struct RespondAnyHostCommand {
+    pub id: CommandId,
+    pub link_id: LinkId,
+    pub request_id: RequestId,
+    pub data: HostResourcePayload,
+    pub compressed_candidate: Option<HostResourcePayload>,
 }
 
 pub struct ProvideDecompressedHostCommand {
@@ -588,6 +601,40 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         &mut |entropy| host.fill_entropy(entropy),
                         &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
                     ),
+                    HostCommand::RespondAny(respond) => {
+                        let data = respond.data.as_slice();
+                        if engine.response_fits_packet(&respond.link_id, data) {
+                            engine.ingest_command_into(
+                                IssuedCommand {
+                                    id: respond.id,
+                                    command: EngineCommand::Respond(Respond {
+                                        link_id: respond.link_id,
+                                        request_id: respond.request_id,
+                                        data: RespondData::from_slice(data)
+                                            .expect("response_fits_packet bounds data to the respond cap"),
+                                    }),
+                                },
+                                &interfaces,
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                            )
+                        } else {
+                            engine.ingest_send_resource_into(
+                                respond.id,
+                                respond.link_id,
+                                data,
+                                respond
+                                    .compressed_candidate
+                                    .as_ref()
+                                    .map(HostResourcePayload::as_slice),
+                                Some(respond.request_id),
+                                now,
+                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                            )
+                        }
+                    }
                     HostCommand::ProvideDecompressed(provide) => {
                         engine.provide_decompressed(
                             provide.link_id,

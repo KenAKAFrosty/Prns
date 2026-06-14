@@ -268,6 +268,21 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    /// Would a `data` response to a request fit a single RESPONSE packet on this link, or must
+    /// it ride a resource? The packet rung is bounded both by the link MDU and by the inline
+    /// [`RespondData`](crate::engine::commands::RespondData) capacity ([`MAX_RESPOND_DATA_LEN`]);
+    /// anything larger — or any non-active link — reports `false`, so the unified respond routes
+    /// to the resource path (which also settles the no-link error). The wire never carries the
+    /// difference: the receiver matches a packet response and a resource response to the same
+    /// request id, exactly as RNS 1.3.1 `Link.handle_request` chooses by `len <= mdu`.
+    pub fn response_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
+        let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
+            return false;
+        };
+        let data_len = if data.is_empty() { 1 } else { data.len() };
+        RESPONSE_WIRE_OVERHEAD + data_len <= link_mdu(*mtu) && data.len() <= MAX_RESPOND_DATA_LEN
+    }
+
     /// Seal a request and book its pending row: the request settles when a
     /// response names its id back, or times out at
     /// `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`] — RNS 1.3.1 `Link.request`'s
@@ -598,6 +613,26 @@ mod tests {
         assert_eq!(
             respond(mdu - RESPONSE_WIRE_OVERHEAD + 1).map(|_| ()),
             Err(LinkRequestWriteError::PayloadTooLong),
+        );
+    }
+
+    #[test]
+    fn response_fits_packet_splits_at_the_mdu_and_the_respond_cap_and_a_dead_link() {
+        let link_id = LinkId::new([0x43; 16]);
+        let engine = engine_with_an_active_link_at(link_id, 300);
+        let mdu = link_mdu(300);
+        let largest_packet = (mdu - RESPONSE_WIRE_OVERHEAD).min(MAX_RESPOND_DATA_LEN);
+        assert!(
+            engine.response_fits_packet(&link_id, &std::vec![0xBB; largest_packet]),
+            "a response at the packet ceiling stays a packet",
+        );
+        assert!(
+            !engine.response_fits_packet(&link_id, &std::vec![0xBB; largest_packet + 1]),
+            "one byte past the ceiling upgrades to a resource",
+        );
+        assert!(
+            !engine.response_fits_packet(&LinkId::new([0x99; 16]), b"anything"),
+            "a response over a link that is not active never claims the packet rung",
         );
     }
 
