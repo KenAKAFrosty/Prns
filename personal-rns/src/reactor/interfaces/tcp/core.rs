@@ -17,7 +17,8 @@ use crate::routing::links::MAX_LINK_MTU;
 /// One socket read's worth. The reference uses 4 KiB, which is fine for slow links
 /// but makes local-gigabit resource frames trickle through hundreds of userspace
 /// reads. Keep this TCP-only; serial's read buffer stays sized for its byte stream.
-pub const READ_BUF_LEN: usize = 64 * 1024;
+/// A TCP read can now absorb one worst-case encoded engine frame.
+pub const READ_BUF_LEN: usize = FRAMED_LEN;
 
 /// What a host should claim when it genuinely doesn't know its pipe: a modern wired-LAN
 /// figure, whose tier is the table's top. The reference guesses 10 Mbps
