@@ -71,7 +71,6 @@ const INBOUND_CAP: usize = 8;
 const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
-
 /// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
 /// painted stacks whenever the engine grows.
 const CORE1_STACK_BYTES: usize = 76 * 1024;
