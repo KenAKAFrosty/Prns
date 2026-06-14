@@ -1,28 +1,21 @@
-//! The declarative description of a node: the identity it answers as, whether it forwards,
-//! the destinations it stands up before the first packet, and the platform [`Bind`] that owns
-//! its interfaces and reactor. `Prns::run` consumes one of these — the consumer never hand-wires
-//! the engine, the channels, or the lanes.
+//! The declarative description of a node: which destinations it serves, whether it forwards,
+//! and the platform [`Bind`] that owns its interfaces and reactor. `Prns::run` consumes one of
+//! these — the consumer never hand-wires the engine, the channels, or the lanes.
+//!
+//! There is no "self" identity. A node is whatever destinations it stands up; each `Single`
+//! destination carries the key it answers as. The app (a daemon, Hopspot, a benchmark — the
+//! thing that calls `Prns::run` *is* the app) registers as many, or as few, as it needs.
+//!
+//! Announces are entirely app policy. The runtime hands the controls (a command channel), and
+//! the app — which knows it has started the moment `Prns::run` is reached — fires `AnnounceNow`
+//! once, on a schedule, or never. The recipe says nothing about announce cadence.
 
 use crate::engine::RatchetPolicy;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::ProofStrategy;
+use crate::wire::TransportId;
 
 use super::Bind;
-
-/// Whether this node forwards for others. `Node` puts the primary identity in the transport
-/// role (relay announces, forward addressed packets); `Endpoint` only serves its own destinations.
-pub enum Transport {
-    Endpoint,
-    Node,
-}
-
-/// Whether a destination announces itself when the node starts. Recurring cadence stays app
-/// policy — the app issues `AnnounceNow` through the binding's command channel on its own timer,
-/// exactly as the firmware's announce ticker does today.
-pub enum Announce {
-    Off,
-    AtStartup,
-}
 
 /// One destination the node serves from the moment it starts. More can be registered later
 /// through the command surface; these are the ones the recipe stands up first.
@@ -32,15 +25,15 @@ pub enum StartingDestination<'a> {
         app_name: &'a str,
         aspects: &'a [&'a str],
     },
-    /// An encrypted destination answered by the node's primary identity, carrying its proof
-    /// strategy, ratchet policy, and announce app-data.
+    /// An encrypted destination and the key it answers as — its own identity, held for it
+    /// alone. Carries its proof strategy, ratchet policy, and announce app-data.
     Single {
         app_name: &'a str,
         aspects: &'a [&'a str],
+        identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
         app_data: &'a [u8],
         proof: ProofStrategy,
         ratchet: RatchetPolicy,
-        announce: Announce,
     },
 }
 
@@ -48,10 +41,10 @@ pub enum StartingDestination<'a> {
 /// carried by the [`Bind`]'s `Storage` associated type, so the caller writes no turbofish; the
 /// interface set, lanes, and host live inside the `Bind`.
 pub struct Recipe<B: Bind, D> {
-    /// The node's primary identity. The engine is built holding it; `Single` destinations answer
-    /// as it, and `Transport::Node` gives it the forwarding role.
-    pub identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    pub transport: Transport,
+    /// `Some` opts this node into the transport role: relay announces and forward addressed
+    /// packets. A bare 16-byte id suffices — forwarding never signs, so this is *not* an
+    /// identity and stands apart from any destination's key.
+    pub transport: Option<TransportId>,
     /// The destinations stood up before the first packet is ingested
     /// (`impl IntoIterator<Item = StartingDestination>`).
     pub destinations: D,

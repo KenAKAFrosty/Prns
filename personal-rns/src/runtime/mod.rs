@@ -10,6 +10,6 @@ mod prns;
 mod recipe;
 
 pub use bind::Bind;
-pub use event::PrnsEvent;
+pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
-pub use recipe::{Announce, Recipe, StartingDestination, Transport};
+pub use recipe::{Recipe, StartingDestination};
