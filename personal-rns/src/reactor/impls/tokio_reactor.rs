@@ -1,13 +1,16 @@
+use core::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::engine::{
     CommandId, Directive, EngineCommand, EngineReaction, EngineState, InstantMillis, IssuedCommand,
-    Journaled, ProofRequest, Respond, RespondData, WakeSchedules,
+    Journaled, ProofRequest, Respond, RespondData, Settlement, WakeSchedules,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -380,9 +383,36 @@ impl InterfaceStatus for TokioInterfaceStatus {
 /// embedded host calls the borrow-taking entry points directly instead.)
 pub enum HostCommand {
     Engine(IssuedCommand),
+    /// An engine command whose settlement a caller is awaiting: the `completion` rides the command
+    /// to the single reactor task, which stashes it keyed by `issued.id` and fires it when the
+    /// matching `CommandSettled` is journaled — so the await-correlation registry has one owner and
+    /// needs no lock. This is the verb [`TokioCommands::send_single`] issues.
+    ///
+    /// [`TokioCommands::send_single`]: crate::runtime::TokioCommands::send_single
+    AwaitedEngine {
+        issued: IssuedCommand,
+        completion: oneshot::Sender<Settlement>,
+    },
     SendResource(SendResourceHostCommand),
     RespondAny(RespondAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
+}
+
+/// Fire an awaited command's settlement to the caller parked on it, or pass the event through. The
+/// reactor owns `pending` (a single-task `RefCell` map, no `Arc`/`Mutex`): a `CommandSettled` whose
+/// id a caller awaits is handed to that caller's [`oneshot`] and dropped from the event stream;
+/// every other journaled event — including a settlement nobody awaited — is returned for the app.
+fn settle_or_forward<'a>(
+    pending: &RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>>,
+    journaled: Journaled<'a>,
+) -> Option<Journaled<'a>> {
+    if let Journaled::CommandSettled { id, settlement } = &journaled {
+        if let Some(completion) = pending.borrow_mut().remove(id) {
+            let _ = completion.send(*settlement);
+            return None;
+        }
+    }
+    Some(journaled)
 }
 
 #[derive(Debug)]
@@ -536,6 +566,17 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         .collect();
     let mut wire_scratch = WireScratch::new();
     let mut unmask_scratch = std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice();
+    let pending_completions: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
+        RefCell::new(HashMap::new());
+    macro_rules! journaled_sink {
+        () => {
+            |journaled: Journaled<'_>| {
+                if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
+                    on_journaled(journaled);
+                }
+            }
+        };
+    }
     loop {
         let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
@@ -573,7 +614,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     now,
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut should_prove,
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                 );
                 lane.release();
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
@@ -587,8 +628,18 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         &interfaces,
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
+                    HostCommand::AwaitedEngine { issued, completion } => {
+                        pending_completions.borrow_mut().insert(issued.id, completion);
+                        engine.ingest_command_into(
+                            issued,
+                            &interfaces,
+                            now,
+                            &mut |entropy| host.fill_entropy(entropy),
+                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        )
+                    }
                     HostCommand::SendResource(send) => engine.ingest_send_resource_into(
                         send.id,
                         send.link_id,
@@ -599,7 +650,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         send.request_id,
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
-                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
                     HostCommand::RespondAny(respond) => {
                         let data = respond.data.as_slice();
@@ -620,7 +671,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                                 &interfaces,
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                             None => engine.ingest_send_resource_into(
                                 respond.id,
@@ -633,7 +684,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                                 Some(respond.request_id),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
-                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                                &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
                         }
                     }
@@ -642,7 +693,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             provide.link_id,
                             provide.hash,
                             provide.plaintext.as_slice(),
-                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                         );
                         WakeSchedules::UNCHANGED
                     }
@@ -657,7 +708,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     now,
                     &interfaces,
                     &mut |bytes| host.fill_entropy(bytes),
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut on_journaled),
+                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                 );
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
@@ -831,6 +882,59 @@ mod tests {
     use crate::reactor::interface_seam::Interface;
     use crate::wire::{PacketType, WirePacketHeader};
     use tokio::sync::mpsc;
+
+    #[test]
+    fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
+        let pending: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
+            RefCell::new(HashMap::new());
+        let (completion, mut settled) = oneshot::channel();
+        pending.borrow_mut().insert(CommandId(7), completion);
+
+        let settlement = Settlement::SendSingle(Ok(crate::engine::Delivered {
+            rtt: crate::units::Rtt::from_millis(9),
+        }));
+        let forwarded = settle_or_forward(
+            &pending,
+            Journaled::CommandSettled {
+                id: CommandId(7),
+                settlement,
+            },
+        );
+
+        assert!(
+            forwarded.is_none(),
+            "an awaited settlement is consumed, not forwarded to the app"
+        );
+        assert_eq!(
+            settled
+                .try_recv()
+                .expect("the awaiter received its settlement"),
+            settlement
+        );
+        assert!(
+            pending.borrow().is_empty(),
+            "the awaiter is removed from the registry once fired"
+        );
+    }
+
+    #[test]
+    fn settle_forwards_a_settlement_nobody_awaits() {
+        let pending: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
+            RefCell::new(HashMap::new());
+        let forwarded = settle_or_forward(
+            &pending,
+            Journaled::CommandSettled {
+                id: CommandId(3),
+                settlement: Settlement::SendSingle(Ok(crate::engine::Delivered {
+                    rtt: crate::units::Rtt::from_millis(1),
+                })),
+            },
+        );
+        assert!(
+            forwarded.is_some(),
+            "a settlement with no awaiter passes through to on_event"
+        );
+    }
 
     #[test]
     fn host_resource_payload_supports_owned_and_shared_prefix_bytes() {
