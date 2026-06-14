@@ -23,6 +23,7 @@ pub const LINK_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + EXPLICIT_PROOF_PAYLOAD_L
 pub enum ProofIngest {
     SendSingleDelivered { id: CommandId, delivered: Delivered },
     SendLinkDelivered { id: CommandId, delivered: Delivered },
+    SendChannelDelivered { id: CommandId, delivered: Delivered },
     Ignored,
 }
 

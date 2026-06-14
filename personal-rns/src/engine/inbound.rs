@@ -156,6 +156,12 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
+            IngestPacketOutcome::Proof(ProofIngest::SendChannelDelivered { id, delivered }) => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendChannel(Ok(delivered)),
+                }));
+            }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::TransportedLinkRequest {
                 header,

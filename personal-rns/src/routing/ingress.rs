@@ -733,6 +733,16 @@ impl<S: StorageLayout> EngineState<S> {
                         fire_on: reverse.received_interface,
                     });
                 }
+                if let Some((id, delivered)) =
+                    self.settle_channel_ack(&link_id, payload, arrived_at)
+                {
+                    // A channel send's proof is link traffic too — extend liveness.
+                    self.links.note_inbound(&link_id, arrived_at);
+                    return IngestPacketOutcome::Proof(ProofIngest::SendChannelDelivered {
+                        id,
+                        delivered,
+                    });
+                }
                 let outcome = self.ingest_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendLinkDelivered { .. }) {
                     // The validated proof is link traffic: it extends the link's
