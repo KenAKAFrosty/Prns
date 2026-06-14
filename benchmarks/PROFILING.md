@@ -1,6 +1,6 @@
 # Profiling the engine microscope
 
-Five complementary tools for profiling the **pure-Prns** paths — the Rust engine
+Six complementary tools for profiling the **pure-Prns** paths — the Rust engine
 under `benches/engine_cycle.rs` and the scenario binaries (`scenario_node`,
 `shaped_pipe`). These profile our own code; they have nothing to do with the
 reference-implementation scenarios. Pick by the question you're asking:
@@ -8,12 +8,28 @@ reference-implementation scenarios. Pick by the question you're asking:
 | Tool | Question | Determinism | Install |
 |------|----------|-------------|---------|
 | **pprof + Criterion** | Where does wall-clock go inside a bench? (flamegraph) | sampled | built in (dev-dep) |
+| **resource_profile** | Is bulk resource transfer engine-bound, and which resource stage owns it? | staged wall-clock | built in |
 | **samply** | Let me explore the call tree / timeline interactively | sampled | `cargo install samply` |
 | **iai-callgrind** | Exactly how many instructions / cache hits / branches per function, reproducibly? | deterministic | `cargo install iai-callgrind-runner` + `valgrind` |
 | **dhat** | How many heap allocations / bytes per operation? Which call sites? | deterministic | built in (dev-dep) |
 | **perf stat** | What does the real silicon do under load? (IPC, branch/LLC miss) | HW counters | `perf` (linux-tools) |
 
 All commands run from `benchmarks/`.
+
+## Resource transfer split — engine-only bulk resources
+
+`resource_profile` drives real resource sends across an already-established link
+inside two live engines, with no TCP, tokio, Python, or scenario process glue. It
+prints the full resource frame mix plus stage timing for sender advertise,
+receiver pull, sender serve, receiver assemble, and proof settlement:
+
+```sh
+RUSTFLAGS="-C target-cpu=native --cfg aes_armv8" cargo build --release --bin resource_profile
+./target/release/resource_profile 256 1048575 8
+```
+
+Use this before cutting into resource code: if this number is much higher than a
+live scenario, the next bottleneck is outside the pure engine path.
 
 ## 1. pprof flamegraphs — inside the Criterion run
 

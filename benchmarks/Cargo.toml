@@ -74,6 +74,11 @@ name = "render_results"
 path = "src/bin/render_results.rs"
 bench = false
 
+[[bin]]
+name = "resource_profile"
+path = "src/bin/resource_profile.rs"
+bench = false
+
 # --- Microscope: drive the engine directly, no I/O — the control baseline for crypto work ---
 [[bench]]
 name = "engine_cycle"
