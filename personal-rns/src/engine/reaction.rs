@@ -3,6 +3,7 @@ use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
@@ -53,6 +54,16 @@ pub enum Journaled<'a> {
     ResponseReceived {
         link_id: LinkId,
         request_id: RequestId,
+        data: &'a [u8],
+    },
+    /// A sequenced channel message reassembled into delivery order — RNS 1.3.1
+    /// `Channel._receive`'s callback as data. `message_type` is the envelope's
+    /// opaque type tag; `data` is the message body, borrowed for this reaction
+    /// only (it rides the arriving packet, or the reorder buffer the in-order
+    /// run just drained). One arrival can journal several of these in order.
+    ChannelMessageReceived {
+        link_id: LinkId,
+        message_type: MessageType,
         data: &'a [u8],
     },
     LinkClosed {

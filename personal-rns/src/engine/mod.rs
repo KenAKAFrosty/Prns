@@ -213,6 +213,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) links: Links<S::Links>,
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
+    pub(crate) channels: S::Channels,
 }
 
 impl<S: StorageLayout> Default for EngineState<S> {
@@ -238,6 +239,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             links: Links::default(),
             outgoing_resources: OutgoingResources::default(),
             incoming_resources: IncomingResources::default(),
+            channels: Default::default(),
         }
     }
 }

@@ -22,6 +22,7 @@ use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
     PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
+use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
     link_proof_from, link_request_from, link_rtt_from, signalling_bytes_from, LinkRequest,
     LinkRttError, LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_REQUEST_LEN,
@@ -275,6 +276,17 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         request_id: RequestId,
         data: &'p [u8],
+    },
+    /// A decrypted channel envelope arrived on an active link. The engine owes
+    /// the unconditional ack (`packet_hash` names it) and, once the receive
+    /// algorithm runs, the in-order messages it unblocks. `payload` is the
+    /// envelope body, borrowed from the arriving packet.
+    ChannelDataReceived {
+        link_id: LinkId,
+        message_type: MessageType,
+        sequence: ChannelSequence,
+        payload: &'p [u8],
+        packet_hash: PacketHash,
     },
     /// A part request named one of our outgoing transfers — the engine owes
     /// the requested parts raw from the register, and a hashmap update when
@@ -591,6 +603,7 @@ impl<S: StorageLayout> EngineState<S> {
                         WireContext::ResourceReceiverCancel => {
                             self.classify_resource_receiver_cancel(data, arrived_at)
                         }
+                        WireContext::Channel => self.classify_channel_data(data, arrived_at),
                         _ => IngestPacketOutcome::Ignored,
                     };
                 }
@@ -1057,6 +1070,46 @@ impl<S: StorageLayout> EngineState<S> {
                 Some((ProofStrategy::ProveIf, owed)) => ProofObligation::OwedIfAppOverLink(owed),
                 Some((ProofStrategy::ProveNone, _)) | None => ProofObligation::None,
             },
+        }
+    }
+
+    /// RNS 1.3.1 `Link.receive`'s CHANNEL branch: an encrypted channel packet on
+    /// an open (active) link. Unlike app link data, channel packets carry the
+    /// protocol's own sequence dedup, so the packet-hash duplicate filter is
+    /// skipped here (a byte-identical retransmit must reach the receive algorithm
+    /// to be re-acked, exactly as RNS exempts CHANNEL from `packet_filter`). The
+    /// hash is still taken — over the ciphertext, before the in-place open — for
+    /// the ack the arrival unconditionally owes.
+    fn classify_channel_data<'p>(
+        &mut self,
+        data: DataPacket<'p>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let link_id = LinkId::new(*data.destination.as_bytes());
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &data.destination,
+            data.context,
+            data.payload,
+        );
+        let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let Ok(plaintext) = key.open_in_place(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let plaintext: &'p [u8] = plaintext;
+        let Ok(envelope) = parse_envelope(plaintext) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        self.links.note_inbound(&link_id, arrived_at);
+        IngestPacketOutcome::ChannelDataReceived {
+            link_id,
+            message_type: envelope.message_type,
+            sequence: envelope.sequence,
+            payload: envelope.payload,
+            packet_hash,
         }
     }
 

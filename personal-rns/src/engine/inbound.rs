@@ -10,6 +10,7 @@ use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::proof::{
@@ -273,6 +274,40 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
+            IngestPacketOutcome::ChannelDataReceived {
+                link_id,
+                message_type,
+                sequence,
+                payload,
+                packet_hash,
+            } => {
+                let outcome = channel_receive(
+                    &mut self.channels,
+                    &link_id,
+                    sequence,
+                    message_type,
+                    payload,
+                    |message_type, data| {
+                        sink(EngineReaction::Journaled(
+                            Journaled::ChannelMessageReceived {
+                                link_id,
+                                message_type,
+                                data,
+                            },
+                        ));
+                    },
+                );
+                if outcome.owes_proof() && is_egress_eligible(view, source, Egress::Transmit) {
+                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                    if let Ok(written) = self.write_channel_ack(&link_id, &packet_hash, &mut proof)
+                    {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: source,
+                            bytes: &proof[..written],
+                        }));
+                    }
+                }
+            }
             IngestPacketOutcome::OwesResourceParts {
                 link_id,
                 hash,
@@ -428,4 +463,219 @@ pub(crate) fn is_egress_eligible(
             Egress::Transmit => config.capabilities.allows_transmit(),
             Egress::Transport => config.capabilities.allows_transport(),
         })
+}
+
+#[cfg(test)]
+mod channel_tests {
+    use super::*;
+    use crate::crypto::{
+        ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
+        Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
+    };
+    use crate::engine::commands::CommandId;
+    use crate::engine::test_support::{transporting_view, Cap, TEST_ENTROPY};
+    use crate::engine::{Directive, EngineReaction};
+    use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
+    use crate::routing::links::channel::{write_envelope, ChannelSequence, MessageType};
+    use crate::routing::links::data::write_link_packet;
+    use crate::routing::links::table::InitiatedLink;
+    use crate::routing::links::{LinkId, LinkKey};
+    use crate::routing::proof::LINK_PROOF_WIRE_LEN;
+    use crate::wire::{
+        DestinationHash, DestinationType, PacketType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN,
+    };
+    use std::vec::Vec;
+
+    const LANE: [u8; 16] = [0xEE; 16];
+
+    fn shared() -> crate::crypto::X25519SharedSecret {
+        x25519_diffie_hellman(
+            &X25519SecretKey::new([0x33; 32]),
+            &X25519PublicKey([0x44; 32]),
+        )
+    }
+
+    /// An engine holding one active link we initiated, with a known link signing
+    /// key, plus that link's session key for sealing packets it will open.
+    fn active_initiator() -> (EngineState<Cap>, LinkId, LinkKey, Ed25519PublicKey) {
+        let link_id = LinkId::new([0x5C; 16]);
+        let link_signing = Ed25519SecretKey::new([0x42; 32]);
+        let link_signing_public = ed25519_public_key(&link_signing);
+        let mut state = EngineState::<Cap>::default();
+        state
+            .links
+            .track_initiated(InitiatedLink {
+                link_id,
+                destination: DestinationHash::new([0x77; 16]),
+                initiator_secret: X25519SecretKey::new([0x33; 32]),
+                link_signing,
+                requested_at: InstantMillis(0),
+                timeout_at: InstantMillis(5_000),
+                command_id: CommandId(1),
+            })
+            .unwrap();
+        state
+            .links
+            .activate_initiated(
+                &link_id,
+                LinkKey::derive(&link_id, &shared()),
+                250,
+                BROADCAST_MTU,
+                InterfaceId::new(LANE),
+                InstantMillis(1_000),
+                Ed25519PublicKey([0x99; 32]),
+            )
+            .unwrap();
+        (
+            state,
+            link_id,
+            LinkKey::derive(&link_id, &shared()),
+            link_signing_public,
+        )
+    }
+
+    fn channel_frame(
+        key: &LinkKey,
+        link_id: &LinkId,
+        message_type: MessageType,
+        sequence: ChannelSequence,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let mut envelope = [0u8; BROADCAST_MTU];
+        let env_len = write_envelope(message_type, sequence, body, &mut envelope).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let len = write_link_packet(
+            link_id,
+            key,
+            BROADCAST_MTU,
+            WireContext::Channel,
+            &envelope[..env_len],
+            &[0u8; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..len].to_vec()
+    }
+
+    /// Feed one already-framed channel packet and collect the messages it
+    /// journals (in order) and the ack directive it emits, if any.
+    fn feed(
+        state: &mut EngineState<Cap>,
+        frame: &[u8],
+        now: u64,
+    ) -> (Vec<(MessageType, Vec<u8>)>, Option<Vec<u8>>) {
+        let mut raw = frame.to_vec();
+        let mut messages = Vec::new();
+        let mut ack = None;
+        state.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(now),
+                source_interface: InterfaceId::new(LANE),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+            InstantMillis(now),
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_| false,
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::ChannelMessageReceived {
+                    message_type,
+                    data,
+                    ..
+                }) => messages.push((message_type, data.to_vec())),
+                EngineReaction::Directive(Directive::Send { bytes, .. }) => {
+                    ack = Some(bytes.to_vec())
+                }
+                _ => {}
+            },
+        );
+        (messages, ack)
+    }
+
+    fn assert_valid_ack(
+        ack: &[u8],
+        ciphertext: &[u8],
+        link_id: &LinkId,
+        signer: &Ed25519PublicKey,
+    ) {
+        assert_eq!(
+            ack.len(),
+            LINK_PROOF_WIRE_LEN,
+            "the ack is one explicit proof"
+        );
+        let expected = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &DestinationHash::new(*link_id.as_bytes()),
+            WireContext::Channel,
+            ciphertext,
+        );
+        assert_eq!(
+            &ack[HEADER_MIN_LEN..HEADER_MIN_LEN + PACKET_HASH_LEN],
+            expected.as_bytes(),
+            "the ack names the packet it proves",
+        );
+        let signature = Ed25519Signature(
+            ack[HEADER_MIN_LEN + PACKET_HASH_LEN..LINK_PROOF_WIRE_LEN]
+                .try_into()
+                .unwrap(),
+        );
+        ed25519_verify(signer, expected.as_bytes(), &signature)
+            .expect("the ack verifies against the initiator's link signing key");
+    }
+
+    #[test]
+    fn an_in_order_channel_message_is_journaled_and_unconditionally_acked() {
+        let (mut state, link_id, key, signer) = active_initiator();
+        let frame = channel_frame(
+            &key,
+            &link_id,
+            MessageType(7),
+            ChannelSequence(0),
+            b"hello channel",
+        );
+        let ciphertext = frame[HEADER_MIN_LEN..].to_vec();
+
+        let (messages, ack) = feed(&mut state, &frame, 2_000);
+        assert_eq!(
+            messages,
+            std::vec![(MessageType(7), b"hello channel".to_vec())],
+            "the message is delivered to the journal in order",
+        );
+        assert_valid_ack(
+            &ack.expect("a channel arrival owes an ack even when should_prove says no"),
+            &ciphertext,
+            &link_id,
+            &signer,
+        );
+    }
+
+    #[test]
+    fn a_gap_then_its_fill_journals_the_whole_run_in_order() {
+        let (mut state, link_id, key, _signer) = active_initiator();
+
+        let ahead = channel_frame(&key, &link_id, MessageType(1), ChannelSequence(1), b"one");
+        let (messages, ack) = feed(&mut state, &ahead, 2_000);
+        assert!(
+            messages.is_empty(),
+            "the out-of-order arrival waits for the gap"
+        );
+        assert!(
+            ack.is_some(),
+            "but it is still acked so the sender stops resending"
+        );
+
+        let gap = channel_frame(&key, &link_id, MessageType(0), ChannelSequence(0), b"zero");
+        let (messages, ack) = feed(&mut state, &gap, 2_100);
+        assert_eq!(
+            messages,
+            std::vec![
+                (MessageType(0), b"zero".to_vec()),
+                (MessageType(1), b"one".to_vec()),
+            ],
+            "filling the gap drains the buffered run in one arrival, in sequence order",
+        );
+        assert!(ack.is_some(), "the gap-filling arrival is acked too");
+    }
 }
