@@ -1,5 +1,5 @@
 //! The embassy platform binding — the second concrete [`Bind`], distilled from the hand-roll in
-//! the S3 firmware's `engine_task`. Where [`TokioBind`](super::TokioBind) *owns* heap channels and
+//! the S3 firmware's `engine_task`. Where `TokioBind` *owns* heap channels and
 //! lanes, embassy's are `static` (const-sized) and the reactor takes them by borrow — so this
 //! binding *holds the borrow bundle* the firmware sets up (the `Host`, the interface descriptors,
 //! the inbound-notify and command `Receiver`s over `static` channels, the inbound grant-lane
@@ -118,7 +118,7 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 }
 
-/// The embassy command handle — the embedded twin of [`TokioCommands`](super::TokioCommands). It
+/// The embassy command handle — the embedded twin of `TokioCommands`. It
 /// holds the command channel's [`Sender`] and a borrow of the app's [`CompletionPool`], and is
 /// `Copy`, so any task can drive the node through it. Every [`CommandId`] is minted from the pool's
 /// one counter, so the app never picks ids and a fire-and-forget [`issue`](Self::issue) can't
@@ -162,7 +162,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     }
 
     /// Send one Single data packet to `destination` and await its delivery proof — the embedded peer
-    /// of [`TokioCommands::send_single`](super::TokioCommands::send_single). Claims a pool slot,
+    /// of `TokioCommands::send_single`. Claims a pool slot,
     /// parks on it until the engine settles, and frees the slot on every exit, cancellation
     /// included. `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
     pub async fn send_single(

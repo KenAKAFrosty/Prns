@@ -18,7 +18,7 @@ pub enum SendError<F> {
     /// The node has stopped: the command channel is closed (host) or the bounded lane is gone.
     NodeStopped,
     /// More awaited sends are in flight than the platform tracks at once — the embedded
-    /// [`CompletionPool`](super::CompletionPool) is full. The unbounded host path never returns it.
+    /// `CompletionPool` is full. The unbounded host path never returns it.
     Busy,
     /// The engine settled the send as a typed failure (`SendSingleFailure`, …).
     Failed(F),
