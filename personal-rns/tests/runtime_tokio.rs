@@ -11,15 +11,13 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, IssuedCommand,
     RatchetPolicy,
 };
-use personal_rns::identity::in_memory::InMemoryNodeIdentity;
-use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::reactor::interface_seam::Interface;
 use personal_rns::reactor::interfaces::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
 };
-use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind};
 use personal_rns::storage::GrowableHeap;
@@ -43,12 +41,8 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> StartingDestina
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
-    let secret_a = secret(0xA1);
-    let dest_a = {
-        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_a);
-        let name = expand_name("bench", &["link"]).expect("name expands");
-        derive_destination_hash(&identity.identity_hash(), &name)
-    };
+    let single_a = single(secret(0xA1));
+    let dest_a = single_a.address();
 
     // Node A: a TCP server + a Single it will announce.
     let (mut bind_a, commands_a) = TokioBind::<GrowableHeap>::new(TokioHost::new());
@@ -61,7 +55,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     tokio::spawn(Prns::run(
         Recipe {
             transport: None,
-            destinations: [single(secret_a)],
+            destinations: [single_a],
             bind: bind_a,
         },
         |_event| {},

@@ -11,9 +11,13 @@
 //! once, on a schedule, or never. The recipe says nothing about announce cadence.
 
 use crate::engine::RatchetPolicy;
-use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::in_memory::InMemoryNodeIdentity;
+use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::routing::announce::{
+    derive_destination_hash, derive_plain_destination_hash, expand_name,
+};
 use crate::routing::ProofStrategy;
-use crate::wire::TransportId;
+use crate::wire::{DestinationHash, TransportId};
 
 use super::Bind;
 
@@ -35,6 +39,33 @@ pub enum StartingDestination<'a> {
         proof: ProofStrategy,
         ratchet: RatchetPolicy,
     },
+}
+
+impl StartingDestination<'_> {
+    /// The address this destination will answer as — the same hash `Prns::run` registers,
+    /// derived purely from the name (and, for a `Single`, its key) so an app can learn it
+    /// before the node starts. An announcing responder needs it to name itself in `AnnounceNow`;
+    /// the recipe owns the registration, but the address is the app's to know.
+    pub fn address(&self) -> DestinationHash {
+        match self {
+            StartingDestination::Plain { app_name, aspects } => {
+                let name =
+                    expand_name(app_name, aspects).expect("recipe destination name is valid");
+                derive_plain_destination_hash(&name)
+            }
+            StartingDestination::Single {
+                app_name,
+                aspects,
+                identity,
+                ..
+            } => {
+                let signer = InMemoryNodeIdentity::from_secret_key_bytes(identity);
+                let name =
+                    expand_name(app_name, aspects).expect("recipe destination name is valid");
+                derive_destination_hash(&signer.identity_hash(), &name)
+            }
+        }
+    }
 }
 
 /// Everything [`Prns::run`](super::Prns::run) needs to stand a node up. The storage recipe is

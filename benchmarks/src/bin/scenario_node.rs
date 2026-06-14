@@ -32,11 +32,14 @@ use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
-#[cfg(not(feature = "fixed-storage"))]
-use personal_rns::storage::GrowableHeap as NodeStorage;
+use personal_rns::routing::ProofStrategy;
+use personal_rns::runtime::{
+    Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind, TokioCommands,
+};
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
-use personal_rns::routing::ProofStrategy;
+#[cfg(not(feature = "fixed-storage"))]
+use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
 use tokio::sync::mpsc;
 
@@ -292,6 +295,25 @@ async fn scenario_main() {
             .expect("parse manifest");
     let duration = Duration::from_millis(duration_override.unwrap_or(manifest.profile.duration_ms));
 
+    // Relay and chain are pure-transport topologies with no destination of their own — the
+    // recipe does not model them, so they keep their own hand-roll.
+    if role == "relay" {
+        relay_node(&manifest).await;
+        return;
+    }
+    if role == "chain" {
+        chain_node(&addr).await;
+        return;
+    }
+    // The single- and link-firehose endpoints ride the high-level runtime. Request, resource,
+    // and churn still hand-roll the reactor below: they need responder-side registration
+    // (request handlers, resource strategies) and the resource host command that the recipe and
+    // the command handle do not yet surface.
+    if matches!(manifest.profile.mechanism.as_str(), "single" | "link") {
+        run_runtime_endpoint(&manifest, &role, &addr, duration).await;
+        return;
+    }
+
     let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
     let node = engine.held_identity_hashes()[0];
     let destination = engine
@@ -405,14 +427,6 @@ async fn scenario_main() {
         _ => {}
     };
 
-    if role == "relay" {
-        relay_node(&manifest).await;
-        return;
-    }
-    if role == "chain" {
-        chain_node(&addr).await;
-        return;
-    }
     match role.as_str() {
         "responder" => {
             let mut in_lanes = vec![(TCP_INTERFACE_ID, in_rx)];
@@ -498,17 +512,11 @@ async fn scenario_main() {
                     event_rx,
                 )
                 .await;
-            } else if manifest.profile.mechanism == "link" {
-                respond_link(
-                    destination,
-                    announce_every,
-                    initiators,
-                    command_tx,
-                    event_rx,
-                )
-                .await;
             } else {
-                respond(destination, announce_every, command_tx, event_rx).await;
+                panic!(
+                    "mechanism {:?} is not a hand-rolled responder",
+                    manifest.profile.mechanism
+                );
             }
         }
         "initiator" => {
@@ -550,10 +558,11 @@ async fn scenario_main() {
                 initiate_request(&manifest.profile, duration, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "resource" {
                 initiate_resource(&manifest.profile, duration, command_tx, event_rx).await;
-            } else if manifest.profile.mechanism == "link" {
-                initiate_link(&manifest.profile, duration, command_tx, event_rx).await;
             } else {
-                initiate(&manifest.profile, duration, command_tx, event_rx).await;
+                panic!(
+                    "mechanism {:?} is not a hand-rolled initiator",
+                    manifest.profile.mechanism
+                );
             }
             // Close settlement is engine-state, not wire-state: give the egress lane a
             // beat to flush the close frame, or the responder only learns via its 10s
@@ -564,13 +573,188 @@ async fn scenario_main() {
     }
 }
 
+/// The single- and link-firehose endpoints stood up through the high-level runtime: a
+/// [`Recipe`] carrying one Single destination and a [`TokioBind`] that owns the wire, driven by
+/// `Prns::run`. The engine, channels, lanes, and reactor call the hand-roll below still spells
+/// out are all assembled by the runtime; this end keeps only what is genuinely the app's — the
+/// destination's address (to announce itself), the command handle, and the event stream.
+async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
+    let mechanism = manifest.profile.mechanism.as_str();
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let initiators = manifest.profile.initiator_count;
+
+    // The recipe borrows its destination names for the node's whole life, and the node outlives
+    // this frame (`Prns::run` is spawned), so the manifest-derived aspect is promoted to 'static.
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let single = StartingDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    };
+    let destination = single.address();
+
+    let (mut bind, commands) = TokioBind::<NodeStorage>::new(TokioHost::new());
+
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let on_event = move |event: PrnsEvent<'_>| {
+        let mapped = match event {
+            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                Some(Event::Heard(destination))
+            }
+            PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
+                Some(Event::Settled(id, settlement))
+            }
+            PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+            PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
+                Some(Event::Delivered(delivery.plaintext.len()))
+            }
+            PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
+                Some(Event::Delivered(delivery.plaintext.len()))
+            }
+            _ => None,
+        };
+        if let Some(event) = mapped {
+            let _ = event_tx.send(event);
+        }
+    };
+
+    let bound = match role {
+        "responder" => stand_up_responder_wire(&mut bind, manifest, addr).await,
+        "initiator" => {
+            stand_up_initiator_wire(&mut bind, manifest, addr).await;
+            String::new()
+        }
+        other => panic!("unknown role {other:?}"),
+    };
+
+    tokio::spawn(Prns::run(
+        Recipe {
+            transport: None,
+            destinations: [single],
+            bind,
+        },
+        on_event,
+    ));
+
+    if role == "responder" {
+        println!("READY role=responder addr={bound}");
+        if mechanism == "link" {
+            respond_link(destination, announce_every, initiators, &commands, event_rx).await;
+        } else {
+            respond(destination, announce_every, &commands, event_rx).await;
+        }
+    } else {
+        println!("READY role=initiator");
+        if mechanism == "link" {
+            initiate_link(&manifest.profile, duration, &commands, event_rx).await;
+        } else {
+            initiate(&manifest.profile, duration, &commands, event_rx).await;
+        }
+        // Close settlement is engine-state, not wire-state: give the egress lane a beat to flush
+        // the close frame, or the responder only learns via its 10s stale reaper.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Attach the responder's listening wire to `bind` and spawn it, returning the READY address
+/// line (the bound server address, plus any fan-in listeners joined by `+`).
+async fn stand_up_responder_wire(
+    bind: &mut TokioBind<NodeStorage>,
+    manifest: &Manifest,
+    addr: &str,
+) -> String {
+    if manifest.profile.topology == "relay" {
+        let interface = TcpClientInterface::new(
+            TCP_INTERFACE_ID,
+            addr.to_string(),
+            tcp_core::TCP_BITRATE_GUESS_BPS,
+            Duration::from_millis(100),
+        );
+        let seam = bind.attach(interface.descriptor());
+        tokio::spawn(interface.run(seam));
+        addr.to_string()
+    } else if manifest.profile.wire == "udp" {
+        let (local, peer) = udp_halves(addr);
+        let interface = UdpInterface::bind(
+            TCP_INTERFACE_ID,
+            local,
+            peer,
+            udp_core::UDP_BITRATE_GUESS_BPS,
+        )
+        .await
+        .expect("binds the scenario port");
+        let seam = bind.attach(interface.descriptor());
+        tokio::spawn(interface.run(seam));
+        addr.to_string()
+    } else {
+        let interface =
+            TcpServerInterface::bind(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_GUESS_BPS)
+                .await
+                .expect("binds the scenario port");
+        let bound = interface.local_addr().expect("bound address");
+        let seam = bind.attach(interface.descriptor());
+        tokio::spawn(interface.run(seam));
+        let mut addresses = bound.to_string();
+        for index in 0..manifest.profile.initiator_count.saturating_sub(1) {
+            let extra = TcpServerInterface::bind(
+                fanin_listener_id(index),
+                "127.0.0.1:0",
+                tcp_core::TCP_BITRATE_GUESS_BPS,
+            )
+            .await
+            .expect("binds an extra listener");
+            let extra_bound = extra.local_addr().expect("bound address");
+            let extra_seam = bind.attach(extra.descriptor());
+            tokio::spawn(extra.run(extra_seam));
+            addresses.push('+');
+            addresses.push_str(&extra_bound.to_string());
+        }
+        addresses
+    }
+}
+
+/// Attach the initiator's dialing wire to `bind` and spawn it.
+async fn stand_up_initiator_wire(
+    bind: &mut TokioBind<NodeStorage>,
+    manifest: &Manifest,
+    addr: &str,
+) {
+    if manifest.profile.wire == "udp" {
+        let (local, peer) = udp_halves(addr);
+        let interface = UdpInterface::bind(
+            TCP_INTERFACE_ID,
+            local,
+            peer,
+            udp_core::UDP_BITRATE_GUESS_BPS,
+        )
+        .await
+        .expect("binds the scenario port");
+        let seam = bind.attach(interface.descriptor());
+        tokio::spawn(interface.run(seam));
+    } else {
+        let interface = TcpClientInterface::new(
+            TCP_INTERFACE_ID,
+            addr.to_string(),
+            tcp_core::TCP_BITRATE_GUESS_BPS,
+            Duration::from_millis(100),
+        );
+        let seam = bind.attach(interface.descriptor());
+        tokio::spawn(interface.run(seam));
+    }
+}
+
 /// The proving end: announce on a cadence (ProveAll proves every single inside the
 /// engine), count delivered payload bytes, and report once the firehose has been quiet —
 /// singles have no teardown to signal the end with, so silence after traffic is it.
 async fn respond(
     destination: DestinationHash,
     announce_every: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
+    commands: &TokioCommands,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut next_id = 1u64;
@@ -591,7 +775,7 @@ async fn respond(
                     }),
                 };
                 next_id += 1;
-                if commands.send(HostCommand::Engine(command)).is_err() {
+                if !commands.issue(command) {
                     return;
                 }
             }
@@ -622,7 +806,7 @@ async fn respond(
 async fn initiate(
     profile: &Profile,
     duration: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
+    commands: &TokioCommands,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -666,7 +850,7 @@ async fn initiate(
             *next_id += 1;
             *sent += 1;
             *in_flight += 1;
-            commands.send(HostCommand::Engine(command)).is_ok()
+            commands.issue(command)
         };
 
     for _ in 0..profile.window {
@@ -728,7 +912,7 @@ async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
     initiator_count: usize,
-    commands: mpsc::UnboundedSender<HostCommand>,
+    commands: &TokioCommands,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
@@ -750,7 +934,7 @@ async fn respond_link(
                     }),
                 };
                 next_id += 1;
-                if commands.send(HostCommand::Engine(command)).is_err() {
+                if !commands.issue(command) {
                     return;
                 }
             }
@@ -786,7 +970,7 @@ async fn respond_link(
 async fn initiate_link(
     profile: &Profile,
     duration: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
+    commands: &TokioCommands,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -795,12 +979,13 @@ async fn initiate_link(
             _ => {}
         }
     };
-    commands
-        .send(HostCommand::Engine(IssuedCommand {
+    assert!(
+        commands.issue(IssuedCommand {
             id: CommandId(1),
             command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        }))
-        .expect("reactor alive");
+        }),
+        "reactor alive"
+    );
     let link_id = loop {
         match events.recv().await.expect("reactor alive") {
             Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
@@ -847,7 +1032,7 @@ async fn initiate_link(
             *next_id += 1;
             *sent += 1;
             *in_flight += 1;
-            commands.send(HostCommand::Engine(command)).is_ok()
+            commands.issue(command)
         };
 
     for _ in 0..profile.window {
@@ -886,12 +1071,13 @@ async fn initiate_link(
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
-    commands
-        .send(HostCommand::Engine(IssuedCommand {
+    assert!(
+        commands.issue(IssuedCommand {
             id: CommandId(next_id),
             command: EngineCommand::CloseLink(CloseLink { link_id }),
-        }))
-        .expect("reactor alive");
+        }),
+        "reactor alive"
+    );
     let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
     loop {
         match tokio::time::timeout_at(close_deadline, events.recv()).await {

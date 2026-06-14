@@ -20,7 +20,7 @@ use crate::storage::StorageLayout;
 
 use super::{Bind, PrnsEvent};
 
-const LANE_DEPTH: usize = 8;
+const LANE_DEPTH: usize = 64;
 
 /// A cloneable command sender — the app's handle to drive the running node. Obtained from
 /// [`TokioBind::new`]; usable inline (before the final `Prns::run`) or from other tasks.
