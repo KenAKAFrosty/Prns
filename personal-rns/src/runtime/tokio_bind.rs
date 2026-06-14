@@ -7,31 +7,68 @@
 //! the dual-side surface: keep it to drive the node inline before the final `Prns::run`, or move
 //! it into other tasks when you taskify the run.
 
+use core::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::engine::{EngineState, IssuedCommand};
+use crate::engine::{CommandId, EngineState, IssuedCommand};
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::impls::tokio_reactor::{
-    self, tokio_grant_lane, Egress, HostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost,
-    TokioInterfaceSeam,
+    self, tokio_grant_lane, Egress, HostCommand, RespondAnyHostCommand, TokioGrantConsumer,
+    TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::storage::StorageLayout;
 
-use super::{Bind, PrnsEvent};
+use super::{Bind, PrnsEvent, Responder};
 
 const LANE_DEPTH: usize = 64;
 
+/// Response command ids are minted from the top of the id space so a runner answering requests
+/// never collides with the app's own [`TokioCommands::issue`] ids (which count up from the app's
+/// chosen base). The app would have to be issuing 2^63 commands to meet them.
+const RESPONSE_COMMAND_ID_BASE: u64 = 1 << 63;
+
 /// A cloneable command sender — the app's handle to drive the running node. Obtained from
-/// [`TokioBind::new`]; usable inline (before the final `Prns::run`) or from other tasks.
+/// [`TokioBind::new`]; usable inline (before the final `Prns::run`) or from other tasks. Clones
+/// share one response-id counter, so every [`respond`](Self::respond) across them stays unique.
 #[derive(Clone)]
-pub struct TokioCommands(UnboundedSender<HostCommand>);
+pub struct TokioCommands {
+    tx: UnboundedSender<HostCommand>,
+    respond_ids: Arc<AtomicU64>,
+}
 
 impl TokioCommands {
+    pub(crate) fn over(tx: UnboundedSender<HostCommand>) -> Self {
+        Self {
+            tx,
+            respond_ids: Arc::new(AtomicU64::new(RESPONSE_COMMAND_ID_BASE)),
+        }
+    }
+
     /// Queue an engine command (announce, send single, establish link, …) for the next reactor
     /// cycle. Returns `false` once the node has stopped and the channel is closed.
     pub fn issue(&self, command: IssuedCommand) -> bool {
-        self.0.send(HostCommand::Engine(command)).is_ok()
+        self.tx.send(HostCommand::Engine(command)).is_ok()
+    }
+
+    /// Answer a request with `body` of any length: the engine picks the rung — a single RESPONSE
+    /// packet when it fits the link MDU, an outgoing resource named back to the request when it
+    /// doesn't. This is both the request runner's issue path and the app's defer path — keep the
+    /// [`Responder`] a handler hands back when it returns `Response::None` and answer later, off
+    /// the runner's task. Returns `false` once the node has stopped and the channel is closed.
+    pub fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+        let id = CommandId(self.respond_ids.fetch_add(1, Ordering::Relaxed));
+        self.tx
+            .send(HostCommand::RespondAny(RespondAnyHostCommand {
+                id,
+                link_id: responder.link_id,
+                request_id: responder.request_id,
+                data: body.to_vec().into(),
+                compressed_candidate: None,
+            }))
+            .is_ok()
     }
 }
 
@@ -62,7 +99,7 @@ impl<S: StorageLayout> TokioBind<S> {
                 command_rx,
                 _storage: core::marker::PhantomData,
             },
-            TokioCommands(command_tx),
+            TokioCommands::over(command_tx),
         )
     }
 

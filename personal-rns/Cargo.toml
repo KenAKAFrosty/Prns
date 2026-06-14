@@ -32,7 +32,7 @@ fat-links = []
 # lane slot and wire scratch pays the ceiling, so this is a std-host tier — embedded
 # targets size with `fat-links` instead.
 giga-links = ["fat-links"]
-tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb", "giga-links"]
+tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb", "dep:futures-util", "giga-links"]
 # Just the embassy primitives the contract seam needs (`embassy-sync` channels +
 # `embassy-time` clock, `static_cell` for the outbound grant ring's backing
 # buffer) — NOT `embassy-net`, so this builds on the host toolchain and the
@@ -103,6 +103,12 @@ rtrb = { version = "0.3", optional = true }
 # `select!` over its three inputs. Workers bring their own I/O features; the seam
 # itself needs no runtime flavor.
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
+
+# Cooperative multiplexer for the request runner (under `tokio-host`): `FuturesUnordered` drives
+# every in-flight handler on the runner's single task, so a slow `async fn` yields to the others
+# rather than blocking them — the cooperative concurrency the typed router promises. `alloc` is the
+# only feature it needs; the crate owns the pin machinery our `deny(unsafe_code)` won't let us hand-roll.
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["alloc"] }
 
 # The WiFi/LAN auto-interface's socket layer (under `wifi-lan-auto`): IPv6 multicast
 # egress (`IPV6_MULTICAST_IF`) plus `SO_REUSEADDR`/`SO_REUSEPORT` set before bind —
