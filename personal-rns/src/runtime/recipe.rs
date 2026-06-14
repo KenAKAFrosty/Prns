@@ -46,6 +46,7 @@ impl StartingDestination<'_> {
     /// derived purely from the name (and, for a `Single`, its key) so an app can learn it
     /// before the node starts. An announcing responder needs it to name itself in `AnnounceNow`;
     /// the recipe owns the registration, but the address is the app's to know.
+    #[allow(clippy::expect_used)]
     pub fn address(&self) -> DestinationHash {
         match self {
             StartingDestination::Plain { app_name, aspects } => {

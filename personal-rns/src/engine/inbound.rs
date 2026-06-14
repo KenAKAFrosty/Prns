@@ -564,13 +564,13 @@ mod channel_tests {
         frame[..len].to_vec()
     }
 
+    /// The messages a fed channel packet journals (in order) paired with the ack
+    /// directive it emits, if any.
+    type FeedOutcome = (Vec<(MessageType, Vec<u8>)>, Option<Vec<u8>>);
+
     /// Feed one already-framed channel packet and collect the messages it
     /// journals (in order) and the ack directive it emits, if any.
-    fn feed(
-        state: &mut EngineState<Cap>,
-        frame: &[u8],
-        now: u64,
-    ) -> (Vec<(MessageType, Vec<u8>)>, Option<Vec<u8>>) {
+    fn feed(state: &mut EngineState<Cap>, frame: &[u8], now: u64) -> FeedOutcome {
         let mut raw = frame.to_vec();
         let mut messages = Vec::new();
         let mut ack = None;

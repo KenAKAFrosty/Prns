@@ -15,6 +15,7 @@ impl Prns {
     /// so in practice this never returns). Every engine event is mapped to a [`PrnsEvent`] and
     /// handed to `on_event`; the app issues commands through the sender it kept when it built the
     /// recipe's [`Bind`].
+    #[allow(clippy::expect_used)]
     pub async fn run<'a, B, D>(recipe: Recipe<B, D>, on_event: impl FnMut(PrnsEvent<'_>))
     where
         B: Bind,
