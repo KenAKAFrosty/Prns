@@ -12,6 +12,7 @@ use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::dedup::PacketHashHistory;
 use crate::routing::delivery::receipts::ReceiptColumns;
 use crate::routing::group_keys::GroupKeyColumns;
+use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::resources::table::{
     IncomingResourceState, OutgoingResourceState, ResourceColumns,
 };
@@ -53,4 +54,5 @@ pub trait StorageLayout {
     type Links: LinkColumns + Default;
     type OutgoingResources: ResourceColumns<OutgoingResourceState> + Default;
     type IncomingResources: ResourceColumns<IncomingResourceState> + Default;
+    type Channels: ChannelColumns + Default;
 }

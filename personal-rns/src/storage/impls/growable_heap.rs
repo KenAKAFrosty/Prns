@@ -8,6 +8,7 @@ use crate::routing::announce::schedule::HeapScheduledAnnounceQueue;
 use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
 use crate::routing::group_keys::HeapGroupKeyColumns;
+use crate::routing::links::channel::impls::HeapChannelColumns;
 use crate::routing::links::resources::table::{
     HeapResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
@@ -44,6 +45,7 @@ impl StorageLayout for GrowableHeap {
     type Links = HeapLinkColumns;
     type OutgoingResources = HeapResourceColumns<OutgoingResourceState>;
     type IncomingResources = HeapResourceColumns<IncomingResourceState>;
+    type Channels = HeapChannelColumns;
 }
 
 #[cfg(test)]

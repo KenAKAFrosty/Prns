@@ -43,6 +43,7 @@ where
         Links = A::Links,
         OutgoingResources = A::OutgoingResources,
         IncomingResources = A::IncomingResources,
+        Channels = A::Channels,
     >,
 {
 }

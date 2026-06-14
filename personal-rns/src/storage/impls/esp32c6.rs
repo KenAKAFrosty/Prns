@@ -8,12 +8,15 @@ use crate::routing::announce::schedule::FixedScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::links::channel::channel_mdu;
+use crate::routing::links::channel::impls::FixedArrayChannelColumns;
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
     FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
+use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
@@ -29,6 +32,8 @@ impl Esp32C6 {
     const UPSTREAM_APP_DESTINATIONS: usize = 4;
     const LINKS: usize = 4;
     const RESOURCE_TRANSFER_BYTES: usize = 4096;
+    const CHANNEL_REORDER_DEPTH: usize = 8;
+    const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(MAX_LINK_MTU);
 }
 
 impl StorageLayout for Esp32C6 {
@@ -62,6 +67,11 @@ impl StorageLayout for Esp32C6 {
         1,
         { Self::RESOURCE_TRANSFER_BYTES },
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
+    >;
+    type Channels = FixedArrayChannelColumns<
+        { Self::LINKS },
+        { Self::CHANNEL_REORDER_DEPTH },
+        { Self::CHANNEL_MESSAGE_BYTES },
     >;
 }
 

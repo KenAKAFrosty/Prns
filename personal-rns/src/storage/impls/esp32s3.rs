@@ -12,12 +12,16 @@ use crate::routing::announce::schedule::FixedHeapScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::links::channel::channel_mdu;
+use crate::routing::links::channel::impls::FixedHeapChannelColumns;
+use crate::routing::links::channel::receive::WINDOW_MAX;
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
     FixedHeapResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
+use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
@@ -32,6 +36,8 @@ const MAX_CONCURRENT_LINKS: usize = 8;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
+const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
+const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(MAX_LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
 
@@ -67,6 +73,12 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         1,
         MAX_RESOURCE_TRANSFER_BYTES,
         MAX_RESOURCE_PARTS,
+        A,
+    >;
+    type Channels = FixedHeapChannelColumns<
+        MAX_CONCURRENT_LINKS,
+        CHANNEL_REORDER_DEPTH,
+        CHANNEL_MESSAGE_BYTES,
         A,
     >;
 }
