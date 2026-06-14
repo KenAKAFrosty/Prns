@@ -334,6 +334,7 @@ mod tests {
     use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
     use crate::routing::links::table::LinkPhase;
     use crate::routing::links::table::LinkRole;
+    use crate::routing::RouteResponsiveness;
     use crate::wire::DestinationHash;
 
     impl EstablishLinkWriteOutcome {
@@ -581,6 +582,87 @@ mod tests {
             after.scheduled_announces,
             WakeSchedules::UNCHANGED.scheduled_announces,
             "only the link lane moves",
+        );
+    }
+
+    #[test]
+    fn a_timed_out_link_request_marks_its_destination_unresponsive() {
+        let mut state = neighbor_with_a_route();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let _ = state
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut buf,
+            )
+            .dispatched();
+        assert_eq!(
+            state
+                .routing_table
+                .existing_route_for(&peer_destination(), &arrival_view())
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unknown,
+            "the route is unconfirmed until a proof returns",
+        );
+
+        let _ = state.fire_due_link_deadlines(
+            InstantMillis(13_000),
+            &arrival_view(),
+            &mut |bytes: &mut [u8]| bytes.fill(0xE1),
+            &mut |_| {},
+        );
+
+        assert_eq!(
+            state
+                .routing_table
+                .existing_route_for(&peer_destination(), &arrival_view())
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unresponsive,
+            "our own link request that never established marks its destination unresponsive",
+        );
+    }
+
+    #[test]
+    fn the_initiator_link_activating_marks_its_destination_responsive() {
+        let mut initiator = neighbor_with_a_route();
+        let mut request = [0u8; BROADCAST_MTU];
+        let dispatch = initiator
+            .write_commanded_link_request(
+                CommandId(7),
+                &establish(),
+                InstantMillis(1_000),
+                vector_establish_entropy(),
+                &arrival_view(),
+                &mut request,
+            )
+            .dispatched();
+        assert_eq!(
+            initiator
+                .routing_table
+                .existing_route_for(&peer_destination(), &arrival_view())
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unknown,
+        );
+
+        let mut responder = personal_node_announcer();
+        let (proofs, _, _) =
+            reactions_of(&mut responder, &request[..dispatch.wire_len], 1_100, 0x99);
+        let _ = reactions_of(&mut initiator, &proofs[0], 1_250, 0xA5);
+
+        assert_eq!(
+            initiator
+                .routing_table
+                .existing_route_for(&peer_destination(), &arrival_view())
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Responsive,
+            "the initiator's link reaching active confirms its destination's route",
         );
     }
 
@@ -1597,6 +1679,15 @@ mod tests {
             0x10,
             &relay_view,
         );
+        assert_eq!(
+            relay
+                .routing_table
+                .existing_route_for(&personal_node_destination(), &relay_view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unknown,
+            "the relay's freshly heard route to B is unconfirmed",
+        );
 
         // The initiator: knows B only through the relay's retransmitted announce.
         let mut initiator = EngineState::<Cap>::new(second_secret_key());
@@ -1645,6 +1736,15 @@ mod tests {
                 .unwrap()
                 .validated,
             "the proof validated the transported row",
+        );
+        assert_eq!(
+            relay
+                .routing_table
+                .existing_route_for(&personal_node_destination(), &relay_view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Responsive,
+            "validating the transported proof confirms the relay's route to B",
         );
 
         // A activates and the LRRTT switches through to activate B.

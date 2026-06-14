@@ -252,4 +252,70 @@ mod tests {
             "past the deadline the request settles Timeout, exactly once",
         );
     }
+
+    #[test]
+    fn an_unproved_transported_link_to_a_neighbor_marks_the_route_unresponsive() {
+        use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::interfaces::{InboundPacket, InterfaceId};
+        use crate::routing::links::transported::TransportedLink;
+        use crate::routing::links::LinkId;
+
+        let source = InterfaceId::new([0xA1; 16]);
+        let view = [routable_descriptor(source)];
+        let mut engine = EngineState::<Cap>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        let destination =
+            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        assert_eq!(
+            engine
+                .routing_table
+                .existing_route_for(&destination, &view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unknown,
+            "a freshly learned route is unconfirmed",
+        );
+
+        engine
+            .transported_links
+            .track(TransportedLink {
+                link_id: LinkId::new([0x5C; 16]),
+                destination,
+                next_hop: None,
+                next_hop_interface: source,
+                received_interface: source,
+                taken_hops: 1,
+                remaining_hops: 1,
+                validated: false,
+                last_active: InstantMillis(1_000),
+                proof_timeout: InstantMillis(7_000),
+            })
+            .unwrap();
+
+        let _ = engine.fire_due_link_deadlines(
+            InstantMillis(7_000),
+            &view,
+            &mut |bytes: &mut [u8]| bytes.fill(0),
+            &mut |_| {},
+        );
+
+        assert_eq!(
+            engine
+                .routing_table
+                .existing_route_for(&destination, &view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unresponsive,
+            "the neighbor link never proved, so its route is marked unresponsive",
+        );
+    }
 }
