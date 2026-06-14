@@ -325,6 +325,8 @@ pub enum SendChannelFailure {
     WindowFull,
     /// The channel table had no slot to track this link's channel.
     Untrackable,
+    /// The retransmission budget ran out unproved — the link is being torn down.
+    Timeout,
 }
 
 /// RNS 1.3.1 `Link.teardown`: close an ACTIVE link deliberately, telling the

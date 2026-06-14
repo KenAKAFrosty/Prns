@@ -338,6 +338,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }
                     }
                 }
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
             }
             CommandOutcome::SendChannelRejected { id, failure } => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {

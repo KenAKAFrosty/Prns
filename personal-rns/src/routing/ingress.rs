@@ -22,6 +22,7 @@ use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
     PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
+use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
     link_proof_from, link_request_from, link_rtt_from, signalling_bytes_from, LinkRequest,
@@ -1280,6 +1281,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
         self.links.remove(&link_id);
+        self.channels.close(&link_id);
         IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 

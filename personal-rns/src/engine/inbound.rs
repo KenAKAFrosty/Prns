@@ -161,6 +161,7 @@ impl<S: StorageLayout> EngineState<S> {
                     id,
                     settlement: Settlement::SendChannel(Ok(delivered)),
                 }));
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
             }
             IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
             IngestPacketOutcome::TransportedLinkRequest {
