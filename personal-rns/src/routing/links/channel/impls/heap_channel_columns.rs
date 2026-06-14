@@ -11,7 +11,7 @@ use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::columns::{
     BufferOutcome, ChannelColumns, EnsureChannelError, OutstandingSend, TxOutcome,
 };
-use crate::routing::links::channel::{ChannelSequence, MessageType};
+use crate::routing::links::channel::{ChannelSequence, ChannelWindow, MessageType};
 use crate::routing::links::LinkId;
 
 #[derive(Debug, Default)]
@@ -40,6 +40,7 @@ pub struct HeapChannelColumns {
     next_expected: Vec<ChannelSequence>,
     buffers: Vec<ReorderBuffer>,
     next_tx_sequence: Vec<ChannelSequence>,
+    windows: Vec<ChannelWindow>,
     outstanding: Vec<OutstandingRing>,
 }
 
@@ -66,6 +67,7 @@ impl ChannelColumns for HeapChannelColumns {
         self.next_expected.push(ChannelSequence(0));
         self.buffers.push(ReorderBuffer::default());
         self.next_tx_sequence.push(ChannelSequence(0));
+        self.windows.push(ChannelWindow::default());
         self.outstanding.push(OutstandingRing::default());
         Ok(self.link_ids.len() - 1)
     }
@@ -76,6 +78,7 @@ impl ChannelColumns for HeapChannelColumns {
             self.next_expected.swap_remove(index);
             self.buffers.swap_remove(index);
             self.next_tx_sequence.swap_remove(index);
+            self.windows.swap_remove(index);
             self.outstanding.swap_remove(index);
         }
     }
@@ -123,6 +126,13 @@ impl ChannelColumns for HeapChannelColumns {
     }
     fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence) {
         self.next_tx_sequence[index] = sequence;
+    }
+
+    fn window(&self, index: usize) -> ChannelWindow {
+        self.windows[index]
+    }
+    fn set_window(&mut self, index: usize, window: ChannelWindow) {
+        self.windows[index] = window;
     }
 
     fn outstanding_count(&self, index: usize) -> usize {

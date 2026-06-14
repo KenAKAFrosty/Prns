@@ -4,7 +4,8 @@
 //! key as a `CHANNEL`-context packet, and tracks it in the channel's outstanding
 //! ring; the peer's proof (an explicit link proof addressed to the link) settles
 //! it Delivered. The window bounds how many sends may be in flight unproven —
-//! fixed at the RNS initial value here; its RTT-tiered growth is a later slice.
+//! opened by one on each ack and closed by one on each loss, ratcheting toward
+//! an RTT-tiered ceiling (see [`ChannelWindow`]).
 
 use crate::crypto::{ed25519_verify, Ed25519Signature};
 use crate::engine::commands::{
@@ -19,7 +20,9 @@ use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
-use crate::routing::links::channel::{write_envelope, ENVELOPE_HEADER_LEN};
+use crate::routing::links::channel::{
+    write_envelope, ChannelSequence, ChannelWindow, ENVELOPE_HEADER_LEN,
+};
 use crate::routing::links::data::{write_link_packet, LinkDataError};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -27,10 +30,11 @@ use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
-/// RNS 1.3.1 `Channel.WINDOW`: the initial number of unproven messages a channel
-/// keeps in flight. Growth toward the RTT-tiered `WINDOW_MAX` is a later slice;
-/// for now the window is fixed at this floor.
-pub const CHANNEL_TX_WINDOW: usize = 2;
+/// RNS 1.3.1 `Channel.WINDOW`: the number of unproven messages a fresh channel
+/// keeps in flight before it has adapted. A channel's live allowance is its
+/// [`ChannelWindow`], which opens from here toward an RTT-tiered ceiling on acks
+/// and closes back toward its floor on losses.
+pub const CHANNEL_TX_WINDOW: usize = ChannelWindow::INITIAL as usize;
 
 /// The scratch an outbound envelope needs before sealing: the 6-byte header plus
 /// the largest body a channel message carries at the broadcast MTU.
@@ -81,7 +85,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             Some(LinkPhase::Active { .. }) => {
                 let window_full = self.channels.index_of(&send.link_id).is_some_and(|index| {
-                    self.channels.outstanding_count(index) >= CHANNEL_TX_WINDOW
+                    self.channels.outstanding_count(index) >= self.channels.window(index).limit()
                 });
                 if window_full {
                     CommandOutcome::SendChannelRejected {
@@ -107,11 +111,21 @@ impl<S: StorageLayout> EngineState<S> {
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<SendChannelDispatch, SendChannelWriteError> {
+        let rtt_ms = match self.links.phase_for(&send.link_id) {
+            Some(LinkPhase::Active { rtt_ms, .. }) => *rtt_ms,
+            _ => return Err(SendChannelWriteError::LinkVanished),
+        };
         let index = self
             .channels
             .ensure(&send.link_id)
             .map_err(|_| SendChannelWriteError::Untrackable)?;
-        if self.channels.outstanding_count(index) >= CHANNEL_TX_WINDOW {
+        if self.channels.next_tx_sequence(index) == ChannelSequence(0)
+            && self.channels.outstanding_count(index) == 0
+        {
+            self.channels
+                .set_window(index, ChannelWindow::for_rtt(rtt_ms));
+        }
+        if self.channels.outstanding_count(index) >= self.channels.window(index).limit() {
             return Err(SendChannelWriteError::WindowFull);
         }
         let sequence = self.channels.next_tx_sequence(index);
@@ -120,13 +134,10 @@ impl<S: StorageLayout> EngineState<S> {
         let plaintext_len = write_envelope(send.message_type, sequence, &send.body, &mut envelope)
             .map_err(|_| SendChannelWriteError::Frame(LinkDataError::PayloadTooLong))?;
 
-        let Some(LinkPhase::Active {
-            key, mtu, rtt_ms, ..
-        }) = self.links.phase_for(&send.link_id)
-        else {
+        let Some(LinkPhase::Active { key, mtu, .. }) = self.links.phase_for(&send.link_id) else {
             return Err(SendChannelWriteError::LinkVanished);
         };
-        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(*rtt_ms, 0)));
+        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(rtt_ms, 0)));
         let wire_len = write_link_packet(
             &send.link_id,
             key,
@@ -191,10 +202,16 @@ impl<S: StorageLayout> EngineState<S> {
             .iter()
             .position(|hash| *hash == named_hash)?;
 
-        let Some(LinkPhase::Active { peer_signing, .. }) = self.links.phase_for(link_id) else {
+        let Some(LinkPhase::Active {
+            peer_signing,
+            rtt_ms,
+            ..
+        }) = self.links.phase_for(link_id)
+        else {
             return None;
         };
         let peer_signing = *peer_signing;
+        let rtt_ms = *rtt_ms;
         if ed25519_verify(
             &peer_signing,
             named_hash.as_bytes(),
@@ -208,6 +225,9 @@ impl<S: StorageLayout> EngineState<S> {
         let command_id = self.channels.outstanding_command_id(index, sub);
         let sent_at = self.channels.outstanding_sent_at(index, sub);
         self.channels.retire_outstanding(index, sub);
+        let mut window = self.channels.window(index);
+        window.grow_on_ack(rtt_ms);
+        self.channels.set_window(index, window);
         Some((
             command_id,
             Delivered {
@@ -302,6 +322,9 @@ impl<S: StorageLayout> EngineState<S> {
                         .saturating_add(channel_retry_timeout_ms(rtt_ms, new_tries)),
                 ),
             );
+            let mut window = self.channels.window(index);
+            window.shrink_on_loss();
+            self.channels.set_window(index, window);
         }
 
         let mut wake = WakeSchedules::UNCHANGED;
@@ -643,6 +666,53 @@ mod tests {
             initiator.channels.outstanding_count(index),
             CHANNEL_TX_WINDOW,
             "the window holds exactly its limit outstanding",
+        );
+    }
+
+    #[test]
+    fn the_send_window_opens_by_one_as_each_ack_arrives() {
+        let (mut responder, link_id, responder_signing) = responder();
+        let (mut initiator, _) = initiator(responder_signing);
+
+        let (frame, _) = send_channel(
+            &mut initiator,
+            link_id,
+            CommandId(1),
+            MessageType(0),
+            b"a",
+            2_000,
+        );
+        let frame = frame.expect("the send goes out");
+        let index = initiator.channels.index_of(&link_id).unwrap();
+        assert_eq!(
+            initiator.channels.window(index).limit(),
+            CHANNEL_TX_WINDOW,
+            "an unacked channel sits at the initial window",
+        );
+
+        let mut ack = None;
+        feed_packet(
+            &mut responder,
+            &frame,
+            2_100,
+            &mut |_, _| {},
+            &mut |bytes| ack = Some(bytes.to_vec()),
+            &mut |_, _| {},
+        );
+        let ack = ack.expect("the responder acks");
+        feed_packet(
+            &mut initiator,
+            &ack,
+            2_200,
+            &mut |_, _| {},
+            &mut |_| {},
+            &mut |_, _| {},
+        );
+
+        assert_eq!(
+            initiator.channels.window(index).limit(),
+            CHANNEL_TX_WINDOW + 1,
+            "the ack opened the window by one",
         );
     }
 

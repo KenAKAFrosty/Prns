@@ -15,7 +15,7 @@ use crate::routing::dedup::PacketHash;
 use crate::routing::links::channel::columns::{
     BufferOutcome, ChannelColumns, EnsureChannelError, OutstandingSend, TxOutcome,
 };
-use crate::routing::links::channel::{ChannelSequence, MessageType};
+use crate::routing::links::channel::{ChannelSequence, ChannelWindow, MessageType};
 use crate::routing::links::LinkId;
 
 fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
@@ -39,6 +39,7 @@ pub struct FixedHeapChannelColumns<
     payload_lens: Box<[[usize; REORDER_CAP]], A>,
     payloads: Box<[[[u8; MAX_PAYLOAD]; REORDER_CAP]], A>,
     next_tx_sequence: [ChannelSequence; SLOTS],
+    windows: [ChannelWindow; SLOTS],
     outstanding_count: [usize; SLOTS],
     outstanding_packet_hashes: Box<[[PacketHash; REORDER_CAP]], A>,
     outstanding_command_ids: Box<[[CommandId; REORDER_CAP]], A>,
@@ -70,6 +71,7 @@ impl<
             payload_lens: filled([0; REORDER_CAP], SLOTS, A::default()),
             payloads: filled([[0u8; MAX_PAYLOAD]; REORDER_CAP], SLOTS, A::default()),
             next_tx_sequence: [ChannelSequence(0); SLOTS],
+            windows: [ChannelWindow::default(); SLOTS],
             outstanding_count: [0; SLOTS],
             outstanding_packet_hashes: filled(
                 [PacketHash::new([0u8; 32]); REORDER_CAP],
@@ -118,6 +120,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.next_expected[index] = ChannelSequence(0);
         self.buffered_count[index] = 0;
         self.next_tx_sequence[index] = ChannelSequence(0);
+        self.windows[index] = ChannelWindow::default();
         self.outstanding_count[index] = 0;
         self.len += 1;
         Ok(index)
@@ -136,6 +139,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.payload_lens.swap(index, last);
         self.payloads.swap(index, last);
         self.next_tx_sequence.swap(index, last);
+        self.windows.swap(index, last);
         self.outstanding_count.swap(index, last);
         self.outstanding_packet_hashes.swap(index, last);
         self.outstanding_command_ids.swap(index, last);
@@ -200,6 +204,13 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
     }
     fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence) {
         self.next_tx_sequence[index] = sequence;
+    }
+
+    fn window(&self, index: usize) -> ChannelWindow {
+        self.windows[index]
+    }
+    fn set_window(&mut self, index: usize, window: ChannelWindow) {
+        self.windows[index] = window;
     }
 
     fn outstanding_count(&self, index: usize) -> usize {

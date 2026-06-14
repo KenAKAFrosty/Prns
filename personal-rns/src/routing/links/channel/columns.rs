@@ -9,7 +9,7 @@
 //! next sequence to stamp and a ring of sent-but-unacked messages awaiting their
 //! proof; the send algorithm lives above in [`send`](super::send).
 
-use super::{ChannelSequence, MessageType};
+use super::{ChannelSequence, ChannelWindow, MessageType};
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::routing::dedup::PacketHash;
@@ -95,6 +95,11 @@ pub trait ChannelColumns {
     /// The next sequence the channel at `index` will stamp on an outbound message.
     fn next_tx_sequence(&self, index: usize) -> ChannelSequence;
     fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence);
+
+    /// The channel's adaptive send window — the in-flight allowance the send
+    /// algorithm gates against, grown on each ack and shrunk on each loss.
+    fn window(&self, index: usize) -> ChannelWindow;
+    fn set_window(&mut self, index: usize, window: ChannelWindow);
 
     /// How many sent messages are still awaiting their proof — the channel's
     /// in-flight count the send window is measured against.
