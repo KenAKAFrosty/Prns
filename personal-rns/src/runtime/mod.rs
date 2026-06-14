@@ -5,12 +5,14 @@
 //! in `prns.rs`; the one place embassy and tokio diverge is the [`Bind`] seam.
 
 mod bind;
+mod command;
 mod event;
 mod prns;
 mod recipe;
 mod request_router;
 
 pub use bind::Bind;
+pub use command::SendError;
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
 pub use recipe::{Recipe, StartingDestination};
@@ -22,7 +24,7 @@ pub use request_router::{
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
-pub use tokio_bind::{SendError, TokioBind, TokioCommands};
+pub use tokio_bind::{TokioBind, TokioCommands};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_runner;
@@ -30,4 +32,4 @@ mod tokio_runner;
 #[cfg(feature = "embassy-contract")]
 mod embassy_bind;
 #[cfg(feature = "embassy-contract")]
-pub use embassy_bind::EmbassyBind;
+pub use embassy_bind::{CompletionPool, EmbassyBind, EmbassyCommands};

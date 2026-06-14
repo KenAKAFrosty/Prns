@@ -27,17 +27,9 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{Bind, PrnsEvent, Responder};
+use super::{Bind, PrnsEvent, Responder, SendError};
 
 const LANE_DEPTH: usize = 64;
-
-/// Why an awaited send never reached `Delivered`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendError<F> {
-    PayloadTooLarge,
-    NodeStopped,
-    Failed(F),
-}
 
 /// A cloneable handle to the running node — bind it as `prns` and drive the node through it.
 /// Obtained from [`TokioBind::new`]; usable inline (before the final `Prns::run`) or moved into

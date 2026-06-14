@@ -769,6 +769,7 @@ mod tests {
             | Journaled::PeerIdentified { .. }
             | Journaled::RequestReceived { .. }
             | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
