@@ -1841,6 +1841,7 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "personal-hopspot-app"
 version = "0.1.0"
 dependencies = [
+ "allocator-api2",
  "critical-section",
  "embassy-executor",
  "embassy-futures",
@@ -1884,6 +1885,7 @@ name = "personal-rns"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "allocator-api2",
  "cbc",
  "ed25519-dalek",
  "embassy-futures",

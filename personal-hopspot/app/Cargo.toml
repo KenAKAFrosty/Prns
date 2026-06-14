@@ -14,6 +14,10 @@ fixture-identity = []
 # Diagnostics: a pre-frame boot line reporting the engine's static SRAM footprint and
 # free heap, with a settle delay so a USB-serial-JTAG monitor catches it past re-enumeration.
 footprint = []
+# Replaces the normal Hopspot firmware with an on-device self-firehose: two engines on the
+# PSRAM storage, hand-wired in-process, measuring pure engine throughput on the S3 silicon and
+# printing a DEVICE_FIREHOSE line over the serial-JTAG log.
+device-firehose = []
 
 [[bin]]
 name = "personal-hopspot-app"
@@ -45,7 +49,8 @@ tokio-udev = "0.9"
 tokio-stream = "0.1"
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "external-alloc"] }
+allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv6", "medium-ethernet", "multicast", "udp"] }
 static_cell = "2"

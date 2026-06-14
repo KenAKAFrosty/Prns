@@ -46,9 +46,10 @@ use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::reactor::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
-use personal_rns::storage::Esp32S3;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
+
+use crate::engine_storage::EngineStorageType;
 
 use personal_hopspot_ui as screen;
 
@@ -70,8 +71,6 @@ const INBOUND_CAP: usize = 8;
 const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
-/// The engine's fixed inline storage (no heap): the same shape the firmware has always run.
-type EngineStorageType = Esp32S3;
 
 /// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
 /// painted stacks whenever the engine grows.
@@ -212,6 +211,7 @@ pub async fn run(spawner: Spawner) {
     // esp-rtos needs a heap + a timer + a software interrupt to boot the scheduler and the
     // embassy-time driver. USB-only (no radio/IP stack) keeps this small.
     esp_alloc::heap_allocator!(size: 64 * 1024);
+    esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
