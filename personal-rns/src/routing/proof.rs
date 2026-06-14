@@ -1,9 +1,10 @@
-use crate::crypto::Ed25519Signature;
+use crate::crypto::{ed25519_sign, Ed25519Signature};
 use crate::engine::commands::{CommandId, Delivered};
 use crate::engine::egress::EgressSerializeError;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
+use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
 
@@ -72,6 +73,17 @@ pub enum WriteProofError {
     Serialize(EgressSerializeError),
 }
 
+/// What can stop a channel ack from being framed. The responder signs with the
+/// destination identity it answers for (which must still be held); the
+/// initiator signs with the link's own ephemeral key, which is always present
+/// on an active initiator link, so only the responder path can miss its key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteChannelAckError {
+    LinkNotActive,
+    IdentityNotHeld,
+    Serialize(EgressSerializeError),
+}
+
 use crate::engine::egress::{write_implicit_proof_wire_packet, write_link_proof_wire_packet};
 use crate::engine::EngineState;
 use crate::identity::IdentitySigner;
@@ -110,6 +122,35 @@ impl<S: StorageLayout> EngineState<S> {
         let signature = identity.sign(owed.packet_hash.as_bytes());
         write_link_proof_wire_packet(&owed.link_id, &owed.packet_hash, &signature, buf)
             .map_err(WriteProofError::Serialize)
+    }
+
+    /// Sign and frame the unconditional ack a received channel packet earns
+    /// (RNS 1.3.1 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a
+    /// channel is open, on either side). The responder signs the packet hash
+    /// with the destination identity it answers for; the initiator signs with
+    /// the link's own ephemeral key, the one kept on its [`LinkRole::Initiator`].
+    /// Both frame the explicit link proof; the sender's receipt validates it.
+    pub fn write_channel_ack(
+        &self,
+        link_id: &LinkId,
+        packet_hash: &PacketHash,
+        buf: &mut [u8],
+    ) -> Result<usize, WriteChannelAckError> {
+        let Some(LinkPhase::Active { role, .. }) = self.links.phase_for(link_id) else {
+            return Err(WriteChannelAckError::LinkNotActive);
+        };
+        let signature = match role {
+            LinkRole::Responder { identity, .. } => self
+                .held_identities
+                .get(identity)
+                .ok_or(WriteChannelAckError::IdentityNotHeld)?
+                .sign(packet_hash.as_bytes()),
+            LinkRole::Initiator { link_signing } => {
+                ed25519_sign(link_signing, packet_hash.as_bytes())
+            }
+        };
+        write_link_proof_wire_packet(link_id, packet_hash, &signature, buf)
+            .map_err(WriteChannelAckError::Serialize)
     }
 
     /// An arriving proof settles the outstanding send it validates. RNS 1.3.1
@@ -321,6 +362,144 @@ mod tests {
             Err(WriteProofError::Serialize(
                 EgressSerializeError::BufferTooShort
             )),
+        );
+    }
+
+    #[test]
+    fn an_initiator_channel_ack_is_signed_by_the_link_key() {
+        use crate::crypto::{
+            ed25519_public_key, ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey,
+            Ed25519SecretKey, X25519PublicKey, X25519SecretKey,
+        };
+        use crate::engine::commands::CommandId;
+        use crate::routing::links::table::InitiatedLink;
+        use crate::routing::links::{LinkId, LinkKey};
+
+        let mut state = EngineState::<Cap>::default();
+        let link_id = LinkId::new([0x5C; 16]);
+        let link_signing = Ed25519SecretKey::new([0x42; 32]);
+        let link_signing_public = ed25519_public_key(&link_signing);
+        state
+            .links
+            .track_initiated(InitiatedLink {
+                link_id,
+                destination: DestinationHash::new([0x77; 16]),
+                initiator_secret: X25519SecretKey::new([0x33; 32]),
+                link_signing,
+                requested_at: InstantMillis(0),
+                timeout_at: InstantMillis(5_000),
+                command_id: CommandId(1),
+            })
+            .unwrap();
+        let shared = x25519_diffie_hellman(
+            &X25519SecretKey::new([0x33; 32]),
+            &X25519PublicKey([0x44; 32]),
+        );
+        state
+            .links
+            .activate_initiated(
+                &link_id,
+                LinkKey::derive(&link_id, &shared),
+                250,
+                BROADCAST_MTU,
+                InterfaceId::new([0xEE; 16]),
+                InstantMillis(1_000),
+                Ed25519PublicKey([0x99; 32]),
+            )
+            .unwrap();
+
+        let packet_hash = PacketHash::new([0xAB; 32]);
+        let mut buf = [0u8; BROADCAST_MTU];
+        let written = state
+            .write_channel_ack(&link_id, &packet_hash, &mut buf)
+            .unwrap();
+        assert_eq!(written, LINK_PROOF_WIRE_LEN);
+        assert_eq!(
+            &buf[HEADER_MIN_LEN..HEADER_MIN_LEN + PACKET_HASH_LEN],
+            packet_hash.as_bytes(),
+            "the proof names the packet it acks",
+        );
+        let signature = Ed25519Signature(
+            buf[HEADER_MIN_LEN + PACKET_HASH_LEN..LINK_PROOF_WIRE_LEN]
+                .try_into()
+                .unwrap(),
+        );
+        ed25519_verify(&link_signing_public, packet_hash.as_bytes(), &signature)
+            .expect("the initiator signs the ack with its own ephemeral link key");
+    }
+
+    #[test]
+    fn a_responder_channel_ack_is_signed_by_the_held_identity() {
+        use crate::crypto::{
+            ed25519_verify, x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey,
+            X25519SecretKey,
+        };
+        use crate::identity::IdentitySigner;
+        use crate::routing::links::table::RespondingLink;
+        use crate::routing::links::{LinkId, LinkKey};
+
+        let mut state = EngineState::<Cap>::default();
+        let identity = state.hold_identity(fixed_secret_key()).unwrap();
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let signing_public = *signer.signing_public_key().as_ed25519();
+
+        let link_id = LinkId::new([0x6D; 16]);
+        let shared = x25519_diffie_hellman(
+            &X25519SecretKey::new([0x55; 32]),
+            &X25519PublicKey([0x66; 32]),
+        );
+        state
+            .links
+            .track_responding(RespondingLink {
+                link_id,
+                key: LinkKey::derive(&link_id, &shared),
+                requested_at: InstantMillis(0),
+                timeout_at: InstantMillis(5_000),
+                mtu: BROADCAST_MTU,
+                initiator_signing: Ed25519PublicKey([0x99; 32]),
+                destination: DestinationHash::new([0x77; 16]),
+                identity,
+                proof_strategy: ProofStrategy::ProveAll,
+            })
+            .unwrap();
+        state
+            .links
+            .activate_responding(
+                &link_id,
+                250,
+                InterfaceId::new([0xEE; 16]),
+                InstantMillis(1_000),
+            )
+            .unwrap();
+
+        let packet_hash = PacketHash::new([0xCD; 32]);
+        let mut buf = [0u8; BROADCAST_MTU];
+        let written = state
+            .write_channel_ack(&link_id, &packet_hash, &mut buf)
+            .unwrap();
+        assert_eq!(written, LINK_PROOF_WIRE_LEN);
+        let signature = Ed25519Signature(
+            buf[HEADER_MIN_LEN + PACKET_HASH_LEN..LINK_PROOF_WIRE_LEN]
+                .try_into()
+                .unwrap(),
+        );
+        ed25519_verify(&signing_public, packet_hash.as_bytes(), &signature)
+            .expect("the responder signs the ack with the destination identity it answers for");
+    }
+
+    #[test]
+    fn a_channel_ack_for_an_inactive_link_reports_it() {
+        use crate::routing::links::LinkId;
+
+        let state = EngineState::<Cap>::default();
+        let mut buf = [0u8; BROADCAST_MTU];
+        assert_eq!(
+            state.write_channel_ack(
+                &LinkId::new([0x01; 16]),
+                &PacketHash::new([0u8; 32]),
+                &mut buf
+            ),
+            Err(WriteChannelAckError::LinkNotActive),
         );
     }
 }

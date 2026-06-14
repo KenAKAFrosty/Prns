@@ -849,7 +849,7 @@ fn emit_proof(
 mod tests_support {
     use super::*;
     use crate::crypto::{
-        x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+        x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey, X25519SecretKey,
     };
     use crate::engine::commands::{EngineCommand, IssuedCommand, Settlement};
     use crate::engine::test_support::{filled_frame, routable_descriptor, Cap, TEST_ENTROPY};
@@ -900,6 +900,7 @@ mod tests_support {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
+                link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),
                 timeout_at: InstantMillis(5_000),
                 command_id: CommandId(1),

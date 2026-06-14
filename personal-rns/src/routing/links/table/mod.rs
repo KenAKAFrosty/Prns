@@ -6,7 +6,7 @@ mod impls;
 
 pub use impls::*;
 
-use crate::crypto::{Ed25519PublicKey, X25519SecretKey};
+use crate::crypto::{Ed25519PublicKey, Ed25519SecretKey, X25519SecretKey};
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
@@ -17,9 +17,13 @@ use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::DestinationHash;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkRole {
-    Initiator,
+    /// We opened this link. RNS 1.3.1 `Link.__init__` mints a per-link ephemeral
+    /// signing key for the initiator (the responder signs with its destination
+    /// identity instead); `link_signing` is that key, kept so this side can prove
+    /// the channel packets it receives — the only packets an initiator ever owes
+    /// a proof for.
+    Initiator { link_signing: Ed25519SecretKey },
     Responder {
         destination: DestinationHash,
         identity: IdentityHash,
@@ -27,10 +31,33 @@ pub enum LinkRole {
     },
 }
 
+// Holds the initiator's per-link signing secret, so Debug can't be derived —
+// Ed25519SecretKey deliberately has no Debug to leak. The redacted impl names
+// the variant and prints the responder's public fields; the secret zeroizes on
+// drop wherever the role dies.
+impl core::fmt::Debug for LinkRole {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Initiator { .. } => f.debug_struct("Initiator").finish_non_exhaustive(),
+            Self::Responder {
+                destination,
+                identity,
+                proof_strategy,
+            } => f
+                .debug_struct("Responder")
+                .field("destination", destination)
+                .field("identity", identity)
+                .field("proof_strategy", proof_strategy)
+                .finish(),
+        }
+    }
+}
+
 pub enum LinkPhase {
     Pending {
         destination: DestinationHash,
         initiator_secret: X25519SecretKey,
+        link_signing: Ed25519SecretKey,
         requested_at: InstantMillis,
         command_id: CommandId,
     },
@@ -65,6 +92,7 @@ impl LinkPhase {
         Self::Pending {
             destination: DestinationHash::new([0u8; 16]),
             initiator_secret: X25519SecretKey::new([0u8; 32]),
+            link_signing: Ed25519SecretKey::new([0u8; 32]),
             requested_at: InstantMillis(0),
             command_id: CommandId(0),
         }
@@ -129,6 +157,7 @@ pub struct InitiatedLink {
     pub link_id: LinkId,
     pub destination: DestinationHash,
     pub initiator_secret: X25519SecretKey,
+    pub link_signing: Ed25519SecretKey,
     pub requested_at: InstantMillis,
     pub timeout_at: InstantMillis,
     pub command_id: CommandId,
@@ -153,7 +182,7 @@ pub struct DueKeepalive {
 }
 
 fn active_deadline(
-    role: LinkRole,
+    role: &LinkRole,
     last_inbound: InstantMillis,
     last_keepalive_sent: InstantMillis,
     keepalive_ms: u64,
@@ -161,7 +190,7 @@ fn active_deadline(
     let stale_at = last_inbound.0.saturating_add(stale_ms_from(keepalive_ms));
     match role {
         LinkRole::Responder { .. } => InstantMillis(stale_at),
-        LinkRole::Initiator => {
+        LinkRole::Initiator { .. } => {
             let send_at = last_inbound
                 .0
                 .max(last_keepalive_sent.0)
@@ -232,6 +261,7 @@ impl<C: LinkColumns> Links<C> {
             LinkPhase::Pending {
                 destination: link.destination,
                 initiator_secret: link.initiator_secret,
+                link_signing: link.link_signing,
                 requested_at: link.requested_at,
                 command_id: link.command_id,
             },
@@ -279,30 +309,35 @@ impl<C: LinkColumns> Links<C> {
         let index = self
             .index_of(link_id)
             .ok_or(LinkActivationError::UnknownLink)?;
-        if !matches!(&self.columns.phases()[index], LinkPhase::Pending { .. }) {
-            return Err(LinkActivationError::WrongPhase);
+        let phase = self.columns.phase_mut(index);
+        match core::mem::replace(phase, LinkPhase::vacant()) {
+            LinkPhase::Pending { link_signing, .. } => {
+                let keepalive_ms = keepalive_ms_from(rtt_ms);
+                let role = LinkRole::Initiator { link_signing };
+                let deadline = active_deadline(&role, now, now, keepalive_ms);
+                *phase = LinkPhase::Active {
+                    remote_identity: None,
+                    resource_strategy: ResourceStrategy::default(),
+                    last_resource_window: None,
+                    last_resource_eifr: None,
+                    key,
+                    role,
+                    rtt_ms,
+                    mtu,
+                    attached_interface,
+                    last_inbound: now,
+                    last_keepalive_sent: now,
+                    keepalive_ms,
+                    peer_signing,
+                };
+                self.columns.set_timeout_at(index, Some(deadline));
+                Ok(())
+            }
+            other => {
+                *phase = other;
+                Err(LinkActivationError::WrongPhase)
+            }
         }
-        let keepalive_ms = keepalive_ms_from(rtt_ms);
-        *self.columns.phase_mut(index) = LinkPhase::Active {
-            remote_identity: None,
-            resource_strategy: ResourceStrategy::default(),
-            last_resource_window: None,
-            last_resource_eifr: None,
-            key,
-            role: LinkRole::Initiator,
-            rtt_ms,
-            mtu,
-            attached_interface,
-            last_inbound: now,
-            last_keepalive_sent: now,
-            keepalive_ms,
-            peer_signing,
-        };
-        self.columns.set_timeout_at(
-            index,
-            Some(active_deadline(LinkRole::Initiator, now, now, keepalive_ms)),
-        );
-        Ok(())
     }
 
     pub fn activate_responding(
@@ -332,6 +367,7 @@ impl<C: LinkColumns> Links<C> {
                     identity,
                     proof_strategy,
                 };
+                let deadline = active_deadline(&role, now, now, keepalive_ms);
                 *phase = LinkPhase::Active {
                     remote_identity: None,
                     resource_strategy: ResourceStrategy::default(),
@@ -347,8 +383,7 @@ impl<C: LinkColumns> Links<C> {
                     keepalive_ms,
                     peer_signing: initiator_signing,
                 };
-                self.columns
-                    .set_timeout_at(index, Some(active_deadline(role, now, now, keepalive_ms)));
+                self.columns.set_timeout_at(index, Some(deadline));
                 Ok(())
             }
             other => {
@@ -421,7 +456,7 @@ impl<C: LinkColumns> Links<C> {
         } = self.columns.phase_mut(index)
         {
             *last_inbound = now;
-            let deadline = active_deadline(*role, now, *last_keepalive_sent, *keepalive_ms);
+            let deadline = active_deadline(role, now, *last_keepalive_sent, *keepalive_ms);
             self.columns.set_timeout_at(index, Some(deadline));
         }
     }
@@ -464,7 +499,7 @@ impl<C: LinkColumns> Links<C> {
             }
             let link_id = self.columns.link_ids()[index];
             if let LinkPhase::Active {
-                role: LinkRole::Initiator,
+                role: role @ LinkRole::Initiator { .. },
                 attached_interface,
                 last_inbound,
                 last_keepalive_sent,
@@ -479,8 +514,7 @@ impl<C: LinkColumns> Links<C> {
                 if now.0 >= send_at {
                     *last_keepalive_sent = now;
                     let attached_interface = *attached_interface;
-                    let deadline =
-                        active_deadline(LinkRole::Initiator, *last_inbound, now, *keepalive_ms);
+                    let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms);
                     self.columns.set_timeout_at(index, Some(deadline));
                     return Some(DueKeepalive {
                         link_id,
@@ -565,6 +599,7 @@ mod tests {
             link_id: link_id(id),
             destination: dest(id),
             initiator_secret: secret(id),
+            link_signing: Ed25519SecretKey::new([id; 32]),
             requested_at: InstantMillis(1_000),
             timeout_at: InstantMillis(timeout_at),
             command_id: CommandId(u64::from(id)),
@@ -625,7 +660,7 @@ mod tests {
             .unwrap();
 
         let Some(LinkPhase::Active {
-            role: LinkRole::Initiator,
+            role: LinkRole::Initiator { .. },
             rtt_ms,
             ..
         }) = links.phase_for(&link_id(1))

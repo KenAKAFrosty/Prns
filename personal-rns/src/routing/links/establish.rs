@@ -1,5 +1,6 @@
 use crate::crypto::{
-    x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+    x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
+    X25519SecretKey,
 };
 use crate::engine::commands::{CommandId, CommandOutcome, EstablishLink, EstablishLinkError};
 use crate::engine::{EngineState, InstantMillis};
@@ -50,11 +51,17 @@ impl EstablishLinkEntropy {
         Self(bytes)
     }
 
-    fn into_parts(self) -> (X25519SecretKey, InMemoryNodeIdentity) {
+    fn into_parts(self) -> (X25519SecretKey, Ed25519SecretKey, InMemoryNodeIdentity) {
         let ephemeral = InMemoryNodeIdentity::from_secret_key_bytes(&self.0);
         let mut scalar = [0u8; 32];
         scalar.copy_from_slice(&self.0[..32]);
-        (X25519SecretKey::new(scalar), ephemeral)
+        let mut signing = [0u8; 32];
+        signing.copy_from_slice(&self.0[32..]);
+        (
+            X25519SecretKey::new(scalar),
+            Ed25519SecretKey::new(signing),
+            ephemeral,
+        )
     }
 }
 
@@ -143,7 +150,7 @@ impl<S: StorageLayout> EngineState<S> {
         let hops = retained.hops;
         let fire_on = retained.receiving_interface;
 
-        let (initiator_secret, ephemeral) = entropy.into_parts();
+        let (initiator_secret, link_signing, ephemeral) = entropy.into_parts();
         let encryption_public = *ephemeral.encryption_public_key().as_x25519();
         let signing_public = *ephemeral.signing_public_key().as_ed25519();
         let link_id = LinkId::derive(&establish.destination, &encryption_public, &signing_public);
@@ -175,6 +182,7 @@ impl<S: StorageLayout> EngineState<S> {
             link_id,
             destination: establish.destination,
             initiator_secret,
+            link_signing,
             requested_at: now,
             timeout_at,
             command_id: id,
@@ -423,7 +431,7 @@ mod tests {
         assert_eq!(parsed.mtu, BROADCAST_MTU);
         assert_eq!(parsed.mode, LinkMode::Aes256Cbc);
 
-        let (_, ephemeral) = vector_establish_entropy().into_parts();
+        let (_, _, ephemeral) = vector_establish_entropy().into_parts();
         assert_eq!(
             parsed.initiator_encryption,
             *ephemeral.encryption_public_key().as_x25519(),
@@ -855,7 +863,7 @@ mod tests {
         assert!(matches!(
             initiator.links.phase_for(&link_id),
             Some(LinkPhase::Active {
-                role: LinkRole::Initiator,
+                role: LinkRole::Initiator { .. },
                 rtt_ms: 250,
                 ..
             }),
@@ -892,7 +900,7 @@ mod tests {
 
         let Some(LinkPhase::Active {
             key: initiator_key,
-            role: LinkRole::Initiator,
+            role: LinkRole::Initiator { .. },
             ..
         }) = initiator.links.phase_for(&link_id)
         else {

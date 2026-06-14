@@ -660,7 +660,7 @@ const AWAITING_PROOF_RETRIES: u8 = 3;
 mod tests {
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, X25519PublicKey, X25519SecretKey};
-    use crate::crypto::{CryptoError, Ed25519PublicKey};
+    use crate::crypto::{CryptoError, Ed25519PublicKey, Ed25519SecretKey};
     use crate::engine::test_support::{filled_frame, Cap};
     use crate::engine::InstantMillis;
     use crate::interfaces::InterfaceId;
@@ -705,6 +705,7 @@ mod tests {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
+                link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),
                 timeout_at: InstantMillis(5_000),
                 command_id: CommandId(1),
@@ -891,6 +892,7 @@ mod tests {
                 link_id: link_id(),
                 destination: DestinationHash::new([0x77; 16]),
                 initiator_secret: X25519SecretKey::new([0x33; 32]),
+                link_signing: Ed25519SecretKey::new([0x33; 32]),
                 requested_at: InstantMillis(500),
                 timeout_at: InstantMillis(5_000),
                 command_id: CommandId(1),

@@ -1026,7 +1026,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let owed = match role {
-            LinkRole::Initiator => None,
+            LinkRole::Initiator { .. } => None,
             LinkRole::Responder {
                 destination,
                 identity,
@@ -1196,7 +1196,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.links.note_inbound(&link_id, arrived_at);
                 IngestPacketOutcome::OwesKeepaliveEcho { link_id }
             }
-            (LinkRole::Initiator | LinkRole::Responder { .. }, KEEPALIVE_ECHO) => {
+            (LinkRole::Initiator { .. } | LinkRole::Responder { .. }, KEEPALIVE_ECHO) => {
                 self.links.note_inbound(&link_id, arrived_at);
                 IngestPacketOutcome::Ignored
             }

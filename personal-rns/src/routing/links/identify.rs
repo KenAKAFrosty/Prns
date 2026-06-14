@@ -58,7 +58,7 @@ impl<S: StorageLayout> EngineState<S> {
                 error: IdentifyError::NotInitiator,
             },
             Some(LinkPhase::Active {
-                role: LinkRole::Initiator,
+                role: LinkRole::Initiator { .. },
                 ..
             }) => {
                 if self.held_identities.get(&identify.identity).is_none() {

@@ -509,7 +509,8 @@ mod tests {
         mtu: usize,
     ) -> EngineState<crate::storage::GrowableHeap> {
         use crate::crypto::{
-            x25519_diffie_hellman, Ed25519PublicKey, X25519PublicKey, X25519SecretKey,
+            x25519_diffie_hellman, Ed25519PublicKey, Ed25519SecretKey, X25519PublicKey,
+            X25519SecretKey,
         };
         use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
         use crate::routing::links::table::InitiatedLink;
@@ -523,6 +524,7 @@ mod tests {
                 link_id,
                 destination: DestinationHash::new([0x11; 16]),
                 initiator_secret: X25519SecretKey::new([0x21; 32]),
+                link_signing: Ed25519SecretKey::new([0x21; 32]),
                 requested_at: InstantMillis(0),
                 timeout_at: InstantMillis(600_000),
                 command_id: CommandId(1),
