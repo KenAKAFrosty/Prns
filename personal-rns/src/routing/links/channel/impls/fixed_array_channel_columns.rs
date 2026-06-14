@@ -5,7 +5,12 @@
 //! overflows), `MAX_PAYLOAD` the channel MDU. The boxed-bulk twin for scale is
 //! `FixedHeapChannelColumns`.
 
-use crate::routing::links::channel::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
+use crate::engine::commands::CommandId;
+use crate::engine::InstantMillis;
+use crate::routing::dedup::PacketHash;
+use crate::routing::links::channel::columns::{
+    BufferOutcome, ChannelColumns, EnsureChannelError, TxOutcome,
+};
 use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::LinkId;
 
@@ -22,6 +27,11 @@ pub struct FixedArrayChannelColumns<
     message_types: [[MessageType; REORDER_CAP]; SLOTS],
     payload_lens: [[usize; REORDER_CAP]; SLOTS],
     payloads: [[[u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
+    next_tx_sequence: [ChannelSequence; SLOTS],
+    outstanding_count: [usize; SLOTS],
+    outstanding_packet_hashes: [[PacketHash; REORDER_CAP]; SLOTS],
+    outstanding_command_ids: [[CommandId; REORDER_CAP]; SLOTS],
+    outstanding_sent_ats: [[InstantMillis; REORDER_CAP]; SLOTS],
 }
 
 impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Default
@@ -37,6 +47,11 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Def
             message_types: [[MessageType(0); REORDER_CAP]; SLOTS],
             payload_lens: [[0; REORDER_CAP]; SLOTS],
             payloads: [[[0u8; MAX_PAYLOAD]; REORDER_CAP]; SLOTS],
+            next_tx_sequence: [ChannelSequence(0); SLOTS],
+            outstanding_count: [0; SLOTS],
+            outstanding_packet_hashes: [[PacketHash::new([0u8; 32]); REORDER_CAP]; SLOTS],
+            outstanding_command_ids: [[CommandId(0); REORDER_CAP]; SLOTS],
+            outstanding_sent_ats: [[InstantMillis(0); REORDER_CAP]; SLOTS],
         }
     }
 }
@@ -66,6 +81,8 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.link_ids[index] = *link;
         self.next_expected[index] = ChannelSequence(0);
         self.buffered_count[index] = 0;
+        self.next_tx_sequence[index] = ChannelSequence(0);
+        self.outstanding_count[index] = 0;
         self.len += 1;
         Ok(index)
     }
@@ -82,6 +99,11 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.message_types.swap(index, last);
         self.payload_lens.swap(index, last);
         self.payloads.swap(index, last);
+        self.next_tx_sequence.swap(index, last);
+        self.outstanding_count.swap(index, last);
+        self.outstanding_packet_hashes.swap(index, last);
+        self.outstanding_command_ids.swap(index, last);
+        self.outstanding_sent_ats.swap(index, last);
         self.len = last;
     }
 
@@ -128,6 +150,52 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize> Cha
         self.payload_lens[index].swap(sub, last);
         self.payloads[index].swap(sub, last);
         self.buffered_count[index] = last;
+    }
+
+    fn next_tx_sequence(&self, index: usize) -> ChannelSequence {
+        self.next_tx_sequence[index]
+    }
+    fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence) {
+        self.next_tx_sequence[index] = sequence;
+    }
+
+    fn outstanding_count(&self, index: usize) -> usize {
+        self.outstanding_count[index]
+    }
+    fn outstanding_packet_hashes(&self, index: usize) -> &[PacketHash] {
+        &self.outstanding_packet_hashes[index][..self.outstanding_count[index]]
+    }
+    fn outstanding_command_id(&self, index: usize, sub: usize) -> CommandId {
+        self.outstanding_command_ids[index][sub]
+    }
+    fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis {
+        self.outstanding_sent_ats[index][sub]
+    }
+
+    fn push_outstanding(
+        &mut self,
+        index: usize,
+        packet_hash: PacketHash,
+        command_id: CommandId,
+        sent_at: InstantMillis,
+    ) -> TxOutcome {
+        let count = self.outstanding_count[index];
+        if count >= REORDER_CAP {
+            return TxOutcome::Full;
+        }
+        self.outstanding_packet_hashes[index][count] = packet_hash;
+        self.outstanding_command_ids[index][count] = command_id;
+        self.outstanding_sent_ats[index][count] = sent_at;
+        self.outstanding_count[index] = count + 1;
+        TxOutcome::Tracked
+    }
+
+    fn retire_outstanding(&mut self, index: usize, sub: usize) {
+        let last = self.outstanding_count[index] - 1;
+        self.outstanding_packet_hashes[index].swap(sub, last);
+        self.outstanding_command_ids[index].swap(sub, last);
+        self.outstanding_sent_ats[index].swap(sub, last);
+        self.outstanding_count[index] = last;
     }
 }
 
@@ -223,5 +291,68 @@ mod tests {
         let b = columns.index_of(&link(2)).unwrap();
         assert_eq!(columns.next_expected(b), ChannelSequence(42));
         assert_eq!(columns.index_of(&link(1)), None);
+    }
+
+    #[test]
+    fn the_tx_sequence_advances_and_is_per_channel() {
+        let mut columns = Columns::default();
+        let a = columns.ensure(&link(1)).unwrap();
+        let b = columns.ensure(&link(2)).unwrap();
+        assert_eq!(columns.next_tx_sequence(a), ChannelSequence(0));
+        columns.set_next_tx_sequence(a, ChannelSequence(1));
+        assert_eq!(columns.next_tx_sequence(a), ChannelSequence(1));
+        assert_eq!(
+            columns.next_tx_sequence(b),
+            ChannelSequence(0),
+            "per channel"
+        );
+    }
+
+    #[test]
+    fn outstanding_sends_track_match_by_hash_and_retire() {
+        let mut columns = Columns::default();
+        let i = columns.ensure(&link(1)).unwrap();
+        assert_eq!(columns.outstanding_count(i), 0);
+        assert_eq!(
+            columns.push_outstanding(i, hash(5), CommandId(50), InstantMillis(500)),
+            TxOutcome::Tracked
+        );
+        assert_eq!(
+            columns.push_outstanding(i, hash(6), CommandId(60), InstantMillis(600)),
+            TxOutcome::Tracked
+        );
+        assert_eq!(columns.outstanding_count(i), 2);
+
+        let sub = columns
+            .outstanding_packet_hashes(i)
+            .iter()
+            .position(|h| *h == hash(5))
+            .unwrap();
+        assert_eq!(columns.outstanding_command_id(i, sub), CommandId(50));
+        assert_eq!(columns.outstanding_sent_at(i, sub), InstantMillis(500));
+        columns.retire_outstanding(i, sub);
+        assert_eq!(columns.outstanding_count(i), 1);
+        assert_eq!(columns.outstanding_packet_hashes(i), &[hash(6)]);
+    }
+
+    #[test]
+    fn a_full_outstanding_ring_is_refused() {
+        let mut columns = Columns::default();
+        let i = columns.ensure(&link(1)).unwrap();
+        for n in 0..4u8 {
+            assert_eq!(
+                columns.push_outstanding(i, hash(n), CommandId(u64::from(n)), InstantMillis(0)),
+                TxOutcome::Tracked
+            );
+        }
+        assert_eq!(
+            columns.push_outstanding(i, hash(99), CommandId(99), InstantMillis(0)),
+            TxOutcome::Full,
+            "REORDER_CAP bounds the outstanding ring too",
+        );
+    }
+
+    fn hash(byte: u8) -> PacketHash {
+        PacketHash::new([byte; 32])
     }
 }

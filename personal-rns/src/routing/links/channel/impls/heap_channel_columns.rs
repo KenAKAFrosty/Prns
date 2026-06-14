@@ -5,7 +5,12 @@
 
 use alloc::vec::Vec;
 
-use crate::routing::links::channel::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
+use crate::engine::commands::CommandId;
+use crate::engine::InstantMillis;
+use crate::routing::dedup::PacketHash;
+use crate::routing::links::channel::columns::{
+    BufferOutcome, ChannelColumns, EnsureChannelError, TxOutcome,
+};
 use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::LinkId;
 
@@ -17,10 +22,19 @@ struct ReorderBuffer {
 }
 
 #[derive(Debug, Default)]
+struct OutstandingRing {
+    packet_hashes: Vec<PacketHash>,
+    command_ids: Vec<CommandId>,
+    sent_ats: Vec<InstantMillis>,
+}
+
+#[derive(Debug, Default)]
 pub struct HeapChannelColumns {
     link_ids: Vec<LinkId>,
     next_expected: Vec<ChannelSequence>,
     buffers: Vec<ReorderBuffer>,
+    next_tx_sequence: Vec<ChannelSequence>,
+    outstanding: Vec<OutstandingRing>,
 }
 
 impl ChannelColumns for HeapChannelColumns {
@@ -42,6 +56,8 @@ impl ChannelColumns for HeapChannelColumns {
         self.link_ids.push(*link);
         self.next_expected.push(ChannelSequence(0));
         self.buffers.push(ReorderBuffer::default());
+        self.next_tx_sequence.push(ChannelSequence(0));
+        self.outstanding.push(OutstandingRing::default());
         Ok(self.link_ids.len() - 1)
     }
 
@@ -50,6 +66,8 @@ impl ChannelColumns for HeapChannelColumns {
             self.link_ids.swap_remove(index);
             self.next_expected.swap_remove(index);
             self.buffers.swap_remove(index);
+            self.next_tx_sequence.swap_remove(index);
+            self.outstanding.swap_remove(index);
         }
     }
 
@@ -89,6 +107,47 @@ impl ChannelColumns for HeapChannelColumns {
         buffer.sequences.swap_remove(sub);
         buffer.message_types.swap_remove(sub);
         buffer.payloads.swap_remove(sub);
+    }
+
+    fn next_tx_sequence(&self, index: usize) -> ChannelSequence {
+        self.next_tx_sequence[index]
+    }
+    fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence) {
+        self.next_tx_sequence[index] = sequence;
+    }
+
+    fn outstanding_count(&self, index: usize) -> usize {
+        self.outstanding[index].packet_hashes.len()
+    }
+    fn outstanding_packet_hashes(&self, index: usize) -> &[PacketHash] {
+        &self.outstanding[index].packet_hashes
+    }
+    fn outstanding_command_id(&self, index: usize, sub: usize) -> CommandId {
+        self.outstanding[index].command_ids[sub]
+    }
+    fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis {
+        self.outstanding[index].sent_ats[sub]
+    }
+
+    fn push_outstanding(
+        &mut self,
+        index: usize,
+        packet_hash: PacketHash,
+        command_id: CommandId,
+        sent_at: InstantMillis,
+    ) -> TxOutcome {
+        let ring = &mut self.outstanding[index];
+        ring.packet_hashes.push(packet_hash);
+        ring.command_ids.push(command_id);
+        ring.sent_ats.push(sent_at);
+        TxOutcome::Tracked
+    }
+
+    fn retire_outstanding(&mut self, index: usize, sub: usize) {
+        let ring = &mut self.outstanding[index];
+        ring.packet_hashes.swap_remove(sub);
+        ring.command_ids.swap_remove(sub);
+        ring.sent_ats.swap_remove(sub);
     }
 }
 

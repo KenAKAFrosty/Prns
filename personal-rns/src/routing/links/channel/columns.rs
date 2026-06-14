@@ -5,16 +5,27 @@
 //! array for embedded, a boxed `FixedHeap` (PSRAM) for scale, a growable heap
 //! for std, even a zero-reorder "require in-order, drop-and-retransmit" strategy
 //! — so the reorder *policy*, not just its allocation, stays swappable and no
-//! const generic reaches engine logic. The transmit columns (next sequence,
-//! window, tx ring) join this trait in slice 3.
+//! const generic reaches engine logic. The transmit side adds, per channel, the
+//! next sequence to stamp and a ring of sent-but-unacked messages awaiting their
+//! proof; the send algorithm lives above in [`send`](super::send).
 
 use super::{ChannelSequence, MessageType};
+use crate::engine::commands::CommandId;
+use crate::engine::InstantMillis;
+use crate::routing::dedup::PacketHash;
 use crate::routing::links::LinkId;
 
 /// Whether an out-of-order arrival found room in a channel's reorder buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BufferOutcome {
     Stored,
+    Full,
+}
+
+/// Whether a sent message found room in a channel's outstanding (unacked) ring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxOutcome {
+    Tracked,
     Full,
 }
 
@@ -61,4 +72,29 @@ pub trait ChannelColumns {
     ) -> BufferOutcome;
     /// Remove the buffered entry at sub-index `sub` (it has been delivered).
     fn swap_remove_buffered(&mut self, index: usize, sub: usize);
+
+    /// The next sequence the channel at `index` will stamp on an outbound message.
+    fn next_tx_sequence(&self, index: usize) -> ChannelSequence;
+    fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence);
+
+    /// How many sent messages are still awaiting their proof — the channel's
+    /// in-flight count the send window is measured against.
+    fn outstanding_count(&self, index: usize) -> usize;
+    /// The packet hashes of the outstanding sends, packed, for matching an
+    /// arriving proof to the message it acks.
+    fn outstanding_packet_hashes(&self, index: usize) -> &[PacketHash];
+    /// The command id of the outstanding send at sub-index `sub`.
+    fn outstanding_command_id(&self, index: usize, sub: usize) -> CommandId;
+    /// When the outstanding send at sub-index `sub` was transmitted.
+    fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis;
+    /// Track a freshly sent message awaiting its proof.
+    fn push_outstanding(
+        &mut self,
+        index: usize,
+        packet_hash: PacketHash,
+        command_id: CommandId,
+        sent_at: InstantMillis,
+    ) -> TxOutcome;
+    /// Remove the outstanding send at sub-index `sub` (its proof arrived).
+    fn retire_outstanding(&mut self, index: usize, sub: usize);
 }
