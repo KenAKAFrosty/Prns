@@ -155,9 +155,7 @@ impl<const ARENA_BYTES: usize, const MAX_ENTRIES: usize, A: Allocator> RetainedA
 mod tests {
     use super::*;
 
-    fn assert_packed<const A: usize, const M: usize>(
-        store: &FixedHeapPackedAppDataArena<A, M>,
-    ) {
+    fn assert_packed<const A: usize, const M: usize>(store: &FixedHeapPackedAppDataArena<A, M>) {
         let mut covered = std::vec![false; store.used];
         let mut total = 0;
         for (slot, span) in store.spans.iter().enumerate() {
@@ -170,7 +168,10 @@ mod tests {
                 *byte = true;
             }
         }
-        assert_eq!(total, store.used, "used must equal the sum of live span lengths");
+        assert_eq!(
+            total, store.used,
+            "used must equal the sum of live span lengths"
+        );
         assert!(
             covered.iter().all(|&c| c),
             "live spans must cover [0, used) with no gaps"
@@ -232,14 +233,20 @@ mod tests {
         let mut store = FixedHeapPackedAppDataArena::<64, 2>::default();
         store.insert(&[1]).unwrap();
         store.insert(&[2]).unwrap();
-        assert_eq!(store.insert(&[3]), Err(RetainedAppDataError::TooManyEntries));
+        assert_eq!(
+            store.insert(&[3]),
+            Err(RetainedAppDataError::TooManyEntries)
+        );
     }
 
     #[test]
     fn insert_past_the_byte_budget_errors_and_leaves_the_store_unchanged() {
         let mut store = FixedHeapPackedAppDataArena::<8, 4>::default();
         let a = store.insert(&[0xAA; 6]).unwrap();
-        assert_eq!(store.insert(&[0xBB; 4]), Err(RetainedAppDataError::ArenaFull));
+        assert_eq!(
+            store.insert(&[0xBB; 4]),
+            Err(RetainedAppDataError::ArenaFull)
+        );
         assert_eq!(store.used, 6);
         assert_eq!(store.get(a), &[0xAA; 6]);
         assert_packed(&store);

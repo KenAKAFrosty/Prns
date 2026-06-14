@@ -72,7 +72,8 @@ impl<
         const TRANSFER_BYTES: usize,
         const MAX_PARTS: usize,
         A: Allocator,
-    > ResourceColumns<State> for FixedHeapResourceColumns<State, SLOTS, TRANSFER_BYTES, MAX_PARTS, A>
+    > ResourceColumns<State>
+    for FixedHeapResourceColumns<State, SLOTS, TRANSFER_BYTES, MAX_PARTS, A>
 {
     fn capacity(&self) -> usize {
         SLOTS

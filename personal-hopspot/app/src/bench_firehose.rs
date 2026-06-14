@@ -21,8 +21,8 @@ esp_app_desc!();
 
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, Directive, EngineCommand,
-    EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, RatchetPolicy, SendSingle,
-    SendSinglePayload, Settlement,
+    EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
+    SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
@@ -61,7 +61,9 @@ fn push_frame(frames: &mut FrameList, bytes: &[u8]) {
 fn capture(reaction: EngineReaction<'_>, frames: &mut FrameList, delivered: &mut bool) {
     match reaction {
         EngineReaction::Directive(Directive::Send { bytes, .. }) => push_frame(frames, bytes),
-        EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) => push_frame(frames, bytes),
+        EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) => {
+            push_frame(frames, bytes)
+        }
         EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
             let mut buf = FrameBuf::new();
             let _ = buf.resize(MAX_WIRE_FRAME_LEN, 0u8);

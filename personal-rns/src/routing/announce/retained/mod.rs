@@ -5,12 +5,12 @@ use crate::storage::ColumnsFull;
 mod impls;
 
 pub use impls::{FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory};
-#[cfg(feature = "alloc")]
-pub use impls::{HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData};
 #[cfg(feature = "external-alloc")]
 pub use impls::{
     FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns, FixedHeapTieredAnnounceIdHistory,
 };
+#[cfg(feature = "alloc")]
+pub use impls::{HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetainedAnnounceEntry {

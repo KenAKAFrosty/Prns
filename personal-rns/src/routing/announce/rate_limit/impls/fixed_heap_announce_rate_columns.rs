@@ -19,8 +19,10 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-pub struct FixedHeapAnnounceRateColumns<const MAX_ANNOUNCE_RATE_ENTRIES: usize, A: Allocator = Global>
-{
+pub struct FixedHeapAnnounceRateColumns<
+    const MAX_ANNOUNCE_RATE_ENTRIES: usize,
+    A: Allocator = Global,
+> {
     len: usize,
     destinations: Box<[DestinationHash], A>,
     entries: Box<[AnnounceRateEntry], A>,
@@ -110,20 +112,30 @@ mod tests {
     }
 
     fn entry_at(ms: u64) -> AnnounceRateEntry {
-        let mut entry = AnnounceRateEntry::default();
-        entry.last_allowed_announce_at = InstantMillis(ms);
-        entry
+        AnnounceRateEntry {
+            last_allowed_announce_at: InstantMillis(ms),
+            ..AnnounceRateEntry::default()
+        }
     }
 
     #[test]
     fn records_until_full_then_evicts_the_least_recently_active() {
         let mut columns = FixedHeapAnnounceRateColumns::<2>::default();
         assert_eq!(columns.capacity(), 2);
-        assert_eq!(columns.insert(dest(1), entry_at(100)), RateEntryAdmission::Recorded);
-        assert_eq!(columns.insert(dest(2), entry_at(200)), RateEntryAdmission::Recorded);
+        assert_eq!(
+            columns.insert(dest(1), entry_at(100)),
+            RateEntryAdmission::Recorded
+        );
+        assert_eq!(
+            columns.insert(dest(2), entry_at(200)),
+            RateEntryAdmission::Recorded
+        );
         assert_eq!(columns.len(), 2);
 
-        assert_eq!(columns.insert(dest(3), entry_at(300)), RateEntryAdmission::Recorded);
+        assert_eq!(
+            columns.insert(dest(3), entry_at(300)),
+            RateEntryAdmission::Recorded
+        );
         assert_eq!(columns.len(), 2);
         assert!(columns.destinations().contains(&dest(2)));
         assert!(columns.destinations().contains(&dest(3)));
@@ -133,7 +145,10 @@ mod tests {
     #[test]
     fn a_zero_capacity_table_is_untrackable() {
         let mut columns = FixedHeapAnnounceRateColumns::<0>::default();
-        assert_eq!(columns.insert(dest(1), entry_at(1)), RateEntryAdmission::Untrackable);
+        assert_eq!(
+            columns.insert(dest(1), entry_at(1)),
+            RateEntryAdmission::Untrackable
+        );
     }
 
     #[test]

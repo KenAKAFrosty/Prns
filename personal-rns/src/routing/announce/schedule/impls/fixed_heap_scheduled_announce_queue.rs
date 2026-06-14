@@ -37,7 +37,9 @@ impl<const MAX_PENDING: usize, A: Allocator + Default> Default
     }
 }
 
-impl<const MAX_PENDING: usize, A: Allocator + Default> FixedHeapScheduledAnnounceQueue<MAX_PENDING, A> {
+impl<const MAX_PENDING: usize, A: Allocator + Default>
+    FixedHeapScheduledAnnounceQueue<MAX_PENDING, A>
+{
     pub fn new() -> Self {
         Self::default()
     }
@@ -65,7 +67,8 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         self.source_interface.push(entry.source_interface);
         self.hops.push(entry.hops);
         self.emission_count.push(entry.emission_count);
-        self.peer_rebroadcast_count.push(entry.peer_rebroadcast_count);
+        self.peer_rebroadcast_count
+            .push(entry.peer_rebroadcast_count);
         self.directed_to.push(entry.directed_to);
     }
 
@@ -330,12 +333,18 @@ mod tests {
         let mut pending = FixedHeapScheduledAnnounceQueue::<4>::new();
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 5);
 
-        assert_eq!(pending.advance_due_retransmits(InstantMillis(100), 5_500, 2), 0);
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(100), 5_500, 2),
+            0
+        );
         let entry = pending.iter().next().unwrap();
         assert_eq!(entry.emission_count, 1);
         assert_eq!(entry.due_at, InstantMillis(5_600));
 
-        assert_eq!(pending.advance_due_retransmits(InstantMillis(5_600), 5_500, 2), 1);
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(5_600), 5_500, 2),
+            1
+        );
         assert_eq!(pending.scheduled_count(), 0);
     }
 
@@ -370,7 +379,11 @@ mod tests {
         }
         assert_eq!(pending.scheduled_count(), 2048);
         pending.schedule(dest_n(9999), InstantMillis(1), iface(0xAA), 1);
-        assert_eq!(pending.scheduled_count(), 2048, "a full queue refuses the overflow row");
+        assert_eq!(
+            pending.scheduled_count(),
+            2048,
+            "a full queue refuses the overflow row"
+        );
         assert_eq!(pending.drain_due(InstantMillis(u64::MAX)), 2048);
         assert_eq!(pending.scheduled_count(), 0);
     }

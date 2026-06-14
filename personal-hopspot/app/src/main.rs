@@ -5,14 +5,14 @@
 #[cfg(target_arch = "xtensa")]
 extern crate alloc;
 
+#[cfg(all(target_arch = "xtensa", feature = "device-firehose"))]
+mod bench_firehose;
 #[cfg(not(target_arch = "xtensa"))]
 mod desktop;
 #[cfg(target_arch = "xtensa")]
 mod engine_storage;
 #[cfg(all(target_arch = "xtensa", not(feature = "device-firehose")))]
 mod s3;
-#[cfg(all(target_arch = "xtensa", feature = "device-firehose"))]
-mod bench_firehose;
 
 #[cfg(not(target_arch = "xtensa"))]
 fn main() {

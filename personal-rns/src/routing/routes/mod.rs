@@ -7,9 +7,9 @@ use crate::wire::DestinationHash;
 mod impls;
 
 pub use impls::FixedArrayRouteColumns;
-pub use impls::FixedIndexedRouteColumns;
 #[cfg(feature = "external-alloc")]
 pub use impls::FixedHeapRouteColumns;
+pub use impls::FixedIndexedRouteColumns;
 #[cfg(feature = "alloc")]
 pub use impls::HeapRouteColumns;
 

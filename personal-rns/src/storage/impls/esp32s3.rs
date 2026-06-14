@@ -12,12 +12,16 @@ use crate::routing::announce::schedule::FixedHeapScheduledAnnounceQueue;
 use crate::routing::dedup::FixedPacketHashHistory;
 use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
+use crate::routing::links::channel::channel_mdu;
+use crate::routing::links::channel::impls::FixedHeapChannelColumns;
+use crate::routing::links::channel::receive::WINDOW_MAX;
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
     FixedHeapResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
+use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
@@ -32,6 +36,8 @@ const MAX_CONCURRENT_LINKS: usize = 8;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
+const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
+const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(MAX_LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
 
@@ -69,6 +75,12 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         MAX_RESOURCE_PARTS,
         A,
     >;
+    type Channels = FixedHeapChannelColumns<
+        MAX_CONCURRENT_LINKS,
+        CHANNEL_REORDER_DEPTH,
+        CHANNEL_MESSAGE_BYTES,
+        A,
+    >;
 }
 
 #[cfg(test)]
@@ -84,17 +96,53 @@ mod tests {
             "EngineState<Esp32S3<Global>> = {} bytes SRAM-resident (host 64-bit; the cold bulk lives behind boxes in PSRAM and is not counted here)",
             core::mem::size_of::<EngineState<L>>()
         );
-        println!("  Routes        {:>6} B (index inline; rows boxed)", core::mem::size_of::<<L as StorageLayout>::Routes>());
-        println!("  Announces     {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::Announces>());
-        println!("  History       {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::History>());
-        println!("  AppData       {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::AppData>());
-        println!("  ScheduledAnn  {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::ScheduledAnnounces>());
-        println!("  AnnounceRates {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::AnnounceRates>());
-        println!("  ReverseRoutes {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::ReverseRoutes>());
-        println!("  PacketHashes  {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::PacketHashes>());
-        println!("  Receipts      {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::Receipts>());
-        println!("  Links         {:>6} B (inline)", core::mem::size_of::<<L as StorageLayout>::Links>());
-        println!("  OutResources  {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::OutgoingResources>());
-        println!("  InResources   {:>6} B (boxed)", core::mem::size_of::<<L as StorageLayout>::IncomingResources>());
+        println!(
+            "  Routes        {:>6} B (index inline; rows boxed)",
+            core::mem::size_of::<<L as StorageLayout>::Routes>()
+        );
+        println!(
+            "  Announces     {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::Announces>()
+        );
+        println!(
+            "  History       {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::History>()
+        );
+        println!(
+            "  AppData       {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::AppData>()
+        );
+        println!(
+            "  ScheduledAnn  {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::ScheduledAnnounces>()
+        );
+        println!(
+            "  AnnounceRates {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::AnnounceRates>()
+        );
+        println!(
+            "  ReverseRoutes {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::ReverseRoutes>()
+        );
+        println!(
+            "  PacketHashes  {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::PacketHashes>()
+        );
+        println!(
+            "  Receipts      {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::Receipts>()
+        );
+        println!(
+            "  Links         {:>6} B (inline)",
+            core::mem::size_of::<<L as StorageLayout>::Links>()
+        );
+        println!(
+            "  OutResources  {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::OutgoingResources>()
+        );
+        println!(
+            "  InResources   {:>6} B (boxed)",
+            core::mem::size_of::<<L as StorageLayout>::IncomingResources>()
+        );
     }
 }

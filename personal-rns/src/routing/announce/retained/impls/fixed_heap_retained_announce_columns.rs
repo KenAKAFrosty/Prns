@@ -22,8 +22,10 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-pub struct FixedHeapRetainedAnnounceColumns<const MAX_TRACKED_DESTINATIONS: usize, A: Allocator = Global>
-{
+pub struct FixedHeapRetainedAnnounceColumns<
+    const MAX_TRACKED_DESTINATIONS: usize,
+    A: Allocator = Global,
+> {
     len: usize,
     public_keys: Box<[IdentityPublicKeys], A>,
     dotted_name_hash: Box<[DottedNameHash], A>,
@@ -154,7 +156,10 @@ mod tests {
         assert_eq!(columns.public_keys(), &[keys(1), keys(2)]);
         assert_eq!(
             columns.retained_announce_id(),
-            &[AnnounceId::from_wire([1; 10]), AnnounceId::from_wire([2; 10])]
+            &[
+                AnnounceId::from_wire([1; 10]),
+                AnnounceId::from_wire([2; 10])
+            ]
         );
     }
 
