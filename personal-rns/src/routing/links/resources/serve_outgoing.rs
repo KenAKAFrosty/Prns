@@ -7,8 +7,9 @@
 //! where it stands. The reference collapses both exhausted-request failure
 //! modes into one logged "sequencing error"; we name them.
 
+use crate::routing::links::resources::control::PART_REQUEST_PLAINTEXT_CAP;
 use crate::routing::links::resources::{
-    COLLISION_GUARD_SIZE, HASHMAP_MAX_LEN, MAP_HASH_LEN, WINDOW_MAX,
+    COLLISION_GUARD_SIZE, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,25 +30,102 @@ pub struct HashmapUpdatePlan {
     pub scope_start: usize,
 }
 
+/// The most names a part request can fit in its plaintext after the flag and
+/// resource hash. Normal emitters cap at `WINDOW_MAX`; the extra slot preserves
+/// the old read side's tolerance for a full base-MDU request without a
+/// hashmap-exhausted marker.
+pub const MAX_REQUESTED_PARTS: usize =
+    (PART_REQUEST_PLAINTEXT_CAP - 1 - RESOURCE_HASH_LEN) / MAP_HASH_LEN;
+
+#[derive(Debug, Clone)]
+pub struct ServedPartIndices {
+    parts: [usize; MAX_REQUESTED_PARTS],
+    len: usize,
+    next: usize,
+}
+
+impl ServedPartIndices {
+    fn empty() -> Self {
+        Self {
+            parts: [0; MAX_REQUESTED_PARTS],
+            len: 0,
+            next: 0,
+        }
+    }
+
+    fn push(&mut self, part: usize) -> bool {
+        if self.len == self.parts.len() {
+            return false;
+        }
+        self.parts[self.len] = part;
+        self.len += 1;
+        true
+    }
+}
+
+impl Iterator for ServedPartIndices {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next >= self.len {
+            return None;
+        }
+        let part = self.parts[self.next];
+        self.next += 1;
+        Some(part)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.len.saturating_sub(self.next);
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for ServedPartIndices {}
+
 /// The part-picking filter of RNS 1.3.1 `Resource.request`: every part whose
 /// name appears among the requested names and sits inside the serving scope,
 /// yielded in ascending part order regardless of the order requested. Names
 /// outside the scope or matching nothing are ignored without comment, like
 /// the reference. A ragged tail on `requested` is ignored the same way the
 /// part-request parser tolerates it.
-pub fn serve_part_indices<'a>(
-    hashmap: &'a [u8],
+pub fn serve_part_indices(
+    hashmap: &[u8],
     scope_start: usize,
-    requested: &'a [u8],
-) -> impl Iterator<Item = usize> + 'a {
+    requested: &[u8],
+) -> ServedPartIndices {
     let known = hashmap.len() / MAP_HASH_LEN;
     let end = scope_start.saturating_add(COLLISION_GUARD_SIZE).min(known);
-    (scope_start..end).filter(move |&i| {
+    let mut served = ServedPartIndices::empty();
+    let requested_len = requested.len() / MAP_HASH_LEN;
+
+    if requested_len <= MAX_REQUESTED_PARTS {
+        let mut requested_names = [0u32; MAX_REQUESTED_PARTS];
+        for (index, asked) in requested.chunks_exact(MAP_HASH_LEN).enumerate() {
+            requested_names[index] = map_hash_name_word(asked);
+        }
+        for i in scope_start..end {
+            let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
+            if requested_names[..requested_len].contains(&map_hash_name_word(name))
+                && !served.push(i)
+            {
+                break;
+            }
+        }
+        return served;
+    }
+
+    for i in scope_start..end {
         let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
-        requested
+        if requested
             .chunks_exact(MAP_HASH_LEN)
             .any(|asked| asked == name)
-    })
+            && !served.push(i)
+        {
+            break;
+        }
+    }
+    served
 }
 
 /// The hashmap-exhausted half of RNS 1.3.1 `Resource.request`: find the last
@@ -76,6 +154,10 @@ pub fn plan_hashmap_update(
         entries_end: ((segment + 1) * HASHMAP_MAX_LEN).min(known),
         scope_start: past_matched.saturating_sub(1 + WINDOW_MAX),
     })
+}
+
+fn map_hash_name_word(name: &[u8]) -> u32 {
+    u32::from_ne_bytes([name[0], name[1], name[2], name[3]])
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ use crate::routing::links::resources::advertisement::{
 use crate::routing::links::resources::build_outgoing::build_outgoing_resource;
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
-    write_cancel_plaintext, PART_REQUEST_PLAINTEXT_CAP,
+    write_cancel_plaintext,
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
@@ -298,21 +298,11 @@ impl<S: StorageLayout> EngineState<S> {
             .set_timeout_at(index, Some(transferring_deadline(now, rtt_ms)));
 
         let scope_start = self.outgoing_resources.state(index).scope_start;
-        let mut picked = [0usize; MAX_REQUESTED_PARTS];
-        let mut picked_len = 0;
         for part in serve_part_indices(
             self.outgoing_resources.names_flat(index),
             scope_start,
             requested,
         ) {
-            if picked_len == picked.len() {
-                break;
-            }
-            picked[picked_len] = part;
-            picked_len += 1;
-        }
-
-        for &part in &picked[..picked_len] {
             let outgoing = &self.outgoing_resources;
             let mut fill = |slot: &mut [u8]| -> Option<usize> {
                 let state = outgoing.state(index);
@@ -647,11 +637,6 @@ where
     wrote
 }
 
-/// The most names one part request can carry:
-/// the plaintext cap less the flag byte and resource hash, in map-hash strides.
-const MAX_REQUESTED_PARTS: usize =
-    (PART_REQUEST_PLAINTEXT_CAP - 1 - RESOURCE_HASH_LEN) / MAP_HASH_LEN;
-
 /// RNS 1.3.1 `Resource.request`: `retries_left = 3` once every part has been
 /// sent and only the proof is owed.
 const AWAITING_PROOF_RETRIES: u8 = 3;
@@ -959,7 +944,9 @@ mod tests {
         last_known: Option<&[u8; MAP_HASH_LEN]>,
         requested: &[u8],
     ) -> std::vec::Vec<u8> {
-        use crate::routing::links::resources::control::write_part_request_plaintext;
+        use crate::routing::links::resources::control::{
+            write_part_request_plaintext, PART_REQUEST_PLAINTEXT_CAP,
+        };
         let mut plaintext = [0u8; PART_REQUEST_PLAINTEXT_CAP];
         let plaintext_len =
             write_part_request_plaintext(hash, last_known, requested, &mut plaintext).unwrap();

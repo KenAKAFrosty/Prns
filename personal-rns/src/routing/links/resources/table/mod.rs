@@ -369,12 +369,17 @@ pub enum AcceptIncomingResourceError {
     AlreadyReceiving,
     TransferTooLarge,
     TooManyParts,
+    HashmapTooLong,
+    HashmapRagged,
+    HashmapBeyondPartCount,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyHashmapUpdateError {
     BeyondPartCount,
     SkipsAhead,
+    HashmapTooLong,
+    HashmapRagged,
 }
 
 #[derive(Debug, Default)]
@@ -399,6 +404,15 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
         }
         if offer.part_count > self.columns.part_capacity() {
             return Err(AcceptIncomingResourceError::TooManyParts);
+        }
+        if offer.initial_names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
+            return Err(AcceptIncomingResourceError::HashmapTooLong);
+        }
+        if !offer.initial_names.len().is_multiple_of(MAP_HASH_LEN) {
+            return Err(AcceptIncomingResourceError::HashmapRagged);
+        }
+        if offer.initial_names.len() / MAP_HASH_LEN > offer.part_count {
+            return Err(AcceptIncomingResourceError::HashmapBeyondPartCount);
         }
         let index = self
             .columns
@@ -437,6 +451,12 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
             .ok()
             .and_then(|segment| segment.checked_mul(HASHMAP_MAX_LEN))
             .ok_or(ApplyHashmapUpdateError::BeyondPartCount)?;
+        if names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
+            return Err(ApplyHashmapUpdateError::HashmapTooLong);
+        }
+        if !names.len().is_multiple_of(MAP_HASH_LEN) {
+            return Err(ApplyHashmapUpdateError::HashmapRagged);
+        }
         let entries = names.len() / MAP_HASH_LEN;
         let state = &self.columns.states()[index];
         if offset + entries > state.part_count {
@@ -452,11 +472,14 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
     }
 
     fn write_names(&mut self, index: usize, offset: usize, names: &[u8]) {
+        let entries = names.len() / MAP_HASH_LEN;
+        let byte_len = entries * MAP_HASH_LEN;
+        let byte_start = offset * MAP_HASH_LEN;
+        let byte_end = byte_start + byte_len;
         let buffers = self.columns.buffers_mut(index);
-        for (at, name) in names.chunks_exact(MAP_HASH_LEN).enumerate() {
-            buffers.part_names[offset + at].copy_from_slice(name);
-        }
-        let height = offset + names.len() / MAP_HASH_LEN;
+        buffers.part_names.as_flattened_mut()[byte_start..byte_end]
+            .copy_from_slice(&names[..byte_len]);
+        let height = offset + entries;
         let state = self.columns.state_mut(index);
         state.hashmap_height = state.hashmap_height.max(height);
     }
@@ -761,6 +784,28 @@ mod tests {
             AcceptIncomingResourceError::TooManyParts,
         );
 
+        let too_long_names = [0u8; (HASHMAP_MAX_LEN + 1) * MAP_HASH_LEN];
+        assert_eq!(
+            incoming
+                .accept(link_id(1), offer(0xCD, &too_long_names))
+                .unwrap_err(),
+            AcceptIncomingResourceError::HashmapTooLong,
+        );
+
+        assert_eq!(
+            incoming
+                .accept(link_id(1), offer(0xCD, &[0u8; MAP_HASH_LEN + 1]))
+                .unwrap_err(),
+            AcceptIncomingResourceError::HashmapRagged,
+        );
+
+        assert_eq!(
+            incoming
+                .accept(link_id(1), offer(0xCD, &[0u8; 4 * MAP_HASH_LEN]))
+                .unwrap_err(),
+            AcceptIncomingResourceError::HashmapBeyondPartCount,
+        );
+
         incoming.accept(link_id(2), offer(0xCD, &[])).unwrap();
         assert_eq!(
             incoming.accept(link_id(3), offer(0xEE, &[])).unwrap_err(),
@@ -801,6 +846,18 @@ mod tests {
                 .apply_hashmap_update(index, 1, &std::vec![0u8; 27 * MAP_HASH_LEN])
                 .unwrap_err(),
             ApplyHashmapUpdateError::BeyondPartCount,
+        );
+        assert_eq!(
+            incoming
+                .apply_hashmap_update(index, 1, &[0u8; (HASHMAP_MAX_LEN + 1) * MAP_HASH_LEN])
+                .unwrap_err(),
+            ApplyHashmapUpdateError::HashmapTooLong,
+        );
+        assert_eq!(
+            incoming
+                .apply_hashmap_update(index, 1, &[0u8; MAP_HASH_LEN + 1])
+                .unwrap_err(),
+            ApplyHashmapUpdateError::HashmapRagged,
         );
         assert_eq!(
             incoming
