@@ -21,13 +21,14 @@ use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::columns::{ChannelColumns, OutstandingSend, TxOutcome};
 use crate::routing::links::channel::{
-    write_envelope, ChannelSequence, ChannelWindow, ENVELOPE_HEADER_LEN,
+    write_envelope, ChannelRtt, ChannelSequence, ChannelWindow, ENVELOPE_HEADER_LEN,
 };
 use crate::routing::links::data::{write_link_packet, LinkDataError};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::{DestinationHash, DestinationType, WireContext, BROADCAST_MTU, HEADER_MIN_LEN};
 
 /// RNS 1.3.1 `Channel.WINDOW`: the number of unproven messages a fresh channel
@@ -48,8 +49,8 @@ pub const CHANNEL_MAX_TRIES: u8 = 5;
 /// watchdog retransmits — an integer reformulation of RNS Channel's
 /// `_get_packet_timeout_time` (local pacing, no parity cost): a base of
 /// `max(rtt × 2.5, 25 ms)` widened with each retry.
-pub fn channel_retry_timeout_ms(rtt_ms: u64, tries: u8) -> u64 {
-    let base = rtt_ms.saturating_mul(5).saturating_div(2).max(25);
+pub fn channel_retry_timeout_ms(rtt: Rtt, tries: u8) -> u64 {
+    let base = rtt.millis().saturating_mul(5).saturating_div(2).max(25);
     base.saturating_mul(u64::from(tries) + 1)
 }
 
@@ -111,8 +112,8 @@ impl<S: StorageLayout> EngineState<S> {
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<SendChannelDispatch, SendChannelWriteError> {
-        let rtt_ms = match self.links.phase_for(&send.link_id) {
-            Some(LinkPhase::Active { rtt_ms, .. }) => *rtt_ms,
+        let rtt = match self.links.phase_for(&send.link_id) {
+            Some(LinkPhase::Active { rtt, .. }) => *rtt,
             _ => return Err(SendChannelWriteError::LinkVanished),
         };
         let index = self
@@ -123,7 +124,7 @@ impl<S: StorageLayout> EngineState<S> {
             && self.channels.outstanding_count(index) == 0
         {
             self.channels
-                .set_window(index, ChannelWindow::for_rtt(rtt_ms));
+                .set_window(index, ChannelWindow::for_rtt(ChannelRtt(rtt)));
         }
         if self.channels.outstanding_count(index) >= self.channels.window(index).limit() {
             return Err(SendChannelWriteError::WindowFull);
@@ -137,7 +138,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(LinkPhase::Active { key, mtu, .. }) = self.links.phase_for(&send.link_id) else {
             return Err(SendChannelWriteError::LinkVanished);
         };
-        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(rtt_ms, 0)));
+        let timeout_at = InstantMillis(now.0.saturating_add(channel_retry_timeout_ms(rtt, 0)));
         let wire_len = write_link_packet(
             &send.link_id,
             key,
@@ -203,15 +204,13 @@ impl<S: StorageLayout> EngineState<S> {
             .position(|hash| *hash == named_hash)?;
 
         let Some(LinkPhase::Active {
-            peer_signing,
-            rtt_ms,
-            ..
+            peer_signing, rtt, ..
         }) = self.links.phase_for(link_id)
         else {
             return None;
         };
         let peer_signing = *peer_signing;
-        let rtt_ms = *rtt_ms;
+        let rtt = *rtt;
         if ed25519_verify(
             &peer_signing,
             named_hash.as_bytes(),
@@ -226,7 +225,7 @@ impl<S: StorageLayout> EngineState<S> {
         let sent_at = self.channels.outstanding_sent_at(index, sub);
         self.channels.retire_outstanding(index, sub);
         let mut window = self.channels.window(index);
-        window.grow_on_ack(rtt_ms);
+        window.grow_on_ack(ChannelRtt(rtt));
         self.channels.set_window(index, window);
         Some((
             command_id,
@@ -258,13 +257,13 @@ impl<S: StorageLayout> EngineState<S> {
 
             let active = match self.links.phase_for(&link_id) {
                 Some(LinkPhase::Active {
-                    rtt_ms,
+                    rtt,
                     attached_interface,
                     ..
-                }) => Some((*rtt_ms, *attached_interface)),
+                }) => Some((*rtt, *attached_interface)),
                 _ => None,
             };
-            let Some((rtt_ms, fire_on)) = active else {
+            let Some((rtt, fire_on)) = active else {
                 let id = self.channels.outstanding_command_id(index, sub);
                 self.channels.retire_outstanding(index, sub);
                 settle_channel_timeout(id, sink);
@@ -319,7 +318,7 @@ impl<S: StorageLayout> EngineState<S> {
                 sub,
                 InstantMillis(
                     now.0
-                        .saturating_add(channel_retry_timeout_ms(rtt_ms, new_tries)),
+                        .saturating_add(channel_retry_timeout_ms(rtt, new_tries)),
                 ),
             );
             let mut window = self.channels.window(index);
@@ -462,7 +461,12 @@ mod tests {
             .unwrap();
         state
             .links
-            .activate_responding(&link_id, 250, InterfaceId::new(LANE), InstantMillis(1_000))
+            .activate_responding(
+                &link_id,
+                Rtt(250),
+                InterfaceId::new(LANE),
+                InstantMillis(1_000),
+            )
             .unwrap();
         (state, link_id, signing)
     }
@@ -488,7 +492,7 @@ mod tests {
             .activate_initiated(
                 &link_id,
                 session_key(&link_id),
-                250,
+                Rtt(250),
                 BROADCAST_MTU,
                 InterfaceId::new(LANE),
                 InstantMillis(1_000),

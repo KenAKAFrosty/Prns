@@ -15,6 +15,7 @@ pub mod receive;
 pub mod send;
 
 use crate::routing::links::data::link_mdu;
+use crate::units::Rtt;
 
 /// RNS 1.3.1 `Channel` `MSGTYPE`: the 16-bit tag that lets one channel
 /// multiplex several message kinds over a link. Opaque to the engine; values
@@ -40,15 +41,68 @@ impl ChannelSequence {
     }
 }
 
+/// A link's [`Rtt`] seen through the channel send window's flow-control lens:
+/// which speed band it falls in ([`tier`](Self::tier)) and
+/// whether it is too slow to pipeline at all
+/// ([`pins_send_window`](Self::pins_send_window)). The thresholds are RNS 1.3.1
+/// `Channel`'s, so they belong to the channel — not to the general round-trip
+/// time, which stays a plain measurement other layers read however they like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ChannelRtt(pub Rtt);
+
+/// The speed band a [`ChannelRtt`] falls in, naming RNS 1.3.1 `Channel`'s
+/// `RTT_FAST`/`RTT_MEDIUM` cut-offs so the window adaptation reads as intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelRttTier {
+    Fast,
+    Medium,
+    Slow,
+}
+
+impl ChannelRtt {
+    /// RNS 1.3.1 `Channel.RTT_FAST` (0.18 s): at or under this is the fast tier.
+    pub const FAST_CEILING: Rtt = Rtt(180);
+    /// RNS 1.3.1 `Channel.RTT_MEDIUM` (0.75 s): at or under this is the medium tier.
+    pub const MEDIUM_CEILING: Rtt = Rtt(750);
+    /// RNS 1.3.1 `Channel.RTT_SLOW` (1.45 s): past this the send window cannot
+    /// pipeline and is pinned to a single message in flight.
+    pub const WINDOW_PIN_CEILING: Rtt = Rtt(1_450);
+
+    /// The speed band this RTT falls in: fast (≤ 180 ms), medium (≤ 750 ms),
+    /// else slow.
+    pub const fn tier(self) -> ChannelRttTier {
+        if self.0.millis() <= Self::FAST_CEILING.millis() {
+            ChannelRttTier::Fast
+        } else if self.0.millis() <= Self::MEDIUM_CEILING.millis() {
+            ChannelRttTier::Medium
+        } else {
+            ChannelRttTier::Slow
+        }
+    }
+
+    /// Whether a fresh send window must pin to a single message in flight — a
+    /// link too slow (past [`WINDOW_PIN_CEILING`](Self::WINDOW_PIN_CEILING)) to
+    /// keep more than one send unproven.
+    pub const fn pins_send_window(self) -> bool {
+        self.0.millis() > Self::WINDOW_PIN_CEILING.millis()
+    }
+}
+
+impl From<Rtt> for ChannelRtt {
+    fn from(rtt: Rtt) -> Self {
+        ChannelRtt(rtt)
+    }
+}
+
 /// RNS 1.3.1 `Channel`'s adaptive send window in integer form: how many messages
 /// may ride in flight unproven ([`limit`](Self::limit)), the RTT-tiered ceiling
 /// that count grows toward, and the floor it shrinks to. The window opens by one
 /// on every ack ([`grow_on_ack`](Self::grow_on_ack)) and closes by one on every
 /// loss ([`shrink_on_loss`](Self::shrink_on_loss)); its ceiling ratchets up to
 /// the medium then fast tier once a link sustains
-/// [`FAST_RATE_THRESHOLD`](Self::FAST_RATE_THRESHOLD) fast-enough rounds. The
-/// reference's float-second RTT thresholds are rendered here as `u64` millis so
-/// no float reaches the engine.
+/// [`FAST_RATE_THRESHOLD`](Self::FAST_RATE_THRESHOLD) fast-enough rounds, the band
+/// read from the link's [`ChannelRtt`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelWindow {
     size: u8,
@@ -69,16 +123,14 @@ impl ChannelWindow {
     pub const MAX_FAST: u8 = 48;
     pub const FLEXIBILITY: u8 = 4;
     pub const FAST_RATE_THRESHOLD: u32 = 10;
-    pub const RTT_FAST_MS: u64 = 180;
-    pub const RTT_MEDIUM_MS: u64 = 750;
-    pub const RTT_SLOW_MS: u64 = 1_450;
 
-    /// The window a channel opens with, given the link's round-trip time: a slow
-    /// link (RTT past [`RTT_SLOW_MS`](Self::RTT_SLOW_MS)) is pinned to a single
-    /// message in flight; any faster link starts at [`INITIAL`](Self::INITIAL)
-    /// with room to grow to the slow-tier ceiling and ratchet higher.
-    pub const fn for_rtt(rtt_ms: u64) -> Self {
-        if rtt_ms > Self::RTT_SLOW_MS {
+    /// The window a channel opens with, given the link's round-trip time: a link
+    /// too slow to pipeline ([`ChannelRtt::pins_send_window`]) is held to a
+    /// single message in flight; any faster link starts at
+    /// [`INITIAL`](Self::INITIAL) with room to grow to the slow-tier ceiling and
+    /// ratchet higher.
+    pub const fn for_rtt(rtt: ChannelRtt) -> Self {
+        if rtt.pins_send_window() {
             Self {
                 size: 1,
                 max: 1,
@@ -106,23 +158,25 @@ impl ChannelWindow {
 
     /// Open the window after an ack: grow the in-flight allowance by one toward
     /// the ceiling, and — once a link sustains
-    /// [`FAST_RATE_THRESHOLD`](Self::FAST_RATE_THRESHOLD) rounds at a tier's RTT
-    /// — ratchet the ceiling (and floor) up to that tier. Unlike the reference
-    /// there is no `rtt == 0` guard: the reference uses `0` as the sentinel for a
-    /// link whose RTT is not measured yet, but a window only grows on an *active*
-    /// link, whose RTT is always measured (the unmeasured state is the link's
-    /// pre-active phases, which carry no RTT at all). A `0` here is therefore a
-    /// genuine sub-millisecond round trip and earns the fast tier, not a missing
-    /// measurement to skip.
-    pub fn grow_on_ack(&mut self, rtt_ms: u64) {
+    /// [`FAST_RATE_THRESHOLD`](Self::FAST_RATE_THRESHOLD) rounds in a tier — ratchet
+    /// the ceiling (and floor) up to that tier. Unlike the reference there is no
+    /// `rtt == 0` guard: the reference uses `0` as the sentinel for a link whose
+    /// RTT is not measured yet, but a window only grows on an *active* link, whose
+    /// RTT is always measured (the unmeasured state is the link's pre-active
+    /// phases, which carry no RTT at all). A `0` here is therefore a genuine
+    /// sub-millisecond round trip in the [`Fast`](ChannelRttTier::Fast) tier, not
+    /// a missing measurement to skip.
+    pub fn grow_on_ack(&mut self, rtt: ChannelRtt) {
         if self.size < self.max {
             self.size += 1;
         }
-        if rtt_ms > Self::RTT_FAST_MS {
-            self.fast_rate_rounds = 0;
-            if rtt_ms > Self::RTT_MEDIUM_MS {
+        match rtt.tier() {
+            ChannelRttTier::Slow => {
+                self.fast_rate_rounds = 0;
                 self.medium_rate_rounds = 0;
-            } else {
+            }
+            ChannelRttTier::Medium => {
+                self.fast_rate_rounds = 0;
                 self.medium_rate_rounds = self.medium_rate_rounds.saturating_add(1);
                 if self.max < Self::MAX_MEDIUM
                     && self.medium_rate_rounds == Self::FAST_RATE_THRESHOLD
@@ -131,11 +185,12 @@ impl ChannelWindow {
                     self.min = Self::MIN_LIMIT_MEDIUM;
                 }
             }
-        } else {
-            self.fast_rate_rounds = self.fast_rate_rounds.saturating_add(1);
-            if self.max < Self::MAX_FAST && self.fast_rate_rounds == Self::FAST_RATE_THRESHOLD {
-                self.max = Self::MAX_FAST;
-                self.min = Self::MIN_LIMIT_FAST;
+            ChannelRttTier::Fast => {
+                self.fast_rate_rounds = self.fast_rate_rounds.saturating_add(1);
+                if self.max < Self::MAX_FAST && self.fast_rate_rounds == Self::FAST_RATE_THRESHOLD {
+                    self.max = Self::MAX_FAST;
+                    self.min = Self::MIN_LIMIT_FAST;
+                }
             }
         }
     }
@@ -155,7 +210,7 @@ impl ChannelWindow {
 
 impl Default for ChannelWindow {
     fn default() -> Self {
-        Self::for_rtt(0)
+        Self::for_rtt(ChannelRtt(Rtt(0)))
     }
 }
 
@@ -241,6 +296,10 @@ pub fn parse_envelope(bytes: &[u8]) -> Result<Envelope<'_>, EnvelopeError> {
 mod tests {
     use super::*;
     use crate::wire::BROADCAST_MTU;
+
+    fn rtt(ms: u64) -> ChannelRtt {
+        ChannelRtt(Rtt(ms))
+    }
 
     fn hx(s: &str) -> Vec<u8> {
         (0..s.len())
@@ -335,12 +394,12 @@ mod tests {
     #[test]
     fn the_window_opens_at_the_rtt_tier() {
         assert_eq!(
-            ChannelWindow::for_rtt(0).limit(),
+            ChannelWindow::for_rtt(rtt(0)).limit(),
             ChannelWindow::INITIAL as usize
         );
-        assert_eq!(ChannelWindow::for_rtt(100).limit(), 2);
+        assert_eq!(ChannelWindow::for_rtt(rtt(100)).limit(), 2);
         assert_eq!(
-            ChannelWindow::for_rtt(2_000).limit(),
+            ChannelWindow::for_rtt(rtt(2_000)).limit(),
             1,
             "a slow link is pinned to one message in flight"
         );
@@ -348,57 +407,57 @@ mod tests {
 
     #[test]
     fn an_ack_opens_the_window_one_step_toward_its_ceiling() {
-        let mut window = ChannelWindow::for_rtt(250);
+        let mut window = ChannelWindow::for_rtt(rtt(250));
         assert_eq!(window.limit(), 2);
         for expected in [3, 4, 5, 5, 5] {
-            window.grow_on_ack(250);
+            window.grow_on_ack(rtt(250));
             assert_eq!(window.limit(), expected, "grows to the ceiling then holds");
         }
     }
 
     #[test]
     fn a_sustained_fast_run_ratchets_the_ceiling_to_the_fast_tier() {
-        let mut window = ChannelWindow::for_rtt(50);
+        let mut window = ChannelWindow::for_rtt(rtt(50));
         for _ in 0..ChannelWindow::FAST_RATE_THRESHOLD {
-            window.grow_on_ack(50);
+            window.grow_on_ack(rtt(50));
         }
         for _ in 0..ChannelWindow::MAX_FAST {
-            window.grow_on_ack(50);
+            window.grow_on_ack(rtt(50));
         }
         assert_eq!(window.limit(), ChannelWindow::MAX_FAST as usize);
     }
 
     #[test]
     fn a_sub_millisecond_link_earns_the_fast_tier() {
-        let mut window = ChannelWindow::for_rtt(0);
+        let mut window = ChannelWindow::for_rtt(rtt(0));
         for _ in 0..ChannelWindow::FAST_RATE_THRESHOLD {
-            window.grow_on_ack(0);
+            window.grow_on_ack(rtt(0));
         }
         for _ in 0..ChannelWindow::MAX_FAST {
-            window.grow_on_ack(0);
+            window.grow_on_ack(rtt(0));
         }
         assert_eq!(
             window.limit(),
             ChannelWindow::MAX_FAST as usize,
-            "rtt_ms == 0 is a measured sub-ms link, not an unmeasured one",
+            "an rtt of zero is a measured sub-ms link, not an unmeasured one",
         );
     }
 
     #[test]
     fn a_sustained_medium_run_ratchets_only_to_the_medium_tier() {
-        let mut window = ChannelWindow::for_rtt(500);
+        let mut window = ChannelWindow::for_rtt(rtt(500));
         let rounds = ChannelWindow::FAST_RATE_THRESHOLD + u32::from(ChannelWindow::MAX_MEDIUM);
         for _ in 0..rounds {
-            window.grow_on_ack(500);
+            window.grow_on_ack(rtt(500));
         }
         assert_eq!(window.limit(), ChannelWindow::MAX_MEDIUM as usize);
     }
 
     #[test]
     fn a_loss_closes_the_window_toward_its_floor() {
-        let mut window = ChannelWindow::for_rtt(250);
+        let mut window = ChannelWindow::for_rtt(rtt(250));
         for _ in 0..15 {
-            window.grow_on_ack(250);
+            window.grow_on_ack(rtt(250));
         }
         let opened = window.limit();
         assert!(opened > ChannelWindow::MIN as usize);
@@ -412,7 +471,7 @@ mod tests {
 
     #[test]
     fn the_window_will_not_close_below_its_floor() {
-        let mut window = ChannelWindow::for_rtt(250);
+        let mut window = ChannelWindow::for_rtt(rtt(250));
         window.shrink_on_loss();
         assert_eq!(
             window.limit(),

@@ -167,7 +167,7 @@ impl<S: StorageLayout> EngineState<S> {
             key,
             mtu,
             attached_interface,
-            rtt_ms,
+            rtt,
             peer_signing,
             ..
         }) = self.links.phase_for(&send.link_id)
@@ -176,7 +176,8 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
-        let traffic_timeout_ms = rtt_ms
+        let traffic_timeout_ms = rtt
+            .millis()
             .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
             .max(LINK_TRAFFIC_TIMEOUT_MIN_MS);
         let wire_len = write_link_data(&send.link_id, key, *mtu, &send.payload, iv, buf)

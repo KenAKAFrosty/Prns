@@ -215,7 +215,7 @@ impl<S: StorageLayout> EngineState<S> {
                 responder_encryption,
                 responder_signing,
                 command_id,
-                rtt_ms,
+                rtt,
                 mtu,
             } => {
                 if is_egress_eligible(view, source, Egress::Transmit) {
@@ -225,7 +225,7 @@ impl<S: StorageLayout> EngineState<S> {
                     if let Ok(written) = self.write_owed_link_rtt(
                         &link_id,
                         &responder_encryption,
-                        rtt_ms,
+                        rtt,
                         mtu.min(link_mtu_ceiling(view, source)),
                         source,
                         now,
@@ -241,7 +241,7 @@ impl<S: StorageLayout> EngineState<S> {
                             id: command_id,
                             settlement: Settlement::EstablishLink(Ok(LinkEstablished {
                                 link_id,
-                                rtt_ms,
+                                rtt_ms: rtt.millis(),
                             })),
                         }));
                     }
@@ -526,7 +526,7 @@ mod channel_tests {
             .activate_initiated(
                 &link_id,
                 LinkKey::derive(&link_id, &shared()),
-                250,
+                crate::units::Rtt(250),
                 BROADCAST_MTU,
                 InterfaceId::new(LANE),
                 InstantMillis(1_000),

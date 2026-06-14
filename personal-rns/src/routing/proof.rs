@@ -401,7 +401,7 @@ mod tests {
             .activate_initiated(
                 &link_id,
                 LinkKey::derive(&link_id, &shared),
-                250,
+                crate::units::Rtt(250),
                 BROADCAST_MTU,
                 InterfaceId::new([0xEE; 16]),
                 InstantMillis(1_000),
@@ -467,7 +467,7 @@ mod tests {
             .links
             .activate_responding(
                 &link_id,
-                250,
+                crate::units::Rtt(250),
                 InterfaceId::new([0xEE; 16]),
                 InstantMillis(1_000),
             )

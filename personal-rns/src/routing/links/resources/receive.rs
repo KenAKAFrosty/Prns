@@ -229,7 +229,7 @@ impl<S: StorageLayout> EngineState<S> {
             key,
             mtu,
             attached_interface,
-            rtt_ms,
+            rtt,
             ..
         }) = self.links.phase_for(link_id)
         else {
@@ -237,7 +237,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let mtu = *mtu;
         let fire_on = *attached_interface;
-        let rtt_ms = *rtt_ms;
+        let rtt_ms = rtt.millis();
         let mut iv = [0u8; 16];
         fill_entropy(&mut iv);
         let mut request_wire_len = 0u64;
@@ -334,10 +334,10 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         self.links.note_inbound(&link_id, arrived_at);
-        let Some(LinkPhase::Active { rtt_ms, .. }) = self.links.phase_for(&link_id) else {
+        let Some(LinkPhase::Active { rtt, .. }) = self.links.phase_for(&link_id) else {
             return IngestPacketOutcome::Ignored;
         };
-        let link_rtt_ms = *rtt_ms;
+        let link_rtt_ms = rtt.millis();
         {
             let state = self.incoming_resources.state_mut(index);
             state.received_byte_count = state.received_byte_count.saturating_add(part.len() as u64);
@@ -716,7 +716,7 @@ impl<S: StorageLayout> EngineState<S> {
         if let Some(index) = self.incoming_resources.lookup(link_id, hash) {
             let state = *self.incoming_resources.state(index);
             let link_rtt_ms = match self.links.phase_for(link_id) {
-                Some(LinkPhase::Active { rtt_ms, .. }) => *rtt_ms,
+                Some(LinkPhase::Active { rtt, .. }) => rtt.millis(),
                 _ => 1,
             };
             let eifr = expected_inflight_bits_per_second(&state, link_rtt_ms);
@@ -911,7 +911,7 @@ mod tests_support {
             .activate_initiated(
                 &link_id(),
                 link_key(),
-                250,
+                crate::units::Rtt(250),
                 BROADCAST_MTU,
                 lane(),
                 InstantMillis(1_000),

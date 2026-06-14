@@ -5,6 +5,7 @@
 use super::{LinkId, LinkKey, LinkMode};
 use crate::crypto::{ed25519_verify, Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::IdentitySigner;
+use crate::units::Rtt;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     TransportId, WireContext, WireError, WirePacketHeader, BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN,
@@ -270,20 +271,22 @@ pub fn link_proof_from(
 const MSGPACK_FLOAT64: u8 = 0xcb;
 const LINK_RTT_PLAINTEXT_LEN: usize = 9;
 
-fn pack_rtt(rtt_ms: u64) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
+fn pack_rtt(rtt: Rtt) -> [u8; LINK_RTT_PLAINTEXT_LEN] {
     let mut out = [0u8; LINK_RTT_PLAINTEXT_LEN];
     out[0] = MSGPACK_FLOAT64;
-    out[1..].copy_from_slice(&(rtt_ms as f64 / 1_000.0).to_be_bytes());
+    out[1..].copy_from_slice(&(rtt.millis() as f64 / 1_000.0).to_be_bytes());
     out
 }
 
-fn unpack_rtt(bytes: &[u8]) -> Option<u64> {
+fn unpack_rtt(bytes: &[u8]) -> Option<Rtt> {
     if bytes.len() != LINK_RTT_PLAINTEXT_LEN || bytes[0] != MSGPACK_FLOAT64 {
         return None;
     }
     let mut be = [0u8; 8];
     be.copy_from_slice(&bytes[1..]);
-    Some((f64::from_be_bytes(be) * 1_000.0 + 0.5) as u64)
+    Some(Rtt::from_millis(
+        (f64::from_be_bytes(be) * 1_000.0 + 0.5) as u64,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,7 +299,7 @@ pub enum LinkRttError {
 pub fn write_link_rtt(
     link_id: &LinkId,
     link_key: &LinkKey,
-    rtt_ms: u64,
+    rtt: Rtt,
     iv: &[u8; 16],
     buf: &mut [u8],
 ) -> Result<usize, LinkRttError> {
@@ -314,7 +317,7 @@ pub fn write_link_rtt(
     let header_len = header
         .write(buf)
         .map_err(|_| LinkRttError::BufferTooShort)?;
-    let plaintext = pack_rtt(rtt_ms);
+    let plaintext = pack_rtt(rtt);
     let sealed = link_key
         .seal(iv, &plaintext, &mut buf[header_len..])
         .map_err(|_| LinkRttError::BufferTooShort)?;
@@ -324,7 +327,7 @@ pub fn write_link_rtt(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRtt {
     pub link_id: LinkId,
-    pub rtt_ms: u64,
+    pub rtt: Rtt,
 }
 
 pub fn parse_link_rtt(raw: &[u8], link_key: &LinkKey) -> Result<LinkRtt, LinkRttError> {
@@ -345,10 +348,10 @@ pub fn link_rtt_from(
     let n = link_key
         .open(payload, &mut out)
         .map_err(|_| LinkRttError::InvalidToken)?;
-    let rtt_ms = unpack_rtt(&out[..n]).ok_or(LinkRttError::Malformed)?;
+    let rtt = unpack_rtt(&out[..n]).ok_or(LinkRttError::Malformed)?;
     Ok(LinkRtt {
         link_id: *link_id,
-        rtt_ms,
+        rtt,
     })
 }
 
@@ -674,7 +677,7 @@ mod tests {
         let n = write_link_rtt(
             &LinkId::new(a16(RTT_LINK_ID)),
             &rtt_link_key(),
-            RTT_VALUE_MS,
+            Rtt(RTT_VALUE_MS),
             &a16(RTT_IV),
             &mut buf,
         )
@@ -686,7 +689,7 @@ mod tests {
     fn parse_link_rtt_recovers_the_reference_rtt() {
         let parsed = parse_link_rtt(&hx(LRRTT_PACKET), &rtt_link_key()).unwrap();
         assert_eq!(parsed.link_id, LinkId::new(a16(RTT_LINK_ID)));
-        assert_eq!(parsed.rtt_ms, RTT_VALUE_MS);
+        assert_eq!(parsed.rtt, Rtt(RTT_VALUE_MS));
     }
 
     #[test]
@@ -696,13 +699,13 @@ mod tests {
         let n = write_link_rtt(
             &LinkId::new(a16(RTT_LINK_ID)),
             &key,
-            73_115,
+            Rtt(73_115),
             &a16(RTT_IV),
             &mut buf,
         )
         .unwrap();
         let parsed = parse_link_rtt(&buf[..n], &key).unwrap();
-        assert_eq!(parsed.rtt_ms, 73_115);
+        assert_eq!(parsed.rtt, Rtt(73_115));
     }
 
     fn sealed_rtt_packet_of(hostile: f64) -> Vec<u8> {
@@ -722,7 +725,7 @@ mod tests {
     #[test]
     fn parse_link_rtt_saturates_a_hostile_float() {
         let key = rtt_link_key();
-        let parse = |packet: &[u8]| parse_link_rtt(packet, &key).unwrap().rtt_ms;
+        let parse = |packet: &[u8]| parse_link_rtt(packet, &key).unwrap().rtt.millis();
         assert_eq!(parse(&sealed_rtt_packet_of(f64::NAN)), 0);
         assert_eq!(parse(&sealed_rtt_packet_of(-5.0)), 0);
         assert_eq!(parse(&sealed_rtt_packet_of(f64::INFINITY)), u64::MAX);
@@ -746,7 +749,7 @@ mod tests {
             write_link_rtt(
                 &LinkId::new(a16(RTT_LINK_ID)),
                 &rtt_link_key(),
-                RTT_VALUE_MS,
+                Rtt(RTT_VALUE_MS),
                 &a16(RTT_IV),
                 &mut tiny,
             ),

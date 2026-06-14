@@ -15,6 +15,7 @@ use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from};
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::upstream_app_destinations::ProofStrategy;
+use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 pub enum LinkRole {
@@ -73,7 +74,7 @@ pub enum LinkPhase {
     Active {
         key: LinkKey,
         role: LinkRole,
-        rtt_ms: u64,
+        rtt: Rtt,
         mtu: usize,
         attached_interface: InterfaceId,
         last_inbound: InstantMillis,
@@ -131,7 +132,7 @@ impl core::fmt::Debug for LinkPhase {
             Self::Active {
                 key,
                 role,
-                rtt_ms,
+                rtt,
                 mtu,
                 attached_interface,
                 last_inbound,
@@ -142,7 +143,7 @@ impl core::fmt::Debug for LinkPhase {
                 .debug_struct("Active")
                 .field("key", key)
                 .field("role", role)
-                .field("rtt_ms", rtt_ms)
+                .field("rtt", rtt)
                 .field("mtu", mtu)
                 .field("attached_interface", attached_interface)
                 .field("last_inbound", last_inbound)
@@ -300,7 +301,7 @@ impl<C: LinkColumns> Links<C> {
         &mut self,
         link_id: &LinkId,
         key: LinkKey,
-        rtt_ms: u64,
+        rtt: Rtt,
         mtu: usize,
         attached_interface: InterfaceId,
         now: InstantMillis,
@@ -312,7 +313,7 @@ impl<C: LinkColumns> Links<C> {
         let phase = self.columns.phase_mut(index);
         match core::mem::replace(phase, LinkPhase::vacant()) {
             LinkPhase::Pending { link_signing, .. } => {
-                let keepalive_ms = keepalive_ms_from(rtt_ms);
+                let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Initiator { link_signing };
                 let deadline = active_deadline(&role, now, now, keepalive_ms);
                 *phase = LinkPhase::Active {
@@ -322,7 +323,7 @@ impl<C: LinkColumns> Links<C> {
                     last_resource_eifr: None,
                     key,
                     role,
-                    rtt_ms,
+                    rtt,
                     mtu,
                     attached_interface,
                     last_inbound: now,
@@ -343,7 +344,7 @@ impl<C: LinkColumns> Links<C> {
     pub fn activate_responding(
         &mut self,
         link_id: &LinkId,
-        rtt_ms: u64,
+        rtt: Rtt,
         attached_interface: InterfaceId,
         now: InstantMillis,
     ) -> Result<(), LinkActivationError> {
@@ -361,7 +362,7 @@ impl<C: LinkColumns> Links<C> {
                 proof_strategy,
                 ..
             } => {
-                let keepalive_ms = keepalive_ms_from(rtt_ms);
+                let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Responder {
                     destination,
                     identity,
@@ -375,7 +376,7 @@ impl<C: LinkColumns> Links<C> {
                     last_resource_eifr: None,
                     key,
                     role,
-                    rtt_ms,
+                    rtt,
                     mtu,
                     attached_interface,
                     last_inbound: now,
@@ -651,7 +652,7 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                250,
+                Rtt(250),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -661,13 +662,13 @@ mod tests {
 
         let Some(LinkPhase::Active {
             role: LinkRole::Initiator { .. },
-            rtt_ms,
+            rtt,
             ..
         }) = links.phase_for(&link_id(1))
         else {
             panic!("a proven link must be active as initiator");
         };
-        assert_eq!(*rtt_ms, 250);
+        assert_eq!(*rtt, Rtt(250));
         assert_eq!(
             links.earliest_timeout_at(),
             Some(InstantMillis(2_000 + 51_428)),
@@ -681,19 +682,19 @@ mod tests {
         links.track_responding(responding(2, 5_000)).unwrap();
 
         links
-            .activate_responding(&link_id(2), 500, iface(0xEE), InstantMillis(2_000))
+            .activate_responding(&link_id(2), Rtt(500), iface(0xEE), InstantMillis(2_000))
             .unwrap();
 
         let Some(LinkPhase::Active {
             key: stored,
             role: LinkRole::Responder { .. },
-            rtt_ms,
+            rtt,
             ..
         }) = links.phase_for(&link_id(2))
         else {
             panic!("a responding link with its rtt must be active as responder");
         };
-        assert_eq!(*rtt_ms, 500);
+        assert_eq!(*rtt, Rtt(500));
 
         let iv = [0xA5u8; 16];
         let mut via_table = [0u8; 96];
@@ -716,7 +717,7 @@ mod tests {
             links.activate_initiated(
                 &link_id(9),
                 key(9, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -725,7 +726,7 @@ mod tests {
             Err(LinkActivationError::UnknownLink),
         );
         assert_eq!(
-            links.activate_responding(&link_id(9), 100, iface(0xEE), InstantMillis(2_000)),
+            links.activate_responding(&link_id(9), Rtt(100), iface(0xEE), InstantMillis(2_000)),
             Err(LinkActivationError::UnknownLink),
         );
 
@@ -733,7 +734,7 @@ mod tests {
         links.track_responding(responding(2, 5_000)).unwrap();
 
         assert_eq!(
-            links.activate_responding(&link_id(1), 100, iface(0xEE), InstantMillis(2_000)),
+            links.activate_responding(&link_id(1), Rtt(100), iface(0xEE), InstantMillis(2_000)),
             Err(LinkActivationError::WrongPhase),
         );
         assert!(matches!(
@@ -744,7 +745,7 @@ mod tests {
             links.activate_initiated(
                 &link_id(2),
                 key(2, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -757,7 +758,7 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -768,7 +769,7 @@ mod tests {
             links.activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -819,7 +820,7 @@ mod tests {
             .activate_initiated(
                 &link_id(3),
                 key(3, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -858,7 +859,7 @@ mod tests {
             .activate_initiated(
                 &link_id(2),
                 key(2, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),
@@ -871,7 +872,7 @@ mod tests {
             .activate_initiated(
                 &link_id(1),
                 key(1, 9),
-                100,
+                Rtt(100),
                 500,
                 iface(0xEE),
                 InstantMillis(2_000),

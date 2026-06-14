@@ -20,6 +20,7 @@ use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::NextHop;
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::BROADCAST_MTU;
 
 pub const ESTABLISH_LINK_ENTROPY_LEN: usize = IDENTITY_SECRET_KEY_LEN;
@@ -273,7 +274,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         responder_encryption: &X25519PublicKey,
-        rtt_ms: u64,
+        rtt: Rtt,
         mtu: usize,
         attached_interface: InterfaceId,
         now: InstantMillis,
@@ -289,13 +290,13 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let shared = x25519_diffie_hellman(initiator_secret, responder_encryption);
         let key = LinkKey::derive(link_id, &shared);
-        let written = write_link_rtt(link_id, &key, rtt_ms, iv, buf)
+        let written = write_link_rtt(link_id, &key, rtt, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
             .activate_initiated(
                 link_id,
                 key,
-                rtt_ms,
+                rtt,
                 mtu,
                 attached_interface,
                 now,
@@ -864,7 +865,7 @@ mod tests {
             initiator.links.phase_for(&link_id),
             Some(LinkPhase::Active {
                 role: LinkRole::Initiator { .. },
-                rtt_ms: 250,
+                rtt: Rtt(250),
                 ..
             }),
         ));
@@ -909,7 +910,7 @@ mod tests {
         let Some(LinkPhase::Active {
             key: responder_key,
             role: LinkRole::Responder { .. },
-            rtt_ms: 500,
+            rtt: Rtt(500),
             ..
         }) = responder.links.phase_for(&link_id)
         else {

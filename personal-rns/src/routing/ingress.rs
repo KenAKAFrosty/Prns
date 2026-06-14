@@ -45,6 +45,7 @@ use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestin
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, UpsertRouteOutcome};
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
     DestinationHash, DestinationType, PacketType, TransportId, WireContext, WireError,
@@ -347,7 +348,7 @@ pub enum IngestPacketOutcome<'p> {
         responder_encryption: X25519PublicKey,
         responder_signing: Ed25519PublicKey,
         command_id: CommandId,
-        rtt_ms: u64,
+        rtt: Rtt,
         mtu: usize,
     },
     /// The LRRTT for a handshake we answered opened under the session key —
@@ -962,7 +963,7 @@ impl<S: StorageLayout> EngineState<S> {
             responder_encryption: proof.responder_encryption,
             responder_signing,
             command_id: *command_id,
-            rtt_ms: arrived_at.0.saturating_sub(requested_at.0),
+            rtt: Rtt::measured_between(*requested_at, arrived_at),
             mtu: if proof.mtu == 0 {
                 BROADCAST_MTU
             } else {
@@ -995,11 +996,11 @@ impl<S: StorageLayout> EngineState<S> {
             }
             Err(_) => return IngestPacketOutcome::Ignored,
         };
-        let measured_ms = arrived_at.0.saturating_sub(requested_at.0);
-        let rtt_ms = measured_ms.max(reported.rtt_ms);
+        let measured = Rtt::measured_between(*requested_at, arrived_at);
+        let rtt = measured.max(reported.rtt);
         if self
             .links
-            .activate_responding(&link_id, rtt_ms, source_interface, arrived_at)
+            .activate_responding(&link_id, rtt, source_interface, arrived_at)
             .is_err()
         {
             return IngestPacketOutcome::Ignored;
@@ -1017,7 +1018,10 @@ impl<S: StorageLayout> EngineState<S> {
                 .default_resource_strategy(&destination);
             let _ = self.links.set_resource_strategy(&link_id, default_strategy);
         }
-        IngestPacketOutcome::LinkActivated { link_id, rtt_ms }
+        IngestPacketOutcome::LinkActivated {
+            link_id,
+            rtt_ms: rtt.millis(),
+        }
     }
 
     fn classify_link_data<'p>(

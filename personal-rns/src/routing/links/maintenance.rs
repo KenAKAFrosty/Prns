@@ -5,6 +5,7 @@ use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WireError, WirePacketHeader,
@@ -13,8 +14,8 @@ use crate::wire::{
 pub const KEEPALIVE_REQUEST: u8 = 0xFF;
 pub const KEEPALIVE_ECHO: u8 = 0xFE;
 
-pub fn keepalive_ms_from(rtt_ms: u64) -> u64 {
-    (rtt_ms.saturating_mul(360_000) / 1_750).clamp(5_000, 360_000)
+pub fn keepalive_ms_from(rtt: Rtt) -> u64 {
+    (rtt.millis().saturating_mul(360_000) / 1_750).clamp(5_000, 360_000)
 }
 
 pub fn stale_ms_from(keepalive_ms: u64) -> u64 {
@@ -128,10 +129,10 @@ mod tests {
 
     #[test]
     fn the_keepalive_cadence_matches_the_reference_law() {
-        assert_eq!(keepalive_ms_from(0), 5_000);
-        assert_eq!(keepalive_ms_from(250), 51_428);
-        assert_eq!(keepalive_ms_from(1_750), 360_000);
-        assert_eq!(keepalive_ms_from(10_000), 360_000);
+        assert_eq!(keepalive_ms_from(Rtt(0)), 5_000);
+        assert_eq!(keepalive_ms_from(Rtt(250)), 51_428);
+        assert_eq!(keepalive_ms_from(Rtt(1_750)), 360_000);
+        assert_eq!(keepalive_ms_from(Rtt(10_000)), 360_000);
         assert_eq!(stale_ms_from(51_428), 102_856);
     }
 
@@ -191,7 +192,7 @@ mod kani_proofs {
     #[kani::proof]
     fn keepalive_for_any_rtt_stays_inside_the_reference_clamp() {
         let rtt_ms: u64 = kani::any();
-        let keepalive_ms = keepalive_ms_from(rtt_ms);
+        let keepalive_ms = keepalive_ms_from(Rtt(rtt_ms));
         assert!(keepalive_ms >= 5_000);
         assert!(keepalive_ms <= 360_000);
     }
@@ -199,7 +200,7 @@ mod kani_proofs {
     #[kani::proof]
     fn stale_is_exactly_twice_any_clamped_keepalive() {
         let rtt_ms: u64 = kani::any();
-        let keepalive_ms = keepalive_ms_from(rtt_ms);
+        let keepalive_ms = keepalive_ms_from(Rtt(rtt_ms));
         assert_eq!(stale_ms_from(keepalive_ms), keepalive_ms * 2);
     }
 }

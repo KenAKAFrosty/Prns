@@ -299,7 +299,7 @@ impl<S: StorageLayout> EngineState<S> {
             key,
             mtu,
             attached_interface,
-            rtt_ms,
+            rtt,
             peer_signing,
             ..
         }) = self.links.phase_for(&request.link_id)
@@ -308,7 +308,8 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let fire_on = *attached_interface;
         let peer_signing = *peer_signing;
-        let timeout_ms = rtt_ms
+        let timeout_ms = rtt
+            .millis()
             .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
             .max(LINK_TRAFFIC_TIMEOUT_MIN_MS)
             .saturating_add(REQUEST_RESPONSE_GRACE_MS);
@@ -557,7 +558,7 @@ mod tests {
             .activate_initiated(
                 &link_id,
                 key,
-                100,
+                crate::units::Rtt(100),
                 mtu,
                 InterfaceId::new([0xEE; 16]),
                 InstantMillis(1_000),

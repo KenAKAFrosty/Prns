@@ -75,7 +75,7 @@ impl<S: StorageLayout> EngineState<S> {
             key,
             mtu,
             attached_interface,
-            rtt_ms,
+            rtt,
             ..
         } = phase
         else {
@@ -87,7 +87,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let mtu = *mtu;
         let fire_on = *attached_interface;
-        let rtt_ms = *rtt_ms;
+        let rtt_ms = rtt.millis();
 
         let mut seal_iv = [0u8; 16];
         fill_entropy(&mut seal_iv);
@@ -279,14 +279,11 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(link_id, hash) else {
             return;
         };
-        let Some(LinkPhase::Active {
-            key, mtu, rtt_ms, ..
-        }) = self.links.phase_for(link_id)
-        else {
+        let Some(LinkPhase::Active { key, mtu, rtt, .. }) = self.links.phase_for(link_id) else {
             return;
         };
         let mtu = *mtu;
-        let rtt_ms = *rtt_ms;
+        let rtt_ms = rtt.millis();
         {
             let state = self.outgoing_resources.state_mut(index);
             if state.status == OutgoingResourceStatus::Advertised {
@@ -465,7 +462,7 @@ impl<S: StorageLayout> EngineState<S> {
                 key,
                 mtu,
                 attached_interface,
-                rtt_ms,
+                rtt,
                 ..
             }) = self.links.phase_for(&link_id)
             else {
@@ -479,7 +476,7 @@ impl<S: StorageLayout> EngineState<S> {
             };
             let mtu = *mtu;
             let fire_on = *attached_interface;
-            let rtt_ms = *rtt_ms;
+            let rtt_ms = rtt.millis();
             match state.status {
                 OutgoingResourceStatus::Advertised => {
                     if state.retries_left == 0 {
@@ -701,7 +698,7 @@ mod tests {
             .activate_initiated(
                 &link_id(),
                 link_key(),
-                250,
+                crate::units::Rtt(250),
                 BROADCAST_MTU,
                 lane(),
                 InstantMillis(1_000),
