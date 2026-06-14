@@ -76,10 +76,10 @@ pub struct Responder {
     pub request_id: RequestId,
 }
 
-/// One request, as the handler sees it: the raw data, who asked (`None` = an anonymous initiator,
-/// the RNS default), and when. `link_id`/`request_id` stay out of the way behind [`responder`].
-///
-/// [`responder`]: Self::responder
+/// One inbound request as the *runtime* assembles it from a journaled `RequestReceived` — the raw
+/// data, who asked (`None` = an anonymous initiator, the RNS default), and when. The runner builds
+/// this and hands it to [`Router::dispatch`], which pairs it with the app state into a
+/// [`RequestCx`] for the handler. `link_id`/`request_id` ride [`responder`](Self::responder).
 pub struct InboundRequest<'a> {
     pub data: &'a [u8],
     pub requester: Option<IdentityHash>,
@@ -88,7 +88,7 @@ pub struct InboundRequest<'a> {
 }
 
 impl<'a> InboundRequest<'a> {
-    /// Build the handler's view of a journaled request. The runtime calls this; a test can too.
+    /// Build the runtime's parts of a journaled request. The runner calls this; a test can too.
     #[must_use]
     pub fn new(
         link_id: LinkId,
@@ -115,12 +115,33 @@ impl<'a> InboundRequest<'a> {
     }
 }
 
+/// Everything a handler reads, in one borrow: the shared app `state` and the inbound request. The
+/// single lifetime is why the handler signature elides it — `async fn handle(cx: RequestCx<'_, S>)
+/// -> Response<'_>`, no `<'a>`. Mutation of `state` rides interior mutability (the dispatch task is
+/// cooperative, so a `RefCell`/atomic suffices — never a `Mutex`).
+pub struct RequestCx<'a, S> {
+    pub state: &'a S,
+    pub data: &'a [u8],
+    pub requester: Option<IdentityHash>,
+    pub requested_at: InstantMillis,
+    responder: Responder,
+}
+
+impl<S> RequestCx<'_, S> {
+    /// The token to answer this request later — when `handle` returns [`Response::None`] now and
+    /// the answer comes from an offloaded task.
+    #[must_use]
+    pub fn responder(&self) -> Responder {
+        self.responder
+    }
+}
+
 /// One route: a contract path, an access policy, and an async handler over shared `&S`.
 #[allow(async_fn_in_trait)]
 pub trait RequestRoute<S> {
     const PATH: &'static str;
     const POLICY: RoutePolicy;
-    async fn handle<'a>(state: &'a S, request: InboundRequest<'a>) -> Response<'a>;
+    async fn handle(cx: RequestCx<'_, S>) -> Response<'_>;
 }
 
 /// A compile-time set of routes, produced by [`routes!`]. The registrations the recipe stands up
@@ -132,11 +153,7 @@ pub trait RouteSet<S> {
     /// Run the route whose path hashes to `path_hash`, or `None` if the set doesn't match it
     /// (a gate-admitted path the set somehow misses — with [`Self::REGISTRATIONS`] deriving the
     /// gate, a near-dead branch).
-    async fn dispatch<'a>(
-        state: &'a S,
-        path_hash: RequestPathHash,
-        request: InboundRequest<'a>,
-    ) -> Option<Response<'a>>;
+    async fn dispatch(cx: RequestCx<'_, S>, path_hash: RequestPathHash) -> Option<Response<'_>>;
 }
 
 /// The runtime's command-shaped answer from a [`Router::dispatch`]: the runner copies `body` into
@@ -190,7 +207,14 @@ impl<S, R: RouteSet<S>> Router<S, R> {
         request: InboundRequest<'a>,
     ) -> Option<OutboundResponse<'a>> {
         let responder = request.responder();
-        match R::dispatch(&self.state, path_hash, request).await {
+        let cx = RequestCx {
+            state: &self.state,
+            data: request.data,
+            requester: request.requester,
+            requested_at: request.requested_at,
+            responder,
+        };
+        match R::dispatch(cx, path_hash).await {
             Some(Response::Data(body)) => Some(OutboundResponse {
                 link_id: responder.link_id,
                 request_id: responder.request_id,
@@ -219,11 +243,10 @@ macro_rules! routes {
                 ),)+
             ];
 
-            async fn dispatch<'a>(
-                state: &'a S,
+            async fn dispatch(
+                cx: $crate::runtime::RequestCx<'_, S>,
                 path_hash: $crate::routing::request_handlers::RequestPathHash,
-                request: $crate::runtime::InboundRequest<'a>,
-            ) -> ::core::option::Option<$crate::runtime::Response<'a>> {
+            ) -> ::core::option::Option<$crate::runtime::Response<'_>> {
                 $(
                     if path_hash
                         == $crate::routing::request_handlers::RequestPathHash::of(
@@ -231,7 +254,7 @@ macro_rules! routes {
                         )
                     {
                         return ::core::option::Option::Some(
-                            <$route as $crate::runtime::RequestRoute<S>>::handle(state, request).await,
+                            <$route as $crate::runtime::RequestRoute<S>>::handle(cx).await,
                         );
                     }
                 )+
@@ -254,7 +277,7 @@ mod tests {
     impl RequestRoute<App> for Health {
         const PATH: &'static str = "/health";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle<'a>(_state: &'a App, _request: InboundRequest<'a>) -> Response<'a> {
+        async fn handle(_cx: RequestCx<'_, App>) -> Response<'_> {
             Response::Data(b"ok")
         }
     }
@@ -263,8 +286,8 @@ mod tests {
     impl RequestRoute<App> for Greet {
         const PATH: &'static str = "/greet";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle<'a>(state: &'a App, _request: InboundRequest<'a>) -> Response<'a> {
-            Response::Data(state.greeting)
+        async fn handle(cx: RequestCx<'_, App>) -> Response<'_> {
+            Response::Data(cx.state.greeting)
         }
     }
 
@@ -274,7 +297,7 @@ mod tests {
     impl RequestRoute<App> for Admin {
         const PATH: &'static str = "/admin";
         const POLICY: RoutePolicy = RoutePolicy::AllowList(&[ADMIN]);
-        async fn handle<'a>(_state: &'a App, _request: InboundRequest<'a>) -> Response<'a> {
+        async fn handle(_cx: RequestCx<'_, App>) -> Response<'_> {
             Response::None
         }
     }
