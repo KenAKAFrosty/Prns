@@ -172,6 +172,10 @@ pub fn map_hash(part: &[u8], salt_nonce: &SaltNonce) -> [u8; MAP_HASH_LEN] {
     name
 }
 
+pub(crate) fn map_hash_name_word(name: &[u8]) -> u32 {
+    u32::from_ne_bytes([name[0], name[1], name[2], name[3]])
+}
+
 /// The salt nonce a transfer is named under — the advertisement's `r`,
 /// salting every map hash and the resource hash so part names never repeat
 /// across transfers of the same data. The reference calls it `random_hash`;

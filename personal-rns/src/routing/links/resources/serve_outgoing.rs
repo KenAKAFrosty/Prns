@@ -9,7 +9,8 @@
 
 use crate::routing::links::resources::control::PART_REQUEST_PLAINTEXT_CAP;
 use crate::routing::links::resources::{
-    COLLISION_GUARD_SIZE, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN, WINDOW_MAX,
+    map_hash_name_word, COLLISION_GUARD_SIZE, HASHMAP_MAX_LEN, MAP_HASH_LEN, RESOURCE_HASH_LEN,
+    WINDOW_MAX,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,10 +155,6 @@ pub fn plan_hashmap_update(
         entries_end: ((segment + 1) * HASHMAP_MAX_LEN).min(known),
         scope_start: past_matched.saturating_sub(1 + WINDOW_MAX),
     })
-}
-
-fn map_hash_name_word(name: &[u8]) -> u32 {
-    u32::from_ne_bytes([name[0], name[1], name[2], name[3]])
 }
 
 #[cfg(test)]

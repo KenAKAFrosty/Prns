@@ -13,8 +13,8 @@
 
 use crate::crypto::CryptoError;
 use crate::routing::links::resources::{
-    map_hash, ResourceCompression, ResourceHash, ResourceProof, SaltNonce, COLLISION_GUARD_SIZE,
-    MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
+    map_hash, map_hash_name_word, ResourceCompression, ResourceHash, ResourceProof, SaltNonce,
+    COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
 
@@ -85,11 +85,7 @@ pub fn build_outgoing_resource(
     let sealed = &transfer[..sealed_transfer_len];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
-        for (index, part) in sealed.chunks(sdu).enumerate() {
-            let name = map_hash(part, &salt_nonce);
-            hashmap[index * MAP_HASH_LEN..(index + 1) * MAP_HASH_LEN].copy_from_slice(&name);
-        }
-        if hashmap_has_collision(&hashmap[..hashmap_len]) {
+        if !write_hashmap_without_collision(sealed, sdu, &salt_nonce, &mut hashmap[..hashmap_len]) {
             continue;
         }
         let (hash, expected_proof) =
@@ -109,15 +105,39 @@ pub fn build_outgoing_resource(
     Err(BuildOutgoingResourceError::SaltRerollsExhausted)
 }
 
+fn write_hashmap_without_collision(
+    sealed: &[u8],
+    sdu: usize,
+    salt_nonce: &SaltNonce,
+    hashmap: &mut [u8],
+) -> bool {
+    for (index, part) in sealed.chunks(sdu).enumerate() {
+        let name = map_hash(part, salt_nonce);
+        let name_word = u32::from_ne_bytes(name);
+        let offset = index * MAP_HASH_LEN;
+        let guard_start = index.saturating_sub(COLLISION_GUARD_SIZE);
+        for previous in guard_start..index {
+            let previous_offset = previous * MAP_HASH_LEN;
+            if map_hash_name_word(&hashmap[previous_offset..previous_offset + MAP_HASH_LEN])
+                == name_word
+            {
+                return false;
+            }
+        }
+        hashmap[offset..offset + MAP_HASH_LEN].copy_from_slice(&name);
+    }
+    true
+}
+
 /// RNS 1.3.1's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run
 /// of consecutive parts, every map hash must be unique — that is the span a
 /// part request's search scope covers on the serving side.
 pub fn hashmap_has_collision(hashmap: &[u8]) -> bool {
     let count = hashmap.len() / MAP_HASH_LEN;
     for i in 1..count {
-        let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
+        let name = map_hash_name_word(&hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN]);
         for j in i.saturating_sub(COLLISION_GUARD_SIZE)..i {
-            if &hashmap[j * MAP_HASH_LEN..(j + 1) * MAP_HASH_LEN] == name {
+            if map_hash_name_word(&hashmap[j * MAP_HASH_LEN..(j + 1) * MAP_HASH_LEN]) == name {
                 return true;
             }
         }
