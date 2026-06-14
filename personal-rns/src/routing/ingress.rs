@@ -43,7 +43,7 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
-use crate::routing::{DropCause, RemovedRoute, UpsertRouteOutcome};
+use crate::routing::{DropCause, RemovedRoute, RouteResponsiveness, UpsertRouteOutcome};
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
@@ -792,7 +792,8 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(entry) = self.transported_links.entry_for(link_id) else {
             return IngestPacketOutcome::Ignored;
         };
-        let Some(retained) = self.routing_table.retained_announce_for(&entry.destination) else {
+        let destination = entry.destination;
+        let Some(retained) = self.routing_table.retained_announce_for(&destination) else {
             return IngestPacketOutcome::Ignored;
         };
         let responder_signing = *retained.announce.public_keys.signing.as_ed25519();
@@ -807,6 +808,8 @@ impl<S: StorageLayout> EngineState<S> {
         ) else {
             return IngestPacketOutcome::Ignored;
         };
+        self.routing_table
+            .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
         IngestPacketOutcome::Forward(PacketToForward {
             header: WirePacketHeader {
                 ifac_flag: IfacFlag::Open,
@@ -1238,7 +1241,7 @@ impl<S: StorageLayout> EngineState<S> {
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
             delivered: Delivered {
-                rtt_ms: arrived_at.0.saturating_sub(proven.sent_at.0),
+                rtt: Rtt::measured_between(proven.sent_at, arrived_at),
             },
             link_id,
             request_id,

@@ -696,7 +696,9 @@ mod tests {
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                 id: CommandId(7),
-                delivered: Delivered { rtt_ms: 250 },
+                delivered: Delivered {
+                    rtt: crate::units::Rtt::from_millis(250),
+                },
             }),
         );
         assert_eq!(state.receipts.len(), 0);
@@ -744,7 +746,9 @@ mod tests {
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSingleDelivered {
                 id: CommandId(7),
-                delivered: Delivered { rtt_ms: 500 },
+                delivered: Delivered {
+                    rtt: crate::units::Rtt::from_millis(500),
+                },
             }),
         );
         assert_eq!(state.receipts.len(), 0);

@@ -6,6 +6,7 @@ use crate::identity::IdentityHash;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
+use crate::units::Rtt;
 use crate::wire::{DestinationHash, HEADER_MIN_LEN, SIGNATURE_LEN};
 
 pub const IMPLICIT_PROOF_WIRE_LEN: usize = HEADER_MIN_LEN + SIGNATURE_LEN;
@@ -182,7 +183,7 @@ impl<S: StorageLayout> EngineState<S> {
         match proven {
             Some(receipt) => {
                 let delivered = Delivered {
-                    rtt_ms: arrived_at.0.saturating_sub(receipt.sent_at.0),
+                    rtt: Rtt::measured_between(receipt.sent_at, arrived_at),
                 };
                 match receipt.kind {
                     ReceiptKind::SendSingle => ProofIngest::SendSingleDelivered {

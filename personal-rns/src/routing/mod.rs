@@ -119,6 +119,26 @@ where
         })
     }
 
+    pub fn mark_responsiveness(
+        &mut self,
+        destination: &DestinationHash,
+        responsiveness: RouteResponsiveness,
+    ) {
+        let Some(i) = self.index_of(destination) else {
+            return;
+        };
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops: self.routes.hops()[i],
+                learned_at: self.routes.learned_at()[i],
+                responsiveness,
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn upsert_route(
         &mut self,
@@ -204,7 +224,7 @@ where
         let route_entry = RouteEntry {
             hops,
             learned_at: arrived_at,
-            responsiveness: RouteResponsiveness::Responsive,
+            responsiveness: RouteResponsiveness::Unknown,
             receiving_interface,
             next_hop,
         };
@@ -255,7 +275,7 @@ where
             RouteEntry {
                 hops,
                 learned_at: arrived_at,
-                responsiveness: RouteResponsiveness::Responsive,
+                responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface,
                 next_hop,
             },

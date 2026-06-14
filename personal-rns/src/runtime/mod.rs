@@ -22,7 +22,7 @@ pub use request_router::{
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
-pub use tokio_bind::{TokioBind, TokioCommands};
+pub use tokio_bind::{SendError, TokioBind, TokioCommands};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_runner;

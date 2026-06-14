@@ -230,7 +230,7 @@ impl<S: StorageLayout> EngineState<S> {
         Some((
             command_id,
             Delivered {
-                rtt_ms: arrived_at.0.saturating_sub(sent_at.0),
+                rtt: Rtt::measured_between(sent_at, arrived_at),
             },
         ))
     }
@@ -626,7 +626,7 @@ mod tests {
                 settled.as_slice(),
                 [(
                     CommandId(42),
-                    Settlement::SendChannel(Ok(Delivered { rtt_ms: 200 }))
+                    Settlement::SendChannel(Ok(Delivered { rtt: Rtt(200) }))
                 )]
             ),
             "got {settled:?}",

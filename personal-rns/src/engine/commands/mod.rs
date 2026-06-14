@@ -20,7 +20,7 @@ use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::units::HopCount;
+use crate::units::{HopCount, Rtt};
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 use heapless::Vec as HeaplessVec;
 
@@ -447,7 +447,7 @@ pub struct PathFound {
 /// RNS 1.3.1 `PacketReceipt.DELIVERED`, with the round trip it measured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Delivered {
-    pub rtt_ms: u64,
+    pub rtt: Rtt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
