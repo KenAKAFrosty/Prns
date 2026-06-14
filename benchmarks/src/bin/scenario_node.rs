@@ -32,7 +32,10 @@ use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
-use personal_rns::storage::GrowableHeap;
+#[cfg(not(feature = "fixed-storage"))]
+use personal_rns::storage::GrowableHeap as NodeStorage;
+#[cfg(feature = "fixed-storage")]
+use personal_rns::storage::Esp32S3 as NodeStorage;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;
 use tokio::sync::mpsc;
@@ -289,7 +292,7 @@ async fn scenario_main() {
             .expect("parse manifest");
     let duration = Duration::from_millis(duration_override.unwrap_or(manifest.profile.duration_ms));
 
-    let mut engine = EngineState::<GrowableHeap>::new(fresh_identity());
+    let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
     let node = engine.held_identity_hashes()[0];
     let destination = engine
         .register_single_destination(
@@ -1315,7 +1318,7 @@ async fn initiate_request(
 /// stamp, link request booking, blind ciphertext switching) is engine
 /// machinery under test.
 async fn relay_node(manifest: &Manifest) {
-    let engine = EngineState::<GrowableHeap>::new(fresh_identity());
+    let engine = EngineState::<NodeStorage>::new(fresh_identity());
     let _ = manifest;
 
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -1374,7 +1377,7 @@ async fn relay_node(manifest: &Manifest) {
 /// A pure transport node in a trunk: listen for the next hop downstream, dial the
 /// previous hop upstream, switch everything between them.
 async fn chain_node(upstream: &str) {
-    let engine = EngineState::<GrowableHeap>::new(fresh_identity());
+    let engine = EngineState::<NodeStorage>::new(fresh_identity());
 
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();

@@ -9,6 +9,11 @@ edition = "2021"
 # move at its own pace. Builds via its own manifest.
 [workspace]
 
+# Builds scenario_node on the fixed embedded layout (Esp32S3) instead of the default
+# unbounded GrowableHeap — lets the suite measure the on-device storage profile on-host.
+[features]
+fixed-storage = ["personal-rns/external-alloc"]
+
 [lib]
 name = "benchmarks"
 path = "src/lib.rs"
