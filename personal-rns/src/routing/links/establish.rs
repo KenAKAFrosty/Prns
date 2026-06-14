@@ -18,7 +18,7 @@ use crate::routing::links::table::{
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
 use crate::routing::upstream_app_destinations::ProofStrategy;
-use crate::routing::NextHop;
+use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::BROADCAST_MTU;
@@ -283,11 +283,14 @@ impl<S: StorageLayout> EngineState<S> {
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
         let Some(LinkPhase::Pending {
-            initiator_secret, ..
+            initiator_secret,
+            destination,
+            ..
         }) = self.links.phase_for(link_id)
         else {
             return Err(WriteLinkRttError::NotPending);
         };
+        let destination = *destination;
         let shared = x25519_diffie_hellman(initiator_secret, responder_encryption);
         let key = LinkKey::derive(link_id, &shared);
         let written = write_link_rtt(link_id, &key, rtt, iv, buf)
@@ -303,6 +306,8 @@ impl<S: StorageLayout> EngineState<S> {
                 peer_signing,
             )
             .map_err(|_| WriteLinkRttError::NotPending)?;
+        self.routing_table
+            .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
         Ok(written)
     }
 

@@ -10,6 +10,7 @@ use crate::interfaces::InterfaceConfig;
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
+use crate::routing::RouteResponsiveness;
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
@@ -71,14 +72,26 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
     {
         while let Some(overdue) = self.pop_timed_out_link(now) {
-            if let OverdueLink::Initiated { command_id, .. } = overdue {
+            if let OverdueLink::Initiated {
+                command_id,
+                destination,
+                ..
+            } = overdue
+            {
+                self.routing_table
+                    .mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id: command_id,
                     settlement: Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)),
                 }));
             }
         }
-        while self.transported_links.pop_overdue(now).is_some() {}
+        while let Some(overdue) = self.transported_links.pop_overdue(now) {
+            if !overdue.validated && overdue.remaining_hops == 1 {
+                self.routing_table
+                    .mark_responsiveness(&overdue.destination, RouteResponsiveness::Unresponsive);
+            }
+        }
         while let Some(link_id) = self.links.pop_stale(now) {
             let mut iv = [0u8; ENCRYPTION_IV_LEN];
             fill_entropy(&mut iv);

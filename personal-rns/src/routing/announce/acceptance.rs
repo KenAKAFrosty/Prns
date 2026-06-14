@@ -104,7 +104,9 @@ impl AnnounceAcceptanceInput<'_> {
             Ordering::Less => Reject(StaleEvidence),
             Ordering::Equal => match existing.responsiveness {
                 RouteResponsiveness::Unresponsive => Accept(FailoverFromUnresponsiveIncumbent),
-                RouteResponsiveness::Responsive => Reject(EqualEvidenceIncumbentStillWorking),
+                RouteResponsiveness::Responsive | RouteResponsiveness::Unknown => {
+                    Reject(EqualEvidenceIncumbentStillWorking)
+                }
             },
             Ordering::Greater => {
                 if announce_id_was_already_seen {

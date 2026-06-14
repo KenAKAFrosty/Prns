@@ -206,6 +206,7 @@ pub enum OverdueLink {
     Initiated {
         link_id: LinkId,
         command_id: CommandId,
+        destination: DestinationHash,
     },
     Responding {
         link_id: LinkId,
@@ -535,9 +536,14 @@ impl<C: LinkColumns> Links<C> {
             }
             let link_id = self.columns.link_ids()[index];
             let overdue = match &self.columns.phases()[index] {
-                LinkPhase::Pending { command_id, .. } => OverdueLink::Initiated {
+                LinkPhase::Pending {
+                    command_id,
+                    destination,
+                    ..
+                } => OverdueLink::Initiated {
                     link_id,
                     command_id: *command_id,
+                    destination: *destination,
                 },
                 LinkPhase::Handshake { .. } => OverdueLink::Responding { link_id },
                 LinkPhase::Active { .. } => continue,
@@ -839,6 +845,7 @@ mod tests {
         assert!(popped.contains(&OverdueLink::Initiated {
             link_id: link_id(1),
             command_id: CommandId(1),
+            destination: dest(1),
         }));
         assert!(popped.contains(&OverdueLink::Responding {
             link_id: link_id(2),

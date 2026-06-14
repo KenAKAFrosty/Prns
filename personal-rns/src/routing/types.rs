@@ -22,6 +22,7 @@ pub struct ForwardingRoute {
 /// RNS 1.3.1 `path_is_unresponsive`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteResponsiveness {
+    Unknown,
     Responsive,
     Unresponsive,
 }
