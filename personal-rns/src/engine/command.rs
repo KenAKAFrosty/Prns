@@ -6,13 +6,15 @@ use crate::engine::{
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
 use crate::engine::{
-    CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError, RespondFailure, SendLinkError,
-    SendLinkFailure, SendRequestError, SendRequestFailure, SetResourceStrategyFailure,
+    CloseLinkFailure, IdentifyError, IdentifyFailure, RespondError, RespondFailure,
+    SendChannelError, SendChannelFailure, SendLinkError, SendLinkFailure, SendRequestError,
+    SendRequestFailure, SetResourceStrategyFailure,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
+use crate::routing::links::channel::send::SendChannelWriteError;
 use crate::routing::links::data::SendLinkWriteError;
 use crate::routing::links::establish::EstablishLinkEntropy;
 use crate::routing::links::identify::IdentifyWriteError;
@@ -299,6 +301,51 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::SendLink(Err(SendLinkFailure::Rejected(error))),
                 }));
             }
+            CommandOutcome::OwesSendChannel { id, send } => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_entropy(&mut iv);
+                match self.active_link_interface(&send.link_id) {
+                    None => {
+                        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement: Settlement::SendChannel(Err(SendChannelFailure::Rejected(
+                                SendChannelError::NoSuchLink,
+                            ))),
+                        }));
+                    }
+                    Some(fire_on) => {
+                        let mut wrote = None;
+                        let mut fill = |slot: &mut [u8]| match self
+                            .write_commanded_send_channel(id, &send, now, &iv, slot)
+                        {
+                            Ok(dispatch) => Some(dispatch.wire_len),
+                            Err(error) => {
+                                wrote = Some(error);
+                                None
+                            }
+                        };
+                        sink(EngineReaction::Directive(Directive::EmitFrame {
+                            target: fire_on,
+                            fill: &mut fill,
+                        }));
+                        if let Some(error) = wrote {
+                            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                id,
+                                settlement: Settlement::SendChannel(Err(send_channel_failure(
+                                    error,
+                                ))),
+                            }));
+                        }
+                    }
+                }
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+            }
+            CommandOutcome::SendChannelRejected { id, failure } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::SendChannel(Err(failure)),
+                }));
+            }
             CommandOutcome::OwesIdentify { id, identify } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
@@ -517,6 +564,17 @@ fn culled_settlement(culled: CulledReceipt) -> Settlement {
         ReceiptKind::SendSingle => Settlement::SendSingle(Err(SendSingleFailure::Culled)),
         ReceiptKind::SendLink => Settlement::SendLink(Err(SendLinkFailure::Culled)),
         ReceiptKind::SendRequest => Settlement::SendRequest(Err(SendRequestFailure::Culled)),
+    }
+}
+
+fn send_channel_failure(error: SendChannelWriteError) -> SendChannelFailure {
+    match error {
+        SendChannelWriteError::LinkVanished => {
+            SendChannelFailure::Rejected(SendChannelError::NoSuchLink)
+        }
+        SendChannelWriteError::Untrackable => SendChannelFailure::Untrackable,
+        SendChannelWriteError::WindowFull => SendChannelFailure::WindowFull,
+        SendChannelWriteError::Frame(error) => SendChannelFailure::WriteFailed(error),
     }
 }
 

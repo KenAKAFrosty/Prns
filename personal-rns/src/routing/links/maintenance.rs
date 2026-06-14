@@ -1,6 +1,7 @@
 use crate::engine::commands::{CloseLink, CloseLinkError, CommandId, CommandOutcome};
 use crate::engine::EngineState;
 use crate::interfaces::InterfaceId;
+use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
@@ -108,6 +109,7 @@ impl<S: StorageLayout> EngineState<S> {
         let wire_len =
             write_link_close(link_id, key, iv, buf).map_err(|_| WriteLinkCloseError::Serialize)?;
         self.links.remove(link_id);
+        self.channels.close(link_id);
         Ok(LinkCloseDispatch { wire_len, fire_on })
     }
 }

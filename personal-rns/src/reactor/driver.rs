@@ -55,6 +55,9 @@ where
         DueLane::ResourceDeadlines => {
             engine.fire_due_resource_deadlines(now, fill_entropy, on_reaction)
         }
+        DueLane::ChannelTimeouts => {
+            engine.fire_due_channel_timeouts(now, interfaces, fill_entropy, on_reaction)
+        }
     }
 }
 

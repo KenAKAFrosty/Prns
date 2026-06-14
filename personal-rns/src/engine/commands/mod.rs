@@ -13,6 +13,7 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::delivery::send_single::WriteSendSingleError;
+use crate::routing::links::channel::{channel_mdu, MessageType};
 use crate::routing::links::data::LinkDataError;
 use crate::routing::links::establish::WriteEstablishLinkError;
 use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
@@ -43,6 +44,7 @@ pub enum EngineCommand {
     RequestPath(RequestPath),
     EstablishLink(EstablishLink),
     SendLink(SendLink),
+    SendChannel(SendChannel),
     Identify(Identify),
     SendRequest(SendRequest),
     Respond(Respond),
@@ -142,6 +144,14 @@ pub enum CommandOutcome {
         id: CommandId,
         error: SendLinkError,
     },
+    OwesSendChannel {
+        id: CommandId,
+        send: SendChannel,
+    },
+    SendChannelRejected {
+        id: CommandId,
+        failure: SendChannelFailure,
+    },
     ResourceStrategySet {
         id: CommandId,
     },
@@ -182,6 +192,12 @@ pub enum EstablishLinkError {
 pub const MAX_SEND_LINK_PLAINTEXT_LEN: usize = 431;
 
 pub type SendLinkPayload = HeaplessVec<u8, MAX_SEND_LINK_PLAINTEXT_LEN>;
+
+/// The most body bytes one channel message can carry at the broadcast MTU: the
+/// channel MDU (the link MDU less the 6-byte envelope header).
+pub const MAX_SEND_CHANNEL_BODY_LEN: usize = channel_mdu(crate::wire::BROADCAST_MTU);
+
+pub type SendChannelBody = HeaplessVec<u8, MAX_SEND_CHANNEL_BODY_LEN>;
 
 /// RNS 1.3.1 `Link.identify`: reveal a held identity to the responder over the
 /// encrypted link — initiator-only, shown to the peer and no one else, and
@@ -282,6 +298,37 @@ pub enum SendLinkError {
     LinkNotActive,
 }
 
+/// RNS 1.3.1 `Channel.send`: a sequenced, reliable message over a link's
+/// channel. `message_type` is the envelope's opaque type tag (the engine never
+/// interprets it); `body` is the message payload. Settles Delivered when the
+/// peer's proof for this message arrives, or fails closed at emission
+/// (no such link, window full) — the lost-in-flight timeout joins in slice 4.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendChannel {
+    pub link_id: LinkId,
+    pub message_type: MessageType,
+    pub body: SendChannelBody,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendChannelError {
+    NoSuchLink,
+    LinkNotActive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendChannelFailure {
+    Rejected(SendChannelError),
+    WriteFailed(LinkDataError),
+    /// The send window is full — the peer has not yet proved enough in-flight
+    /// messages. The app retries once earlier sends settle.
+    WindowFull,
+    /// The channel table had no slot to track this link's channel.
+    Untrackable,
+    /// The retransmission budget ran out unproved — the link is being torn down.
+    Timeout,
+}
+
 /// RNS 1.3.1 `Link.teardown`: close an ACTIVE link deliberately, telling the
 /// peer with the sealed LINKCLOSE and purging the session key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,6 +427,7 @@ pub enum Settlement {
     CloseLink(Result<(), CloseLinkFailure>),
     SendResource(Result<(), SendResourceFailure>),
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
+    SendChannel(Result<Delivered, SendChannelFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,7 +571,8 @@ impl Settleable for AnnounceNow {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -549,7 +598,8 @@ impl Settleable for SendGroup {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -575,7 +625,8 @@ impl Settleable for SendSingle {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -601,7 +652,8 @@ impl Settleable for RequestPath {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -629,7 +681,8 @@ impl Settleable for EstablishLink {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -655,7 +708,8 @@ impl Settleable for SendLink {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -681,7 +735,8 @@ impl Settleable for Identify {
             | Settlement::SendLink(_)
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -739,7 +794,8 @@ impl Settleable for CloseLink {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
-            | Settlement::SetResourceStrategy(_) => None,
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendChannel(_) => None,
         }
     }
 }
@@ -765,7 +821,35 @@ impl Settleable for SetResourceStrategy {
             | Settlement::SendRequest(_)
             | Settlement::Respond(_)
             | Settlement::CloseLink(_)
-            | Settlement::SendResource(_) => None,
+            | Settlement::SendResource(_)
+            | Settlement::SendChannel(_) => None,
+        }
+    }
+}
+
+impl Settleable for SendChannel {
+    type Success = Delivered;
+    type Failure = SendChannelFailure;
+
+    fn into_command(self) -> EngineCommand {
+        EngineCommand::SendChannel(self)
+    }
+
+    fn from_settlement(settlement: Settlement) -> Option<Result<Delivered, SendChannelFailure>> {
+        match settlement {
+            Settlement::SendChannel(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SendSingle(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendLink(_)
+            | Settlement::CloseLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_) => None,
         }
     }
 }
@@ -794,6 +878,7 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             EngineCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
             EngineCommand::SendLink(send) => self.ingest_send_link(id, send),
+            EngineCommand::SendChannel(send) => self.ingest_send_channel(id, send),
             EngineCommand::Identify(identify) => self.ingest_identify(id, identify),
             EngineCommand::SendRequest(request) => self.ingest_send_request(id, request),
             EngineCommand::Respond(respond) => self.ingest_respond(id, respond),

@@ -5,7 +5,12 @@
 
 use alloc::vec::Vec;
 
-use crate::routing::links::channel::columns::{BufferOutcome, ChannelColumns, EnsureChannelError};
+use crate::engine::commands::CommandId;
+use crate::engine::InstantMillis;
+use crate::routing::dedup::PacketHash;
+use crate::routing::links::channel::columns::{
+    BufferOutcome, ChannelColumns, EnsureChannelError, OutstandingSend, TxOutcome,
+};
 use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::LinkId;
 
@@ -17,10 +22,25 @@ struct ReorderBuffer {
 }
 
 #[derive(Debug, Default)]
+struct OutstandingRing {
+    packet_hashes: Vec<PacketHash>,
+    command_ids: Vec<CommandId>,
+    sent_ats: Vec<InstantMillis>,
+    timeout_ats: Vec<InstantMillis>,
+    tries: Vec<u8>,
+    sequences: Vec<ChannelSequence>,
+    message_types: Vec<MessageType>,
+    bodies: Vec<Vec<u8>>,
+    ivs: Vec<[u8; 16]>,
+}
+
+#[derive(Debug, Default)]
 pub struct HeapChannelColumns {
     link_ids: Vec<LinkId>,
     next_expected: Vec<ChannelSequence>,
     buffers: Vec<ReorderBuffer>,
+    next_tx_sequence: Vec<ChannelSequence>,
+    outstanding: Vec<OutstandingRing>,
 }
 
 impl ChannelColumns for HeapChannelColumns {
@@ -34,6 +54,9 @@ impl ChannelColumns for HeapChannelColumns {
     fn index_of(&self, link: &LinkId) -> Option<usize> {
         self.link_ids.iter().position(|id| id == link)
     }
+    fn link_at(&self, index: usize) -> LinkId {
+        self.link_ids[index]
+    }
 
     fn ensure(&mut self, link: &LinkId) -> Result<usize, EnsureChannelError> {
         if let Some(index) = self.index_of(link) {
@@ -42,6 +65,8 @@ impl ChannelColumns for HeapChannelColumns {
         self.link_ids.push(*link);
         self.next_expected.push(ChannelSequence(0));
         self.buffers.push(ReorderBuffer::default());
+        self.next_tx_sequence.push(ChannelSequence(0));
+        self.outstanding.push(OutstandingRing::default());
         Ok(self.link_ids.len() - 1)
     }
 
@@ -50,6 +75,8 @@ impl ChannelColumns for HeapChannelColumns {
             self.link_ids.swap_remove(index);
             self.next_expected.swap_remove(index);
             self.buffers.swap_remove(index);
+            self.next_tx_sequence.swap_remove(index);
+            self.outstanding.swap_remove(index);
         }
     }
 
@@ -89,6 +116,77 @@ impl ChannelColumns for HeapChannelColumns {
         buffer.sequences.swap_remove(sub);
         buffer.message_types.swap_remove(sub);
         buffer.payloads.swap_remove(sub);
+    }
+
+    fn next_tx_sequence(&self, index: usize) -> ChannelSequence {
+        self.next_tx_sequence[index]
+    }
+    fn set_next_tx_sequence(&mut self, index: usize, sequence: ChannelSequence) {
+        self.next_tx_sequence[index] = sequence;
+    }
+
+    fn outstanding_count(&self, index: usize) -> usize {
+        self.outstanding[index].packet_hashes.len()
+    }
+    fn outstanding_packet_hashes(&self, index: usize) -> &[PacketHash] {
+        &self.outstanding[index].packet_hashes
+    }
+    fn outstanding_command_id(&self, index: usize, sub: usize) -> CommandId {
+        self.outstanding[index].command_ids[sub]
+    }
+    fn outstanding_sent_at(&self, index: usize, sub: usize) -> InstantMillis {
+        self.outstanding[index].sent_ats[sub]
+    }
+    fn outstanding_timeout_at(&self, index: usize, sub: usize) -> InstantMillis {
+        self.outstanding[index].timeout_ats[sub]
+    }
+    fn set_outstanding_timeout_at(&mut self, index: usize, sub: usize, timeout_at: InstantMillis) {
+        self.outstanding[index].timeout_ats[sub] = timeout_at;
+    }
+    fn outstanding_tries(&self, index: usize, sub: usize) -> u8 {
+        self.outstanding[index].tries[sub]
+    }
+    fn set_outstanding_tries(&mut self, index: usize, sub: usize, tries: u8) {
+        self.outstanding[index].tries[sub] = tries;
+    }
+    fn outstanding_sequence(&self, index: usize, sub: usize) -> ChannelSequence {
+        self.outstanding[index].sequences[sub]
+    }
+    fn outstanding_message_type(&self, index: usize, sub: usize) -> MessageType {
+        self.outstanding[index].message_types[sub]
+    }
+    fn outstanding_body(&self, index: usize, sub: usize) -> &[u8] {
+        &self.outstanding[index].bodies[sub]
+    }
+    fn outstanding_iv(&self, index: usize, sub: usize) -> [u8; 16] {
+        self.outstanding[index].ivs[sub]
+    }
+
+    fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome {
+        let ring = &mut self.outstanding[index];
+        ring.packet_hashes.push(send.packet_hash);
+        ring.command_ids.push(send.command_id);
+        ring.sent_ats.push(send.sent_at);
+        ring.timeout_ats.push(send.timeout_at);
+        ring.tries.push(0);
+        ring.sequences.push(send.sequence);
+        ring.message_types.push(send.message_type);
+        ring.bodies.push(send.body.to_vec());
+        ring.ivs.push(send.iv);
+        TxOutcome::Tracked
+    }
+
+    fn retire_outstanding(&mut self, index: usize, sub: usize) {
+        let ring = &mut self.outstanding[index];
+        ring.packet_hashes.swap_remove(sub);
+        ring.command_ids.swap_remove(sub);
+        ring.sent_ats.swap_remove(sub);
+        ring.timeout_ats.swap_remove(sub);
+        ring.tries.swap_remove(sub);
+        ring.sequences.swap_remove(sub);
+        ring.message_types.swap_remove(sub);
+        ring.bodies.swap_remove(sub);
+        ring.ivs.swap_remove(sub);
     }
 }
 

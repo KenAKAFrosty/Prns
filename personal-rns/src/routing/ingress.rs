@@ -22,6 +22,7 @@ use crate::routing::delivery::{
     Delivery, GroupDelivery, LinkDelivery, PlainDelivery, SingleDelivery,
     PLAIN_DATA_MAX_RECEIVED_HOPS,
 };
+use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::channel::{parse_envelope, ChannelSequence, MessageType};
 use crate::routing::links::handshake::{
     link_proof_from, link_request_from, link_rtt_from, signalling_bytes_from, LinkRequest,
@@ -733,6 +734,16 @@ impl<S: StorageLayout> EngineState<S> {
                         fire_on: reverse.received_interface,
                     });
                 }
+                if let Some((id, delivered)) =
+                    self.settle_channel_ack(&link_id, payload, arrived_at)
+                {
+                    // A channel send's proof is link traffic too — extend liveness.
+                    self.links.note_inbound(&link_id, arrived_at);
+                    return IngestPacketOutcome::Proof(ProofIngest::SendChannelDelivered {
+                        id,
+                        delivered,
+                    });
+                }
                 let outcome = self.ingest_proof(payload, arrived_at);
                 if matches!(outcome, ProofIngest::SendLinkDelivered { .. }) {
                     // The validated proof is link traffic: it extends the link's
@@ -1270,6 +1281,7 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         }
         self.links.remove(&link_id);
+        self.channels.close(&link_id);
         IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 

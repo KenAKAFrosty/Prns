@@ -14,12 +14,13 @@ pub use commands::{
     CloseLinkError, CloseLinkFailure, CommandId, CommandOutcome, Delivered, EngineCommand,
     EstablishLink, EstablishLinkError, EstablishLinkFailure, Identify, IdentifyError,
     IdentifyFailure, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
-    RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, SendGroup,
-    SendGroupFailure, SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload,
-    SendRequest, SendRequestData, SendRequestError, SendRequestFailure, SendResourceError,
-    SendResourceFailure, SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload,
-    SetResourceStrategy, SetResourceStrategyError, SetResourceStrategyFailure, Settleable,
-    Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN,
+    RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, SendChannel,
+    SendChannelBody, SendChannelError, SendChannelFailure, SendGroup, SendGroupFailure,
+    SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload, SendRequest,
+    SendRequestData, SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure,
+    SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload, SetResourceStrategy,
+    SetResourceStrategyError, SetResourceStrategyFailure, Settleable, Settlement,
+    MAX_SEND_CHANNEL_BODY_LEN, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN,
     MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
 };
 pub use egress::{
@@ -72,6 +73,7 @@ use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
+use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
@@ -93,6 +95,7 @@ pub enum DueLane {
     ExpiredRoutes,
     LinkDeadlines,
     ResourceDeadlines,
+    ChannelTimeouts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +131,7 @@ pub struct WakeSchedules {
     pub expired_routes: LaneWake,
     pub link_deadlines: LaneWake,
     pub resource_deadlines: LaneWake,
+    pub channel_timeouts: LaneWake,
 }
 
 impl WakeSchedules {
@@ -138,6 +142,7 @@ impl WakeSchedules {
         expired_routes: LaneWake::Unchanged,
         link_deadlines: LaneWake::Unchanged,
         resource_deadlines: LaneWake::Unchanged,
+        channel_timeouts: LaneWake::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -148,6 +153,7 @@ impl WakeSchedules {
             (&mut self.expired_routes, delta.expired_routes),
             (&mut self.link_deadlines, delta.link_deadlines),
             (&mut self.resource_deadlines, delta.resource_deadlines),
+            (&mut self.channel_timeouts, delta.channel_timeouts),
         ] {
             match change {
                 LaneWake::Unchanged => {}
@@ -174,6 +180,7 @@ impl WakeSchedules {
             (self.expired_routes, DueLane::ExpiredRoutes),
             (self.link_deadlines, DueLane::LinkDeadlines),
             (self.resource_deadlines, DueLane::ResourceDeadlines),
+            (self.channel_timeouts, DueLane::ChannelTimeouts),
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
@@ -343,6 +350,22 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
+    pub fn channel_timeouts_wake(&self) -> LaneWake {
+        LaneWake::from_deadline(self.earliest_channel_tx_timeout_at())
+    }
+
+    /// The soonest a channel send anywhere next times out — the watchdog's wake.
+    fn earliest_channel_tx_timeout_at(&self) -> Option<InstantMillis> {
+        let mut earliest: Option<InstantMillis> = None;
+        for index in 0..self.channels.len() {
+            for sub in 0..self.channels.outstanding_count(index) {
+                let at = self.channels.outstanding_timeout_at(index, sub);
+                earliest = Some(earliest.map_or(at, |best| if at.0 < best.0 { at } else { best }));
+            }
+        }
+        earliest
+    }
+
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {
         LaneWake::from_deadline(self.routing_table.soonest_route_expiry(view))
     }
@@ -360,6 +383,7 @@ impl<S: StorageLayout> EngineState<S> {
             expired_routes: self.route_expiry_wake(view),
             link_deadlines: self.link_deadlines_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
+            channel_timeouts: self.channel_timeouts_wake(),
         }
     }
 
@@ -491,6 +515,7 @@ mod tests {
             expired_routes: expired,
             link_deadlines: LaneWake::Unchanged,
             resource_deadlines: LaneWake::Unchanged,
+            channel_timeouts: LaneWake::Unchanged,
         }
     }
 
