@@ -8,15 +8,16 @@
 
 use crate::interfaces::rns_serial_framing;
 use crate::interfaces::{
-    hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
-    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability, hardware_mtu_for_bitrate,
 };
 use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::routing::links::MAX_LINK_MTU;
 
-/// One socket read's worth, the reference's `recv` size — TCP-sized chunks, not serial
-/// trickles.
-pub const READ_BUF_LEN: usize = 4_096;
+/// One socket read's worth. The reference uses 4 KiB, which is fine for slow links
+/// but makes local-gigabit resource frames trickle through hundreds of userspace
+/// reads. Keep this TCP-only; serial's read buffer stays sized for its byte stream.
+pub const READ_BUF_LEN: usize = 64 * 1024;
 
 /// What a host should claim when it genuinely doesn't know its pipe: a modern wired-LAN
 /// figure, whose tier is the table's top. The reference guesses 10 Mbps
