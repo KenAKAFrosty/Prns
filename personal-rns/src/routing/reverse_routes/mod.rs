@@ -58,8 +58,6 @@ impl<C: ReverseRouteColumns> ReverseRoutes<C> {
         self.columns.push(entry);
     }
 
-    /// Pop the reverse route a proof should ride. Rows are one-shot, matching
-    /// the RNS 1.3.1 `reverse_table.pop`. An expired hit is a miss.
     pub fn take(
         &mut self,
         proof_destination: &DestinationHash,
@@ -80,6 +78,19 @@ impl<C: ReverseRouteColumns> ReverseRoutes<C> {
             return None;
         }
         Some(route)
+    }
+
+    pub fn cull_interface_orphans(&mut self, interface_present: impl Fn(InterfaceId) -> bool) {
+        let mut index = 0;
+        while index < self.columns.len() {
+            if interface_present(self.columns.received_interfaces()[index])
+                && interface_present(self.columns.outbound_interfaces()[index])
+            {
+                index += 1;
+            } else {
+                self.columns.swap_remove(index);
+            }
+        }
     }
 
     fn evict_expired(&mut self, now: InstantMillis) {
@@ -194,5 +205,22 @@ mod tests {
         assert_eq!(table.len(), 64);
         assert!(table.take(&dest(17), InstantMillis(2_000)).is_some());
         assert_eq!(table.len(), 63);
+    }
+
+    #[test]
+    fn a_reverse_route_whose_interface_left_the_view_is_culled() {
+        let mut table: ReverseRoutes<FixedReverseRouteColumns<4>> = ReverseRoutes::default();
+        table.remember(entry(1, 0xA1, 0xB2, 30_000), InstantMillis(1_000));
+        table.remember(entry(2, 0xA1, 0xEE, 30_000), InstantMillis(1_000));
+
+        table.cull_interface_orphans(|id| id != iface(0xEE));
+
+        assert_eq!(
+            table.len(),
+            1,
+            "the row whose outbound lane vanished is gone"
+        );
+        assert!(table.take(&dest(1), InstantMillis(2_000)).is_some());
+        assert_eq!(table.take(&dest(2), InstantMillis(2_000)), None);
     }
 }

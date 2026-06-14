@@ -6,7 +6,7 @@ use crate::engine::{
     WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::InterfaceConfig;
+use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
@@ -145,6 +145,11 @@ impl<S: StorageLayout> EngineState<S> {
                     crate::engine::inbound::journal_removal(removed),
                 ));
             });
+        let interface_present = |id: InterfaceId| view.iter().any(|config| config.id == id);
+        self.reverse_routes
+            .cull_interface_orphans(interface_present);
+        self.transported_links
+            .cull_interface_orphans(interface_present);
         WakeSchedules {
             expired_routes: self.route_expiry_wake(view),
             ..WakeSchedules::UNCHANGED
