@@ -47,15 +47,26 @@ impl Prns {
                     app_data,
                     proof,
                     ratchet,
+                    request_handlers,
                 } => {
                     let held = engine
                         .hold_identity(identity)
                         .expect("recipe identity fits the store");
-                    engine
+                    let destination = engine
                         .register_single_destination(
                             &held, app_name, aspects, app_data, proof, ratchet,
                         )
                         .expect("recipe single destination is valid");
+                    for (path, policy) in request_handlers {
+                        engine
+                            .register_request_handler(&destination, path, policy.engine_policy())
+                            .expect("recipe request handler fits the store");
+                        for identity in policy.seed_list() {
+                            engine
+                                .allow_requester(&destination, path, *identity)
+                                .expect("recipe seed identity admits to its own fresh handler");
+                        }
+                    }
                 }
             }
         }

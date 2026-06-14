@@ -600,6 +600,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: &[],
     };
     let destination = single.address();
 

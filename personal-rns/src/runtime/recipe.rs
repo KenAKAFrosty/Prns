@@ -19,7 +19,7 @@ use crate::routing::announce::{
 use crate::routing::ProofStrategy;
 use crate::wire::{DestinationHash, TransportId};
 
-use super::Bind;
+use super::{Bind, RoutePolicy};
 
 /// One destination the node serves from the moment it starts. More can be registered later
 /// through the command surface; these are the ones the recipe stands up first.
@@ -30,7 +30,10 @@ pub enum StartingDestination<'a> {
         aspects: &'a [&'a str],
     },
     /// An encrypted destination and the key it answers as — its own identity, held for it
-    /// alone. Carries its proof strategy, ratchet policy, and announce app-data.
+    /// alone. Carries its proof strategy, ratchet policy, announce app-data, and the request
+    /// handlers it answers (typically `router.registrations()` — `&[]` for a destination that
+    /// serves no requests). Each is registered before the first packet, so a handler is never
+    /// racing a request; runtime additions to an `AllowList` ride the `AllowRequester` command.
     Single {
         app_name: &'a str,
         aspects: &'a [&'a str],
@@ -38,6 +41,7 @@ pub enum StartingDestination<'a> {
         app_data: &'a [u8],
         proof: ProofStrategy,
         ratchet: RatchetPolicy,
+        request_handlers: &'a [(&'a str, RoutePolicy)],
     },
 }
 

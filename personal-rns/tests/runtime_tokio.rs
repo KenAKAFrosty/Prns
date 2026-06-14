@@ -36,6 +36,7 @@ fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> StartingDestina
         app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
+        request_handlers: &[],
     }
 }
 
