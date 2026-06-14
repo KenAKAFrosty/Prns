@@ -140,22 +140,53 @@ impl<const FRAME_CAP: usize> RnsSerialDecoder<FRAME_CAP> {
     }
 
     pub fn feed_slice(&mut self, input: &[u8], mut on_frame: impl FnMut(&[u8])) {
-        let mut i = 0;
-        while i < input.len() {
+        let mut offset = 0;
+        while offset < input.len() {
+            match self.feed_slice_next(input, &mut offset) {
+                Ok(Some(frame)) => on_frame(frame),
+                Ok(None) => break,
+                Err(DecodeError::FrameTooBig) => {}
+            }
+        }
+    }
+
+    pub fn feed_slice_next<'a>(
+        &'a mut self,
+        input: &[u8],
+        offset: &mut usize,
+    ) -> Result<Option<&'a [u8]>, DecodeError> {
+        while *offset < input.len() {
             if self.in_frame && !self.saw_escape {
-                let run_end = find_special(&input[i..]).map_or(input.len(), |offset| i + offset);
-                let run = &input[i..run_end];
-                if !run.is_empty() && run.len() <= self.buffer.capacity() - self.buffer.len() {
-                    let _ = self.buffer.extend_from_slice(run);
-                    i = run_end;
-                    continue;
+                let run_end =
+                    find_special(&input[*offset..]).map_or(input.len(), |at| *offset + at);
+                let run_len = run_end - *offset;
+                if run_len != 0 {
+                    let free = self.buffer.capacity() - self.buffer.len();
+                    if run_len <= free {
+                        let run = &input[*offset..run_end];
+                        let _ = self.buffer.extend_from_slice(run);
+                        *offset = run_end;
+                        continue;
+                    }
+
+                    if free != 0 {
+                        let run = &input[*offset..*offset + free];
+                        let _ = self.buffer.extend_from_slice(run);
+                        *offset += free;
+                    }
+                    self.reset();
+                    *offset += 1;
+                    return Err(DecodeError::FrameTooBig);
                 }
             }
-            if matches!(self.feed_one(input[i]), Ok(true)) {
-                on_frame(&self.buffer);
+
+            let byte = input[*offset];
+            *offset += 1;
+            if self.feed_one(byte)? {
+                return Ok(Some(&self.buffer));
             }
-            i += 1;
         }
+        Ok(None)
     }
 
     fn feed_one(&mut self, byte: u8) -> Result<bool, DecodeError> {

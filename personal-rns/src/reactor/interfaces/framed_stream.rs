@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};
-use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use crate::reactor::airtime::{AirtimeLedger, frame_airtime_us};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::InterfaceSeam;
 use crate::reactor::throughput::ThroughputLedger;
@@ -50,8 +50,10 @@ pub async fn serve<
                 let now = InstantMillis(started.elapsed().as_millis() as u64);
                 throughput.record_rx(now, read as u64);
                 status.set_transfer_rates(throughput.rates(now));
-                for &byte in &read_buf[..read] {
-                    if let Ok(Some(frame)) = decoder.feed(byte) {
+                let mut offset = 0;
+                let read_buf = &read_buf[..read];
+                while offset < read_buf.len() {
+                    if let Ok(Some(frame)) = decoder.feed_slice_next(read_buf, &mut offset) {
                         if !frame.is_empty() {
                             seam.next_inbound(frame).await;
                         }
