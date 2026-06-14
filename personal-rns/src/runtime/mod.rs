@@ -8,11 +8,16 @@ mod bind;
 mod event;
 mod prns;
 mod recipe;
+mod request_router;
 
 pub use bind::Bind;
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
 pub use recipe::{Recipe, StartingDestination};
+pub use request_router::{
+    InboundRequest, OutboundResponse, RequestRoute, Responder, Response, RoutePolicy, RouteSet,
+    Router,
+};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
