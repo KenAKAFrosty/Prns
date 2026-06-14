@@ -9,6 +9,10 @@
 //! is a higher consumer-API layer, not the engine's concern. `Buffer` rides on
 //! top as one consumer that claims the reserved system type `0xff00`.
 
+pub mod columns;
+pub mod impls;
+pub mod receive;
+
 use crate::routing::links::data::link_mdu;
 
 /// RNS 1.3.1 `Channel` `MSGTYPE`: the 16-bit tag that lets one channel
