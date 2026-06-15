@@ -72,6 +72,10 @@ where
         self.index_of(destination).map(|i| self.routes.hops()[i])
     }
 
+    pub fn has_route(&self, destination: &DestinationHash) -> bool {
+        self.index_of(destination).is_some()
+    }
+
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
         self.routes.index_of(destination)
     }

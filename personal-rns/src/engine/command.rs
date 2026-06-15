@@ -76,11 +76,11 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut buf,
                 ) {
                     CommandedAnnounceWriteOutcome::Written { len, .. } => {
-                        let only = match announce.target {
-                            AnnounceTarget::AllInterfaces => None,
-                            AnnounceTarget::Interface(interface) => Some(interface),
+                        let fanout = match announce.target {
+                            AnnounceTarget::AllInterfaces => FanTarget::All,
+                            AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
                         };
-                        fan_self_originated(interfaces, only, &buf[..len], sink);
+                        fan_self_originated(interfaces, fanout, &buf[..len], sink);
                         Settlement::AnnounceNow(Ok(()))
                     }
                     CommandedAnnounceWriteOutcome::Rejected { rejection, .. } => {
@@ -115,7 +115,7 @@ impl<S: StorageLayout> EngineState<S> {
                     SendSingleWriteOutcome::Written(dispatch) => {
                         fan_self_originated(
                             interfaces,
-                            Some(dispatch.fire_on),
+                            FanTarget::Only(dispatch.fire_on),
                             &buf[..dispatch.wire_len],
                             sink,
                         );
@@ -158,7 +158,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_send_group(&send, &iv, &mut buf) {
                     Ok(wire_len) => {
-                        fan_self_originated(interfaces, None, &buf[..wire_len], sink);
+                        fan_self_originated(interfaces, FanTarget::All, &buf[..wire_len], sink);
                         Settlement::SendGroup(Ok(()))
                     }
                     Err(_) => Settlement::SendGroup(Err(SendGroupFailure::WriteFailed)),
@@ -186,7 +186,7 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                     PathRequestWriteOutcome::Written { wire_len, culled } => {
-                        fan_self_originated(interfaces, None, &buf[..wire_len], sink);
+                        fan_self_originated(interfaces, FanTarget::All, &buf[..wire_len], sink);
                         if let Some(culled) = culled {
                             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                                 id: culled.command_id,
@@ -219,7 +219,7 @@ impl<S: StorageLayout> EngineState<S> {
                     EstablishLinkWriteOutcome::Written(dispatch) => {
                         fan_self_originated(
                             interfaces,
-                            Some(dispatch.fire_on),
+                            FanTarget::Only(dispatch.fire_on),
                             &buf[..dispatch.wire_len],
                             sink,
                         );
@@ -354,7 +354,7 @@ impl<S: StorageLayout> EngineState<S> {
                     Ok(dispatch) => {
                         fan_self_originated(
                             interfaces,
-                            Some(dispatch.fire_on),
+                            FanTarget::Only(dispatch.fire_on),
                             &buf[..dispatch.wire_len],
                             sink,
                         );
@@ -509,7 +509,7 @@ impl<S: StorageLayout> EngineState<S> {
                         if let Some(fire_on) = dispatch.fire_on {
                             fan_self_originated(
                                 interfaces,
-                                Some(fire_on),
+                                FanTarget::Only(fire_on),
                                 &buf[..dispatch.wire_len],
                                 sink,
                             );
@@ -592,18 +592,29 @@ fn send_channel_failure(error: SendChannelWriteError) -> SendChannelFailure {
     }
 }
 
-/// Fan one self-originated payload to its targets: every interface (`only` = `None`) or a
-/// single named one, taking each that is live and may transmit. The same gate the legacy
-/// runtime's `fan_to_handles` applied with `FanoutClass::SelfOriginated`; the bytes are
-/// lent to each `Send` in turn, never copied into a staging buffer.
-fn fan_self_originated(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FanTarget {
+    All,
+    Only(InterfaceId),
+    AllExcept(InterfaceId),
+}
+
+/// Fan one self-originated payload across `fanout`'s interfaces, taking each that is live
+/// and may transmit. The same gate the legacy runtime's `fan_to_handles` applied with
+/// `FanoutClass::SelfOriginated`; the bytes are lent to each `Send` in turn, never copied
+/// into a staging buffer.
+pub(crate) fn fan_self_originated(
     interfaces: &[InterfaceConfig],
-    only: Option<InterfaceId>,
+    fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
     for config in interfaces {
-        let targeted = only.is_none_or(|id| config.id == id);
+        let targeted = match fanout {
+            FanTarget::All => true,
+            FanTarget::Only(id) => config.id == id,
+            FanTarget::AllExcept(id) => config.id != id,
+        };
         if targeted && config.capabilities.allows_transmit() {
             sink(EngineReaction::Directive(Directive::Send {
                 target: config.id,

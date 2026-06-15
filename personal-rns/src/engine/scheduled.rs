@@ -1,3 +1,5 @@
+use crate::engine::command::{fan_self_originated, FanTarget};
+use crate::engine::egress::write_path_request_wire_packet;
 use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
@@ -12,7 +14,7 @@ use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
 use crate::routing::RouteResponsiveness;
 use crate::storage::StorageLayout;
-use crate::wire::BROADCAST_MTU;
+use crate::wire::{BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN};
 
 impl<S: StorageLayout> EngineState<S> {
     /// Settle every tracked send whose proof deadline has passed: each gives up
@@ -86,10 +88,34 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
             }
         }
+        let transport_id = self.transport_id;
         while let Some(overdue) = self.transported_links.pop_overdue(now) {
-            if !overdue.validated && overdue.remaining_hops == 1 {
+            if overdue.validated {
+                continue;
+            }
+            let has_route = self.routing_table.has_route(&overdue.destination);
+
+            let fanout = if has_route && (overdue.remaining_hops == 1 || overdue.taken_hops == 1) {
                 self.routing_table
                     .mark_responsiveness(&overdue.destination, RouteResponsiveness::Unresponsive);
+                Some(FanTarget::AllExcept(overdue.received_interface))
+            } else if !has_route {
+                Some(FanTarget::All)
+            } else {
+                None
+            };
+            if let Some(fanout) = fanout {
+                let mut tag = [0u8; TRUNCATED_HASH_BYTE_LEN];
+                fill_entropy(&mut tag);
+                let mut request = [0u8; BROADCAST_MTU];
+                if let Ok(wire_len) = write_path_request_wire_packet(
+                    overdue.destination,
+                    transport_id,
+                    &tag,
+                    &mut request,
+                ) {
+                    fan_self_originated(view, fanout, &request[..wire_len], sink);
+                }
             }
         }
         while let Some(link_id) = self.links.pop_stale(now) {
@@ -322,5 +348,152 @@ mod tests {
             RouteResponsiveness::Unresponsive,
             "the neighbor link never proved, so its route is marked unresponsive",
         );
+    }
+
+    #[test]
+    fn an_unproved_neighbor_link_fires_a_path_request_away_from_the_received_lane() {
+        use crate::engine::egress::PATH_REQUEST_DESTINATION;
+        use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::interfaces::{InboundPacket, InterfaceId};
+        use crate::routing::links::transported::TransportedLink;
+        use crate::routing::links::LinkId;
+        use crate::wire::{DestinationType, WirePacketHeader};
+
+        let received = InterfaceId::new([0xA1; 16]);
+        let away = InterfaceId::new([0xB2; 16]);
+        let view = [routable_descriptor(received), routable_descriptor(away)];
+
+        let mut engine = EngineState::<Cap>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: received,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        let destination =
+            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+
+        engine
+            .transported_links
+            .track(TransportedLink {
+                link_id: LinkId::new([0x5C; 16]),
+                destination,
+                next_hop: None,
+                next_hop_interface: away,
+                received_interface: received,
+                taken_hops: 1,
+                remaining_hops: 1,
+                validated: false,
+                last_active: InstantMillis(1_000),
+                proof_timeout: InstantMillis(7_000),
+            })
+            .unwrap();
+
+        let mut sent = std::vec::Vec::new();
+        let _ = engine.fire_due_link_deadlines(
+            InstantMillis(7_000),
+            &view,
+            &mut |bytes: &mut [u8]| bytes.fill(0x5A),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { target, bytes }) = reaction {
+                    sent.push((target, bytes.to_vec()));
+                }
+            },
+        );
+
+        assert_eq!(
+            engine
+                .routing_table
+                .existing_route_for(&destination, &view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unresponsive,
+        );
+        assert_eq!(
+            sent.len(),
+            1,
+            "the request fires on the one lane that wasn't the dead link's",
+        );
+        assert_eq!(
+            sent[0].0, away,
+            "never back out the interface the failed link arrived on",
+        );
+        let (header, payload) = WirePacketHeader::parse(&sent[0].1).unwrap();
+        assert_eq!(header.destination, PATH_REQUEST_DESTINATION);
+        assert_eq!(header.destination_type, DestinationType::Plain);
+        assert_eq!(
+            &payload[..16],
+            destination.as_bytes(),
+            "and it asks for the destination whose link just died",
+        );
+    }
+
+    #[test]
+    fn an_unproved_link_recovers_when_the_initiator_is_the_neighbor_too() {
+        use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::interfaces::{InboundPacket, InterfaceId};
+        use crate::routing::links::transported::TransportedLink;
+        use crate::routing::links::LinkId;
+
+        let received = InterfaceId::new([0xA1; 16]);
+        let away = InterfaceId::new([0xB2; 16]);
+        let view = [routable_descriptor(received), routable_descriptor(away)];
+
+        let mut engine = EngineState::<Cap>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: received,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        let destination =
+            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+
+        engine
+            .transported_links
+            .track(TransportedLink {
+                link_id: LinkId::new([0x5C; 16]),
+                destination,
+                next_hop: None,
+                next_hop_interface: away,
+                received_interface: received,
+                taken_hops: 1,
+                remaining_hops: 4,
+                validated: false,
+                last_active: InstantMillis(1_000),
+                proof_timeout: InstantMillis(7_000),
+            })
+            .unwrap();
+
+        let mut sent = std::vec::Vec::new();
+        let _ = engine.fire_due_link_deadlines(
+            InstantMillis(7_000),
+            &view,
+            &mut |bytes: &mut [u8]| bytes.fill(0x5A),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
+                    sent.push(target);
+                }
+            },
+        );
+
+        assert_eq!(
+            engine
+                .routing_table
+                .existing_route_for(&destination, &view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unresponsive,
+            "a far destination still recovers when its link initiator is our neighbor",
+        );
+        assert_eq!(sent, std::vec![away]);
     }
 }
