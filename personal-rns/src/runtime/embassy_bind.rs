@@ -13,12 +13,12 @@
 //! storage instead of the heap.
 
 use core::cell::RefCell;
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
+use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, Journaled, Respond,
