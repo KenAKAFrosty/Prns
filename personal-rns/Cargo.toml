@@ -77,6 +77,11 @@ differential-coverage = ["std"]
 keyring-zbus = ["_keyring-vault", "keyring/async-secret-service", "keyring/async-io"]
 keyring-libdbus = ["_keyring-vault", "keyring/sync-secret-service"]
 _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-native", "keyring/windows-native"]
+# The embedded identity vault's flash backend (`FlashVault`). Persists the secret key
+# to a board-owned NOR flash region over `embedded-storage`, generated once on first
+# boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by
+# default — only an embedded host links it.
+flash = ["dep:embedded-storage"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -163,6 +168,11 @@ portable-atomic = { version = "1", optional = true, default-features = false, fe
 # guards it rather than in a plain file. Off by default and never built by the
 # core gates; only an opt-in host pulls the dbus/security-framework tree.
 keyring = { version = "3", optional = true, default-features = false }
+
+# Generic NOR-flash traits for the embedded identity vault's `FlashVault` (under
+# `flash`): the board hands it any driver implementing `NorFlash`/`ReadNorFlash`
+# (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
+embedded-storage = { version = "0.3", optional = true, default-features = false }
 
 [dev-dependencies]
 proptest = "1"

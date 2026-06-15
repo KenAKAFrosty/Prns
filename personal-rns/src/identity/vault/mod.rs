@@ -5,6 +5,8 @@ mod impls;
 pub use impls::{
     read_identity_file, FileVault, FileVaultError, HostLoadSource, HostVault, HostVaultError,
 };
+#[cfg(feature = "flash")]
+pub use impls::{FlashVault, FlashVaultError};
 #[cfg(feature = "_keyring-vault")]
 pub use impls::{KeyringVault, KeyringVaultError};
 

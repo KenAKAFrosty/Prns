@@ -12,3 +12,8 @@ pub use host::{HostLoadSource, HostVault, HostVaultError};
 mod os_keyring;
 #[cfg(feature = "_keyring-vault")]
 pub use os_keyring::{KeyringVault, KeyringVaultError};
+
+#[cfg(feature = "flash")]
+mod flash;
+#[cfg(feature = "flash")]
+pub use flash::{FlashVault, FlashVaultError};
