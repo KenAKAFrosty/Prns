@@ -97,8 +97,6 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             .position(|entry| entry.link_id == *link_id)
     }
 
-    /// Record a link request passing through. A duplicate link id is refused.
-    /// The first request through owns the row, replays repeat nothing.
     pub fn track(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
         if self.index_of(&entry.link_id).is_some() {
             return Err(ColumnsFull);
@@ -145,8 +143,6 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         })
     }
 
-    /// The switching gate for every other link-addressed frame — RNS 1.3.1's
-    /// direction-and-hops checks, refreshing the row's life on each repeat.
     pub fn switch(
         &mut self,
         link_id: &LinkId,
@@ -203,6 +199,20 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         Some(entry)
     }
 
+    pub fn cull_interface_orphans(&mut self, interface_present: impl Fn(InterfaceId) -> bool) {
+        let mut index = 0;
+        while index < self.columns.len() {
+            let entry = self.columns.entries()[index];
+            if interface_present(entry.next_hop_interface)
+                && interface_present(entry.received_interface)
+            {
+                index += 1;
+            } else {
+                self.columns.swap_remove(index);
+            }
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.columns.len()
     }
@@ -235,6 +245,24 @@ mod tests {
             last_active: InstantMillis(1_000),
             proof_timeout: InstantMillis(9_000),
         }
+    }
+
+    #[test]
+    fn a_transported_link_whose_interface_left_the_view_is_culled() {
+        let mut transported = TestTransported::default();
+        transported.track(entry(1, true)).unwrap();
+        let mut on_gone = entry(2, true);
+        on_gone.next_hop_interface = iface(0xEE);
+        transported.track(on_gone).unwrap();
+
+        transported.cull_interface_orphans(|id| id != iface(0xEE));
+
+        assert_eq!(transported.len(), 1);
+        assert!(transported.entry_for(&LinkId::new([1; 16])).is_some());
+        assert!(
+            transported.entry_for(&LinkId::new([2; 16])).is_none(),
+            "the row whose next hop left the view is gone",
+        );
     }
 
     #[test]
