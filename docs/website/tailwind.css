@@ -124,10 +124,10 @@ html, body {
 .prose th:first-child, .prose td:first-child { color: var(--color-paper); }
 .prose td img, .prose th img { display: inline-block; vertical-align: -3px; margin-right: 0.15em; }
 
-/* Landing eyebrow: the last word rotates on load (unstoppable → uncensorable →
-   resilient → private) and rests on "yours", which then draws an underline.
-   One-shot. A 1rem window sits inline with the surrounding all-caps text; the
-   stacked word list (1.4rem steps) scrolls up through it. */
+/* Landing eyebrow: the last word rotates through a short list of qualities on
+   load and rests on "yours", which then draws an underline. One-shot. A 1rem
+   window sits inline with the surrounding all-caps text; the stacked word list
+   (1.4rem steps) scrolls up through it. */
 .kicker-rotator {
     display: inline-block;
     height: 1rem;
