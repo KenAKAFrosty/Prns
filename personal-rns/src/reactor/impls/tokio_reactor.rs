@@ -508,6 +508,7 @@ pub struct ProvideDecompressedHostCommand {
     pub plaintext: HostResourcePayload,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run<S, H, J>(
     engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,

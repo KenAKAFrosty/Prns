@@ -151,9 +151,10 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     // The initiator: hear the responder, establish a link, ask once, and check the answer.
     let conversation = async {
         let destination = loop {
-            match heard_rx.recv().await.expect("initiator stays alive") {
-                Heard::Destination(destination) => break destination,
-                _ => {}
+            if let Heard::Destination(destination) =
+                heard_rx.recv().await.expect("initiator stays alive")
+            {
+                break destination;
             }
         };
         assert_eq!(destination, dest_a, "heard the responder's destination");
@@ -183,9 +184,8 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
             }))
             .expect("the initiator node is running");
         loop {
-            match heard_rx.recv().await.expect("initiator stays alive") {
-                Heard::Response(data) => break data,
-                _ => {}
+            if let Heard::Response(data) = heard_rx.recv().await.expect("initiator stays alive") {
+                break data;
             }
         }
     };
