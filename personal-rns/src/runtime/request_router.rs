@@ -193,31 +193,31 @@ impl<AppState, R: RouteSet<AppState>> Router<AppState, R> {
 macro_rules! routes {
     ($($route:ty),+ $(,)?) => {{
         struct RouteSetImpl;
-        impl<S> $crate::runtime::RouteSet<S> for RouteSetImpl
+        impl<S> $crate::runtime::request_router::RouteSet<S> for RouteSetImpl
         where
-            $($route: $crate::runtime::RequestRoute<S>,)+
+            $($route: $crate::runtime::request_router::RequestRoute<S>,)+
         {
-            const REGISTRATIONS: &'static [(&'static str, $crate::runtime::RoutePolicy)] = &[
+            const REGISTRATIONS: &'static [(&'static str, $crate::runtime::request_router::RoutePolicy)] = &[
                 $((
-                    <$route as $crate::runtime::RequestRoute<S>>::PATH,
-                    <$route as $crate::runtime::RequestRoute<S>>::POLICY,
+                    <$route as $crate::runtime::request_router::RequestRoute<S>>::PATH,
+                    <$route as $crate::runtime::request_router::RequestRoute<S>>::POLICY,
                 ),)+
             ];
 
             async fn dispatch(
-                cx: $crate::runtime::RequestContext<'_, S>,
+                cx: $crate::runtime::request_router::RequestContext<'_, S>,
                 path_hash: $crate::routing::request_handlers::RequestPathHash,
-            ) -> ::core::result::Result<(), $crate::runtime::Decline> {
+            ) -> ::core::result::Result<(), $crate::runtime::request_router::Decline> {
                 $(
                     if path_hash
                         == $crate::routing::request_handlers::RequestPathHash::of(
-                            <$route as $crate::runtime::RequestRoute<S>>::PATH,
+                            <$route as $crate::runtime::request_router::RequestRoute<S>>::PATH,
                         )
                     {
-                        return <$route as $crate::runtime::RequestRoute<S>>::handle(cx).await;
+                        return <$route as $crate::runtime::request_router::RequestRoute<S>>::handle(cx).await;
                     }
                 )+
-                ::core::result::Result::Err($crate::runtime::Decline::Ignore)
+                ::core::result::Result::Err($crate::runtime::request_router::Decline::Ignore)
             }
         }
         RouteSetImpl

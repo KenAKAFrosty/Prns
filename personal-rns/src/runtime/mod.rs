@@ -3,17 +3,13 @@ mod command;
 mod event;
 mod prns;
 mod recipe;
-mod request_router;
+pub mod request_router;
 
 pub use bind::Bind;
 pub use command::{Commands, SendError};
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use prns::Prns;
 pub use recipe::{Recipe, StartingDestination};
-pub use request_router::{
-    Decline, InboundRequest, RequestContext, RequestRoute, RespondToken, ResponseSink, RoutePolicy,
-    RouteSet, Router,
-};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;

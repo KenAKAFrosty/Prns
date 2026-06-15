@@ -28,10 +28,8 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 
-use super::{
-    Decline, EmbassyBind, EmbassyCommands, InboundRequest, Message, Prns, PrnsEvent, Recipe,
-    ResponseSink, RouteSet, Router, StartingDestination,
-};
+use super::request_router::{Decline, InboundRequest, ResponseSink, RouteSet, Router};
+use super::{EmbassyBind, EmbassyCommands, Message, Prns, PrnsEvent, Recipe, StartingDestination};
 
 /// How many requests can wait for the pool before new ones are dropped. Drop-on-full *is* the
 /// backpressure, exactly as on the host: a dropped request is one the requester retries or times
@@ -209,7 +207,8 @@ impl Prns {
 mod tests {
     use super::*;
     use crate::engine::{EngineCommand, IssuedCommand};
-    use crate::runtime::{CompletionPool, RequestContext, RequestRoute, RoutePolicy};
+    use crate::runtime::request_router::{RequestContext, RequestRoute, RoutePolicy};
+    use crate::runtime::CompletionPool;
     use embassy_futures::block_on;
     use embassy_futures::select::{select, Either};
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;

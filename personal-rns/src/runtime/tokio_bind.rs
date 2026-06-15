@@ -27,7 +27,8 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{Bind, PrnsEvent, RespondToken, SendError};
+use super::request_router::RespondToken;
+use super::{Bind, PrnsEvent, SendError};
 
 const LANE_DEPTH: usize = 64;
 

@@ -8,7 +8,7 @@ use crate::engine::{CommandId, Delivered, EngineCommand, SendSingleFailure};
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
-use super::RespondToken;
+use super::request_router::RespondToken;
 
 /// Why an awaited send never reached `Delivered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

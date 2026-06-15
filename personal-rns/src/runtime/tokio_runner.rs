@@ -20,10 +20,8 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 
-use super::{
-    Decline, InboundRequest, Message, Prns, PrnsEvent, Recipe, RouteSet, Router,
-    StartingDestination, TokioBind, TokioCommands,
-};
+use super::request_router::{Decline, InboundRequest, RouteSet, Router};
+use super::{Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind, TokioCommands};
 
 /// How many requests can wait for the runner before new ones are dropped. Drop-on-full *is* the
 /// backpressure: a dropped request is one the requester retries or times out, exactly as it would
@@ -142,7 +140,7 @@ impl Prns {
 mod tests {
     use super::*;
     use crate::reactor::impls::tokio_reactor::HostCommand;
-    use crate::runtime::{RequestContext, RequestRoute, RoutePolicy};
+    use crate::runtime::request_router::{RequestContext, RequestRoute, RoutePolicy};
 
     struct App {
         body: &'static [u8],

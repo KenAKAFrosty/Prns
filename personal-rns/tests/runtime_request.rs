@@ -24,9 +24,11 @@ use personal_rns::reactor::interfaces::tcp::impls::tokio::{
 use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
+use personal_rns::runtime::request_router::{
+    Decline, RequestContext, RequestRoute, RoutePolicy, Router,
+};
 use personal_rns::runtime::{
-    Decline, Diagnostic, Message, Prns, PrnsEvent, Recipe, RequestContext, RequestRoute,
-    RoutePolicy, Router, StartingDestination, TokioBind,
+    Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;

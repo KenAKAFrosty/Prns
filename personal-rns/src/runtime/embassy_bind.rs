@@ -32,7 +32,8 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{Bind, PrnsEvent, RespondToken, SendError};
+use super::request_router::RespondToken;
+use super::{Bind, PrnsEvent, SendError};
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;

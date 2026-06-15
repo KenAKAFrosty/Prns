@@ -19,7 +19,8 @@ use crate::routing::announce::{
 use crate::routing::ProofStrategy;
 use crate::wire::{DestinationHash, TransportId};
 
-use super::{Bind, RoutePolicy};
+use super::request_router::RoutePolicy;
+use super::Bind;
 
 /// One destination the node serves from the moment it starts. More can be registered later
 /// through the command surface; these are the ones the recipe stands up first.
