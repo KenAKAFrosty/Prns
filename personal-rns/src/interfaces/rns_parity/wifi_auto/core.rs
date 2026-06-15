@@ -13,7 +13,11 @@ use core::net::Ipv6Addr;
 use heapless::{String as HString, Vec as HVec};
 
 use crate::crypto::sha256;
-use crate::interfaces::MacAddress;
+use crate::interfaces::{
+    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceConfig, InterfaceId, InterfaceMode, MacAddress, TransportCapability,
+};
+use crate::routing::links::MAX_LINK_MTU;
 
 pub const GROUP_ID: &[u8] = b"reticulum";
 /// Discovery multicast group for the default "reticulum" group id:
@@ -38,6 +42,44 @@ pub const DEFAULT_DATA_PORT: u16 = 42671;
 /// ([`AutoInterface.py` L44](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L44)).
 pub const HARDWARE_MTU: usize = 1196;
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
+
+/// What RNS guesses for an AutoInterface's pipe when none is configured: 10 Mbps
+/// (`AutoInterface.BITRATE_GUESS`,
+/// [`AutoInterface.py` L70](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L70)).
+pub const WIFI_BITRATE_GUESS_BPS: u32 = 10_000_000;
+
+/// The hardware MTU a per-peer member declares. RNS pins the AutoInterface at a fixed
+/// [`HARDWARE_MTU`] (`FIXED_MTU = True`,
+/// [`AutoInterface.py` L44-L45](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L44-L45)),
+/// so unlike the bitrate-tiered interfaces this is not derived from the pipe; it is only clamped by
+/// the engine's link ceiling.
+pub const WIFI_HW_MTU_CAP: usize = if HARDWARE_MTU < MAX_LINK_MTU {
+    HARDWARE_MTU
+} else {
+    MAX_LINK_MTU
+};
+
+/// The descriptor one confirmed-peer member declares. Each peer is its own flat engine interface,
+/// so RNS 1.3.1's same-interface announce repeat across AutoInterface peers becomes ordinary
+/// cross-interface forwarding among sibling members here: the egress is
+/// [`TransportCapability::CrossInterfaceOnly`], and an announce arriving from one peer is forwarded
+/// out to the others (never back to its source) by the engine's normal fan-out. `mode` stays
+/// [`InterfaceMode::Full`], the mode RNS hands each spawned peer interface.
+pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
+    InterfaceConfig {
+        id,
+        capabilities: InterfaceCapabilities {
+            ingress: IngressCapability::Enabled,
+            egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+        },
+        mode: InterfaceMode::Full,
+        bitrate_bps: Some(bitrate_bps),
+        hardware_mtu: Some(WIFI_HW_MTU_CAP),
+        announce_rate_limit: None,
+        announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
+        airtime_duty_cycle: None,
+    }
+}
 
 /// Reconstruct the IPv6 link-local address an SLAAC stack derives from `mac` via
 /// EUI-64: `fe80::` over the 64-bit interface id formed by flipping the U/L bit

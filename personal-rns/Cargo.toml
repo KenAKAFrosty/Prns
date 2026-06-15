@@ -47,11 +47,11 @@ embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-asyn
 # AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
 # old LoRa/ESP-NOW radio shells were removed with the device host examples.
 embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
-# The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) for std hosts:
-# the std worker machinery plus socket2 (IPv6 multicast egress + address reuse) and
-# if-addrs (the chosen NIC's real link-local + index). Opt-in, so std hosts that don't
-# want it never link either crate.
-wifi-lan-auto = ["std-sync-host", "dep:socket2", "dep:if-addrs"]
+# The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) on the reactor
+# seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
+# reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
+# hosts that don't want it never link either crate.
+wifi-lan-auto = ["tokio-host", "tokio/net", "dep:socket2", "dep:if-addrs"]
 # The RNS-parity TCP interface (TcpClientInterface / TcpServerInterface) on the reactor
 # seam: tokio's own TCP plus socket2 for the reference's socket discipline (TCP_NODELAY,
 # keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
