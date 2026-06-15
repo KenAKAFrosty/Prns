@@ -1474,7 +1474,9 @@ impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.3.1 `Transport.path_request_handler`: we answer a request only for a
     /// destination of our own or, as a transport node, a route we hold. We never
     /// *forward* an unknown onward — that is opt-in recursive discovery (RNS
-    /// `DISCOVER_PATHS_FOR`), gated off and built later.
+    /// `DISCOVER_PATHS_FOR`), gated off and built later. Unlike the reference, we
+    /// also withhold a route we've marked unresponsive, so the requester hears a
+    /// live path from elsewhere instead of relearning the dead one.
     fn ingest_path_request<'p>(
         &mut self,
         data: &DataPacket<'_>,
@@ -1516,6 +1518,12 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(route) = cached_route else {
             return IngestPacketOutcome::Ignored;
         };
+
+        if self.routing_table.responsiveness_of(&request.destination)
+            == Some(RouteResponsiveness::Unresponsive)
+        {
+            return IngestPacketOutcome::Ignored;
+        }
 
         let due_at = InstantMillis(now.0 + path_response_grace_ms(source_interface, view));
         self.scheduled_announces.schedule_directed(
@@ -2162,6 +2170,60 @@ mod tests {
             ),
             IngestPacketOutcome::Ignored,
             "a different transport id but the same id is the same request — deduped",
+        );
+    }
+
+    #[test]
+    fn an_unresponsive_route_is_withheld_then_vouched_for_again_once_it_recovers() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let transport_id = [0x7a; 16];
+
+        relay
+            .routing_table
+            .mark_responsiveness(&cached, RouteResponsiveness::Unresponsive);
+
+        let mut withheld = std::vec::Vec::new();
+        withheld.extend_from_slice(cached.as_bytes());
+        withheld.extend_from_slice(&transport_id);
+        withheld.extend_from_slice(&[0x11; 16]);
+        let mut wire = path_request_wire_with(&withheld);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Ignored,
+            "an unresponsive route is withheld so a node with a live path answers instead",
+        );
+
+        relay
+            .routing_table
+            .mark_responsiveness(&cached, RouteResponsiveness::Responsive);
+
+        let mut recovered = std::vec::Vec::new();
+        recovered.extend_from_slice(cached.as_bytes());
+        recovered.extend_from_slice(&transport_id);
+        recovered.extend_from_slice(&[0x22; 16]);
+        let mut wire = path_request_wire_with(&recovered);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_100),
+                    source_interface: iface(0xA1),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::ScheduledPathResponse {
+                destination: cached
+            },
+            "once marked responsive again, we vouch for the route once more",
         );
     }
 

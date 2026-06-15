@@ -76,6 +76,11 @@ where
         self.index_of(destination).is_some()
     }
 
+    pub fn responsiveness_of(&self, destination: &DestinationHash) -> Option<RouteResponsiveness> {
+        self.index_of(destination)
+            .map(|i| self.routes.responsiveness()[i])
+    }
+
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
         self.routes.index_of(destination)
     }
