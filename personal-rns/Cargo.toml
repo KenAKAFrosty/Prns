@@ -156,3 +156,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 
 [lints]
 workspace = true
+
+
+[[example]]
+name = "scratch_tokio"
+required-features = ["tcp"]

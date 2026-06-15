@@ -1,7 +1,7 @@
 use crate::reactor::interface_seam::Interface;
 
 pub trait InterfaceAttach {
-    fn attach<I: Interface>(&mut self, interface: I);
+    fn attach<I: Interface + 'static>(&mut self, interface: I);
 }
 
 pub trait InterfaceSet {
@@ -12,9 +12,21 @@ impl InterfaceSet for () {
     fn attach_all<A: InterfaceAttach>(self, _attach: &mut A) {}
 }
 
+/// A run-time-sized set of one interface kind — what a fan-in responder (N like listeners) or any
+/// caller that builds its wires in a loop hands the recipe. Heterogeneous sets still take the tuple
+/// form; this is the homogeneous escape hatch, so it needs an owning heap and rides the `std` lane.
+#[cfg(feature = "std")]
+impl<I: Interface + 'static> InterfaceSet for std::vec::Vec<I> {
+    fn attach_all<A: InterfaceAttach>(self, attach: &mut A) {
+        for interface in self {
+            attach.attach(interface);
+        }
+    }
+}
+
 macro_rules! interface_set_tuple {
     ($($name:ident),+) => {
-        impl<$($name: Interface),+> InterfaceSet for ($($name,)+) {
+        impl<$($name: Interface + 'static),+> InterfaceSet for ($($name,)+) {
             #[allow(non_snake_case)]
             fn attach_all<A: InterfaceAttach>(self, attach: &mut A) {
                 let ($($name,)+) = self;

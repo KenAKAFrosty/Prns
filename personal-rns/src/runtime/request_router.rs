@@ -1,5 +1,3 @@
-use core::marker::PhantomData;
-
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::routing::links::request::RequestId;
@@ -145,52 +143,50 @@ pub trait RouteSet<S> {
         -> Result<(), Decline>;
 }
 
-pub struct Router<AppState, R: RouteSet<AppState>> {
-    app_state: AppState,
-    _routes: PhantomData<R>,
+/// The empty route set — what [`routes!`](crate::routes) with no arms hands back, and what a node
+/// that serves no requests carries. It registers nothing and declines every request as `Ignore`.
+impl<S> RouteSet<S> for () {
+    const REGISTRATIONS: &'static [(&'static str, RoutePolicy)] = &[];
+    async fn dispatch(
+        _cx: RequestContext<'_, S>,
+        _path_hash: RequestPathHash,
+    ) -> Result<(), Decline> {
+        Err(Decline::Ignore)
+    }
 }
 
-impl<AppState, R: RouteSet<AppState>> Router<AppState, R> {
-    #[must_use]
-    pub fn new(app_state: AppState, _routes: R) -> Self {
-        Self {
-            app_state,
-            _routes: PhantomData,
-        }
-    }
+/// The value [`routes!`](crate::routes) hands back when given no routes — the empty [`RouteSet`].
+/// A named constructor so the macro needn't expand to a bare `()`, which `clippy::unused_unit`
+/// flags at every call site.
+pub const fn no_routes() {}
 
-    #[must_use]
-    pub fn registrations(&self) -> &'static [(&'static str, RoutePolicy)] {
-        R::REGISTRATIONS
-    }
-
-    #[must_use]
-    pub fn app_state(&self) -> &AppState {
-        &self.app_state
-    }
-
-    pub async fn dispatch<'a>(
-        &'a self,
-        path_hash: RequestPathHash,
-        request: InboundRequest<'a>,
-        sink: &'a mut dyn ResponseSink,
-    ) -> Result<(), Decline> {
-        let cx = RequestContext {
-            state: &self.app_state,
-            data: request.data,
-            requester: request.requester,
-            requested_at: request.requested_at,
-            respond_token: request.respond_token(),
-            sink,
-        };
-        R::dispatch(cx, path_hash).await
-    }
+/// Route one request to the handler its `path_hash` selects, building the [`RequestContext`] over
+/// the app's shared `state` and the runner's grant `sink`. `RouteSet::dispatch` is a static fn, so
+/// the runner dispatches with only `&state` and the route-set type `R` — no `Router` wrapper.
+pub async fn dispatch_request<'a, S, R: RouteSet<S>>(
+    state: &'a S,
+    path_hash: RequestPathHash,
+    request: InboundRequest<'a>,
+    sink: &'a mut dyn ResponseSink,
+) -> Result<(), Decline> {
+    let cx = RequestContext {
+        state,
+        data: request.data,
+        requester: request.requester,
+        requested_at: request.requested_at,
+        respond_token: request.respond_token(),
+        sink,
+    };
+    R::dispatch(cx, path_hash).await
 }
 
 /// Compose route types into a [`RouteSet`] value, e.g., `routes![Health, Echo, Status]`. Each arm awaits
 /// a concrete handler future, so the set is monomorphized. There's no boxing and it's`no_std`-clean.
 #[macro_export]
 macro_rules! routes {
+    () => {
+        $crate::runtime::request_router::no_routes()
+    };
     ($($route:ty),+ $(,)?) => {{
         struct RouteSetImpl;
         impl<S> $crate::runtime::request_router::RouteSet<S> for RouteSetImpl
@@ -271,17 +267,13 @@ mod tests {
         }
     }
 
-    fn bench_router() -> Router<App, impl RouteSet<App>> {
-        Router::new(
-            App { greeting: b"hi" },
-            crate::routes![Health, Greet, Admin, Ack],
-        )
+    fn registrations<R: RouteSet<App>>(_routes: R) -> &'static [(&'static str, RoutePolicy)] {
+        R::REGISTRATIONS
     }
 
     #[test]
     fn the_route_set_is_the_registration_set_the_recipe_stands_up() {
-        let router = bench_router();
-        let registrations = router.registrations();
+        let registrations = registrations(crate::routes![Health, Greet, Admin, Ack]);
         assert_eq!(registrations.len(), 4);
         assert_eq!(registrations[0], ("/health", RoutePolicy::AllowAll));
         assert_eq!(registrations[2].0, "/admin");
@@ -294,57 +286,52 @@ mod tests {
     #[cfg(feature = "tokio-host")]
     #[tokio::test]
     async fn dispatch_routes_by_path_then_answers_or_declines() {
-        let router = bench_router();
-        let request = || {
-            InboundRequest::new(
+        async fn dispatch<R: RouteSet<App>>(
+            _routes: &R,
+            state: &App,
+            path: &str,
+            sink: &mut dyn ResponseSink,
+        ) -> Result<(), Decline> {
+            let request = InboundRequest::new(
                 LinkId::new([1; 16]),
                 RequestId([2; 16]),
                 None,
                 InstantMillis(0),
                 b"",
-            )
-        };
+            );
+            dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await
+        }
+
+        let routes = crate::routes![Health, Greet, Admin, Ack];
+        let state = App { greeting: b"hi" };
 
         let mut greet = std::vec::Vec::new();
         assert_eq!(
-            router
-                .dispatch(RequestPathHash::of("/greet"), request(), &mut greet)
-                .await,
+            dispatch(&routes, &state, "/greet", &mut greet).await,
             Ok(())
         );
         assert_eq!(greet.as_slice(), b"hi");
 
         let mut health = std::vec::Vec::new();
         assert_eq!(
-            router
-                .dispatch(RequestPathHash::of("/health"), request(), &mut health)
-                .await,
+            dispatch(&routes, &state, "/health", &mut health).await,
             Ok(())
         );
         assert_eq!(health.as_slice(), b"ok");
 
         let mut ack = std::vec::Vec::new();
-        assert_eq!(
-            router
-                .dispatch(RequestPathHash::of("/ack"), request(), &mut ack)
-                .await,
-            Ok(())
-        );
+        assert_eq!(dispatch(&routes, &state, "/ack", &mut ack).await, Ok(()));
         assert!(ack.is_empty());
 
         let mut admin = std::vec::Vec::new();
         assert_eq!(
-            router
-                .dispatch(RequestPathHash::of("/admin"), request(), &mut admin)
-                .await,
+            dispatch(&routes, &state, "/admin", &mut admin).await,
             Err(Decline::CloseLink)
         );
 
         let mut miss = std::vec::Vec::new();
         assert_eq!(
-            router
-                .dispatch(RequestPathHash::of("/nope"), request(), &mut miss)
-                .await,
+            dispatch(&routes, &state, "/nope", &mut miss).await,
             Err(Decline::Ignore)
         );
     }

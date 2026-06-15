@@ -1,15 +1,10 @@
-//! The tokio platform binding — the first concrete [`Bind`], distilled from the hand-roll in the
-//! benchmark `scenario_node`. It owns the interface descriptors, their grant lanes, the
-//! inbound-notify and command channels, the [`TokioHost`], and the reactor call; the runtime
-//! hands it a fully assembled engine and it drives the tokio reactor forever.
-//!
-//! The command channel's sender comes out of [`TokioBind::new`] as a [`TokioCommands`] handle —
-//! the dual-side surface: keep it to drive the node inline before the final `Prns::run`, or move
-//! it into other tasks when you taskify the run.
-
+use std::future::Future;
+use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use futures_util::future::join_all;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -22,26 +17,24 @@ use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, RespondAnyHostCommand,
     TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
-use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+use crate::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::LinkId;
-use crate::storage::StorageLayout;
+use crate::storage::GrowableHeap;
 use crate::wire::DestinationHash;
 
-use super::request_router::RespondToken;
-use super::{Bind, PrnsEvent, SendError};
+use super::interface_set::{InterfaceAttach, InterfaceSet};
+use super::recipe::StartingDestination;
+use super::request_router::{RespondToken, RouteSet};
+use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
+use super::{Message, PrnsEvent, Recipe, SendError};
 
 const LANE_DEPTH: usize = 64;
 
-/// A cloneable handle to the running node — bind it as `prns` and drive the node through it.
-/// Obtained from [`TokioBind::new`]; usable inline (before the final `Prns::run`) or moved into
-/// other tasks. Clones share one node, so an awaited send on one resolves wherever it settles.
+/// A cloneable, `Send` handle to a running node — the proactive surface. Hand clones to other tasks
+/// or threads (each shares one node, so an awaited send on any resolves wherever it settles).
 ///
-/// The handle mints every [`CommandId`] from one counter — the app never picks ids, so a
-/// fire-and-forget [`issue`](Self::issue) can never collide with an awaited
-/// [`send_single`](Self::send_single) or a runner's [`respond`](Self::respond). `issue` returns the
-/// id it minted (watch `on_event` for that settlement); `send_single` parks on a oneshot the reactor
-/// fires, the completion riding the command with no shared registry; `respond` / `close_link` are
-/// the request runner's answer paths.
+/// Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can
+/// never collide with an awaited [`send_single`](Self::send_single) or a runner's respond.
 #[derive(Clone)]
 pub struct TokioCommands {
     commands: UnboundedSender<HostCommand>,
@@ -61,10 +54,6 @@ impl TokioCommands {
         CommandId(self.ids.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// Queue an engine command (announce, send single, establish link, …) for the next reactor
-    /// cycle and return the [`CommandId`] it was minted under — watch `on_event` for the settlement
-    /// tagged with it. `None` once the node has stopped and the channel is closed. This is the
-    /// fire-and-forget escape hatch; to await the outcome instead, prefer the typed methods.
     pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         let id = self.mint();
         self.commands
@@ -73,9 +62,6 @@ impl TokioCommands {
         Some(id)
     }
 
-    /// Send one Single data packet to `destination` and await its delivery proof. The future
-    /// resolves when the engine settles the send — `Ok(Delivered)` with the round trip it
-    /// measured, or the typed reason it did not deliver.
     pub async fn send_single(
         &self,
         destination: DestinationHash,
@@ -95,10 +81,6 @@ impl TokioCommands {
         }
     }
 
-    /// Mint a [`CommandId`], issue the command with a oneshot the reactor fires on settlement, and
-    /// park on it — `None` if the node stopped before settling (the channel closed, or the reactor
-    /// dropped the completion). The completion rides the command, so the correlation registry lives
-    /// on the single reactor task with no lock.
     async fn settle(&self, command: EngineCommand) -> Option<Settlement> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
@@ -124,25 +106,14 @@ impl TokioCommands {
             .is_ok()
     }
 
-    /// Answer a request with `body` of any length: the engine picks the rung — a single RESPONSE
-    /// packet when it fits the link MDU, an outgoing resource named back to the request when it
-    /// doesn't. This is the app's defer path — keep the [`RespondToken`] a handler hands back when it
-    /// returns `Err(Decline::Ignore)` and answer later, off the runner's task. `body` is copied; when
-    /// you already own the bytes, [`respond_owned`](Self::respond_owned) moves them. Returns `false`
-    /// once the node has stopped and the channel is closed.
     pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         self.send_response(responder, body.to_vec().into())
     }
 
-    /// Answer with an owned `body` — the request runner's path: the filled grant moves straight into
-    /// the response with no copy. Same auto-upgrade and id discipline as [`respond`](Self::respond).
     pub fn respond_owned(&self, responder: RespondToken, body: std::vec::Vec<u8>) -> bool {
         self.send_response(responder, body.into())
     }
 
-    /// Sever an active link — the runner's path for a handler that returns `Err(Decline::CloseLink)`,
-    /// and usable directly to tear a link down. Queues RNS 1.3.1's `Link.teardown` (the sealed
-    /// LINKCLOSE) for the next reactor cycle. Returns `false` once the node has stopped.
     pub fn close_link(&self, link_id: LinkId) -> bool {
         self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
             .is_some()
@@ -171,72 +142,183 @@ impl super::Commands for TokioCommands {
     }
 }
 
-pub struct TokioBind<S: StorageLayout> {
-    host: TokioHost,
+struct TokioAttach {
+    notify_tx: UnboundedSender<InterfaceId>,
     interfaces: std::vec::Vec<InterfaceConfig>,
     inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
     egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
-    notify_tx: UnboundedSender<InterfaceId>,
-    notify_rx: UnboundedReceiver<InterfaceId>,
-    command_rx: UnboundedReceiver<HostCommand>,
-    _storage: core::marker::PhantomData<S>,
+    runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
 }
 
-impl<S: StorageLayout> TokioBind<S> {
-    pub fn new() -> (Self, TokioCommands) {
-        Self::with_host(TokioHost::new())
-    }
-
-    pub fn with_host(host: TokioHost) -> (Self, TokioCommands) {
-        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        (
-            Self {
-                host,
-                interfaces: std::vec::Vec::new(),
-                inbound: std::vec::Vec::new(),
-                egress_lanes: std::vec::Vec::new(),
-                notify_tx,
-                notify_rx,
-                command_rx,
-                _storage: core::marker::PhantomData,
-            },
-            TokioCommands {
-                commands: command_tx,
-                ids: Arc::new(AtomicU64::new(0)),
-            },
-        )
-    }
-
-    /// Wire the grant lanes for an interface and return its [`TokioInterfaceSeam`]. The caller
-    /// spawns the concrete interface's `run(seam)` — keeping the interface future (whose `Send`
-    /// the `Interface` trait does not promise) at a monomorphic site where tokio can prove it.
-    pub fn attach(&mut self, descriptor: InterfaceConfig) -> TokioInterfaceSeam {
+impl InterfaceAttach for TokioAttach {
+    fn attach<I: Interface + 'static>(&mut self, interface: I) {
+        let descriptor = interface.descriptor();
         let id = descriptor.id;
         let (in_producer, in_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
         let (out_producer, out_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
         self.interfaces.push(descriptor);
         self.inbound.push((id, in_consumer));
         self.egress_lanes.push((id, out_producer));
-        TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer)
+        let seam = TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer);
+        self.runs.push(Box::pin(interface.run(seam)));
     }
 }
 
-impl<S: StorageLayout> Bind for TokioBind<S> {
-    type Storage = S;
+/// A node on the tokio host — the loop side of the runtime. Built from a [`Recipe`] with
+/// [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by
+/// [`run`](Self::run) (the reactor + the request runner, joined). Hold [`handle`](Self::handle)
+/// clones to drive it from other tasks/threads while `run` owns the loop.
+pub struct Prns<St, R, F> {
+    handle: TokioCommands,
+    host: TokioHost,
+    engine: EngineState<GrowableHeap>,
+    interfaces: std::vec::Vec<InterfaceConfig>,
+    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
+    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
+    notify_rx: UnboundedReceiver<InterfaceId>,
+    command_rx: UnboundedReceiver<HostCommand>,
+    iface_runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
+    state: St,
+    on_event: F,
+    _routes: PhantomData<R>,
+}
 
-    async fn drive(self, engine: EngineState<S>, mut on_event: impl FnMut(PrnsEvent<'_>)) {
-        let TokioBind {
+impl<St, R, F> Prns<St, R, F>
+where
+    R: RouteSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+{
+    /// Stand a node up from `recipe` on the default `GrowableHeap` storage: assemble the engine
+    /// (transport role, destinations, the routes' request handlers), then attach and spawn every
+    /// interface. Synchronous — only [`run`](Self::run) awaits.
+    #[allow(clippy::expect_used)]
+    pub fn new<'a, D, I>(recipe: Recipe<D, St, R, F, I>) -> Self
+    where
+        D: IntoIterator<Item = StartingDestination<'a>>,
+        I: InterfaceSet,
+    {
+        let (notify_tx, notify_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let handle = TokioCommands {
+            commands: command_tx,
+            ids: Arc::new(AtomicU64::new(0)),
+        };
+
+        let mut engine = EngineState::<GrowableHeap>::default();
+        if let Some(id) = recipe.transport {
+            engine.set_transport_id(id);
+        }
+        for destination in recipe.destinations {
+            match destination {
+                StartingDestination::Plain { app_name, aspects } => {
+                    engine
+                        .register_plain_destination(app_name, aspects)
+                        .expect("recipe plain destination is valid");
+                }
+                StartingDestination::Single {
+                    app_name,
+                    aspects,
+                    identity,
+                    app_data,
+                    proof,
+                    ratchet,
+                } => {
+                    let held = engine
+                        .hold_identity(identity)
+                        .expect("recipe identity fits the store");
+                    let dest = engine
+                        .register_single_destination(
+                            &held, app_name, aspects, app_data, proof, ratchet,
+                        )
+                        .expect("recipe single destination is valid");
+                    for (path, policy) in R::REGISTRATIONS {
+                        engine
+                            .register_request_handler(&dest, path, policy.engine_policy())
+                            .expect("recipe request handler fits the store");
+                        for seed in policy.seed_list() {
+                            engine
+                                .allow_requester(&dest, path, *seed)
+                                .expect("recipe seed identity admits to its own fresh handler");
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut attach = TokioAttach {
+            notify_tx,
+            interfaces: std::vec::Vec::new(),
+            inbound: std::vec::Vec::new(),
+            egress_lanes: std::vec::Vec::new(),
+            runs: std::vec::Vec::new(),
+        };
+        recipe.interfaces.attach_all(&mut attach);
+
+        Prns {
+            handle,
+            host: TokioHost::new(),
+            engine,
+            interfaces: attach.interfaces,
+            inbound: attach.inbound,
+            egress_lanes: attach.egress_lanes,
+            notify_rx,
+            command_rx,
+            iface_runs: attach.runs,
+            state: recipe.state,
+            on_event: recipe.on_event,
+            _routes: PhantomData,
+        }
+    }
+
+    /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run)
+    /// owns the loop.
+    #[must_use]
+    pub fn handle(&self) -> TokioCommands {
+        self.handle.clone()
+    }
+
+    pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
+        self.handle.issue(command)
+    }
+
+    pub async fn send_single(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<Delivered, SendError<SendSingleFailure>> {
+        self.handle.send_single(destination, data).await
+    }
+
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
+        self.handle.respond(responder, body)
+    }
+
+    pub fn close_link(&self, link_id: LinkId) -> bool {
+        self.handle.close_link(link_id)
+    }
+
+    /// Drive the node until it stops (the reactor loops indefinitely, so in practice forever). The
+    /// reactor and the request runner run joined: every inbound request is forked to the runner
+    /// (which answers it through the routes), while that event — and every other — reaches the
+    /// recipe's `on_event` with shared `&state`, zero-copy.
+    pub async fn run(self) {
+        let Prns {
+            handle,
             host,
+            engine,
             interfaces,
             inbound,
             egress_lanes,
             notify_rx,
             command_rx,
-            ..
+            iface_runs,
+            state,
+            mut on_event,
+            _routes,
         } = self;
         let egress = Egress::new(egress_lanes);
-        tokio_reactor::run(
+        let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
+        let reactor = tokio_reactor::run(
             engine,
             interfaces,
             std::vec::Vec::new(),
@@ -245,9 +327,32 @@ impl<S: StorageLayout> Bind for TokioBind<S> {
             inbound,
             command_rx,
             egress,
-            |journaled| on_event(PrnsEvent::from(journaled)),
-        )
-        .await
+            |journaled| {
+                let event = PrnsEvent::from(journaled);
+                if let PrnsEvent::Message(Message::Request {
+                    link_id,
+                    request_id,
+                    path_hash,
+                    requested_at,
+                    data,
+                }) = &event
+                {
+                    let _ = req_tx.try_send(RunnerRequest {
+                        link_id: *link_id,
+                        request_id: *request_id,
+                        path_hash: *path_hash,
+                        requested_at: *requested_at,
+                        data: data.to_vec(),
+                    });
+                }
+                on_event(event, &state);
+            },
+        );
+        tokio::join!(
+            reactor,
+            run_router::<St, R>(&state, req_rx, handle),
+            join_all(iface_runs),
+        );
     }
 }
 
@@ -315,9 +420,9 @@ mod tests {
         use crate::runtime::Commands;
 
         let (prns, mut command_rx) = handle();
-        let id = Commands::close_link(&prns, LinkId::new([3; 16]));
+        let queued = Commands::close_link(&prns, LinkId::new([3; 16]));
         assert!(
-            id,
+            queued,
             "the trait method reaches the handle and queues the close"
         );
         assert!(

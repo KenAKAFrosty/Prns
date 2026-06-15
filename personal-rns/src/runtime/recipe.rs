@@ -1,15 +1,3 @@
-//! The declarative description of a node: which destinations it serves, whether it forwards,
-//! and the platform [`Bind`] that owns its interfaces and reactor. `Prns::run` consumes one of
-//! these — the consumer never hand-wires the engine, the channels, or the lanes.
-//!
-//! There is no "self" identity. A node is whatever destinations it stands up; each `Single`
-//! destination carries the key it answers as. The app (a daemon, Hopspot, a benchmark — the
-//! thing that calls `Prns::run` *is* the app) registers as many, or as few, as it needs.
-//!
-//! Announces are entirely app policy. The runtime hands the controls (a command channel), and
-//! the app — which knows it has started the moment `Prns::run` is reached — fires `AnnounceNow`
-//! once, on a schedule, or never. The recipe says nothing about announce cadence.
-
 use crate::engine::RatchetPolicy;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -19,22 +7,13 @@ use crate::routing::announce::{
 use crate::routing::ProofStrategy;
 use crate::wire::{DestinationHash, TransportId};
 
-use super::request_router::RoutePolicy;
-use super::Bind;
+use super::PrnsEvent;
 
-/// One destination the node serves from the moment it starts. More can be registered later
-/// through the command surface; these are the ones the recipe stands up first.
 pub enum StartingDestination<'a> {
-    /// An unencrypted, identity-less destination (RNS PLAIN).
     Plain {
         app_name: &'a str,
         aspects: &'a [&'a str],
     },
-    /// An encrypted destination and the key it answers as — its own identity, held for it
-    /// alone. Carries its proof strategy, ratchet policy, announce app-data, and the request
-    /// handlers it answers (typically `router.registrations()` — `&[]` for a destination that
-    /// serves no requests). Each is registered before the first packet, so a handler is never
-    /// racing a request; runtime additions to an `AllowList` ride the `AllowRequester` command.
     Single {
         app_name: &'a str,
         aspects: &'a [&'a str],
@@ -42,15 +21,12 @@ pub enum StartingDestination<'a> {
         app_data: &'a [u8],
         proof: ProofStrategy,
         ratchet: RatchetPolicy,
-        request_handlers: &'a [(&'a str, RoutePolicy)],
     },
 }
 
 impl StartingDestination<'_> {
-    /// The address this destination will answer as — the same hash `Prns::run` registers,
-    /// derived purely from the name (and, for a `Single`, its key) so an app can learn it
-    /// before the node starts. An announcing responder needs it to name itself in `AnnounceNow`;
-    /// the recipe owns the registration, but the address is the app's to know.
+    /// The address this destination answers as, derived from its name (and key, for a `Single`) —
+    /// so an announcing app can name itself before the node starts.
     #[allow(clippy::expect_used)]
     pub fn address(&self) -> DestinationHash {
         match self {
@@ -74,17 +50,18 @@ impl StartingDestination<'_> {
     }
 }
 
-/// Everything [`Prns::run`](super::Prns::run) needs to stand a node up. The storage recipe is
-/// carried by the [`Bind`]'s `Storage` associated type, so the caller writes no turbofish; the
-/// interface set, lanes, and host live inside the `Bind`.
-pub struct Recipe<B: Bind, D> {
-    /// `Some` opts this node into the transport role: relay announces and forward addressed
-    /// packets. A bare 16-byte id suffices — forwarding never signs, so this is *not* an
-    /// identity and stands apart from any destination's key.
+/// The complete definition of a node, handed to `Prns::new`: what it is
+/// (`transport`, `destinations`), what it holds and how it reacts (`state`, `routes`, `on_event`),
+/// and the wires it runs over (`interfaces`). The field bounds (`RouteSet`, `InterfaceSet`, the
+/// event handler) are applied at `new()`, so the struct itself stays platform-neutral.
+pub struct Recipe<D, St, R, F, I>
+where
+    F: FnMut(PrnsEvent<'_>, &St),
+{
     pub transport: Option<TransportId>,
-    /// The destinations stood up before the first packet is ingested
-    /// (`impl IntoIterator<Item = StartingDestination>`).
     pub destinations: D,
-    /// The platform binding: interfaces, grant lanes, channels, host, reactor.
-    pub bind: B,
+    pub state: St,
+    pub routes: R,
+    pub on_event: F,
+    pub interfaces: I,
 }

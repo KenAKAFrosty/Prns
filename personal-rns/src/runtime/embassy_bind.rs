@@ -1,39 +1,32 @@
-//! The embassy platform binding — the second concrete [`Bind`], distilled from the hand-roll in
-//! the S3 firmware's `engine_task`. Where `TokioBind` *owns* heap channels and
-//! lanes, embassy's are `static` (const-sized) and the reactor takes them by borrow — so this
-//! binding *holds the borrow bundle* the firmware sets up (the `Host`, the interface descriptors,
-//! the inbound-notify and command `Receiver`s over `static` channels, the inbound grant-lane
-//! consumers, and the egress) and hands them to the reactor in [`Bind::drive`].
+//! The embassy command surface — the embedded twin of `TokioCommands`, kept warm while the neutral
+//! `Prns`/[`Recipe`](super::Recipe) entry point is dialed in on the tokio side. The
+//! embassy *runner* (the borrow-bundle that drove the reactor over `static` channels) is parked; what
+//! survives here are the two pieces an embedded node reattaches to once the neutral runner is ported:
+//! the handle and its completion store.
 //!
-//! The handle is [`EmbassyCommands`] — the embedded twin of `TokioCommands`, built over the command
-//! channel's `Sender` and a [`CompletionPool`] the app provides as a `static` (the embedded stand-in
-//! for tokio's per-command oneshot, since no_std has no ownable completion to ride the command). The
-//! app keeps the `Sender` side wrapped in the handle and passes the `Receiver` and the same pool
-//! borrow in here — the dual-side surface of `TokioBind`, with the channel and pool living in static
-//! storage instead of the heap.
+//! The handle is [`EmbassyCommands`] — built over the command channel's `Sender` and a
+//! [`CompletionPool`] the app provides as a `static` (the embedded stand-in for tokio's per-command
+//! oneshot, since no_std has no ownable completion to ride the command). The app keeps the `Sender`
+//! wrapped in the handle and holds the matching `Receiver` and the same pool borrow for the runner —
+//! the channel and pool living in static storage instead of the heap.
 
 use core::cell::RefCell;
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::channel::{Receiver, Sender};
+use embassy_sync::channel::Sender;
 use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, Journaled, Respond,
-    RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
+    CloseLink, CommandId, Delivered, EngineCommand, IssuedCommand, Respond, RespondData,
+    SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
-use crate::interfaces::ifac::InterfaceIfac;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
-use crate::reactor::grant::AnyGrantConsumer;
-use crate::reactor::impls::embassy_reactor::{run, EmbassyEgress, EmbassyHost};
 use crate::routing::links::LinkId;
-use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
 use super::request_router::RespondToken;
-use super::{Bind, PrnsEvent, SendError};
+use super::SendError;
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
@@ -98,8 +91,10 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 
     /// Hand `settlement` to the slot awaiting `id`, if any, and report whether it fired — the
-    /// binding drops a fired settlement from the event stream. Signals under the lock so a
-    /// concurrent release/claim can't slip the slot out from under the wakeup.
+    /// runner drops a fired settlement from the event stream. Signals under the lock so a
+    /// concurrent release/claim can't slip the slot out from under the wakeup. The reattachment
+    /// point for the parked runner, so only the tests exercise it for now.
+    #[allow(dead_code)]
     fn settle(&self, id: CommandId, settlement: Settlement) -> bool {
         self.awaited.lock(|cell| {
             let mut awaited = cell.borrow_mut();
@@ -144,7 +139,7 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> Copy
 
 impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a, M, COMMANDS, N> {
     /// Pair the command channel's sender with the completion pool — the app holds both as `static`s
-    /// and passes the matching [`CompletionPool`] reference into [`EmbassyBind::new`] too.
+    /// and passes the matching [`CompletionPool`] reference to the runner too.
     #[must_use]
     pub fn new(
         commands: Sender<'a, M, IssuedCommand, COMMANDS>,
@@ -259,92 +254,6 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::Commands
 
     fn close_link(&self, link_id: LinkId) -> bool {
         self.close_link(link_id)
-    }
-}
-
-pub struct EmbassyBind<'a, S, E, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>
-where
-    S: StorageLayout,
-    E: FnMut(&mut [u8]),
-    M: RawMutex,
-{
-    host: EmbassyHost<E>,
-    interfaces: &'a [InterfaceConfig],
-    ifacs: &'a [InterfaceIfac],
-    notify: Receiver<'a, M, InterfaceId, NOTIFY>,
-    inbound_lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantConsumer)],
-    commands: Receiver<'a, M, IssuedCommand, COMMANDS>,
-    egress: EmbassyEgress<'a>,
-    pool: &'a CompletionPool<M, N>,
-    _storage: core::marker::PhantomData<S>,
-}
-
-impl<'a, S, E, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>
-    EmbassyBind<'a, S, E, M, NOTIFY, COMMANDS, N>
-where
-    S: StorageLayout,
-    E: FnMut(&mut [u8]),
-    M: RawMutex,
-{
-    /// Bundle the firmware's already-wired reactor inputs into a binding. The app owns the `static`
-    /// notify/command channels, the lane buffers, and the [`CompletionPool`]; it keeps the command
-    /// channel's `Sender` (wrapped in an [`EmbassyCommands`] over the same pool) and passes the
-    /// matching `Receiver`s and a `pool` borrow here.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        host: EmbassyHost<E>,
-        interfaces: &'a [InterfaceConfig],
-        ifacs: &'a [InterfaceIfac],
-        notify: Receiver<'a, M, InterfaceId, NOTIFY>,
-        inbound_lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantConsumer)],
-        commands: Receiver<'a, M, IssuedCommand, COMMANDS>,
-        egress: EmbassyEgress<'a>,
-        pool: &'a CompletionPool<M, N>,
-    ) -> Self {
-        Self {
-            host,
-            interfaces,
-            ifacs,
-            notify,
-            inbound_lanes,
-            commands,
-            egress,
-            pool,
-            _storage: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a, S, E, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize> Bind
-    for EmbassyBind<'a, S, E, M, NOTIFY, COMMANDS, N>
-where
-    S: StorageLayout,
-    E: FnMut(&mut [u8]),
-    M: RawMutex,
-{
-    type Storage = S;
-
-    async fn drive(self, engine: EngineState<S>, mut on_event: impl FnMut(PrnsEvent<'_>)) {
-        let pool = self.pool;
-        run(
-            engine,
-            self.interfaces,
-            self.ifacs,
-            self.host,
-            self.notify,
-            self.inbound_lanes,
-            self.commands,
-            self.egress,
-            |journaled| {
-                if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if pool.settle(*id, *settlement) {
-                        return;
-                    }
-                }
-                on_event(PrnsEvent::from(journaled));
-            },
-        )
-        .await
     }
 }
 

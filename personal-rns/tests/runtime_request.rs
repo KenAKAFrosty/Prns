@@ -1,7 +1,7 @@
-//! The typed request router, end to end over real TCP: a responder stood up by `Prns::serve` with
-//! a one-route `Router` answers a live request from an initiator. The handler *computes* its answer
-//! (it echoes the request bytes and appends a suffix, assembling them straight into the grant), so
-//! this exercises the whole dogfood path — `serve` drives the reactor and the runner together, a
+//! The typed request router, end to end over real TCP: a responder stood up by `Prns::new` with a
+//! one-route set answers a live request from an initiator. The handler *computes* its answer (it
+//! echoes the request bytes and appends a suffix, assembling them straight into the grant), so this
+//! exercises the whole dogfood path — `run` drives the reactor and the runner together, a
 //! `RequestReceived` is forked to the runner, the route's `handle` fills the grant and returns
 //! `Ok(())`, and the auto-upgrading respond carries the bytes back to the initiator. An integration
 //! test, so it builds against the public API.
@@ -16,21 +16,15 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::interface_seam::Interface;
 use personal_rns::reactor::interfaces::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
 };
-use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::request_router::{
-    Decline, RequestContext, RequestRoute, RoutePolicy, Router,
-};
-use personal_rns::runtime::{
-    Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind,
-};
-use personal_rns::storage::GrowableHeap;
+use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use personal_rns::runtime::{Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination};
 use personal_rns::wire::DestinationHash;
+use personal_rns::{interfaces, routes};
 
 const BITRATE: u32 = 1_000_000;
 const QUERY_PATH: &str = "/test/echo";
@@ -64,7 +58,6 @@ enum Heard {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_request_router_answers_a_live_request_over_tcp() {
-    let router = Router::new(Responder, routes![Echo]);
     let responder_dest = StartingDestination::Single {
         app_name: "bench",
         aspects: &["link"],
@@ -72,21 +65,26 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: router.registrations(),
     };
     let dest_a = responder_dest.address();
 
-    // Responder node: a TCP server plus the router-backed Single it answers requests on.
-    let (mut bind_a, commands_a) = TokioBind::<GrowableHeap>::new();
+    // Responder node: a TCP server plus the route-backed Single it answers requests on. `Prns::new`
+    // registers the routes' handlers on every Single it stands up, so the destination carries them.
     let server = TcpServerInterface::bind(InterfaceId::new([0xA0; 16]), "127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
-    let seam_a = bind_a.attach(server.descriptor());
-    tokio::spawn(server.run(seam_a));
+    let node_a = Prns::new(Recipe {
+        transport: None,
+        destinations: [responder_dest],
+        state: Responder,
+        routes: routes![Echo],
+        on_event: |_event, _state| {},
+        interfaces: interfaces![server],
+    });
 
     // The responder announces on a cadence so the initiator can find it — pure app policy.
-    let announcer = commands_a.clone();
+    let announcer = node_a.handle();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
@@ -105,32 +103,26 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     });
 
     // Initiator node: a TCP client to the responder; reports what it hears on the event lane.
-    let initiator_dest = StartingDestination::Single {
-        app_name: "bench",
-        aspects: &["link"],
-        identity: secret(0xB2),
-        app_data: b"",
-        proof: ProofStrategy::ProveAll,
-        ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: &[],
-    };
-    let (mut bind_b, commands_b) = TokioBind::<GrowableHeap>::new();
     let client = TcpClientInterface::new(
         InterfaceId::new([0xB0; 16]),
         addr,
         BITRATE,
         Duration::from_millis(100),
     );
-    let seam_b = bind_b.attach(client.descriptor());
-    tokio::spawn(client.run(seam_b));
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(Prns::run(
-        Recipe {
-            transport: None,
-            destinations: [initiator_dest],
-            bind: bind_b,
-        },
-        move |event| {
+    let node_b = Prns::new(Recipe {
+        transport: None,
+        destinations: [StartingDestination::Single {
+            app_name: "bench",
+            aspects: &["link"],
+            identity: secret(0xB2),
+            app_data: b"",
+            proof: ProofStrategy::ProveAll,
+            ratchet: RatchetPolicy::NoRatchets,
+        }],
+        state: (),
+        routes: routes![],
+        on_event: move |event, _state| {
             let mapped = match event {
                 PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
                     Some(Heard::Destination(destination))
@@ -147,7 +139,9 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
                 let _ = heard_tx.send(event);
             }
         },
-    ));
+        interfaces: interfaces![client],
+    });
+    let commands_b = node_b.handle();
 
     // The initiator: hear the responder, establish a link, ask once, and check the answer.
     let conversation = async {
@@ -191,23 +185,15 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         }
     };
 
-    // `Prns::serve` is the responder's whole loop; it never returns, so race it against the
-    // initiator's conversation and assert on whichever the timeout resolves.
-    let serve = Prns::serve(
-        Recipe {
-            transport: None,
-            destinations: [responder_dest],
-            bind: bind_a,
-        },
-        router,
-        commands_a,
-        |_event| {},
-    );
+    // Both nodes' `run` loops are `!Send` and never return, so they're driven on this task and raced
+    // against the initiator's conversation; assert on whichever the timeout resolves.
     tokio::select! {
-        _ = serve => panic!("the responder's serve loop ended unexpectedly"),
+        biased;
         answer = tokio::time::timeout(Duration::from_secs(10), conversation) => {
             let answer = answer.expect("the request round-trips within 10s");
             assert_eq!(answer.as_slice(), b"ping-pong", "the router computed and returned the answer");
         }
+        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
+        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
     }
 }

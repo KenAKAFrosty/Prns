@@ -36,13 +36,14 @@ use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioBind, TokioCommands,
+    Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioCommands,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
 #[cfg(not(feature = "fixed-storage"))]
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
+use personal_rns::{interfaces, routes};
 use tokio::sync::mpsc;
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 16]);
@@ -579,18 +580,24 @@ async fn scenario_main() {
     }
 }
 
-/// The single- and link-firehose endpoints stood up through the high-level runtime: a
-/// [`Recipe`] carrying one Single destination and a [`TokioBind`] that owns the wire, driven by
-/// `Prns::run`. The engine, channels, lanes, and reactor call the hand-roll below still spells
+/// The single-, link-, and channel-firehose endpoints stood up through the high-level runtime: a
+/// [`Recipe`] carrying one Single destination and the wires it runs over, built into a [`Prns`]
+/// node by [`Prns::new`]. The engine, channels, lanes, and reactor the hand-roll below still spells
 /// out are all assembled by the runtime; this end keeps only what is genuinely the app's — the
-/// destination's address (to announce itself), the command handle, and the event stream.
+/// destination's address (to announce itself), the command handle, and the event stream. Because
+/// `Prns::run` owns the reactor and is `!Send`, it is driven on this task in a `select!` against the
+/// role's own firehose loop, which speaks to the node through the cloned [`TokioCommands`] handle.
+///
+/// `Prns::new` stands the engine up on `GrowableHeap`; the `fixed-storage` (`Esp32S3`) residence is
+/// not yet a `Prns` knob, so the firehose endpoints always measure heap storage. The hand-rolled
+/// request/resource/churn paths still honor `NodeStorage`.
 async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
     let mechanism = manifest.profile.mechanism.as_str();
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
     let initiators = manifest.profile.initiator_count;
 
-    // The recipe borrows its destination names for the node's whole life, and the node outlives
-    // this frame (`Prns::run` is spawned), so the manifest-derived aspect is promoted to 'static.
+    // The recipe borrows its destination names for the node's whole life, and the node lives as
+    // long as its `run` loop is driven, so the manifest-derived aspect is promoted to 'static.
     let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
     let single = StartingDestination::Single {
@@ -600,14 +607,11 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
-        request_handlers: &[],
     };
     let destination = single.address();
 
-    let (mut bind, commands) = TokioBind::<NodeStorage>::new();
-
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
-    let on_event = move |event: PrnsEvent<'_>| {
+    let on_event = move |event: PrnsEvent<'_>, _state: &()| {
         let mapped = match event {
             PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
                 Some(Event::Heard(destination))
@@ -633,66 +637,79 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         }
     };
 
-    let bound = match role {
-        "responder" => stand_up_responder_wire(&mut bind, manifest, addr).await,
-        "initiator" => {
-            stand_up_initiator_wire(&mut bind, manifest, addr).await;
-            String::new()
-        }
-        other => panic!("unknown role {other:?}"),
-    };
-
-    tokio::spawn(Prns::run(
-        Recipe {
-            transport: None,
-            destinations: [single],
-            bind,
-        },
-        on_event,
-    ));
-
     if role == "responder" {
+        let (node, bound) = build_responder_node(single, on_event, manifest, addr).await;
+        let commands = node.handle();
         println!("READY role=responder addr={bound}");
-        if mechanism == "link" || mechanism == "channel" {
-            respond_link(destination, announce_every, initiators, &commands, event_rx).await;
-        } else {
-            respond(destination, announce_every, &commands, event_rx).await;
+        let firehose = async {
+            if mechanism == "link" || mechanism == "channel" {
+                respond_link(destination, announce_every, initiators, &commands, event_rx).await;
+            } else {
+                respond(destination, announce_every, &commands, event_rx).await;
+            }
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = firehose => {}
+        }
+    } else if role == "initiator" {
+        let node = build_initiator_node(single, on_event, manifest, addr).await;
+        let commands = node.handle();
+        println!("READY role=initiator");
+        let firehose = async {
+            if mechanism == "link" {
+                initiate_link(&manifest.profile, duration, &commands, event_rx).await;
+            } else if mechanism == "channel" {
+                initiate_channel(&manifest.profile, duration, &commands, event_rx).await;
+            } else {
+                initiate(&manifest.profile, duration, &commands, event_rx).await;
+            }
+            // Close settlement is engine-state, not wire-state: give the egress lane a beat to
+            // flush the close frame, or the responder only learns via its 10s stale reaper.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
         }
     } else {
-        println!("READY role=initiator");
-        if mechanism == "link" {
-            initiate_link(&manifest.profile, duration, &commands, event_rx).await;
-        } else if mechanism == "channel" {
-            initiate_channel(&manifest.profile, duration, &commands, event_rx).await;
-        } else {
-            initiate(&manifest.profile, duration, &commands, event_rx).await;
-        }
-        // Close settlement is engine-state, not wire-state: give the egress lane a beat to flush
-        // the close frame, or the responder only learns via its 10s stale reaper.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        panic!("unknown role {role:?}");
     }
 }
 
-/// Attach the responder's listening wire to `bind` and spawn it, returning the READY address
-/// line (the bound server address, plus any fan-in listeners joined by `+`).
-async fn stand_up_responder_wire(
-    bind: &mut TokioBind<NodeStorage>,
+/// Build the responder's node: its listening wires fold straight into the recipe (a relayed client,
+/// a UDP half, or a TCP server plus any fan-in listeners as a homogeneous `Vec`), and the bound
+/// READY address line comes back beside it (the server address, plus fan-in listeners joined by
+/// `+`). The interface kind differs per branch, but `Prns::new` erases it, so every arm yields the
+/// same node type.
+async fn build_responder_node<F>(
+    single: StartingDestination<'static>,
+    on_event: F,
     manifest: &Manifest,
     addr: &str,
-) -> String {
+) -> (Prns<(), (), F>, String)
+where
+    F: FnMut(PrnsEvent<'_>, &()),
+{
     if manifest.profile.topology == "relay" {
-        let interface = TcpClientInterface::new(
+        let client = TcpClientInterface::new(
             TCP_INTERFACE_ID,
             addr.to_string(),
             tcp_core::TCP_BITRATE_GUESS_BPS,
             Duration::from_millis(100),
         );
-        let seam = bind.attach(interface.descriptor());
-        tokio::spawn(interface.run(seam));
-        addr.to_string()
+        let node = Prns::new(Recipe {
+            transport: None,
+            destinations: [single],
+            state: (),
+            routes: routes![],
+            on_event,
+            interfaces: interfaces![client],
+        });
+        (node, addr.to_string())
     } else if manifest.profile.wire == "udp" {
         let (local, peer) = udp_halves(addr);
-        let interface = UdpInterface::bind(
+        let udp = UdpInterface::bind(
             TCP_INTERFACE_ID,
             local,
             peer,
@@ -700,18 +717,22 @@ async fn stand_up_responder_wire(
         )
         .await
         .expect("binds the scenario port");
-        let seam = bind.attach(interface.descriptor());
-        tokio::spawn(interface.run(seam));
-        addr.to_string()
+        let node = Prns::new(Recipe {
+            transport: None,
+            destinations: [single],
+            state: (),
+            routes: routes![],
+            on_event,
+            interfaces: interfaces![udp],
+        });
+        (node, addr.to_string())
     } else {
-        let interface =
+        let primary =
             TcpServerInterface::bind(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_GUESS_BPS)
                 .await
                 .expect("binds the scenario port");
-        let bound = interface.local_addr().expect("bound address");
-        let seam = bind.attach(interface.descriptor());
-        tokio::spawn(interface.run(seam));
-        let mut addresses = bound.to_string();
+        let mut addresses = primary.local_addr().expect("bound address").to_string();
+        let mut servers = vec![primary];
         for index in 0..manifest.profile.initiator_count.saturating_sub(1) {
             let extra = TcpServerInterface::bind(
                 fanin_listener_id(index),
@@ -720,25 +741,35 @@ async fn stand_up_responder_wire(
             )
             .await
             .expect("binds an extra listener");
-            let extra_bound = extra.local_addr().expect("bound address");
-            let extra_seam = bind.attach(extra.descriptor());
-            tokio::spawn(extra.run(extra_seam));
             addresses.push('+');
-            addresses.push_str(&extra_bound.to_string());
+            addresses.push_str(&extra.local_addr().expect("bound address").to_string());
+            servers.push(extra);
         }
-        addresses
+        let node = Prns::new(Recipe {
+            transport: None,
+            destinations: [single],
+            state: (),
+            routes: routes![],
+            on_event,
+            interfaces: servers,
+        });
+        (node, addresses)
     }
 }
 
-/// Attach the initiator's dialing wire to `bind` and spawn it.
-async fn stand_up_initiator_wire(
-    bind: &mut TokioBind<NodeStorage>,
+/// Build the initiator's node: one dialing wire (a UDP half or a TCP client) folded into the recipe.
+async fn build_initiator_node<F>(
+    single: StartingDestination<'static>,
+    on_event: F,
     manifest: &Manifest,
     addr: &str,
-) {
+) -> Prns<(), (), F>
+where
+    F: FnMut(PrnsEvent<'_>, &()),
+{
     if manifest.profile.wire == "udp" {
         let (local, peer) = udp_halves(addr);
-        let interface = UdpInterface::bind(
+        let udp = UdpInterface::bind(
             TCP_INTERFACE_ID,
             local,
             peer,
@@ -746,17 +777,29 @@ async fn stand_up_initiator_wire(
         )
         .await
         .expect("binds the scenario port");
-        let seam = bind.attach(interface.descriptor());
-        tokio::spawn(interface.run(seam));
+        Prns::new(Recipe {
+            transport: None,
+            destinations: [single],
+            state: (),
+            routes: routes![],
+            on_event,
+            interfaces: interfaces![udp],
+        })
     } else {
-        let interface = TcpClientInterface::new(
+        let client = TcpClientInterface::new(
             TCP_INTERFACE_ID,
             addr.to_string(),
             tcp_core::TCP_BITRATE_GUESS_BPS,
             Duration::from_millis(100),
         );
-        let seam = bind.attach(interface.descriptor());
-        tokio::spawn(interface.run(seam));
+        Prns::new(Recipe {
+            transport: None,
+            destinations: [single],
+            state: (),
+            routes: routes![],
+            on_event,
+            interfaces: interfaces![client],
+        })
     }
 }
 

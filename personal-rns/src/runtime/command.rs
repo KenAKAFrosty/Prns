@@ -1,8 +1,6 @@
-//! Platform-neutral command-surface types — shared by every [`Bind`]'s command handle, so a
-//! `send_single` resolves to the same `Result` whether tokio's unbounded oneshot or embassy's
-//! fixed completion pool carried the awaited settlement.
-//!
-//! [`Bind`]: super::Bind
+//! Platform-neutral command-surface types — shared by every command handle, so a `send_single`
+//! resolves to the same `Result` whether tokio's unbounded oneshot or embassy's fixed completion
+//! pool carried the awaited settlement.
 
 use crate::engine::{CommandId, Delivered, EngineCommand, SendSingleFailure};
 use crate::routing::links::LinkId;
