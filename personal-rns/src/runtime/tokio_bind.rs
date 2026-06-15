@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use futures_util::future::join_all;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -14,8 +15,8 @@ use crate::engine::{
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::impls::tokio_reactor::{
-    self, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, RespondAnyHostCommand,
-    TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
+    self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
+    RespondAnyHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::LinkId;
@@ -39,14 +40,20 @@ const LANE_DEPTH: usize = 64;
 pub struct PrnsHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
+    notify_tx: UnboundedSender<InterfaceId>,
+    iface_build: UnboundedSender<DriverMsg>,
 }
 
 impl PrnsHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let (iface_build, _iface_build_rx) = mpsc::unbounded_channel();
         Self {
             commands,
             ids: Arc::new(AtomicU64::new(0)),
+            notify_tx,
+            iface_build,
         }
     }
 
@@ -118,6 +125,48 @@ impl PrnsHandle {
         self.issue(EngineCommand::CloseLink(CloseLink { link_id }))
             .is_some()
     }
+
+    /// Attach an interface to the running node and get a handle to tear it back down. The interface
+    /// is wired exactly the way the recipe wires the initial set and begins carrying traffic as soon
+    /// as the reactor processes the attach. Grab any per-interface control handle (`.status()`, a
+    /// radio's own controls) before calling this, since it takes the interface by value.
+    ///
+    /// `I: Send` is the host's bargain: the interface rides to the `run` task inside a `Send` builder
+    /// closure (handed to the interface driver), which mints its run future there — so the future
+    /// itself never has to be `Send`, which is what keeps `!Send` interface bodies legal here. The
+    /// reactor only learns the `Send` lane halves, so it stays `Send` and spawnable.
+    pub fn add_interface<I>(&self, interface: I) -> AttachedInterface
+    where
+        I: Interface + Send + 'static,
+    {
+        let descriptor = interface.descriptor();
+        let id = descriptor.id;
+        let (in_producer, in_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        let (out_producer, out_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        let seam = TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer);
+        let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
+            Box::new(move || Box::pin(interface.run(seam)));
+        let _ = self
+            .commands
+            .send(HostCommand::AddInterface(AddInterfaceCommand {
+                descriptor,
+                inbound: in_consumer,
+                egress: out_producer,
+            }));
+        let _ = self.iface_build.send(DriverMsg::Add { id, build });
+        AttachedInterface {
+            id,
+            commands: self.commands.clone(),
+            iface_build: self.iface_build.clone(),
+        }
+    }
+
+    /// Detach the interface with this id (the inverse of [`add_interface`](Self::add_interface)):
+    /// deregister its lanes on the reactor and stop its run future on the driver.
+    pub fn remove_interface(&self, id: InterfaceId) {
+        let _ = self.commands.send(HostCommand::RemoveInterface { id });
+        let _ = self.iface_build.send(DriverMsg::Stop { id });
+    }
 }
 
 impl super::Commands for PrnsHandle {
@@ -139,6 +188,84 @@ impl super::Commands for PrnsHandle {
 
     fn close_link(&self, link_id: LinkId) -> bool {
         self.close_link(link_id)
+    }
+}
+
+/// A handle to one interface attached at runtime through [`PrnsHandle::add_interface`]: its minted
+/// id, and the lever to detach it. Dropping the handle leaves the interface running; only
+/// [`teardown`](Self::teardown) (or [`PrnsHandle::remove_interface`]) takes it down.
+pub struct AttachedInterface {
+    id: InterfaceId,
+    commands: UnboundedSender<HostCommand>,
+    iface_build: UnboundedSender<DriverMsg>,
+}
+
+impl AttachedInterface {
+    /// The interface's framework-minted id.
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        self.id
+    }
+
+    /// Detach the interface: deregister its lanes on the reactor and stop its run future.
+    pub fn teardown(self) {
+        let _ = self
+            .commands
+            .send(HostCommand::RemoveInterface { id: self.id });
+        let _ = self.iface_build.send(DriverMsg::Stop { id: self.id });
+    }
+}
+
+/// A message to the interface driver: a new interface to start driving, or a request to stop one.
+/// The driver lives on the `!Send` `run` task, so an interface's `!Send` run future never has to
+/// cross a thread — only the `Send` builder closure does.
+enum DriverMsg {
+    Add {
+        id: InterfaceId,
+        build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>,
+    },
+    Stop {
+        id: InterfaceId,
+    },
+}
+
+/// Drive every interface run future — the recipe's initial set, plus any added through the handle
+/// at runtime — on the `run` task. Each runtime-added interface is wrapped with a stop signal so
+/// [`PrnsHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
+async fn drive_interfaces(
+    initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
+    mut messages: UnboundedReceiver<DriverMsg>,
+) {
+    let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>> =
+        initial.into_iter().collect();
+    let mut stops: HashMap<InterfaceId, oneshot::Sender<()>> = HashMap::new();
+    let mut open = true;
+    loop {
+        if !open && futures.is_empty() {
+            return;
+        }
+        tokio::select! {
+            message = messages.recv(), if open => match message {
+                Some(DriverMsg::Add { id, build }) => {
+                    let run = build();
+                    let (stop_tx, stop_rx) = oneshot::channel();
+                    futures.push(Box::pin(async move {
+                        tokio::select! {
+                            () = run => {}
+                            _ = stop_rx => {}
+                        }
+                    }));
+                    stops.insert(id, stop_tx);
+                }
+                Some(DriverMsg::Stop { id }) => {
+                    if let Some(stop) = stops.remove(&id) {
+                        let _ = stop.send(());
+                    }
+                }
+                None => open = false,
+            },
+            _ = futures.next(), if !futures.is_empty() => {}
+        }
     }
 }
 
@@ -177,6 +304,7 @@ pub struct Prns<St, R, F, S: StorageLayout> {
     egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
+    iface_build_rx: UnboundedReceiver<DriverMsg>,
     iface_runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     state: St,
     on_event: F,
@@ -199,9 +327,12 @@ where
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
         let handle = PrnsHandle {
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
+            notify_tx: notify_tx.clone(),
+            iface_build: iface_build_tx,
         };
 
         let mut engine = EngineState::<S>::default();
@@ -263,6 +394,7 @@ where
             egress_lanes: attach.egress_lanes,
             notify_rx,
             command_rx,
+            iface_build_rx,
             iface_runs: attach.runs,
             state: recipe.app_state,
             on_event: recipe.on_event,
@@ -311,6 +443,7 @@ where
             egress_lanes,
             notify_rx,
             command_rx,
+            iface_build_rx,
             iface_runs,
             state,
             mut on_event,
@@ -351,7 +484,7 @@ where
         tokio::join!(
             reactor,
             run_router::<St, R>(&state, req_rx, handle),
-            join_all(iface_runs),
+            drive_interfaces(iface_runs, iface_build_rx),
         );
     }
 }

@@ -265,6 +265,14 @@ impl Egress {
         }
         let _ = fill(discard);
     }
+
+    fn add_lane(&mut self, id: InterfaceId, producer: TokioGrantProducer<MAX_WIRE_FRAME_LEN>) {
+        self.lanes.push((id, std::sync::Mutex::new(producer)));
+    }
+
+    fn remove_lane(&mut self, id: InterfaceId) {
+        self.lanes.retain(|(lane_id, _)| *lane_id != id);
+    }
 }
 
 /// A cheap-clone handle to one interface's live state: the interface holds a clone and writes
@@ -396,6 +404,25 @@ pub enum HostCommand {
     SendResource(SendResourceHostCommand),
     RespondAny(RespondAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
+    /// Register a runtime-added interface's descriptor and lanes so the reactor routes to it. Its
+    /// run loop is driven separately on the runtime's interface driver; only these `Send` lane
+    /// halves cross to the reactor.
+    AddInterface(AddInterfaceCommand),
+    /// Deregister the interface with this id: drop its descriptor and lanes so the reactor stops
+    /// routing to it (its run loop is stopped separately on the interface driver).
+    RemoveInterface {
+        id: InterfaceId,
+    },
+}
+
+/// The payload of [`HostCommand::AddInterface`]: a runtime-added interface's descriptor and the
+/// reactor's halves of its grant lanes (inbound consumer, outbound producer). All `Send`, so the
+/// reactor stays `Send`; the interface's `!Send` run future is driven on the runtime's interface
+/// driver, not here.
+pub struct AddInterfaceCommand {
+    pub descriptor: InterfaceConfig,
+    pub inbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
+    pub egress: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
 }
 
 /// Fire an awaited command's settlement to the caller parked on it, or pass the event through. The
@@ -542,13 +569,13 @@ pub async fn run<S, H, J>(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_with_proof_decider<S, H, J, P>(
     mut engine: EngineState<S>,
-    interfaces: std::vec::Vec<InterfaceConfig>,
+    mut interfaces: std::vec::Vec<InterfaceConfig>,
     ifacs: std::vec::Vec<InterfaceIfac>,
     mut host: H,
     mut notify: UnboundedReceiver<InterfaceId>,
     mut inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
     mut commands: UnboundedReceiver<HostCommand>,
-    egress: Egress,
+    mut egress: Egress,
     mut on_journaled: J,
     mut should_prove: P,
 ) where
@@ -696,6 +723,34 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             provide.plaintext.as_slice(),
                             &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                         );
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::AddInterface(add) => {
+                        let AddInterfaceCommand {
+                            descriptor,
+                            inbound,
+                            egress: egress_producer,
+                        } = add;
+                        let id = descriptor.id;
+                        pacers.push(InterfacePacer {
+                            id,
+                            pacer: AnnouncePacer::new(
+                                descriptor.announce_bandwidth_cap,
+                                descriptor.bitrate_bps,
+                            ),
+                        });
+                        interfaces.push(descriptor);
+                        inbound_lanes.push((id, inbound));
+                        egress.add_lane(id, egress_producer);
+                        wake_schedules = engine.wake_schedules(&interfaces);
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::RemoveInterface { id } => {
+                        interfaces.retain(|config| config.id != id);
+                        inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
+                        pacers.retain(|pacer| pacer.id != id);
+                        egress.remove_lane(id);
+                        wake_schedules = engine.wake_schedules(&interfaces);
                         WakeSchedules::UNCHANGED
                     }
                 };
