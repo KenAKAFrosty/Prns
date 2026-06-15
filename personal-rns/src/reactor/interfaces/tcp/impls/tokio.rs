@@ -60,7 +60,20 @@ pub struct TcpClientInterface {
 
 impl TcpClientInterface {
     #[must_use]
-    pub fn new(id: InterfaceId, target: String, bitrate_bps: u32, reconnect: Duration) -> Self {
+    pub fn new(target: String, bitrate_bps: u32, reconnect: Duration) -> Self {
+        Self::new_with_id(InterfaceId::mint(), target, bitrate_bps, reconnect)
+    }
+
+    /// Build with a caller-chosen id instead of a minted one — for advanced setups that drive the
+    /// reactor by hand and must pin the interface to the routing key their own wiring references.
+    /// Ordinary nodes call [`new`](Self::new) and let the framework mint a unique id.
+    #[must_use]
+    pub fn new_with_id(
+        id: InterfaceId,
+        target: String,
+        bitrate_bps: u32,
+        reconnect: Duration,
+    ) -> Self {
         Self {
             id,
             target,
@@ -68,6 +81,14 @@ impl TcpClientInterface {
             reconnect,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
+    }
+
+    /// This interface's id: minted by [`new`](Self::new), or the one handed to
+    /// [`new_with_id`](Self::new_with_id). For the app that wants to name it (an
+    /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        self.id
     }
 
     /// A clone of this interface's live-status handle for the app to read on its own render
@@ -137,7 +158,14 @@ impl TcpServerInterface {
     /// silently inside the accept loop. `bitrate_bps` is the host's claim about its pipe —
     /// it sets the declared hardware MTU through the reference's tier table, so claim
     /// honestly ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
-    pub async fn bind(
+    pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
+        Self::bind_with_id(InterfaceId::mint(), addr, bitrate_bps).await
+    }
+
+    /// Bind with a caller-chosen id instead of a minted one — for advanced setups that drive the
+    /// reactor by hand and must pin the interface to the routing key their own wiring references.
+    /// Ordinary nodes call [`bind`](Self::bind) and let the framework mint a unique id.
+    pub async fn bind_with_id(
         id: InterfaceId,
         addr: impl tokio::net::ToSocketAddrs,
         bitrate_bps: u32,
@@ -149,6 +177,14 @@ impl TcpServerInterface {
             bitrate_bps,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         })
+    }
+
+    /// This interface's id: minted by [`bind`](Self::bind), or the one handed to
+    /// [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
+    /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        self.id
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -229,10 +265,6 @@ mod tests {
         }
     }
 
-    fn test_id() -> InterfaceId {
-        InterfaceId::new([0xDC; 16])
-    }
-
     async fn write_framed(socket: &mut TcpStream, payload: &[u8]) {
         let mut framed = [0u8; 64];
         let n = rns_serial_framing::encode(payload, &mut framed).expect("encodes the payload");
@@ -273,7 +305,6 @@ mod tests {
         };
 
         let interface = TcpClientInterface::new(
-            test_id(),
             addr.to_string(),
             core::TCP_BITRATE_GUESS_BPS,
             Duration::from_millis(10),
@@ -324,10 +355,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_server_serves_the_next_connection_after_the_first_drops() {
-        let interface =
-            TcpServerInterface::bind(test_id(), "127.0.0.1:0", core::TCP_BITRATE_GUESS_BPS)
-                .await
-                .expect("binds an ephemeral test port");
+        let interface = TcpServerInterface::bind("127.0.0.1:0", core::TCP_BITRATE_GUESS_BPS)
+            .await
+            .expect("binds an ephemeral test port");
         let addr = interface.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -393,22 +423,19 @@ mod tests {
         use crate::routing::links::LinkId;
         use crate::routing::upstream_app_destinations::ProofStrategy;
 
-        let initiator_iface = InterfaceId::new([0xA1; 16]);
-        let responder_iface = InterfaceId::new([0xB2; 16]);
-
-        let b_interface =
-            TcpServerInterface::bind(responder_iface, "127.0.0.1:0", core::TCP_BITRATE_GUESS_BPS)
-                .await
-                .expect("binds an ephemeral test port");
+        let b_interface = TcpServerInterface::bind("127.0.0.1:0", core::TCP_BITRATE_GUESS_BPS)
+            .await
+            .expect("binds an ephemeral test port");
+        let responder_iface = b_interface.id();
         let addr = b_interface
             .local_addr()
             .expect("the bound address is known");
         let a_interface = TcpClientInterface::new(
-            initiator_iface,
             addr.to_string(),
             core::TCP_BITRATE_GUESS_BPS,
             Duration::from_millis(10),
         );
+        let initiator_iface = a_interface.id();
 
         let initiator_engine = EngineState::<Cap>::new(second_secret_key());
         let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();

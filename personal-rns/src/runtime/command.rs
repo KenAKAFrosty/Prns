@@ -22,7 +22,7 @@ pub enum SendError<F> {
     Failed(F),
 }
 
-/// The one command surface every platform's handle presents — `TokioCommands` over an unbounded
+/// The one command surface every platform's handle presents — `PrnsHandle` over an unbounded
 /// channel and a oneshot, `EmbassyCommands` over a bounded channel and a static completion pool,
 /// the same four verbs either way. Consumer code (and the request runner) takes `impl Commands` and
 /// runs on whichever platform supplied it; each handle also keeps the platform-specific extras its

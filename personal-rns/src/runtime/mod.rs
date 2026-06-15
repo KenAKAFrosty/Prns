@@ -9,12 +9,12 @@ pub use command::{Commands, SendError};
 pub use event::{Diagnostic, Message, PrnsEvent};
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub use interface_set::{InterfaceAttach, InterfaceSet};
-pub use recipe::{Recipe, StartingDestination};
+pub use recipe::{PreConfiguredDestination, PrnsRecipe};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
-pub use tokio_bind::{Prns, TokioCommands};
+pub use tokio_bind::{Prns, PrnsHandle};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_runner;

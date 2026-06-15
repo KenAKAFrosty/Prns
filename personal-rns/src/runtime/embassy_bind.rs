@@ -1,5 +1,5 @@
-//! The embassy command surface — the embedded twin of `TokioCommands`, kept warm while the neutral
-//! `Prns`/[`Recipe`](super::Recipe) entry point is dialed in on the tokio side. The
+//! The embassy command surface — the embedded twin of `PrnsHandle`, kept warm while the neutral
+//! `Prns`/[`PrnsRecipe`](super::PrnsRecipe) entry point is dialed in on the tokio side. The
 //! embassy *runner* (the borrow-bundle that drove the reactor over `static` channels) is parked; what
 //! survives here are the two pieces an embedded node reattaches to once the neutral runner is ported:
 //! the handle and its completion store.
@@ -114,7 +114,7 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 }
 
-/// The embassy command handle — the embedded twin of `TokioCommands`. It
+/// The embassy command handle — the embedded twin of `PrnsHandle`. It
 /// holds the command channel's [`Sender`] and a borrow of the app's [`CompletionPool`], and is
 /// `Copy`, so any task can drive the node through it. Every [`CommandId`] is minted from the pool's
 /// one counter, so the app never picks ids and a fire-and-forget [`issue`](Self::issue) can't
@@ -158,7 +158,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     }
 
     /// Send one Single data packet to `destination` and await its delivery proof — the embedded peer
-    /// of `TokioCommands::send_single`. Claims a pool slot,
+    /// of `PrnsHandle::send_single`. Claims a pool slot,
     /// parks on it until the engine settles, and frees the slot on every exit, cancellation
     /// included. `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
     pub async fn send_single(
@@ -202,7 +202,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
 
     /// Answer a request by moving a prebuilt [`RespondData`] in — the request runner's path, one copy
     /// fewer than [`respond`](Self::respond) since the handler already filled a `RespondData` grant.
-    /// Returns `false` once the command lane is full. The embedded twin of `TokioCommands::respond_owned`.
+    /// Returns `false` once the command lane is full. The embedded twin of `PrnsHandle::respond_owned`.
     pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,

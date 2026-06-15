@@ -36,7 +36,7 @@ use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, Prns, PrnsEvent, Recipe, StartingDestination, TokioCommands,
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsHandle, PrnsRecipe,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
@@ -438,7 +438,7 @@ async fn scenario_main() {
         "responder" => {
             let mut in_lanes = vec![(TCP_INTERFACE_ID, in_rx)];
             let bound = if manifest.profile.topology == "relay" {
-                let interface = TcpClientInterface::new(
+                let interface = TcpClientInterface::new_with_id(
                     TCP_INTERFACE_ID,
                     addr.clone(),
                     tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -448,7 +448,7 @@ async fn scenario_main() {
                 addr.clone()
             } else if manifest.profile.wire == "udp" {
                 let (local, peer) = udp_halves(&addr);
-                let interface = UdpInterface::bind(
+                let interface = UdpInterface::bind_with_id(
                     TCP_INTERFACE_ID,
                     local,
                     peer,
@@ -459,7 +459,7 @@ async fn scenario_main() {
                 tokio::spawn(interface.run(seam));
                 addr.clone()
             } else {
-                let interface = TcpServerInterface::bind(
+                let interface = TcpServerInterface::bind_with_id(
                     TCP_INTERFACE_ID,
                     addr.as_str(),
                     tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -470,7 +470,7 @@ async fn scenario_main() {
                 tokio::spawn(interface.run(seam));
                 let mut addresses = bound.to_string();
                 for (id, extra_seam, extra_in_rx) in extra_listeners.drain(..) {
-                    let extra = TcpServerInterface::bind(
+                    let extra = TcpServerInterface::bind_with_id(
                         id,
                         "127.0.0.1:0",
                         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -529,7 +529,7 @@ async fn scenario_main() {
         "initiator" => {
             if manifest.profile.wire == "udp" {
                 let (local, peer) = udp_halves(&addr);
-                let interface = UdpInterface::bind(
+                let interface = UdpInterface::bind_with_id(
                     TCP_INTERFACE_ID,
                     local,
                     peer,
@@ -539,7 +539,7 @@ async fn scenario_main() {
                 .expect("binds the scenario port");
                 tokio::spawn(interface.run(seam));
             } else {
-                let interface = TcpClientInterface::new(
+                let interface = TcpClientInterface::new_with_id(
                     TCP_INTERFACE_ID,
                     addr.clone(),
                     tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -581,12 +581,12 @@ async fn scenario_main() {
 }
 
 /// The single-, link-, and channel-firehose endpoints stood up through the high-level runtime: a
-/// [`Recipe`] carrying one Single destination and the wires it runs over, built into a [`Prns`]
+/// [`PrnsRecipe`] carrying one Single destination and the wires it runs over, built into a [`Prns`]
 /// node by [`Prns::new`]. The engine, channels, lanes, and reactor the hand-roll below still spells
 /// out are all assembled by the runtime; this end keeps only what is genuinely the app's — the
 /// destination's address (to announce itself), the command handle, and the event stream. Because
 /// `Prns::run` owns the reactor and is `!Send`, it is driven on this task in a `select!` against the
-/// role's own firehose loop, which speaks to the node through the cloned [`TokioCommands`] handle.
+/// role's own firehose loop, which speaks to the node through the cloned [`PrnsHandle`] handle.
 ///
 /// `Prns::new` stands the engine up on `GrowableHeap`; the `fixed-storage` (`Esp32S3`) residence is
 /// not yet a `Prns` knob, so the firehose endpoints always measure heap storage. The hand-rolled
@@ -600,15 +600,17 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     // long as its `run` loop is driven, so the manifest-derived aspect is promoted to 'static.
     let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
-    let single = StartingDestination::Single {
+    let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
         identity: fresh_identity(),
-        app_data: b"",
+        announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
     };
-    let destination = single.address();
+    let destination = single
+        .destination_hash()
+        .expect("the bench destination name is valid");
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let on_event = move |event: PrnsEvent<'_>, _state: &()| {
@@ -683,7 +685,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
 /// `+`). The interface kind differs per branch, but `Prns::new` erases it, so every arm yields the
 /// same node type.
 async fn build_responder_node<F>(
-    single: StartingDestination<'static>,
+    single: PreConfiguredDestination<'static>,
     on_event: F,
     manifest: &Manifest,
     addr: &str,
@@ -692,15 +694,15 @@ where
     F: FnMut(PrnsEvent<'_>, &()),
 {
     if manifest.profile.topology == "relay" {
-        let client = TcpClientInterface::new(
+        let client = TcpClientInterface::new_with_id(
             TCP_INTERFACE_ID,
             addr.to_string(),
             tcp_core::TCP_BITRATE_GUESS_BPS,
             Duration::from_millis(100),
         );
-        let node = Prns::new(Recipe {
+        let node = Prns::new(PrnsRecipe {
             transport: None,
-            destinations: [single],
+            pre_configured_destinations: [single],
             state: (),
             routes: routes![],
             on_event,
@@ -709,7 +711,7 @@ where
         (node, addr.to_string())
     } else if manifest.profile.wire == "udp" {
         let (local, peer) = udp_halves(addr);
-        let udp = UdpInterface::bind(
+        let udp = UdpInterface::bind_with_id(
             TCP_INTERFACE_ID,
             local,
             peer,
@@ -717,9 +719,9 @@ where
         )
         .await
         .expect("binds the scenario port");
-        let node = Prns::new(Recipe {
+        let node = Prns::new(PrnsRecipe {
             transport: None,
-            destinations: [single],
+            pre_configured_destinations: [single],
             state: (),
             routes: routes![],
             on_event,
@@ -727,14 +729,17 @@ where
         });
         (node, addr.to_string())
     } else {
-        let primary =
-            TcpServerInterface::bind(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_GUESS_BPS)
-                .await
-                .expect("binds the scenario port");
+        let primary = TcpServerInterface::bind_with_id(
+            TCP_INTERFACE_ID,
+            addr,
+            tcp_core::TCP_BITRATE_GUESS_BPS,
+        )
+        .await
+        .expect("binds the scenario port");
         let mut addresses = primary.local_addr().expect("bound address").to_string();
         let mut servers = vec![primary];
         for index in 0..manifest.profile.initiator_count.saturating_sub(1) {
-            let extra = TcpServerInterface::bind(
+            let extra = TcpServerInterface::bind_with_id(
                 fanin_listener_id(index),
                 "127.0.0.1:0",
                 tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -745,9 +750,9 @@ where
             addresses.push_str(&extra.local_addr().expect("bound address").to_string());
             servers.push(extra);
         }
-        let node = Prns::new(Recipe {
+        let node = Prns::new(PrnsRecipe {
             transport: None,
-            destinations: [single],
+            pre_configured_destinations: [single],
             state: (),
             routes: routes![],
             on_event,
@@ -759,7 +764,7 @@ where
 
 /// Build the initiator's node: one dialing wire (a UDP half or a TCP client) folded into the recipe.
 async fn build_initiator_node<F>(
-    single: StartingDestination<'static>,
+    single: PreConfiguredDestination<'static>,
     on_event: F,
     manifest: &Manifest,
     addr: &str,
@@ -769,7 +774,7 @@ where
 {
     if manifest.profile.wire == "udp" {
         let (local, peer) = udp_halves(addr);
-        let udp = UdpInterface::bind(
+        let udp = UdpInterface::bind_with_id(
             TCP_INTERFACE_ID,
             local,
             peer,
@@ -777,24 +782,24 @@ where
         )
         .await
         .expect("binds the scenario port");
-        Prns::new(Recipe {
+        Prns::new(PrnsRecipe {
             transport: None,
-            destinations: [single],
+            pre_configured_destinations: [single],
             state: (),
             routes: routes![],
             on_event,
             interfaces: interfaces![udp],
         })
     } else {
-        let client = TcpClientInterface::new(
+        let client = TcpClientInterface::new_with_id(
             TCP_INTERFACE_ID,
             addr.to_string(),
             tcp_core::TCP_BITRATE_GUESS_BPS,
             Duration::from_millis(100),
         );
-        Prns::new(Recipe {
+        Prns::new(PrnsRecipe {
             transport: None,
-            destinations: [single],
+            pre_configured_destinations: [single],
             state: (),
             routes: routes![],
             on_event,
@@ -809,7 +814,7 @@ where
 async fn respond(
     destination: DestinationHash,
     announce_every: Duration,
-    commands: &TokioCommands,
+    commands: &PrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut announce = tokio::time::interval(announce_every);
@@ -858,7 +863,7 @@ async fn respond(
 async fn initiate(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioCommands,
+    commands: &PrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -958,7 +963,7 @@ async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
     initiator_count: usize,
-    commands: &TokioCommands,
+    commands: &PrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
@@ -1013,7 +1018,7 @@ async fn respond_link(
 async fn initiate_link(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioCommands,
+    commands: &PrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -1139,7 +1144,7 @@ async fn initiate_link(
 async fn initiate_channel(
     profile: &Profile,
     duration: Duration,
-    commands: &TokioCommands,
+    commands: &PrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -1680,7 +1685,7 @@ async fn relay_node(manifest: &Manifest) {
         tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
     ];
 
-    let side_a = TcpServerInterface::bind(
+    let side_a = TcpServerInterface::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -1688,7 +1693,7 @@ async fn relay_node(manifest: &Manifest) {
     .await
     .expect("binds side a");
     let addr_a = side_a.local_addr().expect("bound address");
-    let side_b = TcpServerInterface::bind(
+    let side_b = TcpServerInterface::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
         "127.0.0.1:0",
         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -1740,7 +1745,7 @@ async fn chain_node(upstream: &str) {
         tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
     ];
 
-    let downstream = TcpServerInterface::bind(
+    let downstream = TcpServerInterface::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -1748,7 +1753,7 @@ async fn chain_node(upstream: &str) {
     .await
     .expect("binds downstream side");
     let addr = downstream.local_addr().expect("bound address");
-    let up = TcpClientInterface::new(
+    let up = TcpClientInterface::new_with_id(
         RELAY_SECOND_INTERFACE_ID,
         upstream.to_string(),
         tcp_core::TCP_BITRATE_GUESS_BPS,

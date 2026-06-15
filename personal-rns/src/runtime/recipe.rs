@@ -2,14 +2,14 @@ use crate::engine::RatchetPolicy;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::announce::{
-    derive_destination_hash, derive_plain_destination_hash, expand_name,
+    derive_destination_hash, derive_plain_destination_hash, expand_name, ExpandNameError,
 };
 use crate::routing::ProofStrategy;
 use crate::wire::{DestinationHash, TransportId};
 
 use super::PrnsEvent;
 
-pub enum StartingDestination<'a> {
+pub enum PreConfiguredDestination<'a> {
     Plain {
         app_name: &'a str,
         aspects: &'a [&'a str],
@@ -18,50 +18,46 @@ pub enum StartingDestination<'a> {
         app_name: &'a str,
         aspects: &'a [&'a str],
         identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-        app_data: &'a [u8],
+        announce_app_data: &'a [u8],
         proof: ProofStrategy,
         ratchet: RatchetPolicy,
     },
 }
 
-impl StartingDestination<'_> {
-    /// The address this destination answers as, derived from its name (and key, for a `Single`) —
-    /// so an announcing app can name itself before the node starts.
-    #[allow(clippy::expect_used)]
-    pub fn address(&self) -> DestinationHash {
+impl PreConfiguredDestination<'_> {
+    /// The address this destination answers as, derived from its name (and key, for a `Single`),
+    /// so an announcing app can name itself before the node starts. `Err` only when the name is
+    /// malformed (a dotted component, or past the length bound), the same validation `Prns::new`
+    /// runs as it stands the destination up.
+    pub fn destination_hash(&self) -> Result<DestinationHash, ExpandNameError> {
         match self {
-            StartingDestination::Plain { app_name, aspects } => {
-                let name =
-                    expand_name(app_name, aspects).expect("recipe destination name is valid");
-                derive_plain_destination_hash(&name)
-            }
-            StartingDestination::Single {
+            PreConfiguredDestination::Plain { app_name, aspects } => Ok(
+                derive_plain_destination_hash(&expand_name(app_name, aspects)?),
+            ),
+            PreConfiguredDestination::Single {
                 app_name,
                 aspects,
                 identity,
                 ..
             } => {
                 let signer = InMemoryNodeIdentity::from_secret_key_bytes(identity);
-                let name =
-                    expand_name(app_name, aspects).expect("recipe destination name is valid");
-                derive_destination_hash(&signer.identity_hash(), &name)
+                Ok(derive_destination_hash(
+                    &signer.identity_hash(),
+                    &expand_name(app_name, aspects)?,
+                ))
             }
         }
     }
 }
 
-/// The complete definition of a node, handed to `Prns::new`: what it is
-/// (`transport`, `destinations`), what it holds and how it reacts (`state`, `routes`, `on_event`),
-/// and the wires it runs over (`interfaces`). The field bounds (`RouteSet`, `InterfaceSet`, the
-/// event handler) are applied at `new()`, so the struct itself stays platform-neutral.
-pub struct Recipe<D, St, R, F, I>
+pub struct PrnsRecipe<Destinations, AppState, Routes, OnEvent, Interfaces>
 where
-    F: FnMut(PrnsEvent<'_>, &St),
+    OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
     pub transport: Option<TransportId>,
-    pub destinations: D,
-    pub state: St,
-    pub routes: R,
-    pub on_event: F,
-    pub interfaces: I,
+    pub pre_configured_destinations: Destinations,
+    pub state: AppState,
+    pub routes: Routes,
+    pub interfaces: Interfaces,
+    pub on_event: OnEvent,
 }

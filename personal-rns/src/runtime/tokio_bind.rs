@@ -23,10 +23,10 @@ use crate::storage::GrowableHeap;
 use crate::wire::DestinationHash;
 
 use super::interface_set::{InterfaceAttach, InterfaceSet};
-use super::recipe::StartingDestination;
+use super::recipe::PreConfiguredDestination;
 use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
-use super::{Message, PrnsEvent, Recipe, SendError};
+use super::{Message, PrnsEvent, PrnsRecipe, SendError};
 
 const LANE_DEPTH: usize = 64;
 
@@ -36,12 +36,12 @@ const LANE_DEPTH: usize = 64;
 /// Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can
 /// never collide with an awaited [`send_single`](Self::send_single) or a runner's respond.
 #[derive(Clone)]
-pub struct TokioCommands {
+pub struct PrnsHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
 }
 
-impl TokioCommands {
+impl PrnsHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
         Self {
@@ -120,7 +120,7 @@ impl TokioCommands {
     }
 }
 
-impl super::Commands for TokioCommands {
+impl super::Commands for PrnsHandle {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         self.issue(command)
     }
@@ -164,12 +164,12 @@ impl InterfaceAttach for TokioAttach {
     }
 }
 
-/// A node on the tokio host — the loop side of the runtime. Built from a [`Recipe`] with
+/// A node on the tokio host — the loop side of the runtime. Built from a [`PrnsRecipe`] with
 /// [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by
 /// [`run`](Self::run) (the reactor + the request runner, joined). Hold [`handle`](Self::handle)
 /// clones to drive it from other tasks/threads while `run` owns the loop.
 pub struct Prns<St, R, F> {
-    handle: TokioCommands,
+    handle: PrnsHandle,
     host: TokioHost,
     engine: EngineState<GrowableHeap>,
     interfaces: std::vec::Vec<InterfaceConfig>,
@@ -192,14 +192,14 @@ where
     /// (transport role, destinations, the routes' request handlers), then attach and spawn every
     /// interface. Synchronous — only [`run`](Self::run) awaits.
     #[allow(clippy::expect_used)]
-    pub fn new<'a, D, I>(recipe: Recipe<D, St, R, F, I>) -> Self
+    pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I>) -> Self
     where
-        D: IntoIterator<Item = StartingDestination<'a>>,
+        D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: InterfaceSet,
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let handle = TokioCommands {
+        let handle = PrnsHandle {
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
         };
@@ -208,18 +208,18 @@ where
         if let Some(id) = recipe.transport {
             engine.set_transport_id(id);
         }
-        for destination in recipe.destinations {
+        for destination in recipe.pre_configured_destinations {
             match destination {
-                StartingDestination::Plain { app_name, aspects } => {
+                PreConfiguredDestination::Plain { app_name, aspects } => {
                     engine
                         .register_plain_destination(app_name, aspects)
                         .expect("recipe plain destination is valid");
                 }
-                StartingDestination::Single {
+                PreConfiguredDestination::Single {
                     app_name,
                     aspects,
                     identity,
-                    app_data,
+                    announce_app_data: app_data,
                     proof,
                     ratchet,
                 } => {
@@ -273,7 +273,7 @@ where
     /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run)
     /// owns the loop.
     #[must_use]
-    pub fn handle(&self) -> TokioCommands {
+    pub fn handle(&self) -> PrnsHandle {
         self.handle.clone()
     }
 
@@ -363,9 +363,9 @@ mod tests {
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
-    fn handle() -> (TokioCommands, UnboundedReceiver<HostCommand>) {
+    fn handle() -> (PrnsHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
-        (TokioCommands::over(commands), command_rx)
+        (PrnsHandle::over(commands), command_rx)
     }
 
     #[tokio::test]

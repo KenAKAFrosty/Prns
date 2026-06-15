@@ -29,6 +29,17 @@ pub struct UdpInterface {
 
 impl UdpInterface {
     pub async fn bind(
+        local: impl tokio::net::ToSocketAddrs,
+        peer: impl tokio::net::ToSocketAddrs,
+        bitrate_bps: u32,
+    ) -> io::Result<Self> {
+        Self::bind_with_id(InterfaceId::mint(), local, peer, bitrate_bps).await
+    }
+
+    /// Bind with a caller-chosen id instead of a minted one — for advanced setups that drive the
+    /// reactor by hand and must pin the interface to the routing key their own wiring references.
+    /// Ordinary nodes call [`bind`](Self::bind) and let the framework mint a unique id.
+    pub async fn bind_with_id(
         id: InterfaceId,
         local: impl tokio::net::ToSocketAddrs,
         peer: impl tokio::net::ToSocketAddrs,
@@ -46,6 +57,14 @@ impl UdpInterface {
             bitrate_bps,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         })
+    }
+
+    /// This interface's id: minted by [`bind`](Self::bind), or the one handed to
+    /// [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
+    /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        self.id
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -140,14 +159,9 @@ mod tests {
             .expect("binds the test peer");
         let far_addr = far.local_addr().expect("the peer address is known");
 
-        let interface = UdpInterface::bind(
-            InterfaceId::new([0xDD; 16]),
-            "127.0.0.1:0",
-            far_addr,
-            core::UDP_BITRATE_GUESS_BPS,
-        )
-        .await
-        .expect("binds an ephemeral local port");
+        let interface = UdpInterface::bind("127.0.0.1:0", far_addr, core::UDP_BITRATE_GUESS_BPS)
+            .await
+            .expect("binds an ephemeral local port");
         let near_addr = interface.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -198,14 +212,13 @@ mod tests {
             EstablishLink, IssuedCommand, Journaled, LinkEstablished, RatchetPolicy, SendLink,
             SendLinkPayload, Settlement,
         };
-        use crate::reactor::impls::tokio_reactor::{run, Egress, TokioHost, TokioInterfaceSeam};
+        use crate::reactor::impls::tokio_reactor::{
+            run, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
+        };
         use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
         use crate::routing::delivery::Delivery;
         use crate::routing::links::LinkId;
         use crate::routing::upstream_app_destinations::ProofStrategy;
-
-        let initiator_iface = InterfaceId::new([0xA3; 16]);
-        let responder_iface = InterfaceId::new([0xB4; 16]);
 
         let probe_a = UdpSocket::bind("127.0.0.1:0").await.expect("probes a port");
         let addr_a = probe_a.local_addr().expect("port known");
@@ -214,14 +227,14 @@ mod tests {
         drop(probe_a);
         drop(probe_b);
 
-        let a_interface =
-            UdpInterface::bind(initiator_iface, addr_a, addr_b, core::UDP_BITRATE_GUESS_BPS)
-                .await
-                .expect("binds the initiator socket");
-        let b_interface =
-            UdpInterface::bind(responder_iface, addr_b, addr_a, core::UDP_BITRATE_GUESS_BPS)
-                .await
-                .expect("binds the responder socket");
+        let a_interface = UdpInterface::bind(addr_a, addr_b, core::UDP_BITRATE_GUESS_BPS)
+            .await
+            .expect("binds the initiator socket");
+        let initiator_iface = a_interface.id();
+        let b_interface = UdpInterface::bind(addr_b, addr_a, core::UDP_BITRATE_GUESS_BPS)
+            .await
+            .expect("binds the responder socket");
+        let responder_iface = b_interface.id();
 
         let initiator_engine = EngineState::<Cap>::new(second_secret_key());
         let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();

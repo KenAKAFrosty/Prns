@@ -25,13 +25,21 @@ pub struct SerialInterface<Open> {
 
 impl<Open> SerialInterface<Open> {
     #[must_use]
-    pub fn new(id: InterfaceId, open: Open, reconnect: Duration) -> Self {
+    pub fn new(open: Open, reconnect: Duration) -> Self {
+        let id = InterfaceId::mint();
         Self {
             id,
             open,
             reconnect,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
+    }
+
+    /// This interface's framework-minted id, for the app that wants to name it (an
+    /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        self.id
     }
 
     /// A clone of this interface's live-status handle for the app to read on its own render
@@ -113,10 +121,6 @@ mod tests {
         }
     }
 
-    fn test_id() -> InterfaceId {
-        InterfaceId::new([0xD0; 16])
-    }
-
     #[tokio::test]
     async fn frames_outbound_and_deframes_inbound_across_a_real_async_stream() {
         // A duplex stands in for the serial wire: the factory yields its end once, then refuses
@@ -135,7 +139,7 @@ mod tests {
             outbound: out_rx,
         };
 
-        let interface = SerialInterface::new(test_id(), open, Duration::from_millis(10));
+        let interface = SerialInterface::new(open, Duration::from_millis(10));
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 
