@@ -16,7 +16,7 @@ use personal_rns::interfaces::rns_parity::tcp::impls::tokio::{
 };
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Children, Diagnostic, FanOut, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    Diagnostic, Fleet, InterfaceSupervisor, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};
@@ -27,16 +27,16 @@ fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     Zeroizing::new([byte; IDENTITY_SECRET_KEY_LEN])
 }
 
-/// A minimal fan-out parent that stands up exactly one TCP-client child dialing `addr`, holds the
-/// child handle, then parks for life — standing in for a real discovery loop. Tearing the parent
-/// down must cascade to the child.
+/// A minimal interface supervisor that stands up exactly one TCP-client member dialing `addr`, holds
+/// the member handle, then parks for life, standing in for a real discovery loop. Tearing the
+/// supervisor down must cascade to the member.
 struct DialOnce {
     addr: String,
 }
 
-impl FanOut for DialOnce {
-    async fn run(self, children: Children) {
-        let _child = children.add(TcpClientInterface::new(
+impl InterfaceSupervisor for DialOnce {
+    async fn run(self, fleet: Fleet) {
+        let _member = fleet.add(TcpClientInterface::new(
             self.addr,
             BITRATE,
             Duration::from_millis(100),
@@ -222,7 +222,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_fanout_parent_spawns_a_child_and_a_parent_teardown_cascades_to_it() {
+async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_to_it() {
     let single_a = single(secret(0xE1));
     let dest_a = single_a
         .destination_hash()
@@ -243,7 +243,7 @@ async fn a_fanout_parent_spawns_a_child_and_a_parent_teardown_cascades_to_it() {
     });
     let commands_a = node_a.handle();
 
-    // Node B starts wireless; a fan-out parent stands up its child at runtime.
+    // Node B starts wireless; a supervisor stands up its member at runtime.
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = Prns::new(PrnsRecipe {
         transport: None,
@@ -260,7 +260,7 @@ async fn a_fanout_parent_spawns_a_child_and_a_parent_teardown_cascades_to_it() {
     });
     let commands_b = node_b.handle();
 
-    let parent = commands_b.add_fanout(DialOnce { addr });
+    let supervisor = commands_b.supervise(DialOnce { addr });
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
@@ -282,22 +282,22 @@ async fn a_fanout_parent_spawns_a_child_and_a_parent_teardown_cascades_to_it() {
     tokio::select! {
         biased;
         () = async {
-            // The child the parent stood up carries A's announce to B.
+            // The member the supervisor stood up carries A's announce to B.
             let heard = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
                 .await
-                .expect("B hears A over the fan-out parent's child within 5s")
+                .expect("B hears A over the supervisor's member within 5s")
                 .expect("the announce channel stays open");
-            assert_eq!(heard, dest_a, "B heard A through the child the parent spawned");
+            assert_eq!(heard, dest_a, "B heard A through the member the supervisor spawned");
 
-            // Tear the *parent* down; the driver cascades the stop to its child, so B falls silent.
-            parent.teardown();
+            // Tear the *supervisor* down; the driver cascades the stop to its member, so B falls silent.
+            supervisor.teardown();
             tokio::time::sleep(Duration::from_millis(300)).await;
             while heard_rx.try_recv().is_ok() {}
             assert!(
                 tokio::time::timeout(Duration::from_millis(800), heard_rx.recv())
                     .await
                     .is_err(),
-                "tearing the parent down cascades to its child, so no announce reaches B"
+                "tearing the supervisor down cascades to its member, so no announce reaches B"
             );
         } => {}
         () = node_a.run() => unreachable!("node A's run loop returned"),

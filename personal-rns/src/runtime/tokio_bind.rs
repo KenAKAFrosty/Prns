@@ -148,27 +148,27 @@ impl PrnsHandle {
         )
     }
 
-    /// Attach a fan-out parent: an interface that owns no wire of its own, but runs a discovery loop
-    /// and stands up a child interface per validated connection through the [`Children`] handle it is
-    /// given. The parent itself is no engine interface (no descriptor, no lanes); each child it adds
-    /// is an ordinary flat engine interface recorded under it, so tearing the parent down cascades to
-    /// every child. The home of the auto-interfaces (auto-wifi, auto-usb).
-    pub fn add_fanout<P>(&self, parent: P) -> AttachedInterface
+    /// Attach an interface supervisor: a node that owns no wire of its own, but runs a discovery loop
+    /// and stands up a fleet member per validated connection through the [`Fleet`] handle it is
+    /// given. The supervisor itself is no engine interface (no descriptor, no lanes); each member it
+    /// adds is an ordinary flat engine interface recorded under it, so tearing the supervisor down
+    /// cascades to its whole fleet. The home of the auto-interfaces (auto-wifi, auto-usb).
+    pub fn supervise<S>(&self, supervisor: S) -> AttachedInterface
     where
-        P: FanOut + Send + 'static,
+        S: InterfaceSupervisor + Send + 'static,
     {
         let id = InterfaceId::mint();
-        let children = Children {
-            parent_id: id,
+        let fleet = Fleet {
+            supervisor_id: id,
             commands: self.commands.clone(),
             iface_build: self.iface_build.clone(),
             notify_tx: self.notify_tx.clone(),
         };
         let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
-            Box::new(move || Box::pin(parent.run(children)));
+            Box::new(move || Box::pin(supervisor.run(fleet)));
         let _ = self.iface_build.send(DriverMsg::Add {
             id,
-            parent: None,
+            supervisor: None,
             build,
         });
         AttachedInterface {
@@ -179,8 +179,8 @@ impl PrnsHandle {
     }
 
     /// Detach the interface with this id (the inverse of [`add_interface`](Self::add_interface)):
-    /// deregister its lanes on the reactor and stop its run future on the driver. For a fan-out
-    /// parent, the driver cascades the stop to every child it stood up.
+    /// deregister its lanes on the reactor and stop its run future on the driver. For a supervisor,
+    /// the driver cascades the stop to every member of its fleet.
     pub fn remove_interface(&self, id: InterfaceId) {
         let _ = self.commands.send(HostCommand::RemoveInterface { id });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
@@ -235,15 +235,15 @@ impl AttachedInterface {
 }
 
 /// Wire one interface onto the running node: build its grant lanes + seam, hand the reactor the
-/// `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `parent`
-/// records it as a fan-out child so the driver cascades teardown. Shared by
-/// [`PrnsHandle::add_interface`] (no parent) and [`Children::add`] (this parent's id).
+/// `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `supervisor`
+/// records it as a fleet member so the driver cascades teardown. Shared by
+/// [`PrnsHandle::add_interface`] (no supervisor) and [`Fleet::add`] (this supervisor's id).
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
     notify_tx: &UnboundedSender<InterfaceId>,
     interface: I,
-    parent: Option<InterfaceId>,
+    supervisor: Option<InterfaceId>,
 ) -> AttachedInterface
 where
     I: Interface + Send + 'static,
@@ -260,7 +260,11 @@ where
         inbound: in_consumer,
         egress: out_producer,
     }));
-    let _ = iface_build.send(DriverMsg::Add { id, parent, build });
+    let _ = iface_build.send(DriverMsg::Add {
+        id,
+        supervisor,
+        build,
+    });
     AttachedInterface {
         id,
         commands: commands.clone(),
@@ -268,20 +272,20 @@ where
     }
 }
 
-/// A fan-out parent's lever to stand up child interfaces, handed to it by
-/// [`PrnsHandle::add_fanout`]. Each [`add`](Self::add) registers a flat engine interface (its own
-/// minted id) recorded as this parent's child; the parent typically holds the returned
-/// [`AttachedInterface`] so it can detach that one child when its link drops.
-pub struct Children {
-    parent_id: InterfaceId,
+/// A supervisor's lever to stand up fleet members, handed to it by [`PrnsHandle::supervise`]. Each
+/// [`add`](Self::add) registers a flat engine interface (its own minted id) recorded as this
+/// supervisor's member; the supervisor typically holds the returned [`AttachedInterface`] so it can
+/// detach that one member when its link drops.
+pub struct Fleet {
+    supervisor_id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
     iface_build: UnboundedSender<DriverMsg>,
     notify_tx: UnboundedSender<InterfaceId>,
 }
 
-impl Children {
-    /// Stand up a child interface under this parent — identical to [`PrnsHandle::add_interface`]
-    /// except the child is recorded as this parent's, so a parent teardown takes it with it.
+impl Fleet {
+    /// Stand up a fleet member under this supervisor — identical to [`PrnsHandle::add_interface`]
+    /// except the member is recorded as this supervisor's, so a supervisor teardown takes it with it.
     pub fn add<I>(&self, interface: I) -> AttachedInterface
     where
         I: Interface + Send + 'static,
@@ -291,18 +295,18 @@ impl Children {
             &self.iface_build,
             &self.notify_tx,
             interface,
-            Some(self.parent_id),
+            Some(self.supervisor_id),
         )
     }
 }
 
-/// A fan-out parent: an interface that owns no wire of its own, but runs a discovery loop and stands
-/// up a child interface per validated connection through the [`Children`] handle it is given.
-/// Attached with [`PrnsHandle::add_fanout`] (e.g. the WiFi/LAN auto-interface: multicast discovery
-/// plus a peering ack, then a unicast child per confirmed peer).
+/// An interface supervisor: a node that owns no wire of its own, but runs a discovery loop and
+/// stands up a fleet member (a real interface) per validated connection through the [`Fleet`] handle
+/// it is given. Attached with [`PrnsHandle::supervise`] (e.g. the WiFi/LAN auto-interface: multicast
+/// discovery plus a peering ack, then a unicast member per confirmed peer).
 #[allow(async_fn_in_trait)]
-pub trait FanOut {
-    async fn run(self, children: Children);
+pub trait InterfaceSupervisor {
+    async fn run(self, fleet: Fleet);
 }
 
 /// A message to the interface driver: a new interface to start driving, or a request to stop one.
@@ -311,7 +315,7 @@ pub trait FanOut {
 enum DriverMsg {
     Add {
         id: InterfaceId,
-        parent: Option<InterfaceId>,
+        supervisor: Option<InterfaceId>,
         build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>,
     },
     Stop {
@@ -330,7 +334,7 @@ async fn drive_interfaces(
     let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>> =
         initial.into_iter().collect();
     let mut stops: HashMap<InterfaceId, oneshot::Sender<()>> = HashMap::new();
-    let mut parents: HashMap<InterfaceId, InterfaceId> = HashMap::new();
+    let mut supervisor_of: HashMap<InterfaceId, InterfaceId> = HashMap::new();
     let mut open = true;
     loop {
         if !open && futures.is_empty() {
@@ -338,9 +342,9 @@ async fn drive_interfaces(
         }
         tokio::select! {
             message = messages.recv(), if open => match message {
-                Some(DriverMsg::Add { id, parent, build }) => {
-                    if let Some(parent_id) = parent {
-                        let _ = parents.insert(id, parent_id);
+                Some(DriverMsg::Add { id, supervisor, build }) => {
+                    if let Some(supervisor_id) = supervisor {
+                        let _ = supervisor_of.insert(id, supervisor_id);
                     }
                     let run = build();
                     let (stop_tx, stop_rx) = oneshot::channel();
@@ -354,16 +358,16 @@ async fn drive_interfaces(
                 }
                 Some(DriverMsg::Stop { id }) => {
                     stop_interface(&mut stops, id);
-                    parents.remove(&id);
-                    let cascaded: std::vec::Vec<InterfaceId> = parents
+                    supervisor_of.remove(&id);
+                    let cascaded: std::vec::Vec<InterfaceId> = supervisor_of
                         .iter()
-                        .filter(|(_, parent_id)| **parent_id == id)
-                        .map(|(child, _)| *child)
+                        .filter(|(_, supervisor_id)| **supervisor_id == id)
+                        .map(|(member, _)| *member)
                         .collect();
-                    for child in cascaded {
-                        stop_interface(&mut stops, child);
-                        parents.remove(&child);
-                        let _ = commands.send(HostCommand::RemoveInterface { id: child });
+                    for member in cascaded {
+                        stop_interface(&mut stops, member);
+                        supervisor_of.remove(&member);
+                        let _ = commands.send(HostCommand::RemoveInterface { id: member });
                     }
                 }
                 None => open = false,
