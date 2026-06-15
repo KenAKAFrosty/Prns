@@ -24,15 +24,13 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::tokio_reactor::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
-use crate::reactor::interfaces::usb_auto::core::{
-    self, Capabilities, HostInbound, Message, NodeTag,
-};
 
 /// A slow fallback re-enumeration. Hot-plug is event-driven (the consumer pokes the rescan
 /// signal the instant the OS reports a change), so this only backstops a missed event, a host

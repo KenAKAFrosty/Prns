@@ -15,9 +15,7 @@ use personal_rns::engine::{
     RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::reactor::interfaces::tcp::impls::tokio::{
-    TcpClientInterface, TcpServerInterface,
-};
+use personal_rns::interfaces::tcp::impls::tokio::{TcpClientInterface, TcpServerInterface};
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};

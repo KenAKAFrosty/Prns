@@ -22,12 +22,12 @@ use personal_rns::reactor::impls::tokio_reactor::{
     TokioHost, TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::reactor::interfaces::tcp::core as tcp_core;
-use personal_rns::reactor::interfaces::tcp::impls::tokio::{
+use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
 };
-use personal_rns::reactor::interfaces::udp::core as udp_core;
-use personal_rns::reactor::interfaces::udp::impls::tokio::UdpInterface;
+use personal_rns::interfaces::udp::core as udp_core;
+use personal_rns::interfaces::udp::impls::tokio::UdpInterface;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;

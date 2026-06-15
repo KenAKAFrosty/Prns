@@ -1,6 +1,6 @@
 //! The host-agnostic core of the serial interface: the sizing the read and write loops are
 //! built around, and the descriptor the engine sees. The framing brain lives once in the
-//! shared serve loop (`reactor::interfaces::framed_stream`); each host's impl supplies only
+//! shared serve loop (`interfaces::framed_stream`); each host's impl supplies only
 //! the async byte stream.
 
 use crate::interfaces::rns_serial_framing::{self, RnsSerialDecoder};

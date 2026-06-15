@@ -9,7 +9,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::reactor::interfaces::tcp::impls::tokio::TcpServerInterface;
+use personal_rns::interfaces::tcp::impls::tokio::TcpServerInterface;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe};

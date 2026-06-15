@@ -27,7 +27,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
-use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::ProofStrategy;
 

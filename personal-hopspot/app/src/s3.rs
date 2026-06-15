@@ -43,8 +43,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
     EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::reactor::interfaces::usb_auto::core::device_descriptor;
-use personal_rns::reactor::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
+use personal_rns::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;

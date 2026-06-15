@@ -34,7 +34,7 @@ use personal_rns::reactor::impls::tokio_reactor::{
     TokioInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::reactor::interfaces::usb_auto::impls::tokio::UsbAutoHost;
+use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::storage::GrowableHeap;

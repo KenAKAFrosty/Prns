@@ -4,11 +4,11 @@ use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
 use crate::engine::InstantMillis;
+use crate::interfaces::udp::core;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
-use crate::reactor::interfaces::udp::core;
 use crate::reactor::throughput::ThroughputLedger;
 
 /// One end of an RNS UDP pair (`UDPInterface` parity): bind the local address up front —

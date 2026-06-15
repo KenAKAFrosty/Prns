@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::interfaces::framed_stream;
+use crate::interfaces::serial::core;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
-use crate::reactor::interfaces::framed_stream;
-use crate::reactor::interfaces::serial::core;
 use crate::reactor::throughput::ThroughputLedger;
 
 /// A serial interface that owns its medium's whole lifecycle: `open` yields a fresh async

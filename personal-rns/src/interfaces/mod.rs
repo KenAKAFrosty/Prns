@@ -7,11 +7,21 @@ pub mod mode;
 pub mod substrate;
 
 mod config;
-mod definition;
 mod framing;
 pub mod impls;
 mod packet;
 mod status;
+
+#[cfg(feature = "tokio-host")]
+pub mod framed_stream;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod serial;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod tcp;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod udp;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod usb_auto;
 
 pub use capabilities::{
     Capabilities, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -26,7 +36,6 @@ pub use config::{
     hardware_mtu_for_bitrate, AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit,
     InterfaceConfig,
 };
-pub use definition::{InterfaceDefinitionView, InterfaceKind};
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::{AirtimeUtilization, InterfaceStatus, TransferRates};
 

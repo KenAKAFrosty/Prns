@@ -15,12 +15,10 @@ use embassy_futures::select::{select3, Either3};
 use embassy_time::{with_timeout, Duration, Timer};
 use embedded_io_async::{Read, Write};
 
+use crate::interfaces::usb_auto::core::{self, Capabilities, InboundReaction, Message, NodeTag};
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
-use crate::reactor::interfaces::usb_auto::core::{
-    self, Capabilities, InboundReaction, Message, NodeTag,
-};
 
 /// Upper bound on one frame's write. With no host reading the link, an unbounded write would
 /// wedge the loop; this lets a dropped HelloAck/announce lapse so the next probe (or re-announce)
