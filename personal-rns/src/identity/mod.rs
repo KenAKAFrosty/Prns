@@ -7,6 +7,7 @@
 //! deterministic test/spike identity. Persistence is a later, separate concern.
 
 pub mod held;
+pub mod vault;
 
 use crate::crypto::{
     hkdf_sha256, sha256, token_is_authentic, token_open, token_open_in_place, token_seal,
