@@ -18,6 +18,7 @@ use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
 use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
+use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
@@ -50,6 +51,7 @@ impl StorageLayout for Nrf52840 {
     type PacketHashes = FixedPacketHashHistory<32>;
     type ReverseRoutes = FixedReverseRouteColumns<8>;
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
+    type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;

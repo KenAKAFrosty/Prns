@@ -19,6 +19,7 @@ use crate::routing::links::resources::table::{
 use crate::routing::links::table::LinkColumns;
 use crate::routing::links::transported::TransportedLinkColumns;
 use crate::routing::path_requests::pending::PendingPathRequestColumns;
+use crate::routing::path_requests::recent::RecentPathRequestColumns;
 use crate::routing::path_requests::seen::SeenPathRequestColumns;
 use crate::routing::request_handlers::RequestHandlerColumns;
 use crate::routing::reverse_routes::ReverseRouteColumns;
@@ -46,6 +47,7 @@ pub trait StorageLayout {
     type PacketHashes: PacketHashHistory + Default;
     type ReverseRoutes: ReverseRouteColumns + Default;
     type PendingPathRequests: PendingPathRequestColumns + Default;
+    type RecentPathRequests: RecentPathRequestColumns + Default;
     type SeenPathRequests: SeenPathRequestColumns + Default;
     type AnnounceRates: AnnounceRateColumns + Default;
     type GroupKeys: GroupKeyColumns + Default;

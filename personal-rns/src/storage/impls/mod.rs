@@ -35,6 +35,7 @@ where
         PacketHashes = A::PacketHashes,
         ReverseRoutes = A::ReverseRoutes,
         PendingPathRequests = A::PendingPathRequests,
+        RecentPathRequests = A::RecentPathRequests,
         SeenPathRequests = A::SeenPathRequests,
         AnnounceRates = A::AnnounceRates,
         GroupKeys = A::GroupKeys,

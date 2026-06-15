@@ -79,6 +79,7 @@ use crate::routing::links::resources::table::{IncomingResources, OutgoingResourc
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::pending::PendingPathRequests;
+use crate::routing::path_requests::recent::RecentPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
@@ -213,6 +214,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) receipts: Receipts<S::Receipts>,
     pub(crate) reverse_routes: ReverseRoutes<S::ReverseRoutes>,
     pub(crate) pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
+    pub(crate) recent_path_requests: RecentPathRequests<S::RecentPathRequests>,
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
@@ -239,6 +241,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             receipts: Receipts::default(),
             reverse_routes: ReverseRoutes::default(),
             pending_path_requests: PendingPathRequests::default(),
+            recent_path_requests: RecentPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),

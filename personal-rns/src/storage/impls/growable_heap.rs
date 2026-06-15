@@ -15,6 +15,7 @@ use crate::routing::links::resources::table::{
 use crate::routing::links::table::HeapLinkColumns;
 use crate::routing::links::transported::HeapTransportedLinkColumns;
 use crate::routing::path_requests::pending::HeapPendingPathRequestColumns;
+use crate::routing::path_requests::recent::HeapRecentPathRequestColumns;
 use crate::routing::path_requests::seen::HeapSeenPathRequestColumns;
 use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
@@ -37,6 +38,7 @@ impl StorageLayout for GrowableHeap {
     type PacketHashes = HeapPacketHashHistory;
     type ReverseRoutes = HeapReverseRouteColumns;
     type PendingPathRequests = HeapPendingPathRequestColumns;
+    type RecentPathRequests = HeapRecentPathRequestColumns;
     type SeenPathRequests = HeapSeenPathRequestColumns;
     type AnnounceRates = HeapAnnounceRateColumns;
     type GroupKeys = HeapGroupKeyColumns;

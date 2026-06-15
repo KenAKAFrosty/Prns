@@ -94,11 +94,23 @@ impl<S: StorageLayout> EngineState<S> {
                 continue;
             }
             let has_route = self.routing_table.has_route(&overdue.destination);
+            let destination_is_neighbor =
+                self.routing_table.hop_count_to(&overdue.destination) == Some(1);
+            let initiator_is_neighbor = overdue.taken_hops == 1;
 
-            let fanout = if has_route && (overdue.remaining_hops == 1 || overdue.taken_hops == 1) {
-                self.routing_table
-                    .mark_responsiveness(&overdue.destination, RouteResponsiveness::Unresponsive);
-                Some(FanTarget::AllExcept(overdue.received_interface))
+            let fanout = if has_route && (destination_is_neighbor || initiator_is_neighbor) {
+                if self
+                    .recent_path_requests
+                    .is_throttled(&overdue.destination, now)
+                {
+                    None
+                } else {
+                    self.routing_table.mark_responsiveness(
+                        &overdue.destination,
+                        RouteResponsiveness::Unresponsive,
+                    );
+                    Some(FanTarget::AllExcept(overdue.received_interface))
+                }
             } else if !has_route {
                 Some(FanTarget::All)
             } else {
@@ -115,6 +127,8 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut request,
                 ) {
                     fan_self_originated(view, fanout, &request[..wire_len], sink);
+                    self.recent_path_requests
+                        .mark_seen_at(overdue.destination, now);
                 }
             }
         }
@@ -495,5 +509,78 @@ mod tests {
             "a far destination still recovers when its link initiator is our neighbor",
         );
         assert_eq!(sent, std::vec![away]);
+    }
+
+    #[test]
+    fn a_recently_requested_destination_holds_off_the_overdue_links_path_request() {
+        use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::interfaces::{InboundPacket, InterfaceId};
+        use crate::routing::links::transported::TransportedLink;
+        use crate::routing::links::LinkId;
+
+        let received = InterfaceId::new([0xA1; 16]);
+        let away = InterfaceId::new([0xB2; 16]);
+        let view = [routable_descriptor(received), routable_descriptor(away)];
+
+        let mut engine = EngineState::<Cap>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: received,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        let destination =
+            DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+
+        engine
+            .transported_links
+            .track(TransportedLink {
+                link_id: LinkId::new([0x5C; 16]),
+                destination,
+                next_hop: None,
+                next_hop_interface: away,
+                received_interface: received,
+                taken_hops: 1,
+                remaining_hops: 1,
+                validated: false,
+                last_active: InstantMillis(1_000),
+                proof_timeout: InstantMillis(7_000),
+            })
+            .unwrap();
+
+        let asked_well_within_the_throttle_window = InstantMillis(2_000);
+        engine
+            .recent_path_requests
+            .mark_seen_at(destination, asked_well_within_the_throttle_window);
+
+        let mut sent = std::vec::Vec::new();
+        let _ = engine.fire_due_link_deadlines(
+            InstantMillis(7_000),
+            &view,
+            &mut |bytes: &mut [u8]| bytes.fill(0x5A),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
+                    sent.push(target);
+                }
+            },
+        );
+
+        assert_eq!(
+            engine
+                .routing_table
+                .existing_route_for(&destination, &view)
+                .unwrap()
+                .responsiveness,
+            RouteResponsiveness::Unknown,
+            "the throttle holds off the unresponsive mark too, not only the resend",
+        );
+        assert!(
+            sent.is_empty(),
+            "a path request inside the minimum interval suppresses the re-request",
+        );
     }
 }

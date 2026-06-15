@@ -52,6 +52,8 @@ impl<S: StorageLayout> EngineState<S> {
             command_id: id,
             timeout_at: InstantMillis(now.0.saturating_add(PATH_REQUEST_TIMEOUT_MS)),
         });
+        self.recent_path_requests
+            .mark_seen_at(request.destination, now);
 
         PathRequestWriteOutcome::Written { wire_len, culled }
     }
