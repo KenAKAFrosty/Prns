@@ -1,19 +1,11 @@
-//! The platform-agnostic brain of the RNS AutoInterface, wire-exact against
-//! Python RNS 1.3.1
-//! ([`AutoInterface.py`](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py)).
+//! The platform-agnostic brain of the RNS AutoInterface, wire-exact against Python RNS 1.3.1.
 //!
 //! The protocol: each node periodically multicasts a beacon whose payload is
 //! `sha256(group_id ++ <its own link-local, as a canonical string>)`. A
 //! receiver recomputes that hash from the datagram's *source* address and peers
 //! only on a match; the token authenticates the sender's source address as
-//! a member of the shared group ([`AutoInterface.py` L364-L366](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L364-L366), [L491-L494](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L491-L494)). Data
-//! is unicast to each discovered peer's [`DEFAULT_DATA_PORT`]; discovery completes over
-//! multicast either direction plus the unicast reverse-peering channel
-//! ([`UNICAST_DISCOVERY_PORT`]).
-//!
-//! This is just the protocol brain — the verdict logic and the peer table. The sockets,
-//! the beacon cadence, and spawning a child interface per validated peer are the driver's
-//! job (the parent that owns this).
+//! a member of the shared group. Data is unicast to each discovered peer's [`DEFAULT_DATA_PORT`];
+//! discovery completes over multicast either direction plus the unicast reverse-peering channel ([`UNICAST_DISCOVERY_PORT`]).
 
 use core::fmt::Write as _;
 use core::net::Ipv6Addr;

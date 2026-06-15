@@ -139,21 +139,38 @@ impl PrnsHandle {
     where
         I: Interface + Send + 'static,
     {
-        let descriptor = interface.descriptor();
-        let id = descriptor.id;
-        let (in_producer, in_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-        let (out_producer, out_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-        let seam = TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer);
+        attach_interface(
+            &self.commands,
+            &self.iface_build,
+            &self.notify_tx,
+            interface,
+            None,
+        )
+    }
+
+    /// Attach a fan-out parent: an interface that owns no wire of its own, but runs a discovery loop
+    /// and stands up a child interface per validated connection through the [`Children`] handle it is
+    /// given. The parent itself is no engine interface (no descriptor, no lanes); each child it adds
+    /// is an ordinary flat engine interface recorded under it, so tearing the parent down cascades to
+    /// every child. The home of the auto-interfaces (auto-wifi, auto-usb).
+    pub fn add_fanout<P>(&self, parent: P) -> AttachedInterface
+    where
+        P: FanOut + Send + 'static,
+    {
+        let id = InterfaceId::mint();
+        let children = Children {
+            parent_id: id,
+            commands: self.commands.clone(),
+            iface_build: self.iface_build.clone(),
+            notify_tx: self.notify_tx.clone(),
+        };
         let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
-            Box::new(move || Box::pin(interface.run(seam)));
-        let _ = self
-            .commands
-            .send(HostCommand::AddInterface(AddInterfaceCommand {
-                descriptor,
-                inbound: in_consumer,
-                egress: out_producer,
-            }));
-        let _ = self.iface_build.send(DriverMsg::Add { id, build });
+            Box::new(move || Box::pin(parent.run(children)));
+        let _ = self.iface_build.send(DriverMsg::Add {
+            id,
+            parent: None,
+            build,
+        });
         AttachedInterface {
             id,
             commands: self.commands.clone(),
@@ -162,7 +179,8 @@ impl PrnsHandle {
     }
 
     /// Detach the interface with this id (the inverse of [`add_interface`](Self::add_interface)):
-    /// deregister its lanes on the reactor and stop its run future on the driver.
+    /// deregister its lanes on the reactor and stop its run future on the driver. For a fan-out
+    /// parent, the driver cascades the stop to every child it stood up.
     pub fn remove_interface(&self, id: InterfaceId) {
         let _ = self.commands.send(HostCommand::RemoveInterface { id });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
@@ -216,12 +234,84 @@ impl AttachedInterface {
     }
 }
 
+/// Wire one interface onto the running node: build its grant lanes + seam, hand the reactor the
+/// `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `parent`
+/// records it as a fan-out child so the driver cascades teardown. Shared by
+/// [`PrnsHandle::add_interface`] (no parent) and [`Children::add`] (this parent's id).
+fn attach_interface<I>(
+    commands: &UnboundedSender<HostCommand>,
+    iface_build: &UnboundedSender<DriverMsg>,
+    notify_tx: &UnboundedSender<InterfaceId>,
+    interface: I,
+    parent: Option<InterfaceId>,
+) -> AttachedInterface
+where
+    I: Interface + Send + 'static,
+{
+    let descriptor = interface.descriptor();
+    let id = descriptor.id;
+    let (in_producer, in_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (out_producer, out_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer);
+    let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
+        Box::new(move || Box::pin(interface.run(seam)));
+    let _ = commands.send(HostCommand::AddInterface(AddInterfaceCommand {
+        descriptor,
+        inbound: in_consumer,
+        egress: out_producer,
+    }));
+    let _ = iface_build.send(DriverMsg::Add { id, parent, build });
+    AttachedInterface {
+        id,
+        commands: commands.clone(),
+        iface_build: iface_build.clone(),
+    }
+}
+
+/// A fan-out parent's lever to stand up child interfaces, handed to it by
+/// [`PrnsHandle::add_fanout`]. Each [`add`](Self::add) registers a flat engine interface (its own
+/// minted id) recorded as this parent's child; the parent typically holds the returned
+/// [`AttachedInterface`] so it can detach that one child when its link drops.
+pub struct Children {
+    parent_id: InterfaceId,
+    commands: UnboundedSender<HostCommand>,
+    iface_build: UnboundedSender<DriverMsg>,
+    notify_tx: UnboundedSender<InterfaceId>,
+}
+
+impl Children {
+    /// Stand up a child interface under this parent — identical to [`PrnsHandle::add_interface`]
+    /// except the child is recorded as this parent's, so a parent teardown takes it with it.
+    pub fn add<I>(&self, interface: I) -> AttachedInterface
+    where
+        I: Interface + Send + 'static,
+    {
+        attach_interface(
+            &self.commands,
+            &self.iface_build,
+            &self.notify_tx,
+            interface,
+            Some(self.parent_id),
+        )
+    }
+}
+
+/// A fan-out parent: an interface that owns no wire of its own, but runs a discovery loop and stands
+/// up a child interface per validated connection through the [`Children`] handle it is given.
+/// Attached with [`PrnsHandle::add_fanout`] (e.g. the WiFi/LAN auto-interface: multicast discovery
+/// plus a peering ack, then a unicast child per confirmed peer).
+#[allow(async_fn_in_trait)]
+pub trait FanOut {
+    async fn run(self, children: Children);
+}
+
 /// A message to the interface driver: a new interface to start driving, or a request to stop one.
 /// The driver lives on the `!Send` `run` task, so an interface's `!Send` run future never has to
 /// cross a thread — only the `Send` builder closure does.
 enum DriverMsg {
     Add {
         id: InterfaceId,
+        parent: Option<InterfaceId>,
         build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send>,
     },
     Stop {
@@ -235,10 +325,12 @@ enum DriverMsg {
 async fn drive_interfaces(
     initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     mut messages: UnboundedReceiver<DriverMsg>,
+    commands: UnboundedSender<HostCommand>,
 ) {
     let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>> =
         initial.into_iter().collect();
     let mut stops: HashMap<InterfaceId, oneshot::Sender<()>> = HashMap::new();
+    let mut parents: HashMap<InterfaceId, InterfaceId> = HashMap::new();
     let mut open = true;
     loop {
         if !open && futures.is_empty() {
@@ -246,7 +338,10 @@ async fn drive_interfaces(
         }
         tokio::select! {
             message = messages.recv(), if open => match message {
-                Some(DriverMsg::Add { id, build }) => {
+                Some(DriverMsg::Add { id, parent, build }) => {
+                    if let Some(parent_id) = parent {
+                        let _ = parents.insert(id, parent_id);
+                    }
                     let run = build();
                     let (stop_tx, stop_rx) = oneshot::channel();
                     futures.push(Box::pin(async move {
@@ -258,14 +353,29 @@ async fn drive_interfaces(
                     stops.insert(id, stop_tx);
                 }
                 Some(DriverMsg::Stop { id }) => {
-                    if let Some(stop) = stops.remove(&id) {
-                        let _ = stop.send(());
+                    stop_interface(&mut stops, id);
+                    parents.remove(&id);
+                    let cascaded: std::vec::Vec<InterfaceId> = parents
+                        .iter()
+                        .filter(|(_, parent_id)| **parent_id == id)
+                        .map(|(child, _)| *child)
+                        .collect();
+                    for child in cascaded {
+                        stop_interface(&mut stops, child);
+                        parents.remove(&child);
+                        let _ = commands.send(HostCommand::RemoveInterface { id: child });
                     }
                 }
                 None => open = false,
             },
             _ = futures.next(), if !futures.is_empty() => {}
         }
+    }
+}
+
+fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) {
+    if let Some(stop) = stops.remove(&id) {
+        let _ = stop.send(());
     }
 }
 
@@ -481,10 +591,11 @@ where
                 on_event(event, &state);
             },
         );
+        let driver_commands = handle.commands.clone();
         tokio::join!(
             reactor,
             run_router::<St, R>(&state, req_rx, handle),
-            drive_interfaces(iface_runs, iface_build_rx),
+            drive_interfaces(iface_runs, iface_build_rx, driver_commands),
         );
     }
 }
