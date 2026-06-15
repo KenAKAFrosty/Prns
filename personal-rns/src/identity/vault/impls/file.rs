@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-use crate::identity::vault::{IdentityLabel, IdentityVault};
+use crate::identity::vault::{IdentityLabel, IdentitySecretKey, IdentityVault};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 pub struct FileVault {
@@ -45,22 +45,8 @@ impl FileVault {
 impl IdentityVault for FileVault {
     type Error = FileVaultError;
 
-    fn load(
-        &self,
-        label: &IdentityLabel,
-    ) -> Result<Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>, Self::Error> {
-        let mut file = match fs::File::open(self.path_for(label)) {
-            Ok(file) => file,
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        let length = file.metadata()?.len();
-        if length != IDENTITY_SECRET_KEY_LEN as u64 {
-            return Err(FileVaultError::MalformedLength { found: length });
-        }
-        let mut secret = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-        file.read_exact(&mut secret[..])?;
-        Ok(Some(secret))
+    fn load(&self, label: &IdentityLabel) -> Result<Option<IdentitySecretKey>, Self::Error> {
+        read_identity_file(&self.path_for(label))
     }
 
     fn store(
@@ -90,6 +76,21 @@ impl IdentityVault for FileVault {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+pub fn read_identity_file(path: &Path) -> Result<Option<IdentitySecretKey>, FileVaultError> {
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let length = file.metadata()?.len();
+    if length != IDENTITY_SECRET_KEY_LEN as u64 {
+        return Err(FileVaultError::MalformedLength { found: length });
+    }
+    let mut secret = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+    file.read_exact(&mut secret[..])?;
+    Ok(Some(secret))
 }
 
 fn stage_secret(

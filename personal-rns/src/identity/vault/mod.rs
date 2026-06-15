@@ -2,7 +2,11 @@ use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 mod impls;
 #[cfg(feature = "std")]
-pub use impls::{FileVault, FileVaultError};
+pub use impls::{
+    read_identity_file, FileVault, FileVaultError, HostLoadSource, HostVault, HostVaultError,
+};
+
+pub type IdentitySecretKey = Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>;
 
 pub const MAX_IDENTITY_LABEL_LEN: usize = 64;
 
@@ -73,10 +77,7 @@ fn is_label_byte(byte: u8) -> bool {
 pub trait IdentityVault {
     type Error;
 
-    fn load(
-        &self,
-        label: &IdentityLabel,
-    ) -> Result<Option<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>>, Self::Error>;
+    fn load(&self, label: &IdentityLabel) -> Result<Option<IdentitySecretKey>, Self::Error>;
 
     fn store(
         &mut self,
@@ -97,7 +98,7 @@ pub fn load_or_generate<V: IdentityVault>(
     vault: &mut V,
     label: &IdentityLabel,
     mut fill_entropy: impl FnMut(&mut [u8]),
-) -> Result<(Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, IdentityOrigin), V::Error> {
+) -> Result<(IdentitySecretKey, IdentityOrigin), V::Error> {
     if let Some(secret) = vault.load(label)? {
         return Ok((secret, IdentityOrigin::Loaded));
     }
