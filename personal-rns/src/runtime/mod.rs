@@ -33,3 +33,6 @@ mod tokio_runner;
 mod embassy_bind;
 #[cfg(feature = "embassy-contract")]
 pub use embassy_bind::{CompletionPool, EmbassyBind, EmbassyCommands};
+
+#[cfg(feature = "embassy-contract")]
+mod embassy_runner;

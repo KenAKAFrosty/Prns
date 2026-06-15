@@ -199,15 +199,21 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     /// auto-upgrades to a resource instead.
     pub fn respond(&self, responder: Responder, body: &[u8]) -> bool {
         match RespondData::from_slice(body) {
-            Ok(data) => self
-                .issue(EngineCommand::Respond(Respond {
-                    link_id: responder.link_id,
-                    request_id: responder.request_id,
-                    data,
-                }))
-                .is_some(),
+            Ok(data) => self.respond_owned(responder, data),
             Err(_) => false,
         }
+    }
+
+    /// Answer a request by moving a prebuilt [`RespondData`] in — the request runner's path, one copy
+    /// fewer than [`respond`](Self::respond) since the handler already filled a `RespondData` grant.
+    /// Returns `false` once the command lane is full. The embedded twin of `TokioCommands::respond_owned`.
+    pub fn respond_owned(&self, responder: Responder, data: RespondData) -> bool {
+        self.issue(EngineCommand::Respond(Respond {
+            link_id: responder.link_id,
+            request_id: responder.request_id,
+            data,
+        }))
+        .is_some()
     }
 
     /// Sever an active link. Returns `false` if the command lane is full.
