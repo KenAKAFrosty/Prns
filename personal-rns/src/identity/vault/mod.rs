@@ -1,5 +1,9 @@
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
+mod impls;
+#[cfg(feature = "std")]
+pub use impls::{FileVault, FileVaultError};
+
 pub const MAX_IDENTITY_LABEL_LEN: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
