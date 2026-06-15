@@ -42,6 +42,12 @@ const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(MAX_LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
 
+impl<A: Allocator> Default for Esp32S3<A> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
 impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type Routes = FixedHeapRouteColumns<MAX_TRACKED_DESTINATIONS, ROUTE_INDEX_BUCKETS, A>;
     type Announces = FixedHeapRetainedAnnounceColumns<MAX_TRACKED_DESTINATIONS, A>;

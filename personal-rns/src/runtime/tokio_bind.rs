@@ -19,7 +19,7 @@ use crate::reactor::impls::tokio_reactor::{
 };
 use crate::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::LinkId;
-use crate::storage::GrowableHeap;
+use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
 use super::interface_set::{InterfaceAttach, InterfaceSet};
@@ -168,10 +168,10 @@ impl InterfaceAttach for TokioAttach {
 /// [`new`](Self::new) (synchronous: it wires the engine and spawns each interface), then driven by
 /// [`run`](Self::run) (the reactor + the request runner, joined). Hold [`handle`](Self::handle)
 /// clones to drive it from other tasks/threads while `run` owns the loop.
-pub struct Prns<St, R, F> {
+pub struct Prns<St, R, F, S: StorageLayout> {
     handle: PrnsHandle,
     host: TokioHost,
-    engine: EngineState<GrowableHeap>,
+    engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,
     inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
     egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
@@ -183,16 +183,16 @@ pub struct Prns<St, R, F> {
     _routes: PhantomData<R>,
 }
 
-impl<St, R, F> Prns<St, R, F>
+impl<St, R, F, S: StorageLayout> Prns<St, R, F, S>
 where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
 {
-    /// Stand a node up from `recipe` on the default `GrowableHeap` storage: assemble the engine
-    /// (transport role, destinations, the routes' request handlers), then attach and spawn every
-    /// interface. Synchronous — only [`run`](Self::run) awaits.
+    /// Stand a node up from `recipe` on the storage layout it names (`recipe.storage`): assemble
+    /// the engine (transport role, destinations, the routes' request handlers), then attach and
+    /// spawn every interface. Synchronous — only [`run`](Self::run) awaits.
     #[allow(clippy::expect_used)]
-    pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I>) -> Self
+    pub fn new<'a, D, I>(recipe: PrnsRecipe<D, St, R, F, I, S>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: InterfaceSet,
@@ -204,7 +204,7 @@ where
             ids: Arc::new(AtomicU64::new(0)),
         };
 
-        let mut engine = EngineState::<GrowableHeap>::default();
+        let mut engine = EngineState::<S>::default();
         if let Some(id) = recipe.transport {
             engine.set_transport_id(id);
         }
@@ -264,7 +264,7 @@ where
             notify_rx,
             command_rx,
             iface_runs: attach.runs,
-            state: recipe.state,
+            state: recipe.app_state,
             on_event: recipe.on_event,
             _routes: PhantomData,
         }

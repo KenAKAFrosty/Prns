@@ -23,6 +23,7 @@ use crate::routing::routes::HeapRouteColumns;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
 use crate::storage::StorageLayout;
 
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GrowableHeap;
 
 impl StorageLayout for GrowableHeap {

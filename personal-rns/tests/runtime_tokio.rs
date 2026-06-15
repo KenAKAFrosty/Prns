@@ -16,6 +16,7 @@ use personal_rns::reactor::interfaces::tcp::impls::tokio::{
 };
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe};
+use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};
 
 const BITRATE: u32 = 1_000_000;
@@ -50,7 +51,8 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let node_a = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [single_a],
-        state: (),
+        app_state: (),
+        storage: GrowableHeap,
         routes: routes![],
         on_event: |_event, _state| {},
         interfaces: interfaces![server],
@@ -63,7 +65,8 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let node_b = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [single(secret(0xB2))],
-        state: (),
+        app_state: (),
+        storage: GrowableHeap,
         routes: routes![],
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {

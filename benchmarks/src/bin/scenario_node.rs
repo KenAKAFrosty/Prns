@@ -689,7 +689,7 @@ async fn build_responder_node<F>(
     on_event: F,
     manifest: &Manifest,
     addr: &str,
-) -> (Prns<(), (), F>, String)
+) -> (Prns<(), (), F, NodeStorage>, String)
 where
     F: FnMut(PrnsEvent<'_>, &()),
 {
@@ -703,7 +703,8 @@ where
         let node = Prns::new(PrnsRecipe {
             transport: None,
             pre_configured_destinations: [single],
-            state: (),
+            app_state: (),
+            storage: NodeStorage::default(),
             routes: routes![],
             on_event,
             interfaces: interfaces![client],
@@ -722,7 +723,8 @@ where
         let node = Prns::new(PrnsRecipe {
             transport: None,
             pre_configured_destinations: [single],
-            state: (),
+            app_state: (),
+            storage: NodeStorage::default(),
             routes: routes![],
             on_event,
             interfaces: interfaces![udp],
@@ -753,7 +755,8 @@ where
         let node = Prns::new(PrnsRecipe {
             transport: None,
             pre_configured_destinations: [single],
-            state: (),
+            app_state: (),
+            storage: NodeStorage::default(),
             routes: routes![],
             on_event,
             interfaces: servers,
@@ -768,7 +771,7 @@ async fn build_initiator_node<F>(
     on_event: F,
     manifest: &Manifest,
     addr: &str,
-) -> Prns<(), (), F>
+) -> Prns<(), (), F, NodeStorage>
 where
     F: FnMut(PrnsEvent<'_>, &()),
 {
@@ -785,7 +788,8 @@ where
         Prns::new(PrnsRecipe {
             transport: None,
             pre_configured_destinations: [single],
-            state: (),
+            app_state: (),
+            storage: NodeStorage::default(),
             routes: routes![],
             on_event,
             interfaces: interfaces![udp],
@@ -800,7 +804,8 @@ where
         Prns::new(PrnsRecipe {
             transport: None,
             pre_configured_destinations: [single],
-            state: (),
+            app_state: (),
+            storage: NodeStorage::default(),
             routes: routes![],
             on_event,
             interfaces: interfaces![client],

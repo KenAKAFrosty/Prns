@@ -13,6 +13,7 @@ use personal_rns::reactor::interfaces::tcp::impls::tokio::TcpServerInterface;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe};
+use personal_rns::storage::GrowableHeap;
 use personal_rns::{interfaces, routes};
 
 struct Hello;
@@ -50,7 +51,8 @@ async fn main() {
     let prns = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [me],
-        state: (),
+        app_state: (),
+        storage: GrowableHeap,
         routes: routes![Hello],
         interfaces: interfaces![tcp1, tcp2],
         on_event: |_event, _state| {},

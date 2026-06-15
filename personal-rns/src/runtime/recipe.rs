@@ -50,13 +50,17 @@ impl PreConfiguredDestination<'_> {
     }
 }
 
-pub struct PrnsRecipe<Destinations, AppState, Routes, OnEvent, Interfaces>
+pub struct PrnsRecipe<Destinations, AppState, Routes, OnEvent, Interfaces, Storage>
 where
     OnEvent: FnMut(PrnsEvent<'_>, &AppState),
 {
     pub transport: Option<TransportId>,
     pub pre_configured_destinations: Destinations,
-    pub state: AppState,
+    pub app_state: AppState,
+    /// The storage layout the engine's columns run on: `GrowableHeap` on a std host, a fixed
+    /// prepackage (`Esp32S3`/`Esp32C6`/`Nrf52840`) on a board. A type-level choice carried as a
+    /// value so the recipe owns it and `Prns::new` no longer assumes one.
+    pub storage: Storage,
     pub routes: Routes,
     pub interfaces: Interfaces,
     pub on_event: OnEvent,

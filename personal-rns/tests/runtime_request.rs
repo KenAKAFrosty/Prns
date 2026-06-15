@@ -24,6 +24,7 @@ use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRout
 use personal_rns::runtime::{
     Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
 };
+use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
 
@@ -80,7 +81,8 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     let node_a = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [responder_dest],
-        state: Responder,
+        app_state: Responder,
+        storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
         interfaces: interfaces![server],
@@ -118,7 +120,8 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
             proof: ProofStrategy::ProveAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
-        state: (),
+        app_state: (),
+        storage: GrowableHeap,
         routes: routes![],
         on_event: move |event, _state| {
             let mapped = match event {
