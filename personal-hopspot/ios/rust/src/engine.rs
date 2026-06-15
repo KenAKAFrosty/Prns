@@ -16,7 +16,7 @@ use personal_rns::reactor::impls::tokio_reactor::{
     TokioInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::serial::impls::tokio::SerialInterface;
+use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;

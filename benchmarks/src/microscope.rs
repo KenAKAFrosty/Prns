@@ -6,7 +6,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
-use personal_rns::interfaces::tcp::core as tcp_core;
+use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::routing::announce::defaults::{JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::ResourceStrategy;

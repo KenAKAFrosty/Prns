@@ -7,7 +7,7 @@ use socket2::{SockRef, TcpKeepalive};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::interfaces::framed_stream;
-use crate::interfaces::tcp::core;
+use crate::interfaces::rns_parity::tcp::core;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;

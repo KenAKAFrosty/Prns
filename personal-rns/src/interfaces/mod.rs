@@ -15,11 +15,7 @@ mod status;
 #[cfg(feature = "tokio-host")]
 pub mod framed_stream;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
-pub mod serial;
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
-pub mod tcp;
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
-pub mod udp;
+pub mod rns_parity;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod usb_auto;
 

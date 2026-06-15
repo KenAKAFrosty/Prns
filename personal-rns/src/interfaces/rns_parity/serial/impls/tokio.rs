@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::interfaces::framed_stream;
-use crate::interfaces::serial::core;
+use crate::interfaces::rns_parity::serial::core;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;

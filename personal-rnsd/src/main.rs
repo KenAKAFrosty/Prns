@@ -30,7 +30,7 @@ use personal_rns::reactor::impls::tokio_reactor::{
 };
 use personal_rns::reactor::impls::tokio_reactor::tokio_grant_lane;
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::serial::impls::tokio::SerialInterface;
+use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;

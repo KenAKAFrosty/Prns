@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use tokio::net::UdpSocket;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::udp::core;
+use crate::interfaces::rns_parity::udp::core;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
