@@ -56,13 +56,14 @@ impl IdentityVault for FileVault {
     ) -> Result<(), Self::Error> {
         self.ensure_dir()?;
         let final_path = self.path_for(label);
-        let staging_path = self
-            .dir
-            .join(format!(".{}.{}.staging", label.as_str(), std::process::id()));
+        let staging_path = self.dir.join(format!(
+            ".{}.{}.staging",
+            label.as_str(),
+            std::process::id()
+        ));
 
-        let staged = stage_secret(&staging_path, secret).and_then(|()| {
-            fs::rename(&staging_path, &final_path).map_err(FileVaultError::from)
-        });
+        let staged = stage_secret(&staging_path, secret)
+            .and_then(|()| fs::rename(&staging_path, &final_path).map_err(FileVaultError::from));
         if staged.is_err() {
             let _ = fs::remove_file(&staging_path);
         }
@@ -148,8 +149,8 @@ mod tests {
         fn new() -> Self {
             static COUNTER: AtomicU32 = AtomicU32::new(0);
             let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir()
-                .join(format!("prns-vault-{}-{}", std::process::id(), unique));
+            let path =
+                std::env::temp_dir().join(format!("prns-vault-{}-{}", std::process::id(), unique));
             Self { path }
         }
     }

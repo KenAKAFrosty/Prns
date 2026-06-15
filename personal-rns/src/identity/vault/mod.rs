@@ -5,6 +5,8 @@ mod impls;
 pub use impls::{
     read_identity_file, FileVault, FileVaultError, HostLoadSource, HostVault, HostVaultError,
 };
+#[cfg(feature = "_keyring-vault")]
+pub use impls::{KeyringVault, KeyringVaultError};
 
 pub type IdentitySecretKey = Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>;
 
@@ -180,7 +182,10 @@ mod tests {
     #[test]
     fn a_label_past_the_ceiling_is_rejected() {
         let too_long = "a".repeat(MAX_IDENTITY_LABEL_LEN + 1);
-        assert_eq!(IdentityLabel::new(&too_long), Err(IdentityLabelError::TooLong));
+        assert_eq!(
+            IdentityLabel::new(&too_long),
+            Err(IdentityLabelError::TooLong)
+        );
         let at_ceiling = "a".repeat(MAX_IDENTITY_LABEL_LEN);
         assert!(IdentityLabel::new(&at_ceiling).is_ok());
     }

@@ -247,8 +247,10 @@ mod tests {
 
     #[test]
     fn with_no_reticulum_present_a_miss_stays_a_miss() {
-        let vault = HostVault::new(MemoryVault::default())
-            .adopting(label("primary"), PathBuf::from("/nonexistent/reticulum/identity"));
+        let vault = HostVault::new(MemoryVault::default()).adopting(
+            label("primary"),
+            PathBuf::from("/nonexistent/reticulum/identity"),
+        );
         assert!(vault.load(&label("primary")).unwrap().is_none());
     }
 

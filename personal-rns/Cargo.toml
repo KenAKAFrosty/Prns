@@ -14,7 +14,10 @@ path = "src/lib.rs"
 
 [features]
 default = ["std", "std-sync-host"]
-alloc = []
+# `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by
+# declaration, not by a dependency happening to unify the feature in — the host
+# identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
+alloc = ["zeroize/alloc"]
 # Place fixed-capacity bulk in a caller-chosen heap region (PSRAM) via a custom
 # `Allocator`: pulls the `allocator_api2` backport and unlocks the allocator-generic
 # `FixedHeap*` columns + the `Esp32S3` prepackage. Off by default — ordinary hosts
@@ -63,6 +66,17 @@ udp = ["tokio-host", "tokio/net"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
+# The host identity vault's OS secret store (`KeyringVault`). Off by default, never
+# built by the core gates; only an opt-in host links it. Pick exactly one Linux
+# secret-service backend: `keyring-zbus` is pure Rust (zbus, no system library, so
+# `cargo build` just works), `keyring-libdbus` links the system libdbus-1 C library
+# (lighter Rust tree, but needs libdbus-1-dev present). macOS Keychain and the Windows
+# Credential Manager ride either backend. There is deliberately no bare `keyring`
+# feature — a feature sharing the dependency's name fuses them and pulls both backends
+# at once; `_keyring-vault` is the internal compile gate the two share, not a knob.
+keyring-zbus = ["_keyring-vault", "keyring/async-secret-service", "keyring/async-io"]
+keyring-libdbus = ["_keyring-vault", "keyring/sync-secret-service"]
+_keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-native", "keyring/windows-native"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -142,6 +156,13 @@ log = { version = "0.4", optional = true, default-features = false }
 # u32's 4 GiB. portable-atomic emulates them through critical-section (esp-hal supplies the
 # impl in the firmware binary; native on the host), keeping the counters true u64.
 portable-atomic = { version = "1", optional = true, default-features = false, features = ["critical-section"] }
+
+# OS secret store for the host identity vault (under `keyring`): the platform's
+# own credential manager — Secret Service / kwallet on Linux, Keychain on macOS,
+# Credential Manager on Windows — so a host's private key rests where the OS
+# guards it rather than in a plain file. Off by default and never built by the
+# core gates; only an opt-in host pulls the dbus/security-framework tree.
+keyring = { version = "3", optional = true, default-features = false }
 
 [dev-dependencies]
 proptest = "1"
