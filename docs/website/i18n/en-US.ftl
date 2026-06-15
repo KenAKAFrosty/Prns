@@ -8,14 +8,18 @@ footer-tagline = Brought to you by the Personal team.
 
 # Landing
 # `landing-kicker` is the full eyebrow, used as-is by every non-English locale.
-# en-US renders an animated variant: `landing-kicker-prefix` followed by a
-# final word that rotates (developers → builders → tinkerers) and rests on
-# "people". The rotating words live in src/pages/landing.rs (English-only, since
-# the trick is word-order specific).
-landing-kicker = Unstoppable mesh networks for the people
-landing-kicker-prefix = Unstoppable mesh networks for the
+# en-US renders an animated variant: `landing-kicker-prefix` followed by a final
+# word that rotates through several qualities and rests on "yours". The rotating
+# words live in src/pages/landing.rs (English-only, since the trick is word-order
+# specific).
+landing-kicker = Mesh networking that's yours
+landing-kicker-prefix = Mesh networking that's
 landing-title = A production-grade port of Reticulum (RNS) written in safe Rust.
-landing-subtitle = A deterministic, no_std, alloc-free core. Built for the performance and stability every Reticulum node needs, from a five-dollar microcontroller to a cloud server.
+# en-US renders the title on two lines, the second ("written in safe Rust.") in
+# the accent green, matching the OG card. Other locales use landing-title as-is.
+landing-title-lead = A production-grade port of Reticulum (RNS)
+landing-title-accent = written in safe Rust.
+landing-subtitle = Built for the performance and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Pick a crate
 landing-cta-contributing = Contributing
 

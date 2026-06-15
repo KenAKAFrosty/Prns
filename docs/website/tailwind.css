@@ -124,8 +124,8 @@ html, body {
 .prose th:first-child, .prose td:first-child { color: var(--color-paper); }
 .prose td img, .prose th img { display: inline-block; vertical-align: -3px; margin-right: 0.15em; }
 
-/* Landing eyebrow: the last word rotates on load (developers → builders →
-   tinkerers → makers) and rests on "people", which then draws an underline.
+/* Landing eyebrow: the last word rotates on load (unstoppable → uncensorable →
+   resilient → private) and rests on "yours", which then draws an underline.
    One-shot. A 1rem window sits inline with the surrounding all-caps text; the
    stacked word list (1.4rem steps) scrolls up through it. */
 .kicker-rotator {
@@ -156,14 +156,14 @@ html, body {
     height: 1rem;
     overflow: hidden;
 }
-/* translateY(-7rem) is the resting state as a real static transform; the
+/* translateY(-11.2rem) is the resting state as a real static transform; the
    animation fills `backwards` so it governs only the 0.5s lead-in and the run,
    then hands back to this static value. Relying on forwards-fill alone left
    Safari holding the end frame on a stale layer — a second source of float. */
 .kicker-rotator__list {
     display: block;
-    transform: translateY(-7rem);
-    animation: kicker-rotate 5.5s cubic-bezier(0.65, 0, 0.35, 1) 0.5s 1 backwards;
+    transform: translateY(-11.2rem);
+    animation: kicker-rotate 6.3s cubic-bezier(0.65, 0, 0.35, 1) 0.5s 1 backwards;
 }
 .kicker-rotator__word {
     display: block;
@@ -178,8 +178,10 @@ html, body {
 /* The underline under the resting word. A sibling of the window (so its
    overflow:hidden never clips it), placed just below the 1rem slot. It carries
    the resting word's text (transparent, zero-height) only to size itself to
-   "people" — narrower than the widest rotated word — then draws a bar. Fires a
-   comfortable beat after the word lands (~5.45s in: 0.5s delay + 0.90 * 5.5s). */
+   "yours" — narrower than the widest rotated word — then draws a bar. Fires a
+   comfortable beat after the word lands (~6.04s in: 0.5s delay + 0.88 * 6.3s).
+   The -2px/2px nudge below was measured for "people"; re-eyeball it if the
+   resting word changes. */
 .kicker-rotator__rule {
     position: absolute;
     left: 0;
@@ -202,18 +204,21 @@ html, body {
     background: var(--color-accent);
     transform: scaleX(0);
     transform-origin: left;
-    animation: kicker-underline 0.55s cubic-bezier(0.16, 1, 0.3, 1) 5.9s forwards;
+    animation: kicker-underline 0.55s cubic-bezier(0.16, 1, 0.3, 1) 6.5s forwards;
 }
 @keyframes kicker-underline {
     to { transform: scaleX(1); }
 }
 @keyframes kicker-rotate {
-    0%, 10%   { transform: translateY(0); }
-    18%, 28%  { transform: translateY(-1.4rem); }
-    36%, 46%  { transform: translateY(-2.8rem); }
-    54%, 64%  { transform: translateY(-4.2rem); }
-    72%, 82%  { transform: translateY(-5.6rem); }
-    90%, 100% { transform: translateY(-7rem); }
+    0%, 7%    { transform: translateY(0); }
+    11%, 18%  { transform: translateY(-1.4rem); }
+    22%, 29%  { transform: translateY(-2.8rem); }
+    33%, 40%  { transform: translateY(-4.2rem); }
+    44%, 51%  { transform: translateY(-5.6rem); }
+    55%, 62%  { transform: translateY(-7rem); }
+    66%, 73%  { transform: translateY(-8.4rem); }
+    77%, 84%  { transform: translateY(-9.8rem); }
+    88%, 100% { transform: translateY(-11.2rem); }
 }
 /* Honor reduced-motion: skip the reveal. Resting word + static underline.
    The list keeps its base translateY(-7rem); only the animations are dropped. */

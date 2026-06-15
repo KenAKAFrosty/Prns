@@ -7,30 +7,33 @@ use crate::components::PlatformChip;
 use crate::platforms::PLATFORMS;
 use crate::routes::Route;
 
-/// The eyebrow's last word animates. It opens on "people" (plain), rotates
-/// through developers, builders, tinkerers, makers, then rests back on "people"
-/// (underlined). The first and last entries are both "people" on purpose.
+/// The eyebrow's last word animates. It opens on "yours" (plain), rotates
+/// through seven qualities, then rests back on "yours" (underlined). The first
+/// and last entries are both "yours" on purpose.
 ///
 /// Coupled to the `kicker-rotate` keyframes in tailwind.css, authored for
 /// exactly this many words (one 1.4rem step each, resting on the last). If you
 /// add or remove a word, update the keyframe stops, the list's base
 /// `transform: translateY(...)`, and the underline delay there (then rebuild
 /// the compiled public/assets/tailwind.css with `npm run build:css`).
-const KICKER_WORDS: &[&str] = &["people", "developers", "builders", "tinkerers", "makers", "people"];
+const KICKER_WORDS: &[&str] = &[
+    "yours", "resilient", "fast", "open", "everywhere", "unstoppable",
+    "off-grid", "private", "yours",
+];
 
 #[component]
 pub fn Landing() -> Element {
-    // The rotating-last-word eyebrow only makes sense in English: other locales
-    // word the phrase differently (some lead with "for everyone"), and the
-    // rotating words themselves are English. Everyone else gets the plain kicker.
+    // Two bits of the hero are English-only: the rotating-last-word eyebrow and
+    // the green "written in safe Rust" second line of the title. Other locales
+    // word both phrases differently, so they get the plain kicker and title.
     let i18n = i18n();
-    let rotate_kicker = i18n.language() == langid!("en-US");
-    let resting_word = KICKER_WORDS.last().copied().unwrap_or("people");
+    let is_english = i18n.language() == langid!("en-US");
+    let resting_word = KICKER_WORDS.last().copied().unwrap_or("yours");
 
     rsx! {
         section { class: "pt-8 pb-20",
             p { class: "text-xs font-semibold tracking-[0.22em] uppercase text-accent",
-                if rotate_kicker {
+                if is_english {
                     {t!("landing-kicker-prefix")}
                     " "
                     span { class: "kicker-rotator", "aria-hidden": "true",
@@ -55,7 +58,13 @@ pub fn Landing() -> Element {
                 }
             }
             h1 { class: "mt-4 text-4xl md:text-5xl font-semibold tracking-tight text-paper leading-[1.08]",
-                {t!("landing-title")}
+                if is_english {
+                    {t!("landing-title-lead")}
+                    br {}
+                    span { class: "text-accent", {t!("landing-title-accent")} }
+                } else {
+                    {t!("landing-title")}
+                }
             }
             p { class: "mt-6 text-lg text-soft max-w-2xl leading-relaxed",
                 {t!("landing-subtitle")}
