@@ -12,7 +12,6 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::reactor::interface_seam::Interface;
 use personal_rns::reactor::interfaces::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
@@ -45,7 +44,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let dest_a = single_a.address();
 
     // Node A: a TCP server + a Single it will announce.
-    let (mut bind_a, commands_a) = TokioBind::<GrowableHeap>::new(TokioHost::new());
+    let (mut bind_a, commands_a) = TokioBind::<GrowableHeap>::new();
     let server = TcpServerInterface::bind(InterfaceId::new([0xA0; 16]), "127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -62,7 +61,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     ));
 
     // Node B: a TCP client to A; reports any announce it hears through the curated event lane.
-    let (mut bind_b, _commands_b) = TokioBind::<GrowableHeap>::new(TokioHost::new());
+    let (mut bind_b, _commands_b) = TokioBind::<GrowableHeap>::new();
     let client = TcpClientInterface::new(
         InterfaceId::new([0xB0; 16]),
         addr,

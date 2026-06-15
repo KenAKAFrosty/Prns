@@ -16,7 +16,6 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::TokioHost;
 use personal_rns::reactor::interface_seam::Interface;
 use personal_rns::reactor::interfaces::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
@@ -78,7 +77,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     let dest_a = responder_dest.address();
 
     // Responder node: a TCP server plus the router-backed Single it answers requests on.
-    let (mut bind_a, commands_a) = TokioBind::<GrowableHeap>::new(TokioHost::new());
+    let (mut bind_a, commands_a) = TokioBind::<GrowableHeap>::new();
     let server = TcpServerInterface::bind(InterfaceId::new([0xA0; 16]), "127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
@@ -115,7 +114,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         ratchet: RatchetPolicy::NoRatchets,
         request_handlers: &[],
     };
-    let (mut bind_b, commands_b) = TokioBind::<GrowableHeap>::new(TokioHost::new());
+    let (mut bind_b, commands_b) = TokioBind::<GrowableHeap>::new();
     let client = TcpClientInterface::new(
         InterfaceId::new([0xB0; 16]),
         addr,

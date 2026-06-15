@@ -604,7 +604,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     };
     let destination = single.address();
 
-    let (mut bind, commands) = TokioBind::<NodeStorage>::new(TokioHost::new());
+    let (mut bind, commands) = TokioBind::<NodeStorage>::new();
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
     let on_event = move |event: PrnsEvent<'_>| {

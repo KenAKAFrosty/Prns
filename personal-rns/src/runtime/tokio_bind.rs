@@ -183,8 +183,11 @@ pub struct TokioBind<S: StorageLayout> {
 }
 
 impl<S: StorageLayout> TokioBind<S> {
-    /// Build an empty binding on `host`, returning it alongside the command handle the app keeps.
-    pub fn new(host: TokioHost) -> (Self, TokioCommands) {
+    pub fn new() -> (Self, TokioCommands) {
+        Self::with_host(TokioHost::new())
+    }
+
+    pub fn with_host(host: TokioHost) -> (Self, TokioCommands) {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         (
