@@ -27,7 +27,7 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{Bind, PrnsEvent, Responder, SendError};
+use super::{Bind, PrnsEvent, RespondToken, SendError};
 
 const LANE_DEPTH: usize = 64;
 
@@ -110,7 +110,7 @@ impl TokioCommands {
         settled.await.ok()
     }
 
-    fn send_response(&self, responder: Responder, data: HostResourcePayload) -> bool {
+    fn send_response(&self, responder: RespondToken, data: HostResourcePayload) -> bool {
         let id = self.mint();
         self.commands
             .send(HostCommand::RespondAny(RespondAnyHostCommand {
@@ -125,17 +125,17 @@ impl TokioCommands {
 
     /// Answer a request with `body` of any length: the engine picks the rung — a single RESPONSE
     /// packet when it fits the link MDU, an outgoing resource named back to the request when it
-    /// doesn't. This is the app's defer path — keep the [`Responder`] a handler hands back when it
-    /// returns `Err(Decline::Drop)` and answer later, off the runner's task. `body` is copied; when
+    /// doesn't. This is the app's defer path — keep the [`RespondToken`] a handler hands back when it
+    /// returns `Err(Decline::Ignore)` and answer later, off the runner's task. `body` is copied; when
     /// you already own the bytes, [`respond_owned`](Self::respond_owned) moves them. Returns `false`
     /// once the node has stopped and the channel is closed.
-    pub fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         self.send_response(responder, body.to_vec().into())
     }
 
     /// Answer with an owned `body` — the request runner's path: the filled grant moves straight into
     /// the response with no copy. Same auto-upgrade and id discipline as [`respond`](Self::respond).
-    pub fn respond_owned(&self, responder: Responder, body: std::vec::Vec<u8>) -> bool {
+    pub fn respond_owned(&self, responder: RespondToken, body: std::vec::Vec<u8>) -> bool {
         self.send_response(responder, body.into())
     }
 
@@ -161,7 +161,7 @@ impl super::Commands for TokioCommands {
         self.send_single(destination, data).await
     }
 
-    fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         self.respond(responder, body)
     }
 

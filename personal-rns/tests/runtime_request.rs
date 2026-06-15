@@ -25,8 +25,8 @@ use personal_rns::routes;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Decline, Diagnostic, Message, Prns, PrnsEvent, Recipe, RequestCx, RequestRoute, RoutePolicy,
-    Router, StartingDestination, TokioBind,
+    Decline, Diagnostic, Message, Prns, PrnsEvent, Recipe, RequestContext, RequestRoute,
+    RoutePolicy, Router, StartingDestination, TokioBind,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
@@ -47,7 +47,7 @@ struct Echo;
 impl RequestRoute<Responder> for Echo {
     const PATH: &'static str = QUERY_PATH;
     const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-    async fn handle(mut cx: RequestCx<'_, Responder>) -> Result<(), Decline> {
+    async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
         let asked = cx.data;
         cx.write(asked);
         cx.respond(b"-pong")

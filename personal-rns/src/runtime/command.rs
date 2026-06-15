@@ -8,7 +8,7 @@ use crate::engine::{CommandId, Delivered, EngineCommand, SendSingleFailure};
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
-use super::Responder;
+use super::RespondToken;
 
 /// Why an awaited send never reached `Delivered`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +49,7 @@ pub trait Commands {
 
     /// Answer a request with `body`. Returns `false` once the node has stopped (or, on embedded, if
     /// `body` exceeds the single-packet MDU the inline responder can carry).
-    fn respond(&self, responder: Responder, body: &[u8]) -> bool;
+    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool;
 
     /// Sever an active link. Returns `false` once the node has stopped.
     fn close_link(&self, link_id: LinkId) -> bool;

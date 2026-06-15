@@ -32,7 +32,7 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{Bind, PrnsEvent, Responder, SendError};
+use super::{Bind, PrnsEvent, RespondToken, SendError};
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
@@ -197,7 +197,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     /// Answer a request with `body` as a single RESPONSE packet — the request runner's path. Embedded
     /// responds inline, so a `body` past the link MDU is refused here (returns `false`); the host
     /// auto-upgrades to a resource instead.
-    pub fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         match RespondData::from_slice(body) {
             Ok(data) => self.respond_owned(responder, data),
             Err(_) => false,
@@ -207,7 +207,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     /// Answer a request by moving a prebuilt [`RespondData`] in — the request runner's path, one copy
     /// fewer than [`respond`](Self::respond) since the handler already filled a `RespondData` grant.
     /// Returns `false` once the command lane is full. The embedded twin of `TokioCommands::respond_owned`.
-    pub fn respond_owned(&self, responder: Responder, data: RespondData) -> bool {
+    pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,
             request_id: responder.request_id,
@@ -252,7 +252,7 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::Commands
         self.send_single(destination, data).await
     }
 
-    fn respond(&self, responder: Responder, body: &[u8]) -> bool {
+    fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         self.respond(responder, body)
     }
 

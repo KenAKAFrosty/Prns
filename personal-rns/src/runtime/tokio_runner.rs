@@ -84,13 +84,13 @@ where
         request.requested_at,
         &request.data,
     );
-    let responder = inbound.responder();
+    let responder = inbound.respond_token();
     let mut body = std::vec::Vec::new();
     match router.dispatch(request.path_hash, inbound, &mut body).await {
         Ok(()) => {
             commands.respond_owned(responder, body);
         }
-        Err(Decline::Drop) => {}
+        Err(Decline::Ignore) => {}
         Err(Decline::CloseLink) => {
             commands.close_link(responder.link_id);
         }
@@ -142,7 +142,7 @@ impl Prns {
 mod tests {
     use super::*;
     use crate::reactor::impls::tokio_reactor::HostCommand;
-    use crate::runtime::{RequestCx, RequestRoute, RoutePolicy};
+    use crate::runtime::{RequestContext, RequestRoute, RoutePolicy};
 
     struct App {
         body: &'static [u8],
@@ -152,7 +152,7 @@ mod tests {
     impl RequestRoute<App> for Echo {
         const PATH: &'static str = "/echo";
         const POLICY: RoutePolicy = RoutePolicy::AllowAll;
-        async fn handle(mut cx: RequestCx<'_, App>) -> Result<(), Decline> {
+        async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
             let body = cx.state.body;
             cx.respond(body)
         }
