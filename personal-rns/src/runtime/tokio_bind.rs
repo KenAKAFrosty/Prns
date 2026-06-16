@@ -10,8 +10,9 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, SendSingle,
-    SendSingleFailure, SendSinglePayload, Settlement,
+    CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
+    EstablishLinkFailure, IssuedCommand, SendSingle, SendSingleFailure, SendSinglePayload,
+    Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
@@ -94,6 +95,25 @@ impl PrnsHandle {
             .await
         {
             Some(Settlement::SendSingle(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    /// Bring a link up to `destination` and await it — `Ok(LinkId)` once the peer's proof validates,
+    /// or the typed reason it never established. This is the initiator's counterpart to learning an
+    /// inbound link from the event stream: the id it resolves is the handle every link-scoped verb
+    /// takes — open a byte stream, send a channel message, or make a request over it.
+    pub async fn establish_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        match self
+            .settle(EngineCommand::EstablishLink(EstablishLink { destination }))
+            .await
+        {
+            Some(Settlement::EstablishLink(result)) => result
+                .map(|established| established.link_id)
+                .map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }
@@ -622,6 +642,13 @@ where
         self.handle.send_single(destination, data).await
     }
 
+    pub async fn establish_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.handle.establish_link(destination).await
+    }
+
     pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
         self.handle.respond(responder, body)
     }
@@ -746,6 +773,59 @@ mod tests {
             Ok(Delivered {
                 rtt: crate::units::Rtt::from_millis(7),
             }),
+        );
+    }
+
+    #[tokio::test]
+    async fn establish_link_resolves_the_link_id_from_the_settlement() {
+        use crate::engine::LinkEstablished;
+
+        let (prns, mut command_rx) = handle();
+        let issuer = prns.clone();
+        let establish = tokio::spawn(async move { issuer.establish_link(PEER).await });
+
+        match command_rx.recv().await.expect("the command was issued") {
+            HostCommand::AwaitedEngine { issued, completion } => {
+                assert_eq!(
+                    issued.command,
+                    EngineCommand::EstablishLink(EstablishLink { destination: PEER }),
+                );
+                completion
+                    .send(Settlement::EstablishLink(Ok(LinkEstablished {
+                        link_id: LinkId::new([0x42; 16]),
+                        rtt_ms: 11,
+                    })))
+                    .expect("the awaiter is still parked");
+            }
+            _ => panic!("establish_link must issue an AwaitedEngine command"),
+        }
+
+        assert_eq!(
+            establish.await.expect("the establish task joins"),
+            Ok(LinkId::new([0x42; 16])),
+        );
+    }
+
+    #[tokio::test]
+    async fn establish_link_surfaces_a_typed_failure() {
+        let (prns, mut command_rx) = handle();
+        let issuer = prns.clone();
+        let establish = tokio::spawn(async move { issuer.establish_link(PEER).await });
+
+        let HostCommand::AwaitedEngine { completion, .. } =
+            command_rx.recv().await.expect("the command was issued")
+        else {
+            panic!("establish_link must issue an AwaitedEngine command");
+        };
+        completion
+            .send(Settlement::EstablishLink(Err(
+                EstablishLinkFailure::Timeout,
+            )))
+            .expect("the awaiter is still parked");
+
+        assert_eq!(
+            establish.await.expect("the establish task joins"),
+            Err(SendError::Failed(EstablishLinkFailure::Timeout)),
         );
     }
 
