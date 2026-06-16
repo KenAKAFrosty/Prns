@@ -1000,10 +1000,14 @@ mod tests {
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
 
         // Each interface's "wire" (the medium), grant lanes like everything else.
-        let (mut source_wire_in_tx, source_wire_in_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
-        let (source_wire_out_tx, _source_wire_out_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
-        let (_peer_wire_in_tx, peer_wire_in_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
-        let (peer_wire_out_tx, mut peer_wire_out_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (mut source_wire_in_tx, source_wire_in_rx) =
+            leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (source_wire_out_tx, _source_wire_out_rx) =
+            leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (_peer_wire_in_tx, peer_wire_in_rx) =
+            leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (peer_wire_out_tx, mut peer_wire_out_rx) =
+            leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
 
         // The grant lanes are deliberately sized apart: erasure carries both
         // through one reactor, each paying only its own slot size.

@@ -227,17 +227,12 @@ impl InterfaceSeam for TokioInterfaceSeam {
 /// interface's outbound queue. The senders are cheap clones, so `enqueue` is `&self`
 /// and the copy-into-frame is synchronous — exactly what the lent-buffer borrow demands.
 pub struct Egress {
-    lanes: std::vec::Vec<(
-        InterfaceId,
-        std::sync::Mutex<TokioGrantProducer>,
-    )>,
+    lanes: std::vec::Vec<(InterfaceId, std::sync::Mutex<TokioGrantProducer>)>,
 }
 
 impl Egress {
     #[must_use]
-    pub fn new(
-        lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
-    ) -> Self {
+    pub fn new(lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>) -> Self {
         Self {
             lanes: lanes
                 .into_iter()
