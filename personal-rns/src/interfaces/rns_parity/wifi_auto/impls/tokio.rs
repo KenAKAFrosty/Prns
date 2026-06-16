@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -10,7 +11,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::wifi_auto::core;
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceStatus};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -109,26 +110,123 @@ impl Interface for AutoWifiPeer {
 /// `handle.supervise(AutoWifi::new())`.
 pub struct AutoWifi {
     bitrate_bps: u32,
+    status: AutoWifiStatus,
 }
 
 impl AutoWifi {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            bitrate_bps: core::WIFI_BITRATE_GUESS_BPS,
-        }
+        Self::with_bitrate(core::WIFI_BITRATE_GUESS_BPS)
     }
 
     /// Declare a known pipe instead of RNS's 10 Mbps guess; sets the members' announce pacing.
     #[must_use]
     pub fn with_bitrate(bitrate_bps: u32) -> Self {
-        Self { bitrate_bps }
+        Self {
+            bitrate_bps,
+            status: AutoWifiStatus::new(InterfaceId::mint()),
+        }
+    }
+
+    /// A clone of this supervisor's aggregate live-status handle: connection (Offline with no NIC,
+    /// Dormant when up with no peers, Live with peers), summed traffic, and peer count, plus a
+    /// snapshot of each member's own status through [`members`](AutoWifiStatus::members). Call before
+    /// [`supervise`](crate::runtime::PrnsHandle::supervise) consumes the supervisor.
+    #[must_use]
+    pub fn status(&self) -> AutoWifiStatus {
+        self.status.clone()
     }
 }
 
 impl Default for AutoWifi {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The WiFi/LAN auto-interface's aggregate live status, an [`InterfaceStatus`] over the whole
+/// supervisor: the app renders it as one "WiFi" card whose [`connection`](InterfaceStatus::connection)
+/// is Offline (no NIC) / Dormant (up, no peers) / Live (peers), whose bytes are the sum across the
+/// fleet, and whose [`links`](InterfaceStatus::links) is the confirmed-peer count. Each member also
+/// keeps its own [`TokioInterfaceStatus`], exposed through [`members`](Self::members) so a face can
+/// render the peers as ordinary interface cards beside the aggregate.
+#[derive(Clone)]
+pub struct AutoWifiStatus {
+    shared: Arc<AutoWifiShared>,
+}
+
+struct AutoWifiShared {
+    id: InterfaceId,
+    up: AtomicBool,
+    peers: AtomicU32,
+    rx: AtomicU64,
+    tx: AtomicU64,
+    members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
+}
+
+impl AutoWifiStatus {
+    fn new(id: InterfaceId) -> Self {
+        Self {
+            shared: Arc::new(AutoWifiShared {
+                id,
+                up: AtomicBool::new(false),
+                peers: AtomicU32::new(0),
+                rx: AtomicU64::new(0),
+                tx: AtomicU64::new(0),
+                members: Mutex::new(std::vec::Vec::new()),
+            }),
+        }
+    }
+
+    fn mark_up(&self) {
+        self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    fn publish(&self, peers: u32, rx: u64, tx: u64, members: std::vec::Vec<TokioInterfaceStatus>) {
+        self.shared.peers.store(peers, Ordering::Relaxed);
+        self.shared.rx.store(rx, Ordering::Relaxed);
+        self.shared.tx.store(tx, Ordering::Relaxed);
+        if let Ok(mut slot) = self.shared.members.lock() {
+            *slot = members;
+        }
+    }
+
+    /// A snapshot of each confirmed peer's own live status, for rendering the members as ordinary
+    /// interface cards. Cheap: each handle is an `Arc` clone.
+    #[must_use]
+    pub fn members(&self) -> std::vec::Vec<TokioInterfaceStatus> {
+        match self.shared.members.lock() {
+            Ok(members) => members.clone(),
+            Err(_) => std::vec::Vec::new(),
+        }
+    }
+}
+
+impl InterfaceStatus for AutoWifiStatus {
+    fn id(&self) -> InterfaceId {
+        self.shared.id
+    }
+
+    fn connection(&self) -> ConnectionState {
+        if !self.shared.up.load(Ordering::Relaxed) {
+            ConnectionState::Failed
+        } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
+            ConnectionState::Connected
+        } else {
+            ConnectionState::Disconnected
+        }
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        self.shared.rx.load(Ordering::Relaxed)
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        self.shared.tx.load(Ordering::Relaxed)
+    }
+
+    fn links(&self) -> u32 {
+        self.shared.peers.load(Ordering::Relaxed)
     }
 }
 
@@ -143,6 +241,7 @@ impl InterfaceSupervisor for AutoWifi {
         else {
             return;
         };
+        self.status.mark_up();
 
         let mut sup = Supervisor {
             brain: core::AutoInterfaceProtocol::from_link_local(nic.link_local),
@@ -151,7 +250,9 @@ impl InterfaceSupervisor for AutoWifi {
             data: data.clone(),
             index: nic.index,
             bitrate_bps: self.bitrate_bps,
+            status: self.status,
         };
+        sup.publish_status();
         let token = *sup.brain.our_peering_token().as_bytes();
 
         let started = tokio::time::Instant::now();
@@ -194,6 +295,7 @@ impl InterfaceSupervisor for AutoWifi {
                     }
                     let now_ms = started.elapsed().as_millis() as u64;
                     sup.retire_stale(now_ms);
+                    sup.publish_status();
                 }
             }
         }
@@ -203,6 +305,7 @@ impl InterfaceSupervisor for AutoWifi {
 struct PeerMember {
     attached: AttachedInterface,
     inbound: UnboundedSender<std::vec::Vec<u8>>,
+    status: TokioInterfaceStatus,
 }
 
 struct Supervisor {
@@ -212,6 +315,7 @@ struct Supervisor {
     data: Arc<UdpSocket>,
     index: u32,
     bitrate_bps: u32,
+    status: AutoWifiStatus,
 }
 
 impl Supervisor {
@@ -232,14 +336,28 @@ impl Supervisor {
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
         let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, self.index);
         let member = AutoWifiPeer::new(id, self.data.clone(), peer, inbound_rx, self.bitrate_bps);
+        let status = member.status();
         let attached = self.fleet.add(member);
         self.members.insert(
             addr,
             PeerMember {
                 attached,
                 inbound: inbound_tx,
+                status,
             },
         );
+        self.publish_status();
+    }
+
+    fn publish_status(&self) {
+        let members: std::vec::Vec<TokioInterfaceStatus> = self
+            .members
+            .values()
+            .map(|member| member.status.clone())
+            .collect();
+        let rx = members.iter().map(InterfaceStatus::rx_bytes).sum();
+        let tx = members.iter().map(InterfaceStatus::tx_bytes).sum();
+        self.status.publish(members.len() as u32, rx, tx, members);
     }
 
     fn route_inbound(&self, src: SocketAddr, bytes: &[u8]) {
@@ -272,6 +390,7 @@ impl Supervisor {
                 member.attached.teardown();
             }
         }
+        self.publish_status();
     }
 }
 

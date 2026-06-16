@@ -9,4 +9,4 @@ pub mod core;
 pub mod impls;
 
 #[cfg(feature = "wifi-lan-auto")]
-pub use impls::tokio::{AutoWifi, AutoWifiPeer};
+pub use impls::tokio::{AutoWifi, AutoWifiPeer, AutoWifiStatus};

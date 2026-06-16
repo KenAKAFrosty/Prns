@@ -36,6 +36,13 @@ pub trait InterfaceStatus {
     fn transfer_rates(&self) -> Option<TransferRates> {
         None
     }
+
+    /// The number of live links this interface stands for, `0` until a source publishes it. A
+    /// supervisor reports its confirmed-peer count here, so its one aggregate card can show the
+    /// size of the fleet it is running without listing each member.
+    fn links(&self) -> u32 {
+        0
+    }
 }
 
 /// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the
@@ -64,5 +71,9 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn transfer_rates(&self) -> Option<TransferRates> {
         (**self).transfer_rates()
+    }
+
+    fn links(&self) -> u32 {
+        (**self).links()
     }
 }
