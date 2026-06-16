@@ -1,16 +1,18 @@
-//! The Linux debug face of the Personal Hopspot — one of the app's two targets.
+//! The desktop face of the Personal Hopspot — one of the app's two targets.
 //!
-//! Runs the *same* announcing engine the S3 firmware does — here on the async reactor, over the
-//! plug-and-play USB-auto interface that discovers and multiplexes every Personal board on a CDC
-//! port — and renders the *same* Hopspot status screen the OLED shows, in an
-//! `embedded-graphics-simulator` window. Run `cargo desktop`, plug in a Personal board, and watch
-//! the cards tick as announces cross the link.
+//! Runs the *same* announcing engine the S3 firmware does, here on the high-level [`Prns`]
+//! runtime: the recipe stands up the `lxmf.delivery` destination and the transport role, then the
+//! app attaches the plug-and-play USB-auto interface (every Personal board on a CDC port) and
+//! supervises the WiFi/LAN auto-interface (every Personal node on the same WiFi). It renders the
+//! *same* Hopspot status screen the OLED shows — a card per interface, the WiFi supervisor's
+//! aggregate plus a card per peer it stands up — in an `embedded-graphics-simulator` window. Run
+//! `cargo desktop`, plug in a board or join a peer, and watch the cards tick as announces cross.
 //!
-//! The reactor runs on its own thread inside a tokio runtime; the SDL2 window owns the main
-//! thread (SDL requires it) and repaints the interface's live status handle at ~30 fps — read
-//! straight off the interface, never laundered through the engine.
+//! The node runs on its own thread inside a tokio runtime; the SDL2 window owns the main thread
+//! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps — read straight
+//! off each interface, never laundered through the engine.
 
-use std::cell::Cell;
+use std::collections::HashMap;
 use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
@@ -24,23 +26,23 @@ use embedded_graphics_simulator::{
 use heapless::Vec as HVec;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    IssuedCommand, Journaled, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
-use personal_rns::reactor::impls::tokio_reactor::{
-    run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
-    TokioInterfaceStatus,
-};
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
+use personal_rns::runtime::{
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsHandle, PrnsRecipe,
+};
 use personal_rns::storage::GrowableHeap;
-use personal_rns::wire::DestinationHash;
+use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::{interfaces, routes};
 use serialport::SerialPort;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::Notify;
 use tokio_serial::{SerialPortBuilderExt, SerialStream};
 
@@ -70,7 +72,7 @@ const FRAME: Duration = Duration::from_millis(33);
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
 /// This node's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
-/// keys). Handed to the engine through a [`Zeroizing`] buffer so it is wiped from this stack
+/// keys). Handed to the recipe through a [`Zeroizing`] buffer so it is wiped from this stack
 /// frame once construction copies it in.
 fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
@@ -92,116 +94,111 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn interface_label(id: InterfaceId) -> &'static str {
-    if id == USB_INTERFACE_ID {
-        "USB"
-    } else {
-        "Unknown"
-    }
-}
-
-fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
+/// The card icon and label for an interface id: the fixed USB interface, the WiFi supervisor's
+/// aggregate, or one of its peers. Returning `None` would drop the card; every id we render maps.
+fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKind, &'static str)> {
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, "USB"))
+    } else if id == wifi_id {
+        Some((CardKind::Wifi, "WiFi"))
     } else {
-        None
+        Some((CardKind::Wifi, "Peer"))
     }
 }
 
-/// What the engine thread hands the window once the reactor is assembled: the command lane the
-/// UI issues announces on, the live status handle it renders, and the destination its announces
-/// name. The reactor owns everything else.
-struct EngineHandles {
-    command_tx: UnboundedSender<IssuedCommand>,
-    status: TokioInterfaceStatus,
+/// What the node thread hands the window once the runtime is assembled: a command handle to issue
+/// announces on, the two live status handles it renders (the USB interface and the WiFi
+/// supervisor's aggregate, the latter also yielding a card per peer), and the destination its
+/// announces name. The node owns everything else.
+struct WindowHandles {
+    handle: PrnsHandle,
+    usb_status: TokioInterfaceStatus,
+    wifi_status: AutoWifiStatus,
     destination: DestinationHash,
 }
 
-/// Spawn the reactor on its own thread, then own the SDL2 window on this (the main) thread: SDL
-/// requires it. The engine thread hands the window its command lane and status handle back
-/// before the reactor starts running.
+/// Spawn the node on its own thread, then own the SDL2 window on this (the main) thread: SDL
+/// requires it. The node thread hands the window its command handle and status handles back
+/// before the runtime starts running.
 pub fn run() {
     let identity_secret_key = load_identity_secret_key();
 
-    let (ready_tx, ready_rx) = mpsc::channel::<EngineHandles>();
+    let (ready_tx, ready_rx) = mpsc::channel::<WindowHandles>();
     std::thread::Builder::new()
-        .name("hopspot-engine".into())
-        .spawn(move || run_engine(ready_tx, identity_secret_key))
-        .expect("spawn engine thread");
+        .name("hopspot-node".into())
+        .spawn(move || run_node(ready_tx, identity_secret_key))
+        .expect("spawn node thread");
 
     let handles = ready_rx
         .recv()
-        .expect("the engine hands the window its handles before the reactor runs");
+        .expect("the node hands the window its handles before the runtime runs");
     run_window(handles);
 }
 
-fn run_engine(
-    ready_tx: Sender<EngineHandles>,
+fn run_node(
+    ready_tx: Sender<WindowHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
 ) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("the engine thread builds its tokio runtime");
+        .expect("the node thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let mut engine = EngineState::<GrowableHeap>::new(identity_secret_key);
-        let node = engine.held_identity_hashes()[0];
-        engine
-            .set_transport_identity(&node)
-            .expect("the held identity takes the transport role");
-        let destination = engine
-            .register_single_destination(
-                &node,
-                ANNOUNCE_APP_NAME,
-                ANNOUNCE_ASPECTS,
-                ANNOUNCE_APP_DATA,
-                ProofStrategy::ProveAll,
-                RatchetPolicy::Ratcheted,
-            )
-            .expect("registers the lxmf.delivery destination");
+        let transport_id = {
+            let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key);
+            TransportId::new(*signer.identity_hash().as_bytes())
+        };
 
-        let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
-        let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
-        let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let announce_destination = PreConfiguredDestination::Single {
+            app_name: ANNOUNCE_APP_NAME,
+            aspects: ANNOUNCE_ASPECTS,
+            identity: identity_secret_key,
+            announce_app_data: ANNOUNCE_APP_DATA,
+            proof: ProofStrategy::ProveAll,
+            ratchet: RatchetPolicy::Ratcheted,
+        };
+        let destination = announce_destination
+            .destination_hash()
+            .expect("the lxmf.delivery name is valid");
 
-        let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
+        let node = Prns::new(PrnsRecipe {
+            transport: Some(transport_id),
+            pre_configured_destinations: [announce_destination],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: routes![],
+            interfaces: interfaces![],
+            on_event: |event, _state: &()| log_event(event),
+        });
+        let handle = node.handle();
 
         let rescan = Arc::new(Notify::new());
-        let interface = UsbAutoHost::new(
+        let usb = UsbAutoHost::new(
             USB_INTERFACE_ID,
             scan_cdc_ports,
             open_cdc_port,
             rescan.clone(),
         );
-        let status = interface.status();
-        let interfaces = std::vec![interface.descriptor()];
-        let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, notify_tx, outbound_rx);
-
-        let _ = ready_tx.send(EngineHandles {
-            command_tx: command_tx.clone(),
-            status,
-            destination,
-        });
+        let usb_status = usb.status();
+        handle.add_interface(usb);
 
         #[cfg(target_os = "linux")]
         spawn_hotplug_watcher(rescan.clone());
-        tokio::spawn(announce_loop(command_tx, destination));
-        tokio::spawn(interface.run(seam));
 
-        run_reactor(
-            engine,
-            interfaces,
-            std::vec::Vec::new(),
-            TokioHost::new(),
-            notify_rx,
-            std::vec![(USB_INTERFACE_ID, usb_in_rx)],
-            command_rx,
-            egress,
-            log_journaled,
-        )
-        .await;
+        let wifi = AutoWifi::new();
+        let wifi_status = wifi.status();
+        handle.supervise(wifi);
+
+        let _ = ready_tx.send(WindowHandles {
+            handle: handle.clone(),
+            usb_status,
+            wifi_status,
+            destination,
+        });
+
+        tokio::spawn(announce_loop(handle, destination));
+        node.run().await;
     });
 }
 
@@ -274,141 +271,157 @@ async fn watch_hotplug(rescan: Arc<Notify>) {
 
 /// The desktop's own announce cadence: the engine does not originate announces, so the app fires a
 /// scheduled `lxmf.delivery` announce on its own timer (the manual "Announce" menu item fires
-/// the same command on demand).
-async fn announce_loop(commands: UnboundedSender<IssuedCommand>, destination: DestinationHash) {
+/// the same command on demand). The handle mints the command id, so the app never picks one.
+async fn announce_loop(handle: PrnsHandle, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    let mut next_id = 0u64;
     loop {
         interval.tick().await;
-        next_id += 1;
-        let command = IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }),
-        };
-        if commands.send(command).is_err() {
+        let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        })) else {
             return;
-        }
+        };
         println!(
-            "HOPSPOT_TX_ANNOUNCE_NOW id={next_id} kind=scheduled destination={:02x?}",
+            "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=scheduled destination={:02x?}",
+            id.0,
             destination.as_bytes(),
         );
     }
 }
 
-/// What the desktop observes — `Journaled` is the only thing the reactor hands the app (it
-/// carries out the `Directive`s itself). Logs heard announces and inbound deliveries; command
-/// settlements report the outcome of an issued announce.
-fn log_journaled(journaled: Journaled<'_>) {
-    match journaled {
-        Journaled::AnnounceHeard {
-            destination,
-            hops,
-            source_interface,
-        } => {
-            println!(
-                "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
-                destination.as_bytes(),
-                source_interface.as_bytes(),
-            );
-        }
-        Journaled::Delivered(Delivery::Plain(delivery)) => {
-            println!(
-                "HOPSPOT_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
-                delivery.destination.as_bytes(),
-                delivery.payload.len(),
-            );
-        }
-        Journaled::Delivered(Delivery::Single(delivery)) => {
-            println!(
-                "HOPSPOT_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
-                delivery.destination.as_bytes(),
-                delivery.plaintext.len(),
-            );
-        }
-        Journaled::Delivered(Delivery::Group(delivery)) => {
-            println!(
-                "HOPSPOT_USB_RX_DELIVERY kind=group destination={:02x?} bytes={}",
-                delivery.destination.as_bytes(),
-                delivery.plaintext.len(),
-            );
-        }
-        Journaled::Delivered(Delivery::Link(delivery)) => {
-            println!(
-                "HOPSPOT_USB_RX_DELIVERY kind=link link_id={:02x?} bytes={}",
-                delivery.link_id.as_bytes(),
-                delivery.plaintext.len(),
-            );
-        }
-        Journaled::RouteExpired { destination } => {
-            println!(
-                "HOPSPOT_ROUTE_EXPIRED destination={:02x?}",
-                destination.as_bytes(),
-            );
-        }
-        Journaled::RouteEvicted { destination } => {
-            println!(
-                "HOPSPOT_ROUTE_EVICTED destination={:02x?}",
-                destination.as_bytes(),
-            );
-        }
-        Journaled::RouteInterfaceGone { destination } => {
-            println!(
-                "HOPSPOT_ROUTE_INTERFACE_GONE destination={:02x?}",
-                destination.as_bytes(),
-            );
-        }
-        Journaled::LinkEstablished(established) => {
-            println!(
-                "HOPSPOT_LINK_ESTABLISHED link_id={:02x?} rtt_ms={}",
-                established.link_id.as_bytes(),
-                established.rtt_ms,
-            );
-        }
-        Journaled::RequestReceived {
+/// What the desktop observes — `Prns::run` maps the engine's `Journaled` stream into a curated
+/// [`PrnsEvent`], split into the data plane ([`Message`]) and observability ([`Diagnostic`]).
+fn log_event(event: PrnsEvent<'_>) {
+    match event {
+        PrnsEvent::Message(message) => log_message(message),
+        PrnsEvent::Diagnostic(diagnostic) => log_diagnostic(diagnostic),
+    }
+}
+
+fn log_message(message: Message<'_>) {
+    match message {
+        Message::Delivered(Delivery::Plain(delivery)) => println!(
+            "HOPSPOT_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
+            delivery.destination.as_bytes(),
+            delivery.payload.len(),
+        ),
+        Message::Delivered(Delivery::Single(delivery)) => println!(
+            "HOPSPOT_RX_DELIVERY kind=single destination={:02x?} bytes={}",
+            delivery.destination.as_bytes(),
+            delivery.plaintext.len(),
+        ),
+        Message::Delivered(Delivery::Group(delivery)) => println!(
+            "HOPSPOT_RX_DELIVERY kind=group destination={:02x?} bytes={}",
+            delivery.destination.as_bytes(),
+            delivery.plaintext.len(),
+        ),
+        Message::Delivered(Delivery::Link(delivery)) => println!(
+            "HOPSPOT_RX_DELIVERY kind=link link_id={:02x?} bytes={}",
+            delivery.link_id.as_bytes(),
+            delivery.plaintext.len(),
+        ),
+        Message::Request {
             link_id,
             request_id,
             data,
             ..
-        } => {
-            println!(
-                "HOPSPOT_REQUEST_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
-                link_id.as_bytes(),
-                request_id.as_bytes(),
-                data.len(),
-            );
-        }
-        Journaled::ResponseReceived {
+        } => println!(
+            "HOPSPOT_REQUEST_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
+            link_id.as_bytes(),
+            request_id.as_bytes(),
+            data.len(),
+        ),
+        Message::Response {
             link_id,
             request_id,
             data,
-        } => {
-            println!(
-                "HOPSPOT_RESPONSE_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
-                link_id.as_bytes(),
-                request_id.as_bytes(),
-                data.len(),
-            );
-        }
-        Journaled::PeerIdentified { link_id, identity } => {
-            println!(
-                "HOPSPOT_PEER_IDENTIFIED link_id={:02x?} identity={:02x?}",
-                link_id.as_bytes(),
-                identity.as_bytes(),
-            );
-        }
-        Journaled::LinkClosed { link_id, reason } => {
-            println!(
-                "HOPSPOT_LINK_CLOSED link_id={:02x?} reason={reason:?}",
-                link_id.as_bytes(),
-            );
-        }
-        Journaled::CommandSettled { id, settlement } => {
+        } => println!(
+            "HOPSPOT_RESPONSE_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
+            link_id.as_bytes(),
+            request_id.as_bytes(),
+            data.len(),
+        ),
+        Message::Resource {
+            link_id,
+            hash,
+            data,
+        } => println!(
+            "HOPSPOT_RX_RESOURCE link_id={:02x?} hash={:02x?} bytes={}",
+            link_id.as_bytes(),
+            hash.as_bytes(),
+            data.len(),
+        ),
+        Message::ResourceNeedsDecompression {
+            link_id,
+            hash,
+            stream,
+            uncompressed_data_len,
+        } => println!(
+            "HOPSPOT_RX_RESOURCE_COMPRESSED link_id={:02x?} hash={:02x?} stream_bytes={} uncompressed_bytes={}",
+            link_id.as_bytes(),
+            hash.as_bytes(),
+            stream.len(),
+            uncompressed_data_len,
+        ),
+        Message::ChannelMessage {
+            link_id,
+            message_type,
+            data,
+        } => println!(
+            "HOPSPOT_RX_CHANNEL link_id={:02x?} type={message_type:?} bytes={}",
+            link_id.as_bytes(),
+            data.len(),
+        ),
+    }
+}
+
+fn log_diagnostic(diagnostic: Diagnostic) {
+    match diagnostic {
+        Diagnostic::AnnounceHeard {
+            destination,
+            hops,
+            source_interface,
+        } => println!(
+            "HOPSPOT_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
+            destination.as_bytes(),
+            source_interface.as_bytes(),
+        ),
+        Diagnostic::CommandSettled { id, settlement } => {
             println!("HOPSPOT_COMMAND_SETTLED id={} {settlement:?}", id.0);
         }
+        Diagnostic::LinkEstablished(established) => println!(
+            "HOPSPOT_LINK_ESTABLISHED link_id={:02x?} rtt_ms={}",
+            established.link_id.as_bytes(),
+            established.rtt_ms,
+        ),
+        Diagnostic::PeerIdentified { link_id, identity } => println!(
+            "HOPSPOT_PEER_IDENTIFIED link_id={:02x?} identity={:02x?}",
+            link_id.as_bytes(),
+            identity.as_bytes(),
+        ),
+        Diagnostic::LinkClosed { link_id, reason } => println!(
+            "HOPSPOT_LINK_CLOSED link_id={:02x?} reason={reason:?}",
+            link_id.as_bytes(),
+        ),
+        Diagnostic::ResourceFailed { link_id, hash } => println!(
+            "HOPSPOT_RESOURCE_FAILED link_id={:02x?} hash={:02x?}",
+            link_id.as_bytes(),
+            hash.as_bytes(),
+        ),
+        Diagnostic::RouteExpired { destination } => println!(
+            "HOPSPOT_ROUTE_EXPIRED destination={:02x?}",
+            destination.as_bytes(),
+        ),
+        Diagnostic::RouteEvicted { destination } => println!(
+            "HOPSPOT_ROUTE_EVICTED destination={:02x?}",
+            destination.as_bytes(),
+        ),
+        Diagnostic::RouteInterfaceGone { destination } => println!(
+            "HOPSPOT_ROUTE_INTERFACE_GONE destination={:02x?}",
+            destination.as_bytes(),
+        ),
     }
 }
 
@@ -480,12 +493,13 @@ fn finish_press(
     ui_state.handle_input(event, card_count)
 }
 
-/// Own the SDL2 window: repaint the interface's live status as the Hopspot screen until the
-/// window is closed, and funnel the menu's "Announce" item into the reactor's command lane.
-fn run_window(handles: EngineHandles) {
-    let EngineHandles {
-        command_tx,
-        status,
+/// Own the SDL2 window: repaint the interfaces' live status as the Hopspot screen until the
+/// window is closed, and funnel the menu's "Announce" item into the node's command handle.
+fn run_window(handles: WindowHandles) {
+    let WindowHandles {
+        handle,
+        usb_status,
+        wifi_status,
         destination,
     } = handles;
 
@@ -496,43 +510,48 @@ fn run_window(handles: EngineHandles) {
     let mut window = Window::new("Personal Hopspot", &output);
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
 
-    let statuses = std::vec![status];
-    let next_command_id = Cell::new(0u64);
+    let wifi_id = wifi_status.id();
+    let classify = move |id: InterfaceId| classify(id, wifi_id);
 
     let apply_action = move |action: UiAction| match action {
         UiAction::None => {}
         UiAction::Announce => {
-            let id = next_command_id.get() + 1;
-            next_command_id.set(id);
-            let _ = command_tx.send(IssuedCommand {
-                id: CommandId(id),
-                command: EngineCommand::AnnounceNow(AnnounceNow {
-                    destination,
-                    target: AnnounceTarget::AllInterfaces,
-                    app_data: AnnounceAppData::Registered,
-                }),
-            });
-            println!(
-                "HOPSPOT_TX_ANNOUNCE_NOW id={id} kind=manual destination={:02x?}",
-                destination.as_bytes(),
-            );
+            if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                destination,
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            })) {
+                println!(
+                    "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=manual destination={:02x?}",
+                    id.0,
+                    destination.as_bytes(),
+                );
+            }
         }
     };
 
     let mut ui_state = UiState::new();
     let mut active_press: Option<PressStart> = None;
-    let mut last_logged_connection: Option<ConnectionState> = None;
+    let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
     loop {
-        if let Some(status) = statuses.first() {
+        let members = wifi_status.members();
+        let mut statuses: Vec<&dyn InterfaceStatus> = Vec::with_capacity(2 + members.len());
+        statuses.push(&usb_status);
+        statuses.push(&wifi_status);
+        for member in &members {
+            statuses.push(member);
+        }
+
+        for status in &statuses {
             let connection = status.connection();
-            if last_logged_connection != Some(connection) {
+            if last_logged.get(&status.id()) != Some(&connection) {
                 println!(
                     "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
-                    interface_label(status.id()),
+                    classify(status.id()).map_or("?", |(_, label)| label),
                     status.rx_bytes(),
                     status.tx_bytes(),
                 );
-                last_logged_connection = Some(connection);
+                last_logged.insert(status.id(), connection);
             }
         }
 
@@ -546,14 +565,7 @@ fn run_window(handles: EngineHandles) {
             &mut ui_state,
         ));
 
-        let connecting = statuses
-            .iter()
-            .all(|status| status.connection() == ConnectionState::Initializing);
-        if connecting {
-            screen::splash(&mut display, "connecting");
-        } else {
-            screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
-        }
+        screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
 
         window.update(&display);
         for event in window.events() {

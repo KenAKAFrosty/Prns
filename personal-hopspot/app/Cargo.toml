@@ -23,12 +23,6 @@ device-firehose = []
 name = "personal-hopspot-app"
 path = "src/main.rs"
 
-# Desktop-only: the WiFi/LAN auto-interface face on the high-level Prns runtime. Built on demand
-# (cargo run --example wifi_hopspot), never part of the S3 firmware build.
-[[example]]
-name = "wifi_hopspot"
-path = "examples/wifi_hopspot.rs"
-
 [dependencies]
 personal-hopspot-ui = { path = "../ui", default-features = false }
 embedded-graphics = "0.8"
