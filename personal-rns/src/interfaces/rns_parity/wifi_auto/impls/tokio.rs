@@ -33,7 +33,7 @@ pub struct AutoWifiPeer {
     peer: SocketAddrV6,
     inbound: UnboundedReceiver<std::vec::Vec<u8>>,
     bitrate_bps: u32,
-    medium_id: [u8; 16],
+    reachability_tag: [u8; 16],
     status: TokioInterfaceStatus,
 }
 
@@ -46,15 +46,15 @@ impl AutoWifiPeer {
         inbound: UnboundedReceiver<std::vec::Vec<u8>>,
         bitrate_bps: u32,
     ) -> Self {
-        let medium_id = peer.ip().octets();
-        let id = InterfaceId::from_medium(InterfaceKind::WifiPeer, &medium_id);
+        let reachability_tag = peer.ip().octets();
+        let id = InterfaceId::from_reachability_tag(InterfaceKind::WifiPeer, &reachability_tag);
         Self {
             id,
             socket,
             peer,
             inbound,
             bitrate_bps,
-            medium_id,
+            reachability_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -77,8 +77,8 @@ impl Interface for AutoWifiPeer {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn medium_id(&self) -> &[u8] {
-        &self.medium_id
+    fn reachability_tag(&self) -> &[u8] {
+        &self.reachability_tag
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
@@ -139,7 +139,7 @@ impl AutoWifi {
     pub fn with_bitrate(bitrate_bps: u32) -> Self {
         Self {
             bitrate_bps,
-            status: AutoWifiStatus::new(InterfaceId::from_medium(
+            status: AutoWifiStatus::new(InterfaceId::from_reachability_tag(
                 InterfaceKind::AutoWifi,
                 core::GROUP_ID,
             )),
@@ -286,7 +286,7 @@ impl InterfaceStatus for AutoWifiStatus {
 impl InterfaceSupervisor for AutoWifi {
     const KIND: InterfaceKind = InterfaceKind::AutoWifi;
 
-    fn medium_id(&self) -> &[u8] {
+    fn reachability_tag(&self) -> &[u8] {
         core::GROUP_ID
     }
 

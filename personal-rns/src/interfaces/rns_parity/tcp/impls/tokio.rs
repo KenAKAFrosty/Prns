@@ -61,7 +61,7 @@ pub struct TcpClientInterface {
 impl TcpClientInterface {
     #[must_use]
     pub fn new(target: String, bitrate_bps: u32, reconnect: Duration) -> Self {
-        let id = InterfaceId::from_medium(InterfaceKind::TcpClient, target.as_bytes());
+        let id = InterfaceId::from_reachability_tag(InterfaceKind::TcpClient, target.as_bytes());
         Self::new_with_id(id, target, bitrate_bps, reconnect)
     }
 
@@ -108,7 +108,7 @@ impl Interface for TcpClientInterface {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn medium_id(&self) -> &[u8] {
+    fn reachability_tag(&self) -> &[u8] {
         self.target.as_bytes()
     }
 
@@ -155,13 +155,13 @@ pub struct TcpServerInterface {
     id: InterfaceId,
     listener: TcpListener,
     bitrate_bps: u32,
-    medium_id: heapless::Vec<u8, 18>,
+    reachability_tag: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
 }
 
 /// The bytes that tag this server channel: the address it listens on (one interface per bound
 /// address — the per-client fan-out the reference spawns is deferred, see the type docs).
-fn server_medium_id(local: SocketAddr) -> heapless::Vec<u8, 18> {
+fn server_reachability_tag(local: SocketAddr) -> heapless::Vec<u8, 18> {
     let mut tag = heapless::Vec::new();
     match local.ip() {
         IpAddr::V4(v4) => {
@@ -203,14 +203,15 @@ impl TcpServerInterface {
         listener: TcpListener,
         bitrate_bps: u32,
     ) -> io::Result<Self> {
-        let medium_id = server_medium_id(listener.local_addr()?);
-        let id = id_override
-            .unwrap_or_else(|| InterfaceId::from_medium(InterfaceKind::TcpServer, &medium_id));
+        let reachability_tag = server_reachability_tag(listener.local_addr()?);
+        let id = id_override.unwrap_or_else(|| {
+            InterfaceId::from_reachability_tag(InterfaceKind::TcpServer, &reachability_tag)
+        });
         Ok(Self {
             id,
             listener,
             bitrate_bps,
-            medium_id,
+            reachability_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         })
     }
@@ -243,8 +244,8 @@ impl Interface for TcpServerInterface {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn medium_id(&self) -> &[u8] {
-        &self.medium_id
+    fn reachability_tag(&self) -> &[u8] {
+        &self.reachability_tag
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {

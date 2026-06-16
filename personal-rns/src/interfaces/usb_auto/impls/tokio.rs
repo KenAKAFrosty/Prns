@@ -130,7 +130,7 @@ where
         core::host_descriptor(self.id)
     }
 
-    fn medium_id(&self) -> &[u8] {
+    fn reachability_tag(&self) -> &[u8] {
         self.id.as_bytes()
     }
 

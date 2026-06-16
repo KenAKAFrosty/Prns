@@ -38,7 +38,7 @@ impl InterfaceSupervisor for DialOnce {
     const KIND: personal_rns::interfaces::InterfaceKind =
         personal_rns::interfaces::InterfaceKind::Loopback;
 
-    fn medium_id(&self) -> &[u8] {
+    fn reachability_tag(&self) -> &[u8] {
         self.addr.as_bytes()
     }
 

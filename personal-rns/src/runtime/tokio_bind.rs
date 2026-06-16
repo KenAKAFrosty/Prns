@@ -158,7 +158,7 @@ impl PrnsHandle {
     where
         S: InterfaceSupervisor + Send + 'static,
     {
-        let id = InterfaceId::from_medium(S::KIND, supervisor.medium_id());
+        let id = InterfaceId::from_reachability_tag(S::KIND, supervisor.reachability_tag());
         let fleet = Fleet {
             supervisor_id: id,
             commands: self.commands.clone(),
@@ -333,8 +333,8 @@ pub trait InterfaceSupervisor {
 
     /// The bytes that uniquely tag this supervisor. A node runs few supervisors, so this is
     /// typically config-derived (the group it serves); the same rules as
-    /// [`Interface::medium_id`](crate::reactor::interface_seam::Interface::medium_id) apply.
-    fn medium_id(&self) -> &[u8];
+    /// [`reachability_tag`](crate::reactor::interface_seam::Interface::reachability_tag) apply.
+    fn reachability_tag(&self) -> &[u8];
 
     async fn run(self, fleet: Fleet);
 }

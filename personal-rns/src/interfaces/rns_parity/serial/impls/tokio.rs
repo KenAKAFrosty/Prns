@@ -20,30 +20,30 @@ pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
     reconnect: Duration,
-    medium_id: std::vec::Vec<u8>,
+    reachability_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
 
 impl<Open> SerialInterface<Open> {
-    /// `medium_id` names *which* serial device this is — the port name or a stable device id the
-    /// caller knows (the `open` closure that yields the stream hides it from us). Two distinct
-    /// serial channels must pass distinct bytes; the same device across a reopen should pass the
-    /// same, so its routes survive the reconnect.
+    /// `reachability_tag` names *which* serial device this is — the port name or a stable
+    /// device id the caller knows (the `open` closure that yields the stream hides it from
+    /// us). Two distinct serial channels must pass distinct bytes; the same device across a
+    /// reopen should pass the same, so its routes survive the reconnect.
     #[must_use]
-    pub fn new(open: Open, reconnect: Duration, medium_id: &[u8]) -> Self {
-        let medium_id = medium_id.to_vec();
-        let id = InterfaceId::from_medium(InterfaceKind::Serial, &medium_id);
+    pub fn new(open: Open, reconnect: Duration, reachability_tag: &[u8]) -> Self {
+        let reachability_tag = reachability_tag.to_vec();
+        let id = InterfaceId::from_reachability_tag(InterfaceKind::Serial, &reachability_tag);
         Self {
             id,
             open,
             reconnect,
-            medium_id,
+            reachability_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
 
-    /// This interface's id, derived from its device `medium_id`, for the app that wants to name it
-    /// (an [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    /// This interface's id, derived from its device `reachability_tag`, for the app that wants
+    /// to name it (an [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -70,8 +70,8 @@ where
         core::descriptor(self.id)
     }
 
-    fn medium_id(&self) -> &[u8] {
-        &self.medium_id
+    fn reachability_tag(&self) -> &[u8] {
+        &self.reachability_tag
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
