@@ -26,11 +26,10 @@ use tokio::time::Instant;
 
 use crate::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
-use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::tokio_reactor::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
 };
-use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 
 /// A slow fallback re-enumeration. Hot-plug is event-driven (the consumer pokes the rescan
 /// signal the instant the OS reports a change), so this only backstops a missed event, a host
@@ -48,8 +47,8 @@ struct Port {
     id: String,
     key: u64,
     confirmed: bool,
-    outbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
-    inbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
+    outbound: TokioGrantProducer,
+    inbound: TokioGrantConsumer,
     task: JoinHandle<()>,
 }
 
@@ -253,8 +252,8 @@ where
             if let Ok(stream) = (self.open)(name.clone()).await {
                 let key = *next_port_key;
                 *next_port_key += 1;
-                let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(PORT_LANE_DEPTH);
-                let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(PORT_LANE_DEPTH);
+                let (in_tx, in_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
+                let (out_tx, out_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, PORT_LANE_DEPTH);
                 let task = tokio::spawn(serve_port(
                     name.clone(),
                     stream,
@@ -280,7 +279,7 @@ where
 
 /// The next frame owed to this port's wire, borrowed in place from its lane; the borrow
 /// releases on the following call — the seam's own outbound discipline, one level down.
-async fn next_from_lane<const SLOT: usize>(lane: &mut TokioGrantConsumer<SLOT>) -> &[u8] {
+async fn next_from_lane(lane: &mut TokioGrantConsumer) -> &[u8] {
     lane.release();
     lane.peek().await.frame()
 }
@@ -293,10 +292,10 @@ async fn serve_port<S>(
     id: String,
     mut stream: S,
     context: PortContext,
-    mut inbound: TokioGrantProducer<MAX_WIRE_FRAME_LEN>,
+    mut inbound: TokioGrantProducer,
     notify: UnboundedSender<u64>,
     key: u64,
-    mut outbound: TokioGrantConsumer<MAX_WIRE_FRAME_LEN>,
+    mut outbound: TokioGrantConsumer,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -457,8 +456,8 @@ mod tests {
         let status = host.status();
 
         let (notify_tx, mut notify_rx) = unbounded_channel::<InterfaceId>();
-        let (in_tx, mut in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (mut out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (in_tx, mut in_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, 8);
+        let (mut out_tx, out_rx) = tokio_grant_lane(core::MAX_FRAMED_BYTES, 8);
         let seam = TokioInterfaceSeam::new(host_id(), in_tx, notify_tx, out_rx);
         tokio::spawn(host.run(seam));
 

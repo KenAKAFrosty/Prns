@@ -183,7 +183,7 @@ mod tests {
     /// `next_outbound` from a grant lane the test fills.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
-        outbound: TokioGrantConsumer<TEST_FRAME_CAP>,
+        outbound: TokioGrantConsumer,
     }
 
     impl InterfaceSeam for MockSeam {
@@ -210,7 +210,7 @@ mod tests {
         let near_addr = interface.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane::<TEST_FRAME_CAP>(2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(TEST_FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             outbound: out_rx,
@@ -283,8 +283,8 @@ mod tests {
 
         let initiator_engine = EngineState::<Cap>::new(second_secret_key());
         let (a_notify_tx, a_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-        let (a_in_tx, a_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (a_out_tx, a_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (a_in_tx, a_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (a_out_tx, a_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
         let a_seam = TokioInterfaceSeam::new(initiator_iface, a_in_tx, a_notify_tx, a_out_rx);
         let a_egress = Egress::new(std::vec![(initiator_iface, a_out_tx)]);
         let (a_command_tx, a_command_rx) = mpsc::unbounded_channel::<HostCommand>();
@@ -316,8 +316,8 @@ mod tests {
             engine
         };
         let (b_notify_tx, b_notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-        let (b_in_tx, b_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (b_out_tx, b_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (b_in_tx, b_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (b_out_tx, b_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
         let b_seam = TokioInterfaceSeam::new(responder_iface, b_in_tx, b_notify_tx, b_out_rx);
         let b_egress = Egress::new(std::vec![(responder_iface, b_out_tx)]);
         let (b_command_tx, b_command_rx) = mpsc::unbounded_channel::<HostCommand>();

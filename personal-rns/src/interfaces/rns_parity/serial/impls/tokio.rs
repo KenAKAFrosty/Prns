@@ -119,7 +119,7 @@ mod tests {
     /// grant lane the test fills — so the interface's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
-        outbound: TokioGrantConsumer<{ core::SERIAL_FRAME_LEN }>,
+        outbound: TokioGrantConsumer,
     }
 
     impl InterfaceSeam for MockSeam {
@@ -145,7 +145,7 @@ mod tests {
         };
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane::<{ core::SERIAL_FRAME_LEN }>(2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(core::SERIAL_FRAME_LEN, 2);
         let seam = MockSeam {
             inbound: in_tx,
             outbound: out_rx,

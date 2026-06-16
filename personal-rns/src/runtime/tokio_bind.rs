@@ -13,15 +13,16 @@ use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, SendSingle,
     SendSingleFailure, SendSinglePayload, Settlement,
 };
+use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
     RespondAnyHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
-use crate::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::Interface;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, BROADCAST_MTU};
 
 use super::interface_set::{InterfaceAttach, InterfaceSet};
 use super::recipe::PreConfiguredDestination;
@@ -30,6 +31,10 @@ use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::{Message, PrnsEvent, PrnsRecipe, SendError};
 
 const LANE_DEPTH: usize = 64;
+
+fn lane_slot_cap(descriptor: &InterfaceConfig) -> usize {
+    descriptor.hardware_mtu.unwrap_or(BROADCAST_MTU) + IFAC_MAX_SIZE
+}
 
 /// A cloneable, `Send` handle to a running node — the proactive surface. Hand clones to other tasks
 /// or threads (each shares one node, so an awaited send on any resolves wherever it settles).
@@ -272,8 +277,9 @@ where
 {
     let descriptor = interface.descriptor();
     let id = descriptor.id;
-    let (in_producer, in_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (out_producer, out_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let slot_cap = lane_slot_cap(&descriptor);
+    let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
+    let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer);
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
         Box::new(move || Box::pin(interface.run(seam)));
@@ -416,8 +422,8 @@ fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: Int
 struct TokioAttach {
     notify_tx: UnboundedSender<InterfaceId>,
     interfaces: std::vec::Vec<InterfaceConfig>,
-    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
-    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
+    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
+    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
     runs: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
 }
 
@@ -425,8 +431,9 @@ impl InterfaceAttach for TokioAttach {
     fn attach<I: Interface + 'static>(&mut self, interface: I) {
         let descriptor = interface.descriptor();
         let id = descriptor.id;
-        let (in_producer, in_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-        let (out_producer, out_consumer) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        let slot_cap = lane_slot_cap(&descriptor);
+        let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
+        let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
         self.interfaces.push(descriptor);
         self.inbound.push((id, in_consumer));
         self.egress_lanes.push((id, out_producer));
@@ -444,8 +451,8 @@ pub struct Prns<St, R, F, S: StorageLayout> {
     host: TokioHost,
     engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,
-    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer<MAX_WIRE_FRAME_LEN>)>,
-    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer<MAX_WIRE_FRAME_LEN>)>,
+    inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
+    egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
     iface_build_rx: UnboundedReceiver<DriverMsg>,

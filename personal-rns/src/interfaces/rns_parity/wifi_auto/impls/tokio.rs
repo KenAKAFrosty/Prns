@@ -612,7 +612,7 @@ mod tests {
     /// `next_outbound` from a grant lane the test fills.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
-        outbound: TokioGrantConsumer<TEST_FRAME_CAP>,
+        outbound: TokioGrantConsumer,
     }
 
     impl InterfaceSeam for MockSeam {
@@ -660,7 +660,7 @@ mod tests {
         );
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
-        let (mut out_tx, out_rx) = tokio_grant_lane::<TEST_FRAME_CAP>(2);
+        let (mut out_tx, out_rx) = tokio_grant_lane(TEST_FRAME_CAP, 2);
         let seam = MockSeam {
             inbound: in_tx,
             outbound: out_rx,
