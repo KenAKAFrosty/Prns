@@ -750,6 +750,11 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
                         pacers.retain(|pacer| pacer.id != id);
                         egress.remove_lane(id);
+                        let _ = engine.cull_expired_routes(
+                            now,
+                            &interfaces,
+                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        );
                         wake_schedules = engine.wake_schedules(&interfaces);
                         WakeSchedules::UNCHANGED
                     }
