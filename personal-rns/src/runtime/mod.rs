@@ -14,7 +14,9 @@ pub use recipe::{PreConfiguredDestination, PrnsRecipe};
 #[cfg(feature = "tokio-host")]
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
-pub use tokio_bind::{AttachedInterface, Fleet, InterfaceSupervisor, Prns, PrnsHandle};
+pub use tokio_bind::{
+    AttachedInterface, AttachedSupervisor, Fleet, InterfaceSupervisor, Prns, PrnsHandle,
+};
 
 #[cfg(feature = "tokio-host")]
 mod tokio_runner;

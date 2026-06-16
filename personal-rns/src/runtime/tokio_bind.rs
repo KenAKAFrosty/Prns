@@ -152,8 +152,9 @@ impl PrnsHandle {
     /// and stands up a fleet member per validated connection through the [`Fleet`] handle it is
     /// given. The supervisor itself is no engine interface (no descriptor, no lanes); each member it
     /// adds is an ordinary flat engine interface recorded under it, so tearing the supervisor down
-    /// cascades to its whole fleet. The home of the auto-interfaces (auto-wifi, auto-usb).
-    pub fn supervise<S>(&self, supervisor: S) -> AttachedInterface
+    /// cascades to its whole fleet. The home of the auto-interfaces (auto-wifi, auto-usb). Returns an
+    /// [`AttachedSupervisor`], not an [`AttachedInterface`], because a supervisor is not a wire.
+    pub fn supervise<S>(&self, supervisor: S) -> AttachedSupervisor
     where
         S: InterfaceSupervisor + Send + 'static,
     {
@@ -171,9 +172,8 @@ impl PrnsHandle {
             supervisor: None,
             build,
         });
-        AttachedInterface {
+        AttachedSupervisor {
             id,
-            commands: self.commands.clone(),
             iface_build: self.iface_build.clone(),
         }
     }
@@ -230,6 +230,28 @@ impl AttachedInterface {
         let _ = self
             .commands
             .send(HostCommand::RemoveInterface { id: self.id });
+        let _ = self.iface_build.send(DriverMsg::Stop { id: self.id });
+    }
+}
+
+/// A handle to a supervisor attached through [`PrnsHandle::supervise`]: its minted id, and the lever
+/// to detach it. A supervisor owns no reactor lanes of its own, so tearing it down is a single stop
+/// on the driver, which both ends its discovery loop and cascades to deregister every member of its
+/// fleet. Dropping the handle leaves the supervisor running.
+pub struct AttachedSupervisor {
+    id: InterfaceId,
+    iface_build: UnboundedSender<DriverMsg>,
+}
+
+impl AttachedSupervisor {
+    /// The supervisor's framework-minted id.
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        self.id
+    }
+
+    /// Detach the supervisor: stop its discovery loop and cascade teardown to its whole fleet.
+    pub fn teardown(self) {
         let _ = self.iface_build.send(DriverMsg::Stop { id: self.id });
     }
 }
