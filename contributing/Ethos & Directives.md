@@ -1,4 +1,4 @@
-3 directives: Hopspot, interfaces, control API;
+3 directives: Hopspot, interfaces, and final parity-chasing work;
 
 
 Hopspot has 4 roles: 
@@ -10,12 +10,10 @@ Hopspot has 4 roles:
 
 For interfaces, we want to continue to expand real functionality on multi-platform, with genuine production-grade impls ready to go. 
 
-Right now we're still tightening up the WiFi auto-interface, which is yet again a dogfooding & bootstrapping priority, like Hopspot as a whole is. That's shared local WiFi is one the simplest, cleanest ways to connect devices on the desk as we build, alongside auto-USB. 
-
 Following that trend, the next few I expect will be (not necessarily in this order):
-- WiFi LAN auto-interface (parity): **done** — std-host (desktop) + S3 embassy drivers are built and verified peering/announcing cross-platform. Wants a deeper review pass at some point (API/organization, reliability, perf), same as the USB one below. The remaining WiFi work is the extension layer: mesh-AP / BSSID handling (our BSSID issues from before), host-as-AP (mobile-hotspot style; desktops do it too), and connecting to an AP that *is* a Reticulum node host (the inverse).
+- WiFi LAN auto-interface (parity):  Wants a deeper review pass at some point (API/organization, reliability, perf), same as the USB one below. The remaining WiFi work is the extension layer: mesh-AP / BSSID handling (our BSSID issues from before), host-as-AP (mobile-hotspot style; desktops do it too), and connecting to an AP that *is* a Reticulum node host (the inverse).
 - FIx and refine our USB auto-interface
-    - **done** but worth one or two more passes for final quality and performance
+    - **done** but worth one more pass for final quality and performance
 - Bluetooth, which is incredibly strong but has multiple things to handle:
     - Honor RNode format; this could be tricky but would be VERY powerful. Less important than the following two in terms of our long-term Bluetooth goals; however this is table stakes for release. So, what does that mean? It means we can skip it when doing focused bluetooth work if that helps, but we'll just have to come back to it
     - Honor Columba's format; check Sideband & MeshChat if they have their own
@@ -28,7 +26,6 @@ Following that trend, the next few I expect will be (not necessarily in this ord
     - Possibly work to brand this system something internal, either Personal or Bramble related, but bramble is more awkward because it's not really cohesive as a "thing" yet
     - Most importantly, work on the perf side, make sure this is ROCK solid.
     - Nice thing is, this is only on embedded, so the scope is different from the others above
-    - However we should look at reverse engineering these action frames so that hosts that allow direct wifi control can still participate, while ESP hosts just get it for free without the extra effort.
 - LoRa vs GMSK @ 300kbps
     - We've done exploratory work in the past on using the sx1262's alternate mode for faster speed. 
     - Allowing for swapping here is the key piece: LoRa vs Speed mode (or whatever better name we give it)
