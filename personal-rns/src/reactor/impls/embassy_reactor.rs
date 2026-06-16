@@ -639,8 +639,8 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .min_by_key(|deadline| deadline.0)
 }
 
-/// The free-slot id: no real [`InterfaceId::from_medium`] can produce it (`0xff` is not a valid
-/// `InterfaceKind` discriminant), so a free slot never matches an
+/// The free-slot id: no real [`InterfaceId::from_reachability_tag`] can produce it (`0xff` is
+/// not a valid `InterfaceKind` discriminant), so a free slot never matches an
 /// inbound source or an egress target.
 const NIL_INTERFACE: InterfaceId = InterfaceId::new([0xff; 16]);
 

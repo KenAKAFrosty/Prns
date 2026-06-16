@@ -803,7 +803,7 @@ mod tests {
         );
 
         let raw = hx(RAW_ANNOUNCE);
-        let peer = InterfaceId::from_medium(InterfaceKind::WifiPeer, b"test-peer-medium");
+        let peer = InterfaceId::from_reachability_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 
         let drive = async move {
             let mut fleet = fleet;
