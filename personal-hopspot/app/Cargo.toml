@@ -23,6 +23,12 @@ device-firehose = []
 name = "personal-hopspot-app"
 path = "src/main.rs"
 
+# Desktop-only: the WiFi/LAN auto-interface face on the high-level Prns runtime. Built on demand
+# (cargo run --example wifi_hopspot), never part of the S3 firmware build.
+[[example]]
+name = "wifi_hopspot"
+path = "examples/wifi_hopspot.rs"
+
 [dependencies]
 personal-hopspot-ui = { path = "../ui", default-features = false }
 embedded-graphics = "0.8"
@@ -31,7 +37,7 @@ heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(not(target_arch = "xtensa"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
