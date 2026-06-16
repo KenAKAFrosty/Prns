@@ -23,6 +23,7 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
+use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 use super::interface_set::{InterfaceAttach, InterfaceSet};
 use super::recipe::PreConfiguredDestination;
 use super::request_router::{RespondToken, RouteSet};
@@ -97,7 +98,7 @@ impl PrnsHandle {
         }
     }
 
-    async fn settle(&self, command: EngineCommand) -> Option<Settlement> {
+    pub(crate) async fn settle(&self, command: EngineCommand) -> Option<Settlement> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -128,6 +129,38 @@ impl PrnsHandle {
 
     pub fn respond_owned(&self, responder: RespondToken, body: std::vec::Vec<u8>) -> bool {
         self.send_response(responder, body.into())
+    }
+
+    /// Open a byte-stream reader on this link and stream id: registers its sink so inbound stream
+    /// chunks route here, off the app event stream.
+    pub fn byte_stream_reader(&self, link_id: LinkId, stream_id: StreamId) -> ByteStreamReader {
+        let (sink, inbound) = mpsc::unbounded_channel();
+        let _ = self.commands.send(HostCommand::RegisterStreamReader {
+            link_id,
+            stream_id,
+            sink,
+        });
+        ByteStreamReader::new(inbound)
+    }
+
+    /// Open a byte-stream writer on this link and stream id: an `AsyncWrite` framing each write as a
+    /// stream-data channel send.
+    pub fn byte_stream_writer(&self, link_id: LinkId, stream_id: StreamId) -> ByteStreamWriter {
+        ByteStreamWriter::new(self.clone(), link_id, stream_id)
+    }
+
+    /// Open a bidirectional byte stream: a reader on `rx` and a writer on `tx` over one link's
+    /// channel — RNS's `create_bidirectional_buffer`.
+    pub fn byte_stream(
+        &self,
+        link_id: LinkId,
+        rx: StreamId,
+        tx: StreamId,
+    ) -> (ByteStreamReader, ByteStreamWriter) {
+        (
+            self.byte_stream_reader(link_id, rx),
+            self.byte_stream_writer(link_id, tx),
+        )
     }
 
     pub fn close_link(&self, link_id: LinkId) -> bool {

@@ -23,6 +23,7 @@ use crate::reactor::driver::{
 };
 use crate::reactor::interface_seam::{frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN};
 use crate::reactor::Host;
+use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
@@ -436,6 +437,21 @@ pub enum HostCommand {
     RemoveInterface {
         id: InterfaceId,
     },
+    /// Register a byte-stream reader's inbound sink: the run loop routes channel messages of the
+    /// reserved stream type on this link and id to it, suppressing them from the app event stream.
+    RegisterStreamReader {
+        link_id: LinkId,
+        stream_id: StreamId,
+        sink: UnboundedSender<StreamInbound>,
+    },
+}
+
+/// One inbound stream chunk handed from the run loop's demux to a `ByteStreamReader`'s sink: the
+/// payload bytes (owned, copied out of the borrowed reaction) with the eof and compressed flags.
+pub struct StreamInbound {
+    pub payload: std::vec::Vec<u8>,
+    pub eof: bool,
+    pub compressed: bool,
 }
 
 /// The payload of [`HostCommand::AddInterface`]: a runtime-added interface's descriptor and the
@@ -460,6 +476,40 @@ fn settle_or_forward<'a>(
         if let Some(completion) = pending.borrow_mut().remove(id) {
             let _ = completion.send(*settlement);
             return None;
+        }
+    }
+    Some(journaled)
+}
+
+/// The byte-stream demux: a `ChannelMessageReceived` of the reserved stream type whose `(link, id)`
+/// has a registered reader is parsed, pushed to that reader's sink, and dropped from the event
+/// stream; a reader whose receiver is gone is pruned. Everything else is returned for the app.
+fn route_stream_or_forward<'a>(
+    readers: &RefCell<HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>>,
+    journaled: Journaled<'a>,
+) -> Option<Journaled<'a>> {
+    if let Journaled::ChannelMessageReceived {
+        link_id,
+        message_type,
+        data,
+    } = &journaled
+    {
+        if *message_type == STREAM_DATA_TYPE {
+            if let Ok(frame) = byte_stream::parse(data) {
+                let key = (*link_id, frame.header.stream_id);
+                let mut readers = readers.borrow_mut();
+                if let Some(sink) = readers.get(&key) {
+                    let inbound = StreamInbound {
+                        payload: frame.payload.to_vec(),
+                        eof: frame.header.eof,
+                        compressed: frame.header.compressed,
+                    };
+                    if sink.send(inbound).is_err() {
+                        readers.remove(&key);
+                    }
+                    return None;
+                }
+            }
         }
     }
     Some(journaled)
@@ -624,11 +674,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     let mut unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
     let pending_completions: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
         RefCell::new(HashMap::new());
+    let stream_readers: RefCell<HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>> =
+        RefCell::new(HashMap::new());
     macro_rules! journaled_sink {
         () => {
             |journaled: Journaled<'_>| {
                 if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
-                    on_journaled(journaled);
+                    if let Some(journaled) = route_stream_or_forward(&stream_readers, journaled) {
+                        on_journaled(journaled);
+                    }
                 }
             }
         };
@@ -795,6 +849,16 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         pacers.retain(|pacer| pacer.id != id);
                         egress.remove_lane(id);
                         wake_schedules = engine.wake_schedules(&interfaces);
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::RegisterStreamReader {
+                        link_id,
+                        stream_id,
+                        sink,
+                    } => {
+                        stream_readers
+                            .borrow_mut()
+                            .insert((link_id, stream_id), sink);
                         WakeSchedules::UNCHANGED
                     }
                 };

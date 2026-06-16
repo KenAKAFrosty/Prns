@@ -19,6 +19,11 @@ pub use tokio_bind::{
 };
 
 #[cfg(feature = "tokio-host")]
+mod byte_stream;
+#[cfg(feature = "tokio-host")]
+pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
+
+#[cfg(feature = "tokio-host")]
 mod tokio_runner;
 
 #[cfg(feature = "embassy-contract")]

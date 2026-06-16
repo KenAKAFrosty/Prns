@@ -34,7 +34,7 @@ pub const LINK_KEY_LEN: usize = 64;
 /// `EMBEDDED_MAX_WIRE_FRAME_LEN`), so neither pays this ceiling.
 pub const MAX_LINK_MTU: usize = 524_288;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LinkId([u8; TRUNCATED_HASH_BYTE_LEN]);
 
 impl LinkId {
