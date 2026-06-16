@@ -23,5 +23,7 @@ mod tokio_runner;
 
 #[cfg(feature = "embassy-contract")]
 mod embassy_bind;
+#[cfg(all(feature = "embassy-contract", not(feature = "tokio-host")))]
+pub use embassy_bind::Prns;
 #[cfg(feature = "embassy-contract")]
-pub use embassy_bind::{CompletionPool, EmbassyCommands};
+pub use embassy_bind::{CompletionPool, EmbassyCommands, Fleet, MemberWire, ReactorPlumbing};

@@ -7,7 +7,7 @@
 //! That the dispatch *and* the seam are shared is the point: the sync core's shape holds
 //! across std and no_std.
 
-use embassy_futures::select::{select4, Either4};
+use embassy_futures::select::{select4, select5, Either4, Either5};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::zerocopy_channel;
@@ -325,11 +325,17 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
     }
 }
 
-/// The reactor's egress: it routes each engine `Directive::Send` into the target
-/// interface's outbound grant lane — granted, filled in place, committed — with each
-/// lane's slot size erased, so lanes sized to different interfaces share one slice.
-/// A full lane drops the frame rather than stalling the reactor. No alloc: the lanes
-/// are a borrowed slice the caller owns.
+/// The reactor's egress: it routes one engine `Directive::Send` into the target
+/// interface's outbound grant lane — granted, filled in place, committed. A full lane drops
+/// the frame rather than stalling the reactor. The fixed [`EmbassyEgress`] and the dynamic
+/// [`PooledEgress`] both satisfy it, so the reaction-routing helpers stay shared across the
+/// fixed-slice `run` and the runtime's [`run_pooled`].
+pub trait ReactorEgress {
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]);
+}
+
+/// The fixed-set egress: each lane's slot size is erased, so lanes sized to different
+/// interfaces share one slice. No alloc — the lanes are a borrowed slice the caller owns.
 pub struct EmbassyEgress<'a> {
     lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)],
 }
@@ -339,7 +345,9 @@ impl<'a> EmbassyEgress<'a> {
     pub fn new(lanes: &'a mut [(InterfaceId, &'a mut dyn AnyGrantProducer)]) -> Self {
         Self { lanes }
     }
+}
 
+impl ReactorEgress for EmbassyEgress<'_> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if *id == target {
@@ -529,7 +537,7 @@ struct InterfacePacer {
 
 fn route_reaction(
     reaction: EngineReaction<'_>,
-    egress: &mut EmbassyEgress<'_>,
+    egress: &mut impl ReactorEgress,
     ifacs: &[InterfaceIfac],
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
@@ -558,7 +566,7 @@ fn route_reaction(
 /// faces) and copied once into the ring. `fill` runs exactly once — the `EmitFrame`
 /// contract — whether or not the lane has room.
 fn emit_for_wire(
-    egress: &mut EmbassyEgress<'_>,
+    egress: &mut impl ReactorEgress,
     ifacs: &[InterfaceIfac],
     target: InterfaceId,
     fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
@@ -577,7 +585,7 @@ fn ifac_for(ifacs: &[InterfaceIfac], id: InterfaceId) -> Option<&InterfaceIfac> 
 }
 
 fn enqueue_for_wire(
-    egress: &mut EmbassyEgress<'_>,
+    egress: &mut impl ReactorEgress,
     ifacs: &[InterfaceIfac],
     target: InterfaceId,
     bytes: &[u8],
@@ -599,7 +607,7 @@ fn offer_to_pacer(
     bytes: &[u8],
     hops: u8,
     now: InstantMillis,
-    egress: &mut EmbassyEgress<'_>,
+    egress: &mut impl ReactorEgress,
     ifacs: &[InterfaceIfac],
 ) {
     match pacers.iter_mut().find(|entry| entry.id == target) {
@@ -613,7 +621,7 @@ fn offer_to_pacer(
 fn flush_due_pacers(
     pacers: &mut [InterfacePacer],
     now: InstantMillis,
-    egress: &mut EmbassyEgress<'_>,
+    egress: &mut impl ReactorEgress,
     ifacs: &[InterfaceIfac],
 ) {
     for entry in pacers.iter_mut() {
@@ -629,6 +637,259 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .iter()
         .filter_map(|entry| entry.pacer.next_release())
         .min_by_key(|deadline| deadline.0)
+}
+
+/// The free-slot id: no real [`InterfaceId::from_medium`] can produce it (`0xff` is not a valid
+/// `InterfaceKind` discriminant), so a free slot never matches an
+/// inbound source or an egress target.
+const NIL_INTERFACE: InterfaceId = InterfaceId::new([0xff; 16]);
+
+/// The runtime's lever to bring one pooled interface up or down between cycles. A supervisor sends
+/// `Add` when a peer is confirmed (the `slot` it already holds the wire halves of) and `Remove` when
+/// the peer drops; the reactor toggles that slot's id, so its permanently-owned lane endpoints
+/// reuse for the next interface without ever moving.
+pub enum InterfaceLifecycle {
+    Add {
+        slot: usize,
+        config: InterfaceConfig,
+    },
+    Remove {
+        id: InterfaceId,
+    },
+}
+
+/// The dynamic egress: a fixed pool of `N` permanently-owned outbound lane endpoints, each tagged
+/// with the id of the interface currently occupying its slot (`NIL_INTERFACE` while free). The
+/// uniform `SLOT` size (a board's one wire ceiling) lets the pool own concrete endpoints rather
+/// than the fixed path's erased `&mut dyn`, so a slot reuses with no alloc and no re-split.
+pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
+    lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
+}
+
+impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, SLOT, N> {
+    /// Build the egress over the reactor-side outbound endpoints, each at the slot it shares with
+    /// the interface-side half. A free slot carries `NIL_INTERFACE`; an initially-active one
+    /// carries its interface's id.
+    #[must_use]
+    pub fn new(
+        lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
+    ) -> Self {
+        Self { lanes }
+    }
+
+    pub(crate) fn activate(&mut self, slot: usize, id: InterfaceId) {
+        if let Some(entry) = self.lanes.get_mut(slot) {
+            entry.0 = id;
+        }
+    }
+
+    fn deactivate(&mut self, id: InterfaceId) {
+        for entry in self.lanes.iter_mut() {
+            if entry.0 == id {
+                entry.0 = NIL_INTERFACE;
+            }
+        }
+    }
+}
+
+impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
+    for PooledEgress<M, SLOT, N>
+{
+    fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
+        for (id, producer) in self.lanes.iter_mut() {
+            if *id == target {
+                let _ = producer.try_fill_frame(bytes);
+                return;
+            }
+        }
+    }
+}
+
+/// The runtime's reactor: the same loop as [`run`], over a fixed pool of `N` interface slots whose
+/// occupancy changes at runtime through the `lifecycle` lane. `initial` names the slots already
+/// active at boot (the recipe's top-level set); `inbound`/`egress` carry the reactor-side endpoints
+/// for every slot, free ones tagged `NIL_INTERFACE`. A supervisor stands a peer up by sending
+/// [`InterfaceLifecycle::Add`] for a free slot it owns the wire halves of, and tears it down with
+/// [`InterfaceLifecycle::Remove`]; on remove the reactor culls the gone interface's routes exactly
+/// as the host runtime does. Bounded by `N`, alloc-free: the endpoints never move, only the
+/// per-slot id and the active config/pacer set change.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_pooled<
+    S,
+    H,
+    M,
+    const SLOT: usize,
+    const N: usize,
+    const NOTIFY: usize,
+    const COMMANDS: usize,
+    const LIFECYCLE: usize,
+>(
+    mut engine: EngineState<S>,
+    initial: &[InterfaceConfig],
+    mut inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), N>,
+    mut egress: PooledEgress<M, SLOT, N>,
+    mut host: H,
+    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
+    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
+    lifecycle: Receiver<'_, M, InterfaceLifecycle, LIFECYCLE>,
+    mut on_journaled: impl FnMut(Journaled<'_>),
+    mut should_prove: impl FnMut(&ProofRequest) -> bool,
+) where
+    S: StorageLayout,
+    H: Host,
+    M: RawMutex + 'static,
+{
+    let ifacs: &[InterfaceIfac] = &[];
+    let mut configs: HeaplessVec<InterfaceConfig, N> = HeaplessVec::new();
+    let mut pacers: HeaplessVec<InterfacePacer, N> = HeaplessVec::new();
+    for config in initial {
+        let _ = configs.push(*config);
+        let _ = pacers.push(InterfacePacer {
+            id: config.id,
+            pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
+        });
+    }
+    let mut wake_schedules = engine.wake_schedules(&configs);
+    loop {
+        let wake = wake_schedules.soonest(host.now());
+        let pacer_wake = soonest_pacer_release(&pacers);
+
+        match select5(
+            notify.receive(),
+            commands.receive(),
+            wait_for_due_lane(&host, wake),
+            wait_for_pacer(&host, pacer_wake),
+            lifecycle.receive(),
+        )
+        .await
+        {
+            Either5::First(source) => {
+                let Some((_, lane)) = inbound.iter_mut().find(|(id, _)| *id == source) else {
+                    continue;
+                };
+                let Some(frame) = lane.try_peek_frame() else {
+                    continue;
+                };
+                let now = host.now();
+                let jitter = draw_jitter(&mut host);
+                let packet = InboundPacket {
+                    arrived_at: now,
+                    source_interface: source,
+                    bytes: frame,
+                };
+                let delta = engine.ingest_packet_into(
+                    packet,
+                    jitter,
+                    &configs,
+                    now,
+                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut should_prove,
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    },
+                );
+                lane.release_frame();
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &configs);
+            }
+            Either5::Second(issued) => {
+                let now = host.now();
+                let delta = engine.ingest_command_into(
+                    issued,
+                    &configs,
+                    now,
+                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    },
+                );
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &configs);
+            }
+            Either5::Third(lane) => {
+                let now = host.now();
+                let delta = fire_due_lane(
+                    &mut engine,
+                    lane,
+                    now,
+                    &configs,
+                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    },
+                );
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &configs);
+            }
+            Either5::Fourth(()) => {
+                let now = host.now();
+                flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
+            }
+            Either5::Fifth(message) => match message {
+                InterfaceLifecycle::Add { slot, config } => {
+                    let id = config.id;
+                    if let Some(entry) = inbound.get_mut(slot) {
+                        entry.0 = id;
+                        egress.activate(slot, id);
+                        let _ = configs.push(config);
+                        let _ = pacers.push(InterfacePacer {
+                            id,
+                            pacer: AnnouncePacer::new(
+                                config.announce_bandwidth_cap,
+                                config.bitrate_bps,
+                            ),
+                        });
+                        wake_schedules = engine.wake_schedules(&configs);
+                    }
+                }
+                InterfaceLifecycle::Remove { id } => {
+                    if let Some(pos) = inbound.iter().position(|(slot_id, _)| *slot_id == id) {
+                        inbound[pos].0 = NIL_INTERFACE;
+                        while inbound[pos].1.try_peek_frame().is_some() {
+                            inbound[pos].1.release_frame();
+                        }
+                    }
+                    egress.deactivate(id);
+                    if let Some(pos) = configs.iter().position(|config| config.id == id) {
+                        let _ = configs.swap_remove(pos);
+                    }
+                    if let Some(pos) = pacers.iter().position(|pacer| pacer.id == id) {
+                        let _ = pacers.swap_remove(pos);
+                    }
+                    let now = host.now();
+                    engine.cull_expired_routes(now, &configs, &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            now,
+                            &mut on_journaled,
+                        )
+                    });
+                    wake_schedules = engine.wake_schedules(&configs);
+                }
+            },
+        }
+    }
 }
 
 /// A grant lane whose slots and channel live on the leaked heap — the test stand-in
@@ -867,6 +1128,127 @@ mod tests {
             header.hops,
             original_hops + 1,
             "the rebroadcast bumps the hop count"
+        );
+    }
+
+    #[test]
+    fn a_pooled_slot_added_at_runtime_carries_inbound_then_frees_on_remove() {
+        let source = InterfaceId::new([0xA1; 16]);
+
+        let mut engine = EngineState::<Cap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
+
+        let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
+        let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
+        let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
+
+        const SLOT: usize = MAX_WIRE_FRAME_LEN;
+        // The reactor side of one pooled wire, plus the interface-side producer the test drives
+        // frames in on. The slot is free at boot; the runtime stands it up mid-run.
+        let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<SLOT>(2);
+        let (source_out_tx, _source_out_rx) = leaked_grant_lane::<SLOT>(2);
+
+        let mut inbound: HeaplessVec<
+            (
+                InterfaceId,
+                EmbassyGrantConsumer<'static, CriticalSectionRawMutex, SLOT>,
+            ),
+            1,
+        > = HeaplessVec::new();
+        let _ = inbound.push((NIL_INTERFACE, source_in_rx));
+        let mut egress_lanes: HeaplessVec<
+            (
+                InterfaceId,
+                EmbassyGrantProducer<'static, CriticalSectionRawMutex, SLOT>,
+            ),
+            1,
+        > = HeaplessVec::new();
+        let _ = egress_lanes.push((NIL_INTERFACE, source_out_tx));
+
+        let raw = hx(RAW_ANNOUNCE);
+
+        let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+        let heard_sink = heard.clone();
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::AnnounceHeard { .. } => {
+                *heard_sink.borrow_mut() += 1;
+            }
+            Journaled::Delivered(_)
+            | Journaled::CommandSettled { .. }
+            | Journaled::RouteExpired { .. }
+            | Journaled::RouteEvicted { .. }
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
+            | Journaled::RequestReceived { .. }
+            | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
+            | Journaled::LinkClosed { .. }
+            | Journaled::ResourceReceived { .. }
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. } => {}
+        };
+
+        let count = block_on(async {
+            let reactor = run_pooled(
+                engine,
+                &[],
+                inbound,
+                PooledEgress::new(egress_lanes),
+                EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+                notify.receiver(),
+                commands.receiver(),
+                lifecycle.receiver(),
+                app,
+                |_: &ProofRequest| false,
+            );
+
+            let driver = async {
+                // Free slot first: a frame announced before the slot is stood up is never heard.
+                source_in_tx.grant().await.fill(&raw);
+                source_in_tx.commit();
+                notify.sender().send(source).await;
+                Timer::after(Duration::from_millis(30)).await;
+                assert_eq!(*heard.borrow(), 0, "a free slot routes nothing inbound");
+
+                // Stand the slot up at runtime, then announce: now it crosses.
+                lifecycle
+                    .sender()
+                    .send(InterfaceLifecycle::Add {
+                        slot: 0,
+                        config: descriptor(source),
+                    })
+                    .await;
+                Timer::after(Duration::from_millis(30)).await;
+                source_in_tx.grant().await.fill(&raw);
+                source_in_tx.commit();
+                notify.sender().send(source).await;
+                loop {
+                    if *heard.borrow() >= 1 {
+                        break;
+                    }
+                    yield_now().await;
+                }
+
+                // Tear it back down: the cull runs against the reduced view and the reactor keeps
+                // looping (the slot's endpoints stay put, ready to reuse).
+                lifecycle
+                    .sender()
+                    .send(InterfaceLifecycle::Remove { id: source })
+                    .await;
+                Timer::after(Duration::from_millis(30)).await;
+                *heard.borrow()
+            };
+
+            match select(reactor, with_timeout(WATCHDOG, driver)).await {
+                Either::Second(result) => result.expect("the slot is heard before the watchdog"),
+                Either::First(()) => unreachable!("the reactor loop never returns"),
+            }
+        });
+
+        assert_eq!(
+            count, 1,
+            "the runtime-added slot carried exactly the one announce"
         );
     }
 }

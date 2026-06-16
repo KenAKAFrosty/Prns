@@ -10,3 +10,6 @@ pub mod impls;
 
 #[cfg(feature = "wifi-lan-auto")]
 pub use impls::tokio::{AutoWifi, AutoWifiPeer, AutoWifiStatus};
+
+#[cfg(feature = "embassy-wifi")]
+pub use impls::embassy::{AutoWifi, AutoWifiShared, AutoWifiStatus, WifiMemberStatus};

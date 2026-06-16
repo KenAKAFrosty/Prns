@@ -11,22 +11,33 @@
 //! the channel and pool living in static storage instead of the heap.
 
 use core::cell::RefCell;
+use core::future::Future;
+use core::marker::PhantomData;
 
+use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::channel::Sender;
+use embassy_sync::channel::{Receiver, Sender};
 use embassy_sync::signal::Signal;
+use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, IssuedCommand, Respond, RespondData,
-    SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
+    CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, Respond,
+    RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
+use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::reactor::impls::embassy_reactor::{
+    run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
+};
+use crate::reactor::Host;
 use crate::routing::links::LinkId;
+use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::request_router::RespondToken;
-use super::SendError;
+use super::recipe::PreConfiguredDestination;
+use super::request_router::{RespondToken, RouteSet};
+use super::{PrnsEvent, PrnsRecipe, SendError};
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
@@ -257,11 +268,355 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::Commands
     }
 }
 
+/// The reactor-side wiring an embassy node runs on: the pool's inbound consumers and the egress,
+/// the three channel receivers the reactor parks on, and the command handle the app drives it
+/// through. The board declares the matching `static` channels and hands this bundle to
+/// [`Prns::new`]; the interface-side seam halves (and the fleet senders) come off the same pool
+/// separately, so the node owns only the reactor's half.
+pub struct ReactorPlumbing<
+    M,
+    const SLOT: usize,
+    const IFACES: usize,
+    const NOTIFY: usize,
+    const COMMANDS: usize,
+    const LIFECYCLE: usize,
+    const COMPLETIONS: usize,
+> where
+    M: RawMutex + 'static,
+{
+    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
+    egress: PooledEgress<M, SLOT, IFACES>,
+    notify: Receiver<'static, M, InterfaceId, NOTIFY>,
+    commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
+    lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
+}
+
+impl<
+        M: RawMutex + 'static,
+        const SLOT: usize,
+        const IFACES: usize,
+        const NOTIFY: usize,
+        const COMMANDS: usize,
+        const LIFECYCLE: usize,
+        const COMPLETIONS: usize,
+    > ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
+{
+    /// Bundle the reactor's half of the pool. `inbound` and `egress` carry every slot's
+    /// reactor-side endpoint (free slots are tagged by the pool); the receivers are the matching
+    /// halves of the node's three `static` channels; `handle` pairs the command sender with the
+    /// completion pool.
+    #[must_use]
+    pub fn new(
+        inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
+        egress: PooledEgress<M, SLOT, IFACES>,
+        notify: Receiver<'static, M, InterfaceId, NOTIFY>,
+        commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
+        lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+        handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
+    ) -> Self {
+        Self {
+            inbound,
+            egress,
+            notify,
+            commands,
+            lifecycle,
+            handle,
+        }
+    }
+}
+
+/// A node on an embassy host: the no_std twin of the tokio `Prns`, built from a
+/// [`PrnsRecipe`] over a board-declared static interface pool ([`ReactorPlumbing`]). The recipe
+/// still names the node (its transport role, destinations, and routes); the wires are attached
+/// explicitly because the board owns their `static` storage. [`handle`](Self::handle) hands out the
+/// command surface, [`activate`](Self::activate) stands up a top-level interface on a pool slot, and
+/// [`run`](Self::run) joins the reactor with the caller's interface/supervisor drive — a plain
+/// embassy `join`, the shape an embedded app reaches for.
+pub struct Prns<
+    St,
+    R,
+    F,
+    S,
+    H,
+    M,
+    const SLOT: usize,
+    const IFACES: usize,
+    const NOTIFY: usize,
+    const COMMANDS: usize,
+    const LIFECYCLE: usize,
+    const COMPLETIONS: usize,
+> where
+    S: StorageLayout,
+    M: RawMutex + 'static,
+{
+    engine: EngineState<S>,
+    inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), IFACES>,
+    egress: PooledEgress<M, SLOT, IFACES>,
+    notify: Receiver<'static, M, InterfaceId, NOTIFY>,
+    commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
+    lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
+    host: H,
+    initial: HeaplessVec<InterfaceConfig, IFACES>,
+    state: St,
+    on_event: F,
+    _routes: PhantomData<R>,
+}
+
+impl<
+        St,
+        R,
+        F,
+        S,
+        H,
+        M,
+        const SLOT: usize,
+        const IFACES: usize,
+        const NOTIFY: usize,
+        const COMMANDS: usize,
+        const LIFECYCLE: usize,
+        const COMPLETIONS: usize,
+    > Prns<St, R, F, S, H, M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
+where
+    R: RouteSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+    S: StorageLayout,
+    H: Host,
+    M: RawMutex + 'static,
+{
+    /// Stand a node up from `recipe` over the board's `plumbing` and `host` (its clock + entropy):
+    /// assemble the engine (transport role, destinations, the routes' request handlers) exactly as
+    /// the tokio `Prns::new` does, then hold the reactor's half ready. No
+    /// interface is wired yet — [`activate`](Self::activate) names the top-level wires and the
+    /// supervisor drive names the rest, both at [`run`](Self::run).
+    #[allow(clippy::expect_used)]
+    pub fn new<'d, D, I>(
+        recipe: PrnsRecipe<D, St, R, F, I, S>,
+        plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        host: H,
+    ) -> Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        let mut engine = EngineState::<S>::default();
+        if let Some(id) = recipe.transport {
+            engine.set_transport_id(id);
+        }
+        for destination in recipe.pre_configured_destinations {
+            match destination {
+                PreConfiguredDestination::Plain { app_name, aspects } => {
+                    engine
+                        .register_plain_destination(app_name, aspects)
+                        .expect("recipe plain destination is valid");
+                }
+                PreConfiguredDestination::Single {
+                    app_name,
+                    aspects,
+                    identity,
+                    announce_app_data: app_data,
+                    proof,
+                    ratchet,
+                } => {
+                    let held = engine
+                        .hold_identity(identity)
+                        .expect("recipe identity fits the store");
+                    let dest = engine
+                        .register_single_destination(
+                            &held, app_name, aspects, app_data, proof, ratchet,
+                        )
+                        .expect("recipe single destination is valid");
+                    for (path, policy) in R::REGISTRATIONS {
+                        engine
+                            .register_request_handler(&dest, path, policy.engine_policy())
+                            .expect("recipe request handler fits the store");
+                        for seed in policy.seed_list() {
+                            engine
+                                .allow_requester(&dest, path, *seed)
+                                .expect("recipe seed identity admits to its own fresh handler");
+                        }
+                    }
+                }
+            }
+        }
+
+        Prns {
+            engine,
+            inbound: plumbing.inbound,
+            egress: plumbing.egress,
+            notify: plumbing.notify,
+            commands: plumbing.commands,
+            lifecycle: plumbing.lifecycle,
+            handle: plumbing.handle,
+            host,
+            initial: HeaplessVec::new(),
+            state: recipe.app_state,
+            on_event: recipe.on_event,
+            _routes: PhantomData,
+        }
+    }
+
+    /// The command surface for this node — the embedded twin of `PrnsHandle`. `Copy`, so any task
+    /// can drive the node through it while [`run`](Self::run) owns the loop.
+    #[must_use]
+    pub fn handle(&self) -> EmbassyCommands<'static, M, COMMANDS, COMPLETIONS> {
+        self.handle
+    }
+
+    /// Stand a top-level interface up on pool `slot` and hand back the interface-side seam to drive
+    /// it on. The board pairs this with the same `slot`'s interface-side halves off the pool; the
+    /// returned descriptor's id routes inbound and egress to this slot from the moment
+    /// [`run`](Self::run) starts. The home of the always-present wires (the board's USB-auto);
+    /// the supervisor's peers come up later through its [`Fleet`].
+    pub fn activate(&mut self, slot: usize, config: InterfaceConfig) {
+        if let Some(entry) = self.inbound.get_mut(slot) {
+            entry.0 = config.id;
+            self.egress.activate(slot, config.id);
+            let _ = self.initial.push(config);
+        }
+    }
+
+    /// Drive the node until the executor drops it: the reactor (over its slot pool) joined with the
+    /// caller's `drive` — the interface and supervisor run-futures, joined however the board likes.
+    /// Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
+    pub async fn run(self, drive: impl Future<Output = ()>) {
+        let Prns {
+            engine,
+            inbound,
+            egress,
+            notify,
+            commands,
+            lifecycle,
+            handle: _,
+            host,
+            initial,
+            state,
+            mut on_event,
+            _routes,
+        } = self;
+        let reactor = run_pooled(
+            engine,
+            &initial,
+            inbound,
+            egress,
+            host,
+            notify,
+            commands,
+            lifecycle,
+            |journaled| on_event(PrnsEvent::from(journaled), &state),
+            |_| false,
+        );
+        join(reactor, drive).await;
+    }
+}
+
+/// One member slot's reactor wire, lent to a supervisor: the inbound producer it funnels frames it
+/// receives off the medium into, the outbound consumer it drains the reactor's directives off, and
+/// the notify funnel it announces each inbound commit on — tagged with the member's *current* id, so
+/// the supervisor decides the notify tag per peer (the slot's id changes as peers come and go). The
+/// endpoints are permanent, so the slot reuses for the next peer with no re-split.
+pub struct MemberWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize> {
+    pub inbound: EmbassyGrantProducer<'static, M, SLOT>,
+    pub outbound: EmbassyGrantConsumer<'static, M, SLOT>,
+    pub notify: Sender<'static, M, InterfaceId, NOTIFY>,
+}
+
+/// A supervisor's lever onto a contiguous range of the node's interface pool — the embedded twin of
+/// the host `Fleet`, minus the spawn. A supervisor owns no wire of its own; it runs
+/// a discovery loop and, per confirmed peer, claims a free member slot's [`MemberWire`], mints the
+/// peer's id, and tells the reactor to route to it with [`stand_up`](Self::stand_up). When the peer
+/// drops it calls [`tear_down`](Self::tear_down) and the slot frees for the next peer. Bounded by
+/// `MEMBERS` (a compile-time cap — interfaces are cheap, so size it generously); the supervisor
+/// drives its own member futures (it holds the wires), so no future is ever spawned.
+pub struct Fleet<
+    M: RawMutex + 'static,
+    const SLOT: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+> {
+    base: usize,
+    lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
+    members: [Option<MemberWire<M, SLOT, NOTIFY>>; MEMBERS],
+}
+
+impl<
+        M: RawMutex + 'static,
+        const SLOT: usize,
+        const MEMBERS: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    > Fleet<M, SLOT, MEMBERS, NOTIFY, LIFECYCLE>
+{
+    /// Build a fleet over the pool slots `[base .. base + MEMBERS)`. `members[local]` is the
+    /// interface-side wire of global slot `base + local` (the half whose reactor side the node's
+    /// [`ReactorPlumbing`] holds); `lifecycle` is the sender whose receiver the reactor parks on.
+    #[must_use]
+    pub fn new(
+        base: usize,
+        lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
+        members: [Option<MemberWire<M, SLOT, NOTIFY>>; MEMBERS],
+    ) -> Self {
+        Self {
+            base,
+            lifecycle,
+            members,
+        }
+    }
+
+    /// How many peers this fleet can carry at once.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        MEMBERS
+    }
+
+    /// Take member slot `local`'s wire to build its I/O loop around — once, at supervisor start.
+    /// `None` once taken (or out of range), so a supervisor claims each of its `MEMBERS` wires
+    /// exactly once and reuses the slot in place for successive peers.
+    pub fn take_wire(&mut self, local: usize) -> Option<MemberWire<M, SLOT, NOTIFY>> {
+        self.members.get_mut(local)?.take()
+    }
+
+    /// Route the reactor to member slot `local` under `config` (the peer's medium-derived id and
+    /// descriptor): the engine begins forwarding to it at once. `false` if the lifecycle lane is
+    /// full. Pair with the member's own I/O loop coming live on the same slot.
+    pub fn stand_up(&self, local: usize, config: InterfaceConfig) -> bool {
+        self.lifecycle
+            .try_send(InterfaceLifecycle::Add {
+                slot: self.base + local,
+                config,
+            })
+            .is_ok()
+    }
+
+    /// Tear the routed member with this id back down: the reactor culls its routes and frees the
+    /// slot. `false` if the lifecycle lane is full.
+    pub fn tear_down(&self, id: InterfaceId) -> bool {
+        self.lifecycle
+            .try_send(InterfaceLifecycle::Remove { id })
+            .is_ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::{hx, RAW_ANNOUNCE, TEST_TRANSPORT_ID};
+    use crate::interfaces::{
+        AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
+        InterfaceKind, InterfaceMode, TransportCapability,
+    };
+    use crate::reactor::grant::GrantProducer;
+    use crate::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyHost};
+    use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+    use crate::runtime::Diagnostic;
+    use crate::storage::GrowableHeap;
     use crate::units::Rtt;
+    use embassy_futures::block_on;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::channel::Channel;
+    use embassy_time::{with_timeout, Duration, Timer};
+    use std::rc::Rc;
 
     type Pool<const N: usize> = CompletionPool<CriticalSectionRawMutex, N>;
 
@@ -350,6 +705,138 @@ mod tests {
         assert!(
             pool.settle(second, delivered(2)),
             "the stale release left the new claimant intact"
+        );
+    }
+
+    type Mtx = CriticalSectionRawMutex;
+    const SLOT: usize = MAX_WIRE_FRAME_LEN;
+
+    fn descriptor(id: InterfaceId) -> InterfaceConfig {
+        InterfaceConfig {
+            id,
+            capabilities: InterfaceCapabilities {
+                ingress: IngressCapability::Enabled,
+                egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+            },
+            mode: InterfaceMode::Full,
+            bitrate_bps: None,
+            hardware_mtu: None,
+            announce_rate_limit: None,
+            announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
+            airtime_duty_cycle: None,
+        }
+    }
+
+    fn leak<T>(value: T) -> &'static T {
+        std::boxed::Box::leak(std::boxed::Box::new(value))
+    }
+
+    /// A supervisor stands one peer up through its [`Fleet`] on a node built from a recipe, feeds an
+    /// announce in over the member's wire, and the node hears it — then tears the peer back down.
+    /// The whole high-level embassy path end to end: `Prns::new` over a recipe, `run` joining the
+    /// reactor with the supervisor drive, and the Fleet's `stand_up`/`tear_down` reaching the pool.
+    #[test]
+    fn a_recipe_node_hears_an_announce_a_supervisor_stands_a_peer_up_for() {
+        let notify: &'static Channel<Mtx, InterfaceId, 4> = leak(Channel::new());
+        let commands: &'static Channel<Mtx, IssuedCommand, 4> = leak(Channel::new());
+        let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
+        let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
+
+        // One wire pair for slot 0: the reactor side joins the node's plumbing, the interface side
+        // becomes the fleet's one member.
+        let (in_producer, in_consumer) = leaked_grant_lane::<SLOT>(4);
+        let (out_producer, out_consumer) = leaked_grant_lane::<SLOT>(4);
+
+        let free = InterfaceId::new([0xff; 16]);
+        let mut inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, Mtx, SLOT>), 1> =
+            HeaplessVec::new();
+        let _ = inbound.push((free, in_consumer));
+        let mut egress_lanes: HeaplessVec<
+            (InterfaceId, EmbassyGrantProducer<'static, Mtx, SLOT>),
+            1,
+        > = HeaplessVec::new();
+        let _ = egress_lanes.push((free, out_producer));
+
+        let handle = EmbassyCommands::new(commands.sender(), completion);
+        let plumbing = ReactorPlumbing::new(
+            inbound,
+            PooledEgress::new(egress_lanes),
+            notify.receiver(),
+            commands.receiver(),
+            lifecycle.receiver(),
+            handle,
+        );
+
+        let fleet: Fleet<Mtx, SLOT, 1, 4, 4> = Fleet::new(
+            0,
+            lifecycle.sender(),
+            [Some(MemberWire {
+                inbound: in_producer,
+                outbound: out_consumer,
+                notify: notify.sender(),
+            })],
+        );
+
+        let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+        let heard_sink = heard.clone();
+        let recipe = PrnsRecipe {
+            transport: Some(TEST_TRANSPORT_ID),
+            pre_configured_destinations: [PreConfiguredDestination::Plain {
+                app_name: "lxmf",
+                aspects: &["delivery"],
+            }],
+            app_state: (),
+            storage: GrowableHeap,
+            routes: crate::routes![],
+            interfaces: crate::interfaces![],
+            on_event: move |event: PrnsEvent<'_>, _state: &()| {
+                if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { .. }) = event {
+                    *heard_sink.borrow_mut() += 1;
+                }
+            },
+        };
+
+        let node = Prns::new(
+            recipe,
+            plumbing,
+            EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+        );
+
+        let raw = hx(RAW_ANNOUNCE);
+        let peer = InterfaceId::from_medium(InterfaceKind::WifiPeer, b"test-peer-medium");
+
+        let drive = async move {
+            let mut fleet = fleet;
+            let mut wire = fleet
+                .take_wire(0)
+                .expect("the fleet lends its one member wire");
+            assert!(
+                fleet.take_wire(0).is_none(),
+                "a member wire is claimed exactly once"
+            );
+            assert!(
+                fleet.stand_up(0, descriptor(peer)),
+                "the lifecycle lane accepts the add"
+            );
+            Timer::after(Duration::from_millis(40)).await;
+
+            wire.inbound.grant().await.fill(&raw);
+            wire.inbound.commit();
+            wire.notify.send(peer).await;
+            Timer::after(Duration::from_millis(80)).await;
+
+            assert!(
+                fleet.tear_down(peer),
+                "the lifecycle lane accepts the remove"
+            );
+            Timer::after(Duration::from_millis(20)).await;
+        };
+
+        let _ = block_on(with_timeout(Duration::from_millis(600), node.run(drive)));
+        assert_eq!(
+            *heard.borrow(),
+            1,
+            "the node heard the announce the supervisor's peer carried in"
         );
     }
 }
