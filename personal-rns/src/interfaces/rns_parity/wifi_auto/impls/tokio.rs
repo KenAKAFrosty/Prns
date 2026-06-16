@@ -21,6 +21,9 @@ use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 const MAX_PEERS: usize = 8;
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
+/// Consecutive failed discovery beacons before the supervisor reports its egress as down. Two
+/// intervals of [`BEACON_INTERVAL`] so a single transient send error does not flap the card.
+const EGRESS_DOWN_AFTER: u32 = 2;
 
 pub struct AutoWifiPeer {
     id: InterfaceId,
@@ -161,6 +164,8 @@ struct AutoWifiShared {
     peers: AtomicU32,
     rx: AtomicU64,
     tx: AtomicU64,
+    tx_failures: AtomicU64,
+    egress_down: AtomicBool,
     members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
 }
 
@@ -173,6 +178,8 @@ impl AutoWifiStatus {
                 peers: AtomicU32::new(0),
                 rx: AtomicU64::new(0),
                 tx: AtomicU64::new(0),
+                tx_failures: AtomicU64::new(0),
+                egress_down: AtomicBool::new(false),
                 members: Mutex::new(std::vec::Vec::new()),
             }),
         }
@@ -180,6 +187,14 @@ impl AutoWifiStatus {
 
     fn mark_up(&self) {
         self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    fn bump_tx_failures(&self) {
+        self.shared.tx_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn set_egress_down(&self, down: bool) {
+        self.shared.egress_down.store(down, Ordering::Relaxed);
     }
 
     fn publish(&self, peers: u32, rx: u64, tx: u64, members: std::vec::Vec<TokioInterfaceStatus>) {
@@ -200,6 +215,27 @@ impl AutoWifiStatus {
             Err(_) => std::vec::Vec::new(),
         }
     }
+
+    /// Cumulative count of discovery beacons that never left the host, e.g. the OS rejecting
+    /// multicast egress on the chosen NIC with `EHOSTUNREACH`. A climbing value alongside an Offline
+    /// card is the "cannot transmit on this interface" signature, distinct from a NIC that never
+    /// came up at all.
+    #[must_use]
+    pub fn tx_failures(&self) -> u64 {
+        self.shared.tx_failures.load(Ordering::Relaxed)
+    }
+
+    /// True once recent discovery beacons could not be sent at all: the supervisor is up (NIC found,
+    /// sockets bound) but the host is refusing multicast egress, so no peer can ever hear us. On
+    /// macOS this is almost always the Local Network privacy gate, an ungranted app gets
+    /// `EHOSTUNREACH` on every multicast send until the user approves it; elsewhere it usually means
+    /// the link or AP is dropping multicast. The "~ just works ~" canary, an auto-interface that
+    /// cannot beacon says so on its card (Offline) instead of sitting indistinguishable from a
+    /// quiet-but-healthy Dormant.
+    #[must_use]
+    pub fn egress_down(&self) -> bool {
+        self.shared.up.load(Ordering::Relaxed) && self.shared.egress_down.load(Ordering::Relaxed)
+    }
 }
 
 impl InterfaceStatus for AutoWifiStatus {
@@ -208,7 +244,9 @@ impl InterfaceStatus for AutoWifiStatus {
     }
 
     fn connection(&self) -> ConnectionState {
-        if !self.shared.up.load(Ordering::Relaxed) {
+        if !self.shared.up.load(Ordering::Relaxed)
+            || self.shared.egress_down.load(Ordering::Relaxed)
+        {
             ConnectionState::Failed
         } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
             ConnectionState::Connected
@@ -251,6 +289,7 @@ impl InterfaceSupervisor for AutoWifi {
             index: nic.index,
             bitrate_bps: self.bitrate_bps,
             status: self.status,
+            consecutive_tx_failures: 0,
         };
         sup.publish_status();
         let token = *sup.brain.our_peering_token().as_bytes();
@@ -283,9 +322,10 @@ impl InterfaceSupervisor for AutoWifi {
                 }
                 _ = beacon.tick() => {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
-                    let _ = discovery
+                    let beacon_sent = discovery
                         .send_to(&token, scoped(core::DISCOVERY_GROUP, core::DEFAULT_DISCOVERY_PORT, nic.index))
                         .await;
+                    sup.note_beacon(beacon_sent.is_ok());
                     if beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY) {
                         for addr in sup.peer_addresses() {
                             let _ = unicast_discovery
@@ -316,6 +356,7 @@ struct Supervisor {
     index: u32,
     bitrate_bps: u32,
     status: AutoWifiStatus,
+    consecutive_tx_failures: u32,
 }
 
 impl Supervisor {
@@ -358,6 +399,19 @@ impl Supervisor {
         let rx = members.iter().map(InterfaceStatus::rx_bytes).sum();
         let tx = members.iter().map(InterfaceStatus::tx_bytes).sum();
         self.status.publish(members.len() as u32, rx, tx, members);
+    }
+
+    fn note_beacon(&mut self, sent: bool) {
+        if sent {
+            self.consecutive_tx_failures = 0;
+            self.status.set_egress_down(false);
+        } else {
+            self.status.bump_tx_failures();
+            self.consecutive_tx_failures = self.consecutive_tx_failures.saturating_add(1);
+            if self.consecutive_tx_failures >= EGRESS_DOWN_AFTER {
+                self.status.set_egress_down(true);
+            }
+        }
     }
 
     fn route_inbound(&self, src: SocketAddr, bytes: &[u8]) {

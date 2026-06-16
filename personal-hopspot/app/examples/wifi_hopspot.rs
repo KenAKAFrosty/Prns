@@ -108,7 +108,22 @@ fn run_window(wifi_status: AutoWifiStatus) {
     };
 
     let mut ui_state = UiState::new();
+    let mut egress_was_down = false;
     loop {
+        let egress_down = wifi_status.egress_down();
+        if egress_down && !egress_was_down {
+            eprintln!(
+                "wifi: multicast egress is failing on this NIC ({} beacons unsent) — no peer can hear us. \
+                 On macOS this is almost always the Local Network privacy gate: approve the prompt, or enable \
+                 this app under System Settings > Privacy & Security > Local Network. Otherwise check the AP \
+                 passes IPv6 multicast.",
+                wifi_status.tx_failures()
+            );
+        } else if !egress_down && egress_was_down {
+            eprintln!("wifi: multicast egress recovered");
+        }
+        egress_was_down = egress_down;
+
         let members = wifi_status.members();
         let mut statuses: Vec<&dyn InterfaceStatus> = Vec::with_capacity(members.len() + 1);
         statuses.push(&wifi_status);
