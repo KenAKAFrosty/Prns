@@ -77,7 +77,7 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
         let bytes = id.as_bytes();
         let mut label = CardLabel::new();
         let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
-        Some((CardKind::Wifi, label))
+        Some((CardKind::Peer, label))
     }
 }
 

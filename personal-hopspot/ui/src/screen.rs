@@ -22,7 +22,7 @@
 use core::fmt::Write as _;
 
 use embedded_graphics::mono_font::ascii::{FONT_5X8, FONT_6X10, FONT_9X15_BOLD};
-use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::{MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
@@ -77,6 +77,22 @@ const MENU_MARK_X: i32 = 4;
 const MENU_TEXT_X: i32 = 12;
 const FONT_5X8_CHAR_W: i32 = 5;
 
+/// The card-name font: a fleet member (a [`CardKind::Peer`]) reads one size down, so its id tag
+/// fits and it sits visibly under its supervisor.
+fn name_font(kind: CardKind) -> &'static MonoFont<'static> {
+    match kind {
+        CardKind::Peer => &FONT_5X8,
+        _ => &FONT_6X10,
+    }
+}
+
+fn name_char_w(kind: CardKind) -> i32 {
+    match kind {
+        CardKind::Peer => FONT_5X8_CHAR_W,
+        _ => FONT_6X10_CHAR_W,
+    }
+}
+
 const GLOBAL_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Announce", "Status", "Sleep", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
 const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Serial", "Restart", "Back"];
@@ -89,7 +105,7 @@ const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peer", "Drop", "Back"
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in `draw_interface_icon`) as new interface
 /// kinds land; never a wildcard, so the compiler flags the missing glyph.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CardKind {
     Wifi,
     Usb,
@@ -97,6 +113,9 @@ pub enum CardKind {
     LoRa,
     EspNow,
     Tcp,
+    /// A fleet member a supervisor stood up (a WiFi/USB peer), not an interface a node configured
+    /// itself. Renders one font-size down — fits its id tag and reads as subordinate to its parent.
+    Peer,
 }
 
 /// How alive an interface's card reads. `Live` is a confirmed link — the full
@@ -526,8 +545,8 @@ fn draw_compact_number<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
-fn selected_name_backing_width(label: &str) -> u32 {
-    let label_right = NAME_TEXT_X + label.chars().count() as i32 * FONT_6X10_CHAR_W + 1;
+fn selected_name_backing_width(label: &str, char_w: i32) -> u32 {
+    let label_right = NAME_TEXT_X + label.chars().count() as i32 * char_w + 1;
     let icon_right = NAME_ICON_X + NAME_ICON_W + 1;
     let content_right = label_right.max(icon_right).min(WIDTH - 1);
     (content_right - NAME_BACKING_X).max(0) as u32
@@ -535,7 +554,7 @@ fn selected_name_backing_width(label: &str) -> u32 {
 
 fn interface_menu_items(kind: CardKind) -> &'static [&'static str; MENU_ITEM_COUNT] {
     match kind {
-        CardKind::Wifi => &WIFI_MENU_ITEMS,
+        CardKind::Wifi | CardKind::Peer => &WIFI_MENU_ITEMS,
         CardKind::Usb => &USB_MENU_ITEMS,
         CardKind::Ble => &BLE_MENU_ITEMS,
         CardKind::LoRa => &LORA_MENU_ITEMS,
@@ -793,8 +812,8 @@ fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>(
     color: BinaryColor,
 ) {
     match kind {
-        // WiFi: the familiar status-bar arc stack, pixel-reduced to 9px.
-        CardKind::Wifi => {
+        // WiFi: the familiar status-bar arc stack, pixel-reduced to 9px. A peer reuses it.
+        CardKind::Wifi | CardKind::Peer => {
             draw_pattern_colored(
                 display,
                 x,
@@ -938,13 +957,16 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     if selected {
         let _ = Rectangle::new(
             Point::new(NAME_BACKING_X, top + NAME_BACKING_Y),
-            Size::new(selected_name_backing_width(&card.label), NAME_BACKING_H),
+            Size::new(
+                selected_name_backing_width(&card.label, name_char_w(card.kind)),
+                NAME_BACKING_H,
+            ),
         )
         .into_styled(fill(BinaryColor::On))
         .draw(display);
     }
 
-    let label_style = MonoTextStyle::new(&FONT_6X10, name_color);
+    let label_style = MonoTextStyle::new(name_font(card.kind), name_color);
     let num_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
 
     // Name line: [icon] label. Dormant keeps the live icon — only the body changes.
@@ -1057,7 +1079,10 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
     let name_color = if selected {
         let _ = Rectangle::new(
             Point::new(NAME_BACKING_X, top + NAME_BACKING_Y),
-            Size::new(selected_name_backing_width(&card.label), NAME_BACKING_H),
+            Size::new(
+                selected_name_backing_width(&card.label, name_char_w(card.kind)),
+                NAME_BACKING_H,
+            ),
         )
         .into_styled(fill(BinaryColor::On))
         .draw(display);
@@ -1065,7 +1090,7 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
     } else {
         BinaryColor::On
     };
-    let label_style = MonoTextStyle::new(&FONT_6X10, name_color);
+    let label_style = MonoTextStyle::new(name_font(card.kind), name_color);
     if card.liveness.is_offline() {
         draw_offline_icon(display, NAME_ICON_X, top + NAME_LINE_Y + 1, name_color);
     } else {
