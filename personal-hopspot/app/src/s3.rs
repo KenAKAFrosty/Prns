@@ -36,6 +36,8 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
+use personal_rns::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, FrameSlot};
 use personal_rns::reactor::impls::embassy_reactor::{
@@ -43,8 +45,6 @@ use personal_rns::reactor::impls::embassy_reactor::{
     EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::usb_auto::core::device_descriptor;
-use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::wire::DestinationHash;

@@ -28,13 +28,13 @@ use personal_rns::engine::{
     IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
     run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
     TokioInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::storage::GrowableHeap;
