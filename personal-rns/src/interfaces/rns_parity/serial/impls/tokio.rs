@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::interfaces::framed_stream;
 use crate::interfaces::rns_parity::serial::core;
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -20,23 +20,30 @@ pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
     reconnect: Duration,
+    medium_id: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
 
 impl<Open> SerialInterface<Open> {
+    /// `medium_id` names *which* serial device this is — the port name or a stable device id the
+    /// caller knows (the `open` closure that yields the stream hides it from us). Two distinct
+    /// serial channels must pass distinct bytes; the same device across a reopen should pass the
+    /// same, so its routes survive the reconnect.
     #[must_use]
-    pub fn new(open: Open, reconnect: Duration) -> Self {
-        let id = InterfaceId::mint();
+    pub fn new(open: Open, reconnect: Duration, medium_id: &[u8]) -> Self {
+        let medium_id = medium_id.to_vec();
+        let id = InterfaceId::from_medium(InterfaceKind::Serial, &medium_id);
         Self {
             id,
             open,
             reconnect,
+            medium_id,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
 
-    /// This interface's framework-minted id, for the app that wants to name it (an
-    /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    /// This interface's id, derived from its device `medium_id`, for the app that wants to name it
+    /// (an [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
@@ -57,9 +64,14 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     const HW_MTU: usize = super::super::core::SERIAL_HW_MTU;
+    const KIND: InterfaceKind = InterfaceKind::Serial;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        &self.medium_id
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
@@ -139,7 +151,7 @@ mod tests {
             outbound: out_rx,
         };
 
-        let interface = SerialInterface::new(open, Duration::from_millis(10));
+        let interface = SerialInterface::new(open, Duration::from_millis(10), b"test-serial");
         let status = interface.status();
         tokio::spawn(interface.run(seam));
 

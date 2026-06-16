@@ -1,5 +1,5 @@
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::string::String;
 use std::time::Duration;
 
@@ -8,7 +8,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::interfaces::framed_stream;
 use crate::interfaces::rns_parity::tcp::core;
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -61,12 +61,13 @@ pub struct TcpClientInterface {
 impl TcpClientInterface {
     #[must_use]
     pub fn new(target: String, bitrate_bps: u32, reconnect: Duration) -> Self {
-        Self::new_with_id(InterfaceId::mint(), target, bitrate_bps, reconnect)
+        let id = InterfaceId::from_medium(InterfaceKind::TcpClient, target.as_bytes());
+        Self::new_with_id(id, target, bitrate_bps, reconnect)
     }
 
-    /// Build with a caller-chosen id instead of a minted one — for advanced setups that drive the
-    /// reactor by hand and must pin the interface to the routing key their own wiring references.
-    /// Ordinary nodes call [`new`](Self::new) and let the framework mint a unique id.
+    /// Build with a caller-chosen id instead of one derived from the dial target — for advanced
+    /// setups that drive the reactor by hand and must pin the interface to a routing key their own
+    /// wiring references. Ordinary nodes call [`new`](Self::new).
     #[must_use]
     pub fn new_with_id(
         id: InterfaceId,
@@ -101,9 +102,14 @@ impl TcpClientInterface {
 
 impl Interface for TcpClientInterface {
     const HW_MTU: usize = core::TCP_HW_MTU_CAP;
+    const KIND: InterfaceKind = InterfaceKind::TcpClient;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id, self.bitrate_bps)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        self.target.as_bytes()
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
@@ -149,7 +155,24 @@ pub struct TcpServerInterface {
     id: InterfaceId,
     listener: TcpListener,
     bitrate_bps: u32,
+    medium_id: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
+}
+
+/// The bytes that tag this server channel: the address it listens on (one interface per bound
+/// address — the per-client fan-out the reference spawns is deferred, see the type docs).
+fn server_medium_id(local: SocketAddr) -> heapless::Vec<u8, 18> {
+    let mut tag = heapless::Vec::new();
+    match local.ip() {
+        IpAddr::V4(v4) => {
+            let _ = tag.extend_from_slice(&v4.octets());
+        }
+        IpAddr::V6(v6) => {
+            let _ = tag.extend_from_slice(&v6.octets());
+        }
+    }
+    let _ = tag.extend_from_slice(&local.port().to_be_bytes());
+    tag
 }
 
 impl TcpServerInterface {
@@ -159,22 +182,35 @@ impl TcpServerInterface {
     /// it sets the declared hardware MTU through the reference's tier table, so claim
     /// honestly ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
     pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
-        Self::bind_with_id(InterfaceId::mint(), addr, bitrate_bps).await
+        let listener = TcpListener::bind(addr).await?;
+        Self::assemble(None, listener, bitrate_bps)
     }
 
-    /// Bind with a caller-chosen id instead of a minted one — for advanced setups that drive the
-    /// reactor by hand and must pin the interface to the routing key their own wiring references.
-    /// Ordinary nodes call [`bind`](Self::bind) and let the framework mint a unique id.
+    /// Bind with a caller-chosen id instead of one derived from the listen address — for advanced
+    /// setups that drive the reactor by hand and must pin the interface to a routing key their own
+    /// wiring references. Ordinary nodes call [`bind`](Self::bind).
     pub async fn bind_with_id(
         id: InterfaceId,
         addr: impl tokio::net::ToSocketAddrs,
         bitrate_bps: u32,
     ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
+        Self::assemble(Some(id), listener, bitrate_bps)
+    }
+
+    fn assemble(
+        id_override: Option<InterfaceId>,
+        listener: TcpListener,
+        bitrate_bps: u32,
+    ) -> io::Result<Self> {
+        let medium_id = server_medium_id(listener.local_addr()?);
+        let id = id_override
+            .unwrap_or_else(|| InterfaceId::from_medium(InterfaceKind::TcpServer, &medium_id));
         Ok(Self {
             id,
             listener,
             bitrate_bps,
+            medium_id,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         })
     }
@@ -201,9 +237,14 @@ impl TcpServerInterface {
 
 impl Interface for TcpServerInterface {
     const HW_MTU: usize = core::TCP_HW_MTU_CAP;
+    const KIND: InterfaceKind = InterfaceKind::TcpServer;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id, self.bitrate_bps)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        &self.medium_id
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {

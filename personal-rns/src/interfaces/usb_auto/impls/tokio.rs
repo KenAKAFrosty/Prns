@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::interfaces::usb_auto::core::{self, Capabilities, HostInbound, Message, NodeTag};
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::tokio_reactor::{
     tokio_grant_lane, TokioGrantConsumer, TokioGrantProducer, TokioInterfaceStatus,
@@ -124,9 +124,14 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     const HW_MTU: usize = crate::interfaces::impls::usb_auto::core::HOST_USB_HW_MTU;
+    const KIND: InterfaceKind = InterfaceKind::UsbAutoHost;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::host_descriptor(self.id)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        self.id.as_bytes()
     }
 
     /// Multiplex every discovered, confirmed port behind this one interface: drain each port's

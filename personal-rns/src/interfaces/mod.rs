@@ -2,6 +2,7 @@ pub mod capabilities;
 pub mod connection_state;
 pub mod id;
 pub mod ifac;
+pub mod kind;
 pub mod mac;
 pub mod mode;
 pub mod substrate;
@@ -25,6 +26,7 @@ pub use capabilities::{
 };
 pub use connection_state::ConnectionState;
 pub use id::InterfaceId;
+pub use kind::InterfaceKind;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;
 

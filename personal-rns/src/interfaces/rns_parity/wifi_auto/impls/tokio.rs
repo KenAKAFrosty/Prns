@@ -11,7 +11,9 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::wifi_auto::core;
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceStatus};
+use crate::interfaces::{
+    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus,
+};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -31,23 +33,28 @@ pub struct AutoWifiPeer {
     peer: SocketAddrV6,
     inbound: UnboundedReceiver<std::vec::Vec<u8>>,
     bitrate_bps: u32,
+    medium_id: [u8; 16],
     status: TokioInterfaceStatus,
 }
 
 impl AutoWifiPeer {
+    /// The member's id is derived from its peer's link-local address — EUI-64-stable to the peer's
+    /// MAC, so the same device reconnecting (even on a fresh socket) rebinds the routes it owned.
     pub fn new(
-        id: InterfaceId,
         socket: Arc<UdpSocket>,
         peer: SocketAddrV6,
         inbound: UnboundedReceiver<std::vec::Vec<u8>>,
         bitrate_bps: u32,
     ) -> Self {
+        let medium_id = peer.ip().octets();
+        let id = InterfaceId::from_medium(InterfaceKind::WifiPeer, &medium_id);
         Self {
             id,
             socket,
             peer,
             inbound,
             bitrate_bps,
+            medium_id,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
@@ -64,9 +71,14 @@ impl AutoWifiPeer {
 
 impl Interface for AutoWifiPeer {
     const HW_MTU: usize = core::WIFI_HW_MTU_CAP;
+    const KIND: InterfaceKind = InterfaceKind::WifiPeer;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id, self.bitrate_bps)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        &self.medium_id
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
@@ -127,7 +139,10 @@ impl AutoWifi {
     pub fn with_bitrate(bitrate_bps: u32) -> Self {
         Self {
             bitrate_bps,
-            status: AutoWifiStatus::new(InterfaceId::mint()),
+            status: AutoWifiStatus::new(InterfaceId::from_medium(
+                InterfaceKind::AutoWifi,
+                core::GROUP_ID,
+            )),
         }
     }
 
@@ -269,6 +284,12 @@ impl InterfaceStatus for AutoWifiStatus {
 }
 
 impl InterfaceSupervisor for AutoWifi {
+    const KIND: InterfaceKind = InterfaceKind::AutoWifi;
+
+    fn medium_id(&self) -> &[u8] {
+        core::GROUP_ID
+    }
+
     async fn run(self, fleet: Fleet) {
         let Some(nic) = link_local_nic() else { return };
         let Ok(Sockets {
@@ -373,10 +394,9 @@ impl Supervisor {
     }
 
     fn spawn_member(&mut self, addr: Ipv6Addr) {
-        let id = InterfaceId::mint();
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
         let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, self.index);
-        let member = AutoWifiPeer::new(id, self.data.clone(), peer, inbound_rx, self.bitrate_bps);
+        let member = AutoWifiPeer::new(self.data.clone(), peer, inbound_rx, self.bitrate_bps);
         let status = member.status();
         let attached = self.fleet.add(member);
         self.members.insert(
@@ -633,7 +653,6 @@ mod tests {
 
         let (demux_tx, demux_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let member = AutoWifiPeer::new(
-            InterfaceId::mint(),
             shared.clone(),
             peer_addr,
             demux_rx,

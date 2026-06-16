@@ -697,9 +697,14 @@ mod tests {
 
     impl<M: RawMutex, const SLOT: usize> Interface for EmbassyLoopbackInterface<'_, M, SLOT> {
         const HW_MTU: usize = crate::wire::BROADCAST_MTU;
+        const KIND: crate::interfaces::InterfaceKind = crate::interfaces::InterfaceKind::Loopback;
 
         fn descriptor(&self) -> InterfaceConfig {
             self.descriptor
+        }
+
+        fn medium_id(&self) -> &[u8] {
+            self.descriptor.id.as_bytes()
         }
 
         async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {

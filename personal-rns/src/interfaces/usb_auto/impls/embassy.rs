@@ -16,7 +16,7 @@ use embassy_time::{with_timeout, Duration, Timer};
 use embedded_io_async::{Read, Write};
 
 use crate::interfaces::usb_auto::core::{self, Capabilities, InboundReaction, Message, NodeTag};
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 
@@ -68,9 +68,14 @@ where
     P: FnMut() -> bool,
 {
     const HW_MTU: usize = crate::interfaces::impls::usb_auto::core::DEVICE_USB_HW_MTU;
+    const KIND: InterfaceKind = InterfaceKind::UsbAutoDevice;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::device_descriptor(self.id)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        self.id.as_bytes()
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {

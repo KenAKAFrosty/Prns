@@ -1,11 +1,11 @@
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use tokio::net::UdpSocket;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::udp::core;
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
@@ -24,7 +24,24 @@ pub struct UdpInterface {
     socket: UdpSocket,
     peer: SocketAddr,
     bitrate_bps: u32,
+    medium_id: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
+}
+
+/// The bytes that tag this UDP channel: the fixed forward target it speaks to (RNS forwards every
+/// datagram to one `forward_ip:forward_port`), the same target across a reconnect.
+fn udp_medium_id(peer: SocketAddr) -> heapless::Vec<u8, 18> {
+    let mut tag = heapless::Vec::new();
+    match peer.ip() {
+        IpAddr::V4(v4) => {
+            let _ = tag.extend_from_slice(&v4.octets());
+        }
+        IpAddr::V6(v6) => {
+            let _ = tag.extend_from_slice(&v6.octets());
+        }
+    }
+    let _ = tag.extend_from_slice(&peer.port().to_be_bytes());
+    tag
 }
 
 impl UdpInterface {
@@ -33,34 +50,56 @@ impl UdpInterface {
         peer: impl tokio::net::ToSocketAddrs,
         bitrate_bps: u32,
     ) -> io::Result<Self> {
-        Self::bind_with_id(InterfaceId::mint(), local, peer, bitrate_bps).await
+        let (socket, peer) = Self::bind_socket(local, peer).await?;
+        Ok(Self::assemble(None, socket, peer, bitrate_bps))
     }
 
-    /// Bind with a caller-chosen id instead of a minted one — for advanced setups that drive the
-    /// reactor by hand and must pin the interface to the routing key their own wiring references.
-    /// Ordinary nodes call [`bind`](Self::bind) and let the framework mint a unique id.
+    /// Bind with a caller-chosen id instead of one derived from the forward target — for advanced
+    /// setups that drive the reactor by hand and must pin the interface to a routing key their own
+    /// wiring references. Ordinary nodes call [`bind`](Self::bind).
     pub async fn bind_with_id(
         id: InterfaceId,
         local: impl tokio::net::ToSocketAddrs,
         peer: impl tokio::net::ToSocketAddrs,
         bitrate_bps: u32,
     ) -> io::Result<Self> {
+        let (socket, peer) = Self::bind_socket(local, peer).await?;
+        Ok(Self::assemble(Some(id), socket, peer, bitrate_bps))
+    }
+
+    async fn bind_socket(
+        local: impl tokio::net::ToSocketAddrs,
+        peer: impl tokio::net::ToSocketAddrs,
+    ) -> io::Result<(UdpSocket, SocketAddr)> {
         let socket = UdpSocket::bind(local).await?;
         let peer = tokio::net::lookup_host(peer)
             .await?
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "peer resolved to nothing"))?;
-        Ok(Self {
+        Ok((socket, peer))
+    }
+
+    fn assemble(
+        id_override: Option<InterfaceId>,
+        socket: UdpSocket,
+        peer: SocketAddr,
+        bitrate_bps: u32,
+    ) -> Self {
+        let medium_id = udp_medium_id(peer);
+        let id =
+            id_override.unwrap_or_else(|| InterfaceId::from_medium(InterfaceKind::Udp, &medium_id));
+        Self {
             id,
             socket,
             peer,
             bitrate_bps,
+            medium_id,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
-        })
+        }
     }
 
-    /// This interface's id: minted by [`bind`](Self::bind), or the one handed to
-    /// [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
+    /// This interface's id: derived from its forward target by [`bind`](Self::bind), or the one
+    /// handed to [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
     /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
@@ -81,9 +120,14 @@ impl UdpInterface {
 
 impl Interface for UdpInterface {
     const HW_MTU: usize = core::UDP_HW_MTU_CAP;
+    const KIND: InterfaceKind = InterfaceKind::Udp;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id, self.bitrate_bps)
+    }
+
+    fn medium_id(&self) -> &[u8] {
+        &self.medium_id
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {

@@ -7,7 +7,7 @@
 //! interface body can be driven under either executor.
 
 use crate::interfaces::ifac::IFAC_MAX_SIZE;
-use crate::interfaces::InterfaceConfig;
+use crate::interfaces::{InterfaceConfig, InterfaceKind};
 
 /// An IFAC'd wire frame carries the engine's full link ceiling plus the access tag —
 /// the ceiling a uniform-slot host sizes its lanes and scratch buffers by. No frame
@@ -36,6 +36,18 @@ pub trait Interface {
     /// value its descriptor declares and its own buffers are sized by.
     const HW_MTU: usize;
 
+    /// The medium this interface speaks — the namespace root of its id
+    /// ([`InterfaceId::from_medium`](crate::interfaces::InterfaceId::from_medium)).
+    const KIND: InterfaceKind;
+
     fn descriptor(&self) -> InterfaceConfig;
+
+    /// The bytes that uniquely tag *this* channel within its medium — a peer MAC, a remote
+    /// `ip:port`, a device id. Combined with [`KIND`](Self::KIND) into the interface's id, so two
+    /// distinct concurrent channels must never return the same bytes (the attach path rejects a
+    /// live collision loudly); stability across a reconnect is best-effort, whatever the medium
+    /// can offer.
+    fn medium_id(&self) -> &[u8];
+
     async fn run<S: InterfaceSeam>(self, seam: S);
 }

@@ -732,18 +732,28 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             egress: egress_producer,
                         } = add;
                         let id = descriptor.id;
-                        pacers.push(InterfacePacer {
-                            id,
-                            pacer: AnnouncePacer::new(
-                                descriptor.announce_bandwidth_cap,
-                                descriptor.bitrate_bps,
-                            ),
-                        });
-                        interfaces.push(descriptor);
-                        inbound_lanes.push((id, inbound));
-                        egress.add_lane(id, egress_producer);
-                        wake_schedules = engine.wake_schedules(&interfaces);
-                        WakeSchedules::UNCHANGED
+                        if interfaces.iter().any(|config| config.id == id) {
+                            debug_assert!(
+                                false,
+                                "interface id collision (kind byte {}): two live channels produced the same medium id — an interface returned a non-unique medium_id",
+                                id.as_bytes()[0],
+                            );
+                            drop((inbound, egress_producer));
+                            WakeSchedules::UNCHANGED
+                        } else {
+                            pacers.push(InterfacePacer {
+                                id,
+                                pacer: AnnouncePacer::new(
+                                    descriptor.announce_bandwidth_cap,
+                                    descriptor.bitrate_bps,
+                                ),
+                            });
+                            interfaces.push(descriptor);
+                            inbound_lanes.push((id, inbound));
+                            egress.add_lane(id, egress_producer);
+                            wake_schedules = engine.wake_schedules(&interfaces);
+                            WakeSchedules::UNCHANGED
+                        }
                     }
                     HostCommand::RemoveInterface { id } => {
                         interfaces.retain(|config| config.id != id);
@@ -1109,9 +1119,14 @@ mod tests {
 
     impl Interface for LoopbackInterface {
         const HW_MTU: usize = crate::wire::BROADCAST_MTU;
+        const KIND: crate::interfaces::InterfaceKind = crate::interfaces::InterfaceKind::Loopback;
 
         fn descriptor(&self) -> InterfaceConfig {
             self.descriptor
+        }
+
+        fn medium_id(&self) -> &[u8] {
+            self.descriptor.id.as_bytes()
         }
 
         async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {

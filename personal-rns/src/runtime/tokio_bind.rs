@@ -13,7 +13,7 @@ use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, SendSingle,
     SendSingleFailure, SendSinglePayload, Settlement,
 };
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
     RespondAnyHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
@@ -158,7 +158,7 @@ impl PrnsHandle {
     where
         S: InterfaceSupervisor + Send + 'static,
     {
-        let id = InterfaceId::mint();
+        let id = InterfaceId::from_medium(S::KIND, supervisor.medium_id());
         let fleet = Fleet {
             supervisor_id: id,
             commands: self.commands.clone(),
@@ -328,6 +328,14 @@ impl Fleet {
 /// discovery plus a peering ack, then a unicast member per confirmed peer).
 #[allow(async_fn_in_trait)]
 pub trait InterfaceSupervisor {
+    /// The medium this supervisor stands for — the namespace root of its id.
+    const KIND: InterfaceKind;
+
+    /// The bytes that uniquely tag this supervisor. A node runs few supervisors, so this is
+    /// typically config-derived (the group it serves); the same rules as
+    /// [`Interface::medium_id`](crate::reactor::interface_seam::Interface::medium_id) apply.
+    fn medium_id(&self) -> &[u8];
+
     async fn run(self, fleet: Fleet);
 }
 
