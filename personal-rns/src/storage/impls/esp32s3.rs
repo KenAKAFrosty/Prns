@@ -21,7 +21,6 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
@@ -38,7 +37,8 @@ const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
-const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(MAX_LINK_MTU);
+const LINK_MTU: usize = 8192;
+const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);
 

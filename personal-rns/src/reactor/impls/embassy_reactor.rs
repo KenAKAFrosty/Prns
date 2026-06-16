@@ -32,7 +32,7 @@ use crate::reactor::driver::{
 use crate::reactor::grant::{
     AnyGrantConsumer, AnyGrantProducer, FrameSlot, GrantConsumer, GrantProducer,
 };
-use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::{InterfaceSeam, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use crate::reactor::Host;
 use crate::storage::StorageLayout;
 
@@ -438,7 +438,7 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
                 let Some(frame) = lane.try_peek_frame() else {
                     continue;
                 };
-                let mut unmasked = [0u8; MAX_WIRE_FRAME_LEN];
+                let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
                 let bytes = match ifac_for(ifacs, source) {
                     Some(entry) => {
                         let Some(clean_len) = entry.context.unmask_inbound(frame, &mut unmasked)
@@ -571,7 +571,7 @@ fn emit_for_wire(
     target: InterfaceId,
     fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
 ) {
-    let mut frame = [0u8; MAX_WIRE_FRAME_LEN];
+    let mut frame = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
     if let Some(len) = fill(&mut frame) {
         enqueue_for_wire(egress, ifacs, target, &frame[..len]);
     }
@@ -592,7 +592,7 @@ fn enqueue_for_wire(
 ) {
     match ifac_for(ifacs, target) {
         Some(entry) => {
-            let mut wire = [0u8; MAX_WIRE_FRAME_LEN];
+            let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
             if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
                 egress.enqueue(target, &wire[..masked_len]);
             }
@@ -1000,14 +1000,14 @@ mod tests {
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
 
         // Each interface's "wire" (the medium), grant lanes like everything else.
-        let (mut source_wire_in_tx, source_wire_in_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
-        let (source_wire_out_tx, _source_wire_out_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
-        let (_peer_wire_in_tx, peer_wire_in_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
-        let (peer_wire_out_tx, mut peer_wire_out_rx) = leaked_grant_lane::<MAX_WIRE_FRAME_LEN>(2);
+        let (mut source_wire_in_tx, source_wire_in_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (source_wire_out_tx, _source_wire_out_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (_peer_wire_in_tx, peer_wire_in_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
+        let (peer_wire_out_tx, mut peer_wire_out_rx) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(2);
 
         // The grant lanes are deliberately sized apart: erasure carries both
         // through one reactor, each paying only its own slot size.
-        const SOURCE_SLOT: usize = MAX_WIRE_FRAME_LEN;
+        const SOURCE_SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
         const PEER_SLOT: usize = 256;
         let (source_in_tx, mut source_in_rx) = leaked_grant_lane::<SOURCE_SLOT>(2);
         let (mut source_out_tx, source_out_rx) = leaked_grant_lane::<SOURCE_SLOT>(2);
@@ -1142,7 +1142,7 @@ mod tests {
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
         let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
-        const SLOT: usize = MAX_WIRE_FRAME_LEN;
+        const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
         // The reactor side of one pooled wire, plus the interface-side producer the test drives
         // frames in on. The slot is free at boot; the runtime stands it up mid-run.
         let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<SLOT>(2);

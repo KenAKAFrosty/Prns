@@ -15,7 +15,6 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
@@ -115,7 +114,7 @@ impl<
     // sizes its RAM affords.
     type OutgoingResources = FixedResourceColumns<OutgoingResourceState, 1, 4096, 9>;
     type IncomingResources = FixedResourceColumns<IncomingResourceState, 1, 4096, 9>;
-    type Channels = FixedArrayChannelColumns<MAX_LINKS, 8, { channel_mdu(MAX_LINK_MTU) }>;
+    type Channels = FixedArrayChannelColumns<MAX_LINKS, 8, { channel_mdu(8192) }>;
 }
 
 #[cfg(test)]

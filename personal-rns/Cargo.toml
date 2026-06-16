@@ -30,12 +30,7 @@ std-sync-host = ["std", "dep:getrandom", "dep:rtrb"]
 # deadline timer. `tokio` implies std, so the name needs no std- prefix. The
 # lane most std consumers (rnsd, desktop) should sit on — async workers get
 # the lease grammar, sync workers keep `drain_each`.
-fat-links = []
-# The reference's top `optimise_mtu` tier (524 KiB, what a >=1 Gbps wire wants): every
-# lane slot and wire scratch pays the ceiling, so this is a std-host tier — embedded
-# targets size with `fat-links` instead.
-giga-links = ["fat-links"]
-tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb", "dep:futures-util", "giga-links"]
+tokio-host = ["std", "dep:tokio", "dep:getrandom", "dep:rtrb", "dep:futures-util"]
 # Just the embassy primitives the contract seam needs (`embassy-sync` channels +
 # `embassy-time` clock, `static_cell` for the outbound grant ring's backing
 # buffer) — NOT `embassy-net`, so this builds on the host toolchain and the

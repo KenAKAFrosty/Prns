@@ -26,19 +26,13 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const LINK_KEY_LEN: usize = 64;
 
-/// The engine's one ceiling on a negotiated link MTU; the seam's frame is
-/// sized from it, so every queue slot pays it — a per-target memory decision,
-/// never a silent side effect. Three tiers: `giga-links` is the reference's
-/// top `optimise_mtu` tier (what a ≥1 Gbps wire wants), the tier std hosts
-/// carry; `fat-links` is the USB device tier (8192) an embedded target turns
-/// on when its own RAM budget says so; everything else stays at the
-/// broadcast MTU.
-#[cfg(feature = "giga-links")]
+/// The absolute ceiling on a negotiated link MTU — RNS 1.3.1's top
+/// `optimise_mtu` tier (524288, what a ≥1 Gbps wire wants). A safety bound, not
+/// a per-interface size: a link negotiates its own interface's `hardware_mtu`
+/// (see `link_mtu_ceiling`), and this only caps the extreme. Host buffers size
+/// per interface; embedded buffers size to their own hardware (see
+/// `EMBEDDED_MAX_WIRE_FRAME_LEN`), so neither pays this ceiling.
 pub const MAX_LINK_MTU: usize = 524_288;
-#[cfg(all(feature = "fat-links", not(feature = "giga-links")))]
-pub const MAX_LINK_MTU: usize = 8_192;
-#[cfg(not(any(feature = "fat-links", feature = "giga-links")))]
-pub const MAX_LINK_MTU: usize = crate::wire::BROADCAST_MTU;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkId([u8; TRUNCATED_HASH_BYTE_LEN]);

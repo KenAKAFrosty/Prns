@@ -16,7 +16,6 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
-use crate::routing::links::MAX_LINK_MTU;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
@@ -34,7 +33,8 @@ impl Esp32C6 {
     const LINKS: usize = 4;
     const RESOURCE_TRANSFER_BYTES: usize = 4096;
     const CHANNEL_REORDER_DEPTH: usize = 8;
-    const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(MAX_LINK_MTU);
+    const LINK_MTU: usize = 8192;
+    const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(Self::LINK_MTU);
 }
 
 impl StorageLayout for Esp32C6 {

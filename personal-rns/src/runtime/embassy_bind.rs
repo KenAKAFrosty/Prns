@@ -643,7 +643,7 @@ mod tests {
     };
     use crate::reactor::grant::GrantProducer;
     use crate::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyHost};
-    use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+    use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
     use crate::runtime::Diagnostic;
     use crate::storage::GrowableHeap;
     use crate::units::Rtt;
@@ -744,7 +744,7 @@ mod tests {
     }
 
     type Mtx = CriticalSectionRawMutex;
-    const SLOT: usize = MAX_WIRE_FRAME_LEN;
+    const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
 
     fn descriptor(id: InterfaceId) -> InterfaceConfig {
         InterfaceConfig {
