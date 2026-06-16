@@ -45,7 +45,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 # Timing harness for the engine microscope (lean: no plotters/rayon).
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
-pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
+pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
 iai-callgrind = "0.16.1"
 # Heap-allocation profiling for the engine microscope examples. Each example owns its
 # own `#[global_allocator] = dhat::Alloc`, so the lib / iai / criterion paths are
