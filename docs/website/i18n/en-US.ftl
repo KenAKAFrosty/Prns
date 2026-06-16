@@ -19,7 +19,7 @@ landing-title = A production-grade port of Reticulum (RNS) written in safe Rust.
 # the accent green, matching the OG card. Other locales use landing-title as-is.
 landing-title-lead = A production-grade port of Reticulum (RNS)
 landing-title-accent = written in safe Rust.
-landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
+landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server cluster. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Pick a crate
 landing-cta-contributing = Contributing
 
@@ -35,10 +35,10 @@ standards-license-headline = MIT / Apache 2.0
 standards-license-body = Dual-licensed and permissive. No copyleft or commercial restrictions.
 standards-safety-label = Safety
 standards-safety-headline = #![forbid(unsafe_code)]
-standards-safety-body = Our crates contain zero unsafe, enforced by the compiler. The unsafe inside dependencies is checked for UB under Miri and audited with cargo-geiger.
+standards-safety-body = Our crates contain zero unsafe, enforced by the compiler. The unsafe inside dependencies is audited with cargo-geiger and checked for UB under Miri.
 standards-correctness-label = Correctness
 standards-correctness-headline = Diff-tested against RNS
-standards-correctness-body = Every change is checked against the reference, then put through property, fuzz, and mutation tests, with Kani proofs where they matter.
+standards-correctness-body = Every change is checked against the reference, then put through unit, property, fuzz, and mutation tests, with Kani proofs where they matter.
 standards-benchmarked-label = Performance
 standards-benchmarked-headline = Measured, not just claimed
 standards-benchmarked-body = Performance is tracked in the open, measured by a harness you can run yourself.
