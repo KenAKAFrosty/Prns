@@ -439,10 +439,13 @@ pub enum HostCommand {
     },
     /// Register a byte-stream reader's inbound sink: the run loop routes channel messages of the
     /// reserved stream type on this link and id to it, suppressing them from the app event stream.
+    /// `ready` fires once the sink is in the routing table, so the opener can hold back the reader
+    /// until no arriving chunk can slip past to the app — the registration is awaited, not raced.
     RegisterStreamReader {
         link_id: LinkId,
         stream_id: StreamId,
         sink: UnboundedSender<StreamInbound>,
+        ready: oneshot::Sender<()>,
     },
 }
 
@@ -855,10 +858,12 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         link_id,
                         stream_id,
                         sink,
+                        ready,
                     } => {
                         stream_readers
                             .borrow_mut()
                             .insert((link_id, stream_id), sink);
+                        let _ = ready.send(());
                         WakeSchedules::UNCHANGED
                     }
                 };

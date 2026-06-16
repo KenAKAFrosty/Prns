@@ -132,14 +132,23 @@ impl PrnsHandle {
     }
 
     /// Open a byte-stream reader on this link and stream id: registers its sink so inbound stream
-    /// chunks route here, off the app event stream.
-    pub fn byte_stream_reader(&self, link_id: LinkId, stream_id: StreamId) -> ByteStreamReader {
+    /// chunks route here, off the app event stream. Awaits the run loop's acknowledgement that the
+    /// sink is live before yielding the reader, so a chunk that arrives the instant the link opens
+    /// is buffered for the reader, never forwarded past it to the app.
+    pub async fn byte_stream_reader(
+        &self,
+        link_id: LinkId,
+        stream_id: StreamId,
+    ) -> ByteStreamReader {
         let (sink, inbound) = mpsc::unbounded_channel();
+        let (ready, registered) = oneshot::channel();
         let _ = self.commands.send(HostCommand::RegisterStreamReader {
             link_id,
             stream_id,
             sink,
+            ready,
         });
+        let _ = registered.await;
         ByteStreamReader::new(inbound)
     }
 
@@ -150,15 +159,17 @@ impl PrnsHandle {
     }
 
     /// Open a bidirectional byte stream: a reader on `rx` and a writer on `tx` over one link's
-    /// channel — RNS's `create_bidirectional_buffer`.
-    pub fn byte_stream(
+    /// channel — RNS's `create_bidirectional_buffer`. Awaits the reader's registration (see
+    /// [`byte_stream_reader`](Self::byte_stream_reader)) so the read half is live before either is
+    /// handed back.
+    pub async fn byte_stream(
         &self,
         link_id: LinkId,
         rx: StreamId,
         tx: StreamId,
     ) -> (ByteStreamReader, ByteStreamWriter) {
         (
-            self.byte_stream_reader(link_id, rx),
+            self.byte_stream_reader(link_id, rx).await,
             self.byte_stream_writer(link_id, tx),
         )
     }
@@ -736,6 +747,37 @@ mod tests {
                 rtt: crate::units::Rtt::from_millis(7),
             }),
         );
+    }
+
+    #[tokio::test]
+    async fn byte_stream_reader_is_withheld_until_the_run_loop_acks_registration() {
+        let (prns, mut command_rx) = handle();
+        let link = LinkId::new([5; 16]);
+        let stream = StreamId::new(2).unwrap();
+        let opener = prns.clone();
+        let open = tokio::spawn(async move { opener.byte_stream_reader(link, stream).await });
+
+        let HostCommand::RegisterStreamReader {
+            link_id,
+            stream_id,
+            ready,
+            ..
+        } = command_rx
+            .recv()
+            .await
+            .expect("the registration was issued")
+        else {
+            panic!("byte_stream_reader must register its sink");
+        };
+        assert_eq!(link_id, link);
+        assert_eq!(stream_id, stream);
+        assert!(
+            !open.is_finished(),
+            "the reader is held back until the run loop acknowledges the registration",
+        );
+
+        ready.send(()).expect("the opener is parked on the ack");
+        open.await.expect("the reader future resolves once acked");
     }
 
     #[test]
