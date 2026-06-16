@@ -12,6 +12,7 @@
 //! (SDL requires it) and repaints the interfaces' live status handles at ~30 fps — read straight
 //! off each interface, never laundered through the engine.
 
+use core::fmt::Write as _;
 use std::collections::HashMap;
 use std::io;
 use std::sync::mpsc::{self, Sender};
@@ -96,13 +97,18 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 /// The card icon and label for an interface id: the fixed USB interface, the WiFi supervisor's
 /// aggregate, or one of its peers. Returning `None` would drop the card; every id we render maps.
-fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKind, &'static str)> {
+/// A peer's medium-derived id is meaningful now, so its card carries a short hex tag (`Peer 1a2b`)
+/// to tell two peers apart instead of a bare `Peer`.
+fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKind, screen::CardLabel)> {
     if id == USB_INTERFACE_ID {
-        Some((CardKind::Usb, "USB"))
+        Some((CardKind::Usb, screen::card_label("USB")))
     } else if id == wifi_id {
-        Some((CardKind::Wifi, "WiFi"))
+        Some((CardKind::Wifi, screen::card_label("WiFi")))
     } else {
-        Some((CardKind::Wifi, "Peer"))
+        let bytes = id.as_bytes();
+        let mut label = screen::CardLabel::new();
+        let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+        Some((CardKind::Wifi, label))
     }
 }
 
@@ -547,7 +553,9 @@ fn run_window(handles: WindowHandles) {
             if last_logged.get(&status.id()) != Some(&connection) {
                 println!(
                     "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
-                    classify(status.id()).map_or("?", |(_, label)| label),
+                    classify(status.id())
+                        .as_ref()
+                        .map_or("?", |(_, label)| label.as_str()),
                     status.rx_bytes(),
                     status.tx_bytes(),
                 );

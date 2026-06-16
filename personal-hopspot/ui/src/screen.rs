@@ -119,11 +119,29 @@ impl Liveness {
     }
 }
 
-/// One interface's card. The host fills the static bits (kind, label) and the
+/// The card label's backing buffer — owned, not `&'static str`, so a face can format a runtime tag
+/// into it (a discovered peer's id, say) and not just a fixed name. Truncated to the buffer's cap;
+/// the panel clips anything past its width.
+pub const CARD_LABEL_CAP: usize = 16;
+pub type CardLabel = heapless::String<CARD_LABEL_CAP>;
+
+/// Build a [`CardLabel`] from text, truncating to [`CARD_LABEL_CAP`].
+#[must_use]
+pub fn card_label(text: &str) -> CardLabel {
+    let mut label = CardLabel::new();
+    for c in text.chars() {
+        if label.push(c).is_err() {
+            break;
+        }
+    }
+    label
+}
+
+/// One interface's card. The host fills the identity bits (kind, label) and the
 /// live numbers from the interface's status handle.
 pub struct Card {
     pub kind: CardKind,
-    pub label: &'static str,
+    pub label: CardLabel,
     /// Invert the name/icon row for selection or active focus.
     pub selected: bool,
     pub liveness: Liveness,
@@ -920,7 +938,7 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     if selected {
         let _ = Rectangle::new(
             Point::new(NAME_BACKING_X, top + NAME_BACKING_Y),
-            Size::new(selected_name_backing_width(card.label), NAME_BACKING_H),
+            Size::new(selected_name_backing_width(&card.label), NAME_BACKING_H),
         )
         .into_styled(fill(BinaryColor::On))
         .draw(display);
@@ -942,7 +960,7 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
         );
     }
     let _ = Text::with_baseline(
-        card.label,
+        &card.label,
         Point::new(NAME_TEXT_X, top + NAME_LINE_Y),
         label_style,
         Baseline::Top,
@@ -1039,7 +1057,7 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
     let name_color = if selected {
         let _ = Rectangle::new(
             Point::new(NAME_BACKING_X, top + NAME_BACKING_Y),
-            Size::new(selected_name_backing_width(card.label), NAME_BACKING_H),
+            Size::new(selected_name_backing_width(&card.label), NAME_BACKING_H),
         )
         .into_styled(fill(BinaryColor::On))
         .draw(display);
@@ -1060,7 +1078,7 @@ fn draw_card_peek<D: DrawTarget<Color = BinaryColor>>(
         );
     }
     let _ = Text::with_baseline(
-        card.label,
+        &card.label,
         Point::new(NAME_TEXT_X, top + NAME_LINE_Y),
         label_style,
         Baseline::Top,
@@ -1163,7 +1181,7 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
     );
     let header_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let _ = Text::with_baseline(
-        card.label,
+        &card.label,
         Point::new(NAME_TEXT_X, MENU_HEADER_Y),
         header_style,
         Baseline::Top,
@@ -1283,7 +1301,7 @@ mod tests {
     fn test_card(label: &'static str) -> Card {
         Card {
             kind: CardKind::Usb,
-            label,
+            label: card_label(label),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 0,
@@ -1542,7 +1560,7 @@ mod tests {
             test_card("USB"),
             Card {
                 kind: CardKind::Ble,
-                label: "BLE",
+                label: card_label("BLE"),
                 selected: false,
                 liveness: Liveness::Live,
                 tx_bytes: 0,
@@ -1803,7 +1821,7 @@ mod tests {
         display.set_allow_overdraw(true);
         let card = Card {
             kind: CardKind::Usb,
-            label: "USB",
+            label: card_label("USB"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 123,
@@ -1838,7 +1856,7 @@ mod tests {
         display.set_allow_overdraw(true);
         let card = Card {
             kind: CardKind::Wifi,
-            label: "WiFi",
+            label: card_label("WiFi"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 999_999_999,
@@ -1865,7 +1883,7 @@ mod tests {
         display.set_allow_overdraw(true);
         let card = Card {
             kind: CardKind::EspNow,
-            label: "ESP-NOW",
+            label: card_label("ESP-NOW"),
             selected: false,
             liveness: Liveness::Offline,
             tx_bytes: 123,
@@ -1896,7 +1914,7 @@ mod tests {
         display.set_allow_overdraw(true);
         let card = Card {
             kind: CardKind::Wifi,
-            label: "WiFi",
+            label: card_label("WiFi"),
             selected: true,
             liveness: Liveness::Live,
             tx_bytes: 0,

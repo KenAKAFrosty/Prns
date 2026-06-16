@@ -4,22 +4,21 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
-use personal_hopspot_ui::CardKind;
+use personal_hopspot_ui::{card_label, CardKind, CardLabel};
 use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
     IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
-    HostCommand,
-    run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
+    run as run_reactor, tokio_grant_lane, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
     TokioInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
-use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
+use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
@@ -53,9 +52,9 @@ pub(crate) fn usb_bridge() -> AndroidUsbBridge {
     engine().bridge.clone()
 }
 
-pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, &'static str)> {
+pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     if id == USB_INTERFACE_ID {
-        Some((CardKind::Usb, "USB"))
+        Some((CardKind::Usb, card_label("USB")))
     } else {
         None
     }

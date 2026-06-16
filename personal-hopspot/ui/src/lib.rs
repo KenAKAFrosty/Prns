@@ -3,8 +3,8 @@
 pub mod screen;
 
 pub use screen::{
-    draw, draw_with_state, splash, BatteryState, Card, CardKind, InputEvent, Liveness, UiAction,
-    UiState,
+    card_label, draw, draw_with_state, splash, BatteryState, Card, CardKind, CardLabel, InputEvent,
+    Liveness, UiAction, UiState,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
@@ -32,7 +32,7 @@ fn liveness(connection: ConnectionState) -> Liveness {
 /// until their own sources land.
 pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
     statuses: &[S],
-    mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, &'static str)>,
+    mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,
 ) -> heapless::Vec<Card, N> {
     let mut cards = heapless::Vec::new();
     for status in statuses {

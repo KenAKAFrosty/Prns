@@ -370,7 +370,7 @@ pub async fn run(spawner: Spawner) {
         let statuses = [&USB_STATUS];
         let cards: HVec<screen::Card, 8> = screen::statuses_to_cards(&statuses, |id| {
             if id == USB_INTERFACE_ID {
-                Some((screen::CardKind::Usb, "USB"))
+                Some((screen::CardKind::Usb, screen::card_label("USB")))
             } else {
                 None
             }
