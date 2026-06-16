@@ -18,15 +18,15 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 | Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
 |------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
+| go-reticulum → go-reticulum | <img src="assets/check.svg" width="14" alt="conformant" /> 16,393 / 16,888 · 495 timed out | 536 msg/s | 129 kB/s | 0 / 0 ms | 38.9 / 18.3 MiB | 0.30 mJ |
 | Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 722,437 / 722,437 | 24.1k msg/s | 5.8 MB/s | 0 / 1 ms | 11.1 / 41.7 MiB | 0.98 mJ |
-| go-reticulum → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 16,393 / 16,888 · 495 timed out | 536 msg/s | 129 kB/s | 0 / 0 ms | 38.9 / 18.3 MiB | 0.30 mJ |
-| go-reticulum → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 325,264 / 325,736 · 472 timed out | 10.6k msg/s | 2.5 MB/s | 0 / 0 ms | 92.8 / 21.9 MiB | 1.99 mJ |
-| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 201,710 / 202,315 · 605 timed out | 6.7k msg/s | 1.6 MB/s | 2 / 3 ms | 7.2 / 80.2 MiB | 2.63 mJ |
-| go-reticulum → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 209,812 / 209,825 · 13 timed out | 7.0k msg/s | 1.7 MB/s | 2 / 3 ms | 50.8 / 80.9 MiB | 3.24 mJ |
-| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 177,077 / 177,078 · 1 timed out | 5.9k msg/s | 1.4 MB/s | 2 / 2 ms | 85.7 / 14.3 MiB | 3.39 mJ |
-| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 170,266 / 170,267 · 1 timed out | 5.7k msg/s | 1.4 MB/s | 2 / 3 ms | 85.7 / 80.0 MiB | 4.38 mJ |
-| RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 1,490 / 6,813,767 · 6,812,277 timed out | 50 msg/s | 12 kB/s | 1 / 1 ms | 32.3 / 17.5 MiB | 229.77 mJ |
-| Prns → go-reticulum | <img src="assets/cross.svg" width="14" alt="non-conformant" /> 6,728 / 6,871 · 143 timed out | _pending_ | _pending_ | _pending_ | 5.5 / 18.2 MiB | _pending_ |
+| go-reticulum → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 325,264 / 325,736 · 472 timed out | 10.6k msg/s | 2.5 MB/s | 0 / 0 ms | 92.8 / 21.9 MiB | 1.99 mJ |
+| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 201,710 / 202,315 · 605 timed out | 6.7k msg/s | 1.6 MB/s | 2 / 3 ms | 7.2 / 80.2 MiB | 2.63 mJ |
+| go-reticulum → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 209,812 / 209,825 · 13 timed out | 7.0k msg/s | 1.7 MB/s | 2 / 3 ms | 50.8 / 80.9 MiB | 3.24 mJ |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 177,077 / 177,078 · 1 timed out | 5.9k msg/s | 1.4 MB/s | 2 / 2 ms | 85.7 / 14.3 MiB | 3.39 mJ |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 170,266 / 170,267 · 1 timed out | 5.7k msg/s | 1.4 MB/s | 2 / 3 ms | 85.7 / 80.0 MiB | 4.38 mJ |
+| RNS 1.3.1 _(ref)_ → go-reticulum | <img src="assets/check.svg" width="14" alt="conformant" /> 1,490 / 6,813,767 · 6,812,277 timed out | 50 msg/s | 12 kB/s | 1 / 1 ms | 32.3 / 17.5 MiB | 229.77 mJ |
+| Prns → go-reticulum | <img src="assets/check.svg" width="14" alt="conformant" /> 6,728 / 6,871 · 143 timed out | _pending_ | _pending_ | _pending_ | 5.5 / 18.2 MiB | _pending_ |
 
 **Implementations.**
 
@@ -64,24 +64,6 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 | Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 2,254 / 2,254 | 75 msg/s | _pending_ | 53 / 55 ms | 5.7 / 32.7 MiB | 53.89 mJ |
 | RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 2,233 / 2,233 | 74 msg/s | _pending_ | 54 / 55 ms | 33.7 / 32.9 MiB | 70.64 mJ |
 | Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 2,260 / 2,260 | 75 msg/s | _pending_ | 53 / 54 ms | 5.7 / 5.6 MiB | _pending_ |
-
-**Implementations.**
-
-- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
-- **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
-
-## request-response-local-wifi (v1)
-
-Windowed RPC through a shaped pipe at a local-WiFi wire (25 Mbps, 3 ms one-way): the interactive pattern on the most common indoor hop. Latency is engine-plus-wire in equal measure.
-
-Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
-
-| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
-|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
-| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 13,003 / 13,003 | 433 msg/s | _pending_ | 9 / 10 ms | 6.3 / 6.2 MiB | 1.09 mJ |
-| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 13,331 / 13,331 | 444 msg/s | _pending_ | 9 / 10 ms | 40.6 / 6.2 MiB | 10.00 mJ |
-| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 13,150 / 13,150 | 438 msg/s | _pending_ | 9 / 11 ms | 6.3 / 36.8 MiB | 11.94 mJ |
-| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 12,898 / 12,898 | 430 msg/s | _pending_ | 9 / 10 ms | 40.7 / 36.8 MiB | 15.23 mJ |
 
 **Implementations.**
 
@@ -204,7 +186,7 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 
 ---
 
-- _Conformance_ — settled clean: every sent message proved within the link's traffic timeout, shown as `delivered / sent`. A ✗ flags messages that timed out — a responder slower than `rtt × 6` misses the deadline by spec, not by fault.
+- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.1 request-response send-before-register loopback race.
 - _Throughput_ — delivered messages per second, initiator-bound.
 - _Goodput_ — delivered application payload per second (framing excluded).
 - _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.

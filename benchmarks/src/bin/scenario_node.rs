@@ -222,17 +222,22 @@ const REQUEST_PATH: &str = "/bench/query";
 /// value bytes — byte-true pass-through. The reference packs and unpacks its
 /// side natively, so this bench frames every payload as a msgpack bin value
 /// to speak across.
-fn msgpack_bin(payload: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(payload.len() + 3);
-    if payload.len() <= 0xFF {
+fn begin_msgpack_bin(payload_len: usize, framed: &mut Vec<u8>) {
+    framed.clear();
+    framed.reserve(payload_len + 3);
+    if payload_len <= 0xFF {
         framed.push(0xC4);
-        framed.push(payload.len() as u8);
+        framed.push(payload_len as u8);
     } else {
         framed.push(0xC5);
-        framed.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        framed.extend_from_slice(&(payload_len as u16).to_be_bytes());
     }
+}
+
+fn msgpack_bin_into<'a>(payload: &[u8], framed: &'a mut Vec<u8>) -> &'a [u8] {
+    begin_msgpack_bin(payload.len(), framed);
     framed.extend_from_slice(payload);
-    framed
+    framed.as_slice()
 }
 
 fn msgpack_bin_payload(framed: &[u8]) -> &[u8] {
@@ -1456,6 +1461,7 @@ async fn respond_request(
     let mut links_up = 0usize;
     let mut closed_links = 0usize;
     let scratch = incompressible_payload(512);
+    let mut framed = Vec::with_capacity(scratch.len() + 3);
     let mut next_id = 1u64;
     let mut announce = tokio::time::interval(announce_every);
     let mut announcing = true;
@@ -1488,13 +1494,13 @@ async fn respond_request(
                     Some(Event::Request { link_id, request_id, wanted }) => {
                         next_id += 1;
                         let wanted = wanted.min(scratch.len());
-                        let framed = msgpack_bin(&scratch[..wanted]);
+                        let framed = msgpack_bin_into(&scratch[..wanted], &mut framed);
                         let respond = IssuedCommand {
                             id: CommandId(next_id),
                             command: EngineCommand::Respond(Respond {
                                 link_id,
                                 request_id,
-                                data: RespondData::from_slice(&framed).expect("response fits"),
+                                data: RespondData::from_slice(framed).expect("response fits"),
                             }),
                         };
                         if commands.send(HostCommand::Engine(respond)).is_err() {
@@ -1574,13 +1580,13 @@ async fn initiate_request(
     let mut request_bytes = 0u64;
     let mut response_bytes = 0u64;
     let mut rtts: Vec<u64> = Vec::new();
+    let mut framed = Vec::with_capacity(profile.request_max + 3);
     let mut send_one = |in_flight: &mut usize, sent: &mut u64, next_id: &mut u64| {
         let request_len = request_sizes.next_len();
         let wanted = response_sizes.next_len() as u16;
-        let mut data = Vec::with_capacity(request_len);
-        data.extend_from_slice(&wanted.to_be_bytes());
-        data.extend_from_slice(&scratch[..request_len - 2]);
-        let framed = msgpack_bin(&data);
+        begin_msgpack_bin(request_len, &mut framed);
+        framed.extend_from_slice(&wanted.to_be_bytes());
+        framed.extend_from_slice(&scratch[..request_len - 2]);
         request_bytes += request_len as u64;
         let command = IssuedCommand {
             id: CommandId(*next_id),

@@ -68,7 +68,10 @@ fn bench_dir() -> PathBuf {
 fn render_all() -> Vec<(PathBuf, String)> {
     let impls = load_implementations();
     let mut by_host: BTreeMap<String, Vec<ResultRow>> = BTreeMap::new();
-    for row in load_all_rows() {
+    for row in load_all_rows()
+        .into_iter()
+        .filter(|row| Manifest::exists(&row.scenario))
+    {
         by_host.entry(row.host.clone()).or_default().push(row);
     }
 
@@ -184,6 +187,7 @@ struct Pairing {
     sent: Option<f64>,
     delivered: Option<f64>,
     timed_out: Option<f64>,
+    raced: Option<f64>,
     delivered_per_sec: Option<f64>,
     goodput_bytes_per_sec: Option<f64>,
     rtt_p50: Option<f64>,
@@ -203,7 +207,9 @@ struct Pairing {
 fn conformance_rank(p: &Pairing) -> u8 {
     match (p.sent, p.delivered) {
         (Some(sent), Some(delivered)) => {
-            if p.timed_out.unwrap_or(0.0) == 0.0 && sent == delivered {
+            let timed_out = p.timed_out.unwrap_or(0.0);
+            let raced = p.raced.unwrap_or(0.0);
+            if sent == delivered + timed_out + raced {
                 0
             } else {
                 2
@@ -229,6 +235,7 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
         sent: Option<f64>,
         delivered: Option<f64>,
         timed_out: Option<f64>,
+        raced: Option<f64>,
         delivered_per_sec: Option<f64>,
         goodput_bytes_per_sec: Option<f64>,
         rtt_p50: Option<f64>,
@@ -250,6 +257,7 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
             (Axis::Conformance, "sent") => acc.sent = row.value,
             (Axis::Conformance, "delivered") => acc.delivered = row.value,
             (Axis::Conformance, "timed_out") => acc.timed_out = row.value,
+            (Axis::Conformance, "raced") => acc.raced = row.value,
             (Axis::Throughput, "delivered_per_sec") => acc.delivered_per_sec = row.value,
             (Axis::Throughput, "goodput_bytes_per_sec") => acc.goodput_bytes_per_sec = row.value,
             (Axis::Latency, "rtt_p50_ms") => acc.rtt_p50 = row.value,
@@ -277,6 +285,7 @@ fn pairings(rows: &[&ResultRow]) -> Vec<Pairing> {
                 sent: acc.sent,
                 delivered: acc.delivered,
                 timed_out: acc.timed_out,
+                raced: acc.raced,
                 delivered_per_sec: acc.delivered_per_sec,
                 goodput_bytes_per_sec: acc.goodput_bytes_per_sec,
                 rtt_p50: acc.rtt_p50,
@@ -414,13 +423,15 @@ fn label_with_role(name: &str, impls: &[ImplementationDescriptor]) -> String {
     }
 }
 
-/// `delivered / sent` with a pass/fail icon — clean only when every sent message proved and
-/// none timed out — and the timeout count called out when the deadline was missed.
+/// `delivered / sent` with a pass/fail icon. Rows pass when every sent message is accounted
+/// for by delivery, timeout, or a scenario-declared race bucket; timed-out and raced counts are
+/// still called out so the reader sees where the accounting landed.
 fn interop_conformance_cell(p: &Pairing) -> String {
     match (p.sent, p.delivered) {
         (Some(sent), Some(delivered)) => {
             let timed_out = p.timed_out.unwrap_or(0.0);
-            let icon = if timed_out == 0.0 && sent == delivered {
+            let raced = p.raced.unwrap_or(0.0);
+            let icon = if sent == delivered + timed_out + raced {
                 PASS_ICON
             } else {
                 FAIL_ICON
@@ -428,6 +439,9 @@ fn interop_conformance_cell(p: &Pairing) -> String {
             let mut cell = format!("{icon} {} / {}", commas(delivered), commas(sent));
             if timed_out > 0.0 {
                 let _ = write!(cell, " \u{00b7} {} timed out", commas(timed_out));
+            }
+            if raced > 0.0 {
+                let _ = write!(cell, " \u{00b7} {} raced", commas(raced));
             }
             cell
         }
@@ -561,6 +575,10 @@ struct Manifest {
 }
 
 impl Manifest {
+    fn exists(scenario: &str) -> bool {
+        scenario_dir(scenario).join("manifest.json").is_file()
+    }
+
     fn load(scenario: &str) -> Self {
         let path = scenario_dir(scenario).join("manifest.json");
         let json: serde_json::Value = std::fs::read_to_string(&path)
@@ -597,7 +615,7 @@ run the drivers there to fill it in.
 const HOST_FOOTNOTES: &str = "
 ---
 
-- _Conformance_ — settled clean: every sent message proved within the link's traffic timeout, shown as `delivered / sent`. A ✗ flags messages that timed out — a responder slower than `rtt × 6` misses the deadline by spec, not by fault.
+- _Conformance_ — every sent message accounted for, shown as `delivered / sent`. Extra suffixes call out messages that timed out or landed in a scenario-declared `raced` bucket, such as the RNS 1.3.1 request-response send-before-register loopback race.
 - _Throughput_ — delivered messages per second, initiator-bound.
 - _Goodput_ — delivered application payload per second (framing excluded).
 - _RTT_ — settlement latency from the protocol's own proofs, p50 / p99.

@@ -19,6 +19,7 @@ ANNOUNCE_EVERY = 0.5
 INITIATOR_COUNT = 1
 DRAIN_GRACE = 5.0
 QUIET_AFTER_TRAFFIC = 1.5
+REQUEST_RACE_GRACE = 0.05
 REQUEST_PATH = "/bench/query"
 DEFAULT_SIZE_SEED = 0x5EEDCAFEF00D0001
 MASK64 = 0xFFFFFFFFFFFFFFFF
@@ -665,6 +666,7 @@ def initiate_request(name, block, profile, duration):
         "sent": 0,
         "delivered": 0,
         "timeouts": 0,
+        "raced": 0,
         "request_bytes": 0,
         "response_bytes": 0,
         "in_flight": 0,
@@ -705,12 +707,37 @@ def initiate_request(name, block, profile, duration):
         )
         receipt.sent_at_wall = time.monotonic()
 
+    def reap_loopback_races():
+        # RNS 1.3.1 appends sub-MDU request receipts after the packet is sent.
+        # On a zero-latency loopback responder, the response can arrive before
+        # that append and will never be matched or timed out. Count and clear
+        # those benchmark-local zombies so the reference window keeps moving.
+        if profile.get("wire_shape") is not None:
+            return
+        now = time.monotonic()
+        for receipt in list(link.pending_requests):
+            sent_at_wall = getattr(receipt, "sent_at_wall", None)
+            if sent_at_wall is None:
+                continue
+            if (
+                receipt.status == RNS.RequestReceipt.SENT
+                and now - sent_at_wall >= REQUEST_RACE_GRACE
+            ):
+                try:
+                    link.pending_requests.remove(receipt)
+                except ValueError:
+                    continue
+                state["raced"] += 1
+                state["in_flight"] -= 1
+                settled.set()
+
     with lock:
         for _ in range(profile["window"]):
             send_one()
     drain_deadline = deadline + DRAIN_GRACE
     while time.monotonic() < drain_deadline:
         with lock:
+            reap_loopback_races()
             in_flight = state["in_flight"]
             if in_flight < profile["window"] and time.monotonic() < deadline:
                 send_one()
@@ -741,7 +768,8 @@ def initiate_request(name, block, profile, duration):
     seconds = max(elapsed_ms / 1000.0, 1e-9)
     print(
         f"RESULT sent={state['sent']} delivered={state['delivered']} "
-        f"timeouts={state['timeouts']} request_bytes={state['request_bytes']} "
+        f"timeouts={state['timeouts']} raced={state['raced']} "
+        f"request_bytes={state['request_bytes']} "
         f"response_bytes={state['response_bytes']} elapsed_ms={elapsed_ms} "
         f"requests_per_sec={state['delivered'] / seconds:.1f} "
         f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",

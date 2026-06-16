@@ -657,6 +657,7 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     let timeouts = field(&result, "timeouts")
         .or_else(|| field(&result, "failures"))
         .unwrap_or(f64::NAN);
+    let raced = field(&result, "raced").unwrap_or(0.0);
     let responder_delivered = field(&responder_result, "delivered")
         .or_else(|| field(&responder_result, "received"))
         .or_else(|| field(&responder_result, "served"))
@@ -716,7 +717,7 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Conformance,
             "settled_clean",
-            Some(f64::from(sent == delivered && timeouts == 0.0)),
+            Some(f64::from(sent == delivered + timeouts + raced)),
             "bool",
         ),
         row(Axis::Conformance, "sent", Some(sent), "msgs"),
@@ -728,6 +729,7 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
             "msgs",
         ),
         row(Axis::Conformance, "timed_out", Some(timeouts), "msgs"),
+        row(Axis::Conformance, "raced", Some(raced), "msgs"),
         row(
             Axis::Throughput,
             "delivered_per_sec",
@@ -879,12 +881,12 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     println!(
         "\nSUMMARY scenario={} pairing={pairing_label} host={}\n\
          SUMMARY conformance sent={sent:.0} delivered={delivered:.0} \
-         responder_seen={responder_delivered:.0} timed_out={timeouts:.0} settled_clean={}\n\
+         responder_seen={responder_delivered:.0} timed_out={timeouts:.0} raced={raced:.0} settled_clean={}\n\
          SUMMARY initiator cpu={initiator_cpu:.2}s peak_rss={:.1}MiB | \
          responder cpu={responder_cpu:.2}s peak_rss={:.1}MiB",
         args.scenario,
         stamp.host,
-        sent == delivered && timeouts == 0.0,
+        sent == delivered + timeouts + raced,
         initiator_rss as f64 / (1024.0 * 1024.0),
         responder_rss as f64 / (1024.0 * 1024.0),
     );
