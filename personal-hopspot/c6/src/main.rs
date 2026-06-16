@@ -30,18 +30,18 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
+use personal_rns::interfaces::usb_auto::core::device_descriptor;
+use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, FrameSlot};
 use personal_rns::reactor::impls::embassy_reactor::{
     embassy_grant_lane, run as run_reactor, EmbassyEgress, EmbassyGrantConsumer,
     EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
 };
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::usb_auto::core::device_descriptor;
-use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
+use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::announce::{derive_destination_hash, expand_name};
-use personal_rns::storage::Esp32C6;
 use personal_rns::routing::ProofStrategy;
+use personal_rns::storage::Esp32C6;
 use personal_rns::wire::DestinationHash;
 
 esp_app_desc!();
@@ -56,10 +56,9 @@ const INBOUND_CAP: usize = 8;
 const OUTBOUND_CAP: usize = 8;
 const COMMANDS_CAP: usize = 4;
 
-/// One lane slot carries the engine's whole wire ceiling — the USB hardware MTU is larger,
-/// but a thin (non-fat-links) engine never negotiates past this, so bigger slots would hold
-/// bytes the engine refuses.
-const USB_LANE_SLOT: usize = MAX_WIRE_FRAME_LEN;
+/// One lane slot holds a full USB-MTU frame plus its IFAC tag: the engine now negotiates the link
+/// up to the USB hardware's MTU, so the slot is sized to carry it.
+const USB_LANE_SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
 
 const EMPTY_SLOT: FrameSlot<USB_LANE_SLOT> = FrameSlot::empty();
 

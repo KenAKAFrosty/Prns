@@ -27,7 +27,7 @@ use personal_rns::engine::{
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
-use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+use personal_rns::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use personal_rns::routing::announce::defaults::JitterSeed;
 use personal_rns::routing::ProofStrategy;
 
@@ -38,7 +38,7 @@ const DURATION_MS: u64 = 5_000;
 const PAYLOAD_LEN: usize = 128;
 const YIELD_EVERY: u64 = 128;
 
-type FrameBuf = heapless::Vec<u8, MAX_WIRE_FRAME_LEN>;
+type FrameBuf = heapless::Vec<u8, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 type FrameList = heapless::Vec<FrameBuf, 4>;
 
 fn secret(seed: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -66,7 +66,7 @@ fn capture(reaction: EngineReaction<'_>, frames: &mut FrameList, delivered: &mut
         }
         EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
             let mut buf = FrameBuf::new();
-            let _ = buf.resize(MAX_WIRE_FRAME_LEN, 0u8);
+            let _ = buf.resize(EMBEDDED_MAX_WIRE_FRAME_LEN, 0u8);
             if let Some(len) = fill(buf.as_mut_slice()) {
                 buf.truncate(len);
                 let _ = frames.push(buf);

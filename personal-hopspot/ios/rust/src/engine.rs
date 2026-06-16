@@ -10,15 +10,15 @@ use personal_rns::engine::{
     IssuedCommand, Journaled, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
     run as run_reactor, tokio_grant_lane, Egress, TokioHost, TokioInterfaceSeam,
     TokioInterfaceStatus,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
-use personal_rns::storage::GrowableHeap;
 use personal_rns::routing::ProofStrategy;
+use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -98,8 +98,8 @@ fn run_engine(ready_tx: Sender<TokioInterfaceStatus>) {
 
         let (command_tx, command_rx) = unbounded_channel::<IssuedCommand>();
         let (notify_tx, notify_rx) = unbounded_channel::<InterfaceId>();
-        let (tcp_in_tx, tcp_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-        let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
+        let (tcp_in_tx, tcp_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+        let (outbound_tx, outbound_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
         let egress = Egress::new(std::vec![(TCP_INTERFACE_ID, outbound_tx)]);
 
         // The interface owns the listener: each `open` accepts the next connection (the iOS host

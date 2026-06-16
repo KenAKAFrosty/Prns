@@ -55,7 +55,7 @@ use personal_rns::reactor::impls::embassy_reactor::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
     EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
     CompletionPool, EmbassyCommands, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe, ReactorPlumbing,
@@ -116,19 +116,19 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
-type LaneBuf = [FrameSlot<MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
-type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<MAX_WIRE_FRAME_LEN>>;
+type LaneBuf = [FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
+type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN>>;
 type ReactorInbound = HVec<
     (
         InterfaceId,
-        EmbassyGrantConsumer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
     ),
     IFACES,
 >;
 type ReactorEgressLanes = HVec<
     (
         InterfaceId,
-        EmbassyGrantProducer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
     ),
     IFACES,
 >;
@@ -142,14 +142,14 @@ type S3Node = Prns<
     EngineStorageType,
     EmbassyHost<fn(&mut [u8])>,
     Mtx,
-    MAX_WIRE_FRAME_LEN,
+    EMBEDDED_MAX_WIRE_FRAME_LEN,
     IFACES,
     NOTIFY_CAP,
     COMMANDS_CAP,
     LIFECYCLE_CAP,
     COMPLETIONS_CAP,
 >;
-const EMPTY_SLOT: FrameSlot<MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
+const EMPTY_SLOT: FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
 /// The free-slot id a pool slot carries until an interface occupies it (never a real medium id).
 const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 16]);
 
@@ -284,8 +284,8 @@ pub async fn run(spawner: Spawner) {
     let mut inbound: ReactorInbound = HVec::new();
     let mut egress_lanes: ReactorEgressLanes = HVec::new();
     let mut iface_halves: [Option<(
-        EmbassyGrantProducer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
-        EmbassyGrantConsumer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+        EmbassyGrantProducer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
+        EmbassyGrantConsumer<'static, Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN>,
     )>; IFACES] = [const { None }; IFACES];
     for slot in 0..IFACES {
         let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
@@ -355,7 +355,7 @@ pub async fn run(spawner: Spawner) {
     let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
     let usb_device = usb_device(usb_rx, usb_tx);
 
-    let mut members: [Option<MemberWire<Mtx, MAX_WIRE_FRAME_LEN, NOTIFY_CAP>>; MEMBERS] =
+    let mut members: [Option<MemberWire<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP>>; MEMBERS] =
         [const { None }; MEMBERS];
     for member in 0..MEMBERS {
         let (in_producer, out_consumer) = iface_halves[member + 1].take().expect("member half");
@@ -365,7 +365,7 @@ pub async fn run(spawner: Spawner) {
             notify: NOTIFY.sender(),
         });
     }
-    let fleet: Fleet<Mtx, MAX_WIRE_FRAME_LEN, MEMBERS, NOTIFY_CAP, LIFECYCLE_CAP> =
+    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, MEMBERS, NOTIFY_CAP, LIFECYCLE_CAP> =
         Fleet::new(1, LIFECYCLE.sender(), members);
     let wifi = build_wifi(&spawner, p.WIFI, mac_octets);
 
