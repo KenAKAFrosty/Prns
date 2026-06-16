@@ -19,7 +19,7 @@ landing-title = A production-grade port of Reticulum (RNS) written in safe Rust.
 # the accent green, matching the OG card. Other locales use landing-title as-is.
 landing-title-lead = A production-grade port of Reticulum (RNS)
 landing-title-accent = written in safe Rust.
-landing-subtitle = Built for the performance and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
+landing-subtitle = Built for the performance, stability, and energy efficiency every Reticulum node needs, from a five-dollar microcontroller to a cloud server. One engine and one API, the same on embedded, desktop, mobile, games, and the web.
 landing-cta-ethos = Pick a crate
 landing-cta-contributing = Contributing
 
