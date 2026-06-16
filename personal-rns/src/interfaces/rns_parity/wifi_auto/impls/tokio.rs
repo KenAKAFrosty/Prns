@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -286,9 +286,33 @@ struct Sockets {
     data: Arc<UdpSocket>,
 }
 
+/// Pick the NIC the auto-interface should live on. Prefer the one the OS actually routes the
+/// internet through (so a desk full of VPN tunnels and virtual bridges can't lure us onto the wrong
+/// segment), and fall back to the first real link-local interface. Loopback and known virtual or
+/// tunnel interfaces (utun, awdl, bridge, docker, …) are never chosen either way.
 fn link_local_nic() -> Option<Nic> {
+    routed_nic().or_else(scan_nic)
+}
+
+fn routed_nic() -> Option<Nic> {
+    let source = default_route_source()?;
+    let iface = if_addrs::get_if_addrs()
+        .ok()?
+        .into_iter()
+        .find(|iface| iface.ip() == source)?;
+    if iface.is_loopback() || is_virtual(&iface.name) {
+        return None;
+    }
+    let index = iface.index?;
+    link_local_for_scope(index).map(|link_local| Nic { link_local, index })
+}
+
+fn scan_nic() -> Option<Nic> {
     for iface in if_addrs::get_if_addrs().ok()? {
-        if iface.is_loopback() || !matches!(iface.addr, if_addrs::IfAddr::V6(_)) {
+        if iface.is_loopback()
+            || is_virtual(&iface.name)
+            || !matches!(iface.addr, if_addrs::IfAddr::V6(_))
+        {
             continue;
         }
         let Some(index) = iface.index else { continue };
@@ -297,6 +321,33 @@ fn link_local_nic() -> Option<Nic> {
         }
     }
     None
+}
+
+/// The source address the OS would send a public datagram from: the address of the default-route
+/// interface. A connected UDP socket sends nothing, it just makes the kernel resolve the route and
+/// pick the egress address, which `local_addr` then reports.
+fn default_route_source() -> Option<IpAddr> {
+    probe_source(
+        "[2001:4860:4860::8888]:53",
+        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    )
+    .or_else(|| probe_source("8.8.8.8:53", IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
+}
+
+fn probe_source(public: &str, bind: IpAddr) -> Option<IpAddr> {
+    let probe = std::net::UdpSocket::bind((bind, 0)).ok()?;
+    probe.connect(public).ok()?;
+    Some(probe.local_addr().ok()?.ip())
+}
+
+fn is_virtual(name: &str) -> bool {
+    const VIRTUAL_PREFIXES: [&str; 13] = [
+        "utun", "tun", "tap", "ppp", "ipsec", "awdl", "llw", "gif", "stf", "bridge", "vmnet",
+        "vnic", "docker",
+    ];
+    VIRTUAL_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }
 
 fn link_local_for_scope(index: u32) -> Option<Ipv6Addr> {
