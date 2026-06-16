@@ -23,6 +23,19 @@ pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC
 pub const EMBEDDED_MAX_LINK_MTU: usize = 8_192;
 pub const EMBEDDED_MAX_WIRE_FRAME_LEN: usize = EMBEDDED_MAX_LINK_MTU + IFAC_MAX_SIZE;
 
+/// The broadcast-floor wire frame: the slot a no-MTU interface — or an empty reactor — sizes to.
+pub const BROADCAST_WIRE_FRAME_LEN: usize = crate::wire::BROADCAST_MTU + IFAC_MAX_SIZE;
+
+/// The wire frame an interface presents: its declared `hardware_mtu` (or the broadcast floor) plus
+/// the IFAC tag. The host reactor sizes each lane and its shared scratch by this — per interface,
+/// never the absolute ceiling.
+pub fn frame_cap_for(descriptor: &InterfaceConfig) -> usize {
+    descriptor
+        .hardware_mtu
+        .unwrap_or(crate::wire::BROADCAST_MTU)
+        + IFAC_MAX_SIZE
+}
+
 /// The reactor's half of one interface, seen from inside the interface's run loop.
 /// Both directions are async here, and deliberately so: the interface awaits
 /// `next_outbound` for work — so it sleeps when there is nothing to send, the dormancy

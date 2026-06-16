@@ -21,7 +21,7 @@ use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
-use crate::reactor::interface_seam::{InterfaceSeam, MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::{frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN};
 use crate::reactor::Host;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
@@ -615,8 +615,13 @@ pub async fn run_with_proof_decider<S, H, J, P>(
             pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
         })
         .collect();
-    let mut wire_scratch = WireScratch::new();
-    let mut unmask_scratch = std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice();
+    let mut scratch_cap = interfaces
+        .iter()
+        .map(frame_cap_for)
+        .max()
+        .unwrap_or(BROADCAST_WIRE_FRAME_LEN);
+    let mut wire_scratch = WireScratch::new(scratch_cap);
+    let mut unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
     let pending_completions: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
         RefCell::new(HashMap::new());
     macro_rules! journaled_sink {
@@ -764,6 +769,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             drop((inbound, egress_producer));
                             WakeSchedules::UNCHANGED
                         } else {
+                            let frame_cap = frame_cap_for(&descriptor);
                             pacers.push(InterfacePacer {
                                 id,
                                 pacer: AnnouncePacer::new(
@@ -774,6 +780,11 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             interfaces.push(descriptor);
                             inbound_lanes.push((id, inbound));
                             egress.add_lane(id, egress_producer);
+                            if frame_cap > scratch_cap {
+                                scratch_cap = frame_cap;
+                                unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
+                                wire_scratch.grow(scratch_cap);
+                            }
                             wake_schedules = engine.wake_schedules(&interfaces);
                             WakeSchedules::UNCHANGED
                         }
@@ -823,10 +834,17 @@ struct WireScratch {
 }
 
 impl WireScratch {
-    fn new() -> Self {
+    fn new(cap: usize) -> Self {
         Self {
-            emit: std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice(),
-            masked: std::vec![0u8; MAX_WIRE_FRAME_LEN].into_boxed_slice(),
+            emit: std::vec![0u8; cap].into_boxed_slice(),
+            masked: std::vec![0u8; cap].into_boxed_slice(),
+        }
+    }
+
+    fn grow(&mut self, cap: usize) {
+        if self.emit.len() < cap {
+            self.emit = std::vec![0u8; cap].into_boxed_slice();
+            self.masked = std::vec![0u8; cap].into_boxed_slice();
         }
     }
 }
@@ -969,6 +987,7 @@ mod tests {
         InterfaceMode, TransportCapability,
     };
     use crate::reactor::interface_seam::Interface;
+    use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
     use crate::wire::{PacketType, WirePacketHeader};
     use tokio::sync::mpsc;
 

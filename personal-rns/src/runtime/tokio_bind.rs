@@ -13,16 +13,15 @@ use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, SendSingle,
     SendSingleFailure, SendSinglePayload, Settlement,
 };
-use crate::interfaces::ifac::IFAC_MAX_SIZE;
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
     RespondAnyHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
-use crate::reactor::interface_seam::Interface;
+use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
-use crate::wire::{DestinationHash, BROADCAST_MTU};
+use crate::wire::DestinationHash;
 
 use super::interface_set::{InterfaceAttach, InterfaceSet};
 use super::recipe::PreConfiguredDestination;
@@ -30,10 +29,15 @@ use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::{Message, PrnsEvent, PrnsRecipe, SendError};
 
-const LANE_DEPTH: usize = 64;
+const LANE_DEPTH_MAX: usize = 64;
+const LANE_DEPTH_MIN: usize = 4;
+const LANE_BUDGET_BYTES: usize = 512 * 1024;
 
-fn lane_slot_cap(descriptor: &InterfaceConfig) -> usize {
-    descriptor.hardware_mtu.unwrap_or(BROADCAST_MTU) + IFAC_MAX_SIZE
+/// A lane holds up to `LANE_BUDGET_BYTES` of frames in flight: deep for small frames, shallow for
+/// large, so a fat-MTU interface never inflates the lane the way a fixed slot count would. Clamped
+/// to a useful floor and the historical ceiling.
+fn lane_depth_for(slot_cap: usize) -> usize {
+    (LANE_BUDGET_BYTES / slot_cap.max(1)).clamp(LANE_DEPTH_MIN, LANE_DEPTH_MAX)
 }
 
 /// A cloneable, `Send` handle to a running node — the proactive surface. Hand clones to other tasks
@@ -277,9 +281,10 @@ where
 {
     let descriptor = interface.descriptor();
     let id = descriptor.id;
-    let slot_cap = lane_slot_cap(&descriptor);
-    let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
-    let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
+    let slot_cap = frame_cap_for(&descriptor);
+    let depth = lane_depth_for(slot_cap);
+    let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
+    let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
     let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer);
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
         Box::new(move || Box::pin(interface.run(seam)));
@@ -431,9 +436,10 @@ impl InterfaceAttach for TokioAttach {
     fn attach<I: Interface + 'static>(&mut self, interface: I) {
         let descriptor = interface.descriptor();
         let id = descriptor.id;
-        let slot_cap = lane_slot_cap(&descriptor);
-        let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
-        let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, LANE_DEPTH);
+        let slot_cap = frame_cap_for(&descriptor);
+        let depth = lane_depth_for(slot_cap);
+        let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
+        let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
         self.interfaces.push(descriptor);
         self.inbound.push((id, in_consumer));
         self.egress_lanes.push((id, out_producer));
