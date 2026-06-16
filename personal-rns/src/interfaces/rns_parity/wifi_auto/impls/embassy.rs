@@ -278,6 +278,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) where
         M: RawMutex + 'static,
     {
+        // Wait for the link and our IPv6 config before binding — beaconing into a down link is
+        // pointless, and a multicast join can fail before the interface is up.
+        self.stack.wait_config_up().await;
         if self.discovery.bind(core::DEFAULT_DISCOVERY_PORT).is_err()
             || self.data.bind(core::DEFAULT_DATA_PORT).is_err()
             || self

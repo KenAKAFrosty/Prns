@@ -31,7 +31,7 @@ use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::storage::StorageLayout;
 
-const MAX_TRACKED_DESTINATIONS: usize = 2000;
+const MAX_TRACKED_DESTINATIONS: usize = 64;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 8;
 const MAX_CONCURRENT_LINKS: usize = 8;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;

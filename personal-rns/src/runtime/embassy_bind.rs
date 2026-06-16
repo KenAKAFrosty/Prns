@@ -481,6 +481,41 @@ where
     /// Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
     pub async fn run(self, drive: impl Future<Output = ()>) {
         let Prns {
+            mut engine,
+            mut inbound,
+            mut egress,
+            notify,
+            commands,
+            lifecycle,
+            handle: _,
+            mut host,
+            initial,
+            state,
+            mut on_event,
+            _routes,
+        } = self;
+        let reactor = run_pooled(
+            &mut engine,
+            &initial,
+            &mut inbound,
+            &mut egress,
+            &mut host,
+            notify,
+            commands,
+            lifecycle,
+            |journaled| on_event(PrnsEvent::from(journaled), &state),
+            |_| false,
+        );
+        join(reactor, drive).await;
+    }
+
+    /// Drive only the reactor — no interface drive joined. The board runs its interfaces and
+    /// supervisors wherever it likes (a separate task, or a separate *core*: the reactor↔interface
+    /// seam is all `CriticalSectionRawMutex` channels, so the engine can own one core while the I/O
+    /// owns another, genuine parallelism with no shared state but the lanes). The single-core
+    /// convenience is [`run`](Self::run), which joins the reactor with the drive on one task.
+    pub async fn run_reactor(&mut self) {
+        let Prns {
             engine,
             inbound,
             egress,
@@ -491,22 +526,22 @@ where
             host,
             initial,
             state,
-            mut on_event,
+            on_event,
             _routes,
         } = self;
-        let reactor = run_pooled(
+        run_pooled(
             engine,
-            &initial,
+            &initial[..],
             inbound,
             egress,
             host,
-            notify,
-            commands,
-            lifecycle,
-            |journaled| on_event(PrnsEvent::from(journaled), &state),
+            *notify,
+            *commands,
+            *lifecycle,
+            |journaled| on_event(PrnsEvent::from(journaled), state),
             |_| false,
-        );
-        join(reactor, drive).await;
+        )
+        .await;
     }
 }
 

@@ -16,38 +16,51 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 use esp_println::println;
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select, Either};
+use embassy_futures::join::join;
+use embassy_futures::select::{select3, Either3};
+use embassy_net::udp::{PacketMetadata, UdpSocket};
+use embassy_net::{Ipv6Cidr, Runner, StackResources, StaticConfigV6};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::zerocopy_channel;
 use embassy_time::{Duration, Ticker, Timer};
 use heapless::Vec as HVec;
+use portable_atomic::{AtomicU64, Ordering};
 use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::{ConstStaticCell, StaticCell};
 
+use esp_radio::wifi::scan::ScanConfig;
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{
+    Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, WifiController,
+};
+
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    InstantMillis, IssuedCommand, Journaled, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
+use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
-use personal_rns::interfaces::{ConnectionState, InterfaceId};
-use personal_rns::reactor::grant::{AnyGrantConsumer, AnyGrantProducer, FrameSlot};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, MacAddress};
+use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::{
-    embassy_grant_lane, run as run_reactor, EmbassyEgress, EmbassyGrantConsumer,
-    EmbassyGrantProducer, EmbassyHost, EmbassyInterfaceSeam, EmbassyInterfaceStatus,
+    embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
+    EmbassyInterfaceSeam, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::routing::announce::{derive_destination_hash, expand_name};
-use personal_rns::routing::ProofStrategy;
-use personal_rns::wire::DestinationHash;
+use personal_rns::runtime::{
+    CompletionPool, EmbassyCommands, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent,
+    PrnsRecipe, ReactorPlumbing,
+};
+use personal_rns::wire::TransportId;
 
 use crate::engine_storage::EngineStorageType;
 
@@ -55,55 +68,91 @@ use personal_hopspot_ui as screen;
 
 esp_app_desc!();
 
-/// This board's USB-auto interface id (opaque to the engine).
+/// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
-/// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil` — the shape LXMF apps parse
-/// (`\x13` = 19 = the name's length), so they surface the display name.
+/// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil`, the shape LXMF apps parse.
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
-/// How often the board re-announces itself: the engine does not originate announces, so the app
-/// owns the cadence (the button fires the same announce on demand).
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The reactor's three cross-core channels, sized for an announce burst.
-const INBOUND_CAP: usize = 8;
-const OUTBOUND_CAP: usize = 8;
-const COMMANDS_CAP: usize = 4;
+/// The WiFi network the board joins (station mode), read at build time. Export them (e.g.
+/// `source .wifi-env`) before `cargo s3`; an unset SSID leaves WiFi down and the board runs USB-only.
+const WIFI_SSID: &str = match option_env!("HOPSPOT_WIFI_SSID") {
+    Some(ssid) => ssid,
+    None => "",
+};
+const WIFI_PASSWORD: &str = match option_env!("HOPSPOT_WIFI_PASSWORD") {
+    Some(password) => password,
+    None => "",
+};
 
-/// The engine's own stack on core 1 — sized from the painted watermark. Re-measure via the
-/// painted stacks whenever the engine grows.
-const CORE1_STACK_BYTES: usize = 76 * 1024;
+/// The interface pool: slot 0 is the USB-auto wire, slots `[1..IFACES)` are the WiFi supervisor's
+/// member pool (one per peer).
+const IFACES: usize = 4;
+const MEMBERS: usize = IFACES - 1;
+const LANE_DEPTH: usize = 2;
+const NOTIFY_CAP: usize = 16;
+const COMMANDS_CAP: usize = 8;
+const LIFECYCLE_CAP: usize = 8;
+const COMPLETIONS_CAP: usize = 4;
 
-const STACK_PAINT_WORD: u32 = 0x57AC_C0DE;
-const STACK_GUARD_SKIP_BYTES: usize = 64;
-const CORE1_ENTRY_BLOB_SKIP_BYTES: usize = 2048;
-const STACK_PAINT_SP_MARGIN_BYTES: usize = 2048;
+/// Core 1 runs *only* the engine reactor: its future (with the constructed engine) lives in the
+/// task pool, so this is just the per-poll execution stack — the run-time ingest crypto's frames.
+/// The one-time engine *construction* (the big, dalek-heavy transient) happens on core 0's
+/// guarded main-task stack instead, so core 1 stays small.
+const CORE1_STACK_BYTES: usize = 32 * 1024;
 
-/// Heltec V4 VBAT sense: the on-board divider is ~4.9x ((390k+100k)/100k), so
-/// VBAT(mV) = pin(mV) * 49 / 10.
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
-/// LiPo range for the bar fill (datasheet: 3.3 V empty … 4.2 V full).
 const VBAT_EMPTY_MV: u32 = 3300;
 const VBAT_FULL_MV: u32 = 4200;
-/// Below this no connected LiPo is plausible (USB with no battery reads ~0), so show
-/// `Unknown` rather than misleading bars.
 const VBAT_ABSENT_MV: u32 = 3000;
 
-/// UI repaint cadence — re-reads the live status (Dormant/Live, bytes) each tick.
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
-/// Re-read the battery every Nth render tick (≈ 2 s at the render cadence).
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
 
-/// Hold the user button at least this long for a long press (open/close a menu);
-/// anything shorter is a tap that advances focus. Matches the desktop face's threshold.
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
-/// Settle time after each press, so the contact's release bounce isn't a fresh press.
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
-/// Place a value in a `'static` `StaticCell` and hand back the `'static` reference — the embassy
-/// idiom for giving the core-1 stack a 'static lifetime without a heap allocation.
+type Mtx = CriticalSectionRawMutex;
+type LaneBuf = [FrameSlot<MAX_WIRE_FRAME_LEN>; LANE_DEPTH];
+type LaneChannel = zerocopy_channel::Channel<'static, Mtx, FrameSlot<MAX_WIRE_FRAME_LEN>>;
+type ReactorInbound = HVec<
+    (
+        InterfaceId,
+        EmbassyGrantConsumer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+    ),
+    IFACES,
+>;
+type ReactorEgressLanes = HVec<
+    (
+        InterfaceId,
+        EmbassyGrantProducer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+    ),
+    IFACES,
+>;
+type Handle = EmbassyCommands<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+/// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument — which
+/// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
+type S3Node = Prns<
+    (),
+    (),
+    for<'a> fn(PrnsEvent<'a>, &()),
+    EngineStorageType,
+    EmbassyHost<fn(&mut [u8])>,
+    Mtx,
+    MAX_WIRE_FRAME_LEN,
+    IFACES,
+    NOTIFY_CAP,
+    COMMANDS_CAP,
+    LIFECYCLE_CAP,
+    COMPLETIONS_CAP,
+>;
+const EMPTY_SLOT: FrameSlot<MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
+/// The free-slot id a pool slot carries until an interface occupies it (never a real medium id).
+const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 16]);
+
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
         static CELL: StaticCell<$t> = StaticCell::new();
@@ -111,136 +160,76 @@ macro_rules! mk_static {
     }};
 }
 
-/// The USB interface's live state, written by the device task and read by the OLED render loop —
-/// both on core 0, so it is shared by reference (not crossing the seam). A `const`-constructed
-/// `static`, no `StaticCell` needed.
+/// The USB interface's live state, written by the device task (core 0) and read by the render loop
+/// (core 0) — the engine on core 1 reaches it through the lanes, this `static` is a face-side view.
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
-/// One lane slot carries the engine's whole wire ceiling — the USB hardware MTU is larger,
-/// but a thin (non-fat-links) engine never negotiates past this, so bigger slots would hold
-/// bytes the engine refuses.
-const USB_LANE_SLOT: usize = MAX_WIRE_FRAME_LEN;
+/// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
+static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(InterfaceId::new([0u8; 16]));
 
-const EMPTY_SLOT: FrameSlot<USB_LANE_SLOT> = FrameSlot::empty();
+/// The reactor's pool: one inbound + one outbound grant ring per slot, split at boot into the
+/// reactor side (core 1's plumbing) and the interface side (core 0's USB seam / fleet wires).
+static IN_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
+    [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
+static IN_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
+static OUT_BUF: [ConstStaticCell<LaneBuf>; IFACES] =
+    [const { ConstStaticCell::new([EMPTY_SLOT; LANE_DEPTH]) }; IFACES];
+static OUT_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() }; IFACES];
 
-type UsbLaneRing =
-    zerocopy_channel::Channel<'static, CriticalSectionRawMutex, FrameSlot<USB_LANE_SLOT>>;
-type UsbSeam = EmbassyInterfaceSeam<'static, CriticalSectionRawMutex, INBOUND_CAP, USB_LANE_SLOT>;
+/// The reactor↔interface channels (cross-core via `CriticalSectionRawMutex`).
+static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
+static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();
+static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
+static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
+static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
 
-/// The reactor's inputs, crossing the core 0 ↔ core 1 seam: the device fills inbound slots in
-/// place and announces each commit on `NOTIFY`, the egress write-grants outbound slots the
-/// device drains, and the render loop / announce timer issue commands. The frame bytes live in
-/// these link-time buffers and never move.
-static USB_IN_SLOTS: ConstStaticCell<[FrameSlot<USB_LANE_SLOT>; INBOUND_CAP]> =
-    ConstStaticCell::new([EMPTY_SLOT; INBOUND_CAP]);
-static USB_IN_RING: StaticCell<UsbLaneRing> = StaticCell::new();
-static USB_OUT_SLOTS: ConstStaticCell<[FrameSlot<USB_LANE_SLOT>; OUTBOUND_CAP]> =
-    ConstStaticCell::new([EMPTY_SLOT; OUTBOUND_CAP]);
-static USB_OUT_RING: StaticCell<UsbLaneRing> = StaticCell::new();
-static NOTIFY: Channel<CriticalSectionRawMutex, InterfaceId, INBOUND_CAP> = Channel::new();
-static COMMANDS: Channel<CriticalSectionRawMutex, IssuedCommand, COMMANDS_CAP> = Channel::new();
-/// The user button's short/long-press events, from `button_task` to the render loop.
-static BUTTON_EVENTS: Channel<CriticalSectionRawMutex, screen::InputEvent, 4> = Channel::new();
+/// The engine's entropy: the hardware TRNG blocks until WiFi RF is live (wifi::new enables it, but
+/// the radio is not associated when the engine starts), so entropy is a board-unique software PRNG
+/// over this `static` state. Acceptable ONLY because this whole identity is a NEVER-ship bring-up
+/// fixture; the long-term fix is to gate the TRNG on RF-up. A fn (not a closure) so the host type
+/// stays nameable for the cross-core move.
+static ENTROPY_STATE: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
 
-static CORE0_STACK: PaintedStack = PaintedStack::unpainted();
-static CORE1_STACK: PaintedStack = PaintedStack::unpainted();
-
-struct PaintedStack {
-    floor: AtomicUsize,
-    top: AtomicUsize,
+fn seeded_entropy(bytes: &mut [u8]) {
+    let mut state = ENTROPY_STATE.load(Ordering::Relaxed);
+    for byte in bytes {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        *byte = (state >> 24) as u8;
+    }
+    ENTROPY_STATE.store(state, Ordering::Relaxed);
 }
 
-impl PaintedStack {
-    const fn unpainted() -> Self {
-        Self {
-            floor: AtomicUsize::new(0),
-            top: AtomicUsize::new(0),
-        }
-    }
+/// The recipe's event sink — a fn (not a closure) so the node type stays nameable.
+fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
-    unsafe fn paint(&self, floor: usize, paint_top: usize, true_top: usize) {
-        critical_section::with(|_| {
-            let mut addr = floor;
-            while addr + 4 <= paint_top {
-                (addr as *mut u32).write_volatile(STACK_PAINT_WORD);
-                addr += 4;
-            }
-        });
-        self.floor.store(floor, Ordering::Release);
-        self.top.store(true_top, Ordering::Release);
-    }
-
-    #[allow(dead_code)]
-    fn peak_bytes(&self) -> usize {
-        let floor = self.floor.load(Ordering::Acquire);
-        let top = self.top.load(Ordering::Acquire);
-        if floor == 0 {
-            return 0;
-        }
-        let mut addr = floor;
-        while addr + 4 <= top {
-            if unsafe { (addr as *const u32).read_volatile() } != STACK_PAINT_WORD {
-                return top - addr;
-            }
-            addr += 4;
-        }
-        0
-    }
-}
-
-fn core0_stack_bounds() -> (usize, usize) {
-    extern "C" {
-        static _stack_end: u32;
-        static _stack_start: u32;
-    }
-    (
-        core::ptr::addr_of!(_stack_end) as usize,
-        core::ptr::addr_of!(_stack_start) as usize,
-    )
-}
-
-/// Platform bring-up, then the Hopspot screen loop. Never returns — its frame holds the
-/// panel-power gate, the OLED, and the battery ADC alive while the spawned tasks (engine on
-/// core 1; device, button, announce on core 0) do the work.
+/// Platform bring-up on core 0, where the heavy lifting lives: the OLED, the identity crypto, the
+/// whole engine *construction* (its dalek-heavy transient wants the guarded main-task stack), and
+/// all the I/O (USB-auto + WiFi-auto). The built node then rides to core 1, which runs only the
+/// reactor on a small stack — true parallelism (engine ⊥ I/O) over the cross-core lane channels.
+/// Never returns: this frame is core 0's I/O + screen drive.
+#[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
 
-    // esp-rtos needs a heap + a timer + a software interrupt to boot the scheduler and the
-    // embassy-time driver. USB-only (no radio/IP stack) keeps this small.
+    esp_println::logger::init_logger_from_env();
     esp_alloc::heap_allocator!(size: 64 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
-    let (core0_floor, core0_top) = core0_stack_bounds();
-    let sp: usize;
-    unsafe { core::arch::asm!("mov {0}, a1", out(reg) sp) };
-    unsafe {
-        CORE0_STACK.paint(
-            core0_floor + STACK_GUARD_SKIP_BYTES,
-            sp - STACK_PAINT_SP_MARGIN_BYTES,
-            core0_top,
-        )
-    };
-
-    let rtc = Rtc::new(p.LPWR);
+    let mut rtc = Rtc::new(p.LPWR);
+    // The engine construction allocates + zeroes PSRAM-backed columns synchronously; PSRAM is slow,
+    // so it can overrun the RTC watchdog's ~2s timeout. Disable RWDT/SWD over the boot build.
+    rtc.rwdt.disable();
+    rtc.swd.disable();
     let timebase = EmbassyTimebase::start_at(InstantMillis(rtc.current_time_us() / 1000));
 
-    // The only thing on the usb-serial-jtag before frames flow — the desktop's decoder skips it
-    // as pre-frame noise. Nothing else may print after this: the wire IS the link.
-    println!("HOPSPOT_S3 boot — USB-auto on the reactor");
-    #[cfg(feature = "footprint")]
-    {
-        Timer::after(Duration::from_millis(2000)).await;
-        println!(
-            "FOOTPRINT engine_state={} bytes (Esp32S3 layout)",
-            core::mem::size_of::<EngineState<EngineStorageType>>()
-        );
-        println!("FOOTPRINT heap_free={} bytes", esp_alloc::HEAP.free());
-    }
+    println!("HOPSPOT_S3 boot — recipe runtime, engine core 1 + I/O core 0");
 
     // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
     let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
@@ -268,64 +257,122 @@ pub async fn run(spawner: Spawner) {
         let _ = display.flush();
     }
 
-    // Async USB serial, split — the device task owns the halves on core 0.
-    let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
-    let (usb_in_tx, usb_in_rx) =
-        embassy_grant_lane(USB_IN_RING.init(zerocopy_channel::Channel::new(USB_IN_SLOTS.take())));
-    let (usb_out_tx, usb_out_rx) =
-        embassy_grant_lane(USB_OUT_RING.init(zerocopy_channel::Channel::new(USB_OUT_SLOTS.take())));
-    let seam = EmbassyInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, NOTIFY.sender(), usb_out_rx);
-    spawner.spawn(usb_device_task(usb_rx, usb_tx, seam).expect("device task fits the pool"));
+    let mac = base_mac_address();
+    let mut mac_octets = [0u8; 6];
+    mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
+    let secret_key = fixture_identity_secret_key(&mac);
 
-    // The destination the announces name: derived from the same fixture identity the engine
-    // answers as (`register_single_destination` derives the same hash), so command and
-    // registration agree.
-    let self_destination = {
-        let secret_key = fixture_identity_secret_key();
-        let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
-        let name = expand_name("lxmf", &["delivery"]).expect("the announce name is valid");
-        derive_destination_hash(&identity.identity_hash(), &name)
+    let (self_destination, transport_id) = {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key);
+        let name = personal_rns::routing::announce::expand_name("lxmf", &["delivery"])
+            .expect("valid name");
+        let destination = personal_rns::routing::announce::derive_destination_hash(
+            &signer.identity_hash(),
+            &name,
+        );
+        let transport = TransportId::new(*signer.identity_hash().as_bytes());
+        (destination, transport)
     };
-    spawner.spawn(announce_task(self_destination).expect("announce task fits"));
+    let seed = self_destination.as_bytes();
+    ENTROPY_STATE.store(
+        u64::from_le_bytes([
+            seed[0], seed[1], seed[2], seed[3], seed[4], seed[5], seed[6], seed[7],
+        ]) | 1,
+        Ordering::Relaxed,
+    );
 
-    // The engine gets core 1 to itself: its own scheduler, its own explicitly sized stack, and no
-    // I/O task ever preempts a cycle. Device, render, and input stay here on core 0 — true
-    // parallelism across the seam.
-    let secret_key = fixture_identity_secret_key();
+    let mut inbound: ReactorInbound = HVec::new();
+    let mut egress_lanes: ReactorEgressLanes = HVec::new();
+    let mut iface_halves: [Option<(
+        EmbassyGrantProducer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+        EmbassyGrantConsumer<'static, Mtx, MAX_WIRE_FRAME_LEN>,
+    )>; IFACES] = [const { None }; IFACES];
+    for slot in 0..IFACES {
+        let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
+        let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
+        let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
+        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        let _ = inbound.push((FREE_SLOT, in_consumer));
+        let _ = egress_lanes.push((FREE_SLOT, out_producer));
+        iface_halves[slot] = Some((in_producer, out_consumer));
+    }
+
+    let handle: Handle = EmbassyCommands::new(COMMANDS.sender(), &COMPLETION);
+    let plumbing = ReactorPlumbing::new(
+        inbound,
+        PooledEgress::new(egress_lanes),
+        NOTIFY.receiver(),
+        COMMANDS.receiver(),
+        LIFECYCLE.receiver(),
+        handle,
+    );
+    let host = EmbassyHost::new_with_timebase(timebase, seeded_entropy as fn(&mut [u8]));
+    static NODE: StaticCell<S3Node> = StaticCell::new();
+    let node: &'static mut S3Node = NODE.init(Prns::new(
+        PrnsRecipe {
+            transport: Some(transport_id),
+            pre_configured_destinations: [PreConfiguredDestination::Single {
+                app_name: "lxmf",
+                aspects: &["delivery"],
+                identity: secret_key,
+                announce_app_data: ANNOUNCE_APP_DATA,
+                proof: personal_rns::routing::ProofStrategy::ProveAll,
+                ratchet: RatchetPolicy::Ratcheted,
+            }],
+            app_state: (),
+            storage: EngineStorageType::default(),
+            routes: personal_rns::routes![],
+            interfaces: personal_rns::interfaces![],
+            on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+        },
+        plumbing,
+        host,
+    ));
+    node.activate(0, device_descriptor(USB_INTERFACE_ID));
+
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
-    let core1_floor = core1_stack as *const CpuStack<CORE1_STACK_BYTES> as usize;
-    let core1_top = core1_floor + core::mem::size_of::<CpuStack<CORE1_STACK_BYTES>>();
-    unsafe {
-        CORE1_STACK.paint(
-            core1_floor + CORE1_ENTRY_BLOB_SKIP_BYTES,
-            core1_top,
-            core1_top,
-        )
-    };
     esp_rtos::start_second_core(
         p.CPU_CTRL,
         sw_int.software_interrupt1,
         core1_stack,
         move || {
-            static CORE1_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
-            CORE1_EXECUTOR
+            static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+            EXECUTOR
                 .init(esp_rtos::embassy::Executor::new())
-                .run(|engine_spawner| {
-                    engine_spawner.spawn(
-                        engine_task(secret_key, timebase, usb_in_rx, usb_out_tx)
-                            .expect("engine task fits"),
-                    );
+                .run(|spawner| {
+                    spawner.spawn(reactor_core(node).expect("reactor task fits"));
                 })
         },
     );
 
-    // User button (GPIO0, the PRG/BOOT button; the internal pull-up holds it high on release).
-    let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
-    spawner.spawn(button_task(button).expect("button task fits the pool"));
+    let (usb_in_producer, usb_out_consumer) = iface_halves[0].take().expect("slot 0 half");
+    let usb_seam = EmbassyInterfaceSeam::new(
+        USB_INTERFACE_ID,
+        usb_in_producer,
+        NOTIFY.sender(),
+        usb_out_consumer,
+    );
+    let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
+    let usb_device = usb_device(usb_rx, usb_tx);
 
-    // Battery sense (Heltec V4): VBAT divider on GPIO1 (ADC1_CH0), gated by ADC_Ctrl on GPIO37 —
-    // driven HIGH to connect the divider. ADC1 is free because no TRNG holds it: the identity is
-    // a bring-up fixture.
+    let mut members: [Option<MemberWire<Mtx, MAX_WIRE_FRAME_LEN, NOTIFY_CAP>>; MEMBERS] =
+        [const { None }; MEMBERS];
+    for member in 0..MEMBERS {
+        let (in_producer, out_consumer) = iface_halves[member + 1].take().expect("member half");
+        members[member] = Some(MemberWire {
+            inbound: in_producer,
+            outbound: out_consumer,
+            notify: NOTIFY.sender(),
+        });
+    }
+    let fleet: Fleet<Mtx, MAX_WIRE_FRAME_LEN, MEMBERS, NOTIFY_CAP, LIFECYCLE_CAP> =
+        Fleet::new(1, LIFECYCLE.sender(), members);
+    let wifi = build_wifi(&spawner, p.WIFI, mac_octets);
+
+    let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
+    spawner.spawn(button_task(button).expect("button task fits"));
+
+    // Battery sense (Heltec V4): VBAT divider on GPIO1 (ADC1_CH0), gated by ADC_Ctrl on GPIO37.
     let mut adc_ctrl = Output::new(p.GPIO37, Level::High, OutputConfig::default());
     adc_ctrl.set_high();
     let mut adc_cfg = AdcConfig::new();
@@ -333,161 +380,144 @@ pub async fn run(spawner: Spawner) {
         adc_cfg.enable_pin_with_cal::<_, AdcCalCurve<_>>(p.GPIO1, Attenuation::_11dB);
     let mut vbat_adc = Adc::new(p.ADC1, adc_cfg);
 
-    // The Hopspot screen: re-read the interface's live status each render tick (so Dormant flips
-    // to Live the moment a host links), and redraw on every button press.
-    let mut ui_state = screen::UiState::new();
-    let mut vbat_ema_mv: u32 = 0;
-    let mut battery = screen::BatteryState::Unknown;
-    let mut ticks_to_battery: u8 = 0;
-    let mut next_command_id = 0u64;
-    let mut render_tick = Ticker::every(RENDER_INTERVAL);
-    loop {
-        if ticks_to_battery == 0 {
-            let mut pin_mv = 0u16;
-            for _ in 0..1000 {
-                if let Ok(v) = vbat_adc.read_oneshot(&mut vbat_pin) {
-                    pin_mv = v;
-                    break;
+    let wifi_status = wifi.as_ref().map(AutoWifi::status);
+    let wifi_id = wifi_status.as_ref().map(|status| {
+        use personal_rns::interfaces::InterfaceStatus;
+        status.id()
+    });
+
+    let render = async move {
+        let mut ui_state = screen::UiState::new();
+        let mut vbat_ema_mv: u32 = 0;
+        let mut battery_state = screen::BatteryState::Unknown;
+        let mut ticks_to_battery: u8 = 0;
+        let mut render_tick = Ticker::every(RENDER_INTERVAL);
+        let mut announce_tick = Ticker::every(ANNOUNCE_INTERVAL);
+        loop {
+            if ticks_to_battery == 0 {
+                let mut pin_mv = 0u16;
+                for _ in 0..1000 {
+                    if let Ok(value) = vbat_adc.read_oneshot(&mut vbat_pin) {
+                        pin_mv = value;
+                        break;
+                    }
                 }
-            }
-            let vbat_mv = pin_mv as u32 * VBAT_DIVIDER_NUM / VBAT_DIVIDER_DEN;
-            battery = if vbat_mv < VBAT_ABSENT_MV {
-                screen::BatteryState::Unknown
-            } else {
-                vbat_ema_mv = if vbat_ema_mv == 0 {
-                    vbat_mv
+                let vbat_mv = pin_mv as u32 * VBAT_DIVIDER_NUM / VBAT_DIVIDER_DEN;
+                battery_state = if vbat_mv < VBAT_ABSENT_MV {
+                    screen::BatteryState::Unknown
                 } else {
-                    (vbat_ema_mv * 7 + vbat_mv) / 8
+                    vbat_ema_mv = if vbat_ema_mv == 0 {
+                        vbat_mv
+                    } else {
+                        (vbat_ema_mv * 7 + vbat_mv) / 8
+                    };
+                    let span = VBAT_FULL_MV - VBAT_EMPTY_MV;
+                    let pct =
+                        (vbat_ema_mv.saturating_sub(VBAT_EMPTY_MV) * 100 / span).min(100) as u8;
+                    screen::BatteryState::Level(pct)
                 };
-                let span = VBAT_FULL_MV - VBAT_EMPTY_MV;
-                let pct = (vbat_ema_mv.saturating_sub(VBAT_EMPTY_MV) * 100 / span).min(100) as u8;
-                screen::BatteryState::Level(pct)
-            };
-            ticks_to_battery = RENDER_TICKS_PER_BATTERY;
-        }
-        ticks_to_battery -= 1;
-
-        let statuses = [&USB_STATUS];
-        let cards: HVec<screen::Card, 8> = screen::statuses_to_cards(&statuses, |id| {
-            if id == USB_INTERFACE_ID {
-                Some((screen::CardKind::Usb, screen::card_label("USB")))
-            } else {
-                None
+                ticks_to_battery = RENDER_TICKS_PER_BATTERY;
             }
-        });
-        let card_count = cards.len();
-        ui_state.sync_card_count(card_count);
-        if oled_ok {
-            screen::draw_with_state(&mut display, &cards, battery, &ui_state);
-            let _ = display.flush();
-        }
+            ticks_to_battery -= 1;
 
-        match select(render_tick.next(), BUTTON_EVENTS.receive()).await {
-            Either::First(()) => {}
-            Either::Second(event) => {
-                if matches!(
-                    ui_state.handle_input(event, card_count),
-                    screen::UiAction::Announce
-                ) {
-                    next_command_id += 1;
-                    let _ = COMMANDS.try_send(IssuedCommand {
-                        id: CommandId(next_command_id),
-                        command: EngineCommand::AnnounceNow(AnnounceNow {
+            let cards = build_cards(&USB_STATUS, wifi_status.as_ref(), wifi_id);
+            let card_count = cards.len();
+            ui_state.sync_card_count(card_count);
+            if oled_ok {
+                screen::draw_with_state(&mut display, &cards, battery_state, &ui_state);
+                let _ = display.flush();
+            }
+
+            match select3(
+                render_tick.next(),
+                announce_tick.next(),
+                BUTTON_EVENTS.receive(),
+            )
+            .await
+            {
+                Either3::First(()) => {}
+                Either3::Second(()) => {
+                    let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination: self_destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }));
+                }
+                Either3::Third(event) => {
+                    if matches!(
+                        ui_state.handle_input(event, card_count),
+                        screen::UiAction::Announce
+                    ) {
+                        let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                             destination: self_destination,
                             target: AnnounceTarget::AllInterfaces,
                             app_data: AnnounceAppData::Registered,
-                        }),
-                    });
+                        }));
+                    }
                 }
             }
+        }
+    };
+
+    match wifi {
+        Some(wifi) => {
+            join(join(usb_device.run(usb_seam), wifi.run(fleet)), render).await;
+        }
+        None => {
+            join(usb_device.run(usb_seam), render).await;
         }
     }
 }
 
-/// A bring-up fixture identity. The battery sense owns ADC1, so no TRNG can — and the bare RNG
-/// without RF isn't trustworthy for a keypair — so the identity is fixed (the oracle vectors'
-/// X25519 0x22 ‖ Ed25519 0x11), with the board MAC mixed in so every flashed board is a distinct
-/// node. NEVER ship: predictable from the MAC. A real one needs RF-backed entropy.
-fn fixture_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    secret_key[..32].fill(0x22);
-    secret_key[32..].fill(0x11);
-    let mac = base_mac_address();
-    let mac_bytes = mac.as_bytes();
-    for (i, byte) in mac_bytes.iter().enumerate() {
-        secret_key[i] ^= byte;
-        secret_key[32 + i] ^= byte;
+/// Core 1: run only the engine reactor over the slot pool. The node was built on core 0 and lives in
+/// a `static`; core 1 borrows it by `&'static mut`, so only a pointer crosses the core boundary (the
+/// engine never moves) and this core needs just a small per-poll stack for the ingest crypto.
+#[embassy_executor::task]
+async fn reactor_core(node: &'static mut S3Node) {
+    node.run_reactor().await
+}
+
+/// Build the card set: the USB host, the WiFi aggregate, and one card per confirmed peer —
+/// classified into USB / WiFi / `Peer <hex>`, the same shape the desktop face renders.
+fn build_cards(
+    usb: &EmbassyInterfaceStatus,
+    wifi: Option<&AutoWifiStatus<MEMBERS>>,
+    wifi_id: Option<InterfaceId>,
+) -> HVec<screen::Card, 8> {
+    use personal_rns::interfaces::InterfaceStatus;
+    let classify = |id: InterfaceId| -> Option<(screen::CardKind, screen::CardLabel)> {
+        if id == USB_INTERFACE_ID {
+            Some((screen::CardKind::Usb, screen::card_label("USB")))
+        } else if Some(id) == wifi_id {
+            Some((screen::CardKind::Wifi, screen::card_label("WiFi")))
+        } else {
+            let bytes = id.as_bytes();
+            let mut label = screen::CardLabel::new();
+            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+            Some((screen::CardKind::Peer, label))
+        }
+    };
+    let mut statuses: HVec<&dyn InterfaceStatus, 8> = HVec::new();
+    let _ = statuses.push(usb);
+    if let Some(wifi) = wifi {
+        let _ = statuses.push(wifi);
+        for member in wifi.members() {
+            let _ = statuses.push(member);
+        }
     }
-    secret_key
+    screen::statuses_to_cards(&statuses, classify)
 }
 
-/// The engine on core 1: build it on the fixed inline storage, take the transport role, register
-/// the `lxmf.delivery` destination, then drive the embassy reactor forever — racing the inbound
-/// funnel, the command lane, and its own deadlines, carrying every directive out through the
-/// egress. Lives in one task so the (unnameable) reactor future stays a local.
-#[embassy_executor::task]
-async fn engine_task(
-    secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    timebase: EmbassyTimebase,
-    usb_in_rx: EmbassyGrantConsumer<'static, CriticalSectionRawMutex, USB_LANE_SLOT>,
-    usb_out_tx: EmbassyGrantProducer<'static, CriticalSectionRawMutex, USB_LANE_SLOT>,
-) {
-    let mut engine = EngineState::<EngineStorageType>::new(secret_key);
-    let node = engine.held_identity_hashes()[0];
-    engine
-        .set_transport_identity(&node)
-        .expect("the held identity takes the transport role");
-    let _ = engine
-        .register_single_destination(
-            &node,
-            "lxmf",
-            &["delivery"],
-            ANNOUNCE_APP_DATA,
-            ProofStrategy::ProveAll,
-            RatchetPolicy::Ratcheted,
-        )
-        .expect("registers the lxmf.delivery destination");
-
-    // The host owns the clock and draws each cycle's announce jitter from the RNG (timing only —
-    // its quality is non-critical). No heap: the board owns the `static` channels.
-    let host = EmbassyHost::new_with_timebase(timebase, |bytes: &mut [u8]| {
-        Rng::new().read(bytes);
-    });
-
-    let mut usb_in_rx = usb_in_rx;
-    let mut usb_out_tx = usb_out_tx;
-    let interfaces = [device_descriptor(USB_INTERFACE_ID)];
-    let mut inbound_lanes: [(InterfaceId, &mut dyn AnyGrantConsumer); 1] =
-        [(USB_INTERFACE_ID, &mut usb_in_rx)];
-    let mut egress_lanes: [(InterfaceId, &mut dyn AnyGrantProducer); 1] =
-        [(USB_INTERFACE_ID, &mut usb_out_tx)];
-    let egress = EmbassyEgress::new(&mut egress_lanes);
-
-    // The reactor swallows every directive into the egress itself; the app sees only `Journaled`,
-    // and the board has nowhere to log it (the usb-serial-jtag is the wire) — so it is dropped.
-    run_reactor(
-        engine,
-        &interfaces,
-        &[],
-        host,
-        NOTIFY.receiver(),
-        &mut inbound_lanes,
-        COMMANDS.receiver(),
-        egress,
-        |_journaled: Journaled<'_>| {},
-    )
-    .await
-}
-
-/// The board's concrete device link: the one monomorphization the static task pool holds. Runs
-/// the USB-auto device interface over the serial-jtag halves, funneling into the reactor and
-/// writing the broadcasts it drains.
-#[embassy_executor::task]
-async fn usb_device_task(
+/// The board's concrete USB-auto device over the serial-jtag halves, reporting into [`USB_STATUS`].
+fn usb_device(
     rx: UsbSerialJtagRx<'static, Async>,
     tx: UsbSerialJtagTx<'static, Async>,
-    seam: UsbSeam,
-) {
+) -> UsbAutoDevice<
+    'static,
+    UsbSerialJtagRx<'static, Async>,
+    UsbSerialJtagTx<'static, Async>,
+    impl FnMut() -> bool,
+> {
     let mut last_sof = 0u16;
     let host_present = move || {
         let frame = USB_DEVICE::regs()
@@ -499,47 +529,158 @@ async fn usb_device_task(
         last_sof = frame;
         advanced
     };
-    let device = UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present);
-    device.run(seam).await
+    UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present)
 }
 
-/// The board's announce cadence: the engine does not originate announces, so this fires a scheduled
-/// `lxmf.delivery` announce on its own timer (the button fires the same on demand).
+/// Bring the WiFi stack up in station mode and hand back the supervisor. `None` with no SSID (the
+/// board then runs USB-only). Spawns the net runner + the connect/reconnect loop on core 0.
+fn build_wifi(
+    spawner: &Spawner,
+    wifi: esp_hal::peripherals::WIFI<'static>,
+    mac: [u8; 6],
+) -> Option<AutoWifi<'static, MEMBERS>> {
+    if WIFI_SSID.is_empty() {
+        return None;
+    }
+    let (controller, interfaces) = esp_radio::wifi::new(wifi, ControllerConfig::default()).ok()?;
+
+    let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
+    let net_config = embassy_net::Config::ipv6_static(StaticConfigV6 {
+        address: Ipv6Cidr::new(link_local, 64),
+        gateway: None,
+        dns_servers: Default::default(),
+    });
+    let resources = mk_static!(StackResources<6>, StackResources::new());
+    let seed = {
+        let mut bytes = [0u8; 8];
+        Rng::new().read(&mut bytes);
+        u64::from_le_bytes(bytes)
+    };
+    let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
+
+    let discovery = {
+        static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+        static RX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
+        static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+        static TX_BUF: ConstStaticCell<[u8; 512]> = ConstStaticCell::new([0u8; 512]);
+        UdpSocket::new(
+            stack,
+            RX_META.take(),
+            RX_BUF.take(),
+            TX_META.take(),
+            TX_BUF.take(),
+        )
+    };
+    let data = {
+        static RX_META: ConstStaticCell<[PacketMetadata; 8]> =
+            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+        static RX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
+        static TX_META: ConstStaticCell<[PacketMetadata; 8]> =
+            ConstStaticCell::new([PacketMetadata::EMPTY; 8]);
+        static TX_BUF: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0u8; 2048]);
+        UdpSocket::new(
+            stack,
+            RX_META.take(),
+            RX_BUF.take(),
+            TX_META.take(),
+            TX_BUF.take(),
+        )
+    };
+
+    spawner.spawn(net_task(runner).expect("net task fits"));
+    spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
+    Some(AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED))
+}
+
+/// Drive the embassy-net stack forever (the link/neighbor/socket machinery), on core 0.
 #[embassy_executor::task]
-async fn announce_task(destination: DestinationHash) {
-    let mut ticker = Ticker::every(ANNOUNCE_INTERVAL);
-    let mut next_id = 0u64;
+async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
+    runner.run().await
+}
+
+/// Join the configured network in station mode and hold the association up, reconnecting on drop.
+///
+/// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
+/// multicast between them unreliably, so a station left to roam can land on a node that never
+/// receives the discovery group. To avoid that, this scans first and pins to the strongest BSSID
+/// for the SSID — landing the S3 on one node and holding it there, where the discovery multicast
+/// reaches it.
+#[embassy_executor::task]
+async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
+    let base = StationConfig::default()
+        .with_ssid(WIFI_SSID)
+        .with_password(WIFI_PASSWORD.into());
+
+    let _ = controller.set_config(&WifiConfig::Station(base.clone()));
+    let mut station = base.clone();
+    if let Ok(networks) = controller.scan_async(&ScanConfig::default()).await {
+        let mut best: Option<([u8; 6], u8, i8)> = None;
+        for ap in &networks {
+            if ap.ssid.as_str() == WIFI_SSID
+                && best.is_none_or(|(_, _, rssi)| ap.signal_strength > rssi)
+            {
+                best = Some((ap.bssid, ap.channel, ap.signal_strength));
+            }
+        }
+        if let Some((bssid, channel, rssi)) = best {
+            log::info!(
+                "wifi: pinned to BSSID {:02x?} channel {} (rssi {})",
+                bssid,
+                channel,
+                rssi
+            );
+            station = base.clone().with_bssid(bssid).with_channel(channel);
+        }
+    }
+    let config = WifiConfig::Station(station);
     loop {
-        next_id += 1;
-        let _ = COMMANDS.try_send(IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }),
-        });
-        ticker.next().await;
+        if controller.is_connected() {
+            Timer::after(Duration::from_secs(2)).await;
+            continue;
+        }
+        if controller.set_config(&config).is_err() {
+            Timer::after(Duration::from_secs(2)).await;
+            continue;
+        }
+        if controller.connect_async().await.is_err() {
+            Timer::after(Duration::from_secs(2)).await;
+        }
     }
 }
 
-/// The user button worker: turn raw active-low edges on GPIO0 into the same
-/// [`InputEvent`](screen::InputEvent)s the desktop face produces. A tap (release before
-/// [`BUTTON_LONG_PRESS`]) is a `ShortPress`; crossing the hold threshold fires a `LongPress` the
-/// instant it's reached — so the menu opens without waiting for release — and the eventual
-/// release is swallowed.
+/// A bring-up fixture identity (the oracle X25519 0x22 ‖ Ed25519 0x11 keypair with the board MAC
+/// mixed in so every flashed board is distinct). NEVER ship: predictable from the MAC.
+fn fixture_identity_secret_key(
+    mac: &esp_hal::efuse::MacAddress,
+) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    let mut secret_key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+    secret_key[..32].fill(0x22);
+    secret_key[32..].fill(0x11);
+    for (i, byte) in mac.as_bytes().iter().enumerate() {
+        secret_key[i] ^= byte;
+        secret_key[32 + i] ^= byte;
+    }
+    secret_key
+}
+
+/// The user button worker (core 0): turn raw active-low edges on GPIO0 into the same
+/// [`InputEvent`](screen::InputEvent)s the desktop face produces.
 #[embassy_executor::task]
-async fn button_task(mut button: Input<'static>) {
+async fn button_task(mut button: Input<'static>) -> ! {
     loop {
         button.wait_for_falling_edge().await;
-        match select(
+        match embassy_futures::select::select(
             button.wait_for_rising_edge(),
             Timer::after(BUTTON_LONG_PRESS),
         )
         .await
         {
-            Either::First(()) => BUTTON_EVENTS.send(screen::InputEvent::ShortPress).await,
-            Either::Second(()) => {
+            embassy_futures::select::Either::First(()) => {
+                BUTTON_EVENTS.send(screen::InputEvent::ShortPress).await
+            }
+            embassy_futures::select::Either::Second(()) => {
                 BUTTON_EVENTS.send(screen::InputEvent::LongPress).await;
                 button.wait_for_rising_edge().await;
             }

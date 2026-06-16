@@ -54,6 +54,7 @@ allocator-api2 = { version = "0.3", default-features = false, features = ["alloc
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv6", "medium-ethernet", "multicast", "udp"] }
 static_cell = "2"
+portable-atomic = { version = "1", default-features = false }
 log = "0.4"
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-backtrace = { version = "0.19", default-features = false, features = ["esp32s3", "panic-handler", "println"] }

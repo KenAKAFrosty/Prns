@@ -1933,6 +1933,7 @@ dependencies = [
  "log",
  "personal-hopspot-ui",
  "personal-rns",
+ "portable-atomic",
  "serialport",
  "ssd1306",
  "static_cell",

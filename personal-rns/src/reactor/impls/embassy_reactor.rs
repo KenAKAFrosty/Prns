@@ -724,11 +724,11 @@ pub async fn run_pooled<
     const COMMANDS: usize,
     const LIFECYCLE: usize,
 >(
-    mut engine: EngineState<S>,
+    engine: &mut EngineState<S>,
     initial: &[InterfaceConfig],
-    mut inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), N>,
-    mut egress: PooledEgress<M, SLOT, N>,
-    mut host: H,
+    inbound: &mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), N>,
+    egress: &mut PooledEgress<M, SLOT, N>,
+    host: &mut H,
     notify: Receiver<'_, M, InterfaceId, NOTIFY>,
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'_, M, InterfaceLifecycle, LIFECYCLE>,
@@ -757,8 +757,8 @@ pub async fn run_pooled<
         match select5(
             notify.receive(),
             commands.receive(),
-            wait_for_due_lane(&host, wake),
-            wait_for_pacer(&host, pacer_wake),
+            wait_for_due_lane(&*host, wake),
+            wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
         )
         .await
@@ -771,7 +771,7 @@ pub async fn run_pooled<
                     continue;
                 };
                 let now = host.now();
-                let jitter = draw_jitter(&mut host);
+                let jitter = draw_jitter(&mut *host);
                 let packet = InboundPacket {
                     arrived_at: now,
                     source_interface: source,
@@ -787,7 +787,7 @@ pub async fn run_pooled<
                     &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &mut egress,
+                            &mut *egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -796,7 +796,7 @@ pub async fn run_pooled<
                     },
                 );
                 lane.release_frame();
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &configs);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
             }
             Either5::Second(issued) => {
                 let now = host.now();
@@ -808,7 +808,7 @@ pub async fn run_pooled<
                     &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &mut egress,
+                            &mut *egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -816,12 +816,12 @@ pub async fn run_pooled<
                         )
                     },
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &configs);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
             }
             Either5::Third(lane) => {
                 let now = host.now();
                 let delta = fire_due_lane(
-                    &mut engine,
+                    &mut *engine,
                     lane,
                     now,
                     &configs,
@@ -829,7 +829,7 @@ pub async fn run_pooled<
                     &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &mut egress,
+                            &mut *egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -837,11 +837,11 @@ pub async fn run_pooled<
                         )
                     },
                 );
-                merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, &configs);
+                merge_wake_schedules_delta(&mut wake_schedules, delta, &*engine, &configs);
             }
             Either5::Fourth(()) => {
                 let now = host.now();
-                flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
+                flush_due_pacers(&mut pacers, now, &mut *egress, ifacs);
             }
             Either5::Fifth(message) => match message {
                 InterfaceLifecycle::Add { slot, config } => {
@@ -878,7 +878,7 @@ pub async fn run_pooled<
                     engine.cull_expired_routes(now, &configs, &mut |reaction| {
                         route_reaction(
                             reaction,
-                            &mut egress,
+                            &mut *egress,
                             ifacs,
                             &mut pacers,
                             now,
@@ -1189,13 +1189,15 @@ mod tests {
             | Journaled::ResourceNeedsDecompression { .. } => {}
         };
 
+        let mut egress = PooledEgress::new(egress_lanes);
+        let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
         let count = block_on(async {
             let reactor = run_pooled(
-                engine,
+                &mut engine,
                 &[],
-                inbound,
-                PooledEgress::new(egress_lanes),
-                EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+                &mut inbound,
+                &mut egress,
+                &mut host,
                 notify.receiver(),
                 commands.receiver(),
                 lifecycle.receiver(),
