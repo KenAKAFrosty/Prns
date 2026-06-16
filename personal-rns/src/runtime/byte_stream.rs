@@ -253,7 +253,11 @@ impl AsyncWrite for ByteStreamWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncReadExt;
+    use crate::engine::{Delivered, IssuedCommand};
+    use crate::reactor::impls::tokio_reactor::HostCommand;
+    use crate::routing::links::channel::byte_stream::parse;
+    use crate::units::Rtt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn chunk(bytes: &[u8], eof: bool, compressed: bool) -> StreamInbound {
         StreamInbound {
@@ -294,5 +298,83 @@ mod tests {
         let mut out = std::vec::Vec::new();
         let err = reader.read_to_end(&mut out).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    }
+
+    #[tokio::test]
+    async fn writer_frames_each_write_as_a_stream_data_send_and_closes_with_eof() {
+        let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = LinkId::new([7; 16]);
+        let stream_id = StreamId::new(3).unwrap();
+        let mut writer = ByteStreamWriter::new(PrnsHandle::over(commands_tx), link, stream_id);
+
+        let write = tokio::spawn(async move {
+            writer.write_all(b"hello").await.unwrap();
+            writer.shutdown().await.unwrap();
+        });
+
+        let mut frames = std::vec::Vec::new();
+        for _ in 0..2 {
+            let HostCommand::AwaitedEngine {
+                issued: IssuedCommand { command, .. },
+                completion,
+            } = commands_rx.recv().await.unwrap()
+            else {
+                panic!("expected an awaited engine command");
+            };
+            let EngineCommand::SendChannel(send) = command else {
+                panic!("expected a SendChannel command");
+            };
+            assert_eq!(send.link_id, link);
+            assert_eq!(send.message_type, STREAM_DATA_TYPE);
+            let frame = parse(&send.body).unwrap();
+            assert_eq!(frame.header.stream_id, stream_id);
+            frames.push((frame.header.eof, frame.payload.to_vec()));
+            completion
+                .send(Settlement::SendChannel(Ok(Delivered { rtt: Rtt(0) })))
+                .unwrap();
+        }
+
+        write.await.unwrap();
+        assert_eq!(frames[0], (false, b"hello".to_vec()));
+        assert_eq!(frames[1], (true, std::vec::Vec::new()));
+    }
+
+    #[tokio::test]
+    async fn writer_retries_a_chunk_past_a_full_send_window() {
+        let (commands_tx, mut commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let link = LinkId::new([9; 16]);
+        let stream_id = StreamId::new(1).unwrap();
+        let mut writer = ByteStreamWriter::new(PrnsHandle::over(commands_tx), link, stream_id);
+
+        let write = tokio::spawn(async move {
+            writer.write_all(b"x").await.unwrap();
+        });
+
+        let HostCommand::AwaitedEngine { completion, .. } = commands_rx.recv().await.unwrap()
+        else {
+            panic!("expected an awaited engine command");
+        };
+        completion
+            .send(Settlement::SendChannel(Err(SendChannelFailure::WindowFull)))
+            .unwrap();
+
+        let HostCommand::AwaitedEngine {
+            issued: IssuedCommand { command, .. },
+            completion,
+        } = commands_rx.recv().await.unwrap()
+        else {
+            panic!("expected the retried command");
+        };
+        let EngineCommand::SendChannel(send) = command else {
+            panic!("expected a SendChannel command");
+        };
+        assert_eq!(send.message_type, STREAM_DATA_TYPE);
+        let frame = parse(&send.body).unwrap();
+        assert_eq!(frame.payload, b"x");
+        completion
+            .send(Settlement::SendChannel(Ok(Delivered { rtt: Rtt(0) })))
+            .unwrap();
+
+        write.await.unwrap();
     }
 }
