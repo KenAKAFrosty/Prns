@@ -1,14 +1,4 @@
-//! RNS 1.3.1 `Channel`: reliable, in-order, deduplicated message delivery over
-//! a link (the [`LinkId`](super::LinkId) session). This module is the wire
-//! foundation — the envelope header the engine writes ahead of every message
-//! body, riding as the plaintext of a
-//! [`WireContext::Channel`](crate::wire::WireContext::Channel) link data packet.
-//!
-//! The engine treats the body as opaque: a [`MessageType`] tag and raw bytes
-//! the app interprets. Typed-message multiplexing (an app handing us an enum)
-//! is a higher consumer-API layer, not the engine's concern. `Buffer` rides on
-//! top as one consumer that claims the reserved system type `0xff00`.
-
+pub mod byte_stream;
 pub mod columns;
 pub mod impls;
 pub mod receive;
@@ -17,15 +7,12 @@ pub mod send;
 use crate::routing::links::data::link_mdu;
 use crate::units::Rtt;
 
-/// RNS 1.3.1 `Channel` `MSGTYPE`: the 16-bit tag that lets one channel
-/// multiplex several message kinds over a link. Opaque to the engine; values
-/// `>= 0xf000` are reserved for system types (the `Buffer` stream is `0xff00`).
+/// RNS 1.3.1 `Channel` `MSGTYPE`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct MessageType(pub u16);
 
-/// RNS 1.3.1 `Channel` sequence number: 16-bit, counting modulo
-/// [`SEQ_MODULUS`], the ordering key for reliable in-order delivery.
+/// RNS 1.3.1 `Channel` sequence number: the ordering key for reliable in-order delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
 pub struct ChannelSequence(pub u16);
@@ -41,18 +28,10 @@ impl ChannelSequence {
     }
 }
 
-/// A link's [`Rtt`] seen through the channel send window's flow-control lens:
-/// which speed band it falls in ([`tier`](Self::tier)) and
-/// whether it is too slow to pipeline at all
-/// ([`pins_send_window`](Self::pins_send_window)). The thresholds are RNS 1.3.1
-/// `Channel`'s, so they belong to the channel — not to the general round-trip
-/// time, which stays a plain measurement other layers read however they like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct ChannelRtt(pub Rtt);
 
-/// The speed band a [`ChannelRtt`] falls in, naming RNS 1.3.1 `Channel`'s
-/// `RTT_FAST`/`RTT_MEDIUM` cut-offs so the window adaptation reads as intent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelRttTier {
     Fast,
@@ -61,16 +40,13 @@ pub enum ChannelRttTier {
 }
 
 impl ChannelRtt {
-    /// RNS 1.3.1 `Channel.RTT_FAST` (0.18 s): at or under this is the fast tier.
+    /// RNS 1.3.1 `Channel.RTT_FAST` (0.18 s)
     pub const FAST_CEILING: Rtt = Rtt(180);
-    /// RNS 1.3.1 `Channel.RTT_MEDIUM` (0.75 s): at or under this is the medium tier.
+    /// RNS 1.3.1 `Channel.RTT_MEDIUM` (0.75 s)
     pub const MEDIUM_CEILING: Rtt = Rtt(750);
-    /// RNS 1.3.1 `Channel.RTT_SLOW` (1.45 s): past this the send window cannot
-    /// pipeline and is pinned to a single message in flight.
+    /// RNS 1.3.1 `Channel.RTT_SLOW` (1.45 s)
     pub const WINDOW_PIN_CEILING: Rtt = Rtt(1_450);
 
-    /// The speed band this RTT falls in: fast (≤ 180 ms), medium (≤ 750 ms),
-    /// else slow.
     pub const fn tier(self) -> ChannelRttTier {
         if self.0.millis() <= Self::FAST_CEILING.millis() {
             ChannelRttTier::Fast
@@ -81,9 +57,6 @@ impl ChannelRtt {
         }
     }
 
-    /// Whether a fresh send window must pin to a single message in flight — a
-    /// link too slow (past [`WINDOW_PIN_CEILING`](Self::WINDOW_PIN_CEILING)) to
-    /// keep more than one send unproven.
     pub const fn pins_send_window(self) -> bool {
         self.0.millis() > Self::WINDOW_PIN_CEILING.millis()
     }
@@ -95,14 +68,6 @@ impl From<Rtt> for ChannelRtt {
     }
 }
 
-/// RNS 1.3.1 `Channel`'s adaptive send window in integer form: how many messages
-/// may ride in flight unproven ([`limit`](Self::limit)), the RTT-tiered ceiling
-/// that count grows toward, and the floor it shrinks to. The window opens by one
-/// on every ack ([`grow_on_ack`](Self::grow_on_ack)) and closes by one on every
-/// loss ([`shrink_on_loss`](Self::shrink_on_loss)); its ceiling ratchets up to
-/// the medium then fast tier once a link sustains
-/// [`FAST_RATE_THRESHOLD`](Self::FAST_RATE_THRESHOLD) fast-enough rounds, the band
-/// read from the link's [`ChannelRtt`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelWindow {
     size: u8,
@@ -124,11 +89,6 @@ impl ChannelWindow {
     pub const FLEXIBILITY: u8 = 4;
     pub const FAST_RATE_THRESHOLD: u32 = 10;
 
-    /// The window a channel opens with, given the link's round-trip time: a link
-    /// too slow to pipeline ([`ChannelRtt::pins_send_window`]) is held to a
-    /// single message in flight; any faster link starts at
-    /// [`INITIAL`](Self::INITIAL) with room to grow to the slow-tier ceiling and
-    /// ratchet higher.
     pub const fn for_rtt(rtt: ChannelRtt) -> Self {
         if rtt.pins_send_window() {
             Self {
@@ -151,21 +111,10 @@ impl ChannelWindow {
         }
     }
 
-    /// How many messages may be in flight unproven right now.
-    pub const fn limit(&self) -> usize {
+    pub const fn in_flight_count_limit(&self) -> usize {
         self.size as usize
     }
 
-    /// Open the window after an ack: grow the in-flight allowance by one toward
-    /// the ceiling, and — once a link sustains
-    /// [`FAST_RATE_THRESHOLD`](Self::FAST_RATE_THRESHOLD) rounds in a tier — ratchet
-    /// the ceiling (and floor) up to that tier. Unlike the reference there is no
-    /// `rtt == 0` guard: the reference uses `0` as the sentinel for a link whose
-    /// RTT is not measured yet, but a window only grows on an *active* link, whose
-    /// RTT is always measured (the unmeasured state is the link's pre-active
-    /// phases, which carry no RTT at all). A `0` here is therefore a genuine
-    /// sub-millisecond round trip in the [`Fast`](ChannelRttTier::Fast) tier, not
-    /// a missing measurement to skip.
     pub fn grow_on_ack(&mut self, rtt: ChannelRtt) {
         if self.size < self.max {
             self.size += 1;
@@ -195,9 +144,6 @@ impl ChannelWindow {
         }
     }
 
-    /// Close the window after a loss: shrink the in-flight allowance by one toward
-    /// the floor, pulling the ceiling down with it while the two stay at least
-    /// [`FLEXIBILITY`](Self::FLEXIBILITY) apart.
     pub fn shrink_on_loss(&mut self) {
         if self.size > self.min {
             self.size -= 1;
@@ -214,14 +160,10 @@ impl Default for ChannelWindow {
     }
 }
 
-/// RNS 1.3.1 `Channel.Envelope` header: the 6 bytes —
-/// `struct.pack(">HHH", msgtype, sequence, length)` — ahead of the message
-/// body.
+/// RNS 1.3.1 `Channel.Envelope` header
 pub const ENVELOPE_HEADER_LEN: usize = 6;
 
-/// RNS 1.3.1 `Channel.mdu`: the most one message body can carry — the link MDU
-/// (see [`link_mdu`]) less the envelope header, capped at the length field's
-/// `u16::MAX` ceiling.
+/// RNS 1.3.1 `Channel.mdu`
 pub const fn channel_mdu(mtu: usize) -> usize {
     let body = link_mdu(mtu).saturating_sub(ENVELOPE_HEADER_LEN);
     if body > u16::MAX as usize {
@@ -239,9 +181,6 @@ pub enum EnvelopeError {
     LengthMismatch,
 }
 
-/// Frame `payload` behind its envelope header into `buf`, returning the written
-/// length. The body rides verbatim and the length field is set to the body
-/// length, matching RNS `Channel.Envelope.pack`.
 pub fn write_envelope(
     message_type: MessageType,
     sequence: ChannelSequence,
@@ -262,8 +201,6 @@ pub fn write_envelope(
     Ok(end)
 }
 
-/// A parsed envelope: the [`MessageType`] tag, the [`ChannelSequence`], and the
-/// borrowed message body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Envelope<'a> {
     pub message_type: MessageType,
@@ -271,9 +208,6 @@ pub struct Envelope<'a> {
     pub payload: &'a [u8],
 }
 
-/// Parse an envelope from the opened plaintext of a channel link packet. The
-/// length field must equal the actual body length — RNS senders always agree,
-/// so a disagreement is a malformed frame.
 pub fn parse_envelope(bytes: &[u8]) -> Result<Envelope<'_>, EnvelopeError> {
     if bytes.len() < ENVELOPE_HEADER_LEN {
         return Err(EnvelopeError::TruncatedHeader);
@@ -394,12 +328,12 @@ mod tests {
     #[test]
     fn the_window_opens_at_the_rtt_tier() {
         assert_eq!(
-            ChannelWindow::for_rtt(rtt(0)).limit(),
+            ChannelWindow::for_rtt(rtt(0)).in_flight_count_limit(),
             ChannelWindow::INITIAL as usize
         );
-        assert_eq!(ChannelWindow::for_rtt(rtt(100)).limit(), 2);
+        assert_eq!(ChannelWindow::for_rtt(rtt(100)).in_flight_count_limit(), 2);
         assert_eq!(
-            ChannelWindow::for_rtt(rtt(2_000)).limit(),
+            ChannelWindow::for_rtt(rtt(2_000)).in_flight_count_limit(),
             1,
             "a slow link is pinned to one message in flight"
         );
@@ -408,10 +342,14 @@ mod tests {
     #[test]
     fn an_ack_opens_the_window_one_step_toward_its_ceiling() {
         let mut window = ChannelWindow::for_rtt(rtt(250));
-        assert_eq!(window.limit(), 2);
+        assert_eq!(window.in_flight_count_limit(), 2);
         for expected in [3, 4, 5, 5, 5] {
             window.grow_on_ack(rtt(250));
-            assert_eq!(window.limit(), expected, "grows to the ceiling then holds");
+            assert_eq!(
+                window.in_flight_count_limit(),
+                expected,
+                "grows to the ceiling then holds"
+            );
         }
     }
 
@@ -424,7 +362,10 @@ mod tests {
         for _ in 0..ChannelWindow::MAX_FAST {
             window.grow_on_ack(rtt(50));
         }
-        assert_eq!(window.limit(), ChannelWindow::MAX_FAST as usize);
+        assert_eq!(
+            window.in_flight_count_limit(),
+            ChannelWindow::MAX_FAST as usize
+        );
     }
 
     #[test]
@@ -437,7 +378,7 @@ mod tests {
             window.grow_on_ack(rtt(0));
         }
         assert_eq!(
-            window.limit(),
+            window.in_flight_count_limit(),
             ChannelWindow::MAX_FAST as usize,
             "an rtt of zero is a measured sub-ms link, not an unmeasured one",
         );
@@ -450,7 +391,10 @@ mod tests {
         for _ in 0..rounds {
             window.grow_on_ack(rtt(500));
         }
-        assert_eq!(window.limit(), ChannelWindow::MAX_MEDIUM as usize);
+        assert_eq!(
+            window.in_flight_count_limit(),
+            ChannelWindow::MAX_MEDIUM as usize
+        );
     }
 
     #[test]
@@ -459,11 +403,11 @@ mod tests {
         for _ in 0..15 {
             window.grow_on_ack(rtt(250));
         }
-        let opened = window.limit();
+        let opened = window.in_flight_count_limit();
         assert!(opened > ChannelWindow::MIN as usize);
         window.shrink_on_loss();
         assert_eq!(
-            window.limit(),
+            window.in_flight_count_limit(),
             opened - 1,
             "a loss closes the window by one"
         );
@@ -474,7 +418,7 @@ mod tests {
         let mut window = ChannelWindow::for_rtt(rtt(250));
         window.shrink_on_loss();
         assert_eq!(
-            window.limit(),
+            window.in_flight_count_limit(),
             ChannelWindow::MIN as usize,
             "a fresh window sits at its floor and a loss cannot push it lower"
         );

@@ -86,7 +86,8 @@ impl<S: StorageLayout> EngineState<S> {
             }
             Some(LinkPhase::Active { .. }) => {
                 let window_full = self.channels.index_of(&send.link_id).is_some_and(|index| {
-                    self.channels.outstanding_count(index) >= self.channels.window(index).limit()
+                    self.channels.outstanding_count(index)
+                        >= self.channels.window(index).in_flight_count_limit()
                 });
                 if window_full {
                     CommandOutcome::SendChannelRejected {
@@ -126,7 +127,9 @@ impl<S: StorageLayout> EngineState<S> {
             self.channels
                 .set_window(index, ChannelWindow::for_rtt(ChannelRtt(rtt)));
         }
-        if self.channels.outstanding_count(index) >= self.channels.window(index).limit() {
+        if self.channels.outstanding_count(index)
+            >= self.channels.window(index).in_flight_count_limit()
+        {
             return Err(SendChannelWriteError::WindowFull);
         }
         let sequence = self.channels.next_tx_sequence(index);
@@ -689,7 +692,7 @@ mod tests {
         let frame = frame.expect("the send goes out");
         let index = initiator.channels.index_of(&link_id).unwrap();
         assert_eq!(
-            initiator.channels.window(index).limit(),
+            initiator.channels.window(index).in_flight_count_limit(),
             CHANNEL_TX_WINDOW,
             "an unacked channel sits at the initial window",
         );
@@ -714,7 +717,7 @@ mod tests {
         );
 
         assert_eq!(
-            initiator.channels.window(index).limit(),
+            initiator.channels.window(index).in_flight_count_limit(),
             CHANNEL_TX_WINDOW + 1,
             "the ack opened the window by one",
         );
