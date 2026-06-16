@@ -37,7 +37,7 @@ const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
 const CHANNEL_REORDER_DEPTH: usize = WINDOW_MAX as usize;
-const LINK_MTU: usize = 8192;
+const LINK_MTU: usize = 2048;
 const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(LINK_MTU);
 
 pub struct Esp32S3<A: Allocator = Global>(PhantomData<A>);

@@ -91,7 +91,7 @@ const WIFI_PASSWORD: &str = match option_env!("HOPSPOT_WIFI_PASSWORD") {
 /// member pool (one per peer).
 const IFACES: usize = 4;
 const MEMBERS: usize = IFACES - 1;
-const LANE_DEPTH: usize = 2;
+const LANE_DEPTH: usize = 1;
 const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 const LIFECYCLE_CAP: usize = 8;

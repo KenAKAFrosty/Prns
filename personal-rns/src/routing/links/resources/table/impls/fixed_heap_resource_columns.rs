@@ -21,6 +21,18 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
+/// `slots` independent zeroed byte buffers of `width` bytes, built directly in `A`. The widest thing
+/// it ever stages on the caller's stack is a single `0u8` — never a whole `[0u8; width]` slot block,
+/// which at the resource transfer width is a stack-resident transient the size of an entire slot. The
+/// per-slot box is the seam that keeps construction off the stack as `TRANSFER_BYTES` grows.
+fn flat_slots<A: Allocator + Default>(width: usize, slots: usize) -> Box<[Box<[u8], A>], A> {
+    let mut outer = Vec::with_capacity_in(slots, A::default());
+    for _ in 0..slots {
+        outer.push(filled(0u8, width, A::default()));
+    }
+    outer.into_boxed_slice()
+}
+
 pub struct FixedHeapResourceColumns<
     State,
     const SLOTS: usize,
@@ -33,7 +45,7 @@ pub struct FixedHeapResourceColumns<
     hashes: [ResourceHash; SLOTS],
     timeout_ats: [Option<InstantMillis>; SLOTS],
     states: [State; SLOTS],
-    transfers: Box<[[u8; TRANSFER_BYTES]], A>,
+    transfers: Box<[Box<[u8], A>], A>,
     part_names: Box<[[[u8; MAP_HASH_LEN]; MAX_PARTS]], A>,
     part_flags: Box<[[bool; MAX_PARTS]], A>,
 }
@@ -59,7 +71,7 @@ impl<
             hashes: [ResourceHash::new([0u8; 32]); SLOTS],
             timeout_ats: [None; SLOTS],
             states: core::array::from_fn(|_| State::default()),
-            transfers: filled([0u8; TRANSFER_BYTES], SLOTS, A::default()),
+            transfers: flat_slots::<A>(TRANSFER_BYTES, SLOTS),
             part_names: filled([[0u8; MAP_HASH_LEN]; MAX_PARTS], SLOTS, A::default()),
             part_flags: filled([false; MAX_PARTS], SLOTS, A::default()),
         }
@@ -112,7 +124,7 @@ impl<
     }
 
     fn transfer(&self, index: usize) -> &[u8] {
-        &self.transfers[index]
+        &self.transfers[index][..]
     }
     fn part_names(&self, index: usize) -> &[[u8; MAP_HASH_LEN]] {
         &self.part_names[index]
@@ -122,7 +134,7 @@ impl<
     }
     fn buffers_mut(&mut self, index: usize) -> ResourceBuffers<'_> {
         ResourceBuffers {
-            transfer: &mut self.transfers[index],
+            transfer: &mut self.transfers[index][..],
             part_names: &mut self.part_names[index],
             part_flags: &mut self.part_flags[index],
         }

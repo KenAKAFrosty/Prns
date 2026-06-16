@@ -24,6 +24,21 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
+/// `slots` independent reorder buffers, each `ROWS` zeroed `WIDTH`-byte payload rows, built directly
+/// in `A`. The widest thing it ever stages on the caller's stack is one `[0u8; WIDTH]` row template —
+/// never a whole `[[u8; WIDTH]; ROWS]` per-slot block, which at an 8 KiB-class `WIDTH` would be a
+/// stack-resident transient the size of the entire heap column. The per-slot box is the seam that
+/// keeps the no-stack-staging guarantee as `MAX_PAYLOAD` grows.
+fn payload_rows<const ROWS: usize, const WIDTH: usize, A: Allocator + Default>(
+    slots: usize,
+) -> Box<[Box<[[u8; WIDTH]], A>], A> {
+    let mut outer = Vec::with_capacity_in(slots, A::default());
+    for _ in 0..slots {
+        outer.push(filled([0u8; WIDTH], ROWS, A::default()));
+    }
+    outer.into_boxed_slice()
+}
+
 pub struct FixedHeapChannelColumns<
     const SLOTS: usize,
     const REORDER_CAP: usize,
@@ -37,7 +52,7 @@ pub struct FixedHeapChannelColumns<
     sequences: Box<[[ChannelSequence; REORDER_CAP]], A>,
     message_types: Box<[[MessageType; REORDER_CAP]], A>,
     payload_lens: Box<[[usize; REORDER_CAP]], A>,
-    payloads: Box<[[[u8; MAX_PAYLOAD]; REORDER_CAP]], A>,
+    payloads: Box<[Box<[[u8; MAX_PAYLOAD]], A>], A>,
     next_tx_sequence: [ChannelSequence; SLOTS],
     windows: [ChannelWindow; SLOTS],
     outstanding_count: [usize; SLOTS],
@@ -49,7 +64,7 @@ pub struct FixedHeapChannelColumns<
     outstanding_sequences: Box<[[ChannelSequence; REORDER_CAP]], A>,
     outstanding_message_types: Box<[[MessageType; REORDER_CAP]], A>,
     outstanding_body_lens: Box<[[usize; REORDER_CAP]], A>,
-    outstanding_bodies: Box<[[[u8; MAX_PAYLOAD]; REORDER_CAP]], A>,
+    outstanding_bodies: Box<[Box<[[u8; MAX_PAYLOAD]], A>], A>,
     outstanding_ivs: Box<[[[u8; 16]; REORDER_CAP]], A>,
 }
 
@@ -69,7 +84,7 @@ impl<
             sequences: filled([ChannelSequence(0); REORDER_CAP], SLOTS, A::default()),
             message_types: filled([MessageType(0); REORDER_CAP], SLOTS, A::default()),
             payload_lens: filled([0; REORDER_CAP], SLOTS, A::default()),
-            payloads: filled([[0u8; MAX_PAYLOAD]; REORDER_CAP], SLOTS, A::default()),
+            payloads: payload_rows::<REORDER_CAP, MAX_PAYLOAD, A>(SLOTS),
             next_tx_sequence: [ChannelSequence(0); SLOTS],
             windows: [ChannelWindow::default(); SLOTS],
             outstanding_count: [0; SLOTS],
@@ -85,7 +100,7 @@ impl<
             outstanding_sequences: filled([ChannelSequence(0); REORDER_CAP], SLOTS, A::default()),
             outstanding_message_types: filled([MessageType(0); REORDER_CAP], SLOTS, A::default()),
             outstanding_body_lens: filled([0; REORDER_CAP], SLOTS, A::default()),
-            outstanding_bodies: filled([[0u8; MAX_PAYLOAD]; REORDER_CAP], SLOTS, A::default()),
+            outstanding_bodies: payload_rows::<REORDER_CAP, MAX_PAYLOAD, A>(SLOTS),
             outstanding_ivs: filled([[0u8; 16]; REORDER_CAP], SLOTS, A::default()),
         }
     }

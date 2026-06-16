@@ -32,7 +32,9 @@ use crate::reactor::driver::{
 use crate::reactor::grant::{
     AnyGrantConsumer, AnyGrantProducer, FrameSlot, GrantConsumer, GrantProducer,
 };
-use crate::reactor::interface_seam::{InterfaceSeam, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::{
+    InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
+};
 use crate::reactor::Host;
 use crate::storage::StorageLayout;
 
@@ -705,6 +707,19 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
     }
 }
 
+/// Cap an interface's advertised link MTU to what this reactor's lanes can carry. The reactor owns
+/// the frame buffers ([`EMBEDDED_MAX_WIRE_FRAME_LEN`]), so it is the authority on the largest wire
+/// any interface on this board can move; an interface that declares a wider medium (the USB device's
+/// 8 KiB, a future fat-link tier) has its ceiling clamped here, so link negotiation can never settle
+/// above the slot the frame must land in. An interface that declares no MTU keeps its broadcast-floor
+/// fallback untouched.
+fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
+    if let Some(mtu) = config.hardware_mtu {
+        config.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
+    }
+    config
+}
+
 /// The runtime's reactor: the same loop as [`run`], over a fixed pool of `N` interface slots whose
 /// occupancy changes at runtime through the `lifecycle` lane. `initial` names the slots already
 /// active at boot (the recipe's top-level set); `inbound`/`egress` carry the reactor-side endpoints
@@ -743,7 +758,8 @@ pub async fn run_pooled<
     let mut configs: HeaplessVec<InterfaceConfig, N> = HeaplessVec::new();
     let mut pacers: HeaplessVec<InterfacePacer, N> = HeaplessVec::new();
     for config in initial {
-        let _ = configs.push(*config);
+        let config = clamp_to_embedded_ceiling(*config);
+        let _ = configs.push(config);
         let _ = pacers.push(InterfacePacer {
             id: config.id,
             pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
@@ -845,6 +861,7 @@ pub async fn run_pooled<
             }
             Either5::Fifth(message) => match message {
                 InterfaceLifecycle::Add { slot, config } => {
+                    let config = clamp_to_embedded_ceiling(config);
                     let id = config.id;
                     if let Some(entry) = inbound.get_mut(slot) {
                         entry.0 = id;

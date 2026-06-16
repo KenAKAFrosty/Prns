@@ -16,11 +16,12 @@ use crate::interfaces::{InterfaceConfig, InterfaceKind};
 pub const MAX_WIRE_FRAME_LEN: usize = crate::routing::links::MAX_LINK_MTU + IFAC_MAX_SIZE;
 
 /// The embedded frame ceiling: an embassy reactor's stack scratch and lane slots
-/// size to this, never the host's absolute `MAX_WIRE_FRAME_LEN`. Set to the USB
-/// hardware tier (8192) — the largest wire an embedded interface presents — so the
-/// no-heap path never inlines the giga ceiling. Per-board channel storage carries
-/// its own basis (each board's `LINK_MTU`), tunable independently of this.
-pub const EMBEDDED_MAX_LINK_MTU: usize = 8_192;
+/// size to this, never the host's absolute `MAX_WIRE_FRAME_LEN`. Sized to the
+/// largest wire an embedded interface presents, clamped to what a board's DRAM
+/// budget can carry across its lane pool — so the no-heap path never inlines the
+/// giga ceiling. Per-board channel storage carries its own basis (each board's
+/// `LINK_MTU`), tunable independently of this.
+pub const EMBEDDED_MAX_LINK_MTU: usize = 2_048;
 pub const EMBEDDED_MAX_WIRE_FRAME_LEN: usize = EMBEDDED_MAX_LINK_MTU + IFAC_MAX_SIZE;
 
 /// The broadcast-floor wire frame: the slot a no-MTU interface — or an empty reactor — sizes to.
