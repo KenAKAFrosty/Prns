@@ -2,9 +2,9 @@ use heapless::Vec as HVec;
 use personal_hopspot_ui::{
     draw_with_state, splash, statuses_to_cards, BatteryState, Card, InputEvent, UiAction, UiState,
 };
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::interfaces::InterfaceStatus;
 
-use crate::engine::{classify, shared_status};
+use crate::engine::{classify, ensure_started, usb_status, wifi_status};
 use crate::framebuffer::FrameBuffer;
 
 const MAX_CARDS: usize = 8;
@@ -12,15 +12,14 @@ const MAX_CARDS: usize = 8;
 pub struct HopspotFace {
     state: UiState,
     framebuffer: FrameBuffer,
-    statuses: Vec<TokioInterfaceStatus>,
 }
 
 impl HopspotFace {
     pub fn new() -> Self {
+        ensure_started();
         Self {
             state: UiState::new(),
             framebuffer: FrameBuffer::new(),
-            statuses: std::vec![shared_status()],
         }
     }
 
@@ -35,8 +34,21 @@ impl HopspotFace {
         self.render_cards(&cards, out_rgba);
     }
 
+    /// Pull the live statuses each frame: the USB host, the WiFi supervisor's aggregate, and one
+    /// card per peer it has stood up — over a `&dyn` slice, the same shape the desktop face renders.
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        statuses_to_cards(&self.statuses, classify)
+        let usb = usb_status();
+        let wifi = wifi_status();
+        let members = wifi.members();
+        let mut statuses: std::vec::Vec<&dyn InterfaceStatus> =
+            std::vec::Vec::with_capacity(2 + members.len());
+        statuses.push(&usb);
+        statuses.push(&wifi);
+        for member in &members {
+            statuses.push(member);
+        }
+        let wifi_id = wifi.id();
+        statuses_to_cards(&statuses, |id| classify(id, wifi_id))
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {
@@ -66,14 +78,13 @@ impl Default for HopspotFace {
 mod tests {
     use super::*;
     use crate::framebuffer::{ARGB_BYTES, DARK_RGBA};
-    use personal_hopspot_ui::{CardKind, Liveness};
+    use personal_hopspot_ui::{card_label, CardKind, Liveness};
 
     impl HopspotFace {
         fn detached() -> Self {
             Self {
                 state: UiState::new(),
                 framebuffer: FrameBuffer::new(),
-                statuses: Vec::new(),
             }
         }
     }
@@ -82,7 +93,7 @@ mod tests {
         let mut cards = HVec::new();
         let _ = cards.push(Card {
             kind: CardKind::Usb,
-            label: "USB",
+            label: card_label("USB"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 1_204_000,
@@ -94,7 +105,7 @@ mod tests {
         });
         let _ = cards.push(Card {
             kind: CardKind::Wifi,
-            label: "WiFi",
+            label: card_label("WiFi"),
             selected: false,
             liveness: Liveness::Live,
             tx_bytes: 22_400_000,
@@ -121,10 +132,10 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_status_set_renders_the_starting_splash() {
+    fn an_empty_card_set_renders_the_starting_splash() {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
-        face.render(&mut out);
+        face.render_cards(&[], &mut out);
         assert!(out.chunks_exact(4).any(|px| px != DARK_RGBA));
     }
 
