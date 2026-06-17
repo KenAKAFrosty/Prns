@@ -35,13 +35,8 @@ use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Build and advertise one resource over an active link. `data` is the
-    /// uncompressed payload; `compressed_candidate` is the host's bz2 attempt
-    /// (or `None` — an embedded host never links a compressor) and the
-    /// reference's keep-only-if-smaller rule picks between them. The sealed
-    /// stream lands in the outgoing register's slot, the advertisement goes
-    /// out grant-first, and the command settles now only on refusal —
-    /// delivery settles at the receiver's proof.
+    /// Build and advertise a whole resource over an active link — the trivial
+    /// one-segment case of [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
     #[allow(clippy::too_many_arguments)]
     pub fn ingest_send_resource_into<F>(
         &mut self,
@@ -50,6 +45,47 @@ impl<S: StorageLayout> EngineState<S> {
         data: &[u8],
         compressed_candidate: Option<&[u8]>,
         request_id: Option<RequestId>,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_send_resource_segment_into(
+            id,
+            link_id,
+            data,
+            compressed_candidate,
+            request_id,
+            1,
+            1,
+            now,
+            fill_entropy,
+            sink,
+        )
+    }
+
+    /// Build and advertise one segment of a resource over an active link.
+    /// `data` is this segment's uncompressed payload; `compressed_candidate`
+    /// is the host's bz2 attempt (or `None` — an embedded host never links a
+    /// compressor) and the reference's keep-only-if-smaller rule picks between
+    /// them. The sealed stream lands in the outgoing register's slot, the
+    /// advertisement goes out grant-first carrying `(segment_index,
+    /// total_segments)`, and the command settles now only on refusal —
+    /// delivery settles at the receiver's proof. Segment 1 of a split records
+    /// its hash as the chain's `original_hash`; every later segment re-advertises
+    /// it, so the host threads no hashes of its own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ingest_send_resource_segment_into<F>(
+        &mut self,
+        id: CommandId,
+        link_id: LinkId,
+        data: &[u8],
+        compressed_candidate: Option<&[u8]>,
+        request_id: Option<RequestId>,
+        segment_index: u64,
+        total_segments: u64,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -122,6 +158,21 @@ impl<S: StorageLayout> EngineState<S> {
                 return wake_schedule_changes;
             }
         };
+
+        let chain_original = (segment_index > 1)
+            .then(|| self.outgoing_assemblies.original_hash(&link_id))
+            .flatten();
+        if let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) {
+            let state = self.outgoing_resources.state_mut(index);
+            state.segment_index = segment_index;
+            state.total_segments = total_segments;
+            if let Some(original) = chain_original {
+                state.original_hash = original;
+            }
+        }
+        if total_segments > 1 && segment_index == 1 {
+            self.outgoing_assemblies.begin(link_id, hash);
+        }
 
         let mut adv_iv = [0u8; 16];
         fill_entropy(&mut adv_iv);
@@ -209,8 +260,13 @@ impl<S: StorageLayout> EngineState<S> {
         if proof != self.outgoing_resources.state(index).expected_proof {
             return Some(IngestPacketOutcome::Ignored);
         }
-        let id = self.outgoing_resources.state(index).command_id;
+        let state = self.outgoing_resources.state(index);
+        let id = state.command_id;
+        let last_segment = state.segment_index >= state.total_segments;
         self.outgoing_resources.remove(&link_id, &hash);
+        if last_segment {
+            self.outgoing_assemblies.clear(&link_id);
+        }
         self.links.note_inbound(&link_id, arrived_at);
         Some(IngestPacketOutcome::ResourceDelivered { id })
     }
@@ -598,14 +654,14 @@ where
             part_count: state.part_count as u64,
             hash: *hash,
             salt_nonce: state.salt_nonce,
-            original_hash: *hash,
-            segment_index: 1,
-            total_segments: 1,
+            original_hash: state.original_hash,
+            segment_index: state.segment_index,
+            total_segments: state.total_segments,
             request_id: state.request_id,
             flags: ResourceFlags {
                 encrypted: true,
                 compressed: state.compression.wire_flag(),
-                split: false,
+                split: state.total_segments > 1,
                 is_request: false,
                 is_response: state.request_id.is_some(),
                 has_metadata: false,

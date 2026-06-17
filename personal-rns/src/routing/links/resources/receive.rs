@@ -1010,6 +1010,8 @@ mod tests_support {
         pub(crate) settlements: std::vec::Vec<(CommandId, Settlement)>,
         pub(crate) received: std::vec::Vec<(ResourceHash, std::vec::Vec<u8>)>,
         pub(crate) failed: std::vec::Vec<ResourceHash>,
+        pub(crate) segments: std::vec::Vec<(ResourceHash, u64, std::vec::Vec<u8>)>,
+        pub(crate) assembled: std::vec::Vec<(ResourceHash, u64)>,
     }
 
     pub(crate) fn feed<S: StorageLayout>(
@@ -1022,6 +1024,8 @@ mod tests_support {
             settlements: std::vec::Vec::new(),
             received: std::vec::Vec::new(),
             failed: std::vec::Vec::new(),
+            segments: std::vec::Vec::new(),
+            assembled: std::vec::Vec::new(),
         };
         let mut raw = frame.to_vec();
         engine.ingest_packet_into(
@@ -1049,6 +1053,23 @@ mod tests_support {
                 }
                 EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
                     capture.failed.push(hash);
+                }
+                EngineReaction::Journaled(Journaled::ResourceSegmentReceived {
+                    original_hash,
+                    segment_index,
+                    data,
+                    ..
+                }) => {
+                    capture
+                        .segments
+                        .push((original_hash, segment_index, data.to_vec()));
+                }
+                EngineReaction::Journaled(Journaled::ResourceAssembled {
+                    original_hash,
+                    total_size,
+                    ..
+                }) => {
+                    capture.assembled.push((original_hash, total_size));
                 }
                 _ => {}
             },
@@ -1338,6 +1359,7 @@ mod loop_tests {
     use crate::engine::test_support::filled_frame;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::advertisement::write_hashmap_update_plaintext;
+    use crate::routing::links::resources::advertisement::ResourceAdvertisement;
     use crate::routing::links::resources::control::write_part_request_plaintext;
     use crate::routing::links::resources::SaltNonce;
     use crate::wire::{PacketType as WirePacketType, WirePacketHeader, BROADCAST_MTU};
@@ -1408,6 +1430,283 @@ mod loop_tests {
             (CommandId(7), Settlement::SendResource(Ok(()))),
         ));
         assert!(sender.outgoing_resources.is_empty());
+    }
+
+    fn another_four_part_payload() -> std::vec::Vec<u8> {
+        b"every part of the second segment now!".repeat(41)
+    }
+
+    fn pump_one_segment<S: StorageLayout>(
+        sender: &mut EngineState<S>,
+        receiver: &mut EngineState<S>,
+        command_id: CommandId,
+        data: &[u8],
+        segment_index: u64,
+        total_segments: u64,
+        base_time: u64,
+    ) -> (InboundCapture, InboundCapture) {
+        let mut advertisement = None;
+        sender.ingest_send_resource_segment_into(
+            command_id,
+            link_id(),
+            data,
+            None,
+            None,
+            segment_index,
+            total_segments,
+            InstantMillis(base_time),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(receiver, &advertisement.unwrap(), base_time + 100);
+        let serve = feed(sender, &pull.frames[0].1, base_time + 200);
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(receiver, part, base_time + 300 + arrived as u64);
+            if !capture.segments.is_empty() || !capture.frames.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let conclusion = conclusion.expect("the last part concludes the segment");
+        let settle = feed(sender, &conclusion.frames[0].1, base_time + 900);
+        (conclusion, settle)
+    }
+
+    #[test]
+    fn a_two_segment_transfer_assembles_across_two_live_engines() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let segment_one = four_part_payload();
+        let segment_two = another_four_part_payload();
+
+        let (concluded_one, settled_one) = pump_one_segment(
+            &mut sender,
+            &mut receiver,
+            CommandId(11),
+            &segment_one,
+            1,
+            2,
+            2_000,
+        );
+        assert_eq!(concluded_one.segments.len(), 1);
+        let original_hash = concluded_one.segments[0].0;
+        assert_eq!(concluded_one.segments[0].1, 1, "the first segment's index");
+        assert_eq!(concluded_one.segments[0].2, segment_one);
+        assert!(
+            concluded_one.assembled.is_empty(),
+            "the assembly does not complete on the first segment",
+        );
+        assert!(matches!(
+            settled_one.settlements[0],
+            (CommandId(11), Settlement::SendResource(Ok(()))),
+        ));
+        assert!(
+            sender.outgoing_resources.is_empty(),
+            "segment one's slot retires on its proof",
+        );
+        assert!(
+            sender.outgoing_assemblies.original_hash(&link_id()).is_some(),
+            "but the send chain persists for segment two",
+        );
+
+        let (concluded_two, settled_two) = pump_one_segment(
+            &mut sender,
+            &mut receiver,
+            CommandId(12),
+            &segment_two,
+            2,
+            2,
+            4_000,
+        );
+        assert_eq!(concluded_two.segments.len(), 1);
+        assert_eq!(
+            concluded_two.segments[0].0, original_hash,
+            "every segment re-advertises the chain's original hash",
+        );
+        assert_eq!(concluded_two.segments[0].1, 2, "the second segment's index");
+        assert_eq!(concluded_two.segments[0].2, segment_two);
+        assert_eq!(
+            concluded_two.assembled.len(),
+            1,
+            "the last segment completes the assembly",
+        );
+        assert_eq!(concluded_two.assembled[0].0, original_hash);
+        assert_eq!(
+            concluded_two.assembled[0].1,
+            (segment_one.len() + segment_two.len()) as u64,
+            "the assembly reports the running byte total",
+        );
+        assert!(matches!(
+            settled_two.settlements[0],
+            (CommandId(12), Settlement::SendResource(Ok(()))),
+        ));
+        assert!(sender.outgoing_resources.is_empty());
+        assert!(
+            sender.outgoing_assemblies.original_hash(&link_id()).is_none(),
+            "the last segment's proof clears the send chain",
+        );
+        assert!(
+            receiver.incoming_assemblies.original_hash(&link_id()).is_none(),
+            "and the receiver's chain retires with the completed assembly",
+        );
+    }
+
+    fn send_segment<S: StorageLayout>(
+        sender: &mut EngineState<S>,
+        command_id: CommandId,
+        data: &[u8],
+        segment_index: u64,
+        total_segments: u64,
+        at: u64,
+    ) -> std::vec::Vec<u8> {
+        let mut frame = None;
+        sender.ingest_send_resource_segment_into(
+            command_id,
+            link_id(),
+            data,
+            None,
+            None,
+            segment_index,
+            total_segments,
+            InstantMillis(at),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    frame = filled_frame(fill);
+                }
+            },
+        );
+        frame.expect("the sender advertises the segment")
+    }
+
+    fn with_advertisement(frame: &[u8], assert: impl FnOnce(&ResourceAdvertisement<'_>)) {
+        let (_, payload) = WirePacketHeader::parse(frame).unwrap();
+        let mut sealed = payload.to_vec();
+        let opened = link_key().open_in_place(&mut sealed).unwrap();
+        assert(&ResourceAdvertisement::parse(opened).unwrap());
+    }
+
+    #[test]
+    fn a_single_shot_send_stays_one_unsplit_segment() {
+        let mut sender = engine_with_active_link();
+        let frame = advertise_from(&mut sender, &four_part_payload(), None);
+        let own = *sender.outgoing_resources.hash_at(0);
+        let state = sender.outgoing_resources.state(0);
+        assert_eq!(state.segment_index, 1);
+        assert_eq!(state.total_segments, 1);
+        assert_eq!(state.original_hash, own, "a whole resource is its own original");
+        assert!(
+            sender.outgoing_assemblies.original_hash(&link_id()).is_none(),
+            "a single-shot send opens no chain",
+        );
+        with_advertisement(&frame, |adv| {
+            assert!(!adv.flags.split, "and it advertises unsplit");
+            assert_eq!(adv.segment_index, 1);
+            assert_eq!(adv.total_segments, 1);
+            assert_eq!(adv.original_hash, own);
+        });
+    }
+
+    #[test]
+    fn segment_one_of_a_split_opens_the_chain_with_its_own_hash() {
+        let mut sender = engine_with_active_link();
+        let frame = send_segment(&mut sender, CommandId(11), &four_part_payload(), 1, 3, 1_500);
+        let own = *sender.outgoing_resources.hash_at(0);
+        let state = sender.outgoing_resources.state(0);
+        assert_eq!(state.segment_index, 1);
+        assert_eq!(state.total_segments, 3);
+        assert_eq!(state.original_hash, own, "segment one's original is its own hash");
+        assert_eq!(
+            sender.outgoing_assemblies.original_hash(&link_id()),
+            Some(own),
+            "and the chain remembers it for the segments to come",
+        );
+        with_advertisement(&frame, |adv| {
+            assert!(adv.flags.split);
+            assert_eq!(adv.segment_index, 1);
+            assert_eq!(adv.total_segments, 3);
+            assert_eq!(adv.original_hash, own);
+        });
+    }
+
+    #[test]
+    fn a_later_segment_advertises_the_chains_original_hash_not_its_own() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        pump_one_segment(
+            &mut sender,
+            &mut receiver,
+            CommandId(11),
+            &four_part_payload(),
+            1,
+            3,
+            2_000,
+        );
+        let original = sender
+            .outgoing_assemblies
+            .original_hash(&link_id())
+            .expect("the chain is open after segment one");
+
+        let frame = send_segment(
+            &mut sender,
+            CommandId(12),
+            &another_four_part_payload(),
+            2,
+            3,
+            4_000,
+        );
+        let own = *sender.outgoing_resources.hash_at(0);
+        let state = sender.outgoing_resources.state(0);
+        assert_eq!(
+            state.original_hash, original,
+            "segment two re-advertises the chain's original hash",
+        );
+        assert_ne!(state.original_hash, own, "which is its own hash no longer");
+        with_advertisement(&frame, |adv| {
+            assert_eq!(adv.original_hash, original);
+            assert_eq!(adv.hash, own, "while its own hash names the segment itself");
+            assert_eq!(adv.segment_index, 2);
+            assert_eq!(adv.total_segments, 3);
+            assert!(adv.flags.split);
+        });
+    }
+
+    #[test]
+    fn tearing_down_a_link_clears_an_open_send_chain() {
+        let mut sender = engine_with_active_link();
+        send_segment(&mut sender, CommandId(11), &four_part_payload(), 1, 2, 1_500);
+        assert!(
+            sender.outgoing_assemblies.original_hash(&link_id()).is_some(),
+            "the chain opens with segment one",
+        );
+        let mut buf = [0u8; BROADCAST_MTU];
+        sender
+            .write_owed_link_close(&link_id(), &[0u8; 16], &mut buf)
+            .unwrap();
+        assert!(
+            sender.outgoing_assemblies.original_hash(&link_id()).is_none(),
+            "and a link teardown clears it with the rest of the link state",
+        );
+    }
+
+    #[test]
+    fn a_split_segment_with_no_open_chain_falls_back_to_its_own_hash() {
+        let mut sender = engine_with_active_link();
+        send_segment(&mut sender, CommandId(11), &four_part_payload(), 2, 2, 1_500);
+        let own = *sender.outgoing_resources.hash_at(0);
+        let state = sender.outgoing_resources.state(0);
+        assert_eq!(
+            state.original_hash, own,
+            "a later segment with no chain to read falls back to its own hash",
+        );
+        assert_eq!(state.segment_index, 2);
+        assert_eq!(state.total_segments, 2);
     }
 
     #[test]
@@ -2186,6 +2485,8 @@ mod dynamics_tests {
                 settlements: std::vec::Vec::new(),
                 received: std::vec::Vec::new(),
                 failed: std::vec::Vec::new(),
+                segments: std::vec::Vec::new(),
+                assembled: std::vec::Vec::new(),
             };
             for (_, part) in &serve.frames {
                 let capture = feed(&mut receiver, part, now);
