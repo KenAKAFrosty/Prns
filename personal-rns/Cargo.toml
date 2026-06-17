@@ -44,7 +44,7 @@ embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-asyn
 # A WiFi embedded host: the embassy contract seam + embassy-net (enough for the
 # AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
 # old LoRa/ESP-NOW radio shells were removed with the device host examples.
-embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:log"]
+embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:embedded-io-async-07", "dep:log"]
 # The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) on the reactor
 # seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
 # reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
@@ -136,7 +136,7 @@ if-addrs = { version = "0.13", optional = true }
 # Embassy stack for the embassy WiFi worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),
 # so enabling the feature adds no redundant copy. Never built by the core gates.
-embassy-net = { version = "0.9.1", optional = true, default-features = false, features = ["udp", "proto-ipv6", "medium-ethernet", "multicast"] }
+embassy-net = { version = "0.9.1", optional = true, default-features = false, features = ["tcp", "udp", "proto-ipv6", "medium-ethernet", "multicast"] }
 embassy-sync = { version = "0.8.0", optional = true, default-features = false }
 embassy-time = { version = "0.5", optional = true, default-features = false }
 # Once-take promotion of the outbound grant ring's backing buffer to `'static`
@@ -149,6 +149,10 @@ embassy-futures = { version = "0.1", optional = true, default-features = false }
 # usb-serial-jtag halves) so `personal-rns` never depends on a specific HAL.
 # 0.6 matches what esp-hal 1.1 implements for its serial peripherals.
 embedded-io-async = { version = "0.6", optional = true, default-features = false }
+# embassy-net 0.9 speaks embedded-io-async 0.7 on its sockets while esp-hal's serial speaks 0.6; the
+# two coexist (esp-hal itself carries both), so the embassy-net TCP client imports the 0.7 traits
+# under its own name, leaving the 0.6 USB/serial generics untouched. Only under `embassy-wifi`.
+embedded-io-async-07 = { package = "embedded-io-async", version = "0.7", optional = true, default-features = false }
 # Logging facade for the worker shells — the host installs the sink (esp-println).
 log = { version = "0.4", optional = true, default-features = false }
 # Real u64 atomics on the 32-bit embedded targets: neither the esp32s3 (xtensa) nor riscv32

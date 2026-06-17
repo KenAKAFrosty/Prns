@@ -156,6 +156,21 @@ pub fn card_label(text: &str) -> CardLabel {
     label
 }
 
+/// A TCP client's card name: `TCP ` plus as much of its dial target as fits, so several clients are
+/// told apart by where they point (`TCP 162.255.87` vs `TCP schttopup.c`) rather than reading a bare
+/// `TCP` on each. Truncates gracefully at the buffer cap; the panel clips the rest.
+#[must_use]
+pub fn tcp_card_label(target: &str) -> CardLabel {
+    let mut label = CardLabel::new();
+    let _ = label.push_str("TCP ");
+    for c in target.chars() {
+        if label.push(c).is_err() {
+            break;
+        }
+    }
+    label
+}
+
 /// One interface's card. The host fills the identity bits (kind, label) and the
 /// live numbers from the interface's status handle.
 pub struct Card {

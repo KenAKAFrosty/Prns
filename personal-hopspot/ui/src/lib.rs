@@ -3,8 +3,8 @@
 pub mod screen;
 
 pub use screen::{
-    card_label, draw, draw_with_state, splash, BatteryState, Card, CardKind, CardLabel, InputEvent,
-    Liveness, UiAction, UiState,
+    card_label, draw, draw_with_state, splash, tcp_card_label, BatteryState, Card, CardKind,
+    CardLabel, InputEvent, Liveness, UiAction, UiState,
 };
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};

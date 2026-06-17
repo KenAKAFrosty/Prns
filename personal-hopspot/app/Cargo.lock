@@ -1965,6 +1965,7 @@ dependencies = [
  "embassy-sync 0.8.0",
  "embassy-time",
  "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
  "futures-util",
  "getrandom",
  "heapless 0.8.0",

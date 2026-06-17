@@ -31,7 +31,7 @@ heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(not(target_arch = "xtensa"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
@@ -52,7 +52,7 @@ tokio-stream = "0.1"
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
-embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv6", "medium-ethernet", "multicast", "udp"] }
+embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "tcp", "udp"] }
 static_cell = "2"
 portable-atomic = { version = "1", default-features = false }
 log = "0.4"

@@ -22,7 +22,10 @@ use embassy_executor::Spawner;
 use embassy_futures::join::join;
 use embassy_futures::select::{select3, Either3};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
-use embassy_net::{Ipv6Cidr, Runner, StackResources, StaticConfigV6};
+use embassy_net::{
+    Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
+    StaticConfigV6,
+};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::zerocopy_channel;
@@ -44,6 +47,7 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::tcp::impls::embassy::TcpClient;
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
@@ -87,11 +91,28 @@ const WIFI_PASSWORD: &str = match option_env!("HOPSPOT_WIFI_PASSWORD") {
     None => "",
 };
 
-/// The interface pool: slot 0 is the USB-auto wire, slots `[1..IFACES)` are the WiFi supervisor's
-/// member pool (one per peer).
-const IFACES: usize = 4;
-const MEMBERS: usize = IFACES - 1;
+/// The LAN Reticulum TCP node the board dials (`ip:port`, e.g. `192.168.1.50:4242`), read at build
+/// time like the WiFi creds. Empty (or unparseable) leaves the TCP interface down. No DNS — a
+/// resolved address only. Rides the WiFi stack, so it needs WiFi up.
+const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
+    Some(target) => target,
+    None => "",
+};
+/// The board's claim about its pipe to the LAN node: it sets the declared MTU tier, which the
+/// reactor then clamps to the embedded ceiling. A 2.4 GHz station's honest order of magnitude.
+const TCP_BITRATE_BPS: u32 = 65_000_000;
+/// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
+const TCP_SOCKET_BUF: usize = 1_024;
+
+/// The interface pool: slot 0 is the USB-auto wire, slot 1 is the TCP client (when a LAN target is
+/// configured, free otherwise), slots `[2..IFACES)` are the WiFi supervisor's member pool (one per
+/// peer).
+const IFACES: usize = 5;
+const MEMBERS: usize = IFACES - 2;
 const LANE_DEPTH: usize = 1;
+/// Slot 1: the always-on TCP client wire (parallel to USB at slot 0), so the WiFi members never
+/// claim it.
+const TCP_SLOT: usize = 1;
 const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 const LIFECYCLE_CAP: usize = 8;
@@ -216,7 +237,7 @@ pub async fn run(spawner: Spawner) {
     let p = esp_hal::init(config);
 
     esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(size: 64 * 1024);
+    esp_alloc::heap_allocator!(size: 56 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
@@ -297,6 +318,15 @@ pub async fn run(spawner: Spawner) {
         iface_halves[slot] = Some((in_producer, out_consumer));
     }
 
+    // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
+    // node moves to core 1 — activating the TCP slot is a core-0-only act.
+    let wifi_built = build_wifi(&spawner, p.WIFI, mac_octets);
+    let stack = wifi_built.as_ref().map(|(_, stack)| *stack);
+    let wifi = wifi_built.map(|(wifi, _)| wifi);
+    let tcp_built = stack.and_then(build_tcp);
+    let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
+    let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
+
     let handle: Handle = EmbassyCommands::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
@@ -329,6 +359,9 @@ pub async fn run(spawner: Spawner) {
         host,
     ));
     node.activate(0, device_descriptor(USB_INTERFACE_ID));
+    if let Some((tcp, _, _)) = &tcp_built {
+        node.activate(TCP_SLOT, tcp.descriptor());
+    }
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(
@@ -355,10 +388,16 @@ pub async fn run(spawner: Spawner) {
     let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
     let usb_device = usb_device(usb_rx, usb_tx);
 
+    let tcp = tcp_built.map(|(tcp, _, _)| {
+        let (in_producer, out_consumer) = iface_halves[TCP_SLOT].take().expect("tcp slot half");
+        let seam = EmbassyInterfaceSeam::new(tcp.id(), in_producer, NOTIFY.sender(), out_consumer);
+        (tcp, seam)
+    });
+
     let mut members: [Option<MemberWire<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP>>; MEMBERS] =
         [const { None }; MEMBERS];
     for member in 0..MEMBERS {
-        let (in_producer, out_consumer) = iface_halves[member + 1].take().expect("member half");
+        let (in_producer, out_consumer) = iface_halves[member + 2].take().expect("member half");
         members[member] = Some(MemberWire {
             inbound: in_producer,
             outbound: out_consumer,
@@ -366,8 +405,7 @@ pub async fn run(spawner: Spawner) {
         });
     }
     let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, MEMBERS, NOTIFY_CAP, LIFECYCLE_CAP> =
-        Fleet::new(1, LIFECYCLE.sender(), members);
-    let wifi = build_wifi(&spawner, p.WIFI, mac_octets);
+        Fleet::new(2, LIFECYCLE.sender(), members);
 
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));
@@ -420,7 +458,13 @@ pub async fn run(spawner: Spawner) {
             }
             ticks_to_battery -= 1;
 
-            let cards = build_cards(&USB_STATUS, wifi_status.as_ref(), wifi_id);
+            let cards = build_cards(
+                &USB_STATUS,
+                wifi_status.as_ref(),
+                wifi_id,
+                tcp_status,
+                tcp_id,
+            );
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
             if oled_ok {
@@ -459,11 +503,21 @@ pub async fn run(spawner: Spawner) {
         }
     };
 
-    match wifi {
-        Some(wifi) => {
+    match (wifi, tcp) {
+        (Some(wifi), Some((tcp, tcp_seam))) => {
+            join(
+                join(
+                    join(usb_device.run(usb_seam), wifi.run(fleet)),
+                    tcp.run(tcp_seam),
+                ),
+                render,
+            )
+            .await;
+        }
+        (Some(wifi), None) => {
             join(join(usb_device.run(usb_seam), wifi.run(fleet)), render).await;
         }
-        None => {
+        (None, _) => {
             join(usb_device.run(usb_seam), render).await;
         }
     }
@@ -483,6 +537,8 @@ fn build_cards(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_id: Option<InterfaceId>,
+    tcp: Option<&EmbassyInterfaceStatus>,
+    tcp_id: Option<InterfaceId>,
 ) -> HVec<screen::Card, 8> {
     use personal_rns::interfaces::InterfaceStatus;
     let classify = |id: InterfaceId| -> Option<(screen::CardKind, screen::CardLabel)> {
@@ -490,6 +546,11 @@ fn build_cards(
             Some((screen::CardKind::Usb, screen::card_label("USB")))
         } else if Some(id) == wifi_id {
             Some((screen::CardKind::Wifi, screen::card_label("WiFi")))
+        } else if Some(id) == tcp_id {
+            Some((
+                screen::CardKind::Tcp,
+                screen::tcp_card_label(HOPSPOT_TCP_TARGET),
+            ))
         } else {
             let bytes = id.as_bytes();
             let mut label = screen::CardLabel::new();
@@ -499,6 +560,9 @@ fn build_cards(
     };
     let mut statuses: HVec<&dyn InterfaceStatus, 8> = HVec::new();
     let _ = statuses.push(usb);
+    if let Some(tcp) = tcp {
+        let _ = statuses.push(tcp);
+    }
     if let Some(wifi) = wifi {
         let _ = statuses.push(wifi);
         for member in wifi.members() {
@@ -532,20 +596,58 @@ fn usb_device(
     UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present)
 }
 
+/// Stand the TCP client up from [`HOPSPOT_TCP_TARGET`] over the WiFi `stack`: parse its `ip:port`
+/// (unset or unparseable leaves it down), mint the interface id and its status under the same key,
+/// and lease the socket's smoltcp buffers from `static`s. Hands back the interface, its status
+/// handle (the render reads it for the card), and its id (the classifier names it).
+fn build_tcp(
+    stack: Stack<'static>,
+) -> Option<(
+    TcpClient<'static>,
+    &'static EmbassyInterfaceStatus,
+    InterfaceId,
+)> {
+    let addr = HOPSPOT_TCP_TARGET.parse::<::core::net::SocketAddr>().ok()?;
+    let target = IpEndpoint::new(addr.ip().into(), addr.port());
+    let tag = HOPSPOT_TCP_TARGET.as_bytes();
+    let id = TcpClient::interface_id(tag);
+    let status: &'static EmbassyInterfaceStatus = mk_static!(
+        EmbassyInterfaceStatus,
+        EmbassyInterfaceStatus::new(id, ConnectionState::Initializing)
+    );
+    let rx_buffer: &'static mut [u8] = mk_static!([u8; TCP_SOCKET_BUF], [0u8; TCP_SOCKET_BUF]);
+    let tx_buffer: &'static mut [u8] = mk_static!([u8; TCP_SOCKET_BUF], [0u8; TCP_SOCKET_BUF]);
+    let tcp = TcpClient::new(
+        stack,
+        target,
+        tag,
+        TCP_BITRATE_BPS,
+        Duration::from_secs(5),
+        rx_buffer,
+        tx_buffer,
+        status,
+    );
+    Some((tcp, status, id))
+}
+
 /// Bring the WiFi stack up in station mode and hand back the supervisor. `None` with no SSID (the
 /// board then runs USB-only). Spawns the net runner + the connect/reconnect loop on core 0.
 fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
     mac: [u8; 6],
-) -> Option<AutoWifi<'static, MEMBERS>> {
+) -> Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> {
     if WIFI_SSID.is_empty() {
         return None;
     }
     let (controller, interfaces) = esp_radio::wifi::new(wifi, ControllerConfig::default()).ok()?;
 
     let link_local = wifi_core::link_local_from_mac(MacAddress::new(mac));
-    let net_config = embassy_net::Config::ipv6_static(StaticConfigV6 {
+    // Dual-stack: the v6 link-local carries WiFi-auto's discovery/data UDP (peer-to-peer on the
+    // segment); v4 over DHCP gives the board a routable address to dial a Reticulum TCP node by
+    // ip:port.
+    let mut net_config = NetConfig::dhcpv4(DhcpConfig::default());
+    net_config.ipv6 = ConfigV6::Static(StaticConfigV6 {
         address: Ipv6Cidr::new(link_local, 64),
         gateway: None,
         dns_servers: Default::default(),
@@ -591,7 +693,10 @@ fn build_wifi(
 
     spawner.spawn(net_task(runner).expect("net task fits"));
     spawner.spawn(wifi_connect_task(controller).expect("wifi connect task fits"));
-    Some(AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED))
+    Some((
+        AutoWifi::new(stack, discovery, data, mac, &WIFI_SHARED),
+        stack,
+    ))
 }
 
 /// Drive the embassy-net stack forever (the link/neighbor/socket machinery), on core 0.

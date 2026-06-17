@@ -31,6 +31,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
+use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
@@ -99,11 +101,21 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 /// aggregate, or one of its peers. Returning `None` would drop the card; every id we render maps.
 /// A peer's medium-derived id is meaningful now, so its card carries a short hex tag (`Peer 1a2b`)
 /// to tell two peers apart instead of a bare `Peer`.
-fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKind, screen::CardLabel)> {
+fn classify(
+    id: InterfaceId,
+    wifi_id: InterfaceId,
+    tcp_id: Option<InterfaceId>,
+    tcp_target: Option<&str>,
+) -> Option<(CardKind, screen::CardLabel)> {
     if id == USB_INTERFACE_ID {
         Some((CardKind::Usb, screen::card_label("USB")))
     } else if id == wifi_id {
         Some((CardKind::Wifi, screen::card_label("WiFi")))
+    } else if Some(id) == tcp_id {
+        Some((
+            CardKind::Tcp,
+            screen::tcp_card_label(tcp_target.unwrap_or("")),
+        ))
     } else {
         let bytes = id.as_bytes();
         let mut label = screen::CardLabel::new();
@@ -120,6 +132,9 @@ struct WindowHandles {
     handle: PrnsHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
+    tcp_status: Option<TokioInterfaceStatus>,
+    tcp_id: Option<InterfaceId>,
+    tcp_target: Option<String>,
     destination: DestinationHash,
 }
 
@@ -196,10 +211,28 @@ fn run_node(
         let wifi_status = wifi.status();
         handle.supervise(wifi);
 
+        let (tcp_status, tcp_id, tcp_target) = match std::env::var("HOPSPOT_TCP_TARGET") {
+            Ok(target) if !target.is_empty() => {
+                let tcp = TcpClientInterface::new(
+                    target.clone(),
+                    tcp_core::TCP_BITRATE_GUESS_BPS,
+                    Duration::from_secs(5),
+                );
+                let status = tcp.status();
+                let id = tcp.id();
+                handle.add_interface(tcp);
+                (Some(status), Some(id), Some(target))
+            }
+            _ => (None, None, None),
+        };
+
         let _ = ready_tx.send(WindowHandles {
             handle: handle.clone(),
             usb_status,
             wifi_status,
+            tcp_status,
+            tcp_id,
+            tcp_target,
             destination,
         });
 
@@ -506,6 +539,9 @@ fn run_window(handles: WindowHandles) {
         handle,
         usb_status,
         wifi_status,
+        tcp_status,
+        tcp_id,
+        tcp_target,
         destination,
     } = handles;
 
@@ -517,7 +553,8 @@ fn run_window(handles: WindowHandles) {
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
 
     let wifi_id = wifi_status.id();
-    let classify = move |id: InterfaceId| classify(id, wifi_id);
+    let tcp_target = tcp_target.as_deref();
+    let classify = move |id: InterfaceId| classify(id, wifi_id, tcp_id, tcp_target);
 
     let apply_action = move |action: UiAction| match action {
         UiAction::None => {}
@@ -541,8 +578,11 @@ fn run_window(handles: WindowHandles) {
     let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
     loop {
         let members = wifi_status.members();
-        let mut statuses: Vec<&dyn InterfaceStatus> = Vec::with_capacity(2 + members.len());
+        let mut statuses: Vec<&dyn InterfaceStatus> = Vec::with_capacity(3 + members.len());
         statuses.push(&usb_status);
+        if let Some(tcp_status) = &tcp_status {
+            statuses.push(tcp_status);
+        }
         statuses.push(&wifi_status);
         for member in &members {
             statuses.push(member);

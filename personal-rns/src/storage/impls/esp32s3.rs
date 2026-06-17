@@ -32,7 +32,7 @@ use crate::storage::StorageLayout;
 
 const MAX_TRACKED_DESTINATIONS: usize = 64;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 8;
-const MAX_CONCURRENT_LINKS: usize = 8;
+const MAX_CONCURRENT_LINKS: usize = 4;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);

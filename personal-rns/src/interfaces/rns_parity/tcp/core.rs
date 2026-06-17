@@ -11,7 +11,7 @@ use crate::interfaces::{
     hardware_mtu_for_bitrate, AnnounceBandwidthCap, EgressCapability, IngressCapability,
     InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
-use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
+use crate::reactor::interface_seam::{EMBEDDED_MAX_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN};
 use crate::routing::links::MAX_LINK_MTU;
 
 /// One socket read's worth. The reference uses 4 KiB, which is fine for slow links
@@ -34,6 +34,17 @@ pub const TCP_HW_MTU_CAP: usize = MAX_LINK_MTU;
 /// serve loop's buffers carry any MTU the descriptor below can declare.
 pub const FRAME_CAP: usize = MAX_WIRE_FRAME_LEN;
 pub const FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(FRAME_CAP);
+
+/// The embedded twins of [`FRAME_CAP`]/[`FRAMED_LEN`]/[`READ_BUF_LEN`]: an embassy TCP client
+/// sizes its decoder, frame, and read buffers to the board's embedded wire ceiling
+/// ([`EMBEDDED_MAX_WIRE_FRAME_LEN`](crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN)),
+/// never the host's absolute one — the same host-vs-embedded split the reactor lanes draw, so a
+/// no-heap board never inlines the giga ceiling into a socket buffer.
+pub const EMBEDDED_FRAME_CAP: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+pub const EMBEDDED_FRAMED_LEN: usize = rns_serial_framing::max_encoded_len(EMBEDDED_FRAME_CAP);
+/// One socket read's worth on embedded — a chunk, not a whole frame: the decoder reassembles across
+/// reads, so this trades a few extra reads for DRAM the board would rather keep for its stack.
+pub const EMBEDDED_READ_BUF_LEN: usize = 1_024;
 
 /// The declared hardware MTU is the bitrate's tier clamped to the engine ceiling: the
 /// in-transit MTU clamp takes interface declarations at face value when a relay books a

@@ -1298,6 +1298,7 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-io-async 0.6.1",
+ "embedded-io-async 0.7.0",
  "embedded-storage",
  "futures-util",
  "getrandom 0.2.17",
