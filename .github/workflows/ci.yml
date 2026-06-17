@@ -118,6 +118,16 @@ jobs:
         run: cargo doc -p personal-rns --no-deps --document-private-items --features embassy-contract --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+      # Hopspot desktop face. Its own workspace — the firmware half rides the Xtensa `esp` toolchain
+      # (espup, not installable on a stock runner; it builds on a device runner), but the host
+      # desktop bin (`cfg(not(target_arch = "xtensa"))`) compiles here and consumes the runtime
+      # Message/Diagnostic enums by *exhaustive* match. Nothing else in CI builds it — fmt-check only
+      # fmt-checks the workspace — so a new runtime event variant could leave the desktop bin
+      # non-compiling, unseen until a hand build (exactly how the multi-segment and link-guard
+      # variants slipped through). This lints and compiles it.
+      - name: clippy — hopspot desktop face
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: personal-hopspot/app
 
   msrv:
     # The declared MSRV (workspace `rust-version`) must actually build. Pinned to the
