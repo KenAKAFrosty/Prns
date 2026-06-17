@@ -5,17 +5,19 @@
 //! transport bridges straight onto the stream, so there's no custom remote helper.
 //!
 //! The thing a clone *addresses* is a **Reticulum destination** — the server's
-//! `git/serve` destination hash — never an IP. An IP appears only as the interface
-//! wire (`--listen` / `--connect`): how two RNS instances physically find each
-//! other. Swap loopback for a LAN address and the exact same code spans two
-//! machines.
+//! `git/serve` destination hash — never an IP. And the peers find each other with no
+//! address configured at all: `serve` and `clone` bring up the host **auto-interfaces**
+//! (WiFi/LAN multicast discovery and USB), so two machines on the same network — or
+//! USB-tethered — just see each other.
 //!
 //! ```text
-//! cargo run                                  # self-contained loopback smoke
-//! cargo run -- serve --repo PATH             # serve a repo; prints its destination
-//! cargo run -- clone <dest-hex> INTO --connect HOST:PORT
+//! cargo run                              # self-contained loopback smoke
+//! cargo run -- serve --repo PATH         # serve a repo; prints its destination
+//! cargo run -- clone <dest-hex> INTO     # on another machine on the same network
 //! ```
 //! Needs `git` and `nc` on `PATH`.
+
+mod host;
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -43,22 +45,26 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::DestinationHash;
 
+use host::bring_up_auto_interfaces;
+
 /// The served destination's name: `git/serve`. Its hash is what a clone addresses.
 const APP: &str = "git";
 const ASPECTS: &[&str] = &["serve"];
-const DEFAULT_PORT: u16 = 4252;
+/// The loopback port the self-contained `demo` meets on (a stand-in for a wire).
+const DEMO_PORT: u16 = 4252;
 
 const USAGE: &str = "\
 git-over-rns — a real `git clone` carried over a Reticulum ByteStream.
 
 USAGE:
-    git-over-rns                                    self-contained loopback smoke
-    git-over-rns serve [--repo PATH] [--listen ADDR]
-    git-over-rns clone <DESTINATION-HEX> <INTO> --connect ADDR
+    git-over-rns                              self-contained loopback smoke
+    git-over-rns serve [--repo PATH]          serve a repo over the auto-interfaces
+    git-over-rns clone <DESTINATION-HEX> <INTO>
 
-`serve` prints its destination hash; hand that hash to `clone`. The address flags
-are only the interface wire (a stand-in for a radio); the clone target is always
-the destination hash.";
+serve and clone bring up the host auto-interfaces (WiFi/LAN + USB) and find each
+other with no address configured — two machines on the same network, or USB-tethered.
+serve prints its destination hash; hand that hash to clone. The clone target is always
+the destination, never an IP.";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -86,35 +92,22 @@ fn main() {
 
 struct ServeOpts {
     repo: PathBuf,
-    listen: String,
 }
 
 impl ServeOpts {
     fn parse(args: &[String]) -> Self {
         let repo = flag(args, "--repo").map_or_else(|| PathBuf::from("."), PathBuf::from);
-        let listen = flag(args, "--listen").unwrap_or_else(|| format!("0.0.0.0:{DEFAULT_PORT}"));
-        Self { repo, listen }
+        Self { repo }
     }
 }
 
 async fn serve(opts: ServeOpts) {
     let dest = served_destination();
     let hex = hex16(dest.as_bytes());
-    let port = opts.listen.rsplit_once(':').map_or(DEFAULT_PORT.to_string(), |(_, p)| p.to_string());
     eprintln!("serving {} as git/serve", opts.repo.display());
     eprintln!("destination: {hex}");
-    eprintln!("clone it from another machine with:");
-    eprintln!("    git-over-rns clone {hex} <into> --connect <this-host>:{port}\n");
-
-    let listener = Arc::new(TcpListener::bind(opts.listen.as_str()).await.expect("bind --listen"));
-    let serial = SerialInterface::new(
-        move || {
-            let listener = listener.clone();
-            async move { listener.accept().await.map(|(stream, _)| stream) }
-        },
-        Duration::from_millis(500),
-        b"serve-serial",
-    );
+    eprintln!("clone it from another machine on the same network with:");
+    eprintln!("    git-over-rns clone {hex} <into>\n");
 
     let (link_tx, mut link_rx) = mpsc::unbounded_channel::<LinkId>();
     let node = node(
@@ -127,11 +120,11 @@ async fn serve(opts: ServeOpts) {
             proof: ProofStrategy::ProveAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
-        std::vec![serial],
         link_tx,
     );
     let handle = node.handle();
     spawn_local(node.run());
+    bring_up_auto_interfaces(&handle);
     spawn_announce(handle.clone(), dest);
 
     // Every link a clone brings up gets its own git-upload-pack, bridged onto the
@@ -174,35 +167,26 @@ async fn serve_one(handle: PrnsHandle, link: LinkId, repo: PathBuf) {
 }
 
 // ---------------------------------------------------------------------------
-// clone: address a destination hash, learn its path, clone over the stream.
+// clone: address a destination hash, discover its path, clone over the stream.
 // ---------------------------------------------------------------------------
 
 struct CloneOpts {
     dest: DestinationHash,
     into: PathBuf,
-    connect: String,
 }
 
 impl CloneOpts {
     fn parse(args: &[String]) -> Self {
         let mut positional = std::vec::Vec::new();
-        let mut connect = None;
         let mut i = 0;
         while i < args.len() {
-            match args[i].as_str() {
-                "--connect" => {
-                    connect = args.get(i + 1).cloned();
-                    i += 2;
-                }
-                flagged if flagged.starts_with("--") => {
-                    eprintln!("unknown flag: {flagged}\n\n{USAGE}");
-                    std::process::exit(2);
-                }
-                _ => {
-                    positional.push(args[i].clone());
-                    i += 1;
-                }
+            let arg = &args[i];
+            if let Some(flagged) = arg.strip_prefix("--") {
+                eprintln!("unknown flag: --{flagged}\n\n{USAGE}");
+                std::process::exit(2);
             }
+            positional.push(arg.clone());
+            i += 1;
         }
         let dest = positional
             .first()
@@ -212,41 +196,26 @@ impl CloneOpts {
             .get(1)
             .map(PathBuf::from)
             .unwrap_or_else(|| fail("clone needs a target directory as its second argument"));
-        let connect = connect.unwrap_or_else(|| fail("clone needs --connect <host:port>"));
-        Self {
-            dest,
-            into,
-            connect,
-        }
+        Self { dest, into }
     }
 }
 
 async fn clone(opts: CloneOpts) {
-    let connect = opts.connect.clone();
-    let serial = SerialInterface::new(
-        move || {
-            let addr = connect.clone();
-            async move { TcpStream::connect(addr).await }
-        },
-        Duration::from_millis(500),
-        b"clone-serial",
-    );
     let node = node(
         "clone",
         std::vec::Vec::<PreConfiguredDestination>::new(),
-        std::vec![serial],
         mpsc::unbounded_channel::<LinkId>().0,
     );
     let handle = node.handle();
     spawn_local(node.run());
+    bring_up_auto_interfaces(&handle);
 
-    println!(
-        "interface up to {}; learning the path to {} from its announce...",
-        opts.connect,
+    eprintln!(
+        "discovering the path to {} over the auto-interfaces...",
         hex16(opts.dest.as_bytes())
     );
     let link = establish(&handle, opts.dest).await;
-    println!("link up — {link:?}");
+    eprintln!("link up — {link:?}");
 
     // The clone side writes stream 0 / reads stream 1; the serve side mirrors.
     let (mut stream_r, mut stream_w) = handle.byte_stream(link, sid(1), sid(0)).await;
@@ -301,7 +270,7 @@ async fn demo() {
     let dest = served_destination();
 
     let listener = Arc::new(
-        TcpListener::bind(("127.0.0.1", DEFAULT_PORT))
+        TcpListener::bind(("127.0.0.1", DEMO_PORT))
             .await
             .expect("bind loopback"),
     );
@@ -324,25 +293,25 @@ async fn demo() {
             proof: ProofStrategy::ProveAll,
             ratchet: RatchetPolicy::NoRatchets,
         }],
-        std::vec![serve_serial],
         serve_link_tx,
     );
     let serve_handle = serve.handle();
     spawn_local(serve.run());
+    serve_handle.add_interface(serve_serial);
 
     let clone_serial = SerialInterface::new(
-        move || async move { TcpStream::connect(("127.0.0.1", DEFAULT_PORT)).await },
+        move || async move { TcpStream::connect(("127.0.0.1", DEMO_PORT)).await },
         Duration::from_millis(500),
         b"clone-serial",
     );
     let clone = node(
         "clone",
         std::vec::Vec::<PreConfiguredDestination>::new(),
-        std::vec![clone_serial],
         mpsc::unbounded_channel::<LinkId>().0,
     );
     let clone_handle = clone.handle();
     spawn_local(clone.run());
+    clone_handle.add_interface(clone_serial);
     spawn_announce(serve_handle.clone(), dest);
 
     let clone_link = establish(&clone_handle, dest).await;
@@ -428,17 +397,17 @@ async fn demo() {
 // shared helpers
 // ---------------------------------------------------------------------------
 
-/// Build a node from a recipe: a current set of served destinations, the interfaces
-/// it speaks over, and a sink the event stream forwards every established link id to.
-fn node<D, I>(
+/// Build a node from a recipe: a current set of served destinations and a sink the
+/// event stream forwards every established link id to. The node carries no interfaces
+/// of its own; the caller attaches them through the handle (serial for the loopback
+/// demo, the auto-interfaces for serve/clone).
+fn node<D>(
     label: &'static str,
     destinations: D,
-    interfaces: std::vec::Vec<I>,
     link_tx: mpsc::UnboundedSender<LinkId>,
 ) -> Prns<(), (), impl FnMut(PrnsEvent<'_>, &()), GrowableHeap>
 where
     D: IntoIterator<Item = PreConfiguredDestination<'static>>,
-    I: personal_rns::reactor::interface_seam::Interface + Send + 'static,
 {
     Prns::new(PrnsRecipe {
         transport: None,
@@ -446,7 +415,7 @@ where
         app_state: (),
         storage: GrowableHeap,
         routes: (),
-        interfaces,
+        interfaces: personal_rns::interfaces![],
         on_event: move |event: PrnsEvent<'_>, _: &()| match event {
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(established)) => {
                 let _ = link_tx.send(established.link_id);
@@ -489,12 +458,12 @@ async fn establish(handle: &PrnsHandle, dest: DestinationHash) -> LinkId {
         match handle.establish_link(dest).await {
             Ok(link) => return link,
             Err(reason) => {
-                eprintln!("[clone] establish attempt {attempt} not ready yet ({reason:?})");
+                eprintln!("[clone] discovery attempt {attempt} not ready yet ({reason:?})");
                 tokio::time::sleep(Duration::from_millis(300)).await;
             }
         }
     }
-    fail("link never established")
+    fail("link never established");
 }
 
 /// The demo identity. A fixed secret keeps the destination hash stable and printable
