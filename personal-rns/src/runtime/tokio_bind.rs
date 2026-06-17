@@ -1059,7 +1059,10 @@ mod tests {
         assert_eq!(got[1].2.len(), 100);
         let mut reassembled = got[0].2.clone();
         reassembled.extend_from_slice(&got[1].2);
-        assert_eq!(reassembled, payload, "the segments reassemble to the source");
+        assert_eq!(
+            reassembled, payload,
+            "the segments reassemble to the source"
+        );
     }
 
     #[tokio::test]
@@ -1070,7 +1073,11 @@ mod tests {
             let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
                 panic!("expected a SendResourceSegment command");
             };
-            let placement = (seg.segment_index, seg.total_segments, seg.data.as_slice().len());
+            let placement = (
+                seg.segment_index,
+                seg.total_segments,
+                seg.data.as_slice().len(),
+            );
             seg.completion
                 .send(Settlement::SendResource(Ok(())))
                 .expect("the awaiter is still parked");
@@ -1110,7 +1117,9 @@ mod tests {
         let result = prns.send_resource(LINK, total_len, &payload[..]).await;
         assert!(matches!(
             result,
-            Err(ResourceSendError::Rejected(SendResourceFailure::RejectedByPeer)),
+            Err(ResourceSendError::Rejected(
+                SendResourceFailure::RejectedByPeer
+            )),
         ));
         drop(prns);
         assert_eq!(
@@ -1146,8 +1155,10 @@ mod tests {
                 panic!("expected a RegisterResourceSink command");
             };
             ready.send(()).expect("the receiver awaits registration");
-            sink.send(ResourceInbound::Chunk(b"hello ".to_vec())).unwrap();
-            sink.send(ResourceInbound::Chunk(b"world".to_vec())).unwrap();
+            sink.send(ResourceInbound::Chunk(b"hello ".to_vec()))
+                .unwrap();
+            sink.send(ResourceInbound::Chunk(b"world".to_vec()))
+                .unwrap();
             sink.send(ResourceInbound::Complete {
                 original_hash: original,
                 total_size: 11,
@@ -1161,8 +1172,15 @@ mod tests {
             .receive_resource(LINK, &mut buf)
             .await
             .expect("the resource arrives");
-        assert_eq!(actor.await.unwrap(), LINK, "the sink registered on the link");
-        assert_eq!(buf, b"hello world", "the chunks stream into the sink in order");
+        assert_eq!(
+            actor.await.unwrap(),
+            LINK,
+            "the sink registered on the link"
+        );
+        assert_eq!(
+            buf, b"hello world",
+            "the chunks stream into the sink in order"
+        );
         assert_eq!(
             receipt,
             ResourceReceipt {

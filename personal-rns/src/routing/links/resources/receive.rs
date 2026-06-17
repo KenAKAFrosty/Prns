@@ -1515,7 +1515,10 @@ mod loop_tests {
             "segment one's slot retires on its proof",
         );
         assert!(
-            sender.outgoing_assemblies.original_hash(&link_id()).is_some(),
+            sender
+                .outgoing_assemblies
+                .original_hash(&link_id())
+                .is_some(),
             "but the send chain persists for segment two",
         );
 
@@ -1553,11 +1556,17 @@ mod loop_tests {
         ));
         assert!(sender.outgoing_resources.is_empty());
         assert!(
-            sender.outgoing_assemblies.original_hash(&link_id()).is_none(),
+            sender
+                .outgoing_assemblies
+                .original_hash(&link_id())
+                .is_none(),
             "the last segment's proof clears the send chain",
         );
         assert!(
-            receiver.incoming_assemblies.original_hash(&link_id()).is_none(),
+            receiver
+                .incoming_assemblies
+                .original_hash(&link_id())
+                .is_none(),
             "and the receiver's chain retires with the completed assembly",
         );
     }
@@ -1607,9 +1616,15 @@ mod loop_tests {
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
         assert_eq!(state.total_segments, 1);
-        assert_eq!(state.original_hash, own, "a whole resource is its own original");
+        assert_eq!(
+            state.original_hash, own,
+            "a whole resource is its own original"
+        );
         assert!(
-            sender.outgoing_assemblies.original_hash(&link_id()).is_none(),
+            sender
+                .outgoing_assemblies
+                .original_hash(&link_id())
+                .is_none(),
             "a single-shot send opens no chain",
         );
         with_advertisement(&frame, |adv| {
@@ -1624,12 +1639,23 @@ mod loop_tests {
     fn segment_one_of_a_split_opens_the_chain_with_its_own_hash() {
         let mut sender = engine_with_active_link();
         let total = (3 * four_part_payload().len()) as u64;
-        let frame = send_segment(&mut sender, CommandId(11), &four_part_payload(), 1, 3, total, 1_500);
+        let frame = send_segment(
+            &mut sender,
+            CommandId(11),
+            &four_part_payload(),
+            1,
+            3,
+            total,
+            1_500,
+        );
         let own = *sender.outgoing_resources.hash_at(0);
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
         assert_eq!(state.total_segments, 3);
-        assert_eq!(state.original_hash, own, "segment one's original is its own hash");
+        assert_eq!(
+            state.original_hash, own,
+            "segment one's original is its own hash"
+        );
         assert_eq!(
             sender.outgoing_assemblies.original_hash(&link_id()),
             Some(own),
@@ -1710,7 +1736,10 @@ mod loop_tests {
             1_500,
         );
         assert!(
-            sender.outgoing_assemblies.original_hash(&link_id()).is_some(),
+            sender
+                .outgoing_assemblies
+                .original_hash(&link_id())
+                .is_some(),
             "the chain opens with segment one",
         );
         let mut buf = [0u8; BROADCAST_MTU];
@@ -1718,7 +1747,10 @@ mod loop_tests {
             .write_owed_link_close(&link_id(), &[0u8; 16], &mut buf)
             .unwrap();
         assert!(
-            sender.outgoing_assemblies.original_hash(&link_id()).is_none(),
+            sender
+                .outgoing_assemblies
+                .original_hash(&link_id())
+                .is_none(),
             "and a link teardown clears it with the rest of the link state",
         );
     }

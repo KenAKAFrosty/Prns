@@ -39,7 +39,12 @@ fn main() {
     print_report(transfers, total_len, wall, &total);
 }
 
-fn print_report(transfers: usize, total_len: usize, wall: Duration, total: &ResourceTransferProfile) {
+fn print_report(
+    transfers: usize,
+    total_len: usize,
+    wall: Duration,
+    total: &ResourceTransferProfile,
+) {
     let payload_bytes = transfers as f64 * total_len as f64;
     let wall_goodput = payload_bytes / wall.as_secs_f64();
     let staged_goodput = payload_bytes / total.stage_total().as_secs_f64();
@@ -64,11 +69,31 @@ fn print_report(transfers: usize, total_len: usize, wall: Duration, total: &Reso
         per_segment_us(total.initiator_settle, segments),
     );
 
-    stage("sender build+advertise", total.sender_offer, total.stage_total());
-    stage("receiver accept+first pull", total.receiver_accept, total.stage_total());
-    stage("sender serve requests", total.sender_serve, total.stage_total());
-    stage("receiver parts+assemble", total.receiver_receive, total.stage_total());
-    stage("initiator verify proof", total.initiator_settle, total.stage_total());
+    stage(
+        "sender build+advertise",
+        total.sender_offer,
+        total.stage_total(),
+    );
+    stage(
+        "receiver accept+first pull",
+        total.receiver_accept,
+        total.stage_total(),
+    );
+    stage(
+        "sender serve requests",
+        total.sender_serve,
+        total.stage_total(),
+    );
+    stage(
+        "receiver parts+assemble",
+        total.receiver_receive,
+        total.stage_total(),
+    );
+    stage(
+        "initiator verify proof",
+        total.initiator_settle,
+        total.stage_total(),
+    );
 }
 
 fn per_segment_us(duration: Duration, segments: f64) -> f64 {

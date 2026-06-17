@@ -4,9 +4,9 @@ use personal_rns::engine::{
     LinkEstablished, RatchetPolicy, SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
 use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
-use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::routing::announce::defaults::{JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
@@ -775,7 +775,10 @@ impl Forward {
                 tcp_core::descriptor(IF_UP, tcp_core::TCP_BITRATE_GUESS_BPS),
                 tcp_core::descriptor(IF_DOWN, tcp_core::TCP_BITRATE_GUESS_BPS),
             ],
-            down_view: vec![tcp_core::descriptor(IF_DOWN, tcp_core::TCP_BITRATE_GUESS_BPS)],
+            down_view: vec![tcp_core::descriptor(
+                IF_DOWN,
+                tcp_core::TCP_BITRATE_GUESS_BPS,
+            )],
             destination,
             payload: [0xCD; PAYLOAD_LEN],
             next_id: 1,
@@ -856,8 +859,9 @@ impl Forward {
                 relay, relay_view, ..
             } = self;
             relay.fire_due_scheduled_announces(REBROADCAST_NOW, relay_view, &mut |reaction| {
-                if let EngineReaction::Directive(Directive::SendAnnounce { bytes, target, .. }) =
-                    reaction
+                if let EngineReaction::Directive(Directive::SendAnnounce {
+                    bytes, target, ..
+                }) = reaction
                 {
                     if target == IF_DOWN {
                         rebroadcast.extend_from_slice(bytes);
@@ -930,7 +934,10 @@ impl Forward {
                 }
             },
         );
-        assert!(!self.single.is_empty(), "initiator sealed a single via the relay");
+        assert!(
+            !self.single.is_empty(),
+            "initiator sealed a single via the relay"
+        );
     }
 
     pub fn seal_many(&mut self, count: usize) -> Vec<Vec<u8>> {

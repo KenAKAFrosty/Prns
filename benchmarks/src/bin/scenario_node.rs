@@ -16,18 +16,18 @@ use personal_rns::engine::{
     SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::{
-    run, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, SendResourceHostCommand,
-    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
-};
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::tcp::impls::tokio::{
     TcpClientInterface, TcpServerInterface,
 };
 use personal_rns::interfaces::rns_parity::udp::core as udp_core;
 use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
+use personal_rns::interfaces::InterfaceId;
+use personal_rns::reactor::impls::tokio_reactor::{
+    run, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, SendResourceHostCommand,
+    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+};
+use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
@@ -1412,8 +1412,11 @@ async fn initiate_resource(
                     SendResourceSegmentHostCommand {
                         id,
                         link_id,
-                        data: HostResourcePayload::shared_prefix(Arc::clone(&scratch), this_segment)
-                            .expect("profile size stays within scratch"),
+                        data: HostResourcePayload::shared_prefix(
+                            Arc::clone(&scratch),
+                            this_segment,
+                        )
+                        .expect("profile size stays within scratch"),
                         request_id: None,
                         segment_index,
                         total_segments,
