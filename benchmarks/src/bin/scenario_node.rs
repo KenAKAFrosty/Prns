@@ -19,7 +19,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::{
     run, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, SendResourceHostCommand,
-    TokioHost, TokioInterfaceSeam,
+    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
@@ -31,7 +31,7 @@ use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
-use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
@@ -44,14 +44,14 @@ use personal_rns::storage::Esp32S3 as NodeStorage;
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 8]);
 const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 8]);
 
 fn fanin_listener_id(index: usize) -> InterfaceId {
-    let mut id = [0xC0u8; 16];
-    id[15] = index as u8;
+    let mut id = [0xC0u8; 8];
+    id[7] = index as u8;
     InterfaceId::new(id)
 }
 const LANE_DEPTH: usize = 64;
@@ -348,15 +348,15 @@ async fn scenario_main() {
         assert!(engine.set_default_resource_strategy(
             &destination,
             ResourceStrategy::Accept {
-                max_uncompressed_len: 2 * 1024 * 1024,
+                max_uncompressed_len: 128 * 1024 * 1024,
                 accept_compressed: false,
             },
         ));
     }
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-    let (in_tx, in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (out_tx, out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx.clone(), out_rx);
     let extra_listener_count = if role == "responder"
         && manifest.profile.wire != "udp"
@@ -370,8 +370,8 @@ async fn scenario_main() {
     let mut extra_listeners = Vec::new();
     for index in 0..extra_listener_count {
         let id = fanin_listener_id(index);
-        let (extra_in_tx, extra_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-        let (extra_out_tx, extra_out_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+        let (extra_in_tx, extra_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+        let (extra_out_tx, extra_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
         egress_lanes.push((id, extra_out_tx));
         extra_listeners.push((
             id,
@@ -416,6 +416,9 @@ async fn scenario_main() {
         }
         Journaled::ResourceReceived { data, .. } => {
             let _ = event_tx.send(Event::ResourceIn(data.len()));
+        }
+        Journaled::ResourceAssembled { total_size, .. } => {
+            let _ = event_tx.send(Event::ResourceIn(total_size as usize));
         }
         Journaled::RequestReceived {
             link_id,
@@ -1363,8 +1366,16 @@ async fn initiate_resource(
             _ => {}
         }
     };
-    let scratch: Arc<[u8]> =
-        incompressible_payload(profile.payload_max.max(profile.payload_len)).into();
+    // One segment's worth of source bytes is all the initiator ever holds: every segment reads at
+    // most MAX_EFFICIENT_SIZE, and the bytes are incompressible and proved per segment, so the same
+    // buffer feeds every segment of every transfer. A real sender streams from a file the same way.
+    let scratch: Arc<[u8]> = incompressible_payload(
+        profile
+            .payload_max
+            .max(profile.payload_len)
+            .min(MAX_EFFICIENT_SIZE),
+    )
+    .into();
     let mut sizes = SizeSequence::new(
         profile.size_seed,
         profile.payload_min,
@@ -1380,41 +1391,55 @@ async fn initiate_resource(
     let mut settled_bytes = 0u64;
     let mut transfer_ms: Vec<u64> = Vec::new();
     while tokio::time::Instant::now() < deadline {
-        next_id += 1;
-        let id = CommandId(next_id);
         let len = sizes.next_len();
         let transfer_started = tokio::time::Instant::now();
-        commands
-            .send(HostCommand::SendResource(SendResourceHostCommand {
-                id,
-                link_id,
-                data: HostResourcePayload::shared_prefix(Arc::clone(&scratch), len)
-                    .expect("profile size stays within scratch"),
-                compressed_candidate: None,
-                request_id: None,
-            }))
-            .expect("reactor alive");
         sent += 1;
-        loop {
-            match events.recv().await.expect("reactor alive") {
-                Event::Settled(settled_id, Settlement::SendResource(result))
-                    if settled_id == id =>
-                {
-                    match result {
-                        Ok(()) => {
-                            settled += 1;
-                            settled_bytes += len as u64;
-                            transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
-                        }
-                        Err(failure) => {
-                            eprintln!("transfer failed: {failure:?}");
-                            failures += 1;
-                        }
-                    }
+        // One logical resource of `len` bytes, sent as MAX_EFFICIENT_SIZE segments — the
+        // host half of PrnsHandle::send_resource, awaiting each segment's proof before the
+        // next so the engine holds one segment at a time. A payload at or under one segment
+        // is a single unsplit transfer.
+        let total_segments = (len as u64).div_ceil(MAX_EFFICIENT_SIZE as u64).max(1);
+        let mut remaining = len;
+        let mut transfer_ok = true;
+        for segment_index in 1..=total_segments {
+            let this_segment = remaining.min(MAX_EFFICIENT_SIZE);
+            remaining -= this_segment;
+            next_id += 1;
+            let id = CommandId(next_id);
+            let (completion, settled_rx) = oneshot::channel();
+            commands
+                .send(HostCommand::SendResourceSegment(
+                    SendResourceSegmentHostCommand {
+                        id,
+                        link_id,
+                        data: HostResourcePayload::shared_prefix(Arc::clone(&scratch), this_segment)
+                            .expect("profile size stays within scratch"),
+                        request_id: None,
+                        segment_index,
+                        total_segments,
+                        completion,
+                    },
+                ))
+                .expect("reactor alive");
+            match settled_rx.await {
+                Ok(Settlement::SendResource(Ok(()))) => {}
+                Ok(Settlement::SendResource(Err(failure))) => {
+                    eprintln!("transfer failed: {failure:?}");
+                    transfer_ok = false;
                     break;
                 }
-                _ => {}
+                Ok(_) | Err(_) => {
+                    transfer_ok = false;
+                    break;
+                }
             }
+        }
+        if transfer_ok {
+            settled += 1;
+            settled_bytes += len as u64;
+            transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
+        } else {
+            failures += 1;
         }
     }
     let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -1681,10 +1706,10 @@ async fn relay_node(manifest: &Manifest) {
 
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-    let (in_a_tx, in_a_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (out_a_tx, out_a_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (in_b_tx, in_b_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (out_b_tx, out_b_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (in_a_tx, in_a_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_a_tx, out_a_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (in_b_tx, in_b_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_b_tx, out_b_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let seam_a = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_a_tx, notify_tx.clone(), out_a_rx);
     let seam_b = TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in_b_tx, notify_tx, out_b_rx);
     let egress = Egress::new(vec![
@@ -1739,10 +1764,10 @@ async fn chain_node(upstream: &str) {
 
     let (_command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-    let (in_down_tx, in_down_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (out_down_tx, out_down_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (in_up_tx, in_up_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
-    let (out_up_tx, out_up_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(LANE_DEPTH);
+    let (in_down_tx, in_down_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_down_tx, out_down_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (in_up_tx, in_up_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_up_tx, out_up_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let seam_down =
         TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_down_tx, notify_tx.clone(), out_down_rx);
     let seam_up =

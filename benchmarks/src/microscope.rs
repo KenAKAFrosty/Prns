@@ -9,7 +9,7 @@ use personal_rns::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::routing::announce::defaults::{JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS};
 use personal_rns::routing::delivery::Delivery;
-use personal_rns::routing::links::resources::ResourceStrategy;
+use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::storage::GrowableHeap;
@@ -345,9 +345,40 @@ impl ResourceCycle {
         let mut profile = ResourceTransferProfile::new(self.payload.len());
         let id = CommandId(self.next_id);
         self.next_id += 1;
+        let len = self.payload.len();
+        self.transfer_one_segment(id, 1, 1, len, &mut profile);
+        profile
+    }
 
+    /// Drive one logical resource of `total_len` bytes as a sequence of
+    /// `MAX_EFFICIENT_SIZE` segments — the multi-segment bulk path. Every segment
+    /// is a full advertise/pull/serve/prove round over the same link, so the
+    /// window and rate state the engine inherits across transfers carries the
+    /// bulk transfer from one segment to the next.
+    pub fn transfer_profile_multi(&mut self, total_len: usize) -> ResourceTransferProfile {
+        let mut profile = ResourceTransferProfile::new(total_len);
+        let total_segments = total_len.div_ceil(MAX_EFFICIENT_SIZE).max(1) as u64;
+        let mut remaining = total_len;
+        for segment_index in 1..=total_segments {
+            let this = remaining.min(MAX_EFFICIENT_SIZE);
+            remaining -= this;
+            let id = CommandId(self.next_id);
+            self.next_id += 1;
+            self.transfer_one_segment(id, segment_index, total_segments, this, &mut profile);
+        }
+        profile
+    }
+
+    fn transfer_one_segment(
+        &mut self,
+        id: CommandId,
+        segment_index: u64,
+        total_segments: u64,
+        len: usize,
+        profile: &mut ResourceTransferProfile,
+    ) {
         let begun = Instant::now();
-        let offer = self.send_resource_offer(id);
+        let offer = self.send_resource_offer(id, segment_index, total_segments, len);
         profile.sender_offer += begun.elapsed();
         profile.advertisements += 1;
         profile.wire_bytes += offer.len() as u64;
@@ -406,12 +437,17 @@ impl ResourceCycle {
             settled.settlements.iter().any(|(settled_id, settlement)| {
                 *settled_id == id && matches!(settlement, Settlement::SendResource(Ok(())))
             }),
-            "proof settles the resource send",
+            "proof settles the resource segment send",
         );
-        profile
     }
 
-    fn send_resource_offer(&mut self, id: CommandId) -> Vec<u8> {
+    fn send_resource_offer(
+        &mut self,
+        id: CommandId,
+        segment_index: u64,
+        total_segments: u64,
+        len: usize,
+    ) -> Vec<u8> {
         let now = self.tick();
         let Self {
             initiator,
@@ -422,12 +458,14 @@ impl ResourceCycle {
             ..
         } = self;
         let mut capture = FeedCapture::default();
-        initiator.ingest_send_resource_into(
+        initiator.ingest_send_resource_segment_into(
             id,
             *link_id,
-            payload,
+            &payload[..len],
             None,
             None,
+            segment_index,
+            total_segments,
             now,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| capture.absorb(reaction, scratch),
