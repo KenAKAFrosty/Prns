@@ -387,6 +387,18 @@ fn log_message(message: Message<'_>) {
             stream.len(),
             uncompressed_data_len,
         ),
+        Message::ResourceSegment {
+            link_id,
+            original_hash,
+            segment_index,
+            total_segments,
+            data,
+        } => println!(
+            "HOPSPOT_RX_RESOURCE_SEGMENT link_id={:02x?} original_hash={:02x?} segment={segment_index}/{total_segments} bytes={}",
+            link_id.as_bytes(),
+            original_hash.as_bytes(),
+            data.len(),
+        ),
         Message::ChannelMessage {
             link_id,
             message_type,
@@ -443,6 +455,25 @@ fn log_diagnostic(diagnostic: Diagnostic) {
         Diagnostic::RouteInterfaceGone { destination } => println!(
             "HOPSPOT_ROUTE_INTERFACE_GONE destination={:02x?}",
             destination.as_bytes(),
+        ),
+        Diagnostic::ResourceAssembled {
+            link_id,
+            original_hash,
+            total_size,
+        } => println!(
+            "HOPSPOT_RESOURCE_ASSEMBLED link_id={:02x?} original_hash={:02x?} total_size={total_size}",
+            link_id.as_bytes(),
+            original_hash.as_bytes(),
+        ),
+        Diagnostic::LinkInterfaceMismatch {
+            link_id,
+            attached_interface,
+            arrived_on,
+        } => println!(
+            "HOPSPOT_LINK_INTERFACE_MISMATCH link_id={:02x?} attached={:02x?} arrived_on={:02x?}",
+            link_id.as_bytes(),
+            attached_interface.as_bytes(),
+            arrived_on.as_bytes(),
         ),
     }
 }
