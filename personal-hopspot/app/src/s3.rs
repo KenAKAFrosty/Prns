@@ -20,7 +20,7 @@ use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select, Either};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
@@ -79,7 +79,6 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil`, the shape LXMF apps parse.
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The WiFi network the board joins (station mode), read at build time. Export them (e.g.
 /// `source .wifi-env`) before `cargo s3`; an unset SSID leaves WiFi down and the board runs USB-only.
@@ -431,7 +430,6 @@ pub async fn run(spawner: Spawner) {
         let mut battery_state = screen::BatteryState::Unknown;
         let mut ticks_to_battery: u8 = 0;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
-        let mut announce_tick = Ticker::every(ANNOUNCE_INTERVAL);
         loop {
             if ticks_to_battery == 0 {
                 let mut pin_mv = 0u16;
@@ -475,22 +473,9 @@ pub async fn run(spawner: Spawner) {
                 let _ = display.flush();
             }
 
-            match select3(
-                render_tick.next(),
-                announce_tick.next(),
-                BUTTON_EVENTS.receive(),
-            )
-            .await
-            {
-                Either3::First(()) => {}
-                Either3::Second(()) => {
-                    let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                        destination: self_destination,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    }));
-                }
-                Either3::Third(event) => {
+            match select(render_tick.next(), BUTTON_EVENTS.receive()).await {
+                Either::First(()) => {}
+                Either::Second(event) => {
                     if matches!(
                         ui_state.handle_input(event, card_count),
                         screen::UiAction::Announce
@@ -578,11 +563,28 @@ async fn build_cards(
         let id = status.id();
         let _ = counts.push((id, handle.interface_counts(id).await.unwrap_or_default()));
     }
-    screen::statuses_to_cards(&statuses, classify, |id| {
+    let lookup = |id: InterfaceId| {
         counts
             .iter()
             .find(|(cid, _)| *cid == id)
             .map_or_else(InterfaceCounts::default, |(_, c)| *c)
+    };
+    let wifi_counts = wifi.map(|wifi| {
+        wifi.members()
+            .fold(InterfaceCounts::default(), |total, member| {
+                let member_counts = lookup(member.id());
+                InterfaceCounts {
+                    destinations: total.destinations + member_counts.destinations,
+                    links: total.links + member_counts.links,
+                }
+            })
+    });
+    screen::statuses_to_cards(&statuses, classify, |id| {
+        if Some(id) == wifi_id {
+            wifi_counts.unwrap_or_default()
+        } else {
+            lookup(id)
+        }
     })
 }
 

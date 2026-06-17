@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{
-    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus,
+    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
@@ -164,10 +164,12 @@ impl Default for AutoWifi {
 
 /// The WiFi/LAN auto-interface's aggregate live status, an [`InterfaceStatus`] over the whole
 /// supervisor: the app renders it as one "WiFi" card whose [`connection`](InterfaceStatus::connection)
-/// is Offline (no NIC) / Dormant (up, no peers) / Live (peers), whose bytes are the sum across the
-/// fleet, and whose [`links`](InterfaceStatus::links) is the confirmed-peer count. Each member also
-/// keeps its own [`TokioInterfaceStatus`], exposed through [`members`](Self::members) so a face can
-/// render the peers as ordinary interface cards beside the aggregate.
+/// is Offline (no NIC) / Dormant (up, no peers) / Live (peers), and whose bytes and
+/// [`transfer_rates`](InterfaceStatus::transfer_rates) are the sum across the fleet. Its link and
+/// destination counts are engine figures, summed over the members by the face's per-interface count
+/// query rather than carried here. Each member also keeps its own [`TokioInterfaceStatus`], exposed
+/// through [`members`](Self::members) so a face can render the peers as ordinary interface cards
+/// beside the aggregate.
 #[derive(Clone)]
 pub struct AutoWifiStatus {
     shared: Arc<AutoWifiShared>,
@@ -276,6 +278,17 @@ impl InterfaceStatus for AutoWifiStatus {
 
     fn tx_bytes(&self) -> u64 {
         self.shared.tx.load(Ordering::Relaxed)
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
+        let members = self.shared.members.lock().ok()?;
+        members
+            .iter()
+            .filter_map(InterfaceStatus::transfer_rates)
+            .reduce(|acc, rates| TransferRates {
+                rx_bps: acc.rx_bps.saturating_add(rates.rx_bps),
+                tx_bps: acc.tx_bps.saturating_add(rates.tx_bps),
+            })
     }
 }
 
@@ -599,7 +612,6 @@ fn scoped(addr: Ipv6Addr, port: u16, index: u32) -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reactor::grant::{GrantConsumer, GrantProducer};
     use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;

@@ -64,8 +64,6 @@ const USB_BAUD: u32 = 115_200;
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
 const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
-/// How often the desktop re-announces itself.
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
@@ -236,7 +234,6 @@ fn run_node(
             destination,
         });
 
-        tokio::spawn(announce_loop(handle, destination));
         node.run().await;
     });
 }
@@ -305,28 +302,6 @@ async fn watch_hotplug(rescan: Arc<Notify>) {
         if event.is_ok() {
             rescan.notify_one();
         }
-    }
-}
-
-/// The desktop's own announce cadence: the engine does not originate announces, so the app fires a
-/// scheduled `lxmf.delivery` announce on its own timer (the manual "Announce" menu item fires
-/// the same command on demand). The handle mints the command id, so the app never picks one.
-async fn announce_loop(handle: PrnsHandle, destination: DestinationHash) {
-    let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    loop {
-        interval.tick().await;
-        let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-            destination,
-            target: AnnounceTarget::AllInterfaces,
-            app_data: AnnounceAppData::Registered,
-        })) else {
-            return;
-        };
-        println!(
-            "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=scheduled destination={:02x?}",
-            id.0,
-            destination.as_bytes(),
-        );
     }
 }
 
@@ -620,8 +595,21 @@ fn run_window(handles: WindowHandles) {
             }
             counts
         });
+        let wifi_counts = members
+            .iter()
+            .fold(InterfaceCounts::default(), |total, member| {
+                let member_counts = counts.get(&member.id()).copied().unwrap_or_default();
+                InterfaceCounts {
+                    destinations: total.destinations + member_counts.destinations,
+                    links: total.links + member_counts.links,
+                }
+            });
         let cards: HVec<Card, 8> = screen::statuses_to_cards(&statuses, classify, |id| {
-            counts.get(&id).copied().unwrap_or_default()
+            if id == wifi_id {
+                wifi_counts
+            } else {
+                counts.get(&id).copied().unwrap_or_default()
+            }
         });
         let card_count = cards.len();
         ui_state.sync_card_count(card_count);

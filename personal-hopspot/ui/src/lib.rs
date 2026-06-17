@@ -30,8 +30,9 @@ fn liveness(connection: ConnectionState) -> Liveness {
 /// card's [`Liveness`] (Dormant until a link confirms, then Live) — and the bytes it has moved, which
 /// fill the Live card. `counts` supplies the engine-owned figures the interface itself can't know —
 /// destinations routed via it and live Reticulum links over it — which a face reads through the
-/// runtime's per-interface query. Rate and last-activity are derived state no source carries yet, so
-/// they report neutral values until then.
+/// runtime's per-interface query. The card's rate is the interface's own published throughput (rx
+/// plus tx, as bytes per second); last-activity is derived state no source carries yet, so it
+/// reports a neutral value until then.
 pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
     statuses: &[S],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,
@@ -56,7 +57,10 @@ pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
             rx_bytes: status.rx_bytes(),
             links,
             destinations,
-            rate_bytes_per_sec: 0,
+            rate_bytes_per_sec: status
+                .transfer_rates()
+                .map(|rates| rates.rx_bps.saturating_add(rates.tx_bps) / 8)
+                .unwrap_or(0),
             last_activity_secs: None,
         });
     }
