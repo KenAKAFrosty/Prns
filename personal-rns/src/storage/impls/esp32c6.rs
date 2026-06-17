@@ -16,6 +16,7 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
+use crate::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
@@ -53,6 +54,7 @@ impl StorageLayout for Esp32C6 {
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
+    type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
     type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
     type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;

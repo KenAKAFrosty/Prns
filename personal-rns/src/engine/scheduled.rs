@@ -57,6 +57,10 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: Settlement::RequestPath(Err(RequestPathFailure::Timeout)),
             }));
         }
+        // A discovery forwarded on a stranger's behalf shares the 15s window; drop
+        // any whose answering announce never arrived so it neither lingers nor
+        // suppresses a fresh discovery for the same destination.
+        self.discovery_path_requests.cull_expired(now);
         WakeSchedules {
             path_request_timeout: self.path_request_timeout_wake(),
             ..WakeSchedules::UNCHANGED

@@ -15,6 +15,7 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
+use crate::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
@@ -99,6 +100,7 @@ impl<
     type PendingPathRequests = FixedPendingPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type RecentPathRequests = FixedRecentPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type SeenPathRequests = FixedSeenPathRequestColumns<MAX_SEEN_PATH_REQUESTS>;
+    type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     // One rate entry per tracked destination at most (we rate-check only what we
     // would rebroadcast), so sized by the routing table like Pending/Directives.
     type AnnounceRates = FixedAnnounceRateColumns<MAX_TRACKED_DESTINATIONS>;

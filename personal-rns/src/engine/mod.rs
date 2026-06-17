@@ -78,6 +78,7 @@ use crate::routing::links::channel::columns::ChannelColumns;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
+use crate::routing::path_requests::discovery::DiscoveryPathRequests;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::recent::RecentPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
@@ -216,6 +217,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
     pub(crate) recent_path_requests: RecentPathRequests<S::RecentPathRequests>,
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
+    pub(crate) discovery_path_requests: DiscoveryPathRequests<S::DiscoveryPathRequests>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
     pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
@@ -243,6 +245,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             pending_path_requests: PendingPathRequests::default(),
             recent_path_requests: RecentPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
+            discovery_path_requests: DiscoveryPathRequests::default(),
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),
             request_handlers: RequestHandlers::default(),
@@ -329,7 +332,17 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn path_request_timeout_wake(&self) -> LaneWake {
-        LaneWake::from_deadline(self.pending_path_requests.earliest_timeout_at())
+        let pending = self.pending_path_requests.earliest_timeout_at();
+        let discovery = self.discovery_path_requests.earliest_expiry_at();
+        let earliest = match (pending, discovery) {
+            (Some(pending), Some(discovery)) => Some(if pending.0 <= discovery.0 {
+                pending
+            } else {
+                discovery
+            }),
+            (some, None) | (None, some) => some,
+        };
+        LaneWake::from_deadline(earliest)
     }
 
     pub fn link_deadlines_wake(&self) -> LaneWake {
