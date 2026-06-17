@@ -147,7 +147,7 @@ impl Interface for UdpInterface {
                     self.status.add_rx(len as u64);
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_rx(now, len as u64);
-                    self.status.set_transfer_rates(throughput.rates(now));
+                    self.status.set_transfer_rates(throughput.rates());
                     seam.next_inbound(&recv_buf[..len]).await;
                 }
                 outbound = seam.next_outbound() => {
@@ -160,7 +160,7 @@ impl Interface for UdpInterface {
                     self.status.add_tx(sent as u64);
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, sent as u64);
-                    self.status.set_transfer_rates(throughput.rates(now));
+                    self.status.set_transfer_rates(throughput.rates());
                     let frame_airtime = frame_airtime_us(sent, self.bitrate_bps);
                     self.status.set_airtime(airtime.record_tx(now, frame_airtime));
                 }

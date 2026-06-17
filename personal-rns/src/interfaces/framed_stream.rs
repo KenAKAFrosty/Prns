@@ -49,7 +49,7 @@ pub async fn serve<
                 status.add_rx(read as u64);
                 let now = InstantMillis(started.elapsed().as_millis() as u64);
                 throughput.record_rx(now, read as u64);
-                status.set_transfer_rates(throughput.rates(now));
+                status.set_transfer_rates(throughput.rates());
                 let mut offset = 0;
                 let read_buf = &read_buf[..read];
                 while offset < read_buf.len() {
@@ -68,7 +68,7 @@ pub async fn serve<
                     status.add_tx(framed as u64);
                     let now = InstantMillis(started.elapsed().as_millis() as u64);
                     throughput.record_tx(now, framed as u64);
-                    status.set_transfer_rates(throughput.rates(now));
+                    status.set_transfer_rates(throughput.rates());
                     if let Some(bitrate_bps) = bitrate_bps {
                         let frame_airtime = frame_airtime_us(framed, bitrate_bps);
                         status.set_airtime(airtime.record_tx(now, frame_airtime));
