@@ -7,7 +7,9 @@ use crate::engine::reaction::LinkClosedReason;
 use crate::engine::EngineState;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
-use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceMode};
+use crate::interfaces::{
+    InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode,
+};
 use crate::routing::announce::defaults::{
     jitter_offset_for, JitterSeed, DEFAULT_REBROADCAST_JITTER_WINDOW_MS, MAX_ANNOUNCE_REBROADCASTS,
     PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS,
@@ -104,6 +106,19 @@ pub enum Ingress<'a> {
     Unparseable,
 }
 
+/// The hop count a packet arrives with, after the free local-instance transit is discounted. A
+/// packet from a [`InterfaceKind::LocalClient`] (an app on this host sharing our instance) crossed
+/// no real hop, so the per-interface increment is cancelled and the shared instance plus its apps
+/// count as a single node — RNS `Transport.inbound`'s `hops -= 1` for local clients, applied at the
+/// one place every packet type's hop count is set.
+fn local_adjusted_hops(received_hops: u8, source: InterfaceId) -> u8 {
+    if source.kind() == Some(InterfaceKind::LocalClient) {
+        received_hops.saturating_sub(1)
+    } else {
+        received_hops
+    }
+}
+
 impl<'a> Ingress<'a> {
     pub fn classify(packet: InboundPacket<'a>) -> Self {
         let InboundPacket {
@@ -120,7 +135,7 @@ impl<'a> Ingress<'a> {
         }
         let (_, payload) = bytes.split_at_mut(payload_offset);
 
-        let received_hops = header.hops.saturating_add(1);
+        let received_hops = local_adjusted_hops(header.hops.saturating_add(1), source_interface);
 
         match header.packet_type {
             PacketType::Announce => {
@@ -1802,6 +1817,15 @@ mod tests {
 
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
+    }
+
+    #[test]
+    fn a_local_client_transit_is_discounted_one_hop() {
+        let local_client = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"app-1");
+        let tcp = InterfaceId::from_reachability_tag(InterfaceKind::TcpClient, b"1.2.3.4:4242");
+        assert_eq!(local_adjusted_hops(5, local_client), 4);
+        assert_eq!(local_adjusted_hops(5, tcp), 5);
+        assert_eq!(local_adjusted_hops(0, local_client), 0);
     }
 
     fn header_bytes(packet_type: PacketType) -> [u8; HEADER_MIN_LEN] {

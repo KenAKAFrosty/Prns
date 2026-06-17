@@ -23,6 +23,8 @@ pub enum InterfaceKind {
     UsbAutoDevice = 6,
     AutoWifi = 7,
     WifiPeer = 8,
+    LocalServer = 9,
+    LocalClient = 10,
 }
 
 impl InterfaceKind {
@@ -41,6 +43,8 @@ impl InterfaceKind {
             6 => Some(Self::UsbAutoDevice),
             7 => Some(Self::AutoWifi),
             8 => Some(Self::WifiPeer),
+            9 => Some(Self::LocalServer),
+            10 => Some(Self::LocalClient),
             _ => None,
         }
     }
@@ -53,7 +57,29 @@ impl InterfaceKind {
     pub const fn member_kind(self) -> Option<Self> {
         match self {
             Self::AutoWifi => Some(Self::WifiPeer),
+            Self::LocalServer => Some(Self::LocalClient),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InterfaceKind;
+
+    #[test]
+    fn the_local_kinds_round_trip_their_discriminants() {
+        for kind in [InterfaceKind::LocalServer, InterfaceKind::LocalClient] {
+            assert_eq!(InterfaceKind::from_u8(kind as u8), Some(kind));
+        }
+    }
+
+    #[test]
+    fn a_local_server_supervises_local_clients() {
+        assert_eq!(
+            InterfaceKind::LocalServer.member_kind(),
+            Some(InterfaceKind::LocalClient)
+        );
+        assert_eq!(InterfaceKind::LocalClient.member_kind(), None);
     }
 }
