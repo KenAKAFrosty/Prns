@@ -134,6 +134,8 @@ impl<S: StorageLayout> EngineState<S> {
             salt_nonce: advertisement.salt_nonce,
             compression,
             uncompressed_data_len: advertisement.data_size,
+            segment_index: advertisement.segment_index,
+            total_segments: advertisement.total_segments,
             sealed_transfer_len,
             part_count,
             sdu,

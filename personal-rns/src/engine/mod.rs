@@ -75,6 +75,7 @@ use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::channel::columns::ChannelColumns;
+use crate::routing::links::resources::assembly::IncomingAssemblies;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
@@ -225,6 +226,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) links: Links<S::Links>,
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
+    pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) channels: S::Channels,
 }
 
@@ -253,6 +255,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             links: Links::default(),
             outgoing_resources: OutgoingResources::default(),
             incoming_resources: IncomingResources::default(),
+            incoming_assemblies: IncomingAssemblies::default(),
             channels: Default::default(),
         }
     }

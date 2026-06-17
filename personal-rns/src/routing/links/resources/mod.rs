@@ -8,6 +8,7 @@
 
 pub mod advertisement;
 pub mod assemble_incoming;
+pub mod assembly;
 pub mod build_outgoing;
 pub mod control;
 pub mod receive;

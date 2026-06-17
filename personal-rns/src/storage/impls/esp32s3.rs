@@ -15,6 +15,7 @@ use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::links::channel::channel_mdu;
 use crate::routing::links::channel::impls::FixedHeapChannelColumns;
 use crate::routing::links::channel::receive::WINDOW_MAX;
+use crate::routing::links::resources::assembly::FixedIncomingAssemblyColumns;
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
     FixedHeapResourceColumns, IncomingResourceState, OutgoingResourceState,
@@ -97,6 +98,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         MAX_RESOURCE_PARTS,
         A,
     >;
+    type IncomingAssemblies = FixedIncomingAssemblyColumns<MAX_CONCURRENT_LINKS>;
     type Channels = FixedHeapChannelColumns<
         MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,

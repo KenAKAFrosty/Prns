@@ -111,6 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
             write_link_close(link_id, key, iv, buf).map_err(|_| WriteLinkCloseError::Serialize)?;
         self.links.remove(link_id);
         self.channels.close(link_id);
+        self.incoming_assemblies.clear(link_id);
         Ok(LinkCloseDispatch { wire_len, fire_on })
     }
 }
