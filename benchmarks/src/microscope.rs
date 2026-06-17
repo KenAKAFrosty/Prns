@@ -185,7 +185,9 @@ impl ResourceCycle {
         assert!(responder.set_default_resource_strategy(
             &destination,
             ResourceStrategy::Accept {
-                max_uncompressed_len: 2 * 1024 * 1024,
+                // Admits a bulk transfer's total: every segment advertises the original total
+                // (RNS 1.3.1 parity), so the ceiling is the whole resource, not one segment.
+                max_uncompressed_len: 256 * 1024 * 1024,
                 accept_compressed: false,
             },
         ));
@@ -346,7 +348,7 @@ impl ResourceCycle {
         let id = CommandId(self.next_id);
         self.next_id += 1;
         let len = self.payload.len();
-        self.transfer_one_segment(id, 1, 1, len, &mut profile);
+        self.transfer_one_segment(id, 1, 1, len, len as u64, &mut profile);
         profile
     }
 
@@ -364,7 +366,14 @@ impl ResourceCycle {
             remaining -= this;
             let id = CommandId(self.next_id);
             self.next_id += 1;
-            self.transfer_one_segment(id, segment_index, total_segments, this, &mut profile);
+            self.transfer_one_segment(
+                id,
+                segment_index,
+                total_segments,
+                this,
+                total_len as u64,
+                &mut profile,
+            );
         }
         profile
     }
@@ -375,10 +384,12 @@ impl ResourceCycle {
         segment_index: u64,
         total_segments: u64,
         len: usize,
+        total_data_size: u64,
         profile: &mut ResourceTransferProfile,
     ) {
         let begun = Instant::now();
-        let offer = self.send_resource_offer(id, segment_index, total_segments, len);
+        let offer =
+            self.send_resource_offer(id, segment_index, total_segments, len, total_data_size);
         profile.sender_offer += begun.elapsed();
         profile.advertisements += 1;
         profile.wire_bytes += offer.len() as u64;
@@ -447,6 +458,7 @@ impl ResourceCycle {
         segment_index: u64,
         total_segments: u64,
         len: usize,
+        total_data_size: u64,
     ) -> Vec<u8> {
         let now = self.tick();
         let Self {
@@ -466,6 +478,7 @@ impl ResourceCycle {
             None,
             segment_index,
             total_segments,
+            total_data_size,
             now,
             &mut |bytes| initiator_entropy.fill(bytes),
             &mut |reaction| capture.absorb(reaction, scratch),

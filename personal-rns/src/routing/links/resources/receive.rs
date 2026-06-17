@@ -1436,6 +1436,7 @@ mod loop_tests {
         b"every part of the second segment now!".repeat(41)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn pump_one_segment<S: StorageLayout>(
         sender: &mut EngineState<S>,
         receiver: &mut EngineState<S>,
@@ -1443,6 +1444,7 @@ mod loop_tests {
         data: &[u8],
         segment_index: u64,
         total_segments: u64,
+        total_data_size: u64,
         base_time: u64,
     ) -> (InboundCapture, InboundCapture) {
         let mut advertisement = None;
@@ -1454,6 +1456,7 @@ mod loop_tests {
             None,
             segment_index,
             total_segments,
+            total_data_size,
             InstantMillis(base_time),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1483,6 +1486,7 @@ mod loop_tests {
         accept_everything(&mut receiver);
         let segment_one = four_part_payload();
         let segment_two = another_four_part_payload();
+        let total = (segment_one.len() + segment_two.len()) as u64;
 
         let (concluded_one, settled_one) = pump_one_segment(
             &mut sender,
@@ -1491,6 +1495,7 @@ mod loop_tests {
             &segment_one,
             1,
             2,
+            total,
             2_000,
         );
         assert_eq!(concluded_one.segments.len(), 1);
@@ -1521,6 +1526,7 @@ mod loop_tests {
             &segment_two,
             2,
             2,
+            total,
             4_000,
         );
         assert_eq!(concluded_two.segments.len(), 1);
@@ -1562,6 +1568,7 @@ mod loop_tests {
         data: &[u8],
         segment_index: u64,
         total_segments: u64,
+        total_data_size: u64,
         at: u64,
     ) -> std::vec::Vec<u8> {
         let mut frame = None;
@@ -1573,6 +1580,7 @@ mod loop_tests {
             None,
             segment_index,
             total_segments,
+            total_data_size,
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1615,7 +1623,8 @@ mod loop_tests {
     #[test]
     fn segment_one_of_a_split_opens_the_chain_with_its_own_hash() {
         let mut sender = engine_with_active_link();
-        let frame = send_segment(&mut sender, CommandId(11), &four_part_payload(), 1, 3, 1_500);
+        let total = (3 * four_part_payload().len()) as u64;
+        let frame = send_segment(&mut sender, CommandId(11), &four_part_payload(), 1, 3, total, 1_500);
         let own = *sender.outgoing_resources.hash_at(0);
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
@@ -1631,6 +1640,10 @@ mod loop_tests {
             assert_eq!(adv.segment_index, 1);
             assert_eq!(adv.total_segments, 3);
             assert_eq!(adv.original_hash, own);
+            assert_eq!(
+                adv.data_size, total,
+                "RNS 1.3.1 parity: every segment advertises the original total, not its own size",
+            );
         });
     }
 
@@ -1639,6 +1652,7 @@ mod loop_tests {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
+        let total = (3 * four_part_payload().len()) as u64;
         pump_one_segment(
             &mut sender,
             &mut receiver,
@@ -1646,6 +1660,7 @@ mod loop_tests {
             &four_part_payload(),
             1,
             3,
+            total,
             2_000,
         );
         let original = sender
@@ -1659,6 +1674,7 @@ mod loop_tests {
             &another_four_part_payload(),
             2,
             3,
+            total,
             4_000,
         );
         let own = *sender.outgoing_resources.hash_at(0);
@@ -1674,13 +1690,25 @@ mod loop_tests {
             assert_eq!(adv.segment_index, 2);
             assert_eq!(adv.total_segments, 3);
             assert!(adv.flags.split);
+            assert_eq!(
+                adv.data_size, total,
+                "and re-advertises the original total, not this segment's size",
+            );
         });
     }
 
     #[test]
     fn tearing_down_a_link_clears_an_open_send_chain() {
         let mut sender = engine_with_active_link();
-        send_segment(&mut sender, CommandId(11), &four_part_payload(), 1, 2, 1_500);
+        send_segment(
+            &mut sender,
+            CommandId(11),
+            &four_part_payload(),
+            1,
+            2,
+            (2 * four_part_payload().len()) as u64,
+            1_500,
+        );
         assert!(
             sender.outgoing_assemblies.original_hash(&link_id()).is_some(),
             "the chain opens with segment one",
@@ -1698,7 +1726,15 @@ mod loop_tests {
     #[test]
     fn a_split_segment_with_no_open_chain_falls_back_to_its_own_hash() {
         let mut sender = engine_with_active_link();
-        send_segment(&mut sender, CommandId(11), &four_part_payload(), 2, 2, 1_500);
+        send_segment(
+            &mut sender,
+            CommandId(11),
+            &four_part_payload(),
+            2,
+            2,
+            (2 * four_part_payload().len()) as u64,
+            1_500,
+        );
         let own = *sender.outgoing_resources.hash_at(0);
         let state = sender.outgoing_resources.state(0);
         assert_eq!(

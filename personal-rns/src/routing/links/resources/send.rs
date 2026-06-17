@@ -60,6 +60,7 @@ impl<S: StorageLayout> EngineState<S> {
             request_id,
             1,
             1,
+            data.len() as u64,
             now,
             fill_entropy,
             sink,
@@ -75,7 +76,10 @@ impl<S: StorageLayout> EngineState<S> {
     /// total_segments)`, and the command settles now only on refusal —
     /// delivery settles at the receiver's proof. Segment 1 of a split records
     /// its hash as the chain's `original_hash`; every later segment re-advertises
-    /// it, so the host threads no hashes of its own.
+    /// it, so the host threads no hashes of its own. `total_data_size` is the
+    /// whole transfer's uncompressed length — RNS 1.3.1 advertises it (the `d`
+    /// field) on every segment, not the segment's own size, so the receiver
+    /// learns the full size up front; for a single-segment send it equals `data`.
     #[allow(clippy::too_many_arguments)]
     pub fn ingest_send_resource_segment_into<F>(
         &mut self,
@@ -86,6 +90,7 @@ impl<S: StorageLayout> EngineState<S> {
         request_id: Option<RequestId>,
         segment_index: u64,
         total_segments: u64,
+        total_data_size: u64,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -166,6 +171,7 @@ impl<S: StorageLayout> EngineState<S> {
             let state = self.outgoing_resources.state_mut(index);
             state.segment_index = segment_index;
             state.total_segments = total_segments;
+            state.uncompressed_data_len = total_data_size;
             if let Some(original) = chain_original {
                 state.original_hash = original;
             }

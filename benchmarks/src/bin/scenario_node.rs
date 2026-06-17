@@ -1417,6 +1417,7 @@ async fn initiate_resource(
                         request_id: None,
                         segment_index,
                         total_segments,
+                        total_data_size: len as u64,
                         completion,
                     },
                 ))

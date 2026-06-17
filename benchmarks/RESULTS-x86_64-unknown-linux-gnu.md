@@ -88,6 +88,24 @@ Each row is one live pairing — the initiator drives a windowed firehose at the
 - **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
 - **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
 
+## resource-bulk (v1)
+
+A single large resource transferred whole, over and over, for a fixed wall-time - the multi-segment bulk mechanism. Each logical transfer is 64 MiB sliced into MAX_EFFICIENT_SIZE segments, sent one at a time and proved before the next, so the engine and the host each hold a single segment while the receiver appends the stream to disk-sized totals. Against resource-transfer (one segment) this measures whether the per-byte rate holds past the single-segment ceiling and whether peak memory stays flat at one segment regardless of total size.
+
+Each row is one live pairing — the initiator drives a windowed firehose at the responder over loopback, and every figure is the protocol's own: delivery proven by receipt, latency from the proofs, energy bracketed around the run. Conformant pairings rank first, ordered by energy per delivered message — a cheap-but-broken run never tops the table; energy needs `sudo` for the power counters and renders pending without it. Numbers compare within a host, never across.
+
+| Initiator → Responder | Conformance | Throughput | Goodput | RTT p50 / p99 | Peak RSS init / resp | Energy / msg |
+|------------------------|-------------|-----------:|--------:|--------------:|---------------------:|-------------:|
+| Prns → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 95 / 95 | 3 msg/s | 212.0 MB/s | 316 / 326 ms | 42.1 / 41.5 MiB | 4668.37 mJ · i 2642.41 / r 2025.95 |
+| RNS 1.3.1 _(ref)_ → Prns | <img src="assets/check.svg" width="14" alt="conformant" /> 10 / 10 | 0 msg/s | 21.7 MB/s | 3114 / 3274 ms | 316.6 / 9.3 MiB | 11944.12 mJ · i 9597.95 / r 2346.17 |
+| Prns → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 36 / 36 | 1 msg/s | 78.5 MB/s | 839 / 1106 ms | 10.0 / 472.9 MiB | 12433.47 mJ · i 2967.12 / r 9466.35 |
+| RNS 1.3.1 _(ref)_ → RNS 1.3.1 _(ref)_ | <img src="assets/check.svg" width="14" alt="conformant" /> 30 / 30 | 1 msg/s | 66.0 MB/s | 917 / 1670 ms | 1066.5 / 429.0 MiB | 14688.32 mJ · i 7334.09 / r 7354.24 |
+
+**Implementations.**
+
+- **Prns** — Rust, ed25519-dalek 2.2 · [https://github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
+- **RNS 1.3.1** — Python, PyCA cryptography / OpenSSL · [https://github.com/markqvist/Reticulum](https://github.com/markqvist/Reticulum) @ `1.3.1` · Reticulum License
+
 ## resource-degraded-bluetooth (v1)
 
 Sequential resource transfers (20-60 KB attachments) through a shaped pipe at a degraded-Bluetooth wire: 100 kbps serialization with 30 ms one-way latency. The first scenario where the rtt-proportional machinery - AIMD window growth, eifr-derived deadlines, part-retry schedules - operates above its loopback floors. Time-to-complete is the product; the pipe counts every wire byte, so payload-per-wire-byte is the protocol's measured overhead tax.

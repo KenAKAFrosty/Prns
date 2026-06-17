@@ -165,6 +165,7 @@ impl PrnsHandle {
                         request_id: None,
                         segment_index,
                         total_segments,
+                        total_data_size: total_len,
                         completion,
                     },
                 ))

@@ -682,6 +682,7 @@ pub struct SendResourceSegmentHostCommand {
     pub request_id: Option<RequestId>,
     pub segment_index: u64,
     pub total_segments: u64,
+    pub total_data_size: u64,
     pub completion: oneshot::Sender<Settlement>,
 }
 
@@ -873,6 +874,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             send.request_id,
                             send.segment_index,
                             send.total_segments,
+                            send.total_data_size,
                             now,
                             &mut |entropy| host.fill_entropy(entropy),
                             &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
