@@ -1093,7 +1093,9 @@ mod tests {
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. } => {}
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. } => {}
         };
 
         let outcome = block_on(async {
@@ -1240,7 +1242,9 @@ mod tests {
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. } => {}
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. } => {}
         };
 
         let mut egress = PooledEgress::new(egress_lanes);
