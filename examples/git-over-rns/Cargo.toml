@@ -1,0 +1,14 @@
+[package]
+name = "git-over-rns"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host"] }
+tokio = { version = "1", features = ["full"] }
+
+# Standalone on purpose: this is an example others can read and run, built on its
+# own rather than as a member of the engine workspace, so it never taxes the core
+# crate's CI gates (the same arrangement personal-rnsd uses).
+[workspace]
