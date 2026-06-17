@@ -27,6 +27,7 @@ use crate::engine::{
     Journaled, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
     run_pooled, EmbassyGrantConsumer, EmbassyGrantProducer, InterfaceLifecycle, PooledEgress,
 };
@@ -502,6 +503,17 @@ where
         }
     }
 
+    /// Register a supervisor's shared lane on pool `slot`, keyed by the supervisor's id. Unlike
+    /// [`activate`](Self::activate) this adds no engine interface — the supervisor itself never
+    /// carries routes; its members do, each added later through the [`Fleet`]. Inbound and egress for
+    /// every child of the supervisor's kind route to this one lane (see `lane_serves`).
+    pub fn activate_fleet(&mut self, slot: usize, supervisor: InterfaceId) {
+        if let Some(entry) = self.inbound.get_mut(slot) {
+            entry.0 = supervisor;
+            self.egress.activate(slot, supervisor);
+        }
+    }
+
     /// Drive the node until the executor drops it: the reactor (over its slot pool) joined with the
     /// caller's `drive` — the interface and supervisor run-futures, joined however the board likes.
     /// Every engine event reaches the recipe's `on_event` with shared `&state`, zero-copy.
@@ -596,80 +608,82 @@ pub struct MemberWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: us
     pub notify: Sender<'static, M, InterfaceId, NOTIFY>,
 }
 
-/// A supervisor's lever onto a contiguous range of the node's interface pool — the embedded twin of
-/// the host `Fleet`, minus the spawn. A supervisor owns no wire of its own; it runs
-/// a discovery loop and, per confirmed peer, claims a free member slot's [`MemberWire`], mints the
-/// peer's id, and tells the reactor to route to it with [`stand_up`](Self::stand_up). When the peer
-/// drops it calls [`tear_down`](Self::tear_down) and the slot frees for the next peer. Bounded by
-/// `MEMBERS` (a compile-time cap — interfaces are cheap, so size it generously); the supervisor
-/// drives its own member futures (it holds the wires), so no future is ever spawned.
+/// A supervisor's lever onto the node's reactor — the embedded twin of the host `Fleet`, minus the
+/// spawn. The whole fleet shares **one** [`MemberWire`]: the supervisor funnels every peer's inbound
+/// frame into it tagged with that peer's id ([`deliver_inbound`](Self::deliver_inbound)) and drains
+/// the reactor's outbound frames off it tagged with their target peer ([`next_outbound`](Self::next_outbound)),
+/// so the reactor's kind-routing demuxes a whole fleet over one lane-pair instead of one per peer.
+/// A confirmed peer becomes a distinct engine interface with [`register_member`](Self::register_member)
+/// and goes away with [`deregister_member`](Self::deregister_member) — each costs only a descriptor,
+/// never a lane. The supervisor's own loop drives this, so no future is ever spawned.
 pub struct Fleet<
     M: RawMutex + 'static,
     const SLOT: usize,
-    const MEMBERS: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 > {
-    base: usize,
+    wire: MemberWire<M, SLOT, NOTIFY>,
     lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    members: [Option<MemberWire<M, SLOT, NOTIFY>>; MEMBERS],
 }
 
-impl<
-        M: RawMutex + 'static,
-        const SLOT: usize,
-        const MEMBERS: usize,
-        const NOTIFY: usize,
-        const LIFECYCLE: usize,
-    > Fleet<M, SLOT, MEMBERS, NOTIFY, LIFECYCLE>
+impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>
+    Fleet<M, SLOT, NOTIFY, LIFECYCLE>
 {
-    /// Build a fleet over the pool slots `[base .. base + MEMBERS)`. `members[local]` is the
-    /// interface-side wire of global slot `base + local` (the half whose reactor side the node's
-    /// [`ReactorPlumbing`] holds); `lifecycle` is the sender whose receiver the reactor parks on.
+    /// Build a fleet over its one shared `wire` (the interface-side halves of the supervisor's lane,
+    /// whose reactor side the node's [`ReactorPlumbing`] holds) and the `lifecycle` sender whose
+    /// receiver the reactor parks on.
     #[must_use]
     pub fn new(
-        base: usize,
+        wire: MemberWire<M, SLOT, NOTIFY>,
         lifecycle: Sender<'static, M, InterfaceLifecycle, LIFECYCLE>,
-        members: [Option<MemberWire<M, SLOT, NOTIFY>>; MEMBERS],
     ) -> Self {
-        Self {
-            base,
-            lifecycle,
-            members,
-        }
+        Self { wire, lifecycle }
     }
 
-    /// How many peers this fleet can carry at once.
-    #[must_use]
-    pub const fn capacity(&self) -> usize {
-        MEMBERS
-    }
-
-    /// Take member slot `local`'s wire to build its I/O loop around — once, at supervisor start.
-    /// `None` once taken (or out of range), so a supervisor claims each of its `MEMBERS` wires
-    /// exactly once and reuses the slot in place for successive peers.
-    pub fn take_wire(&mut self, local: usize) -> Option<MemberWire<M, SLOT, NOTIFY>> {
-        self.members.get_mut(local)?.take()
-    }
-
-    /// Route the reactor to member slot `local` under `config` (the peer's medium-derived id and
-    /// descriptor): the engine begins forwarding to it at once. `false` if the lifecycle lane is
-    /// full. Pair with the member's own I/O loop coming live on the same slot.
-    pub fn stand_up(&self, local: usize, config: InterfaceConfig) -> bool {
+    /// Register a confirmed peer as a distinct engine interface under `config` (the peer's
+    /// medium-derived id and descriptor): the engine forwards to it at once, its frames routing to
+    /// this fleet's one lane by kind. `false` if the lifecycle lane is full.
+    pub fn register_member(&self, config: InterfaceConfig) -> bool {
         self.lifecycle
-            .try_send(InterfaceLifecycle::Add {
-                slot: self.base + local,
-                config,
-            })
+            .try_send(InterfaceLifecycle::Add { config })
             .is_ok()
     }
 
-    /// Tear the routed member with this id back down: the reactor culls its routes and frees the
-    /// slot. `false` if the lifecycle lane is full.
-    pub fn tear_down(&self, id: InterfaceId) -> bool {
+    /// Drop the member with this id: the reactor culls its routes and forgets its descriptor. The
+    /// shared lane stays for the rest of the fleet. `false` if the lifecycle lane is full.
+    pub fn deregister_member(&self, id: InterfaceId) -> bool {
         self.lifecycle
             .try_send(InterfaceLifecycle::Remove { id })
             .is_ok()
+    }
+
+    /// Funnel one inbound frame from peer `child` into the shared lane, tagged so the reactor ingests
+    /// it as `child`'s — then announce the commit on the notify funnel. `false` if the lane is
+    /// momentarily full (the frame is dropped, as a full lane does), so a slow reactor never stalls
+    /// the medium read.
+    pub fn deliver_inbound(&mut self, child: InterfaceId, bytes: &[u8]) -> bool {
+        let Some(grant) = self.wire.inbound.try_grant() else {
+            return false;
+        };
+        grant.fill_for(child, bytes);
+        self.wire.inbound.commit();
+        let _ = self.wire.notify.try_send(child);
+        true
+    }
+
+    /// Park until the reactor grants an outbound frame, returning the peer it targets (the slot's
+    /// tag) and a copy of the frame. The supervisor maps the id to its peer address and sends. The
+    /// frame is copied out (sized `OUT`, the medium's frame ceiling) rather than borrowed, so the
+    /// returned value owns nothing of the fleet — that lets it ride a `select` arm beside the
+    /// supervisor's other fleet uses without a borrow clash. The prior peek is released first, so
+    /// each frame is carried exactly once.
+    pub async fn next_outbound<const OUT: usize>(&mut self) -> (InterfaceId, HeaplessVec<u8, OUT>) {
+        self.wire.outbound.release();
+        let slot = self.wire.outbound.peek().await;
+        let id = slot.interface_id;
+        let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
+        let _ = bytes.extend_from_slice(slot.frame());
+        (id, bytes)
     }
 }
 
@@ -681,7 +695,6 @@ mod tests {
         AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
         InterfaceKind, InterfaceMode, TransportCapability,
     };
-    use crate::reactor::grant::GrantProducer;
     use crate::reactor::impls::embassy_reactor::{leaked_grant_lane, EmbassyHost};
     use crate::reactor::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
     use crate::runtime::Diagnostic;
@@ -842,14 +855,13 @@ mod tests {
             handle,
         );
 
-        let fleet: Fleet<Mtx, SLOT, 1, 4, 4> = Fleet::new(
-            0,
-            lifecycle.sender(),
-            [Some(MemberWire {
+        let fleet: Fleet<Mtx, SLOT, 4, 4> = Fleet::new(
+            MemberWire {
                 inbound: in_producer,
                 outbound: out_consumer,
                 notify: notify.sender(),
-            })],
+            },
+            lifecycle.sender(),
         );
 
         let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
@@ -871,38 +883,36 @@ mod tests {
             },
         };
 
-        let node = Prns::new(
+        let mut node = Prns::new(
             recipe,
             plumbing,
             EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
             HeaplessVec::<InterfaceConfig, 1>::new(),
         );
+        // The fleet's one lane is keyed by the supervisor's id; the WiFi peer routes to it by kind.
+        let supervisor =
+            InterfaceId::from_reachability_tag(InterfaceKind::AutoWifi, b"test-supervisor");
+        node.activate_fleet(0, supervisor);
 
         let raw = hx(RAW_ANNOUNCE);
         let peer = InterfaceId::from_reachability_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 
         let drive = async move {
             let mut fleet = fleet;
-            let mut wire = fleet
-                .take_wire(0)
-                .expect("the fleet lends its one member wire");
             assert!(
-                fleet.take_wire(0).is_none(),
-                "a member wire is claimed exactly once"
-            );
-            assert!(
-                fleet.stand_up(0, descriptor(peer)),
+                fleet.register_member(descriptor(peer)),
                 "the lifecycle lane accepts the add"
             );
             Timer::after(Duration::from_millis(40)).await;
 
-            wire.inbound.grant().await.fill(&raw);
-            wire.inbound.commit();
-            wire.notify.send(peer).await;
+            assert!(
+                fleet.deliver_inbound(peer, &raw),
+                "the shared lane carries the peer's frame"
+            );
             Timer::after(Duration::from_millis(80)).await;
 
             assert!(
-                fleet.tear_down(peer),
+                fleet.deregister_member(peer),
                 "the lifecycle lane accepts the remove"
             );
             Timer::after(Duration::from_millis(20)).await;

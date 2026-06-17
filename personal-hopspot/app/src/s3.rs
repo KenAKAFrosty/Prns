@@ -54,7 +54,7 @@ use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, 
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
-use personal_rns::interfaces::{ConnectionState, InterfaceId, MacAddress};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, MacAddress};
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
@@ -104,15 +104,23 @@ const TCP_BITRATE_BPS: u32 = 65_000_000;
 /// One TCP socket's smoltcp rx/tx buffer — sized for the board's frames, DRAM-frugal over throughput.
 const TCP_SOCKET_BUF: usize = 1_024;
 
-/// The interface pool: slot 0 is the USB-auto wire, slot 1 is the TCP client (when a LAN target is
-/// configured, free otherwise), slots `[2..IFACES)` are the WiFi supervisor's member pool (one per
-/// peer).
-const IFACES: usize = 5;
-/// The engine-interface (descriptor + pacer) pool, distinct from the lane count `IFACES`. Equal for
-/// now; once the WiFi fleet shares one lane it grows past `IFACES` to budget members cheaply (a
-/// descriptor, not an MTU buffer, per member).
-const MAX_IFACES: usize = IFACES;
-const MEMBERS: usize = IFACES - 2;
+/// One lane per top-level driver: USB (slot 0), the TCP client (slot 1), and the WiFi supervisor's
+/// one shared fleet lane (slot 2). WiFi members do NOT each take a lane — they share slot 2 — so the
+/// expensive MTU buffers number three, not three-plus-every-peer.
+const IFACES: usize = 3;
+/// The WiFi fleet's member budget: how many peers the supervisor carries at once. Each costs only a
+/// descriptor + a status slot, never a lane buffer, so it is sized generously.
+const MEMBERS: usize = 8;
+/// The engine-interface (descriptor + pacer) pool: the two fixed interfaces (USB, TCP) plus the WiFi
+/// members. Distinct from the lane count `IFACES` — decoupling them is the whole point of the shared
+/// lane, so a generous member budget costs descriptors, not buffers.
+const MAX_IFACES: usize = 2 + MEMBERS;
+/// The WiFi supervisor's fleet lane (slot 2) key: an `AutoWifi`-kind id, so every `WifiPeer` child
+/// routes to this one lane by the kind byte (`lane_serves`). Also the WiFi card's aggregate id.
+const WIFI_FLEET_ID: InterfaceId =
+    InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
+/// The fleet lane's pool slot, after USB (0) and TCP (1).
+const WIFI_FLEET_SLOT: usize = 2;
 const LANE_DEPTH: usize = 1;
 /// Slot 1: the always-on TCP client wire (parallel to USB at slot 0), so the WiFi members never
 /// claim it.
@@ -192,7 +200,7 @@ static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
 /// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
-static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(InterfaceId::new([0u8; 8]));
+static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID);
 
 /// The reactor's pool: one inbound + one outbound grant ring per slot, split at boot into the
 /// reactor side (core 1's plumbing) and the interface side (core 0's USB seam / fleet wires).
@@ -368,6 +376,12 @@ pub async fn run(spawner: Spawner) {
     if let Some((tcp, _, _)) = &tcp_built {
         node.activate(TCP_SLOT, tcp.descriptor());
     }
+    // The WiFi supervisor's one shared lane: keyed by its AutoWifi id, every WifiPeer member routes
+    // to it by kind. Registered before the node moves to core 1; members add their descriptors at
+    // runtime through the fleet, never another lane.
+    if wifi.is_some() {
+        node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
+    }
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(
@@ -400,18 +414,20 @@ pub async fn run(spawner: Spawner) {
         (tcp, seam)
     });
 
-    let mut members: [Option<MemberWire<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP>>; MEMBERS] =
-        [const { None }; MEMBERS];
-    for member in 0..MEMBERS {
-        let (in_producer, out_consumer) = iface_halves[member + 2].take().expect("member half");
-        members[member] = Some(MemberWire {
-            inbound: in_producer,
-            outbound: out_consumer,
+    // The whole WiFi fleet shares slot 2's one lane: the supervisor funnels every peer's frames
+    // through it, tagged by the peer's id, and the reactor demuxes by kind. Members are descriptors,
+    // not lanes — so no per-peer wire is taken here.
+    let (wifi_in_producer, wifi_out_consumer) = iface_halves[WIFI_FLEET_SLOT]
+        .take()
+        .expect("wifi fleet half");
+    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, NOTIFY_CAP, LIFECYCLE_CAP> = Fleet::new(
+        MemberWire {
+            inbound: wifi_in_producer,
+            outbound: wifi_out_consumer,
             notify: NOTIFY.sender(),
-        });
-    }
-    let fleet: Fleet<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, MEMBERS, NOTIFY_CAP, LIFECYCLE_CAP> =
-        Fleet::new(2, LIFECYCLE.sender(), members);
+        },
+        LIFECYCLE.sender(),
+    );
 
     let button = Input::new(p.GPIO0, InputConfig::default().with_pull(Pull::Up));
     spawner.spawn(button_task(button).expect("button task fits"));

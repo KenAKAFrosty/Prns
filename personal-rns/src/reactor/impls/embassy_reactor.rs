@@ -679,37 +679,30 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
         .min_by_key(|deadline| deadline.0)
 }
 
-/// The free-slot id: no real [`InterfaceId::from_reachability_tag`] can produce it (`0xff` is
-/// not a valid `InterfaceKind` discriminant), so a free slot never matches an
-/// inbound source or an egress target.
-const NIL_INTERFACE: InterfaceId = InterfaceId::new([0xff; 8]);
-
-/// The runtime's lever to bring one pooled interface up or down between cycles. A supervisor sends
-/// `Add` when a peer is confirmed (the `slot` it already holds the wire halves of) and `Remove` when
-/// the peer drops; the reactor toggles that slot's id, so its permanently-owned lane endpoints
-/// reuse for the next interface without ever moving.
+/// The runtime's lever to bring one engine interface up or down between cycles. A supervisor sends
+/// `Add` when a peer is confirmed and `Remove` when it drops; the reactor adds or drops the
+/// interface's descriptor and pacer. No lane is allocated: the interface's frames route to its
+/// medium's standing lane by [`lane_serves`] (a fleet member finds its supervisor's lane by the kind
+/// byte), so a fleet of members shares one lane and `Add`/`Remove` only touch the cheap descriptor
+/// set.
 pub enum InterfaceLifecycle {
-    Add {
-        slot: usize,
-        config: InterfaceConfig,
-    },
-    Remove {
-        id: InterfaceId,
-    },
+    Add { config: InterfaceConfig },
+    Remove { id: InterfaceId },
 }
 
 /// The dynamic egress: a fixed pool of `N` permanently-owned outbound lane endpoints, each tagged
-/// with the id of the interface currently occupying its slot (`NIL_INTERFACE` while free). The
-/// uniform `SLOT` size (a board's one wire ceiling) lets the pool own concrete endpoints rather
-/// than the fixed path's erased `&mut dyn`, so a slot reuses with no alloc and no re-split.
+/// with the id of the interface — or fleet supervisor — it serves (set once at boot by
+/// [`Prns::activate`](crate::runtime::Prns)). The uniform `SLOT` size (a board's one wire ceiling)
+/// lets the pool own concrete endpoints rather than the fixed path's erased `&mut dyn`, and the tag
+/// lets [`lane_serves`] route a whole fleet over one lane.
 pub struct PooledEgress<M: RawMutex + 'static, const SLOT: usize, const N: usize> {
     lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
 }
 
 impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, SLOT, N> {
     /// Build the egress over the reactor-side outbound endpoints, each at the slot it shares with
-    /// the interface-side half. A free slot carries `NIL_INTERFACE`; an initially-active one
-    /// carries its interface's id.
+    /// the interface-side half. Each lane is tagged at boot with the id of the interface or fleet
+    /// supervisor it serves.
     #[must_use]
     pub fn new(
         lanes: HeaplessVec<(InterfaceId, EmbassyGrantProducer<'static, M, SLOT>), N>,
@@ -720,14 +713,6 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
     pub(crate) fn activate(&mut self, slot: usize, id: InterfaceId) {
         if let Some(entry) = self.lanes.get_mut(slot) {
             entry.0 = id;
-        }
-    }
-
-    fn deactivate(&mut self, id: InterfaceId) {
-        for entry in self.lanes.iter_mut() {
-            if entry.0 == id {
-                entry.0 = NIL_INTERFACE;
-            }
         }
     }
 }
@@ -759,13 +744,14 @@ fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
 }
 
 /// The runtime's reactor: the same loop as [`run`], over a fixed pool of `N` interface slots whose
-/// occupancy changes at runtime through the `lifecycle` lane. `initial` names the slots already
-/// active at boot (the recipe's top-level set); `inbound`/`egress` carry the reactor-side endpoints
-/// for every slot, free ones tagged `NIL_INTERFACE`. A supervisor stands a peer up by sending
-/// [`InterfaceLifecycle::Add`] for a free slot it owns the wire halves of, and tears it down with
-/// [`InterfaceLifecycle::Remove`]; on remove the reactor culls the gone interface's routes exactly
-/// as the host runtime does. Bounded by `N`, alloc-free: the endpoints never move, only the
-/// per-slot id and the active config/pacer set change.
+/// the live descriptor set changes at runtime through the `lifecycle` lane. `initial` names the
+/// interfaces active at boot (the recipe's top-level set); `inbound`/`egress` carry the reactor-side
+/// endpoints for the `LANES` standing lanes, each tagged with the interface or fleet supervisor it
+/// serves. A supervisor registers a peer by sending [`InterfaceLifecycle::Add`] (its frames route to
+/// the supervisor's lane by kind) and drops it with [`InterfaceLifecycle::Remove`]; on remove the
+/// reactor culls the gone interface's routes exactly as the host runtime does. Lanes bounded by
+/// `LANES`, the descriptor + pacer set by `MAX_IFACES`, alloc-free: the endpoints never move, only
+/// the active config/pacer set changes.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_pooled<
     S,
@@ -900,12 +886,10 @@ pub async fn run_pooled<
                 flush_due_pacers(&mut pacers, now, &mut *egress, ifacs);
             }
             Either5::Fifth(message) => match message {
-                InterfaceLifecycle::Add { slot, config } => {
+                InterfaceLifecycle::Add { config } => {
                     let config = clamp_to_embedded_ceiling(config);
                     let id = config.id;
-                    if let Some(entry) = inbound.get_mut(slot) {
-                        entry.0 = id;
-                        egress.activate(slot, id);
+                    if configs.iter().all(|existing| existing.id != id) {
                         let _ = configs.push(config);
                         let _ = pacers.push(InterfacePacer {
                             id,
@@ -918,13 +902,6 @@ pub async fn run_pooled<
                     }
                 }
                 InterfaceLifecycle::Remove { id } => {
-                    if let Some(pos) = inbound.iter().position(|(slot_id, _)| *slot_id == id) {
-                        inbound[pos].0 = NIL_INTERFACE;
-                        while inbound[pos].1.try_peek_frame().is_some() {
-                            inbound[pos].1.release_frame();
-                        }
-                    }
-                    egress.deactivate(id);
                     if let Some(pos) = configs.iter().position(|config| config.id == id) {
                         let _ = configs.swap_remove(pos);
                     }
@@ -1204,8 +1181,8 @@ mod tests {
         let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
 
         const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
-        // The reactor side of one pooled wire, plus the interface-side producer the test drives
-        // frames in on. The slot is free at boot; the runtime stands it up mid-run.
+        // The reactor side of one standing lane keyed by `source`, plus the interface-side producer
+        // the test drives frames in on. The interface's descriptor is registered mid-run.
         let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<SLOT>(2);
         let (source_out_tx, _source_out_rx) = leaked_grant_lane::<SLOT>(2);
 
@@ -1216,7 +1193,7 @@ mod tests {
             ),
             1,
         > = HeaplessVec::new();
-        let _ = inbound.push((NIL_INTERFACE, source_in_rx));
+        let _ = inbound.push((source, source_in_rx));
         let mut egress_lanes: HeaplessVec<
             (
                 InterfaceId,
@@ -1224,7 +1201,7 @@ mod tests {
             ),
             1,
         > = HeaplessVec::new();
-        let _ = egress_lanes.push((NIL_INTERFACE, source_out_tx));
+        let _ = egress_lanes.push((source, source_out_tx));
 
         let raw = hx(RAW_ANNOUNCE);
 
@@ -1268,23 +1245,16 @@ mod tests {
             );
 
             let driver = async {
-                // Free slot first: a frame announced before the slot is stood up is never heard.
-                source_in_tx.grant().await.fill(&raw);
-                source_in_tx.commit();
-                notify.sender().send(source).await;
-                Timer::after(Duration::from_millis(30)).await;
-                assert_eq!(*heard.borrow(), 0, "a free slot routes nothing inbound");
-
-                // Stand the slot up at runtime, then announce: now it crosses.
+                // Register the interface at runtime, then announce on its lane: it crosses and the
+                // engine learns a route via it.
                 lifecycle
                     .sender()
                     .send(InterfaceLifecycle::Add {
-                        slot: 0,
                         config: descriptor(source),
                     })
                     .await;
                 Timer::after(Duration::from_millis(30)).await;
-                source_in_tx.grant().await.fill(&raw);
+                source_in_tx.grant().await.fill_for(source, &raw);
                 source_in_tx.commit();
                 notify.sender().send(source).await;
                 loop {
@@ -1294,8 +1264,8 @@ mod tests {
                     yield_now().await;
                 }
 
-                // Tear it back down: the cull runs against the reduced view and the reactor keeps
-                // looping (the slot's endpoints stay put, ready to reuse).
+                // Drop it: the cull runs against the reduced descriptor set (the route via this
+                // interface goes) and the reactor keeps looping, its lane endpoints untouched.
                 lifecycle
                     .sender()
                     .send(InterfaceLifecycle::Remove { id: source })

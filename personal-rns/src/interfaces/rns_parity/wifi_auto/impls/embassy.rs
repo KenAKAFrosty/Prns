@@ -10,19 +10,17 @@
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
-use embassy_futures::select::{select4, select_array, Either4};
+use embassy_futures::select::{select4, Either4};
 use embassy_net::udp::UdpSocket;
 use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_time::{Duration, Ticker};
-use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress};
-use crate::reactor::grant::{GrantConsumer, GrantProducer};
-use crate::runtime::{Fleet, MemberWire};
+use crate::runtime::Fleet;
 
 /// How often the supervisor multicasts its peering token, matching the tokio cadence.
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -270,7 +268,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     #[allow(irrefutable_let_patterns, clippy::expect_used)]
     pub async fn run<M, const SLOT: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         mut self,
-        mut fleet: Fleet<M, SLOT, MEMBERS, NOTIFY, LIFECYCLE>,
+        mut fleet: Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     ) where
         M: RawMutex + 'static,
     {
@@ -288,9 +286,6 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         }
         self.status.mark_up();
 
-        let mut wires: [MemberWire<M, SLOT, NOTIFY>; MEMBERS] = ::core::array::from_fn(|slot| {
-            fleet.take_wire(slot).expect("the fleet lends each wire")
-        });
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
         let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
 
@@ -302,12 +297,11 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         let mut data_buf = [0u8; core::HARDWARE_MTU];
 
         loop {
-            let outbound = wires.each_mut().map(drain_member_outbound);
             match select4(
                 self.discovery.recv_from(&mut discovery_buf),
                 self.data.recv_from(&mut data_buf),
                 beacon.next(),
-                select_array(outbound),
+                fleet.next_outbound::<{ core::HARDWARE_MTU }>(),
             )
             .await
             {
@@ -332,7 +326,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                     if let Ok((len, meta)) = received {
                         if let IpAddress::Ipv6(src) = meta.endpoint.addr {
                             route_inbound(
-                                &mut wires,
+                                &mut fleet,
                                 &peers,
                                 &ids,
                                 &self.status,
@@ -365,35 +359,27 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         now_ms,
                     );
                 }
-                Either4::Fourth((frame, slot)) => {
-                    if let Some(peer) = peers[slot] {
-                        if !frame.is_empty()
-                            && self
-                                .data
-                                .send_to(&frame, (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT))
-                                .await
-                                .is_ok()
-                        {
-                            self.status.member(slot).add_tx(frame.len() as u64);
+                Either4::Fourth((target, frame)) => {
+                    if let Some(slot) = ids.iter().position(|known| *known == target) {
+                        if let Some(peer) = peers[slot] {
+                            if !frame.is_empty()
+                                && self
+                                    .data
+                                    .send_to(
+                                        &frame,
+                                        (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT),
+                                    )
+                                    .await
+                                    .is_ok()
+                            {
+                                self.status.member(slot).add_tx(frame.len() as u64);
+                            }
                         }
                     }
                 }
             }
         }
     }
-}
-
-/// Peek and copy one member's next outbound frame off its reactor lane — the body the `select_array`
-/// races. The prior peek is released first (the seam's `next_outbound` contract), so each frame is
-/// carried exactly once; a free slot's lane never fills, so its peek simply parks forever.
-async fn drain_member_outbound<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize>(
-    wire: &mut MemberWire<M, SLOT, NOTIFY>,
-) -> HeaplessVec<u8, { core::HARDWARE_MTU }> {
-    wire.outbound.release();
-    let frame = wire.outbound.peek().await.frame();
-    let mut bytes: HeaplessVec<u8, { core::HARDWARE_MTU }> = HeaplessVec::new();
-    let _ = bytes.extend_from_slice(frame);
-    bytes
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -408,7 +394,7 @@ fn ingest_beacon<
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &mut [InterfaceId; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
-    fleet: &Fleet<M, SLOT, MEMBERS, NOTIFY, LIFECYCLE>,
+    fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     bitrate_bps: u32,
     src: Ipv6Addr,
     bytes: &[u8],
@@ -429,7 +415,7 @@ fn ingest_beacon<
     ids[slot] = id;
     status.member(slot).assign(id);
     status.republish_peer_count();
-    fleet.stand_up(slot, core::descriptor(id, bitrate_bps));
+    fleet.register_member(core::descriptor(id, bitrate_bps));
 }
 
 fn route_inbound<
@@ -437,8 +423,9 @@ fn route_inbound<
     const SLOT: usize,
     const MEMBERS: usize,
     const NOTIFY: usize,
+    const LIFECYCLE: usize,
 >(
-    wires: &mut [MemberWire<M, SLOT, NOTIFY>; MEMBERS],
+    fleet: &mut Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     peers: &[Option<Ipv6Addr>; MEMBERS],
     ids: &[InterfaceId; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
@@ -451,11 +438,8 @@ fn route_inbound<
     let Some(slot) = peers.iter().position(|peer| *peer == Some(src)) else {
         return;
     };
-    if let Some(grant) = wires[slot].inbound.try_grant() {
-        grant.fill_for(ids[slot], bytes);
-        wires[slot].inbound.commit();
+    if fleet.deliver_inbound(ids[slot], bytes) {
         status.member(slot).add_rx(bytes.len() as u64);
-        let _ = wires[slot].notify.try_send(ids[slot]);
     }
 }
 
@@ -486,7 +470,7 @@ fn retire_stale<
     peers: &mut [Option<Ipv6Addr>; MEMBERS],
     ids: &[InterfaceId; MEMBERS],
     status: &AutoWifiStatus<MEMBERS>,
-    fleet: &Fleet<M, SLOT, MEMBERS, NOTIFY, LIFECYCLE>,
+    fleet: &Fleet<M, SLOT, NOTIFY, LIFECYCLE>,
     now_ms: u64,
 ) {
     if brain.prune_stale_peers(now_ms) == 0 {
@@ -497,7 +481,7 @@ fn retire_stale<
         if brain.known_peer_addresses().any(|known| known == addr) {
             continue;
         }
-        fleet.tear_down(ids[slot]);
+        fleet.deregister_member(ids[slot]);
         peers[slot] = None;
         status.member(slot).retire();
     }
