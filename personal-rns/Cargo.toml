@@ -58,6 +58,11 @@ tcp = ["tokio-host", "dep:socket2", "tokio/net"]
 # The RNS-parity UDP interface (UDPInterface) on the reactor seam: one raw wire packet
 # per datagram, fixed peer addressing, tokio's own UDP — no extra socket crate needed.
 udp = ["tokio-host", "tokio/net"]
+# The RNS-parity local shared-instance interface (LocalServerInterface / LocalClientInterface):
+# a tokio daemon that lets other RNS apps on this host (Sideband, NomadNet, MeshChat) share one
+# instance over loopback TCP (37428) or an AF_UNIX socket. Same HDLC framing as TCP; needs no
+# extra socket crate.
+local = ["tokio-host", "tokio/net"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]

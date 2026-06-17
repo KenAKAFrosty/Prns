@@ -2,6 +2,7 @@
 //! the WiFi/LAN `AutoInterface`. Distinct from our own interfaces (e.g. `usb_auto`), which have no
 //! Reticulum counterpart and live at the `interfaces` root.
 
+pub mod local;
 pub mod serial;
 pub mod tcp;
 pub mod udp;
