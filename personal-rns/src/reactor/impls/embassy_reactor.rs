@@ -345,6 +345,23 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
     }
 }
 
+/// Whether the lane keyed by `lane_key` carries traffic for `target`. Two ways it can: an exact id
+/// match (a dedicated 1:1 lane owns exactly its interface), or `target` being a child of the fleet
+/// supervisor `lane_key` names (the supervisor's [`member_kind`](InterfaceKind::member_kind) equals
+/// `target`'s kind). The second is how one shared lane serves a whole fleet with no per-child
+/// routing entry: a `WifiPeer` frame finds the lane keyed by the `AutoWifi` supervisor by the kind
+/// byte alone. With no supervisor lane registered, only the exact match fires, so routing is
+/// unchanged.
+fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
+    if lane_key == target {
+        return true;
+    }
+    match (lane_key.kind(), target.kind()) {
+        (Some(supervisor), Some(child)) => supervisor.member_kind() == Some(child),
+        _ => false,
+    }
+}
+
 /// The reactor's egress: it routes one engine `Directive::Send` into the target
 /// interface's outbound grant lane — granted, filled in place, committed. A full lane drops
 /// the frame rather than stalling the reactor. The fixed [`EmbassyEgress`] and the dynamic
@@ -370,7 +387,7 @@ impl<'a> EmbassyEgress<'a> {
 impl ReactorEgress for EmbassyEgress<'_> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
-            if *id == target {
+            if lane_serves(*id, target) {
                 let _ = producer.try_fill_frame_for(target, bytes);
                 return;
             }
@@ -452,7 +469,10 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
         .await
         {
             Either4::First(source) => {
-                let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source) else {
+                let Some((_, lane)) = inbound_lanes
+                    .iter_mut()
+                    .find(|(id, _)| lane_serves(*id, source))
+                else {
                     continue;
                 };
                 let Some((source, frame)) = lane.try_peek_frame() else {
@@ -717,7 +737,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
 {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
-            if *id == target {
+            if lane_serves(*id, target) {
                 let _ = producer.try_fill_frame_for(target, bytes);
                 return;
             }
@@ -798,7 +818,8 @@ pub async fn run_pooled<
         .await
         {
             Either5::First(source) => {
-                let Some((_, lane)) = inbound.iter_mut().find(|(id, _)| *id == source) else {
+                let Some((_, lane)) = inbound.iter_mut().find(|(id, _)| lane_serves(*id, source))
+                else {
                     continue;
                 };
                 let Some((source, frame)) = lane.try_peek_frame() else {

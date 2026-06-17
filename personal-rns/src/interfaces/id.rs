@@ -26,6 +26,13 @@ impl InterfaceId {
         &self.0
     }
 
+    /// This id's interface kind — its first byte. `None` for an unknown discriminant (a foreign or
+    /// corrupt id). Lets the reactor route a frame to its medium's lane straight off the id.
+    #[must_use]
+    pub fn kind(&self) -> Option<InterfaceKind> {
+        InterfaceKind::from_u8(self.0[0])
+    }
+
     /// Derive an id from the interface's [`InterfaceKind`] and its `reachability_tag` — the
     /// bytes that uniquely tag this channel within its medium (a peer MAC, a remote `ip:port`,
     /// a device id). The id is `[kind] ++ sha256(reachability_tag)[..7]`: stable while the
