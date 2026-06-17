@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
@@ -18,11 +18,11 @@ use crate::engine::{
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
-    RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioGrantConsumer, TokioGrantProducer,
-    TokioHost, TokioInterfaceSeam,
+    ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioGrantConsumer,
+    TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
-use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
+use crate::routing::links::resources::{ResourceHash, MAX_EFFICIENT_SIZE};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
@@ -65,6 +65,25 @@ pub enum ResourceSendError {
     Source(std::io::Error),
     /// A segment was refused, timed out, or rejected by the peer.
     Rejected(SendResourceFailure),
+    /// The node's reactor has stopped.
+    NodeStopped,
+}
+
+/// What a completed [`receive_resource`](PrnsHandle::receive_resource) yields: the assembled
+/// resource's identity and total size. The bytes themselves were streamed to the caller's sink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceReceipt {
+    pub original_hash: ResourceHash,
+    pub total_size: u64,
+}
+
+/// Why a [`receive_resource`](PrnsHandle::receive_resource) stream did not complete.
+#[derive(Debug)]
+pub enum ResourceReceiveError {
+    /// Writing to `sink` failed before the whole resource arrived.
+    Sink(std::io::Error),
+    /// The transfer failed at the receiver — a bad segment, a vanished link, or a refused offer.
+    Failed,
     /// The node's reactor has stopped.
     NodeStopped,
 }
@@ -159,6 +178,51 @@ impl PrnsHandle {
             }
         }
         Ok(())
+    }
+
+    /// Receive the next inbound resource on `link_id`, streaming it into `sink` — the mirror of
+    /// [`send_resource`](Self::send_resource). Registers the sink before yielding, so a segment
+    /// arriving the instant after cannot reach the app event stream instead, then writes each chunk —
+    /// a whole single-segment resource, or each concluded segment of a split — to `sink` as it
+    /// arrives, resolving with the assembled identity and size once the transfer completes.
+    pub async fn receive_resource(
+        &self,
+        link_id: LinkId,
+        mut sink: impl AsyncWrite + Unpin,
+    ) -> Result<ResourceReceipt, ResourceReceiveError> {
+        let (chunks, mut inbound) = mpsc::unbounded_channel();
+        let (ready, registered) = oneshot::channel();
+        self.commands
+            .send(HostCommand::RegisterResourceSink {
+                link_id,
+                sink: chunks,
+                ready,
+            })
+            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        registered
+            .await
+            .map_err(|_| ResourceReceiveError::NodeStopped)?;
+        loop {
+            match inbound.recv().await {
+                Some(ResourceInbound::Chunk(bytes)) => {
+                    sink.write_all(&bytes)
+                        .await
+                        .map_err(ResourceReceiveError::Sink)?;
+                }
+                Some(ResourceInbound::Complete {
+                    original_hash,
+                    total_size,
+                }) => {
+                    sink.flush().await.map_err(ResourceReceiveError::Sink)?;
+                    return Ok(ResourceReceipt {
+                        original_hash,
+                        total_size,
+                    });
+                }
+                Some(ResourceInbound::Failed) => return Err(ResourceReceiveError::Failed),
+                None => return Err(ResourceReceiveError::NodeStopped),
+            }
+        }
     }
 
     /// Bring a link up to `destination` and await it — `Ok(LinkId)` once the peer's proof validates,
@@ -1063,6 +1127,77 @@ mod tests {
         assert!(matches!(
             prns.send_resource(LINK, 10, &payload[..]).await,
             Err(ResourceSendError::NodeStopped),
+        ));
+    }
+
+    #[tokio::test]
+    async fn receive_resource_streams_an_inbound_resource_into_the_sink() {
+        let (prns, mut command_rx) = handle();
+        let original = ResourceHash::new([9; 32]);
+
+        let actor = tokio::spawn(async move {
+            let Some(HostCommand::RegisterResourceSink {
+                link_id,
+                sink,
+                ready,
+            }) = command_rx.recv().await
+            else {
+                panic!("expected a RegisterResourceSink command");
+            };
+            ready.send(()).expect("the receiver awaits registration");
+            sink.send(ResourceInbound::Chunk(b"hello ".to_vec())).unwrap();
+            sink.send(ResourceInbound::Chunk(b"world".to_vec())).unwrap();
+            sink.send(ResourceInbound::Complete {
+                original_hash: original,
+                total_size: 11,
+            })
+            .unwrap();
+            link_id
+        });
+
+        let mut buf = std::vec::Vec::new();
+        let receipt = prns
+            .receive_resource(LINK, &mut buf)
+            .await
+            .expect("the resource arrives");
+        assert_eq!(actor.await.unwrap(), LINK, "the sink registered on the link");
+        assert_eq!(buf, b"hello world", "the chunks stream into the sink in order");
+        assert_eq!(
+            receipt,
+            ResourceReceipt {
+                original_hash: original,
+                total_size: 11,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_resource_surfaces_a_failed_transfer() {
+        let (prns, mut command_rx) = handle();
+        let actor = tokio::spawn(async move {
+            let Some(HostCommand::RegisterResourceSink { sink, ready, .. }) =
+                command_rx.recv().await
+            else {
+                panic!("expected a RegisterResourceSink command");
+            };
+            ready.send(()).unwrap();
+            sink.send(ResourceInbound::Failed).unwrap();
+        });
+        let mut buf = std::vec::Vec::new();
+        let result = prns.receive_resource(LINK, &mut buf).await;
+        actor.await.unwrap();
+        assert!(matches!(result, Err(ResourceReceiveError::Failed)));
+        assert!(buf.is_empty(), "a failed transfer wrote nothing");
+    }
+
+    #[tokio::test]
+    async fn receive_resource_on_a_stopped_node_is_node_stopped() {
+        let (prns, command_rx) = handle();
+        drop(command_rx);
+        let mut buf = std::vec::Vec::new();
+        assert!(matches!(
+            prns.receive_resource(LINK, &mut buf).await,
+            Err(ResourceReceiveError::NodeStopped),
         ));
     }
 }

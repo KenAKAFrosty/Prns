@@ -16,7 +16,7 @@ mod tokio_bind;
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
     AttachedInterface, AttachedSupervisor, Fleet, InterfaceSupervisor, Prns, PrnsHandle,
-    ResourceSendError,
+    ResourceReceiveError, ResourceReceipt, ResourceSendError,
 };
 
 #[cfg(feature = "tokio-host")]

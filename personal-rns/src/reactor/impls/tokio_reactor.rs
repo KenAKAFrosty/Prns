@@ -448,6 +448,15 @@ pub enum HostCommand {
         sink: UnboundedSender<StreamInbound>,
         ready: oneshot::Sender<()>,
     },
+    /// Register a sink for the next inbound resource on this link: the run loop routes the resource's
+    /// chunks — a whole single-segment resource or each concluded multi-segment chunk — to it and
+    /// signals completion, suppressing them from the app event stream. `ready` fires once the sink is
+    /// registered, so a segment arriving the instant after cannot slip past to the app.
+    RegisterResourceSink {
+        link_id: LinkId,
+        sink: UnboundedSender<ResourceInbound>,
+        ready: oneshot::Sender<()>,
+    },
 }
 
 /// One inbound stream chunk handed from the run loop's demux to a `ByteStreamReader`'s sink: the
@@ -456,6 +465,19 @@ pub struct StreamInbound {
     pub payload: std::vec::Vec<u8>,
     pub eof: bool,
     pub compressed: bool,
+}
+
+/// One inbound resource event handed from the run loop to a `receive_resource` future's sink: a chunk
+/// of bytes (a whole single-segment resource, or one concluded segment of a split), the completion
+/// marker carrying the assembled identity and total size, or a failure. Owned, copied out of the
+/// borrowed reaction.
+pub enum ResourceInbound {
+    Chunk(std::vec::Vec<u8>),
+    Complete {
+        original_hash: ResourceHash,
+        total_size: u64,
+    },
+    Failed,
 }
 
 /// The payload of [`HostCommand::AddInterface`]: a runtime-added interface's descriptor and the
@@ -517,6 +539,61 @@ fn route_stream_or_forward<'a>(
         }
     }
     Some(journaled)
+}
+
+/// The resource mirror of [`route_stream_or_forward`]: an inbound resource journal on a link with a
+/// registered `receive_resource` sink is routed to it — a single-segment `ResourceReceived` as a chunk
+/// then a completion, each `ResourceSegmentReceived` as a chunk, `ResourceAssembled` as the completion,
+/// `ResourceFailed` as a failure — and suppressed from the app event stream. The sink is one-shot: it
+/// retires on the resource's completion or failure, leaving the link free to register the next.
+fn route_resource_or_forward<'a>(
+    sinks: &RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>>,
+    journaled: Journaled<'a>,
+) -> Option<Journaled<'a>> {
+    let link = match &journaled {
+        Journaled::ResourceReceived { link_id, .. }
+        | Journaled::ResourceSegmentReceived { link_id, .. }
+        | Journaled::ResourceAssembled { link_id, .. }
+        | Journaled::ResourceFailed { link_id, .. } => *link_id,
+        _ => return Some(journaled),
+    };
+    let sink = match sinks.borrow().get(&link) {
+        Some(sink) => sink.clone(),
+        None => return Some(journaled),
+    };
+    let retire = match &journaled {
+        Journaled::ResourceReceived { hash, data, .. } => {
+            let _ = sink.send(ResourceInbound::Chunk(data.to_vec()));
+            let _ = sink.send(ResourceInbound::Complete {
+                original_hash: *hash,
+                total_size: data.len() as u64,
+            });
+            true
+        }
+        Journaled::ResourceSegmentReceived { data, .. } => {
+            sink.send(ResourceInbound::Chunk(data.to_vec())).is_err()
+        }
+        Journaled::ResourceAssembled {
+            original_hash,
+            total_size,
+            ..
+        } => {
+            let _ = sink.send(ResourceInbound::Complete {
+                original_hash: *original_hash,
+                total_size: *total_size,
+            });
+            true
+        }
+        Journaled::ResourceFailed { .. } => {
+            let _ = sink.send(ResourceInbound::Failed);
+            true
+        }
+        _ => unreachable!("the link only matched a resource journal above"),
+    };
+    if retire {
+        sinks.borrow_mut().remove(&link);
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -694,12 +771,18 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         RefCell::new(HashMap::new());
     let stream_readers: RefCell<HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>> =
         RefCell::new(HashMap::new());
+    let resource_sinks: RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>> =
+        RefCell::new(HashMap::new());
     macro_rules! journaled_sink {
         () => {
             |journaled: Journaled<'_>| {
                 if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
                     if let Some(journaled) = route_stream_or_forward(&stream_readers, journaled) {
-                        on_journaled(journaled);
+                        if let Some(journaled) =
+                            route_resource_or_forward(&resource_sinks, journaled)
+                        {
+                            on_journaled(journaled);
+                        }
                     }
                 }
             }
@@ -893,6 +976,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         stream_readers
                             .borrow_mut()
                             .insert((link_id, stream_id), sink);
+                        let _ = ready.send(());
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::RegisterResourceSink {
+                        link_id,
+                        sink,
+                        ready,
+                    } => {
+                        resource_sinks.borrow_mut().insert(link_id, sink);
                         let _ = ready.send(());
                         WakeSchedules::UNCHANGED
                     }
@@ -1140,6 +1232,110 @@ mod tests {
         assert!(
             forwarded.is_some(),
             "a settlement with no awaiter passes through to on_event"
+        );
+    }
+
+    const RES_LINK: LinkId = LinkId::new([0x44; 16]);
+
+    fn resource_sink_registry() -> (
+        RefCell<HashMap<LinkId, mpsc::UnboundedSender<ResourceInbound>>>,
+        mpsc::UnboundedReceiver<ResourceInbound>,
+    ) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let sinks = RefCell::new(HashMap::new());
+        sinks.borrow_mut().insert(RES_LINK, tx);
+        (sinks, rx)
+    }
+
+    #[test]
+    fn route_resource_routes_a_segment_and_keeps_the_sink() {
+        let (sinks, mut rx) = resource_sink_registry();
+        let forwarded = route_resource_or_forward(
+            &sinks,
+            Journaled::ResourceSegmentReceived {
+                link_id: RES_LINK,
+                original_hash: ResourceHash::new([1; 32]),
+                segment_index: 1,
+                total_segments: 2,
+                data: b"first",
+            },
+        );
+        assert!(
+            forwarded.is_none(),
+            "a routed segment is suppressed from the app event stream"
+        );
+        assert!(matches!(rx.try_recv(), Ok(ResourceInbound::Chunk(c)) if c == b"first"));
+        assert!(
+            sinks.borrow().contains_key(&RES_LINK),
+            "the sink stays for the segments still to come"
+        );
+    }
+
+    #[test]
+    fn route_resource_completes_and_retires_on_assembly() {
+        let (sinks, mut rx) = resource_sink_registry();
+        let forwarded = route_resource_or_forward(
+            &sinks,
+            Journaled::ResourceAssembled {
+                link_id: RES_LINK,
+                original_hash: ResourceHash::new([2; 32]),
+                total_size: 4096,
+            },
+        );
+        assert!(forwarded.is_none());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ResourceInbound::Complete {
+                total_size: 4096,
+                ..
+            })
+        ));
+        assert!(
+            sinks.borrow().is_empty(),
+            "an assembled resource retires its one-shot sink"
+        );
+    }
+
+    #[test]
+    fn route_resource_delivers_a_single_segment_then_retires() {
+        let (sinks, mut rx) = resource_sink_registry();
+        let forwarded = route_resource_or_forward(
+            &sinks,
+            Journaled::ResourceReceived {
+                link_id: RES_LINK,
+                hash: ResourceHash::new([3; 32]),
+                data: b"whole",
+            },
+        );
+        assert!(forwarded.is_none());
+        assert!(matches!(rx.try_recv(), Ok(ResourceInbound::Chunk(c)) if c == b"whole"));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ResourceInbound::Complete { total_size: 5, .. })
+        ));
+        assert!(
+            sinks.borrow().is_empty(),
+            "a single-segment resource completes and retires in one go"
+        );
+    }
+
+    #[test]
+    fn route_resource_passes_through_an_unregistered_link() {
+        let sinks: RefCell<HashMap<LinkId, mpsc::UnboundedSender<ResourceInbound>>> =
+            RefCell::new(HashMap::new());
+        let forwarded = route_resource_or_forward(
+            &sinks,
+            Journaled::ResourceSegmentReceived {
+                link_id: RES_LINK,
+                original_hash: ResourceHash::new([4; 32]),
+                segment_index: 1,
+                total_segments: 2,
+                data: b"x",
+            },
+        );
+        assert!(
+            forwarded.is_some(),
+            "with no sink registered the journal flows on to the app event stream"
         );
     }
 
