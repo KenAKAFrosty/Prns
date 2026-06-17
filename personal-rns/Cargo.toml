@@ -196,3 +196,7 @@ workspace = true
 [[example]]
 name = "scratch_tokio"
 required-features = ["tcp"]
+
+[[example]]
+name = "local_shared_instance"
+required-features = ["local"]

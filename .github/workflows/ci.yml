@@ -156,6 +156,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/no-std-esp-build.sh
 
+  local-interop:
+    # Real-RNS interop: the LocalServer shared instance against a stock RNS client, proving the wire
+    # matches what Sideband/NomadNet/MeshChat actually speak — not just our own framing. uv installs
+    # the pinned reference RNS (rns==1.3.1, the same benchmarks/reference/requirements.txt the parity
+    # work uses) into a throwaway venv, fast and reproducibly; the smoke script stands up the daemon,
+    # drives an RNS.Reticulum client that connects to it, and asserts the announce is heard.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - name: install the reference RNS (rns==1.3.1)
+        run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r benchmarks/reference/requirements.txt
+      - name: real-RNS local shared-instance smoke
+        run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-interop-smoke.sh
+
   deny:
     # License (no copyleft) + RUSTSEC advisories + source policy, from deny.toml.
     runs-on: ubuntu-latest
