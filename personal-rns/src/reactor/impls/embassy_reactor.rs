@@ -641,6 +641,15 @@ fn enqueue_for_wire(
     }
 }
 
+/// Whether `id` owns one of the reactor's standing lanes outright — an exact-id match, not the
+/// kind match a fleet member rides. Only a dedicated-lane owner (USB, TCP, a top-level supervisor's
+/// own announces) earns an announce pacer; a fleet member shares its supervisor's lane and so its
+/// medium's pacing, never its own ~1 KiB queue. This keeps the pacer pool bounded by lane count, not
+/// by member count.
+fn owns_dedicated_lane<C>(lanes: &[(InterfaceId, C)], id: InterfaceId) -> bool {
+    lanes.iter().any(|(lane_id, _)| *lane_id == id)
+}
+
 fn offer_to_pacer(
     pacers: &mut [InterfacePacer],
     target: InterfaceId,
@@ -681,7 +690,9 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 
 /// The runtime's lever to bring one engine interface up or down between cycles. A supervisor sends
 /// `Add` when a peer is confirmed and `Remove` when it drops; the reactor adds or drops the
-/// interface's descriptor and pacer. No lane is allocated: the interface's frames route to its
+/// interface's descriptor (and an announce pacer only when the interface owns a dedicated lane —
+/// a fleet member shares its supervisor's medium and pacing). No lane is allocated: the interface's
+/// frames route to its
 /// medium's standing lane by [`lane_serves`] (a fleet member finds its supervisor's lane by the kind
 /// byte), so a fleet of members shares one lane and `Add`/`Remove` only touch the cheap descriptor
 /// set.
@@ -750,8 +761,9 @@ fn clamp_to_embedded_ceiling(mut config: InterfaceConfig) -> InterfaceConfig {
 /// serves. A supervisor registers a peer by sending [`InterfaceLifecycle::Add`] (its frames route to
 /// the supervisor's lane by kind) and drops it with [`InterfaceLifecycle::Remove`]; on remove the
 /// reactor culls the gone interface's routes exactly as the host runtime does. Lanes bounded by
-/// `LANES`, the descriptor + pacer set by `MAX_IFACES`, alloc-free: the endpoints never move, only
-/// the active config/pacer set changes.
+/// `LANES`, the descriptor set by `MAX_IFACES`, alloc-free: the endpoints never move, only the
+/// active config set changes. Pacers are bounded by `LANES`, not `MAX_IFACES`: one announce queue
+/// per standing medium, never one per fleet member (see [`owns_dedicated_lane`]).
 #[allow(clippy::too_many_arguments)]
 pub async fn run_pooled<
     S,
@@ -781,14 +793,16 @@ pub async fn run_pooled<
 {
     let ifacs: &[InterfaceIfac] = &[];
     let mut configs: HeaplessVec<InterfaceConfig, MAX_IFACES> = HeaplessVec::new();
-    let mut pacers: HeaplessVec<InterfacePacer, MAX_IFACES> = HeaplessVec::new();
+    let mut pacers: HeaplessVec<InterfacePacer, LANES> = HeaplessVec::new();
     for config in initial {
         let config = clamp_to_embedded_ceiling(*config);
         let _ = configs.push(config);
-        let _ = pacers.push(InterfacePacer {
-            id: config.id,
-            pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
-        });
+        if owns_dedicated_lane(inbound, config.id) {
+            let _ = pacers.push(InterfacePacer {
+                id: config.id,
+                pacer: AnnouncePacer::new(config.announce_bandwidth_cap, config.bitrate_bps),
+            });
+        }
     }
     let mut wake_schedules = engine.wake_schedules(&configs);
     loop {
@@ -891,13 +905,15 @@ pub async fn run_pooled<
                     let id = config.id;
                     if configs.iter().all(|existing| existing.id != id) {
                         let _ = configs.push(config);
-                        let _ = pacers.push(InterfacePacer {
-                            id,
-                            pacer: AnnouncePacer::new(
-                                config.announce_bandwidth_cap,
-                                config.bitrate_bps,
-                            ),
-                        });
+                        if owns_dedicated_lane(inbound, id) {
+                            let _ = pacers.push(InterfacePacer {
+                                id,
+                                pacer: AnnouncePacer::new(
+                                    config.announce_bandwidth_cap,
+                                    config.bitrate_bps,
+                                ),
+                            });
+                        }
                         wake_schedules = engine.wake_schedules(&configs);
                     }
                 }

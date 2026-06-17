@@ -110,7 +110,7 @@ const TCP_SOCKET_BUF: usize = 1_024;
 const IFACES: usize = 3;
 /// The WiFi fleet's member budget: how many peers the supervisor carries at once. Each costs only a
 /// descriptor + a status slot, never a lane buffer, so it is sized generously.
-const MEMBERS: usize = 8;
+const MEMBERS: usize = 64;
 /// The engine-interface (descriptor + pacer) pool: the two fixed interfaces (USB, TCP) plus the WiFi
 /// members. Distinct from the lane count `IFACES` — decoupling them is the whole point of the shared
 /// lane, so a generous member budget costs descriptors, not buffers.
