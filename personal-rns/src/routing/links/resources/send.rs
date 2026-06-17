@@ -677,7 +677,7 @@ mod tests {
     }
 
     fn lane() -> InterfaceId {
-        InterfaceId::new([0xEE; 16])
+        InterfaceId::new([0xEE; 8])
     }
 
     fn install_active_link<S: StorageLayout>(engine: &mut EngineState<S>) {

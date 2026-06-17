@@ -422,7 +422,7 @@ mod tests {
     use crate::wire::{DestinationHash, BROADCAST_MTU};
     use std::vec::Vec;
 
-    const LANE: [u8; 16] = [0xEE; 16];
+    const LANE: [u8; 8] = [0xEE; 8];
     const LINK: [u8; 16] = [0x5C; 16];
 
     fn shared() -> X25519SharedSecret {

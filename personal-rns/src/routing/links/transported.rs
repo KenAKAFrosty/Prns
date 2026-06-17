@@ -229,7 +229,7 @@ mod tests {
     type TestTransported = TransportedLinks<FixedTransportedLinkColumns<3>>;
 
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
 
     fn entry(link: u8, validated: bool) -> TransportedLink {

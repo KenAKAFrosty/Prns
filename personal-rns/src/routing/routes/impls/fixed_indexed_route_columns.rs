@@ -36,7 +36,7 @@ impl<const N: usize, const BUCKETS: usize> Default for FixedIndexedRouteColumns<
             hops: [0u8; N],
             learned_at: [InstantMillis(0); N],
             responsiveness: [RouteResponsiveness::Responsive; N],
-            receiving_interface: [InterfaceId::new([0u8; 16]); N],
+            receiving_interface: [InterfaceId::new([0u8; 8]); N],
             next_hop: [NextHop::Direct; N],
             index: LemireIndex::default(),
         }
@@ -125,7 +125,7 @@ mod tests {
         DestinationHash::new([byte; 16])
     }
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {

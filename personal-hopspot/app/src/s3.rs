@@ -74,7 +74,7 @@ use personal_hopspot_ui as screen;
 esp_app_desc!();
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-s3");
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-s3");
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
 /// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil`, the shape LXMF apps parse.
@@ -172,7 +172,7 @@ type S3Node = Prns<
 >;
 const EMPTY_SLOT: FrameSlot<EMBEDDED_MAX_WIRE_FRAME_LEN> = FrameSlot::empty();
 /// The free-slot id a pool slot carries until an interface occupies it (never a real medium id).
-const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 16]);
+const FREE_SLOT: InterfaceId = InterfaceId::new([0xff; 8]);
 
 macro_rules! mk_static {
     ($t:ty, $val:expr) => {{
@@ -187,7 +187,7 @@ static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
 
 /// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
-static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(InterfaceId::new([0u8; 16]));
+static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(InterfaceId::new([0u8; 8]));
 
 /// The reactor's pool: one inbound + one outbound grant ring per slot, split at boot into the
 /// reactor side (core 1's plumbing) and the interface side (core 0's USB seam / fleet wires).

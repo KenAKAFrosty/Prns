@@ -885,7 +885,7 @@ mod tests_support {
     }
 
     pub(crate) fn lane() -> InterfaceId {
-        InterfaceId::new([0xEE; 16])
+        InterfaceId::new([0xEE; 8])
     }
 
     pub(crate) fn engine_with_active_link() -> EngineState<Cap> {

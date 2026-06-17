@@ -135,7 +135,7 @@ mod tests {
         DestinationHash::new([byte; 16])
     }
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
     fn entry(key: u8, received: u8, outbound: u8, expires: u64) -> ReverseRouteEntry {
         ReverseRouteEntry {

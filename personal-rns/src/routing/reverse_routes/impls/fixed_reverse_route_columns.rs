@@ -17,8 +17,8 @@ impl<const MAX_REVERSE_ROUTES: usize> Default for FixedReverseRouteColumns<MAX_R
         Self {
             len: 0,
             proof_destinations: [DestinationHash::new([0u8; 16]); MAX_REVERSE_ROUTES],
-            received_interfaces: [InterfaceId::new([0u8; 16]); MAX_REVERSE_ROUTES],
-            outbound_interfaces: [InterfaceId::new([0u8; 16]); MAX_REVERSE_ROUTES],
+            received_interfaces: [InterfaceId::new([0u8; 8]); MAX_REVERSE_ROUTES],
+            outbound_interfaces: [InterfaceId::new([0u8; 8]); MAX_REVERSE_ROUTES],
             expires_ats: [InstantMillis(0); MAX_REVERSE_ROUTES],
         }
     }

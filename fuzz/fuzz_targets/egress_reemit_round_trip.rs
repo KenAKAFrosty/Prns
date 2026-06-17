@@ -26,8 +26,8 @@ fn decode_hex(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
-fn hash_bytes(data: &[u8], offset: usize, fallback: u8) -> [u8; 16] {
-    let mut bytes = [fallback; personal_rns::wire::TRUNCATED_HASH_BYTE_LEN];
+fn hash_bytes<const N: usize>(data: &[u8], offset: usize, fallback: u8) -> [u8; N] {
+    let mut bytes = [fallback; N];
     for (idx, byte) in bytes.iter_mut().enumerate() {
         if let Some(input) = data.get(offset + idx) {
             *byte = *input;

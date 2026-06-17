@@ -116,13 +116,13 @@ mod tests {
     fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
-        let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
+        let view = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
 
         let arrival = InstantMillis(1_000);
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: arrival,
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -165,7 +165,7 @@ mod tests {
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: arrival,
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut heard,
             },
             TEST_ENTROPY,
@@ -195,7 +195,7 @@ mod tests {
             .ingest_packet(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0u8; 16]),
+                    source_interface: InterfaceId::new([0u8; 8]),
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
@@ -205,7 +205,7 @@ mod tests {
             panic!("the announce is accepted");
         };
 
-        let target = InterfaceId::new([0xAA; 16]);
+        let target = InterfaceId::new([0xAA; 8]);
         state.scheduled_announces.schedule_directed(
             accepted.destination,
             InstantMillis(2_000),
@@ -215,7 +215,7 @@ mod tests {
 
         let view = [
             routable_descriptor(target),
-            routable_descriptor(InterfaceId::new([0xBB; 16])),
+            routable_descriptor(InterfaceId::new([0xBB; 8])),
         ];
         let mut targets = std::vec::Vec::new();
         state.fire_due_scheduled_announces(InstantMillis(2_000), &view, &mut |reaction| {
@@ -239,7 +239,7 @@ mod tests {
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: arrival,
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn a_same_interface_repeat_source_joins_its_own_rebroadcast_fan() {
-        let source = InterfaceId::new([0u8; 16]);
-        let other = InterfaceId::new([0xFE; 16]);
+        let source = InterfaceId::new([0u8; 8]);
+        let other = InterfaceId::new([0xFE; 8]);
         let view = [repeating_descriptor(source), routable_descriptor(other)];
 
         let mut state = transporting_node();
@@ -276,8 +276,8 @@ mod tests {
 
     #[test]
     fn a_cross_interface_only_source_is_left_out_of_its_own_rebroadcast_fan() {
-        let source = InterfaceId::new([0u8; 16]);
-        let other = InterfaceId::new([0xFE; 16]);
+        let source = InterfaceId::new([0u8; 8]);
+        let other = InterfaceId::new([0xFE; 8]);
         let view = [routable_descriptor(source), routable_descriptor(other)];
 
         let mut state = transporting_node();
@@ -288,7 +288,7 @@ mod tests {
     fn our_own_repeat_echoed_back_is_deduplicated() {
         use crate::engine::{AnnounceIngest, IngestPacketOutcome};
 
-        let source = InterfaceId::new([0u8; 16]);
+        let source = InterfaceId::new([0u8; 8]);
         let view = [repeating_descriptor(source)];
         let mut state = transporting_node();
         let fan = rebroadcast_fan_for(&mut state, &view);
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn an_onward_announce_echo_cancels_the_pending_retransmit() {
-        let source = InterfaceId::new([0u8; 16]);
+        let source = InterfaceId::new([0u8; 8]);
         let view = [repeating_descriptor(source)];
         let mut state = transporting_node();
         let fan = rebroadcast_fan_for(&mut state, &view);
@@ -353,8 +353,8 @@ mod tests {
     fn an_interface_that_cannot_transport_never_joins_a_rebroadcast_fan() {
         use crate::interfaces::{EgressCapability, TransportCapability};
 
-        let source = InterfaceId::new([0u8; 16]);
-        let mut leaf = routable_descriptor(InterfaceId::new([0xFE; 16]));
+        let source = InterfaceId::new([0u8; 8]);
+        let mut leaf = routable_descriptor(InterfaceId::new([0xFE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
         let view = [routable_descriptor(source), leaf];
 
@@ -370,7 +370,7 @@ mod tests {
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: arrival,
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -378,7 +378,7 @@ mod tests {
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
-        let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
+        let view = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
         let (tick_out, emitted) = tick_capture(&mut state, InstantMillis(arrival.0 - 1), &view);
         assert_eq!(tick_out.egress_directive_count, 0);
         assert!(emitted.is_empty());
@@ -394,12 +394,12 @@ mod tests {
         let mut left = transporting_node();
         let mut right = transporting_node();
 
-        let view = [routable_descriptor(InterfaceId::new([0xFE; 16]))];
+        let view = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
         for state in [&mut left, &mut right] {
             let _ = state.ingest_packet(
                 InboundPacket {
                     arrived_at: arrival,
-                    source_interface: InterfaceId::new([0u8; 16]),
+                    source_interface: InterfaceId::new([0u8; 8]),
                     bytes: &mut raw,
                 },
                 TEST_ENTROPY,
@@ -436,14 +436,14 @@ mod tests {
 
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
-        let target = InterfaceId::new([0xFE; 16]);
+        let target = InterfaceId::new([0xFE; 8]);
         let view = [routable_descriptor(target)];
 
         let arrival = InstantMillis(1_000);
         let _ = state.ingest_packet(
             InboundPacket {
                 arrived_at: arrival,
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,

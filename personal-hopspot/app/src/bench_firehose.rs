@@ -33,7 +33,7 @@ use personal_rns::routing::ProofStrategy;
 
 use crate::engine_storage::EngineStorageType;
 
-const BENCH_IFACE: InterfaceId = InterfaceId::new(*b"prns-bench-fireh");
+const BENCH_IFACE: InterfaceId = InterfaceId::new(*b"bnch-frh");
 const DURATION_MS: u64 = 5_000;
 const PAYLOAD_LEN: usize = 128;
 const YIELD_EVERY: u64 = 128;

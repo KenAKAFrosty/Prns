@@ -212,7 +212,7 @@ mod tests {
         use crate::interfaces::{InboundPacket, InterfaceId};
         use crate::wire::DestinationHash;
 
-        let source = InterfaceId::new([0u8; 16]);
+        let source = InterfaceId::new([0u8; 8]);
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
         let _ = engine.ingest_packet(
@@ -226,7 +226,7 @@ mod tests {
         );
         assert_eq!(engine.route_count(), 1);
 
-        let without_source = [routable_descriptor(InterfaceId::new([0xEE; 16]))];
+        let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
         let mut journal = std::vec::Vec::new();
         let delta =
             engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |reaction| {
@@ -305,7 +305,7 @@ mod tests {
         use crate::routing::links::transported::TransportedLink;
         use crate::routing::links::LinkId;
 
-        let source = InterfaceId::new([0xA1; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
         let view = [routable_descriptor(source)];
         let mut engine = EngineState::<Cap>::default();
         let mut raw = hx(RAW_ANNOUNCE);
@@ -373,8 +373,8 @@ mod tests {
         use crate::routing::links::LinkId;
         use crate::wire::{DestinationType, WirePacketHeader};
 
-        let received = InterfaceId::new([0xA1; 16]);
-        let away = InterfaceId::new([0xB2; 16]);
+        let received = InterfaceId::new([0xA1; 8]);
+        let away = InterfaceId::new([0xB2; 8]);
         let view = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();
@@ -453,8 +453,8 @@ mod tests {
         use crate::routing::links::transported::TransportedLink;
         use crate::routing::links::LinkId;
 
-        let received = InterfaceId::new([0xA1; 16]);
-        let away = InterfaceId::new([0xB2; 16]);
+        let received = InterfaceId::new([0xA1; 8]);
+        let away = InterfaceId::new([0xB2; 8]);
         let view = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();
@@ -518,8 +518,8 @@ mod tests {
         use crate::routing::links::transported::TransportedLink;
         use crate::routing::links::LinkId;
 
-        let received = InterfaceId::new([0xA1; 16]);
-        let away = InterfaceId::new([0xB2; 16]);
+        let received = InterfaceId::new([0xA1; 8]);
+        let away = InterfaceId::new([0xB2; 8]);
         let view = [routable_descriptor(received), routable_descriptor(away)];
 
         let mut engine = EngineState::<Cap>::default();

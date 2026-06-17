@@ -48,7 +48,7 @@ fuzz_target!(|data: &[u8]| {
         .register_request_handler(&destination, "/fuzz", RequestPolicy::AllowAll)
         .expect("registers the fuzz handler");
 
-    let interfaces = [InterfaceId::new([0xBE; 16]), InterfaceId::new([0xBF; 16])];
+    let interfaces = [InterfaceId::new([0xBE; 8]), InterfaceId::new([0xBF; 8])];
     let view = [
         interface_config(interfaces[0]),
         interface_config(interfaces[1]),

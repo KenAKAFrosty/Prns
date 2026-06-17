@@ -493,7 +493,7 @@ mod channel_tests {
     };
     use std::vec::Vec;
 
-    const LANE: [u8; 16] = [0xEE; 16];
+    const LANE: [u8; 8] = [0xEE; 8];
 
     fn shared() -> crate::crypto::X25519SharedSecret {
         x25519_diffie_hellman(

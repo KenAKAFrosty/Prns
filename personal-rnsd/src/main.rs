@@ -39,7 +39,7 @@ use tokio::sync::mpsc;
 use tokio_serial::SerialPortBuilderExt;
 
 /// Stable id for the daemon's USB-serial interface (opaque to the engine).
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 
 /// The destination this daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.

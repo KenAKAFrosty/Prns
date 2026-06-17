@@ -16,14 +16,14 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, WireContext, WirePacketHeader};
 use std::time::{Duration, Instant};
 
-const WIRE: InterfaceId = InterfaceId::new([0xC7; 16]);
+const WIRE: InterfaceId = InterfaceId::new([0xC7; 8]);
 const NOW: InstantMillis = InstantMillis(1_000);
 const JITTER: JitterSeed = JitterSeed(7);
 pub const PAYLOAD_LEN: usize = 300;
 pub const RESOURCE_PAYLOAD_LEN: usize = 1024 * 1024 - 1;
 
-const IF_UP: InterfaceId = InterfaceId::new([0xA1; 16]);
-const IF_DOWN: InterfaceId = InterfaceId::new([0xD0; 16]);
+const IF_UP: InterfaceId = InterfaceId::new([0xA1; 8]);
+const IF_DOWN: InterfaceId = InterfaceId::new([0xD0; 8]);
 const SETUP_NOW: InstantMillis = InstantMillis(1_000);
 const REBROADCAST_NOW: InstantMillis =
     InstantMillis(1_000 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);

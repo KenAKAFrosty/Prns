@@ -45,7 +45,7 @@ pub struct WifiMemberStatus {
 impl WifiMemberStatus {
     const fn new() -> Self {
         Self {
-            id: CriticalSectionMutex::new(Cell::new(InterfaceId::new([0u8; 16]))),
+            id: CriticalSectionMutex::new(Cell::new(InterfaceId::new([0u8; 8]))),
             connection: AtomicU8::new(ConnectionState::Disconnected.as_u8()),
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
@@ -292,7 +292,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             fleet.take_wire(slot).expect("the fleet lends each wire")
         });
         let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
-        let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 16]); MEMBERS];
+        let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
 
         let token = *self.brain.our_peering_token().as_bytes();
         let mut beacon = Ticker::every(BEACON_INTERVAL);

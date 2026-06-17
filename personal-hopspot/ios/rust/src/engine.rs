@@ -23,7 +23,7 @@ use personal_rns::wire::DestinationHash;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-pub(crate) const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC0; 16]);
+pub(crate) const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xC0; 8]);
 const TCP_LOOPBACK_PORT: u16 = 4242;
 
 const ANNOUNCE_APP_NAME: &str = "lxmf";

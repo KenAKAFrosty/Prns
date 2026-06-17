@@ -48,7 +48,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator + Default> Default
             hops: filled(0u8, N, A::default()),
             learned_at: filled(InstantMillis(0), N, A::default()),
             responsiveness: filled(RouteResponsiveness::Responsive, N, A::default()),
-            receiving_interface: filled(InterfaceId::new([0u8; 16]), N, A::default()),
+            receiving_interface: filled(InterfaceId::new([0u8; 8]), N, A::default()),
             next_hop: filled(NextHop::Direct, N, A::default()),
         }
     }
@@ -143,7 +143,7 @@ mod tests {
     }
 
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
 
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {

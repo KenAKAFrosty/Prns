@@ -46,7 +46,7 @@ use personal_rns::wire::DestinationHash;
 
 esp_app_desc!();
 
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"prsnl-hopspot-c6");
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-c6");
 
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot C6\xc0";
 

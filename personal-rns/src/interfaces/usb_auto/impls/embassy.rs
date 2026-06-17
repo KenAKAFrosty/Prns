@@ -240,7 +240,7 @@ mod tests {
     }
 
     fn device_id() -> InterfaceId {
-        InterfaceId::new([0xD0; 16])
+        InterfaceId::new([0xD0; 8])
     }
 
     /// Read the device->host wire until a decoded frame satisfies `pick`.

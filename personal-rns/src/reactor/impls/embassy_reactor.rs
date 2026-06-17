@@ -644,7 +644,7 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 /// The free-slot id: no real [`InterfaceId::from_reachability_tag`] can produce it (`0xff` is
 /// not a valid `InterfaceKind` discriminant), so a free slot never matches an
 /// inbound source or an egress target.
-const NIL_INTERFACE: InterfaceId = InterfaceId::new([0xff; 16]);
+const NIL_INTERFACE: InterfaceId = InterfaceId::new([0xff; 8]);
 
 /// The runtime's lever to bring one pooled interface up or down between cycles. A supervisor sends
 /// `Add` when a peer is confirmed (the `slot` it already holds the wire halves of) and `Remove` when
@@ -1005,8 +1005,8 @@ mod tests {
 
     #[test]
     fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_the_peer() {
-        let source = InterfaceId::new([0xA1; 16]);
-        let peer = InterfaceId::new([0xB2; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
+        let peer = InterfaceId::new([0xB2; 8]);
         let view = [descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
@@ -1154,7 +1154,7 @@ mod tests {
 
     #[test]
     fn a_pooled_slot_added_at_runtime_carries_inbound_then_frees_on_remove() {
-        let source = InterfaceId::new([0xA1; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
 
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);

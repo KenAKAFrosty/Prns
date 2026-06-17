@@ -54,7 +54,7 @@ use personal_hopspot_ui::{
 };
 
 /// Stable id for this node's USB-auto interface (opaque to the engine).
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 
 /// CDC-ACM nominal baud (USB ignores it, but the port builder wants a value).
 const USB_BAUD: u32 = 115_200;

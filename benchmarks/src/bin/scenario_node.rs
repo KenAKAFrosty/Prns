@@ -46,8 +46,8 @@ use personal_rns::wire::DestinationHash;
 use personal_rns::{interfaces, routes};
 use tokio::sync::mpsc;
 
-const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 16]);
-const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 16]);
+const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 8]);
+const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 8]);
 
 fn fanin_listener_id(index: usize) -> InterfaceId {
     let mut id = [0xC0u8; 16];

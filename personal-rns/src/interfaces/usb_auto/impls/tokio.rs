@@ -408,7 +408,7 @@ mod tests {
     use tokio::sync::mpsc::unbounded_channel;
 
     fn host_id() -> InterfaceId {
-        InterfaceId::new([0xD0; 16])
+        InterfaceId::new([0xD0; 8])
     }
 
     /// Read the device end until a decoded frame satisfies `pick`, returning what it picks.

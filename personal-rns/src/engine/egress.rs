@@ -302,7 +302,7 @@ mod tests {
     }
 
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
 
     // Minted from RNS 1.3.1: a leaf path request for destination [0x22; 16] with

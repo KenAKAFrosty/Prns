@@ -304,7 +304,7 @@ mod tests {
     }
 
     fn arrival() -> crate::interfaces::InterfaceId {
-        crate::interfaces::InterfaceId::new([0xA1; 16])
+        crate::interfaces::InterfaceId::new([0xA1; 8])
     }
 
     fn unratcheted_neighbor_with_a_tracked_send(
@@ -631,7 +631,7 @@ mod tests {
                     context: crate::wire::WireContext::None,
                     plaintext: b"loopback-hello",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: crate::interfaces::InterfaceId::new([0x07; 16]),
+                    source_interface: crate::interfaces::InterfaceId::new([0x07; 8]),
                 }),
                 proof: crate::routing::proof::ProofObligation::None,
             },

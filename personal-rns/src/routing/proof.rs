@@ -306,7 +306,7 @@ mod tests {
         state.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0xEE; 16]),
+                source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -404,7 +404,7 @@ mod tests {
                 LinkKey::derive(&link_id, &shared),
                 crate::units::Rtt(250),
                 BROADCAST_MTU,
-                InterfaceId::new([0xEE; 16]),
+                InterfaceId::new([0xEE; 8]),
                 InstantMillis(1_000),
                 Ed25519PublicKey([0x99; 32]),
             )
@@ -469,7 +469,7 @@ mod tests {
             .activate_responding(
                 &link_id,
                 crate::units::Rtt(250),
-                InterfaceId::new([0xEE; 16]),
+                InterfaceId::new([0xEE; 8]),
                 InstantMillis(1_000),
             )
             .unwrap();

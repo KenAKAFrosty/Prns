@@ -1751,7 +1751,7 @@ mod tests {
     }
 
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
 
     fn header_bytes(packet_type: PacketType) -> [u8; HEADER_MIN_LEN] {
@@ -2773,7 +2773,7 @@ mod tests {
         let first = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(10),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut first_bytes,
             },
             TEST_ENTROPY,
@@ -2783,7 +2783,7 @@ mod tests {
         let second = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(20),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut second_bytes,
             },
             TEST_ENTROPY,
@@ -2813,7 +2813,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"hello-announced",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -2838,7 +2838,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"ratchet-parity",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -2878,7 +2878,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"ratchet-parity",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -2904,7 +2904,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"identity-keyed",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -2933,7 +2933,7 @@ mod tests {
                     context: WireContext::None,
                     payload: b"hello-plain",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -3106,7 +3106,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"hello-single",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -3239,7 +3239,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"for-a",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -3258,7 +3258,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"for-b",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -3322,7 +3322,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"hello-single",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::None,
             },
@@ -3451,7 +3451,7 @@ mod tests {
                     context: WireContext::None,
                     plaintext: b"prove-me",
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0x07; 16]),
+                    source_interface: InterfaceId::new([0x07; 8]),
                 }),
                 proof: ProofObligation::Owed(ProofOwed {
                     packet_hash,
@@ -3516,7 +3516,7 @@ mod tests {
             state.ingest_packet(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
-                    source_interface: InterfaceId::new([0xA1; 16]),
+                    source_interface: InterfaceId::new([0xA1; 8]),
                     bytes: &mut relayed,
                 },
                 TEST_ENTROPY,
@@ -3534,13 +3534,13 @@ mod tests {
 
         let mut raw = hx(RAW_ANNOUNCE);
         let mut state = transporting_node();
-        let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 16]));
+        let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
 
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -3568,7 +3568,7 @@ mod tests {
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
-                source_interface: InterfaceId::new([0xB2; 16]),
+                source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
@@ -3579,7 +3579,7 @@ mod tests {
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0xA1; 16]),
+                source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
@@ -3589,7 +3589,7 @@ mod tests {
         let IngestPacketOutcome::Forward(forward) = out else {
             panic!("a transport-addressed packet with a one-hop route forwards, got {out:?}");
         };
-        assert_eq!(forward.fire_on, InterfaceId::new([0xB2; 16]));
+        assert_eq!(forward.fire_on, InterfaceId::new([0xB2; 8]));
         let mut wire = [0u8; BROADCAST_MTU];
         let n = forward.to_wire(&mut wire).unwrap();
         let mut expected = hx(RAW_SEALED_TO_RATCHET);
@@ -3604,7 +3604,7 @@ mod tests {
         let again = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
-                source_interface: InterfaceId::new([0xA1; 16]),
+                source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut replay,
             },
             TEST_ENTROPY,
@@ -3638,7 +3638,7 @@ mod tests {
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
-                source_interface: InterfaceId::new([0xB2; 16]),
+                source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
             TEST_ENTROPY,
@@ -3649,7 +3649,7 @@ mod tests {
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0xA1; 16]),
+                source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
@@ -3678,7 +3678,7 @@ mod tests {
         let _ = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(500),
-                source_interface: InterfaceId::new([0xB2; 16]),
+                source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
             TEST_ENTROPY,
@@ -3688,7 +3688,7 @@ mod tests {
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0xA1; 16]),
+                source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
             TEST_ENTROPY,
@@ -3727,7 +3727,7 @@ mod tests {
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
-                source_interface: InterfaceId::new([0xB2; 16]),
+                source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut right_lane[..proof_len],
             },
             TEST_ENTROPY,
@@ -3738,7 +3738,7 @@ mod tests {
         };
         assert_eq!(
             returned.fire_on,
-            InterfaceId::new([0xA1; 16]),
+            InterfaceId::new([0xA1; 8]),
             "the proof leaves on the interface the data packet arrived from",
         );
         let mut wire = [0u8; BROADCAST_MTU];
@@ -3751,7 +3751,7 @@ mod tests {
         let out = relay.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(3_000),
-                source_interface: InterfaceId::new([0xB2; 16]),
+                source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut wrong_lane[..proof_len],
             },
             TEST_ENTROPY,
@@ -3772,7 +3772,7 @@ mod tests {
         let first = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -3784,7 +3784,7 @@ mod tests {
         let second = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -3805,7 +3805,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut at_limit,
             },
             TEST_ENTROPY,
@@ -3819,7 +3819,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut beyond,
             },
             TEST_ENTROPY,
@@ -3841,7 +3841,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -3867,7 +3867,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -3912,7 +3912,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
             TEST_ENTROPY,
@@ -3934,7 +3934,7 @@ mod tests {
         let _ = fresh.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut direct,
             },
             TEST_ENTROPY,
@@ -3956,7 +3956,7 @@ mod tests {
         let mut state: EngineState<Cap> = EngineState::<Cap>::default();
         let junk = InboundPacket {
             arrived_at: InstantMillis(1),
-            source_interface: InterfaceId::new([0u8; 16]),
+            source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
         };
         let out = state.ingest_packet(junk, TEST_ENTROPY, &transporting_view());
@@ -3972,7 +3972,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
@@ -3992,7 +3992,7 @@ mod tests {
         let out = state.ingest_packet(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 16]),
+                source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
             TEST_ENTROPY,

@@ -138,7 +138,7 @@ pub(crate) fn ratcheted_personal_node_announcer() -> EngineState<Cap> {
 pub(crate) fn plain_data_packet(bytes: &mut [u8]) -> InboundPacket<'_> {
     InboundPacket {
         arrived_at: InstantMillis(1_000),
-        source_interface: InterfaceId::new([0x07; 16]),
+        source_interface: InterfaceId::new([0x07; 8]),
         bytes,
     }
 }
@@ -246,7 +246,7 @@ pub(crate) fn repeating_descriptor(id: InterfaceId) -> InterfaceConfig {
 }
 
 pub(crate) fn transporting_view() -> [InterfaceConfig; 1] {
-    [routable_descriptor(InterfaceId::new([0xEE; 16]))]
+    [routable_descriptor(InterfaceId::new([0xEE; 8]))]
 }
 
 pub(crate) const RATCHETED_ANNOUNCE_RNS_WIRE: &str = "2100c3cfae69b36bb6e3bbfd96a3b5867a5900\

@@ -354,7 +354,7 @@ mod tests {
     }
 
     fn arrival() -> InterfaceId {
-        InterfaceId::new([0xA1; 16])
+        InterfaceId::new([0xA1; 8])
     }
 
     fn arrival_view() -> [InterfaceConfig; 1] {
@@ -1601,7 +1601,7 @@ mod tests {
         use crate::routing::delivery::Delivery;
 
         let iface_to_a = arrival();
-        let iface_to_b = InterfaceId::new([0xB7; 16]);
+        let iface_to_b = InterfaceId::new([0xB7; 8]);
         let relay_view = [
             routable_descriptor(iface_to_a),
             routable_descriptor(iface_to_b),

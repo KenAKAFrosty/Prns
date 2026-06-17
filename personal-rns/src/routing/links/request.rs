@@ -560,7 +560,7 @@ mod tests {
                 key,
                 crate::units::Rtt(100),
                 mtu,
-                InterfaceId::new([0xEE; 16]),
+                InterfaceId::new([0xEE; 8]),
                 InstantMillis(1_000),
                 Ed25519PublicKey([0x5A; 32]),
             )

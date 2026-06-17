@@ -1148,7 +1148,7 @@ mod tests {
     #[test]
     fn airtime_reads_none_until_published_then_round_trips() {
         let status =
-            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 16]), ConnectionState::Initializing);
+            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
         assert_eq!(status.airtime(), None);
 
         status.set_airtime(AirtimeUtilization {
@@ -1166,7 +1166,7 @@ mod tests {
 
     #[test]
     fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
-        let id = InterfaceId::new([0x5a; 16]);
+        let id = InterfaceId::new([0x5a; 8]);
         let mut pacers = std::vec![InterfacePacer {
             id,
             pacer: AnnouncePacer::<HeapPacerQueue>::new(
@@ -1294,8 +1294,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_the_peer() {
-        let source = InterfaceId::new([0xA1; 16]);
-        let peer = InterfaceId::new([0xB2; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
+        let peer = InterfaceId::new([0xB2; 8]);
         let view = std::vec![descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
@@ -1415,8 +1415,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_capped_link_holds_a_rebroadcast_burst_then_drains_it_over_time() {
-        let source = InterfaceId::new([0xA1; 16]);
-        let peer = InterfaceId::new([0xB2; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
+        let peer = InterfaceId::new([0xB2; 8]);
         let slow_peer = InterfaceConfig {
             bitrate_bps: Some(1_000),
             announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
@@ -1509,8 +1509,8 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn the_reactor_re_emits_a_rebroadcast_once_more_then_retires_it() {
-        let source = InterfaceId::new([0xA1; 16]);
-        let peer = InterfaceId::new([0xB2; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
+        let peer = InterfaceId::new([0xB2; 8]);
         let view = std::vec![descriptor(source), descriptor(peer)];
 
         let mut engine = EngineState::<Cap>::default();
@@ -1662,7 +1662,7 @@ mod tests {
         expected_proof.extend_from_slice(&identity.sign(packet_hash.as_bytes()).0);
         assert_eq!(expected_proof.len(), IMPLICIT_PROOF_WIRE_LEN);
 
-        let source = InterfaceId::new([0xA1; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
         let view = std::vec![descriptor(source)];
 
         let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -1733,8 +1733,8 @@ mod tests {
         use crate::interfaces::ifac::IfacContext;
         use crate::wire::DestinationHash;
 
-        let source = InterfaceId::new([0xA1; 16]);
-        let peer = InterfaceId::new([0xB2; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
+        let peer = InterfaceId::new([0xB2; 8]);
         let view = std::vec![descriptor(source), descriptor(peer)];
         let mut engine = EngineState::<Cap>::default();
         engine.set_transport_id(TEST_TRANSPORT_ID);
@@ -1862,7 +1862,7 @@ mod tests {
         use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
         use crate::wire::DestinationHash;
 
-        let source = InterfaceId::new([0xA1; 16]);
+        let source = InterfaceId::new([0xA1; 8]);
         let view = std::vec![descriptor(source)];
         let engine = EngineState::<Cap>::default();
 
@@ -1990,8 +1990,8 @@ mod tests {
             )
             .expect("registers the single destination");
 
-        let first = InterfaceId::new([0xA1; 16]);
-        let second = InterfaceId::new([0xB2; 16]);
+        let first = InterfaceId::new([0xA1; 8]);
+        let second = InterfaceId::new([0xB2; 8]);
         let view = std::vec![descriptor(first), descriptor(second)];
 
         let (_notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
@@ -2073,8 +2073,8 @@ mod tests {
         use crate::routing::links::LinkId;
         use crate::routing::upstream_app_destinations::ProofStrategy;
 
-        let initiator_iface = InterfaceId::new([0xA1; 16]);
-        let responder_iface = InterfaceId::new([0xB2; 16]);
+        let initiator_iface = InterfaceId::new([0xA1; 8]);
+        let responder_iface = InterfaceId::new([0xB2; 8]);
 
         let (a_to_b_tx, a_to_b_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (b_to_a_tx, b_to_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();

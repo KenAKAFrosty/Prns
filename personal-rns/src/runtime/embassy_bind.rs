@@ -819,7 +819,7 @@ mod tests {
         let (in_producer, in_consumer) = leaked_grant_lane::<SLOT>(4);
         let (out_producer, out_consumer) = leaked_grant_lane::<SLOT>(4);
 
-        let free = InterfaceId::new([0xff; 16]);
+        let free = InterfaceId::new([0xff; 8]);
         let mut inbound: HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, Mtx, SLOT>), 1> =
             HeaplessVec::new();
         let _ = inbound.push((free, in_consumer));

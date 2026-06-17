@@ -24,7 +24,7 @@ use personal_rns::{interfaces, routes};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
 
 /// Stable id for the USB-auto host over the JNI bridge (opaque to the engine).
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 /// The single conduit name the host's scan reports while a USB device is attached.
 const ANDROID_PORT: &str = "android-usb";
 

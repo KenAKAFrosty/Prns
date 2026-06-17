@@ -29,7 +29,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             hops: [0u8; MAX_TRACKED_DESTINATIONS],
             learned_at: [InstantMillis(0); MAX_TRACKED_DESTINATIONS],
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
-            receiving_interface: [InterfaceId::new([0u8; 16]); MAX_TRACKED_DESTINATIONS],
+            receiving_interface: [InterfaceId::new([0u8; 8]); MAX_TRACKED_DESTINATIONS],
             next_hop: [NextHop::Direct; MAX_TRACKED_DESTINATIONS],
         }
     }
@@ -108,7 +108,7 @@ mod tests {
     }
 
     fn iface(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
 
     fn row(
