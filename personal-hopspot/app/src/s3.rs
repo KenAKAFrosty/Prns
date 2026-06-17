@@ -239,6 +239,16 @@ fn seeded_entropy(bytes: &mut [u8]) {
 /// The recipe's event sink — a fn (not a closure) so the node type stays nameable.
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
+/// Print the allocator's per-region high-water footprint over the boot log: the `External` region's
+/// size is the PSRAM the chip mapped (2 MiB vs 8 MiB), its `used` is the live cost of the engine's
+/// boxed columns, the `Internal` region is the 56 KiB SRAM heap, and `Max usage` is the high-water
+/// across both since boot. Safe only before the USB interface claims the USB-serial-JTAG, so it is a
+/// construction-time probe, never a run-loop one.
+fn log_heap_footprint(label: &str) {
+    println!("[mem] {label}");
+    println!("{}", esp_alloc::HEAP.stats());
+}
+
 /// Platform bring-up on core 0, where the heavy lifting lives: the OLED, the identity crypto, the
 /// whole engine *construction* (its dalek-heavy transient wants the guarded main-task stack), and
 /// all the I/O (USB-auto + WiFi-auto). The built node then rides to core 1, which runs only the
@@ -382,6 +392,8 @@ pub async fn run(spawner: Spawner) {
     if wifi.is_some() {
         node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
     }
+
+    log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(
