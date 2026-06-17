@@ -20,6 +20,12 @@ pub const DEFAULT_LOCAL_PORT: u16 = 37428;
 /// the bottleneck, so 1 Gbps, the wired-LAN tier.
 pub const LOCAL_BITRATE_BPS: u32 = 1_000_000_000;
 
+/// RNS's default `local_socket_path` on Linux (`Reticulum.__init__`: it becomes `"default"` whenever
+/// AF_UNIX is in use and no path is configured). The abstract socket the daemon binds is then
+/// `\0rns/default`, which a default-config Linux app connects to in preference to TCP — so binding it
+/// is what lets an unconfigured Sideband/NomadNet find the daemon on Linux.
+pub const DEFAULT_SOCKET_PATH: &str = "default";
+
 /// The most a local interface carries per wire packet — the engine's ceiling, same as TCP.
 pub const HW_MTU_CAP: usize = MAX_LINK_MTU;
 /// Capacity, not a claim: the largest IFAC'd frame the engine can emit or accept, so the serve
