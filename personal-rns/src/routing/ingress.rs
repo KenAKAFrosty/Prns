@@ -398,6 +398,15 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
+    /// RNS 1.3.1 `Link.receive` (Link.py:975): a packet for an active link arrived on an
+    /// interface other than the one the link is attached to. The reference treats this as a
+    /// possible manipulation attempt — the packet is dropped, never processed; we surface the
+    /// mismatch rather than swallowing it silently.
+    LinkInterfaceMismatch {
+        link_id: LinkId,
+        attached_interface: InterfaceId,
+        arrived_on: InterfaceId,
+    },
     Ignored,
 }
 
@@ -597,6 +606,18 @@ impl<S: StorageLayout> EngineState<S> {
                                 payload: data.payload,
                                 fire_on: switch.fire_on,
                             });
+                        }
+                    }
+                    if let Some(LinkPhase::Active {
+                        attached_interface, ..
+                    }) = self.links.phase_for(&link_id)
+                    {
+                        if *attached_interface != source_interface {
+                            return IngestPacketOutcome::LinkInterfaceMismatch {
+                                link_id,
+                                attached_interface: *attached_interface,
+                                arrived_on: source_interface,
+                            };
                         }
                     }
                     return match data.context {

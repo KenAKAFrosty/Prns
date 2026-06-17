@@ -1012,11 +1012,21 @@ mod tests_support {
         pub(crate) failed: std::vec::Vec<ResourceHash>,
         pub(crate) segments: std::vec::Vec<(ResourceHash, u64, std::vec::Vec<u8>)>,
         pub(crate) assembled: std::vec::Vec<(ResourceHash, u64)>,
+        pub(crate) mismatched: std::vec::Vec<(InterfaceId, InterfaceId)>,
     }
 
     pub(crate) fn feed<S: StorageLayout>(
         engine: &mut EngineState<S>,
         frame: &[u8],
+        at: u64,
+    ) -> InboundCapture {
+        feed_on(engine, frame, lane(), at)
+    }
+
+    pub(crate) fn feed_on<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        frame: &[u8],
+        source_interface: InterfaceId,
         at: u64,
     ) -> InboundCapture {
         let mut capture = InboundCapture {
@@ -1026,16 +1036,17 @@ mod tests_support {
             failed: std::vec::Vec::new(),
             segments: std::vec::Vec::new(),
             assembled: std::vec::Vec::new(),
+            mismatched: std::vec::Vec::new(),
         };
         let mut raw = frame.to_vec();
         engine.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(at),
-                source_interface: lane(),
+                source_interface,
                 bytes: &mut raw,
             },
             TEST_ENTROPY,
-            &[routable_descriptor(lane())],
+            &[routable_descriptor(source_interface)],
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             &mut |_: &crate::engine::ProofRequest| false,
@@ -1070,6 +1081,13 @@ mod tests_support {
                     ..
                 }) => {
                     capture.assembled.push((original_hash, total_size));
+                }
+                EngineReaction::Journaled(Journaled::LinkInterfaceMismatch {
+                    attached_interface,
+                    arrived_on,
+                    ..
+                }) => {
+                    capture.mismatched.push((attached_interface, arrived_on));
                 }
                 _ => {}
             },
@@ -1357,6 +1375,7 @@ mod loop_tests {
     use super::*;
     use crate::engine::commands::Settlement;
     use crate::engine::test_support::filled_frame;
+    use crate::interfaces::InterfaceId;
     use crate::routing::links::data::write_link_packet;
     use crate::routing::links::resources::advertisement::write_hashmap_update_plaintext;
     use crate::routing::links::resources::advertisement::ResourceAdvertisement;
@@ -1775,6 +1794,39 @@ mod loop_tests {
         );
         assert_eq!(state.segment_index, 2);
         assert_eq!(state.total_segments, 2);
+    }
+
+    #[test]
+    fn a_link_packet_on_a_foreign_interface_is_dropped_and_surfaced() {
+        let foreign = InterfaceId::new([0x11; 8]);
+        let advertisement = advertisement_frame(&four_part_payload(), None);
+
+        // Control: on the link's own interface the advertisement is accepted and earns a pull.
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let accepted = feed(&mut receiver, &advertisement, 2_000);
+        assert!(accepted.mismatched.is_empty());
+        assert_eq!(
+            accepted.frames.len(),
+            1,
+            "the link's own interface earns the first pull"
+        );
+        assert!(!receiver.incoming_resources.is_empty());
+
+        // The same advertisement on a foreign interface is dropped unprocessed and surfaced as a
+        // mismatch — RNS 1.3.1 Link.py:975, a possible manipulation attempt.
+        let mut guarded = engine_with_active_link();
+        accept_everything(&mut guarded);
+        let blocked = feed_on(&mut guarded, &advertisement, foreign, 2_000);
+        assert_eq!(blocked.mismatched, std::vec![(lane(), foreign)]);
+        assert!(
+            blocked.frames.is_empty(),
+            "no pull leaves for a foreign-interface packet",
+        );
+        assert!(
+            guarded.incoming_resources.is_empty(),
+            "and the transfer is never opened",
+        );
     }
 
     #[test]
@@ -2555,6 +2607,7 @@ mod dynamics_tests {
                 failed: std::vec::Vec::new(),
                 segments: std::vec::Vec::new(),
                 assembled: std::vec::Vec::new(),
+                mismatched: std::vec::Vec::new(),
             };
             for (_, part) in &serve.frames {
                 let capture = feed(&mut receiver, part, now);

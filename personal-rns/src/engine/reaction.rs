@@ -70,6 +70,14 @@ pub enum Journaled<'a> {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
+    /// RNS 1.3.1 `Link.receive` (Link.py:975): a packet for an active link arrived on an interface
+    /// other than the one the link is attached to — dropped unprocessed, as a possible manipulation
+    /// attempt, and surfaced here so the foreign-interface signal is observable rather than silent.
+    LinkInterfaceMismatch {
+        link_id: LinkId,
+        attached_interface: InterfaceId,
+        arrived_on: InterfaceId,
+    },
     /// RNS 1.3.1's  `resource_concluded` callback as data.
     /// The bytes are borrowed from the register and gone after this reaction returns.
     ResourceReceived {

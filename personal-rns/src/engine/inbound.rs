@@ -460,6 +460,19 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
             }
+            IngestPacketOutcome::LinkInterfaceMismatch {
+                link_id,
+                attached_interface,
+                arrived_on,
+            } => {
+                sink(EngineReaction::Journaled(
+                    Journaled::LinkInterfaceMismatch {
+                        link_id,
+                        attached_interface,
+                        arrived_on,
+                    },
+                ));
+            }
             IngestPacketOutcome::Ignored => {}
         }
         wake_schedule_changes

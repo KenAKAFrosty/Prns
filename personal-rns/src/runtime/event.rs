@@ -89,6 +89,14 @@ pub enum Diagnostic {
         link_id: LinkId,
         reason: LinkClosedReason,
     },
+    /// A packet for this active link arrived on `arrived_on`, not the `attached_interface` the link
+    /// runs over — dropped unprocessed (RNS 1.3.1 `Link.receive`), surfaced as a possible attempt to
+    /// inject into the link from a foreign interface.
+    LinkInterfaceMismatch {
+        link_id: LinkId,
+        attached_interface: InterfaceId,
+        arrived_on: InterfaceId,
+    },
     ResourceFailed {
         link_id: LinkId,
         hash: ResourceHash,
@@ -195,6 +203,15 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::PeerIdentified { link_id, identity } => {
                 PrnsEvent::Diagnostic(Diagnostic::PeerIdentified { link_id, identity })
             }
+            Journaled::LinkInterfaceMismatch {
+                link_id,
+                attached_interface,
+                arrived_on,
+            } => PrnsEvent::Diagnostic(Diagnostic::LinkInterfaceMismatch {
+                link_id,
+                attached_interface,
+                arrived_on,
+            }),
             Journaled::LinkClosed { link_id, reason } => {
                 PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason })
             }
