@@ -31,9 +31,15 @@ use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::storage::StorageLayout;
 
-const MAX_TRACKED_DESTINATIONS: usize = 64;
+const MAX_TRACKED_DESTINATIONS: usize = 2048;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 8;
-const MAX_CONCURRENT_LINKS: usize = 4;
+const MAX_CONCURRENT_LINKS: usize = 16;
+/// Live channels share a small pool of reorder buffers, sized independently of `MAX_CONCURRENT_LINKS`
+/// because a channel's ~94 KiB window is the priciest column on the board and most links never open
+/// one. The pool is keyed by link id with graceful `TableFull` on open, so a link without a live
+/// channel costs no window. A coming refactor pools the window *slots* rather than whole channels, so
+/// concurrency stops being a fixed count; this const is the interim cap.
+const MAX_CONCURRENT_CHANNELS: usize = 4;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
@@ -86,7 +92,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         A,
     >;
     type Channels = FixedHeapChannelColumns<
-        MAX_CONCURRENT_LINKS,
+        MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,
         CHANNEL_MESSAGE_BYTES,
         A,
