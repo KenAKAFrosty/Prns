@@ -37,6 +37,9 @@ use crate::routing::links::resources::{ResourceHash, MAP_HASH_LEN};
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::transported::{extra_link_proof_timeout_ms, TransportedLink};
 use crate::routing::links::LinkId;
+use crate::routing::path_requests::discovery::{
+    DiscoveryOutcome, DISCOVERY_PATH_REQUEST_TIMEOUT_MS,
+};
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::request_handlers::RequestPathHash;
@@ -253,6 +256,15 @@ pub enum IngestPacketOutcome<'p> {
     /// letting directly reachable peers respond first.
     ScheduledPathResponse {
         destination: DestinationHash,
+    },
+    /// A path request arrived for a destination we neither own nor hold a route to,
+    /// on an interface whose mode discovers unknown paths (RNS `DISCOVER_PATHS_FOR`).
+    /// As a transport node we forward it on the requester's behalf on every other
+    /// transport interface; the asking interface is remembered so the answering
+    /// announce can be steered straight back to it.
+    ForwardPathRequestForDiscovery {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
     },
     /// The initiator of an active link revealed its identity, and the
     /// signature checked out — surfaced to the app, RNS 1.3.1's
@@ -1508,16 +1520,39 @@ impl<S: StorageLayout> EngineState<S> {
             };
         }
 
-        let cached_route = self
-            .transport_id
-            .and(
-                self.routing_table
-                    .forwarding_route_for(&request.destination),
-            )
-            .filter(|route| !request.loops_back_through_requester(route.next_hop));
-        let Some(route) = cached_route else {
-            return IngestPacketOutcome::Ignored;
+        let held_route = self.transport_id.and(
+            self.routing_table
+                .forwarding_route_for(&request.destination),
+        );
+        let Some(route) = held_route else {
+            // No route held: as a transport node on a discover-eligible interface we
+            // forward the request on the stranger's behalf; otherwise we stay silent.
+            if self.transport_id.is_none()
+                || !iface_config(view, source_interface)
+                    .is_some_and(|config| config.mode.discovers_unknown_paths())
+            {
+                return IngestPacketOutcome::Ignored;
+            }
+            let expires_at = InstantMillis(now.0.saturating_add(DISCOVERY_PATH_REQUEST_TIMEOUT_MS));
+            match self.discovery_path_requests.begin(
+                request.destination,
+                source_interface,
+                expires_at,
+            ) {
+                DiscoveryOutcome::AlreadyInFlight => return IngestPacketOutcome::Ignored,
+                DiscoveryOutcome::Opened => {}
+            }
+            return IngestPacketOutcome::ForwardPathRequestForDiscovery {
+                destination: request.destination,
+                id: request.id,
+            };
         };
+
+        // A held route whose next hop is the requester itself is suppressed, not
+        // discovered onward — we already know the way, it just loops back.
+        if request.loops_back_through_requester(route.next_hop) {
+            return IngestPacketOutcome::Ignored;
+        }
 
         if self.routing_table.responsiveness_of(&request.destination)
             == Some(RouteResponsiveness::Unresponsive)
@@ -1682,8 +1717,23 @@ impl<S: StorageLayout> EngineState<S> {
         );
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
+                // An announce that answers a discovery we forwarded on a stranger's
+                // behalf is steered straight back to the interface that asked. A path
+                // response is otherwise terminal at us, so without this the answer the
+                // stranger is waiting for would never reach them.
+                let discovery_answer = self.discovery_path_requests.take(&announce.destination);
                 let rebroadcast = if is_path_response {
-                    RebroadcastDecision::TerminalPathResponse
+                    if let Some(requesting_interface) = discovery_answer {
+                        self.scheduled_announces.schedule_directed(
+                            announce.destination,
+                            arrived_at,
+                            requesting_interface,
+                            received_hops,
+                        );
+                        RebroadcastDecision::Scheduled
+                    } else {
+                        RebroadcastDecision::TerminalPathResponse
+                    }
                 } else if self.transport_id.is_none() {
                     RebroadcastDecision::NotATransportNode
                 } else if !interfaces
@@ -2098,6 +2148,194 @@ mod tests {
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
         (relay, cached)
+    }
+
+    fn discovering_descriptor(id: InterfaceId, mode: InterfaceMode) -> InterfaceConfig {
+        InterfaceConfig {
+            mode,
+            ..routable_descriptor(id)
+        }
+    }
+
+    fn stranger_path_request(id: [u8; 16]) -> std::vec::Vec<u8> {
+        let mut buf = [0u8; BROADCAST_MTU];
+        let n = crate::engine::write_path_request_wire_packet(
+            DestinationHash::new([0x44; 16]),
+            None,
+            &id,
+            &mut buf,
+        )
+        .unwrap();
+        buf[..n].to_vec()
+    }
+
+    #[test]
+    fn a_transport_node_on_a_gateway_interface_forwards_an_unknown_path_request() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let source = iface(0xA1);
+        let mut relay = transporting_node();
+        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::ForwardPathRequestForDiscovery {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+        );
+        // The forward is remembered, so a fresh discovery for the same stranger
+        // cannot be opened while the first is still in flight.
+        assert_eq!(
+            relay
+                .discovery_path_requests
+                .begin(stranger, source, InstantMillis(2_000)),
+            DiscoveryOutcome::AlreadyInFlight
+        );
+    }
+
+    #[test]
+    fn a_second_discovery_for_the_same_stranger_is_not_forwarded_again() {
+        let source = iface(0xA1);
+        let mut relay = transporting_node();
+        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+
+        let mut first = stranger_path_request([0x55; 16]);
+        assert!(matches!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut first,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::ForwardPathRequestForDiscovery { .. },
+        ));
+
+        // A second request carrying a different tag clears the tag-dedup but is
+        // still suppressed by the per-destination discovery already in flight.
+        let mut second = stranger_path_request([0x66; 16]);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_100),
+                    source_interface: source,
+                    bytes: &mut second,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn a_transport_node_does_not_discover_on_a_full_mode_interface() {
+        // DISCOVER_PATHS_FOR is access-point/gateway/roaming only.
+        let source = iface(0xA1);
+        let mut relay = transporting_node();
+        let view = [routable_descriptor(source)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn a_leaf_does_not_discover_even_on_a_gateway_interface() {
+        // Recursive discovery is a transport-node behavior; a leaf stays silent.
+        let source = iface(0xA1);
+        let mut leaf: EngineState<Cap> = EngineState::<Cap>::default();
+        let view = [discovering_descriptor(source, InterfaceMode::AccessPoint)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            leaf.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn an_answering_path_response_is_steered_back_to_the_interface_that_asked() {
+        use crate::engine::{Directive, EngineReaction, PathResponseWriteOutcome};
+
+        // B answers for its own destination with a PATH_RESPONSE announce.
+        let mut b = personal_node_announcer();
+        let local = personal_node_destination();
+        let mut buf = [0u8; BROADCAST_MTU];
+        let PathResponseWriteOutcome::Written { wire_len } = b.write_path_response_announce(
+            &local,
+            InstantMillis(500),
+            TEST_ANNOUNCE_ENTROPY,
+            &mut buf,
+        ) else {
+            panic!("a local destination is answerable");
+        };
+
+        // A forwarded a discovery for `local` on behalf of interface 0xA1.
+        let requester = iface(0xA1);
+        let mut a = transporting_node();
+        assert_eq!(
+            a.discovery_path_requests
+                .begin(local, requester, InstantMillis(60_000)),
+            DiscoveryOutcome::Opened
+        );
+
+        // The answer arrives from elsewhere; A accepts the route.
+        let mut wire = buf[..wire_len].to_vec();
+        assert!(matches!(
+            a.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_200),
+                    source_interface: iface(0xB2),
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &transporting_view(),
+            ),
+            IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
+        ));
+
+        // A steers a directed answer to 0xA1 alone, not the flood fan-out.
+        let view = [
+            routable_descriptor(requester),
+            routable_descriptor(iface(0xB2)),
+        ];
+        let mut targets = std::vec::Vec::new();
+        a.fire_due_scheduled_announces(InstantMillis(1_200), &view, &mut |reaction| {
+            if let EngineReaction::Directive(Directive::SendAnnounce { target, .. }) = reaction {
+                targets.push(target);
+            }
+        });
+        assert_eq!(targets, std::vec![requester]);
     }
 
     fn path_request_wire(destination: DestinationHash) -> std::vec::Vec<u8> {

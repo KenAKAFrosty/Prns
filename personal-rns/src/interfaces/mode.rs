@@ -7,3 +7,16 @@ pub enum InterfaceMode {
     Boundary,
     Gateway,
 }
+
+impl InterfaceMode {
+    /// RNS 1.3.1 `Interface.DISCOVER_PATHS_FOR = [ACCESS_POINT, GATEWAY, ROAMING]`:
+    /// the modes on which a transport node will recursively forward a path request
+    /// for an unknown destination on the requester's behalf. Other modes answer
+    /// only from what they already hold.
+    pub fn discovers_unknown_paths(self) -> bool {
+        matches!(
+            self,
+            InterfaceMode::AccessPoint | InterfaceMode::Gateway | InterfaceMode::Roaming
+        )
+    }
+}
