@@ -54,6 +54,13 @@ pub enum Message<'a> {
         stream: &'a [u8],
         uncompressed_data_len: u64,
     },
+    ResourceSegment {
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        segment_index: u64,
+        total_segments: u64,
+        data: &'a [u8],
+    },
     ChannelMessage {
         link_id: LinkId,
         message_type: MessageType,
@@ -85,6 +92,11 @@ pub enum Diagnostic {
     ResourceFailed {
         link_id: LinkId,
         hash: ResourceHash,
+    },
+    ResourceAssembled {
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        total_size: u64,
     },
     RouteExpired {
         destination: DestinationHash,
@@ -143,6 +155,19 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 stream,
                 uncompressed_data_len,
             }),
+            Journaled::ResourceSegmentReceived {
+                link_id,
+                original_hash,
+                segment_index,
+                total_segments,
+                data,
+            } => PrnsEvent::Message(Message::ResourceSegment {
+                link_id,
+                original_hash,
+                segment_index,
+                total_segments,
+                data,
+            }),
             Journaled::ChannelMessageReceived {
                 link_id,
                 message_type,
@@ -176,6 +201,15 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::ResourceFailed { link_id, hash } => {
                 PrnsEvent::Diagnostic(Diagnostic::ResourceFailed { link_id, hash })
             }
+            Journaled::ResourceAssembled {
+                link_id,
+                original_hash,
+                total_size,
+            } => PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled {
+                link_id,
+                original_hash,
+                total_size,
+            }),
             Journaled::RouteExpired { destination } => {
                 PrnsEvent::Diagnostic(Diagnostic::RouteExpired { destination })
             }

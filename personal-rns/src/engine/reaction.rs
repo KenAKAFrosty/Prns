@@ -94,6 +94,20 @@ pub enum Journaled<'a> {
         stream: &'a [u8],
         uncompressed_data_len: u64,
     },
+    /// One concluded segment of a multi-segment transfer. The bytes are borrowed
+    /// from the register and gone after this reaction returns.
+    ResourceSegmentReceived {
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        segment_index: u64,
+        total_segments: u64,
+        data: &'a [u8],
+    },
+    ResourceAssembled {
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        total_size: u64,
+    },
     RouteExpired {
         destination: DestinationHash,
     },

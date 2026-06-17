@@ -20,6 +20,7 @@ use crate::routing::links::resources::advertisement::{
 use crate::routing::links::resources::assemble_incoming::{
     match_part_in_window, open_transfer, verify_and_prove,
 };
+use crate::routing::links::resources::assembly::{AssemblyProgress, SegmentFit};
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, write_part_request_plaintext, write_proof_plaintext,
     PROOF_PLAINTEXT_LEN,
@@ -60,11 +61,11 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// RNS 1.3.1 `Resource.accept`, behind the strategy gate. Refusals are
     /// silent, like a reference receiver that never accepts: the sender's
-    /// advertisement simply goes unanswered. The deferred shapes — split
-    /// (multi-segment), resource-as-request, metadata — are refused here
-    /// too, named in order in the gate. Advertisements stay behind the
-    /// duplicate filter (only `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are
-    /// exempt in the reference).
+    /// advertisement simply goes unanswered. A split (multi-segment) transfer is
+    /// accepted and assembled across segments; the still-deferred shapes —
+    /// resource-as-request, metadata, and a compressed split — are refused here.
+    /// Advertisements stay behind the duplicate filter (only
+    /// `RESOURCE_REQ`/`RESOURCE`/`RESOURCE_PRF` are exempt in the reference).
     pub(crate) fn classify_resource_advertisement<'p>(
         &mut self,
         data: DataPacket<'p>,
@@ -106,16 +107,32 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         if !advertisement.flags.encrypted
-            || advertisement.flags.split
             || advertisement.flags.is_request
             || advertisement.flags.has_metadata
-            || advertisement.total_segments != 1
             || advertisement.hashmap.is_empty()
+            || advertisement.total_segments == 0
+            || advertisement.segment_index == 0
+            || advertisement.segment_index > advertisement.total_segments
+            || advertisement.flags.split != (advertisement.total_segments > 1)
         {
             return IngestPacketOutcome::Ignored;
         }
         let compression = ResourceCompression::from_wire_flag(advertisement.flags.compressed);
         if compression == ResourceCompression::Bz2 && !accept_compressed {
+            return IngestPacketOutcome::Ignored;
+        }
+        let multi_segment = advertisement.total_segments > 1;
+        if multi_segment && compression == ResourceCompression::Bz2 {
+            return IngestPacketOutcome::Ignored;
+        }
+        if multi_segment
+            && advertisement.segment_index > 1
+            && self.incoming_assemblies.fit(
+                &link_id,
+                &advertisement.original_hash,
+                advertisement.segment_index,
+            ) == SegmentFit::Unexpected
+        {
             return IngestPacketOutcome::Ignored;
         }
         if advertisement.data_size > max_uncompressed_len {
@@ -160,6 +177,13 @@ impl<S: StorageLayout> EngineState<S> {
                 state.window = window;
             }
             state.inherited_eifr = inherited.1;
+        }
+        if multi_segment && advertisement.segment_index == 1 {
+            self.incoming_assemblies.begin(
+                link_id,
+                advertisement.original_hash,
+                advertisement.total_segments,
+            );
         }
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::OwesResourcePull {
@@ -575,29 +599,59 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         }
 
-        let mut delivered = false;
+        let multi_segment = state.total_segments > 1;
+        let original_hash = self
+            .incoming_assemblies
+            .original_hash(link_id)
+            .unwrap_or(*hash);
+        let mut delivered_segment_bytes = None;
         {
             let transfer = self.incoming_resources.sealed_transfer_mut(index);
             if let Ok(plaintext) = open_transfer(key, transfer) {
                 if let Ok(proof) = verify_and_prove(plaintext, &state.salt_nonce, hash) {
                     if let Some(prove) = proof_emission(link_id, hash, &proof, mtu) {
                         emit_proof(prove, fire_on, sink);
-                        sink(EngineReaction::Journaled(Journaled::ResourceReceived {
-                            link_id: *link_id,
-                            hash: *hash,
-                            data: plaintext,
-                        }));
-                        delivered = true;
+                        if multi_segment {
+                            sink(EngineReaction::Journaled(
+                                Journaled::ResourceSegmentReceived {
+                                    link_id: *link_id,
+                                    original_hash,
+                                    segment_index: state.segment_index,
+                                    total_segments: state.total_segments,
+                                    data: plaintext,
+                                },
+                            ));
+                        } else {
+                            sink(EngineReaction::Journaled(Journaled::ResourceReceived {
+                                link_id: *link_id,
+                                hash: *hash,
+                                data: plaintext,
+                            }));
+                        }
+                        delivered_segment_bytes = Some(plaintext.len() as u64);
                     }
                 }
             }
         }
         self.retire_incoming_resource(link_id, hash);
-        if !delivered {
-            sink(EngineReaction::Journaled(Journaled::ResourceFailed {
+        match delivered_segment_bytes {
+            None => sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                 link_id: *link_id,
                 hash: *hash,
-            }));
+            })),
+            Some(segment_bytes) if multi_segment => {
+                if let Some(AssemblyProgress::Complete { total_size }) =
+                    self.incoming_assemblies.advance(link_id, segment_bytes)
+                {
+                    sink(EngineReaction::Journaled(Journaled::ResourceAssembled {
+                        link_id: *link_id,
+                        original_hash,
+                        total_size,
+                    }));
+                    self.incoming_assemblies.clear(link_id);
+                }
+            }
+            Some(_) => {}
         }
     }
 
@@ -1059,6 +1113,71 @@ mod tests {
         );
         assert!(capture.frames.is_empty());
         assert!(receiver.incoming_resources.is_empty());
+    }
+
+    fn crafted_split_advertisement(segment_index: u64, total_segments: u64) -> std::vec::Vec<u8> {
+        use crate::routing::links::resources::advertisement::{
+            ResourceAdvertisement, ResourceFlags,
+        };
+        use crate::routing::links::resources::SaltNonce;
+        use crate::wire::BROADCAST_MTU;
+        let part_count = 4usize;
+        let names = [0xCDu8; 16];
+        let advertisement = ResourceAdvertisement {
+            transfer_size: (part_count * 464) as u64,
+            data_size: 1_000,
+            part_count: part_count as u64,
+            hash: ResourceHash::new([0xAB; 32]),
+            salt_nonce: SaltNonce::new([0x61; 4]),
+            original_hash: ResourceHash::new([0xAB; 32]),
+            segment_index,
+            total_segments,
+            request_id: None,
+            flags: ResourceFlags {
+                encrypted: true,
+                compressed: false,
+                split: total_segments > 1,
+                is_request: false,
+                is_response: false,
+                has_metadata: false,
+            },
+            hashmap: &names,
+        };
+        let mut plaintext = [0u8; 431];
+        let plaintext_len = advertisement.write(&mut plaintext).unwrap();
+        let mut frame = [0u8; BROADCAST_MTU];
+        let wire_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::ResourceAdvertisement,
+            &plaintext[..plaintext_len],
+            &[0xD1; 16],
+            &mut frame,
+        )
+        .unwrap();
+        frame[..wire_len].to_vec()
+    }
+
+    #[test]
+    fn a_split_advertisement_opens_a_chain_keyed_by_original_hash() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        feed(&mut receiver, &crafted_split_advertisement(1, 3), 2_000);
+        assert!(!receiver.incoming_resources.is_empty());
+        assert_eq!(
+            receiver.incoming_assemblies.original_hash(&link_id()),
+            Some(ResourceHash::new([0xAB; 32])),
+        );
+    }
+
+    #[test]
+    fn a_segment_index_past_the_chain_length_is_refused() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        feed(&mut receiver, &crafted_split_advertisement(3, 2), 2_000);
+        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(receiver.incoming_assemblies.original_hash(&link_id()), None);
     }
 
     #[test]

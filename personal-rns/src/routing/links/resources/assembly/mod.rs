@@ -104,3 +104,78 @@ impl<C: IncomingAssemblyColumns> IncomingAssemblies<C> {
             .position(|candidate| candidate == link_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link(byte: u8) -> LinkId {
+        LinkId::new([byte; 16])
+    }
+
+    fn hash(byte: u8) -> ResourceHash {
+        ResourceHash::new([byte; 32])
+    }
+
+    fn table() -> IncomingAssemblies<FixedIncomingAssemblyColumns<4>> {
+        IncomingAssemblies::default()
+    }
+
+    #[test]
+    fn advance_assembles_until_the_last_segment_completes() {
+        let mut assemblies = table();
+        assemblies.begin(link(1), hash(0xA), 3);
+        assert_eq!(
+            assemblies.advance(&link(1), 100),
+            Some(AssemblyProgress::Assembling)
+        );
+        assert_eq!(
+            assemblies.advance(&link(1), 100),
+            Some(AssemblyProgress::Assembling)
+        );
+        assert_eq!(
+            assemblies.advance(&link(1), 50),
+            Some(AssemblyProgress::Complete { total_size: 250 })
+        );
+    }
+
+    #[test]
+    fn fit_expects_the_next_segment_of_the_right_chain() {
+        let mut assemblies = table();
+        assemblies.begin(link(1), hash(0xA), 3);
+        assemblies.advance(&link(1), 100);
+        assert_eq!(
+            assemblies.fit(&link(1), &hash(0xA), 2),
+            SegmentFit::Expected
+        );
+        assert_eq!(
+            assemblies.fit(&link(1), &hash(0xA), 3),
+            SegmentFit::Unexpected
+        );
+        assert_eq!(
+            assemblies.fit(&link(1), &hash(0xB), 2),
+            SegmentFit::Unexpected
+        );
+        assert_eq!(
+            assemblies.fit(&link(2), &hash(0xA), 2),
+            SegmentFit::Unexpected
+        );
+    }
+
+    #[test]
+    fn clear_retires_the_chain() {
+        let mut assemblies = table();
+        assemblies.begin(link(1), hash(0xA), 3);
+        assemblies.clear(&link(1));
+        assert_eq!(assemblies.advance(&link(1), 100), None);
+        assert_eq!(assemblies.original_hash(&link(1)), None);
+    }
+
+    #[test]
+    fn begin_replaces_a_prior_chain_on_the_same_link() {
+        let mut assemblies = table();
+        assemblies.begin(link(1), hash(0xA), 2);
+        assemblies.begin(link(1), hash(0xB), 3);
+        assert_eq!(assemblies.original_hash(&link(1)), Some(hash(0xB)));
+    }
+}
