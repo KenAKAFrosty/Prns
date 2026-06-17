@@ -292,6 +292,22 @@ impl<C: LinkColumns> Links<C> {
         Ok(())
     }
 
+    pub fn links_via(&self, interface: InterfaceId) -> usize {
+        self.columns
+            .phases()
+            .iter()
+            .filter(|phase| {
+                matches!(
+                    phase,
+                    LinkPhase::Active {
+                        attached_interface,
+                        ..
+                    } if *attached_interface == interface
+                )
+            })
+            .count()
+    }
+
     pub fn phase_for(&self, link_id: &LinkId) -> Option<&LinkPhase> {
         let index = self.index_of(link_id)?;
         self.columns.phases().get(index)

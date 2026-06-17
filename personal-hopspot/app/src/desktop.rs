@@ -27,7 +27,7 @@ use embedded_graphics_simulator::{
 use heapless::Vec as HVec;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InterfaceCounts, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -556,6 +556,12 @@ fn run_window(handles: WindowHandles) {
     let tcp_target = tcp_target.as_deref();
     let classify = move |id: InterfaceId| classify(id, wifi_id, tcp_id, tcp_target);
 
+    let query_handle = handle.clone();
+    let query_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the window builds a runtime to drive its per-interface count queries");
+
     let apply_action = move |action: UiAction| match action {
         UiAction::None => {}
         UiAction::Announce => {
@@ -603,7 +609,20 @@ fn run_window(handles: WindowHandles) {
             }
         }
 
-        let cards: HVec<Card, 8> = screen::statuses_to_cards(&statuses, classify);
+        let counts: HashMap<InterfaceId, InterfaceCounts> = query_rt.block_on(async {
+            let mut counts = HashMap::new();
+            for status in &statuses {
+                let id = status.id();
+                let _ = counts.insert(
+                    id,
+                    query_handle.interface_counts(id).await.unwrap_or_default(),
+                );
+            }
+            counts
+        });
+        let cards: HVec<Card, 8> = screen::statuses_to_cards(&statuses, classify, |id| {
+            counts.get(&id).copied().unwrap_or_default()
+        });
         let card_count = cards.len();
         ui_state.sync_card_count(card_count);
         apply_action(dispatch_long_press_if_ready(

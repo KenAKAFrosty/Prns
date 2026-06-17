@@ -7,6 +7,7 @@ pub use screen::{
     CardLabel, InputEvent, Liveness, UiAction, UiState,
 };
 
+use personal_rns::engine::InterfaceCounts;
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
 
 fn liveness(connection: ConnectionState) -> Liveness {
@@ -26,19 +27,26 @@ fn liveness(connection: ConnectionState) -> Liveness {
 /// card capacity.
 ///
 /// The handle carries the facts the interface knows first-hand: its connection — which resolves the
-/// card's [`Liveness`] (Dormant until a link confirms, then Live) — the bytes it has moved, which
-/// fill the Live card, and its live link count (a supervisor reports its peer count here). Rate and
-/// last-activity are derived state the handle does not carry yet, so they report neutral values
-/// until their own sources land.
+/// card's [`Liveness`] (Dormant until a link confirms, then Live) — and the bytes it has moved, which
+/// fill the Live card. `counts` supplies the engine-owned figures the interface itself can't know —
+/// destinations routed via it and live Reticulum links over it — which a face reads through the
+/// runtime's per-interface query. Rate and last-activity are derived state no source carries yet, so
+/// they report neutral values until then.
 pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
     statuses: &[S],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,
+    mut counts: impl FnMut(InterfaceId) -> InterfaceCounts,
 ) -> heapless::Vec<Card, N> {
     let mut cards = heapless::Vec::new();
     for status in statuses {
-        let Some((kind, label)) = classify(status.id()) else {
+        let id = status.id();
+        let Some((kind, label)) = classify(id) else {
             continue;
         };
+        let InterfaceCounts {
+            destinations,
+            links,
+        } = counts(id);
         let _ = cards.push(Card {
             kind,
             label,
@@ -46,8 +54,8 @@ pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
             liveness: liveness(status.connection()),
             tx_bytes: status.tx_bytes(),
             rx_bytes: status.rx_bytes(),
-            links: status.links(),
-            destinations: 0,
+            links,
+            destinations,
             rate_bytes_per_sec: 0,
             last_activity_secs: None,
         });

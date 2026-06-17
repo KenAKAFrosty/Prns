@@ -277,10 +277,6 @@ impl InterfaceStatus for AutoWifiStatus {
     fn tx_bytes(&self) -> u64 {
         self.shared.tx.load(Ordering::Relaxed)
     }
-
-    fn links(&self) -> u32 {
-        self.shared.peers.load(Ordering::Relaxed)
-    }
 }
 
 impl InterfaceSupervisor for AutoWifi {

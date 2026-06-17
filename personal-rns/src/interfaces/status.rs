@@ -37,9 +37,9 @@ pub trait InterfaceStatus {
         None
     }
 
-    /// The number of live links this interface stands for, `0` until a source publishes it. A
-    /// supervisor reports its confirmed-peer count here, so its one aggregate card can show the
-    /// size of the fleet it is running without listing each member.
+    /// The number of live Reticulum links carried over this interface, `0` until a source publishes
+    /// it. A supervisor's aggregate handle leaves this at the default — its members each report their
+    /// own; fleet size is read from the per-member cards, not conflated into a link count.
     fn links(&self) -> u32 {
         0
     }

@@ -43,7 +43,8 @@ use esp_radio::wifi::{
 };
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, InterfaceCounts,
+    RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -459,12 +460,14 @@ pub async fn run(spawner: Spawner) {
             ticks_to_battery -= 1;
 
             let cards = build_cards(
+                &handle,
                 &USB_STATUS,
                 wifi_status.as_ref(),
                 wifi_id,
                 tcp_status,
                 tcp_id,
-            );
+            )
+            .await;
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
             if oled_ok {
@@ -533,7 +536,8 @@ async fn reactor_core(node: &'static mut S3Node) {
 
 /// Build the card set: the USB host, the WiFi aggregate, and one card per confirmed peer —
 /// classified into USB / WiFi / `Peer <hex>`, the same shape the desktop face renders.
-fn build_cards(
+async fn build_cards(
+    handle: &Handle,
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_id: Option<InterfaceId>,
@@ -569,7 +573,17 @@ fn build_cards(
             let _ = statuses.push(member);
         }
     }
-    screen::statuses_to_cards(&statuses, classify)
+    let mut counts: HVec<(InterfaceId, InterfaceCounts), 8> = HVec::new();
+    for status in &statuses {
+        let id = status.id();
+        let _ = counts.push((id, handle.interface_counts(id).await.unwrap_or_default()));
+    }
+    screen::statuses_to_cards(&statuses, classify, |id| {
+        counts
+            .iter()
+            .find(|(cid, _)| *cid == id)
+            .map_or_else(InterfaceCounts::default, |(_, c)| *c)
+    })
 }
 
 /// The board's concrete USB-auto device over the serial-jtag halves, reporting into [`USB_STATUS`].

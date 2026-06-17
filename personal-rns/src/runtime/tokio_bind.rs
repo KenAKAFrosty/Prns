@@ -11,8 +11,8 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, SendSingle, SendSingleFailure, SendSinglePayload,
-    Settlement,
+    EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendSingle, SendSingleFailure,
+    SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
@@ -115,6 +115,19 @@ impl PrnsHandle {
                 .map(|established| established.link_id)
                 .map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    /// One interface's live engine counts (destinations routed via it, links carried over it) — a
+    /// synchronous query the engine settles at once, for a face to read on its render cadence.
+    /// `None` if the node has stopped.
+    pub async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
+        match self
+            .settle(EngineCommand::QueryInterfaceCounts { interface })
+            .await
+        {
+            Some(Settlement::InterfaceCounts(counts)) => Some(counts),
+            Some(_) | None => None,
         }
     }
 

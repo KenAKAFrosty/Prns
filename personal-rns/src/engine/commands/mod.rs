@@ -51,6 +51,7 @@ pub enum EngineCommand {
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
+    QueryInterfaceCounts { interface: InterfaceId },
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -174,6 +175,10 @@ pub enum CommandOutcome {
     CloseLinkRejected {
         id: CommandId,
         error: CloseLinkError,
+    },
+    InterfaceCountsRead {
+        id: CommandId,
+        counts: InterfaceCounts,
     },
 }
 
@@ -437,6 +442,21 @@ pub enum Settlement {
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
     SendChannel(Result<Delivered, SendChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
+    InterfaceCounts(InterfaceCounts),
+}
+
+/// A curated, borrowed-then-copied read of one interface's live engine counts — the diagnostic
+/// figures a face shows per card. Settled synchronously by a [`QueryInterfaceCounts`] command, so
+/// the app reads them across the same thread/core boundary as every other settlement. Kept small and
+/// `Copy`; grow the fields here as a face needs more.
+///
+/// [`QueryInterfaceCounts`]: EngineCommand::QueryInterfaceCounts
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InterfaceCounts {
+    /// Routing-table destinations reachable via this interface.
+    pub destinations: u32,
+    /// Live Reticulum links carried over this interface.
+    pub links: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -603,7 +623,8 @@ impl Settleable for AnnounceNow {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -631,7 +652,8 @@ impl Settleable for SendGroup {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -659,7 +681,8 @@ impl Settleable for SendSingle {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -687,7 +710,8 @@ impl Settleable for RequestPath {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -717,7 +741,8 @@ impl Settleable for EstablishLink {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -745,7 +770,8 @@ impl Settleable for SendLink {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -773,7 +799,8 @@ impl Settleable for Identify {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -833,7 +860,8 @@ impl Settleable for CloseLink {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -861,7 +889,8 @@ impl Settleable for SetResourceStrategy {
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SendChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -889,7 +918,8 @@ impl Settleable for SendChannel {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -917,7 +947,8 @@ impl Settleable for AllowRequester {
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendChannel(_) => None,
+            | Settlement::SendChannel(_)
+            | Settlement::InterfaceCounts(_) => None,
         }
     }
 }
@@ -953,6 +984,19 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
             EngineCommand::AllowRequester(allow) => self.ingest_allow_requester(id, allow),
+            EngineCommand::QueryInterfaceCounts { interface } => {
+                CommandOutcome::InterfaceCountsRead {
+                    id,
+                    counts: self.interface_counts(interface),
+                }
+            }
+        }
+    }
+
+    fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
+        InterfaceCounts {
+            destinations: self.route_count_via(interface) as u32,
+            links: self.links_via(interface) as u32,
         }
     }
 

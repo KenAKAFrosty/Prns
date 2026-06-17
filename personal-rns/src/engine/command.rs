@@ -566,6 +566,12 @@ impl<S: StorageLayout> EngineState<S> {
                     ))),
                 }));
             }
+            CommandOutcome::InterfaceCountsRead { id, counts } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::InterfaceCounts(counts),
+                }));
+            }
         }
         wake_schedule_changes
     }

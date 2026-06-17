@@ -23,8 +23,8 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, IssuedCommand, Respond,
-    RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
+    CloseLink, CommandId, Delivered, EngineCommand, EngineState, InterfaceCounts, IssuedCommand,
+    Journaled, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::impls::embassy_reactor::{
@@ -102,10 +102,9 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 
     /// Hand `settlement` to the slot awaiting `id`, if any, and report whether it fired — the
-    /// runner drops a fired settlement from the event stream. Signals under the lock so a
-    /// concurrent release/claim can't slip the slot out from under the wakeup. The reattachment
-    /// point for the parked runner, so only the tests exercise it for now.
-    #[allow(dead_code)]
+    /// runner drops a fired settlement from the event stream so an awaited command resolves once,
+    /// through its `.await`, not also through `on_event`. Signals under the lock so a concurrent
+    /// release/claim can't slip the slot out from under the wakeup.
     fn settle(&self, id: CommandId, settlement: Settlement) -> bool {
         self.awaited.lock(|cell| {
             let mut awaited = cell.borrow_mut();
@@ -198,6 +197,30 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
         match self.pool.parked(slot).await {
             Settlement::SendSingle(result) => result.map_err(SendError::Failed),
             _ => Err(SendError::NodeStopped),
+        }
+    }
+
+    /// One interface's live engine counts (destinations routed via it, links carried over it) — the
+    /// embedded peer of `PrnsHandle::interface_counts`. Claims a pool slot, parks until the engine
+    /// settles the synchronous query, frees the slot on every exit. `None` if no slot is free or the
+    /// node has stopped.
+    pub async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
+        let id = self.pool.mint();
+        let slot = self.pool.claim(id)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: EngineCommand::QueryInterfaceCounts { interface },
+            })
+            .ok()?;
+        match self.pool.parked(slot).await {
+            Settlement::InterfaceCounts(counts) => Some(counts),
+            _ => None,
         }
     }
 
@@ -487,7 +510,7 @@ where
             notify,
             commands,
             lifecycle,
-            handle: _,
+            handle,
             mut host,
             initial,
             state,
@@ -503,7 +526,14 @@ where
             notify,
             commands,
             lifecycle,
-            |journaled| on_event(PrnsEvent::from(journaled), &state),
+            |journaled| {
+                if let Journaled::CommandSettled { id, settlement } = &journaled {
+                    if handle.pool.settle(*id, *settlement) {
+                        return;
+                    }
+                }
+                on_event(PrnsEvent::from(journaled), &state);
+            },
             |_| false,
         );
         join(reactor, drive).await;
@@ -522,7 +552,7 @@ where
             notify,
             commands,
             lifecycle,
-            handle: _,
+            handle,
             host,
             initial,
             state,
@@ -538,7 +568,14 @@ where
             *notify,
             *commands,
             *lifecycle,
-            |journaled| on_event(PrnsEvent::from(journaled), state),
+            |journaled| {
+                if let Journaled::CommandSettled { id, settlement } = &journaled {
+                    if handle.pool.settle(*id, *settlement) {
+                        return;
+                    }
+                }
+                on_event(PrnsEvent::from(journaled), state);
+            },
             |_| false,
         )
         .await;

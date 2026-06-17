@@ -208,10 +208,6 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
             .map(|member| member.tx.load(Ordering::Relaxed))
             .sum()
     }
-
-    fn links(&self) -> u32 {
-        self.shared.peers.load(Ordering::Relaxed)
-    }
 }
 
 /// The RNS WiFi/LAN `AutoInterface` as an embassy supervisor: the board hands it the WiFi `stack`,

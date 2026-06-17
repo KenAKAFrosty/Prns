@@ -14,12 +14,12 @@ pub use commands::{
     AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CloseLink, CloseLinkError,
     CloseLinkFailure, CommandId, CommandOutcome, Delivered, EngineCommand, EstablishLink,
     EstablishLinkError, EstablishLinkFailure, Identify, IdentifyError, IdentifyFailure,
-    IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath, RequestPathFailure,
-    Respond, RespondData, RespondError, RespondFailure, SendChannel, SendChannelBody,
-    SendChannelError, SendChannelFailure, SendGroup, SendGroupFailure, SendGroupPayload, SendLink,
-    SendLinkError, SendLinkFailure, SendLinkPayload, SendRequest, SendRequestData,
-    SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure, SendSingle,
-    SendSingleError, SendSingleFailure, SendSinglePayload, SetResourceStrategy,
+    InterfaceCounts, IssuedCommand, LinkEstablished, PathFound, PathRequestId, RequestPath,
+    RequestPathFailure, Respond, RespondData, RespondError, RespondFailure, SendChannel,
+    SendChannelBody, SendChannelError, SendChannelFailure, SendGroup, SendGroupFailure,
+    SendGroupPayload, SendLink, SendLinkError, SendLinkFailure, SendLinkPayload, SendRequest,
+    SendRequestData, SendRequestError, SendRequestFailure, SendResourceError, SendResourceFailure,
+    SendSingle, SendSingleError, SendSingleFailure, SendSinglePayload, SetResourceStrategy,
     SetResourceStrategyError, SetResourceStrategyFailure, Settleable, Settlement,
     MAX_SEND_CHANNEL_BODY_LEN, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_LINK_PLAINTEXT_LEN,
     MAX_SEND_SINGLE_PLAINTEXT_LEN, PATH_REQUEST_ID_LEN,
@@ -310,6 +310,10 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn route_count_via(&self, interface: InterfaceId) -> usize {
         self.routing_table.route_count_via(interface)
+    }
+
+    pub fn links_via(&self, interface: InterfaceId) -> usize {
+        self.links.links_via(interface)
     }
 
     pub fn scheduled_announce_count(&self) -> usize {
