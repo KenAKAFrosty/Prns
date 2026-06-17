@@ -1,7 +1,15 @@
-//! The fixed-capacity, heap-backed twin of [`FixedArrayChannelColumns`]: the
-//! bulk per-channel reorder buffers live in a caller-chosen heap region (PSRAM
-//! on the S3) via the allocator `A`, while the tiny channel metadata stays
-//! inline. `SLOTS`/`REORDER_CAP`/`MAX_PAYLOAD` mean the same as the inline twin.
+//! The fixed-capacity, heap-backed twin of [`FixedArrayChannelColumns`]: the per-channel reorder and
+//! outstanding *metadata* stays inline and tight (one row per open channel), while the bulk message
+//! *payloads* live in two shared pools — one for the receive reorder buffer, one for the send
+//! retransmit buffer — in a caller-chosen heap region (PSRAM on the S3) via the allocator `A`.
+//!
+//! `SLOTS` is how many channels may be open at once; `REORDER_CAP` the deepest a single channel's
+//! window may grow; `POOL` the count of payload slots all open channels draw from freeform; and
+//! `MAX_PAYLOAD` one slot's width. Pooling the payloads decouples concurrency (channel count) from
+//! depth (per-channel window): the same `POOL` serves many channels each holding a few in flight, or
+//! a few channels each holding many. A push that finds the pool dry returns the same `Full` outcome a
+//! per-channel cap would, so the window simply cannot elevate until another channel drains a slot —
+//! a local backpressure signal, not a new failure path.
 //!
 //! [`FixedArrayChannelColumns`]: super::FixedArrayChannelColumns
 
@@ -24,25 +32,22 @@ fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A>
     column.into_boxed_slice()
 }
 
-/// `slots` independent reorder buffers, each `ROWS` zeroed `WIDTH`-byte payload rows, built directly
-/// in `A`. The widest thing it ever stages on the caller's stack is one `[0u8; WIDTH]` row template —
-/// never a whole `[[u8; WIDTH]; ROWS]` per-slot block, which at an 8 KiB-class `WIDTH` would be a
-/// stack-resident transient the size of the entire heap column. The per-slot box is the seam that
-/// keeps the no-stack-staging guarantee as `MAX_PAYLOAD` grows.
-fn payload_rows<const ROWS: usize, const WIDTH: usize, A: Allocator + Default>(
-    slots: usize,
-) -> Box<[Box<[[u8; WIDTH]], A>], A> {
-    let mut outer = Vec::with_capacity_in(slots, A::default());
-    for _ in 0..slots {
-        outer.push(filled([0u8; WIDTH], ROWS, A::default()));
+/// A payload pool's free list, seeded with every slot id `0..len`. Allocation pops the top, release
+/// pushes it back; the order slots come out in does not matter. Built directly in `A`. The widest
+/// stack transient is one `[0u8; MAX_PAYLOAD]` row template (in [`filled`]), never a whole pool.
+fn free_list<A: Allocator>(len: usize, alloc: A) -> Box<[u16], A> {
+    let mut column = Vec::with_capacity_in(len, alloc);
+    for slot in 0..len {
+        column.push(slot as u16);
     }
-    outer.into_boxed_slice()
+    column.into_boxed_slice()
 }
 
 pub struct FixedHeapChannelColumns<
     const SLOTS: usize,
     const REORDER_CAP: usize,
     const MAX_PAYLOAD: usize,
+    const POOL: usize,
     A: Allocator = Global,
 > {
     len: usize,
@@ -52,7 +57,10 @@ pub struct FixedHeapChannelColumns<
     sequences: Box<[[ChannelSequence; REORDER_CAP]], A>,
     message_types: Box<[[MessageType; REORDER_CAP]], A>,
     payload_lens: Box<[[usize; REORDER_CAP]], A>,
-    payloads: Box<[Box<[[u8; MAX_PAYLOAD]], A>], A>,
+    payload_slots: Box<[[u16; REORDER_CAP]], A>,
+    payload_pool: Box<[[u8; MAX_PAYLOAD]], A>,
+    payload_free: Box<[u16], A>,
+    payload_free_len: usize,
     next_tx_sequence: [ChannelSequence; SLOTS],
     windows: [ChannelWindow; SLOTS],
     outstanding_count: [usize; SLOTS],
@@ -64,7 +72,10 @@ pub struct FixedHeapChannelColumns<
     outstanding_sequences: Box<[[ChannelSequence; REORDER_CAP]], A>,
     outstanding_message_types: Box<[[MessageType; REORDER_CAP]], A>,
     outstanding_body_lens: Box<[[usize; REORDER_CAP]], A>,
-    outstanding_bodies: Box<[Box<[[u8; MAX_PAYLOAD]], A>], A>,
+    outstanding_body_slots: Box<[[u16; REORDER_CAP]], A>,
+    outstanding_body_pool: Box<[[u8; MAX_PAYLOAD]], A>,
+    outstanding_body_free: Box<[u16], A>,
+    outstanding_body_free_len: usize,
     outstanding_ivs: Box<[[[u8; 16]; REORDER_CAP]], A>,
 }
 
@@ -72,8 +83,9 @@ impl<
         const SLOTS: usize,
         const REORDER_CAP: usize,
         const MAX_PAYLOAD: usize,
+        const POOL: usize,
         A: Allocator + Default,
-    > Default for FixedHeapChannelColumns<SLOTS, REORDER_CAP, MAX_PAYLOAD, A>
+    > Default for FixedHeapChannelColumns<SLOTS, REORDER_CAP, MAX_PAYLOAD, POOL, A>
 {
     fn default() -> Self {
         Self {
@@ -84,7 +96,10 @@ impl<
             sequences: filled([ChannelSequence(0); REORDER_CAP], SLOTS, A::default()),
             message_types: filled([MessageType(0); REORDER_CAP], SLOTS, A::default()),
             payload_lens: filled([0; REORDER_CAP], SLOTS, A::default()),
-            payloads: payload_rows::<REORDER_CAP, MAX_PAYLOAD, A>(SLOTS),
+            payload_slots: filled([0u16; REORDER_CAP], SLOTS, A::default()),
+            payload_pool: filled([0u8; MAX_PAYLOAD], POOL, A::default()),
+            payload_free: free_list(POOL, A::default()),
+            payload_free_len: POOL,
             next_tx_sequence: [ChannelSequence(0); SLOTS],
             windows: [ChannelWindow::default(); SLOTS],
             outstanding_count: [0; SLOTS],
@@ -100,14 +115,22 @@ impl<
             outstanding_sequences: filled([ChannelSequence(0); REORDER_CAP], SLOTS, A::default()),
             outstanding_message_types: filled([MessageType(0); REORDER_CAP], SLOTS, A::default()),
             outstanding_body_lens: filled([0; REORDER_CAP], SLOTS, A::default()),
-            outstanding_bodies: payload_rows::<REORDER_CAP, MAX_PAYLOAD, A>(SLOTS),
+            outstanding_body_slots: filled([0u16; REORDER_CAP], SLOTS, A::default()),
+            outstanding_body_pool: filled([0u8; MAX_PAYLOAD], POOL, A::default()),
+            outstanding_body_free: free_list(POOL, A::default()),
+            outstanding_body_free_len: POOL,
             outstanding_ivs: filled([[0u8; 16]; REORDER_CAP], SLOTS, A::default()),
         }
     }
 }
 
-impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: Allocator>
-    ChannelColumns for FixedHeapChannelColumns<SLOTS, REORDER_CAP, MAX_PAYLOAD, A>
+impl<
+        const SLOTS: usize,
+        const REORDER_CAP: usize,
+        const MAX_PAYLOAD: usize,
+        const POOL: usize,
+        A: Allocator,
+    > ChannelColumns for FixedHeapChannelColumns<SLOTS, REORDER_CAP, MAX_PAYLOAD, POOL, A>
 {
     fn capacity(&self) -> usize {
         SLOTS
@@ -145,6 +168,15 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         let Some(index) = self.index_of(link) else {
             return;
         };
+        for sub in 0..self.buffered_count[index] {
+            self.payload_free[self.payload_free_len] = self.payload_slots[index][sub];
+            self.payload_free_len += 1;
+        }
+        for sub in 0..self.outstanding_count[index] {
+            self.outstanding_body_free[self.outstanding_body_free_len] =
+                self.outstanding_body_slots[index][sub];
+            self.outstanding_body_free_len += 1;
+        }
         let last = self.len - 1;
         self.link_ids.swap(index, last);
         self.next_expected.swap(index, last);
@@ -152,7 +184,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.sequences.swap(index, last);
         self.message_types.swap(index, last);
         self.payload_lens.swap(index, last);
-        self.payloads.swap(index, last);
+        self.payload_slots.swap(index, last);
         self.next_tx_sequence.swap(index, last);
         self.windows.swap(index, last);
         self.outstanding_count.swap(index, last);
@@ -164,7 +196,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.outstanding_sequences.swap(index, last);
         self.outstanding_message_types.swap(index, last);
         self.outstanding_body_lens.swap(index, last);
-        self.outstanding_bodies.swap(index, last);
+        self.outstanding_body_slots.swap(index, last);
         self.outstanding_ivs.swap(index, last);
         self.len = last;
     }
@@ -183,7 +215,8 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.message_types[index][sub]
     }
     fn buffered_payload(&self, index: usize, sub: usize) -> &[u8] {
-        &self.payloads[index][sub][..self.payload_lens[index][sub]]
+        let slot = self.payload_slots[index][sub] as usize;
+        &self.payload_pool[slot][..self.payload_lens[index][sub]]
     }
 
     fn push_buffered(
@@ -194,23 +227,28 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         payload: &[u8],
     ) -> BufferOutcome {
         let count = self.buffered_count[index];
-        if count >= REORDER_CAP || payload.len() > MAX_PAYLOAD {
+        if count >= REORDER_CAP || payload.len() > MAX_PAYLOAD || self.payload_free_len == 0 {
             return BufferOutcome::Full;
         }
+        self.payload_free_len -= 1;
+        let slot = self.payload_free[self.payload_free_len] as usize;
         self.sequences[index][count] = sequence;
         self.message_types[index][count] = message_type;
         self.payload_lens[index][count] = payload.len();
-        self.payloads[index][count][..payload.len()].copy_from_slice(payload);
+        self.payload_pool[slot][..payload.len()].copy_from_slice(payload);
+        self.payload_slots[index][count] = slot as u16;
         self.buffered_count[index] = count + 1;
         BufferOutcome::Stored
     }
 
     fn swap_remove_buffered(&mut self, index: usize, sub: usize) {
         let last = self.buffered_count[index] - 1;
+        self.payload_free[self.payload_free_len] = self.payload_slots[index][sub];
+        self.payload_free_len += 1;
         self.sequences[index].swap(sub, last);
         self.message_types[index].swap(sub, last);
         self.payload_lens[index].swap(sub, last);
-        self.payloads[index].swap(sub, last);
+        self.payload_slots[index].swap(sub, last);
         self.buffered_count[index] = last;
     }
 
@@ -259,7 +297,8 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.outstanding_message_types[index][sub]
     }
     fn outstanding_body(&self, index: usize, sub: usize) -> &[u8] {
-        &self.outstanding_bodies[index][sub][..self.outstanding_body_lens[index][sub]]
+        let slot = self.outstanding_body_slots[index][sub] as usize;
+        &self.outstanding_body_pool[slot][..self.outstanding_body_lens[index][sub]]
     }
     fn outstanding_iv(&self, index: usize, sub: usize) -> [u8; 16] {
         self.outstanding_ivs[index][sub]
@@ -267,9 +306,14 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
 
     fn push_outstanding(&mut self, index: usize, send: OutstandingSend<'_>) -> TxOutcome {
         let count = self.outstanding_count[index];
-        if count >= REORDER_CAP || send.body.len() > MAX_PAYLOAD {
+        if count >= REORDER_CAP
+            || send.body.len() > MAX_PAYLOAD
+            || self.outstanding_body_free_len == 0
+        {
             return TxOutcome::Full;
         }
+        self.outstanding_body_free_len -= 1;
+        let slot = self.outstanding_body_free[self.outstanding_body_free_len] as usize;
         self.outstanding_packet_hashes[index][count] = send.packet_hash;
         self.outstanding_command_ids[index][count] = send.command_id;
         self.outstanding_sent_ats[index][count] = send.sent_at;
@@ -278,7 +322,8 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.outstanding_sequences[index][count] = send.sequence;
         self.outstanding_message_types[index][count] = send.message_type;
         self.outstanding_body_lens[index][count] = send.body.len();
-        self.outstanding_bodies[index][count][..send.body.len()].copy_from_slice(send.body);
+        self.outstanding_body_pool[slot][..send.body.len()].copy_from_slice(send.body);
+        self.outstanding_body_slots[index][count] = slot as u16;
         self.outstanding_ivs[index][count] = send.iv;
         self.outstanding_count[index] = count + 1;
         TxOutcome::Tracked
@@ -286,6 +331,9 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
 
     fn retire_outstanding(&mut self, index: usize, sub: usize) {
         let last = self.outstanding_count[index] - 1;
+        self.outstanding_body_free[self.outstanding_body_free_len] =
+            self.outstanding_body_slots[index][sub];
+        self.outstanding_body_free_len += 1;
         self.outstanding_packet_hashes[index].swap(sub, last);
         self.outstanding_command_ids[index].swap(sub, last);
         self.outstanding_sent_ats[index].swap(sub, last);
@@ -294,7 +342,7 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
         self.outstanding_sequences[index].swap(sub, last);
         self.outstanding_message_types[index].swap(sub, last);
         self.outstanding_body_lens[index].swap(sub, last);
-        self.outstanding_bodies[index].swap(sub, last);
+        self.outstanding_body_slots[index].swap(sub, last);
         self.outstanding_ivs[index].swap(sub, last);
         self.outstanding_count[index] = last;
     }
@@ -304,14 +352,14 @@ impl<const SLOTS: usize, const REORDER_CAP: usize, const MAX_PAYLOAD: usize, A: 
 mod tests {
     use super::*;
 
-    type Columns = FixedHeapChannelColumns<2, 4, 16>;
+    type Columns = FixedHeapChannelColumns<2, 4, 16, 8>;
 
     fn link(byte: u8) -> LinkId {
         LinkId::new([byte; 16])
     }
 
     #[test]
-    fn buffered_entries_round_trip_in_the_boxed_buffer() {
+    fn buffered_entries_round_trip_through_the_pool() {
         let mut columns = Columns::default();
         assert_eq!(columns.capacity(), 2);
         let i = columns.ensure(&link(1)).unwrap();
@@ -331,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn the_table_and_reorder_buffer_enforce_their_caps() {
+    fn the_table_and_per_channel_window_enforce_their_caps() {
         let mut columns = Columns::default();
         let i = columns.ensure(&link(1)).unwrap();
         columns.ensure(&link(2)).unwrap();
@@ -346,6 +394,71 @@ mod tests {
     }
 
     #[test]
+    fn a_payload_follows_its_slot_through_swap_remove() {
+        let mut columns = Columns::default();
+        let i = columns.ensure(&link(1)).unwrap();
+        columns.push_buffered(i, ChannelSequence(10), MessageType(0), b"aa");
+        columns.push_buffered(i, ChannelSequence(11), MessageType(0), b"bb");
+        columns.push_buffered(i, ChannelSequence(12), MessageType(0), b"cc");
+        let middle = columns
+            .buffered_sequences(i)
+            .iter()
+            .position(|s| *s == ChannelSequence(11))
+            .unwrap();
+        columns.swap_remove_buffered(i, middle);
+        assert_eq!(columns.buffered_sequences(i).len(), 2);
+        for (seq, body) in [
+            (ChannelSequence(10), b"aa".as_slice()),
+            (ChannelSequence(12), b"cc".as_slice()),
+        ] {
+            let sub = columns
+                .buffered_sequences(i)
+                .iter()
+                .position(|s| *s == seq)
+                .unwrap();
+            assert_eq!(columns.buffered_payload(i, sub), body);
+        }
+    }
+
+    #[test]
+    fn the_shared_pool_caps_total_buffering_and_reclaims_on_drain() {
+        type Pooled = FixedHeapChannelColumns<4, 4, 16, 3>;
+        let mut columns = Pooled::default();
+        let a = columns.ensure(&link(1)).unwrap();
+        let b = columns.ensure(&link(2)).unwrap();
+        assert_eq!(
+            columns.push_buffered(a, ChannelSequence(0), MessageType(0), b"x"),
+            BufferOutcome::Stored
+        );
+        assert_eq!(
+            columns.push_buffered(a, ChannelSequence(1), MessageType(0), b"y"),
+            BufferOutcome::Stored
+        );
+        assert_eq!(
+            columns.push_buffered(b, ChannelSequence(0), MessageType(0), b"z"),
+            BufferOutcome::Stored
+        );
+        assert_eq!(
+            columns.push_buffered(b, ChannelSequence(1), MessageType(0), b"w"),
+            BufferOutcome::Full
+        );
+        assert_eq!(
+            columns.push_buffered(a, ChannelSequence(2), MessageType(0), b"v"),
+            BufferOutcome::Full
+        );
+        let sub = columns
+            .buffered_sequences(a)
+            .iter()
+            .position(|s| *s == ChannelSequence(0))
+            .unwrap();
+        columns.swap_remove_buffered(a, sub);
+        assert_eq!(
+            columns.push_buffered(b, ChannelSequence(1), MessageType(0), b"w"),
+            BufferOutcome::Stored
+        );
+    }
+
+    #[test]
     fn close_frees_the_slot_and_keeps_the_other_findable() {
         let mut columns = Columns::default();
         columns.ensure(&link(1)).unwrap();
@@ -356,5 +469,25 @@ mod tests {
         let b = columns.index_of(&link(2)).unwrap();
         assert_eq!(columns.next_expected(b), ChannelSequence(42));
         assert_eq!(columns.index_of(&link(1)), None);
+    }
+
+    #[test]
+    fn close_returns_a_channels_payload_slots_to_the_pool() {
+        type Pooled = FixedHeapChannelColumns<2, 4, 16, 2>;
+        let mut columns = Pooled::default();
+        let a = columns.ensure(&link(1)).unwrap();
+        columns.push_buffered(a, ChannelSequence(0), MessageType(0), b"x");
+        columns.push_buffered(a, ChannelSequence(1), MessageType(0), b"y");
+        let b = columns.ensure(&link(2)).unwrap();
+        assert_eq!(
+            columns.push_buffered(b, ChannelSequence(0), MessageType(0), b"z"),
+            BufferOutcome::Full
+        );
+        columns.close(&link(1));
+        let b = columns.index_of(&link(2)).unwrap();
+        assert_eq!(
+            columns.push_buffered(b, ChannelSequence(0), MessageType(0), b"z"),
+            BufferOutcome::Stored
+        );
     }
 }

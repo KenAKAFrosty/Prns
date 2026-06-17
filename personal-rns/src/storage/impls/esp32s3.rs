@@ -34,12 +34,18 @@ use crate::storage::StorageLayout;
 const MAX_TRACKED_DESTINATIONS: usize = 2048;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 8;
 const MAX_CONCURRENT_LINKS: usize = 16;
-/// Live channels share a small pool of reorder buffers, sized independently of `MAX_CONCURRENT_LINKS`
-/// because a channel's ~94 KiB window is the priciest column on the board and most links never open
-/// one. The pool is keyed by link id with graceful `TableFull` on open, so a link without a live
-/// channel costs no window. A coming refactor pools the window *slots* rather than whole channels, so
-/// concurrency stops being a fixed count; this const is the interim cap.
-const MAX_CONCURRENT_CHANNELS: usize = 4;
+/// How many channels may be open at once. Independent of `MAX_CONCURRENT_LINKS` (most links never
+/// open a channel) and now cheap: an open channel costs only its tight per-channel metadata row, not
+/// a window. The bulk payloads live in a shared pool ([`CHANNEL_WINDOW_POOL`]), so this can be
+/// generous without reserving a window per channel.
+const MAX_CONCURRENT_CHANNELS: usize = 16;
+/// The payload slots all open channels draw from freeform, one shared pool for the receive reorder
+/// buffer and one for the send retransmit buffer (each `CHANNEL_WINDOW_POOL` slots of
+/// `CHANNEL_MESSAGE_BYTES`). This is the real memory dial: ~94 KiB per 48 slots. Sized so the total
+/// payload bytes match the old four-private-windows budget while letting any mix of channels use
+/// them — 16 channels a few deep, or a few channels near the full window. A channel that finds the
+/// pool dry simply cannot grow its window until another drains a slot.
+const CHANNEL_WINDOW_POOL: usize = 192;
 const MAX_RESOURCE_TRANSFER_BYTES: usize = 8192;
 const ROUTE_INDEX_BUCKETS: usize = route_index_buckets(MAX_TRACKED_DESTINATIONS);
 const MAX_RESOURCE_PARTS: usize = max_part_count(MAX_RESOURCE_TRANSFER_BYTES);
@@ -95,6 +101,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
         MAX_CONCURRENT_CHANNELS,
         CHANNEL_REORDER_DEPTH,
         CHANNEL_MESSAGE_BYTES,
+        CHANNEL_WINDOW_POOL,
         A,
     >;
 }
