@@ -18,7 +18,7 @@ impl<const MAX_DISCOVERY_PATH_REQUESTS: usize> Default
         Self {
             len: 0,
             destinations: [DestinationHash::new([0u8; 16]); MAX_DISCOVERY_PATH_REQUESTS],
-            requesting_interfaces: [InterfaceId::new([0u8; 16]); MAX_DISCOVERY_PATH_REQUESTS],
+            requesting_interfaces: [InterfaceId::new([0u8; 8]); MAX_DISCOVERY_PATH_REQUESTS],
             expires_ats: [InstantMillis(0); MAX_DISCOVERY_PATH_REQUESTS],
         }
     }

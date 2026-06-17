@@ -115,7 +115,7 @@ mod tests {
     }
 
     fn asker(byte: u8) -> InterfaceId {
-        InterfaceId::new([byte; 16])
+        InterfaceId::new([byte; 8])
     }
 
     fn table() -> DiscoveryPathRequests<FixedDiscoveryPathRequestColumns<4>> {

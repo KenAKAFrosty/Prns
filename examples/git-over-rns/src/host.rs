@@ -17,7 +17,7 @@ use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::runtime::PrnsHandle;
 
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 16]);
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
 const USB_BAUD: u32 = 115_200;
 
 /// Attach both auto-interfaces to a running node: the USB-auto host (which discovers
