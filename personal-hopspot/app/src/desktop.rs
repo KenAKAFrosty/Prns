@@ -31,6 +31,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::local::core as local_core;
+use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -208,6 +210,12 @@ fn run_node(
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
         handle.supervise(wifi);
+
+        handle.supervise(LocalServer::new());
+        println!(
+            "shared instance: local RNS apps (Sideband, NomadNet, MeshChat) can connect on 127.0.0.1:{}",
+            local_core::DEFAULT_LOCAL_PORT
+        );
 
         let (tcp_status, tcp_id, tcp_target) = match std::env::var("HOPSPOT_TCP_TARGET") {
             Ok(target) if !target.is_empty() => {

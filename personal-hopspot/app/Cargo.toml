@@ -31,7 +31,7 @@ heapless = { version = "0.8", default-features = false }
 
 [target.'cfg(not(target_arch = "xtensa"))'.dependencies]
 embedded-graphics-simulator = "0.8.0"
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "wifi-lan-auto", "tcp", "local"] }
 # OS CSPRNG for the node identity (mirrors rnsd's load_identity_secret_key).
 getrandom = "0.2"
 # The async runtime + async USB-serial transport the reactor's USB-auto host rides. serialport
