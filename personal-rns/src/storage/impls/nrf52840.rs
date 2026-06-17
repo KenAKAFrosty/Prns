@@ -10,7 +10,9 @@ use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::links::channel::channel_mdu;
 use crate::routing::links::channel::impls::FixedArrayChannelColumns;
-use crate::routing::links::resources::assembly::FixedIncomingAssemblyColumns;
+use crate::routing::links::resources::assembly::{
+    FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
+};
 use crate::routing::links::resources::max_part_count;
 use crate::routing::links::resources::table::{
     FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
@@ -74,6 +76,7 @@ impl StorageLayout for Nrf52840 {
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
     type IncomingAssemblies = FixedIncomingAssemblyColumns<{ Self::LINKS }>;
+    type OutgoingAssemblies = FixedOutgoingAssemblyColumns<{ Self::LINKS }>;
     type Channels = FixedArrayChannelColumns<
         { Self::LINKS },
         { Self::CHANNEL_REORDER_DEPTH },

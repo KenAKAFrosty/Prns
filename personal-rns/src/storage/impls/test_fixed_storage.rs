@@ -10,7 +10,9 @@ use crate::routing::delivery::receipts::FixedReceiptColumns;
 use crate::routing::group_keys::FixedGroupKeyColumns;
 use crate::routing::links::channel::channel_mdu;
 use crate::routing::links::channel::impls::FixedArrayChannelColumns;
-use crate::routing::links::resources::assembly::FixedIncomingAssemblyColumns;
+use crate::routing::links::resources::assembly::{
+    FixedIncomingAssemblyColumns, FixedOutgoingAssemblyColumns,
+};
 use crate::routing::links::resources::table::{
     FixedResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
@@ -118,6 +120,7 @@ impl<
     type OutgoingResources = FixedResourceColumns<OutgoingResourceState, 1, 4096, 9>;
     type IncomingResources = FixedResourceColumns<IncomingResourceState, 1, 4096, 9>;
     type IncomingAssemblies = FixedIncomingAssemblyColumns<MAX_LINKS>;
+    type OutgoingAssemblies = FixedOutgoingAssemblyColumns<MAX_LINKS>;
     type Channels = FixedArrayChannelColumns<MAX_LINKS, 8, { channel_mdu(8192) }>;
 }
 

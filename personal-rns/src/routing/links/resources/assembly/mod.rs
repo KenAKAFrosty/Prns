@@ -105,6 +105,58 @@ impl<C: IncomingAssemblyColumns> IncomingAssemblies<C> {
     }
 }
 
+pub trait OutgoingAssemblyColumns {
+    fn capacity(&self) -> usize;
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn link_ids(&self) -> &[LinkId];
+    fn original_hashes(&self) -> &[ResourceHash];
+
+    fn push(&mut self, link_id: LinkId, original_hash: ResourceHash);
+    fn swap_remove(&mut self, index: usize);
+}
+
+#[derive(Debug, Default)]
+pub struct OutgoingAssemblies<C: OutgoingAssemblyColumns> {
+    columns: C,
+}
+
+impl<C: OutgoingAssemblyColumns> OutgoingAssemblies<C> {
+    /// Record the `original_hash` the chain's first segment minted, so every later
+    /// segment this node sends can advertise the same one. Any prior chain on the
+    /// link is replaced (one outgoing transfer per link at a time).
+    pub fn begin(&mut self, link_id: LinkId, original_hash: ResourceHash) {
+        if let Some(index) = self.index_of(&link_id) {
+            self.columns.swap_remove(index);
+        }
+        if self.columns.len() < self.columns.capacity() {
+            self.columns.push(link_id, original_hash);
+        }
+    }
+
+    pub fn original_hash(&self, link_id: &LinkId) -> Option<ResourceHash> {
+        self.index_of(link_id)
+            .map(|index| self.columns.original_hashes()[index])
+    }
+
+    pub fn clear(&mut self, link_id: &LinkId) {
+        if let Some(index) = self.index_of(link_id) {
+            self.columns.swap_remove(index);
+        }
+    }
+
+    fn index_of(&self, link_id: &LinkId) -> Option<usize> {
+        self.columns
+            .link_ids()
+            .iter()
+            .position(|candidate| candidate == link_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

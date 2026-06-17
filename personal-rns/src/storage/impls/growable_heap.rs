@@ -9,7 +9,9 @@ use crate::routing::dedup::HeapPacketHashHistory;
 use crate::routing::delivery::receipts::HeapReceiptColumns;
 use crate::routing::group_keys::HeapGroupKeyColumns;
 use crate::routing::links::channel::impls::HeapChannelColumns;
-use crate::routing::links::resources::assembly::HeapIncomingAssemblyColumns;
+use crate::routing::links::resources::assembly::{
+    HeapIncomingAssemblyColumns, HeapOutgoingAssemblyColumns,
+};
 use crate::routing::links::resources::table::{
     HeapResourceColumns, IncomingResourceState, OutgoingResourceState,
 };
@@ -52,6 +54,7 @@ impl StorageLayout for GrowableHeap {
     type OutgoingResources = HeapResourceColumns<OutgoingResourceState>;
     type IncomingResources = HeapResourceColumns<IncomingResourceState>;
     type IncomingAssemblies = HeapIncomingAssemblyColumns;
+    type OutgoingAssemblies = HeapOutgoingAssemblyColumns;
     type Channels = HeapChannelColumns;
 }
 

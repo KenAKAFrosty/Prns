@@ -112,6 +112,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.links.remove(link_id);
         self.channels.close(link_id);
         self.incoming_assemblies.clear(link_id);
+        self.outgoing_assemblies.clear(link_id);
         Ok(LinkCloseDispatch { wire_len, fire_on })
     }
 }
