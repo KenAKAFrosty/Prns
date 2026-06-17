@@ -772,15 +772,16 @@ pub async fn run_pooled<
     H,
     M,
     const SLOT: usize,
-    const N: usize,
+    const LANES: usize,
+    const MAX_IFACES: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
 >(
     engine: &mut EngineState<S>,
-    initial: &[InterfaceConfig],
-    inbound: &mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), N>,
-    egress: &mut PooledEgress<M, SLOT, N>,
+    initial: &HeaplessVec<InterfaceConfig, MAX_IFACES>,
+    inbound: &mut HeaplessVec<(InterfaceId, EmbassyGrantConsumer<'static, M, SLOT>), LANES>,
+    egress: &mut PooledEgress<M, SLOT, LANES>,
     host: &mut H,
     notify: Receiver<'_, M, InterfaceId, NOTIFY>,
     commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
@@ -793,8 +794,8 @@ pub async fn run_pooled<
     M: RawMutex + 'static,
 {
     let ifacs: &[InterfaceIfac] = &[];
-    let mut configs: HeaplessVec<InterfaceConfig, N> = HeaplessVec::new();
-    let mut pacers: HeaplessVec<InterfacePacer, N> = HeaplessVec::new();
+    let mut configs: HeaplessVec<InterfaceConfig, MAX_IFACES> = HeaplessVec::new();
+    let mut pacers: HeaplessVec<InterfacePacer, MAX_IFACES> = HeaplessVec::new();
     for config in initial {
         let config = clamp_to_embedded_ceiling(*config);
         let _ = configs.push(config);
@@ -1252,9 +1253,10 @@ mod tests {
         let mut egress = PooledEgress::new(egress_lanes);
         let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
         let count = block_on(async {
+            let initial: HeaplessVec<InterfaceConfig, 1> = HeaplessVec::new();
             let reactor = run_pooled(
                 &mut engine,
-                &[],
+                &initial,
                 &mut inbound,
                 &mut egress,
                 &mut host,

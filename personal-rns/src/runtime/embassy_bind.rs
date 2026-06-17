@@ -365,6 +365,7 @@ pub struct Prns<
     M,
     const SLOT: usize,
     const IFACES: usize,
+    const MAX_IFACES: usize,
     const NOTIFY: usize,
     const COMMANDS: usize,
     const LIFECYCLE: usize,
@@ -381,7 +382,7 @@ pub struct Prns<
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
     handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
-    initial: HeaplessVec<InterfaceConfig, IFACES>,
+    initial: HeaplessVec<InterfaceConfig, MAX_IFACES>,
     state: St,
     on_event: F,
     _routes: PhantomData<R>,
@@ -396,11 +397,12 @@ impl<
         M,
         const SLOT: usize,
         const IFACES: usize,
+        const MAX_IFACES: usize,
         const NOTIFY: usize,
         const COMMANDS: usize,
         const LIFECYCLE: usize,
         const COMPLETIONS: usize,
-    > Prns<St, R, F, S, H, M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
+    > Prns<St, R, F, S, H, M, SLOT, IFACES, MAX_IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>
 where
     R: RouteSet<St>,
     F: FnMut(PrnsEvent<'_>, &St),
@@ -418,6 +420,7 @@ where
         recipe: PrnsRecipe<D, St, R, F, I, S>,
         plumbing: ReactorPlumbing<M, SLOT, IFACES, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
         host: H,
+        initial: HeaplessVec<InterfaceConfig, MAX_IFACES>,
     ) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
@@ -472,7 +475,7 @@ where
             lifecycle: plumbing.lifecycle,
             handle: plumbing.handle,
             host,
-            initial: HeaplessVec::new(),
+            initial,
             state: recipe.app_state,
             on_event: recipe.on_event,
             _routes: PhantomData,
@@ -561,7 +564,7 @@ where
         } = self;
         run_pooled(
             engine,
-            &initial[..],
+            &*initial,
             inbound,
             egress,
             host,
@@ -872,6 +875,7 @@ mod tests {
             recipe,
             plumbing,
             EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+            HeaplessVec::<InterfaceConfig, 1>::new(),
         );
 
         let raw = hx(RAW_ANNOUNCE);

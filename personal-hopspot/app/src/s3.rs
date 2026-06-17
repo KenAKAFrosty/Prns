@@ -108,6 +108,10 @@ const TCP_SOCKET_BUF: usize = 1_024;
 /// configured, free otherwise), slots `[2..IFACES)` are the WiFi supervisor's member pool (one per
 /// peer).
 const IFACES: usize = 5;
+/// The engine-interface (descriptor + pacer) pool, distinct from the lane count `IFACES`. Equal for
+/// now; once the WiFi fleet shares one lane it grows past `IFACES` to budget members cheaply (a
+/// descriptor, not an MTU buffer, per member).
+const MAX_IFACES: usize = IFACES;
 const MEMBERS: usize = IFACES - 2;
 const LANE_DEPTH: usize = 1;
 /// Slot 1: the always-on TCP client wire (parallel to USB at slot 0), so the WiFi members never
@@ -165,6 +169,7 @@ type S3Node = Prns<
     Mtx,
     EMBEDDED_MAX_WIRE_FRAME_LEN,
     IFACES,
+    MAX_IFACES,
     NOTIFY_CAP,
     COMMANDS_CAP,
     LIFECYCLE_CAP,
@@ -357,6 +362,7 @@ pub async fn run(spawner: Spawner) {
         },
         plumbing,
         host,
+        HVec::new(),
     ));
     node.activate(0, device_descriptor(USB_INTERFACE_ID));
     if let Some((tcp, _, _)) = &tcp_built {
