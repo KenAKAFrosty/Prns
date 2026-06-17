@@ -14,7 +14,7 @@ use embassy_sync::zerocopy_channel;
 use embassy_time::{Duration, Timer};
 use heapless::Vec as HeaplessVec;
 
-use portable_atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, ProofRequest,
@@ -94,6 +94,7 @@ pub struct EmbassyInterfaceStatus {
     tx: AtomicU64,
     airtime: AtomicU32,
     transfer_rates: AtomicU64,
+    enabled: AtomicBool,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -109,11 +110,26 @@ impl EmbassyInterfaceStatus {
             tx: AtomicU64::new(0),
             airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
             transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
+            enabled: AtomicBool::new(true),
         }
     }
 
     pub fn set_connection(&self, connection: ConnectionState) {
         self.connection.store(connection.as_u8(), Ordering::Relaxed);
+    }
+
+    /// Turn this interface off or back on from the application. The driver reads
+    /// [`is_enabled`](Self::is_enabled) and goes dormant (wire closed, nothing ingested, egress
+    /// drained and discarded) while off, holding its slot and routes for an instant resume.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether the interface is enabled (the default). The driver polls this to leave or re-enter
+    /// its dormant state.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
     }
 
     pub fn add_rx(&self, bytes: u64) {

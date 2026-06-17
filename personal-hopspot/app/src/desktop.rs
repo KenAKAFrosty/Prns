@@ -552,6 +552,7 @@ fn run_window(handles: WindowHandles) {
                 );
             }
         }
+        UiAction::ToggleSelectedInterface => {}
     };
 
     let mut ui_state = UiState::new();

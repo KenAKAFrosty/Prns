@@ -28,6 +28,7 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 use heapless::String as HString;
+use personal_rns::interfaces::InterfaceId;
 
 const WIDTH: i32 = 64;
 const HEIGHT: i32 = 128;
@@ -95,12 +96,15 @@ fn name_char_w(kind: CardKind) -> i32 {
 
 const GLOBAL_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Announce", "Status", "Sleep", "Back"];
 const ANNOUNCE_MENU_ITEM: usize = 0;
-const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Serial", "Restart", "Back"];
-const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Scan", "Channel", "Back"];
-const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Pair", "Advert", "Back"];
-const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Freq", "Power", "Back"];
-const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peers", "Channel", "Back"];
-const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Stats", "Peer", "Drop", "Back"];
+/// Item 0 of every interface menu is the power toggle; its label is rendered live ("Turn Off" /
+/// "Turn On") from the card's [`Liveness`], and long-pressing it emits [`UiAction::ToggleSelectedInterface`].
+const POWER_MENU_ITEM: usize = 0;
+const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Serial", "Restart", "Back"];
+const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Scan", "Channel", "Back"];
+const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Pair", "Advert", "Back"];
+const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Freq", "Spread", "Back"];
+const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Peers", "Channel", "Back"];
+const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Peer", "Drop", "Back"];
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in `draw_interface_icon`) as new interface
@@ -130,6 +134,11 @@ pub enum Liveness {
     Offline,
     Dormant,
     Live,
+    /// Deliberately turned off from the UI: the interface keeps its slot but its driver is dormant.
+    /// Distinct from `Offline` (involuntary failure) — it keeps its own interface icon rather than
+    /// the failure slash, over an "Off" body, so an interface a user switched off never reads as one
+    /// that broke.
+    Disabled,
 }
 
 impl Liveness {
@@ -174,6 +183,9 @@ pub fn tcp_card_label(target: &str) -> CardLabel {
 /// One interface's card. The host fills the identity bits (kind, label) and the
 /// live numbers from the interface's status handle.
 pub struct Card {
+    /// The interface this card stands for, so a face can act on the selected card (turn it off/on)
+    /// without a separate index-to-id table.
+    pub id: InterfaceId,
     pub kind: CardKind,
     pub label: CardLabel,
     /// Invert the name/icon row for selection or active focus.
@@ -217,6 +229,9 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
+    /// Turn the currently selected interface off, or back on if it is already off. The app reads the
+    /// selected card's [`id`](Card::id) to know which interface, and flips its enabled state.
+    ToggleSelectedInterface,
 }
 
 /// Lightweight interaction state for the Hopspot card stack.
@@ -361,9 +376,13 @@ impl UiState {
                 };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::InterfaceMenu { .. }) => {
+            (InputEvent::LongPress, UiMode::InterfaceMenu { selected_item }) => {
                 self.mode = UiMode::Cards;
-                UiAction::None
+                if selected_item == POWER_MENU_ITEM {
+                    UiAction::ToggleSelectedInterface
+                } else {
+                    UiAction::None
+                }
             }
             (InputEvent::LongPress, UiMode::Cards) => UiAction::None,
         };
@@ -1012,6 +1031,7 @@ fn draw_card_with_selection<D: DrawTarget<Color = BinaryColor>>(
     let whole_card_word = match card.liveness {
         Liveness::Offline => Some("Offline"),
         Liveness::Dormant => Some("Dormant"),
+        Liveness::Disabled => Some("Off"),
         Liveness::Live => None,
     };
     if let Some(word) = whole_card_word {
@@ -1243,10 +1263,19 @@ fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
     );
 
     for (index, item) in interface_menu_items(card.kind).iter().enumerate() {
+        let label = if index == POWER_MENU_ITEM {
+            if card.liveness == Liveness::Disabled {
+                "Turn On"
+            } else {
+                "Turn Off"
+            }
+        } else {
+            item
+        };
         draw_menu_item(
             display,
             MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,
-            item,
+            label,
             index == selected_item.min(MENU_ITEM_COUNT - 1),
         );
     }
@@ -1340,6 +1369,7 @@ mod tests {
 
     fn test_card(label: &'static str) -> Card {
         Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Usb,
             label: card_label(label),
             selected: false,
@@ -1599,6 +1629,7 @@ mod tests {
         let cards = [
             test_card("USB"),
             Card {
+                id: InterfaceId::new([0; 8]),
                 kind: CardKind::Ble,
                 label: card_label("BLE"),
                 selected: false,
@@ -1860,6 +1891,7 @@ mod tests {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
         let card = Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Usb,
             label: card_label("USB"),
             selected: false,
@@ -1895,6 +1927,7 @@ mod tests {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
         let card = Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Wifi,
             label: card_label("WiFi"),
             selected: false,
@@ -1922,6 +1955,7 @@ mod tests {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
         let card = Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::EspNow,
             label: card_label("ESP-NOW"),
             selected: false,
@@ -1953,6 +1987,7 @@ mod tests {
         let mut display = MockDisplay::new();
         display.set_allow_overdraw(true);
         let card = Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Wifi,
             label: card_label("WiFi"),
             selected: true,

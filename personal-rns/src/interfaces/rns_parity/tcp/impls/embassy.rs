@@ -9,7 +9,7 @@
 //! reactor lanes draw. The reactor clamps the declared MTU to those lanes regardless, so a link can
 //! never negotiate past the buffers a frame must land in.
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select3, Either3};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{IpEndpoint, Stack};
 use embassy_time::{with_timeout, Duration, Instant, Timer};
@@ -34,6 +34,9 @@ pub const RECONNECT_WAIT: Duration = Duration::from_secs(5);
 /// [`KEEP_ALIVE`] probes keep a quiet-but-live link from tripping that timeout.
 pub const SOCKET_TIMEOUT: Duration = Duration::from_secs(24);
 pub const KEEP_ALIVE: Duration = Duration::from_secs(5);
+/// How often a dormant or serving driver re-checks its enabled gate, so a "Turn Off"/"Turn On" from
+/// the UI takes effect within a beat rather than waiting on traffic or the reconnect timer.
+pub const ENABLED_POLL: Duration = Duration::from_millis(250);
 
 /// The initiating end of an RNS TCP pair on embassy. Owns its connection lifecycle: connect to
 /// `target`, serve until the stream drops, wait `reconnect`, connect again. The socket's smoltcp
@@ -127,6 +130,13 @@ impl Interface for TcpClient<'_> {
         let started = Instant::now();
 
         loop {
+            if !status.is_enabled() {
+                status.set_connection(ConnectionState::Disabled);
+                while !status.is_enabled() {
+                    Timer::after(ENABLED_POLL).await;
+                }
+                continue;
+            }
             let mut socket = TcpSocket::new(stack, &mut *rx_buffer, &mut *tx_buffer);
             socket.set_timeout(Some(SOCKET_TIMEOUT));
             socket.set_keep_alive(Some(KEEP_ALIVE));
@@ -145,10 +155,14 @@ impl Interface for TcpClient<'_> {
                     started,
                 )
                 .await;
-                status.set_connection(ConnectionState::Disconnected);
             }
             socket.abort();
-            Timer::after(reconnect).await;
+            // Skip the reconnect wait when the driver was just turned off, so the card shows "Off"
+            // at once rather than lingering Disconnected for the reconnect interval.
+            if status.is_enabled() {
+                status.set_connection(ConnectionState::Disconnected);
+                Timer::after(reconnect).await;
+            }
         }
     }
 }
@@ -171,8 +185,19 @@ async fn serve<Seam: InterfaceSeam>(
 ) {
     let (mut reader, mut writer) = socket.split();
     loop {
-        match select(reader.read(read_buf), seam.next_outbound()).await {
-            Either::First(read) => {
+        match select3(
+            reader.read(read_buf),
+            seam.next_outbound(),
+            Timer::after(ENABLED_POLL),
+        )
+        .await
+        {
+            Either3::Third(()) => {
+                if !status.is_enabled() {
+                    return;
+                }
+            }
+            Either3::First(read) => {
                 let read = match read {
                     Ok(0) | Err(_) => return,
                     Ok(read) => read,
@@ -191,7 +216,7 @@ async fn serve<Seam: InterfaceSeam>(
                     }
                 }
             }
-            Either::Second(outbound) => {
+            Either3::Second(outbound) => {
                 if let Ok(framed) = rns_serial_framing::encode(outbound, frame_buf) {
                     if writer.write_all(&frame_buf[..framed]).await.is_err() {
                         return;

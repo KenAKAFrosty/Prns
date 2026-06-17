@@ -107,6 +107,9 @@ where
                     if n > 0 {
                         status.add_rx(n as u64);
                     }
+                    if !status.is_enabled() {
+                        continue;
+                    }
                     for &byte in &read_buf[..n] {
                         let Ok(Some(frame)) = decoder.feed(byte) else {
                             continue;
@@ -136,13 +139,18 @@ where
                     }
                 }
                 Either3::Second(out) => {
-                    if linked {
+                    if linked && status.is_enabled() {
                         let data = Message::Data(out);
                         write_message(&mut tx, &data, &mut frame_buf, status).await;
                     }
                 }
                 Either3::Third(()) => {
-                    if let Some(connection) = presence_verdict(presence(), &mut absent_probes) {
+                    if !status.is_enabled() {
+                        linked = false;
+                        status.set_connection(ConnectionState::Disabled);
+                    } else if let Some(connection) =
+                        presence_verdict(presence(), &mut absent_probes)
+                    {
                         linked = false;
                         status.set_connection(connection);
                     }

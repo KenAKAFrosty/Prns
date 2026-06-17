@@ -6,6 +6,12 @@ pub enum ConnectionState {
     Reconnecting,
     Failed,
     Disconnected,
+    /// Turned off from the application (a Hopspot "Turn Off"): the interface keeps its reserved
+    /// slot and its learned routes but its driver has gone dormant — wire closed, nothing
+    /// ingested, egress drained and discarded — until it is turned back on. Distinct from `Failed`
+    /// (which is involuntary) and `Disconnected` (up but link-less): this is a deliberate, instantly
+    /// reversible off.
+    Disabled,
     Unknown,
 }
 
@@ -19,6 +25,7 @@ impl ConnectionState {
             ConnectionState::Reconnecting => 3,
             ConnectionState::Failed => 4,
             ConnectionState::Disconnected => 5,
+            ConnectionState::Disabled => 6,
             ConnectionState::Unknown => 255,
         }
     }
@@ -31,6 +38,7 @@ impl ConnectionState {
             3 => ConnectionState::Reconnecting,
             4 => ConnectionState::Failed,
             5 => ConnectionState::Disconnected,
+            6 => ConnectionState::Disabled,
             _ => ConnectionState::Unknown,
         }
     }

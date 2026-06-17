@@ -14,6 +14,7 @@ fn liveness(connection: ConnectionState) -> Liveness {
     match connection {
         ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,
         ConnectionState::Failed | ConnectionState::Unknown => Liveness::Offline,
+        ConnectionState::Disabled => Liveness::Disabled,
         ConnectionState::Initializing
         | ConnectionState::Reconnecting
         | ConnectionState::Disconnected => Liveness::Dormant,
@@ -49,6 +50,7 @@ pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
             links,
         } = counts(id);
         let _ = cards.push(Card {
+            id,
             kind,
             label,
             selected: false,

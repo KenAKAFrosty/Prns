@@ -475,18 +475,30 @@ pub async fn run(spawner: Spawner) {
 
             match select(render_tick.next(), BUTTON_EVENTS.receive()).await {
                 Either::First(()) => {}
-                Either::Second(event) => {
-                    if matches!(
-                        ui_state.handle_input(event, card_count),
-                        screen::UiAction::Announce
-                    ) {
+                Either::Second(event) => match ui_state.handle_input(event, card_count) {
+                    screen::UiAction::Announce => {
                         let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                             destination: self_destination,
                             target: AnnounceTarget::AllInterfaces,
                             app_data: AnnounceAppData::Registered,
                         }));
                     }
-                }
+                    screen::UiAction::ToggleSelectedInterface => {
+                        if let Some(card) = ui_state
+                            .selected_card(card_count)
+                            .and_then(|index| cards.get(index))
+                        {
+                            if card.id == USB_INTERFACE_ID {
+                                USB_STATUS.set_enabled(!USB_STATUS.is_enabled());
+                            } else if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
+                                if card.id == tcp_id {
+                                    tcp.set_enabled(!tcp.is_enabled());
+                                }
+                            }
+                        }
+                    }
+                    screen::UiAction::None => {}
+                },
             }
         }
     };
