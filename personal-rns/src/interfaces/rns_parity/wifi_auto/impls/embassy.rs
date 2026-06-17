@@ -452,7 +452,7 @@ fn route_inbound<
         return;
     };
     if let Some(grant) = wires[slot].inbound.try_grant() {
-        grant.fill(bytes);
+        grant.fill_for(ids[slot], bytes);
         wires[slot].inbound.commit();
         status.member(slot).add_rx(bytes.len() as u64);
         let _ = wires[slot].notify.try_send(ids[slot]);

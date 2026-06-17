@@ -25,7 +25,7 @@ pub use capabilities::{
     InterfaceCapabilitiesError, TransportCapability,
 };
 pub use connection_state::ConnectionState;
-pub use id::InterfaceId;
+pub use id::{InterfaceId, INTERFACE_ID_LEN};
 pub use kind::InterfaceKind;
 pub use mac::MacAddress;
 pub use mode::InterfaceMode;

@@ -247,14 +247,14 @@ impl<M: RawMutex, const SLOT: usize> GrantProducer<SLOT> for EmbassyGrantProduce
 }
 
 impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'_, M, SLOT> {
-    fn try_fill_frame(&mut self, frame: &[u8]) -> bool {
+    fn try_fill_frame_for(&mut self, interface_id: InterfaceId, frame: &[u8]) -> bool {
         if frame.len() > SLOT {
             return false;
         }
         let Some(slot) = GrantProducer::try_grant(self) else {
             return false;
         };
-        slot.fill(frame);
+        slot.fill_for(interface_id, frame);
         GrantProducer::commit(self);
         true
     }
@@ -289,8 +289,10 @@ impl<M: RawMutex, const SLOT: usize> GrantConsumer<SLOT> for EmbassyGrantConsume
 }
 
 impl<M: RawMutex, const SLOT: usize> AnyGrantConsumer for EmbassyGrantConsumer<'_, M, SLOT> {
-    fn try_peek_frame(&mut self) -> Option<&mut [u8]> {
-        Some(GrantConsumer::try_peek(self)?.frame_mut())
+    fn try_peek_frame(&mut self) -> Option<(InterfaceId, &mut [u8])> {
+        let slot = GrantConsumer::try_peek(self)?;
+        let id = slot.interface_id;
+        Some((id, slot.frame_mut()))
     }
 
     fn release_frame(&mut self) {
@@ -332,7 +334,7 @@ impl<M: RawMutex, const NOTIFY: usize, const SLOT: usize> InterfaceSeam
     for EmbassyInterfaceSeam<'_, M, NOTIFY, SLOT>
 {
     async fn next_inbound(&mut self, frame: &[u8]) {
-        self.inbound.grant().await.fill(frame);
+        self.inbound.grant().await.fill_for(self.id, frame);
         self.inbound.commit();
         self.notify.send(self.id).await;
     }
@@ -369,7 +371,7 @@ impl ReactorEgress for EmbassyEgress<'_> {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if *id == target {
-                let _ = producer.try_fill_frame(bytes);
+                let _ = producer.try_fill_frame_for(target, bytes);
                 return;
             }
         }
@@ -453,7 +455,7 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
                 let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source) else {
                     continue;
                 };
-                let Some(frame) = lane.try_peek_frame() else {
+                let Some((source, frame)) = lane.try_peek_frame() else {
                     continue;
                 };
                 let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
@@ -716,7 +718,7 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) {
         for (id, producer) in self.lanes.iter_mut() {
             if *id == target {
-                let _ = producer.try_fill_frame(bytes);
+                let _ = producer.try_fill_frame_for(target, bytes);
                 return;
             }
         }
@@ -799,7 +801,7 @@ pub async fn run_pooled<
                 let Some((_, lane)) = inbound.iter_mut().find(|(id, _)| *id == source) else {
                     continue;
                 };
-                let Some(frame) = lane.try_peek_frame() else {
+                let Some((source, frame)) = lane.try_peek_frame() else {
                     continue;
                 };
                 let now = host.now();
