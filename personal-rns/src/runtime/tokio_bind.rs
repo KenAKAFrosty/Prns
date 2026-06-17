@@ -576,8 +576,17 @@ async fn drive_interfaces(
     mut messages: UnboundedReceiver<DriverMsg>,
     commands: UnboundedSender<HostCommand>,
 ) {
-    let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>> =
-        initial.into_iter().collect();
+    let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>> = initial
+        .into_iter()
+        .map(
+            |run| -> Pin<Box<dyn Future<Output = Option<InterfaceId>>>> {
+                Box::pin(async move {
+                    run.await;
+                    None
+                })
+            },
+        )
+        .collect();
     let mut stops: HashMap<InterfaceId, oneshot::Sender<()>> = HashMap::new();
     let mut supervisor_of: HashMap<InterfaceId, InterfaceId> = HashMap::new();
     let mut open = true;
@@ -598,6 +607,7 @@ async fn drive_interfaces(
                             () = run => {}
                             _ = stop_rx => {}
                         }
+                        Some(id)
                     }));
                     stops.insert(id, stop_tx);
                 }
@@ -617,7 +627,19 @@ async fn drive_interfaces(
                 }
                 None => open = false,
             },
-            _ = futures.next(), if !futures.is_empty() => {}
+            // An interface whose run future ended on its own (a dropped connection, no reconnect)
+            // deregisters itself: its descriptor must not outlive its wire. A future ended by a
+            // `Stop` has already had its id pulled from `stops` (and its `RemoveInterface` sent by
+            // the teardown or cascade above), so the `stops.remove` here is what distinguishes a
+            // natural completion from a deliberate one.
+            done = futures.next(), if !futures.is_empty() => {
+                if let Some(Some(id)) = done {
+                    if stops.remove(&id).is_some() {
+                        supervisor_of.remove(&id);
+                        let _ = commands.send(HostCommand::RemoveInterface { id });
+                    }
+                }
+            }
         }
     }
 }
@@ -868,6 +890,43 @@ mod tests {
     fn handle() -> (PrnsHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
         (PrnsHandle::over(commands), command_rx)
+    }
+
+    #[tokio::test]
+    async fn a_self_completing_interface_run_deregisters_it() {
+        // The driver is deliberately `!Send` (it drives `!Send` interface futures on the run task),
+        // so it is run concurrently with the assertion via `join!`, never spawned.
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<DriverMsg>();
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+
+        let id = InterfaceId::from_reachability_tag(
+            crate::interfaces::InterfaceKind::LocalClient,
+            b"ephemeral-peer",
+        );
+        msg_tx
+            .send(DriverMsg::Add {
+                id,
+                supervisor: None,
+                build: Box::new(|| {
+                    let run: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async {});
+                    run
+                }),
+            })
+            .expect("the driver is listening");
+        // Closing the channel lets the driver drain and return once the self-completed member's
+        // cull is done, so the `join!` below terminates.
+        drop(msg_tx);
+
+        tokio::join!(drive_interfaces(std::vec![], msg_rx, cmd_tx), async {
+            let command = tokio::time::timeout(std::time::Duration::from_secs(1), cmd_rx.recv())
+                .await
+                .expect("the driver culls the completed interface within 1s")
+                .expect("the command channel stays open");
+            assert!(
+                matches!(command, HostCommand::RemoveInterface { id: removed } if removed == id),
+                "an interface whose run ended on its own deregisters itself"
+            );
+        });
     }
 
     #[tokio::test]

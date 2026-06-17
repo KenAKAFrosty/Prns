@@ -95,6 +95,17 @@ jobs:
         run: cargo clippy -p personal-rns --features tokio-host --all-targets -- -D warnings
       - name: test — tokio-host on default features
         run: cargo test -p personal-rns --features tokio-host
+      # Local shared-instance lane (LocalServer / LocalClient). Carried with `tcp` because the
+      # end-to-end test dials the server with a TcpClient — the same HDLC wire a real RNS app
+      # speaks — so the integration test only compiles with both features on.
+      - name: clippy — local / shared-instance lane
+        run: cargo clippy -p personal-rns --no-default-features --features "local tcp" --all-targets -- -D warnings
+      - name: test — local / shared-instance lane
+        run: cargo test -p personal-rns --no-default-features --features "local tcp"
+      - name: doc — local / shared-instance lane
+        run: cargo doc -p personal-rns --no-deps --document-private-items --no-default-features --features "local tcp" --quiet
+        env:
+          RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
       # Embassy contract lane. `no-std-embedded` already proves it *builds* alloc-free (host +
       # C6); this RUNS the tests `cargo build` never compiles — the loopback driver and the
       # completion-pool soundness suite. Defaults stay on so `alloc` backs the crate-wide
