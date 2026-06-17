@@ -6,20 +6,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 
 use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendSingle, SendSingleFailure,
-    SendSinglePayload, Settlement,
+    EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendResourceFailure, SendSingle,
+    SendSingleFailure, SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
-    RespondAnyHostCommand, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
+    RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioGrantConsumer, TokioGrantProducer,
+    TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
+use crate::routing::links::resources::MAX_EFFICIENT_SIZE;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
@@ -53,6 +56,17 @@ pub struct PrnsHandle {
     ids: Arc<AtomicU64>,
     notify_tx: UnboundedSender<InterfaceId>,
     iface_build: UnboundedSender<DriverMsg>,
+}
+
+/// Why a [`send_resource`](PrnsHandle::send_resource) stream did not complete.
+#[derive(Debug)]
+pub enum ResourceSendError {
+    /// Reading `source` failed before the whole resource was sent.
+    Source(std::io::Error),
+    /// A segment was refused, timed out, or rejected by the peer.
+    Rejected(SendResourceFailure),
+    /// The node's reactor has stopped.
+    NodeStopped,
 }
 
 impl PrnsHandle {
@@ -97,6 +111,54 @@ impl PrnsHandle {
             Some(Settlement::SendSingle(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
+    }
+
+    /// Stream a resource of `total_len` bytes to a peer over an active link, draining `source` one
+    /// segment at a time and awaiting each segment's proof before reading the next — so the engine and
+    /// the host each hold a single segment, never the whole payload. The length is explicit because
+    /// every segment advertises the total up front, the way the receiver learns when the assembly is
+    /// complete; a payload at or under one segment crosses as a single unsplit resource.
+    pub async fn send_resource(
+        &self,
+        link_id: LinkId,
+        total_len: u64,
+        mut source: impl AsyncRead + Unpin,
+    ) -> Result<(), ResourceSendError> {
+        let segment_size = MAX_EFFICIENT_SIZE as u64;
+        let total_segments = total_len.div_ceil(segment_size).max(1);
+        let mut remaining = total_len;
+        for segment_index in 1..=total_segments {
+            let this_segment = remaining.min(segment_size);
+            remaining -= this_segment;
+            let mut chunk = std::vec![0u8; this_segment as usize];
+            source
+                .read_exact(&mut chunk)
+                .await
+                .map_err(ResourceSendError::Source)?;
+            let id = self.mint();
+            let (completion, settled) = oneshot::channel();
+            self.commands
+                .send(HostCommand::SendResourceSegment(
+                    SendResourceSegmentHostCommand {
+                        id,
+                        link_id,
+                        data: chunk.into(),
+                        request_id: None,
+                        segment_index,
+                        total_segments,
+                        completion,
+                    },
+                ))
+                .map_err(|_| ResourceSendError::NodeStopped)?;
+            match settled.await {
+                Ok(Settlement::SendResource(Ok(()))) => {}
+                Ok(Settlement::SendResource(Err(failure))) => {
+                    return Err(ResourceSendError::Rejected(failure))
+                }
+                Ok(_) | Err(_) => return Err(ResourceSendError::NodeStopped),
+            }
+        }
+        Ok(())
     }
 
     /// Bring a link up to `destination` and await it — `Ok(LinkId)` once the peer's proof validates,
@@ -888,5 +950,119 @@ mod tests {
             matches!(command_rx.try_recv(), Ok(HostCommand::Engine(_))),
             "dispatched through Commands, the close rode the channel"
         );
+    }
+
+    const LINK: LinkId = LinkId::new([5; 16]);
+
+    #[tokio::test]
+    async fn send_resource_drains_a_source_into_proven_segments() {
+        let (prns, mut command_rx) = handle();
+        let total_len = MAX_EFFICIENT_SIZE as u64 + 100;
+        let payload: std::vec::Vec<u8> = (0..total_len).map(|i| i as u8).collect();
+
+        let drainer = tokio::spawn(async move {
+            let mut got = std::vec::Vec::new();
+            loop {
+                let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+                    panic!("expected a SendResourceSegment command");
+                };
+                let last = seg.segment_index == seg.total_segments;
+                got.push((
+                    seg.segment_index,
+                    seg.total_segments,
+                    seg.data.as_slice().to_vec(),
+                ));
+                seg.completion
+                    .send(Settlement::SendResource(Ok(())))
+                    .expect("the awaiter is still parked");
+                if last {
+                    break;
+                }
+            }
+            got
+        });
+
+        prns.send_resource(LINK, total_len, &payload[..])
+            .await
+            .expect("the stream completes");
+        let got = drainer.await.unwrap();
+
+        assert_eq!(got.len(), 2, "a payload one segment over splits in two");
+        assert_eq!((got[0].0, got[0].1), (1, 2));
+        assert_eq!((got[1].0, got[1].1), (2, 2));
+        assert_eq!(got[0].2.len(), MAX_EFFICIENT_SIZE);
+        assert_eq!(got[1].2.len(), 100);
+        let mut reassembled = got[0].2.clone();
+        reassembled.extend_from_slice(&got[1].2);
+        assert_eq!(reassembled, payload, "the segments reassemble to the source");
+    }
+
+    #[tokio::test]
+    async fn a_small_send_resource_is_one_unsplit_segment() {
+        let (prns, mut command_rx) = handle();
+        let payload = std::vec![3u8; 500];
+        let drainer = tokio::spawn(async move {
+            let Some(HostCommand::SendResourceSegment(seg)) = command_rx.recv().await else {
+                panic!("expected a SendResourceSegment command");
+            };
+            let placement = (seg.segment_index, seg.total_segments, seg.data.as_slice().len());
+            seg.completion
+                .send(Settlement::SendResource(Ok(())))
+                .expect("the awaiter is still parked");
+            placement
+        });
+        prns.send_resource(LINK, 500, &payload[..])
+            .await
+            .expect("the single segment completes");
+        assert_eq!(
+            drainer.await.unwrap(),
+            (1, 1, 500),
+            "a sub-segment payload crosses as one unsplit resource",
+        );
+    }
+
+    #[tokio::test]
+    async fn send_resource_surfaces_a_segment_rejection_and_stops() {
+        let (prns, mut command_rx) = handle();
+        let total_len = MAX_EFFICIENT_SIZE as u64 + 100;
+        let payload = std::vec![7u8; total_len as usize];
+        let drainer = tokio::spawn(async move {
+            let mut issued = 0u32;
+            while let Some(command) = command_rx.recv().await {
+                let HostCommand::SendResourceSegment(seg) = command else {
+                    panic!("expected a SendResourceSegment command");
+                };
+                issued += 1;
+                seg.completion
+                    .send(Settlement::SendResource(Err(
+                        SendResourceFailure::RejectedByPeer,
+                    )))
+                    .expect("the awaiter is still parked");
+            }
+            issued
+        });
+
+        let result = prns.send_resource(LINK, total_len, &payload[..]).await;
+        assert!(matches!(
+            result,
+            Err(ResourceSendError::Rejected(SendResourceFailure::RejectedByPeer)),
+        ));
+        drop(prns);
+        assert_eq!(
+            drainer.await.unwrap(),
+            1,
+            "a rejected first segment stops the stream — the second never issues",
+        );
+    }
+
+    #[tokio::test]
+    async fn send_resource_on_a_stopped_node_is_node_stopped() {
+        let (prns, command_rx) = handle();
+        drop(command_rx);
+        let payload = std::vec![0u8; 10];
+        assert!(matches!(
+            prns.send_resource(LINK, 10, &payload[..]).await,
+            Err(ResourceSendError::NodeStopped),
+        ));
     }
 }

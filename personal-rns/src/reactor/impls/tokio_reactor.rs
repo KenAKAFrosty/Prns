@@ -426,6 +426,7 @@ pub enum HostCommand {
         completion: oneshot::Sender<Settlement>,
     },
     SendResource(SendResourceHostCommand),
+    SendResourceSegment(SendResourceSegmentHostCommand),
     RespondAny(RespondAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
     /// Register a runtime-added interface's descriptor and lanes so the reactor routes to it. Its
@@ -591,6 +592,20 @@ pub struct SendResourceHostCommand {
     pub data: HostResourcePayload,
     pub compressed_candidate: Option<HostResourcePayload>,
     pub request_id: Option<RequestId>,
+}
+
+/// One segment of a resource send, awaited: the `completion` rides the command to the reactor, which
+/// stashes it keyed by `id` and fires it when the segment's proof settles — so a host `send_resource`
+/// loop drains its source one segment at a time, sending the next only once the last is proven. The
+/// engine threads the chain's original hash across segments; the host carries only the bytes.
+pub struct SendResourceSegmentHostCommand {
+    pub id: CommandId,
+    pub link_id: LinkId,
+    pub data: HostResourcePayload,
+    pub request_id: Option<RequestId>,
+    pub segment_index: u64,
+    pub total_segments: u64,
+    pub completion: oneshot::Sender<Settlement>,
 }
 
 /// Answer a request with `data` of any length: the engine picks the rung — a single RESPONSE
@@ -765,6 +780,21 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         &mut |entropy| host.fill_entropy(entropy),
                         &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                     ),
+                    HostCommand::SendResourceSegment(send) => {
+                        pending_completions.borrow_mut().insert(send.id, send.completion);
+                        engine.ingest_send_resource_segment_into(
+                            send.id,
+                            send.link_id,
+                            send.data.as_slice(),
+                            None,
+                            send.request_id,
+                            send.segment_index,
+                            send.total_segments,
+                            now,
+                            &mut |entropy| host.fill_entropy(entropy),
+                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        )
+                    }
                     HostCommand::RespondAny(respond) => {
                         let data = respond.data.as_slice();
                         let as_packet = engine
@@ -1355,7 +1385,9 @@ mod tests {
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. } => {}
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1689,7 +1721,9 @@ mod tests {
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. } => {}
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. } => {}
         };
 
         tokio::spawn(run(
@@ -1905,7 +1939,9 @@ mod tests {
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. } => {}
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. } => {}
         };
 
         tokio::spawn(run(
@@ -2018,7 +2054,9 @@ mod tests {
             | Journaled::LinkClosed { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. } => {}
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. } => {}
         };
 
         tokio::spawn(run(
