@@ -87,6 +87,14 @@ jobs:
         run: cargo doc -p personal-rns --no-deps --document-private-items --no-default-features --features tcp --quiet
         env:
           RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
+      # tokio-host on the *default* features — what `cargo test --features tokio-host` exercises
+      # locally, the std-sync-host + async stack a consumer enabling tokio-host on top of the
+      # defaults actually ships. Distinct from the no-default `tcp` lane above: this is the config
+      # that catches a std-sync-host <-> tokio-host feature-unification break the tcp lane can't see.
+      - name: clippy — tokio-host on default features
+        run: cargo clippy -p personal-rns --features tokio-host --all-targets -- -D warnings
+      - name: test — tokio-host on default features
+        run: cargo test -p personal-rns --features tokio-host
       # Embassy contract lane. `no-std-embedded` already proves it *builds* alloc-free (host +
       # C6); this RUNS the tests `cargo build` never compiles — the loopback driver and the
       # completion-pool soundness suite. Defaults stay on so `alloc` backs the crate-wide
