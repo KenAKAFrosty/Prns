@@ -4733,4 +4733,100 @@ mod tests {
         );
         assert_eq!(state.route_count(), 0);
     }
+
+    fn flood_announce(seed: u8, hops: u8) -> std::vec::Vec<u8> {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[seed.wrapping_add(1); 64]);
+        let app = [seed; 4];
+        let announce = Announce::build_signed(
+            &signer,
+            crate::routing::announce::DottedNameHash::new([0u8; 10]),
+            crate::routing::announce::AnnounceId::from_wire([seed; 10]),
+            None,
+            &app,
+        )
+        .expect("a built announce");
+        let mut buf = [0u8; BROADCAST_MTU];
+        let n = crate::engine::egress::write_announce_wire_packet(&announce, hops, &mut buf)
+            .expect("announce serializes");
+        buf[..n].to_vec()
+    }
+
+    #[test]
+    fn a_flood_of_unknown_announces_is_held_then_drip_released_lowest_hop_first() {
+        use crate::engine::{EngineReaction, Journaled};
+
+        let source = InterfaceId::new([0xEE; 8]);
+        let view = transporting_view();
+        let mut relay = transporting_node();
+
+        let mut accepted = 0usize;
+        let mut held = 0usize;
+        for i in 0..8u8 {
+            let mut wire = flood_announce(i, 10 - i);
+            match relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ) {
+                IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)) => accepted += 1,
+                IngestPacketOutcome::Announce(AnnounceIngest::Held) => held += 1,
+                other => panic!("a valid announce is accepted or held, got {other:?}"),
+            }
+        }
+        assert!(
+            accepted >= 1,
+            "the announces under the burst threshold are processed normally",
+        );
+        assert!(
+            held >= 1,
+            "the flood past the threshold is parked, not processed"
+        );
+        assert_eq!(relay.held_announces.len(), held);
+        assert_eq!(
+            relay.route_count(),
+            accepted,
+            "a held announce has not become a route yet",
+        );
+
+        let mut released_hops = std::vec::Vec::new();
+        for step in 0..(held as u64 + 4) {
+            if relay.held_announces.is_empty() {
+                break;
+            }
+            let now = InstantMillis(1_000 + 15_000 + step * 5_000);
+            relay.fire_due_held_announces(
+                now,
+                &view,
+                &mut |bytes: &mut [u8]| bytes.fill(0xE7),
+                &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::AnnounceHeard { hops, .. }) =
+                        reaction
+                    {
+                        released_hops.push(hops);
+                    }
+                },
+            );
+        }
+
+        assert!(
+            relay.held_announces.is_empty(),
+            "once the burst subsides every held announce drips out",
+        );
+        assert_eq!(released_hops.len(), held, "each is released exactly once");
+        assert_eq!(
+            relay.route_count(),
+            accepted + held,
+            "and each held announce becomes a route on release",
+        );
+        let mut ascending = released_hops.clone();
+        ascending.sort_unstable();
+        assert_eq!(
+            released_hops, ascending,
+            "they drip lowest-hop first, not in arrival order",
+        );
+    }
 }
