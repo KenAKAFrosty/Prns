@@ -1753,6 +1753,8 @@ impl<S: StorageLayout> EngineState<S> {
             },
             arrived_at,
         );
+        self.routing_table
+            .note_relayed(&header.destination, arrived_at);
 
         Some(PacketToForward {
             header: forwarded_header,
@@ -4163,6 +4165,51 @@ mod tests {
             again,
             IngestPacketOutcome::Ignored,
             "a relay forwards each packet exactly once",
+        );
+    }
+
+    #[test]
+    fn relaying_a_packet_slides_the_carried_routes_expiry_forward() {
+        let route_view = [routable_descriptor(InterfaceId::new([0xB2; 8]))];
+        let mut relay = transporting_node();
+        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: InterfaceId::new([0xB2; 8]),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        let learned_expiry = relay
+            .routing_table
+            .soonest_route_expiry(&route_view)
+            .expect("the announce taught exactly one route");
+
+        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(120_000),
+                source_interface: InterfaceId::new([0xA1; 8]),
+                bytes: &mut in_transport,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert!(
+            matches!(out, IngestPacketOutcome::Forward(_)),
+            "the transport-addressed packet forwards across the held route, got {out:?}",
+        );
+
+        let relayed_expiry = relay
+            .routing_table
+            .soonest_route_expiry(&route_view)
+            .expect("the carried route survives the relay");
+        assert_eq!(
+            relayed_expiry.0,
+            learned_expiry.0 + (120_000 - 500),
+            "relaying slid the carried route's expiry forward by the gap since its announce, so it cannot age out mid-flow",
         );
     }
 

@@ -130,23 +130,38 @@ where
         })
     }
 
-    /// A route's expiry is derived at evaluation, never stored: its learned-at instant
-    /// plus the lifetime its receiving interface's mode keys *in the current view* —
-    /// so a hot-changed mode re-keys every route it carries at the next evaluation. A
-    /// route whose interface left the view earns no lifetime at all: it is already due,
-    /// which arms the wake lane and lets the next cull remove it as interface-gone.
+    /// The instant a route was last alive: the announce that taught it
+    /// (`learned_at`) or the most recent packet relayed across it
+    /// (`last_relayed_at`), whichever is later. RNS folds both into one path-table
+    /// TIMESTAMP, bumped on learn and on every relay (Transport.py:1636); we keep
+    /// them apart and recombine here, so an actively-carried route never ages out
+    /// mid-flow while its announces lull.
+    fn last_active_at(&self, i: usize) -> InstantMillis {
+        InstantMillis(
+            self.routes.learned_at()[i]
+                .0
+                .max(self.routes.last_relayed_at()[i].0),
+        )
+    }
+
+    /// A route's expiry is derived at evaluation, never stored: its last-active
+    /// instant plus the lifetime its receiving interface's mode keys *in the
+    /// current view* — so a hot-changed mode re-keys every route it carries at the
+    /// next evaluation. A route whose interface left the view earns no lifetime at
+    /// all: it is already due, which arms the wake lane and lets the next cull
+    /// remove it as interface-gone.
     fn expiry_of(&self, i: usize, view: &[InterfaceConfig]) -> InstantMillis {
-        let learned_at = self.routes.learned_at()[i];
+        let last_active_at = self.last_active_at(i);
         match view
             .iter()
             .find(|config| config.id == self.routes.receiving_interfaces()[i])
         {
             Some(config) => InstantMillis(
-                learned_at
+                last_active_at
                     .0
                     .saturating_add(route_expiry_millis(config.mode)),
             ),
-            None => learned_at,
+            None => last_active_at,
         }
     }
 
@@ -172,7 +187,29 @@ where
             RouteEntry {
                 hops: self.routes.hops()[i],
                 learned_at: self.routes.learned_at()[i],
+                last_relayed_at: self.routes.last_relayed_at()[i],
                 responsiveness,
+                receiving_interface: self.routes.receiving_interfaces()[i],
+                next_hop: self.routes.next_hops()[i],
+            },
+        );
+    }
+
+    /// Slide a route's liveness forward as we relay across it — RNS bumps the
+    /// path-table TIMESTAMP on every forwarded packet (Transport.py:1636) so an
+    /// actively-carried destination outlives its announce cadence instead of being
+    /// culled mid-flow.
+    pub fn note_relayed(&mut self, destination: &DestinationHash, now: InstantMillis) {
+        let Some(i) = self.index_of(destination) else {
+            return;
+        };
+        self.routes.set_row(
+            i,
+            RouteEntry {
+                hops: self.routes.hops()[i],
+                learned_at: self.routes.learned_at()[i],
+                last_relayed_at: now,
+                responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
             },
@@ -264,6 +301,7 @@ where
         let route_entry = RouteEntry {
             hops,
             learned_at: arrived_at,
+            last_relayed_at: InstantMillis(0),
             responsiveness: RouteResponsiveness::Unknown,
             receiving_interface,
             next_hop,
@@ -315,6 +353,7 @@ where
             RouteEntry {
                 hops,
                 learned_at: arrived_at,
+                last_relayed_at: InstantMillis(0),
                 responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface,
                 next_hop,
@@ -589,6 +628,92 @@ mod tests {
                 .expires,
             InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
             "and the lifetime still follows whatever mode the view carries",
+        );
+    }
+
+    #[test]
+    fn a_relay_slides_a_routes_expiry_forward_so_it_survives_mid_flow() {
+        use crate::routing::announce::defaults::ROAMING_ROUTE_EXPIRY_MILLIS;
+        let mut table: Rt = Rt::default();
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(1_000),
+            announce_id(1, 1),
+            &app_data(1),
+        );
+        let roaming = view_with(InterfaceMode::Roaming);
+
+        assert_eq!(
+            table
+                .existing_route_for(&dest(1), &roaming)
+                .unwrap()
+                .expires,
+            InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+            "the announce sets the baseline expiry clock",
+        );
+
+        table.note_relayed(&dest(1), InstantMillis(1_000_000));
+        assert_eq!(
+            table
+                .existing_route_for(&dest(1), &roaming)
+                .unwrap()
+                .expires,
+            InstantMillis(1_000_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+            "relaying across the route restarts the clock from the last carried packet",
+        );
+
+        let mut removed = std::vec::Vec::new();
+        table.cull_expired_routes(
+            InstantMillis(1_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+            &roaming,
+            &mut |r| removed.push(r.destination),
+        );
+        assert!(
+            removed.is_empty(),
+            "the route the announce alone would have culled survives, because traffic still flows across it",
+        );
+
+        table.cull_expired_routes(
+            InstantMillis(1_000_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+            &roaming,
+            &mut |r| removed.push(r.destination),
+        );
+        assert_eq!(
+            removed,
+            std::vec![dest(1)],
+            "and it still ages out a full lifetime after its last relay",
+        );
+    }
+
+    #[test]
+    fn an_announce_refresh_clears_prior_relay_activity() {
+        use crate::routing::announce::defaults::ROAMING_ROUTE_EXPIRY_MILLIS;
+        let mut table: Rt = Rt::default();
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(1_000),
+            announce_id(1, 1),
+            &app_data(1),
+        );
+        let roaming = view_with(InterfaceMode::Roaming);
+
+        table.note_relayed(&dest(1), InstantMillis(500_000));
+        record(
+            &mut table,
+            dest(1),
+            1,
+            InstantMillis(2_000),
+            announce_id(1, 2),
+            &app_data(1),
+        );
+        assert_eq!(
+            table.existing_route_for(&dest(1), &roaming).unwrap().expires,
+            InstantMillis(2_000 + ROAMING_ROUTE_EXPIRY_MILLIS),
+            "a fresh announce supersedes prior relay activity, exactly as RNS overwrites the path TIMESTAMP",
         );
     }
 

@@ -22,6 +22,7 @@ pub struct FixedHeapRouteColumns<const N: usize, const BUCKETS: usize, A: Alloca
     destination: Box<[DestinationHash], A>,
     hops: Box<[u8], A>,
     learned_at: Box<[InstantMillis], A>,
+    last_relayed_at: Box<[InstantMillis], A>,
     responsiveness: Box<[RouteResponsiveness], A>,
     receiving_interface: Box<[InterfaceId], A>,
     next_hop: Box<[NextHop], A>,
@@ -47,6 +48,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator + Default> Default
             destination: filled(DestinationHash::new([0u8; 16]), N, A::default()),
             hops: filled(0u8, N, A::default()),
             learned_at: filled(InstantMillis(0), N, A::default()),
+            last_relayed_at: filled(InstantMillis(0), N, A::default()),
             responsiveness: filled(RouteResponsiveness::Responsive, N, A::default()),
             receiving_interface: filled(InterfaceId::new([0u8; 8]), N, A::default()),
             next_hop: filled(NextHop::Direct, N, A::default()),
@@ -77,6 +79,9 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteColumns
     fn learned_at(&self) -> &[InstantMillis] {
         &self.learned_at[..self.len]
     }
+    fn last_relayed_at(&self) -> &[InstantMillis] {
+        &self.last_relayed_at[..self.len]
+    }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness[..self.len]
     }
@@ -90,6 +95,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteColumns
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.learned_at[i] = row.learned_at;
+        self.last_relayed_at[i] = row.last_relayed_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
@@ -122,6 +128,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteColumns
         self.destination[i] = self.destination[last];
         self.hops[i] = self.hops[last];
         self.learned_at[i] = self.learned_at[last];
+        self.last_relayed_at[i] = self.last_relayed_at[last];
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
@@ -150,6 +157,7 @@ mod tests {
         RouteEntry {
             hops,
             learned_at: InstantMillis(learned_at),
+            last_relayed_at: InstantMillis(0),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,

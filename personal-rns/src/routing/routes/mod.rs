@@ -24,6 +24,7 @@ pub const fn route_index_buckets(destinations: usize) -> usize {
 pub struct RouteEntry {
     pub hops: u8,
     pub learned_at: InstantMillis,
+    pub last_relayed_at: InstantMillis,
     pub responsiveness: RouteResponsiveness,
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
@@ -46,6 +47,7 @@ pub trait RouteColumns {
     fn destinations(&self) -> &[DestinationHash];
     fn hops(&self) -> &[u8];
     fn learned_at(&self) -> &[InstantMillis];
+    fn last_relayed_at(&self) -> &[InstantMillis];
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
     fn next_hops(&self) -> &[NextHop];
