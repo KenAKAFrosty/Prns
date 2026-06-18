@@ -13,10 +13,11 @@
 //! growing into an honest shared instance: each verb is answered from live engine state, read through
 //! the node handle ([`RpcQuerySource`] → [`EngineCommand::RpcQuery`](crate::engine::RpcQuery), settled
 //! on the command lane). `link_count`, `path_table`, `next_hop`, and `next_hop_if_name` are live, the
-//! last two by decoding the request's `destination_hash` argument and reading the one route. Phy stats
-//! stay `None` (no phy on host/local interfaces); `first_hop_timeout` answers RNS's default (our
-//! host/local interfaces add no per-byte latency); `interface_stats` is an empty map until interface
-//! byte-counters and status are wired from runtime state.
+//! last two by decoding the request's `destination_hash` argument and reading the one route.
+//! `interface_stats` reports the node's live interfaces (their byte counters, rates, and up/down) from
+//! the status handles the app supplies through [`with_interfaces`](SharedInstanceRpcCompat::with_interfaces),
+//! the same handles the local display reads. Phy stats stay `None` (no phy on host/local interfaces);
+//! `first_hop_timeout` answers RNS's default (our host/local interfaces add no per-byte latency).
 //!
 //! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual HMAC
 //! challenge/response keyed on the shared `rpc_key`, then one request and one reply per connection (a
@@ -27,6 +28,7 @@
 //! answers in kind.
 
 use std::string::String;
+use std::sync::Arc;
 use std::vec::Vec;
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -39,9 +41,21 @@ use tokio::net::UnixListener;
 use super::rpc_value::Value;
 use crate::crypto::{hmac_sha256, hmac_sha256_verify};
 use crate::engine::RpcPathEntry;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot};
 use crate::routing::types::NextHop;
 use crate::wire::DestinationHash;
+
+/// RNS's `Interface.MODE_FULL` — the default interface mode a stock client renders as "Full". The
+/// shim reports it for every interface until per-interface mode is carried through the status seam.
+const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
+
+/// A live view of the node's interfaces, assembled on demand from the status handles the app holds
+/// (the same handles the local display reads). The shim calls it to answer `interface_stats`.
+type InterfaceView = Arc<dyn Fn() -> Vec<InterfaceSnapshot> + Send + Sync>;
+
+fn no_interfaces() -> Vec<InterfaceSnapshot> {
+    Vec::new()
+}
 
 const CHALLENGE: &[u8] = b"#CHALLENGE#";
 const WELCOME: &[u8] = b"#WELCOME#";
@@ -148,6 +162,7 @@ pub struct SharedInstanceRpcCompat<Q> {
     rpc_key: [u8; 32],
     bind: RpcBind,
     query: Q,
+    interfaces: InterfaceView,
 }
 
 /// The shim's read-only window onto the engine: it issues these through the runtime handle to answer
@@ -185,6 +200,7 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
             rpc_key,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
             query,
+            interfaces: Arc::new(no_interfaces),
         }
     }
 
@@ -197,7 +213,21 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
             rpc_key,
             bind: RpcBind::Abstract(socket_path.into()),
             query,
+            interfaces: Arc::new(no_interfaces),
         }
+    }
+
+    /// Supply the live view of the node's interfaces that answers `interface_stats`. `source` is called
+    /// on each `interface_stats` request and returns a snapshot of every interface the app holds a
+    /// status handle for (a fleet supervisor lists its live members). Without it, the shim reports no
+    /// interfaces — a stock client still gets the well-formed empty map it indexes, never a fault.
+    #[must_use]
+    pub fn with_interfaces(
+        mut self,
+        source: impl Fn() -> Vec<InterfaceSnapshot> + Send + Sync + 'static,
+    ) -> Self {
+        self.interfaces = Arc::new(source);
+        self
     }
 
     /// Accept control connections forever, serving each on its own task. Returns only if the listener
@@ -212,8 +242,9 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
                     if let Ok((stream, _)) = listener.accept().await {
                         let key = self.rpc_key;
                         let query = self.query.clone();
+                        let interfaces = self.interfaces.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key, query).await;
+                            let _ = serve_connection(stream, key, query, interfaces).await;
                         });
                     }
                 }
@@ -227,8 +258,9 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
                     if let Ok((stream, _)) = listener.accept().await {
                         let key = self.rpc_key;
                         let query = self.query.clone();
+                        let interfaces = self.interfaces.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key, query).await;
+                            let _ = serve_connection(stream, key, query, interfaces).await;
                         });
                     }
                 }
@@ -249,7 +281,12 @@ fn bind_abstract_rpc(socket_path: &str) -> Option<UnixListener> {
     UnixListener::from_std(listener).ok()
 }
 
-async fn serve_connection<S, Q>(mut stream: S, rpc_key: [u8; 32], query: Q) -> std::io::Result<()>
+async fn serve_connection<S, Q>(
+    mut stream: S,
+    rpc_key: [u8; 32],
+    query: Q,
+    interfaces: InterfaceView,
+) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     Q: RpcQuerySource,
@@ -261,7 +298,7 @@ where
         return Ok(());
     }
     let request = read_frame(&mut stream).await?;
-    write_frame(&mut stream, &reply_for(&request, &query).await).await
+    write_frame(&mut stream, &reply_for(&request, &query, &interfaces).await).await
 }
 
 /// Mirror of RNS `Listener.deliver_challenge`: send our `{sha256}`-tagged challenge, accept the
@@ -330,14 +367,19 @@ fn dialect_of(request: &[u8]) -> RpcDialect {
 
 /// The control-RPC answers, keyed on the method name (a readable substring of the request in either
 /// codec) and encoded in the client's own dialect. `link_count` is answered with real engine state
-/// read through `query`; `interface_stats` with an empty interface map (a NomadNet TextUI indexes
-/// `["interfaces"]` at startup, so a bare `None` crashes it before the UI draws); the link first-hop
-/// timeout with RNS's default; phy stats and anything unknown with `None`. Msgpack replies are built
-/// through the typed [`Value`] encoder; pickle replies stay hand-rolled for the legacy dialect.
-async fn reply_for(request: &[u8], query: &impl RpcQuerySource) -> Vec<u8> {
+/// read through `query`; `interface_stats` with the live interfaces the app holds status handles for
+/// (a NomadNet TextUI indexes `["interfaces"]` at startup, so a bare `None` crashes it before the UI
+/// draws); the link first-hop timeout with RNS's default; phy stats and anything unknown with `None`.
+/// Msgpack replies are built through the typed [`Value`] encoder; pickle replies stay hand-rolled for
+/// the legacy dialect.
+async fn reply_for(
+    request: &[u8],
+    query: &impl RpcQuerySource,
+    interfaces: &InterfaceView,
+) -> Vec<u8> {
     let dialect = dialect_of(request);
     if contains(request, b"interface_stats") {
-        empty_interface_stats(dialect)
+        reply_interface_stats(dialect, interfaces())
     } else if contains(request, b"path_table") {
         reply_path_table(dialect, query.path_table().await)
     } else if contains(request, b"next_hop_if_name") {
@@ -518,20 +560,87 @@ fn reply_str(dialect: RpcDialect, value: &str) -> Vec<u8> {
     }
 }
 
-/// The empty interface-stats map `{"interfaces": []}` — the shape a stock client indexes by
-/// `["interfaces"]`. The shim is siloed from the engine for this verb (interface byte-counters and
-/// status live in the runtime, not the engine), so it reports no interfaces rather than the node's
-/// real ones; wiring real interface stats from runtime state is the next slice. Pickle:
-/// `pickle.dumps({"interfaces": []}, protocol=2)`.
-fn empty_interface_stats(dialect: RpcDialect) -> Vec<u8> {
+/// The node's interface stats in the client's dialect — the shape `rnstatus` and a NomadNet TextUI
+/// index by `["interfaces"]`. Msgpack renders each interface's live counters (the same status the local
+/// display reads) into RNS's per-interface dict; the fields the shim doesn't track (announce rates,
+/// IFAC, mode beyond Full) are simply absent, which a stock client reads as "not reported" rather than
+/// a fabricated zero. The legacy pickle dialect gets the well-formed empty map (`{"interfaces": []}`,
+/// `protocol=2`) — non-faulting, and real pickle rows are a follow-up.
+fn reply_interface_stats(dialect: RpcDialect, interfaces: Vec<InterfaceSnapshot>) -> Vec<u8> {
     match dialect {
-        RpcDialect::Msgpack => {
-            Value::Map(std::vec![("interfaces".into(), Value::Array(std::vec![]))]).to_msgpack()
-        }
         RpcDialect::Pickle => std::vec![
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
             b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
         ],
+        RpcDialect::Msgpack => interface_stats_msgpack(&interfaces),
+    }
+}
+
+fn interface_stats_msgpack(interfaces: &[InterfaceSnapshot]) -> Vec<u8> {
+    let mut total_rxb = 0u64;
+    let mut total_txb = 0u64;
+    let mut total_rxs = 0u64;
+    let mut total_txs = 0u64;
+    let rows = interfaces
+        .iter()
+        .map(|interface| {
+            let rates = interface
+                .transfer_rates
+                .unwrap_or(crate::interfaces::TransferRates {
+                    rx_bps: 0,
+                    tx_bps: 0,
+                });
+            total_rxb += interface.rx_bytes;
+            total_txb += interface.tx_bytes;
+            total_rxs += u64::from(rates.rx_bps);
+            total_txs += u64::from(rates.tx_bps);
+            Value::Map(std::vec![
+                ("name".into(), Value::Str(interface_name(interface.id))),
+                (
+                    "short_name".into(),
+                    Value::Str(interface_name(interface.id))
+                ),
+                ("type".into(), Value::Str(interface_type(interface.id))),
+                (
+                    "status".into(),
+                    Value::Bool(is_online(interface.connection))
+                ),
+                ("mode".into(), Value::Int(RNS_INTERFACE_MODE_FULL)),
+                ("clients".into(), Value::Nil),
+                ("rxb".into(), Value::Int(interface.rx_bytes as i64)),
+                ("txb".into(), Value::Int(interface.tx_bytes as i64)),
+                ("rxs".into(), Value::Int(i64::from(rates.rx_bps))),
+                ("txs".into(), Value::Int(i64::from(rates.tx_bps))),
+            ])
+        })
+        .collect();
+    Value::Map(std::vec![
+        ("interfaces".into(), Value::Array(rows)),
+        ("rxb".into(), Value::Int(total_rxb as i64)),
+        ("txb".into(), Value::Int(total_txb as i64)),
+        ("rxs".into(), Value::Int(total_rxs as i64)),
+        ("txs".into(), Value::Int(total_txs as i64)),
+        ("rss".into(), Value::Nil),
+    ])
+    .to_msgpack()
+}
+
+/// RNS's per-interface `status` flag is a plain bool: up or down. A `Connected` or `Degraded`
+/// interface is up (degraded carries traffic, just impaired); everything else — initializing,
+/// reconnecting, failed, disconnected, disabled — is down.
+fn is_online(connection: ConnectionState) -> bool {
+    matches!(
+        connection,
+        ConnectionState::Connected | ConnectionState::Degraded
+    )
+}
+
+/// RNS's per-interface `type` is the interface class name. The kind names the medium; an interface
+/// with no kind byte is a bare `Interface`.
+fn interface_type(id: InterfaceId) -> String {
+    match id.kind() {
+        Some(kind) => std::format!("{kind:?}"),
+        None => std::string::String::from("Interface"),
     }
 }
 
@@ -624,6 +733,10 @@ mod tests {
         c.flush().await.unwrap();
     }
 
+    fn no_view() -> InterfaceView {
+        Arc::new(no_interfaces)
+    }
+
     #[derive(Clone)]
     struct StubQuery {
         links: u32,
@@ -654,15 +767,15 @@ mod tests {
             routes: std::vec![],
         };
         let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
-        assert_eq!(reply_for(rssi, &query).await, b"N.");
+        assert_eq!(reply_for(rssi, &query, &no_view()).await, b"N.");
         let timeout = b"{'get': 'first_hop_timeout'}";
-        assert_eq!(reply_for(timeout, &query).await, b"I6\n.");
+        assert_eq!(reply_for(timeout, &query, &no_view()).await, b"I6\n.");
         let links = b"{'get': 'link_count'}";
-        assert_eq!(reply_for(links, &query).await, b"I2\n.");
+        assert_eq!(reply_for(links, &query, &no_view()).await, b"I2\n.");
         let path_table = b"{'get': 'path_table'}";
-        assert_eq!(reply_for(path_table, &query).await, b"].");
+        assert_eq!(reply_for(path_table, &query, &no_view()).await, b"].");
         let unknown = b"{'get': 'rate_table'}";
-        assert_eq!(reply_for(unknown, &query).await, b"N.");
+        assert_eq!(reply_for(unknown, &query, &no_view()).await, b"N.");
     }
 
     #[tokio::test]
@@ -673,17 +786,18 @@ mod tests {
         };
         let interface_stats = b"\x81\xa3get\xafinterface_stats";
         assert_eq!(
-            reply_for(interface_stats, &query).await,
-            b"\x81\xaainterfaces\x90"
+            reply_for(interface_stats, &query, &no_view()).await,
+            b"\x86\xaainterfaces\x90\xa3rxb\x00\xa3txb\x00\xa3rxs\x00\xa3txs\x00\xa3rss\xc0",
+            "no status handles -> an empty interface list with zeroed totals"
         );
         let timeout = b"\x81\xa3get\xb1first_hop_timeout";
-        assert_eq!(reply_for(timeout, &query).await, b"\x06");
+        assert_eq!(reply_for(timeout, &query, &no_view()).await, b"\x06");
         let links = b"\x81\xa3get\xaalink_count";
-        assert_eq!(reply_for(links, &query).await, b"\x02");
+        assert_eq!(reply_for(links, &query, &no_view()).await, b"\x02");
         let rssi = b"\x82\xa3get\xabpacket_rssi";
-        assert_eq!(reply_for(rssi, &query).await, b"\xc0");
+        assert_eq!(reply_for(rssi, &query, &no_view()).await, b"\xc0");
         let path_table = b"\x81\xa3get\xaapath_table";
-        assert_eq!(reply_for(path_table, &query).await, b"\x90");
+        assert_eq!(reply_for(path_table, &query, &no_view()).await, b"\x90");
     }
 
     #[tokio::test]
@@ -698,12 +812,55 @@ mod tests {
                 interface: InterfaceId::new([0x07; 8]),
             }],
         };
-        let reply = reply_for(b"\x81\xa3get\xaapath_table", &query).await;
+        let reply = reply_for(b"\x81\xa3get\xaapath_table", &query, &no_view()).await;
         assert_eq!(reply[0], 0x91, "a one-row path table is a 1-element array");
         assert_eq!(reply[1], 0x86, "each row is a 6-entry map");
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
         assert!(contains(b"hash") && contains(b"via") && contains(b"hops"));
         assert!(contains(b"interface") && contains(&[0xab; 16]));
+    }
+
+    #[tokio::test]
+    async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
+        let query = StubQuery {
+            links: 0,
+            routes: std::vec![],
+        };
+        let view: InterfaceView = Arc::new(|| {
+            std::vec![
+                InterfaceSnapshot {
+                    id: InterfaceId::new([0x07; 8]),
+                    connection: ConnectionState::Connected,
+                    rx_bytes: 1234,
+                    tx_bytes: 56,
+                    transfer_rates: Some(crate::interfaces::TransferRates {
+                        rx_bps: 800,
+                        tx_bps: 100,
+                    }),
+                    links: 2,
+                },
+                InterfaceSnapshot {
+                    id: InterfaceId::new([0x09; 8]),
+                    connection: ConnectionState::Reconnecting,
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    transfer_rates: None,
+                    links: 0,
+                },
+            ]
+        });
+        let reply = reply_for(b"\x81\xa3get\xafinterface_stats", &query, &view).await;
+        assert_eq!(reply[0], 0x86, "the top dict still has its 6 keys");
+        let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
+        assert!(
+            contains(b"interfaces\x92"),
+            "the interfaces value is a 2-element array"
+        );
+        assert!(contains(b"rxb") && contains(b"status") && contains(b"mode"));
+        assert!(
+            contains(&[0xc3]) && contains(&[0xc2]),
+            "the connected interface is up (true), the reconnecting one is down (false)"
+        );
     }
 
     fn mp_route_request(verb: &[u8], destination: &[u8; 16]) -> Vec<u8> {
@@ -735,7 +892,12 @@ mod tests {
     async fn next_hop_answers_the_via_hash_or_nil_for_an_unknown_destination() {
         let query = one_via_route();
 
-        let reply = reply_for(&mp_route_request(b"next_hop", &[0xab; 16]), &query).await;
+        let reply = reply_for(
+            &mp_route_request(b"next_hop", &[0xab; 16]),
+            &query,
+            &no_view(),
+        )
+        .await;
         assert_eq!(
             &reply[..2],
             &[0xc4, 0x10],
@@ -743,7 +905,12 @@ mod tests {
         );
         assert_eq!(&reply[2..], &[0xcd; 16], "the hash is the via transport");
 
-        let unknown = reply_for(&mp_route_request(b"next_hop", &[0x11; 16]), &query).await;
+        let unknown = reply_for(
+            &mp_route_request(b"next_hop", &[0x11; 16]),
+            &query,
+            &no_view(),
+        )
+        .await;
         assert_eq!(unknown, b"\xc0", "an unknown destination has no next hop");
     }
 
@@ -759,7 +926,12 @@ mod tests {
                 interface: InterfaceId::new([0x07; 8]),
             }],
         };
-        let reply = reply_for(&mp_route_request(b"next_hop", &[0xab; 16]), &query).await;
+        let reply = reply_for(
+            &mp_route_request(b"next_hop", &[0xab; 16]),
+            &query,
+            &no_view(),
+        )
+        .await;
         assert_eq!(
             &reply[2..],
             &[0xab; 16],
@@ -771,12 +943,22 @@ mod tests {
     async fn next_hop_if_name_is_the_interface_name_or_the_string_none() {
         let query = one_via_route();
 
-        let reply = reply_for(&mp_route_request(b"next_hop_if_name", &[0xab; 16]), &query).await;
+        let reply = reply_for(
+            &mp_route_request(b"next_hop_if_name", &[0xab; 16]),
+            &query,
+            &no_view(),
+        )
+        .await;
         assert_eq!(reply[0] & 0xe0, 0xa0, "a short name is a msgpack fixstr");
         let name = std::str::from_utf8(&reply[1..]).unwrap();
         assert!(name.contains('['), "renders kind[hashprefix]: {name}");
 
-        let unknown = reply_for(&mp_route_request(b"next_hop_if_name", &[0x11; 16]), &query).await;
+        let unknown = reply_for(
+            &mp_route_request(b"next_hop_if_name", &[0x11; 16]),
+            &query,
+            &no_view(),
+        )
+        .await;
         assert_eq!(unknown, b"\xa4None", "an unknown route's name is str(None)");
     }
 
@@ -788,7 +970,7 @@ mod tests {
         request.extend_from_slice(&[b'C', 0x10]);
         request.extend_from_slice(&[0xab; 16]);
 
-        let reply = reply_for(&request, &query).await;
+        let reply = reply_for(&request, &query, &no_view()).await;
         assert_eq!(
             &reply[..4],
             &[0x80, 0x03, b'C', 0x10],
@@ -826,6 +1008,7 @@ mod tests {
                     links: 0,
                     routes: std::vec![],
                 },
+                no_view(),
             )
             .await;
         });
@@ -865,6 +1048,7 @@ mod tests {
                     links: 0,
                     routes: std::vec![],
                 },
+                no_view(),
             )
             .await;
         });

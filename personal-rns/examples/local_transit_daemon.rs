@@ -18,6 +18,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpClientInterface;
+use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::TransportId;
@@ -92,16 +93,18 @@ async fn main() {
     });
     let handle = node.handle();
     handle.supervise(LocalServer::with_port(local_port));
-    let _peer = handle.add_interface(TcpClientInterface::new(
-        peer_addr.clone(),
-        BITRATE,
-        Duration::from_millis(250),
-    ));
+    let tcp = TcpClientInterface::new(peer_addr.clone(), BITRATE, Duration::from_millis(250));
+    let tcp_status = tcp.status();
+    let _peer = handle.add_interface(tcp);
 
     // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
     // channel during attachment (resource) delivery, and fault if nobody answers. It reads engine
     // state (e.g. link_count) through the handle to answer with real values.
-    tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
+    tokio::spawn(
+        SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
+            .with_interfaces(move || std::vec![InterfaceSnapshot::of(&tcp_status)])
+            .run(),
+    );
 
     println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
     node.run().await;

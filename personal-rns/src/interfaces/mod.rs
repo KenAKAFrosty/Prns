@@ -35,6 +35,6 @@ pub use config::{
     InterfaceConfig,
 };
 pub use packet::{InboundPacket, OutboundPacket};
-pub use status::{AirtimeUtilization, InterfaceStatus, TransferRates};
+pub use status::{AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, TransferRates};
 
 pub use framing::rns_serial_framing;

@@ -40,7 +40,7 @@ use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
@@ -125,6 +125,22 @@ fn classify(
         let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
         Some((CardKind::Peer, label))
     }
+}
+
+fn interface_snapshots(
+    usb: &TokioInterfaceStatus,
+    wifi: &AutoWifiStatus,
+    tcp: Option<&TokioInterfaceStatus>,
+) -> Vec<InterfaceSnapshot> {
+    let mut snapshots = vec![InterfaceSnapshot::of(usb)];
+    if let Some(tcp) = tcp {
+        snapshots.push(InterfaceSnapshot::of(tcp));
+    }
+    snapshots.push(InterfaceSnapshot::of(wifi));
+    for member in wifi.members() {
+        snapshots.push(InterfaceSnapshot::of(&member));
+    }
+    snapshots
 }
 
 /// What the node thread hands the window once the runtime is assembled: a command handle to issue
@@ -222,16 +238,6 @@ fn run_node(
         );
 
         let rpc_port = local_core::DEFAULT_LOCAL_PORT + 1;
-        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
-        #[cfg(target_os = "linux")]
-        tokio::spawn(
-            SharedInstanceRpcCompat::abstract_unix(
-                rpc_key,
-                local_core::DEFAULT_SOCKET_PATH,
-                handle.clone(),
-            )
-            .run(),
-        );
         println!(
             "  attachments to local RNS clients flow over the shared Reticulum identity (rpc_key {})",
             rpc_key
@@ -254,6 +260,36 @@ fn run_node(
             }
             _ => (None, None, None),
         };
+
+        {
+            let usb_status = usb_status.clone();
+            let wifi_status = wifi_status.clone();
+            let tcp_status = tcp_status.clone();
+            tokio::spawn(
+                SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
+                    .with_interfaces(move || {
+                        interface_snapshots(&usb_status, &wifi_status, tcp_status.as_ref())
+                    })
+                    .run(),
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let usb_status = usb_status.clone();
+            let wifi_status = wifi_status.clone();
+            let tcp_status = tcp_status.clone();
+            tokio::spawn(
+                SharedInstanceRpcCompat::abstract_unix(
+                    rpc_key,
+                    local_core::DEFAULT_SOCKET_PATH,
+                    handle.clone(),
+                )
+                .with_interfaces(move || {
+                    interface_snapshots(&usb_status, &wifi_status, tcp_status.as_ref())
+                })
+                .run(),
+            );
+        }
 
         let _ = ready_tx.send(WindowHandles {
             handle: handle.clone(),

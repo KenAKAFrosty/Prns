@@ -45,6 +45,33 @@ pub trait InterfaceStatus {
     }
 }
 
+/// An owned, point-in-time read of an [`InterfaceStatus`] — the live facts copied out so a consumer
+/// can hold a `Vec` of them past the borrow of the handle they came from. The shared-instance RPC's
+/// `interface_stats` collects these from the handles the app holds (the same ones the display reads),
+/// then renders them to a stock client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceSnapshot {
+    pub id: InterfaceId,
+    pub connection: ConnectionState,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub transfer_rates: Option<TransferRates>,
+    pub links: u32,
+}
+
+impl InterfaceSnapshot {
+    pub fn of(status: &impl InterfaceStatus) -> Self {
+        Self {
+            id: status.id(),
+            connection: status.connection(),
+            rx_bytes: status.rx_bytes(),
+            tx_bytes: status.tx_bytes(),
+            transfer_rates: status.transfer_rates(),
+            links: status.links(),
+        }
+    }
+}
+
 /// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the
 /// card builder when the handle itself can't be cloned (the no_std `&'static` handle a board
 /// shares between its interface and display tasks), not only the std `Arc`-clone case.
