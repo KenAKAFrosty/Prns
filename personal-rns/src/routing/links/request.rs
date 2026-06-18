@@ -7,6 +7,7 @@
 //! the reference's apps would, byte for byte. Payloads past the link MDU are
 //! Resource territory and refused here.
 
+use crate::crypto::sha256;
 use crate::engine::commands::{
     CommandId, CommandOutcome, Respond, RespondError, SendRequest, SendRequestError,
     MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
@@ -65,6 +66,16 @@ impl RequestId {
     pub fn of_packet(packet_hash: &PacketHash) -> Self {
         let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
         id.copy_from_slice(&packet_hash.as_bytes()[..TRUNCATED_HASH_BYTE_LEN]);
+        Self(id)
+    }
+
+    /// RNS 1.3.1 `Link.request` / `request_resource_concluded`: a request that
+    /// rode a resource is named by `truncated_hash(packed_request)` — the data
+    /// itself, rather than a packet it never formed.
+    #[must_use]
+    pub fn of_request_data(packed_request: &[u8]) -> Self {
+        let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
+        id.copy_from_slice(&sha256(packed_request)[..TRUNCATED_HASH_BYTE_LEN]);
         Self(id)
     }
 

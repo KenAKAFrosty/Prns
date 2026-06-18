@@ -14,6 +14,7 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
 use crate::routing::links::data::write_link_raw_packet;
+use crate::routing::links::request::{parse_request_plaintext, RequestId};
 use crate::routing::links::resources::advertisement::{
     parse_hashmap_update_plaintext, ResourceAdvertisement,
 };
@@ -28,7 +29,7 @@ use crate::routing::links::resources::control::{
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{AcceptedResource, IncomingResourceStatus};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceCompression, ResourceHash, ResourceStrategy,
+    resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
     ESTABLISHMENT_COST_ESTIMATE_BYTES, FAST_RATE_THRESHOLD, MAP_HASH_LEN, MAX_RETRIES,
     PART_TIMEOUT_FACTOR_AFTER_RTT, PER_RETRY_DELAY_MS, RATE_FAST_BYTES_PER_SECOND,
     RATE_VERY_SLOW_BYTES_PER_SECOND, RETRY_GRACE_MS, VERY_SLOW_RATE_THRESHOLD, WINDOW_FLEXIBILITY,
@@ -102,7 +103,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         if !advertisement.flags.encrypted
-            || advertisement.flags.is_request
             || advertisement.flags.has_metadata
             || advertisement.hashmap.is_empty()
             || advertisement.total_segments == 0
@@ -112,13 +112,28 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return IngestPacketOutcome::Ignored;
         }
-        let answers_our_request = advertisement.flags.is_response
-            && advertisement.total_segments == 1
+        let correlation = match (
+            advertisement.flags.is_request,
+            advertisement.flags.is_response,
+            advertisement.request_id,
+        ) {
+            (true, false, Some(id)) => ResourceCorrelation::Request(id),
+            (false, true, Some(id)) => ResourceCorrelation::Response(id),
+            _ => ResourceCorrelation::Unsolicited,
+        };
+        if correlation.is_request() && advertisement.flags.compressed {
+            return IngestPacketOutcome::Ignored;
+        }
+        let bypasses_strategy = advertisement.total_segments == 1
             && !advertisement.flags.compressed
-            && advertisement
-                .request_id
-                .is_some_and(|id| self.receipts.has_pending_request(id.as_bytes()));
-        let (max_uncompressed_len, accept_compressed) = if answers_our_request {
+            && match correlation {
+                ResourceCorrelation::Response(id) => {
+                    self.receipts.has_pending_request(id.as_bytes())
+                }
+                ResourceCorrelation::Request(_) => true,
+                ResourceCorrelation::Unsolicited => false,
+            };
+        let (max_uncompressed_len, accept_compressed) = if bypasses_strategy {
             (u64::MAX, false)
         } else {
             match resource_strategy {
@@ -168,7 +183,7 @@ impl<S: StorageLayout> EngineState<S> {
             sealed_transfer_len,
             part_count,
             sdu,
-            request_id: advertisement.request_id,
+            correlation,
             initial_names: advertisement.hashmap,
         };
         let inherited = match self.links.phase_for(&link_id) {
@@ -635,28 +650,63 @@ impl<S: StorageLayout> EngineState<S> {
                                     data: plaintext,
                                 },
                             ));
-                        } else if let Some((request_id, proven)) = state.request_id.and_then(|id| {
-                            self.receipts
-                                .settle_by_request_id(id.as_bytes())
-                                .map(|proven| (id, proven))
-                        }) {
-                            sink(EngineReaction::Journaled(Journaled::ResponseReceived {
-                                link_id: *link_id,
-                                request_id,
-                                data: plaintext,
-                            }));
-                            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                                id: proven.command_id,
-                                settlement: Settlement::SendRequest(Ok(Delivered {
-                                    rtt: Rtt::measured_between(proven.sent_at, now),
-                                })),
-                            }));
                         } else {
-                            sink(EngineReaction::Journaled(Journaled::ResourceReceived {
-                                link_id: *link_id,
-                                hash: *hash,
-                                data: plaintext,
-                            }));
+                            match state.correlation {
+                                ResourceCorrelation::Response(id) => {
+                                    if let Some(proven) =
+                                        self.receipts.settle_by_request_id(id.as_bytes())
+                                    {
+                                        sink(EngineReaction::Journaled(
+                                            Journaled::ResponseReceived {
+                                                link_id: *link_id,
+                                                request_id: id,
+                                                data: plaintext,
+                                            },
+                                        ));
+                                        sink(EngineReaction::Journaled(
+                                            Journaled::CommandSettled {
+                                                id: proven.command_id,
+                                                settlement: Settlement::SendRequest(Ok(
+                                                    Delivered {
+                                                        rtt: Rtt::measured_between(
+                                                            proven.sent_at,
+                                                            now,
+                                                        ),
+                                                    },
+                                                )),
+                                            },
+                                        ));
+                                    } else {
+                                        sink(EngineReaction::Journaled(
+                                            Journaled::ResourceReceived {
+                                                link_id: *link_id,
+                                                hash: *hash,
+                                                data: plaintext,
+                                            },
+                                        ));
+                                    }
+                                }
+                                ResourceCorrelation::Request(_) => {
+                                    if let Ok(parsed) = parse_request_plaintext(plaintext) {
+                                        sink(EngineReaction::Journaled(
+                                            Journaled::RequestReceived {
+                                                link_id: *link_id,
+                                                request_id: RequestId::of_request_data(plaintext),
+                                                path_hash: parsed.path_hash,
+                                                requested_at: parsed.requested_at,
+                                                data: parsed.data,
+                                            },
+                                        ));
+                                    }
+                                }
+                                ResourceCorrelation::Unsolicited => {
+                                    sink(EngineReaction::Journaled(Journaled::ResourceReceived {
+                                        link_id: *link_id,
+                                        hash: *hash,
+                                        data: plaintext,
+                                    }));
+                                }
+                            }
                         }
                         delivered_segment_bytes = Some(plaintext.len() as u64);
                     }
@@ -1044,6 +1094,7 @@ mod tests_support {
         pub(crate) segments: std::vec::Vec<(ResourceHash, u64, std::vec::Vec<u8>)>,
         pub(crate) assembled: std::vec::Vec<(ResourceHash, u64)>,
         pub(crate) mismatched: std::vec::Vec<(InterfaceId, InterfaceId)>,
+        pub(crate) requests: std::vec::Vec<(RequestId, std::vec::Vec<u8>)>,
     }
 
     pub(crate) fn feed<S: StorageLayout>(
@@ -1068,6 +1119,7 @@ mod tests_support {
             segments: std::vec::Vec::new(),
             assembled: std::vec::Vec::new(),
             mismatched: std::vec::Vec::new(),
+            requests: std::vec::Vec::new(),
         };
         let mut raw = frame.to_vec();
         engine.ingest_packet_into(
@@ -1119,6 +1171,11 @@ mod tests_support {
                     ..
                 }) => {
                     capture.mismatched.push((attached_interface, arrived_on));
+                }
+                EngineReaction::Journaled(Journaled::RequestReceived {
+                    request_id, data, ..
+                }) => {
+                    capture.requests.push((request_id, data.to_vec()));
                 }
                 _ => {}
             },
@@ -1259,6 +1316,67 @@ mod tests {
             conclusion.settlements[0],
             (CommandId(42), Settlement::SendRequest(Ok(_))),
         ));
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
+    fn a_request_resource_dispatches_a_request_despite_the_default_strategy() {
+        use crate::engine::test_support::filled_frame;
+        use crate::routing::links::request::{write_request_plaintext, RequestId};
+        use crate::routing::links::resources::ResourceCorrelation;
+        use crate::routing::request_handlers::RequestPathHash;
+
+        let path_hash = RequestPathHash::new([0x44; 16]);
+        let request_data = b"a request too fat for one packet, ".repeat(40);
+        let mut packed = std::vec![0u8; request_data.len() + 64];
+        let plain_len =
+            write_request_plaintext(InstantMillis(1_400), &path_hash, &request_data, &mut packed)
+                .unwrap();
+        let packed_request = &packed[..plain_len];
+        let request_id = RequestId::of_request_data(packed_request);
+
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            packed_request,
+            None,
+            ResourceCorrelation::Request(request_id),
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let advertisement = advertisement.expect("the peer advertises its request resource");
+
+        let mut receiver = engine_with_active_link();
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        assert_eq!(
+            pull.frames.len(),
+            1,
+            "an inbound request is accepted and pulled, default strategy notwithstanding",
+        );
+
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.requests.is_empty() || !capture.received.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let conclusion = conclusion.expect("the last part concludes the request");
+        assert!(
+            conclusion.received.is_empty(),
+            "a request resource dispatches a RequestReceived, not a bare ResourceReceived",
+        );
+        assert_eq!(conclusion.requests.len(), 1);
+        assert_eq!(conclusion.requests[0].0, request_id);
+        assert_eq!(conclusion.requests[0].1, request_data);
         assert!(receiver.incoming_resources.is_empty());
     }
 
@@ -2716,6 +2834,7 @@ mod dynamics_tests {
                 segments: std::vec::Vec::new(),
                 assembled: std::vec::Vec::new(),
                 mismatched: std::vec::Vec::new(),
+                requests: std::vec::Vec::new(),
             };
             for (_, part) in &serve.frames {
                 let capture = feed(&mut receiver, part, now);

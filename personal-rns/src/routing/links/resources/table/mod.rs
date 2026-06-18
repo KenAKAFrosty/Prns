@@ -12,7 +12,6 @@ pub use impls::*;
 
 use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
-use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::build_outgoing::{BuildOutgoingResourceError, BuiltResource};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof, SaltNonce,
@@ -96,7 +95,7 @@ pub struct IncomingResourceState {
     pub window_max: usize,
     pub status: IncomingResourceStatus,
     pub retries_left: u8,
-    pub request_id: Option<RequestId>,
+    pub correlation: ResourceCorrelation,
     pub measured_rtt_ms: Option<u64>,
     pub part_timeout_factor: u64,
     pub request_sent_at: Option<InstantMillis>,
@@ -132,7 +131,7 @@ impl Default for IncomingResourceState {
             window_max: WINDOW_MAX_SLOW,
             status: IncomingResourceStatus::Transferring,
             retries_left: 0,
-            request_id: None,
+            correlation: ResourceCorrelation::Unsolicited,
             measured_rtt_ms: None,
             part_timeout_factor: PART_TIMEOUT_FACTOR,
             request_sent_at: None,
@@ -374,7 +373,7 @@ pub struct AcceptedResource<'a> {
     pub sealed_transfer_len: usize,
     pub part_count: usize,
     pub sdu: usize,
-    pub request_id: Option<RequestId>,
+    pub correlation: ResourceCorrelation,
     pub initial_names: &'a [u8],
 }
 
@@ -443,7 +442,7 @@ impl<C: ResourceColumns<IncomingResourceState>> IncomingResources<C> {
                     sealed_transfer_len: offer.sealed_transfer_len,
                     part_count: offer.part_count,
                     sdu: offer.sdu,
-                    request_id: offer.request_id,
+                    correlation: offer.correlation,
                     ..IncomingResourceState::default()
                 },
             )
@@ -688,7 +687,7 @@ mod tests {
             sealed_transfer_len: 980,
             part_count: 3,
             sdu: 464,
-            request_id: None,
+            correlation: ResourceCorrelation::Unsolicited,
             initial_names,
         }
     }
