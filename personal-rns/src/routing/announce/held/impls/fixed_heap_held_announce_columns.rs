@@ -1,9 +1,20 @@
+//! The fixed-capacity, heap-backed twin of [`FixedHeldAnnounceColumns`]: the held
+//! announces live in a caller-chosen heap region (PSRAM on the S3) via the
+//! allocator `A`, while the burst limiter keeps its tiny per-interface table in
+//! SRAM. The dest lookup is a linear scan — held announces are touched only during
+//! a burst and bounded by the queue's own capacity, so no keyed index is warranted.
+
+use allocator_api2::alloc::{Allocator, Global};
+use allocator_api2::boxed::Box;
+use allocator_api2::vec::Vec;
+
 use crate::crypto::{Ed25519PublicKey, Ed25519Signature, X25519PublicKey};
 use crate::identity::{IdentityEncryptionPublicKey, IdentitySigningPublicKey};
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::held::{HeldAnnounce, HeldAnnounceColumns};
 use crate::routing::announce::retained::RetainedAnnounceEntry;
 use crate::routing::announce::{AnnounceId, DottedNameHash, IdentityPublicKeys};
+use crate::routing::NextHop;
 use crate::wire::DestinationHash;
 
 fn vacant() -> HeldAnnounce {
@@ -11,7 +22,7 @@ fn vacant() -> HeldAnnounce {
         destination: DestinationHash::new([0u8; 16]),
         hops: 0,
         receiving_interface: InterfaceId::new([0u8; 8]),
-        next_hop: crate::routing::NextHop::Direct,
+        next_hop: NextHop::Direct,
         is_path_response: false,
         announce: RetainedAnnounceEntry {
             public_keys: IdentityPublicKeys {
@@ -27,22 +38,27 @@ fn vacant() -> HeldAnnounce {
     }
 }
 
-#[derive(Debug)]
-pub struct FixedHeldAnnounceColumns<const MAX_HELD: usize> {
+pub struct FixedHeapHeldAnnounceColumns<const MAX_HELD: usize, A: Allocator = Global> {
     len: usize,
-    rows: [HeldAnnounce; MAX_HELD],
+    rows: Box<[HeldAnnounce], A>,
 }
 
-impl<const MAX_HELD: usize> Default for FixedHeldAnnounceColumns<MAX_HELD> {
+impl<const MAX_HELD: usize, A: Allocator + Default> Default
+    for FixedHeapHeldAnnounceColumns<MAX_HELD, A>
+{
     fn default() -> Self {
+        let mut rows = Vec::with_capacity_in(MAX_HELD, A::default());
+        rows.resize(MAX_HELD, vacant());
         Self {
             len: 0,
-            rows: [vacant(); MAX_HELD],
+            rows: rows.into_boxed_slice(),
         }
     }
 }
 
-impl<const MAX_HELD: usize> HeldAnnounceColumns for FixedHeldAnnounceColumns<MAX_HELD> {
+impl<const MAX_HELD: usize, A: Allocator> HeldAnnounceColumns
+    for FixedHeapHeldAnnounceColumns<MAX_HELD, A>
+{
     fn capacity(&self) -> usize {
         MAX_HELD
     }

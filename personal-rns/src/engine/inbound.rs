@@ -8,7 +8,7 @@ use crate::engine::{
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::routing::announce::defaults::JitterSeed;
-use crate::routing::announce::AnnounceEntropy;
+use crate::routing::announce::{Announce, AnnounceEntropy};
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
@@ -35,6 +35,94 @@ pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    /// Drip-release the announces an interface burst held aside, once its rate has
+    /// fallen back under threshold — RNS 1.3.5 `Interface.process_held_announces`
+    /// (Interfaces/Interface.py:234). Each due interface releases its single
+    /// lowest-hop waiting announce back through the normal accept path, then waits
+    /// out another `IC_HELD_RELEASE_INTERVAL` before the next; a still-bursting
+    /// interface only has its deadline pushed out, holding everything until it calms.
+    pub fn fire_due_held_announces<F>(
+        &mut self,
+        now: InstantMillis,
+        view: &[InterfaceConfig],
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let mut wake = WakeSchedules::UNCHANGED;
+        let mut released_any = false;
+        while let Some(interface) = self.next_due_held_interface(now) {
+            self.interface_announce_limits
+                .advance_held_release(interface, now);
+            if !self.interface_announce_limits.rate_subsided(interface, now) {
+                continue;
+            }
+            let Some(slot) = self.held_announces.lowest_hop_slot(interface) else {
+                continue;
+            };
+            let mut app_data = [0u8; BROADCAST_MTU];
+            let Some((held, app_data_len)) = self.held_announces.take(slot, &mut app_data) else {
+                continue;
+            };
+            let announce = Announce {
+                destination: held.destination,
+                public_keys: held.announce.public_keys,
+                dotted_name_hash: held.announce.dotted_name_hash,
+                announce_id: held.announce.retained_announce_id,
+                maybe_ratchet: held.announce.maybe_ratchet,
+                signature: held.announce.signature,
+                app_data: &app_data[..app_data_len],
+            };
+            let mut jitter_bytes = [0u8; core::mem::size_of::<u64>()];
+            fill_entropy(&mut jitter_bytes);
+            let jitter = JitterSeed(u64::from_le_bytes(jitter_bytes));
+            let ingest = self.ingest_announce(
+                announce,
+                held.hops,
+                held.receiving_interface,
+                now,
+                held.next_hop,
+                held.is_path_response,
+                jitter,
+                view,
+                &mut |removed| sink(EngineReaction::Journaled(journal_removal(removed))),
+            );
+            if let AnnounceIngest::Accepted(accepted) = ingest {
+                released_any = true;
+                sink(EngineReaction::Journaled(Journaled::AnnounceHeard {
+                    destination: accepted.destination,
+                    hops: accepted.hops,
+                    source_interface: held.receiving_interface,
+                }));
+                while let Some(settled) = self.pop_settled_path_request(&accepted.destination) {
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: settled.command_id,
+                        settlement: Settlement::RequestPath(Ok(PathFound {
+                            hops: crate::units::HopCount(accepted.hops),
+                        })),
+                    }));
+                }
+            }
+        }
+        wake.held_announce_release = self.held_announce_release_wake();
+        if released_any {
+            wake.scheduled_announces = self.scheduled_announces_wake();
+            wake.path_request_timeout = self.path_request_timeout_wake();
+            wake.expired_routes = self.route_expiry_wake(view);
+        }
+        wake
+    }
+
+    fn next_due_held_interface(&self, now: InstantMillis) -> Option<InterfaceId> {
+        self.held_announces.interfaces().find(|&interface| {
+            self.interface_announce_limits
+                .held_release_for(interface)
+                .is_some_and(|release| release.0 <= now.0)
+        })
+    }
+
     /// Ingest one packet and stream everything it produces to `sink`: the `Journaled`
     /// facts (announce heard, delivery, the settlements a learned route closes) and the
     /// `Directive`s it owes — a proof back on the arrival lane, a packet forwarded onward,
@@ -89,6 +177,9 @@ impl<S: StorageLayout> EngineState<S> {
                     .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
             }
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
+            IngestPacketOutcome::Announce(AnnounceIngest::Held) => {
+                wake_schedule_changes.held_announce_release = self.held_announce_release_wake();
+            }
             IngestPacketOutcome::Delivery { delivery, proof } => {
                 sink(EngineReaction::Journaled(Journaled::Delivered(delivery)));
                 let owed = match proof {

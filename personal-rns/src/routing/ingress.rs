@@ -212,6 +212,10 @@ impl<'a> Ingress<'a> {
 pub enum AnnounceIngest {
     Accepted(AcceptedAnnounce),
     Ignored,
+    /// The interface is bursting and this announce was for an unknown destination,
+    /// so it was parked in the held queue to be drip-released once the burst subsides
+    /// — RNS `Interface.hold_announce` (Interfaces/Interface.py:228).
+    Held,
 }
 
 /// The route an accepted announce just took — what an app needs to discover
@@ -571,17 +575,40 @@ impl<S: StorageLayout> EngineState<S> {
                 arrived_at,
                 next_hop,
                 is_path_response,
-            } => IngestPacketOutcome::Announce(self.ingest_announce(
-                announce,
-                received_hops,
-                source_interface,
-                arrived_at,
-                next_hop,
-                is_path_response,
-                jitter,
-                interfaces,
-                on_removed,
-            )),
+            } => {
+                self.interface_announce_limits
+                    .record(source_interface, arrived_at);
+                let unknown = !self.routing_table.has_route(&announce.destination);
+                let awaiting = self.pending_path_requests.contains(&announce.destination)
+                    || self.discovery_path_requests.contains(&announce.destination);
+                if unknown
+                    && !awaiting
+                    && self
+                        .interface_announce_limits
+                        .should_limit(source_interface, arrived_at)
+                {
+                    self.held_announces.hold(
+                        received_hops,
+                        source_interface,
+                        next_hop,
+                        is_path_response,
+                        &announce,
+                    );
+                    IngestPacketOutcome::Announce(AnnounceIngest::Held)
+                } else {
+                    IngestPacketOutcome::Announce(self.ingest_announce(
+                        announce,
+                        received_hops,
+                        source_interface,
+                        arrived_at,
+                        next_hop,
+                        is_path_response,
+                        jitter,
+                        interfaces,
+                        on_removed,
+                    ))
+                }
+            }
 
             Ingress::Data {
                 data,
@@ -1782,7 +1809,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn ingest_announce(
+    pub(crate) fn ingest_announce(
         &mut self,
         announce: Announce<'_>,
         received_hops: u8,

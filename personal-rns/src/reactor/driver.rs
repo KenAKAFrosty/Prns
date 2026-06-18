@@ -58,6 +58,9 @@ where
         DueLane::ChannelTimeouts => {
             engine.fire_due_channel_timeouts(now, interfaces, fill_entropy, on_reaction)
         }
+        DueLane::HeldAnnounceRelease => {
+            engine.fire_due_held_announces(now, interfaces, fill_entropy, on_reaction)
+        }
     }
 }
 
@@ -108,6 +111,10 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
             "the expired-routes lane must never sit later than the truth: cached {:?}, truth {:?}",
             source_wake_schedules.expired_routes,
             truth.expired_routes,
+        );
+        debug_assert_eq!(
+            source_wake_schedules.held_announce_release, truth.held_announce_release,
+            "the held-announce-release lane drifted from a full recompute",
         );
     }
     #[cfg(not(debug_assertions))]

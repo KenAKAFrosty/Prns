@@ -1,5 +1,7 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
+use crate::routing::announce::held::FixedHeldAnnounceColumns;
+use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
 use crate::routing::announce::retained::{
     FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
@@ -107,6 +109,10 @@ impl<
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<MAX_PENDING_PATH_REQUESTS>;
     type InterfacePathRequestLimits =
         FixedInterfacePathRequestLimitColumns<MAX_PENDING_PATH_REQUESTS>;
+    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<MAX_PENDING_PATH_REQUESTS>;
+    type HeldAnnounces = FixedHeldAnnounceColumns<MAX_PENDING_PATH_REQUESTS>;
+    type HeldAnnounceAppData =
+        PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_PENDING_PATH_REQUESTS>;
     // One rate entry per tracked destination at most (we rate-check only what we
     // would rebroadcast), so sized by the routing table like Pending/Directives.
     type AnnounceRates = FixedAnnounceRateColumns<MAX_TRACKED_DESTINATIONS>;

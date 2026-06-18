@@ -1,5 +1,7 @@
 use crate::crypto::ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
+use crate::routing::announce::held::HeapHeldAnnounceColumns;
+use crate::routing::announce::interface_announce_limit::HeapInterfaceAnnounceLimitColumns;
 use crate::routing::announce::rate_limit::HeapAnnounceRateColumns;
 use crate::routing::announce::retained::{
     HeapAnnounceIdHistory, HeapRetainedAnnounceColumns, HeapRetainedAppData,
@@ -48,6 +50,9 @@ impl StorageLayout for GrowableHeap {
     type SeenPathRequests = HeapSeenPathRequestColumns;
     type DiscoveryPathRequests = HeapDiscoveryPathRequestColumns;
     type InterfacePathRequestLimits = HeapInterfacePathRequestLimitColumns;
+    type InterfaceAnnounceLimits = HeapInterfaceAnnounceLimitColumns;
+    type HeldAnnounces = HeapHeldAnnounceColumns;
+    type HeldAnnounceAppData = HeapRetainedAppData;
     type AnnounceRates = HeapAnnounceRateColumns;
     type GroupKeys = HeapGroupKeyColumns;
     type RequestHandlers = HeapRequestHandlerColumns;

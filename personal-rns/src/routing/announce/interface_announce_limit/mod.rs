@@ -17,6 +17,10 @@ pub const BURST_HOLD_MS: u64 = 15 * 1_000;
 pub const FREQUENCY_WINDOW_MS: u64 = 10 * 1_000;
 /// RNS `Interface.IC_DEQUE_MIN_SAMPLE` + 1: samples needed before a rate is judged
 pub const MIN_SAMPLES_TO_JUDGE: u16 = 3;
+/// RNS `Interface.IC_BURST_PENALTY` (15 seconds): the wait after a burst latches before the first held announce may drip out
+pub const BURST_PENALTY_MS: u64 = 15 * 1_000;
+/// RNS `Interface.IC_HELD_RELEASE_INTERVAL` (5 seconds): the minimum spacing between drip-released announces
+pub const HELD_RELEASE_INTERVAL_MS: u64 = 5 * 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BurstState {
@@ -31,6 +35,18 @@ pub struct InterfaceAnnounceLimit {
     pub window_start: InstantMillis,
     pub window_count: u16,
     pub burst: BurstState,
+    pub held_release: InstantMillis,
+}
+
+fn over_threshold(row: &InterfaceAnnounceLimit, now: InstantMillis) -> bool {
+    let threshold = if now.0.saturating_sub(row.created_at.0) < NEW_INTERFACE_AGE_MS {
+        STRICT_RATE_LIMIT_HZ
+    } else {
+        RELAXED_RATE_LIMIT_HZ
+    };
+    let elapsed_ms = now.0.saturating_sub(row.window_start.0);
+    row.window_count >= MIN_SAMPLES_TO_JUDGE
+        && u64::from(row.window_count) * 1_000 > threshold * elapsed_ms
 }
 
 pub trait InterfaceAnnounceLimitColumns {
@@ -76,15 +92,7 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
             return false;
         };
         let row = &mut self.columns.rows_mut()[index];
-
-        let threshold = if now.0.saturating_sub(row.created_at.0) < NEW_INTERFACE_AGE_MS {
-            STRICT_RATE_LIMIT_HZ
-        } else {
-            RELAXED_RATE_LIMIT_HZ
-        };
-        let elapsed_ms = now.0.saturating_sub(row.window_start.0);
-        let over_threshold = row.window_count >= MIN_SAMPLES_TO_JUDGE
-            && u64::from(row.window_count) * 1_000 > threshold * elapsed_ms;
+        let over_threshold = over_threshold(row, now);
 
         match row.burst {
             BurstState::Bursting(since) => {
@@ -96,12 +104,49 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
             BurstState::Calm => {
                 if over_threshold {
                     row.burst = BurstState::Bursting(now);
+                    row.held_release = InstantMillis(now.0.saturating_add(BURST_PENALTY_MS));
                     true
                 } else {
                     false
                 }
             }
         }
+    }
+
+    /// The next instant a held announce may drip out on `interface` while it is
+    /// bursting — RNS `Interface.ic_held_release` (Interface.py:236), set to
+    /// `now + IC_BURST_PENALTY` when the burst latches.
+    pub fn held_release_for(&self, interface: InterfaceId) -> Option<InstantMillis> {
+        self.columns
+            .rows()
+            .iter()
+            .find(|row| row.interface == interface)
+            .map(|row| row.held_release)
+    }
+
+    /// Push the next release out by one interval after an announce drips through —
+    /// RNS advances `ic_held_release` by `IC_HELD_RELEASE_INTERVAL` on each release
+    /// (Interface.py:250).
+    pub fn advance_held_release(&mut self, interface: InterfaceId, now: InstantMillis) {
+        if let Some(row) = self
+            .columns
+            .rows_mut()
+            .iter_mut()
+            .find(|row| row.interface == interface)
+        {
+            row.held_release = InstantMillis(now.0.saturating_add(HELD_RELEASE_INTERVAL_MS));
+        }
+    }
+
+    /// Whether `interface`'s announce rate has fallen back under its threshold — the
+    /// gate RNS puts on each release, `ia_freq < freq_threshold` (Interface.py:239).
+    /// An interface with no samples reads as subsided.
+    pub fn rate_subsided(&self, interface: InterfaceId, now: InstantMillis) -> bool {
+        self.columns
+            .rows()
+            .iter()
+            .find(|row| row.interface == interface)
+            .is_none_or(|row| !over_threshold(row, now))
     }
 
     pub fn len(&self) -> usize {
@@ -130,6 +175,7 @@ impl<C: InterfaceAnnounceLimitColumns> InterfaceAnnounceLimits<C> {
             window_start: now,
             window_count: 0,
             burst: BurstState::Calm,
+            held_release: InstantMillis(0),
         });
         self.columns.rows().len() - 1
     }

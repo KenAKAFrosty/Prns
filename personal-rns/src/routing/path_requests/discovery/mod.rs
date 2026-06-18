@@ -65,6 +65,12 @@ impl<C: DiscoveryPathRequestColumns> DiscoveryPathRequests<C> {
         Some(requesting_interface)
     }
 
+    /// Whether a recursive discovery is in flight for `destination` — like a waiting
+    /// path request, it exempts the destination from ingress limiting.
+    pub fn contains(&self, destination: &DestinationHash) -> bool {
+        self.index_of(destination).is_some()
+    }
+
     pub fn cull_expired(&mut self, now: InstantMillis) {
         while let Some(index) = self
             .columns

@@ -1,5 +1,7 @@
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
+use crate::routing::announce::held::FixedHeldAnnounceColumns;
+use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::rate_limit::FixedAnnounceRateColumns;
 use crate::routing::announce::retained::{
     FixedArrayRetainedAnnounceColumns, PackedAppDataArena, TieredAnnounceIdHistory,
@@ -60,6 +62,9 @@ impl StorageLayout for Nrf52840 {
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
+    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+    type HeldAnnounces = FixedHeldAnnounceColumns<8>;
+    type HeldAnnounceAppData = PackedAppDataArena<1024, 8>;
     type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
     type GroupKeys = FixedGroupKeyColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;
     type RequestHandlers = FixedRequestHandlerColumns<{ Self::UPSTREAM_APP_DESTINATIONS }>;

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::routing::announce::held::{HeldAnnounce, HeldAnnounceColumns};
+use crate::routing::announce::held::{HeldAnnounce, HeldAnnounceColumns, MAX_HELD_ANNOUNCES};
 
 #[derive(Debug, Default)]
 pub struct HeapHeldAnnounceColumns {
@@ -9,7 +9,7 @@ pub struct HeapHeldAnnounceColumns {
 
 impl HeldAnnounceColumns for HeapHeldAnnounceColumns {
     fn capacity(&self) -> usize {
-        usize::MAX
+        MAX_HELD_ANNOUNCES
     }
 
     fn rows(&self) -> &[HeldAnnounce] {

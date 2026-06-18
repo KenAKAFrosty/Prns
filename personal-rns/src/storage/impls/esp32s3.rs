@@ -4,6 +4,8 @@ use allocator_api2::alloc::{Allocator, Global};
 
 use crate::crypto::ratchets::FixedSelfRatchetColumns;
 use crate::identity::held::FixedHeldIdentityColumns;
+use crate::routing::announce::held::FixedHeapHeldAnnounceColumns;
+use crate::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitColumns;
 use crate::routing::announce::rate_limit::FixedHeapAnnounceRateColumns;
 use crate::routing::announce::retained::{
     FixedHeapPackedAppDataArena, FixedHeapRetainedAnnounceColumns, FixedHeapTieredAnnounceIdHistory,
@@ -83,6 +85,9 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
+    type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+    type HeldAnnounces = FixedHeapHeldAnnounceColumns<64, A>;
+    type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, 64, A>;
     type AnnounceRates = FixedHeapAnnounceRateColumns<MAX_TRACKED_DESTINATIONS, A>;
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;

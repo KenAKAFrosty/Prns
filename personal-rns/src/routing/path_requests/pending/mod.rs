@@ -100,6 +100,15 @@ impl<C: PendingPathRequestColumns> PendingPathRequests<C> {
 
     /// Settle one pending request for a destination whose route just arrived.
     /// Call repeatedly until `None` to settle every request waiting on it.
+    /// Whether a path request is still waiting on `destination` — RNS skips ingress
+    /// limiting for a destination it is actively asking for (Transport.py:1699).
+    pub fn contains(&self, destination: &DestinationHash) -> bool {
+        self.columns
+            .destinations()
+            .iter()
+            .any(|candidate| candidate == destination)
+    }
+
     pub fn pop_settled_for(&mut self, destination: &DestinationHash) -> Option<SettledPathRequest> {
         let index = self
             .columns

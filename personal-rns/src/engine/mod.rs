@@ -72,6 +72,8 @@ use crate::crypto::ratchets::SelfRatchets;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::routing::announce::held::HeldAnnounces;
+use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimits;
 use crate::routing::announce::rate_limit::AnnounceRates;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::delivery::receipts::Receipts;
@@ -103,6 +105,7 @@ pub enum DueLane {
     LinkDeadlines,
     ResourceDeadlines,
     ChannelTimeouts,
+    HeldAnnounceRelease,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +142,7 @@ pub struct WakeSchedules {
     pub link_deadlines: LaneWake,
     pub resource_deadlines: LaneWake,
     pub channel_timeouts: LaneWake,
+    pub held_announce_release: LaneWake,
 }
 
 impl WakeSchedules {
@@ -150,6 +154,7 @@ impl WakeSchedules {
         link_deadlines: LaneWake::Unchanged,
         resource_deadlines: LaneWake::Unchanged,
         channel_timeouts: LaneWake::Unchanged,
+        held_announce_release: LaneWake::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -161,6 +166,7 @@ impl WakeSchedules {
             (&mut self.link_deadlines, delta.link_deadlines),
             (&mut self.resource_deadlines, delta.resource_deadlines),
             (&mut self.channel_timeouts, delta.channel_timeouts),
+            (&mut self.held_announce_release, delta.held_announce_release),
         ] {
             match change {
                 LaneWake::Unchanged => {}
@@ -188,6 +194,7 @@ impl WakeSchedules {
             (self.link_deadlines, DueLane::LinkDeadlines),
             (self.resource_deadlines, DueLane::ResourceDeadlines),
             (self.channel_timeouts, DueLane::ChannelTimeouts),
+            (self.held_announce_release, DueLane::HeldAnnounceRelease),
         ] {
             match wake {
                 LaneWake::Unchanged | LaneWake::Idle => {}
@@ -224,6 +231,8 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) discovery_path_requests: DiscoveryPathRequests<S::DiscoveryPathRequests>,
     pub(crate) interface_path_request_limits:
         InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
+    pub(crate) interface_announce_limits: InterfaceAnnounceLimits<S::InterfaceAnnounceLimits>,
+    pub(crate) held_announces: HeldAnnounces<S::HeldAnnounces, S::HeldAnnounceAppData>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
     pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
@@ -255,6 +264,8 @@ impl<S: StorageLayout> Default for EngineState<S> {
             seen_path_requests: SeenPathRequests::default(),
             discovery_path_requests: DiscoveryPathRequests::default(),
             interface_path_request_limits: InterfacePathRequestLimits::default(),
+            interface_announce_limits: InterfaceAnnounceLimits::default(),
+            held_announces: HeldAnnounces::default(),
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),
             request_handlers: RequestHandlers::default(),
@@ -386,6 +397,18 @@ impl<S: StorageLayout> EngineState<S> {
         LaneWake::from_deadline(self.earliest_channel_tx_timeout_at())
     }
 
+    /// The soonest a held announce may drip out: the earliest release deadline among
+    /// the interfaces that actually hold one. An interface that latched a burst but
+    /// holds nothing arms no wake.
+    pub fn held_announce_release_wake(&self) -> LaneWake {
+        let earliest = self
+            .held_announces
+            .interfaces()
+            .filter_map(|interface| self.interface_announce_limits.held_release_for(interface))
+            .min();
+        LaneWake::from_deadline(earliest)
+    }
+
     /// The soonest a channel send anywhere next times out — the watchdog's wake.
     fn earliest_channel_tx_timeout_at(&self) -> Option<InstantMillis> {
         let mut earliest: Option<InstantMillis> = None;
@@ -416,6 +439,7 @@ impl<S: StorageLayout> EngineState<S> {
             link_deadlines: self.link_deadlines_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
             channel_timeouts: self.channel_timeouts_wake(),
+            held_announce_release: self.held_announce_release_wake(),
         }
     }
 
@@ -548,6 +572,7 @@ mod tests {
             link_deadlines: LaneWake::Unchanged,
             resource_deadlines: LaneWake::Unchanged,
             channel_timeouts: LaneWake::Unchanged,
+            held_announce_release: LaneWake::Unchanged,
         }
     }
 

@@ -21,13 +21,20 @@ use crate::routing::announce::retained::{
     AppDataHandle, RetainedAnnounceEntry, RetainedAppData, RetainedAppDataError,
 };
 use crate::routing::announce::Announce;
+use crate::routing::NextHop;
 use crate::wire::DestinationHash;
+
+/// RNS `Interface.MAX_HELD_ANNOUNCES` (256): the ceiling a growable held queue
+/// caps itself at, so a flood can never make the defense itself unbounded.
+pub const MAX_HELD_ANNOUNCES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeldAnnounce {
     pub destination: DestinationHash,
     pub hops: u8,
     pub receiving_interface: InterfaceId,
+    pub next_hop: NextHop,
+    pub is_path_response: bool,
     pub announce: RetainedAnnounceEntry,
 }
 
@@ -69,10 +76,13 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
     /// (Interface.py:228): a waiting announce for the same destination is replaced
     /// by the fresher one, an unknown destination is added while the queue has room,
     /// and a full queue drops the newcomer rather than evicting another destination.
+    #[allow(clippy::too_many_arguments)]
     pub fn hold(
         &mut self,
         hops: u8,
         receiving_interface: InterfaceId,
+        next_hop: NextHop,
+        is_path_response: bool,
         announce: &Announce<'_>,
     ) -> HoldOutcome {
         if let Some(index) = self.columns.index_of(&announce.destination) {
@@ -84,6 +94,8 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
                     let row = &mut self.columns.rows_mut()[index];
                     row.hops = hops;
                     row.receiving_interface = receiving_interface;
+                    row.next_hop = next_hop;
+                    row.is_path_response = is_path_response;
                     row.announce = retained;
                     HoldOutcome::Replaced
                 }
@@ -99,6 +111,8 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
                         destination: announce.destination,
                         hops,
                         receiving_interface,
+                        next_hop,
+                        is_path_response,
                         announce: retained,
                     });
                     HoldOutcome::Held
@@ -127,6 +141,16 @@ impl<C: HeldAnnounceColumns, A: RetainedAppData> HeldAnnounces<C, A> {
             .rows()
             .iter()
             .any(|row| row.receiving_interface == interface)
+    }
+
+    /// The interface every held announce arrived on, one item per entry (so an
+    /// interface holding several announces repeats). Feeds the release wake lane,
+    /// which pairs each with its interface's release deadline.
+    pub fn interfaces(&self) -> impl Iterator<Item = InterfaceId> + '_ {
+        self.columns
+            .rows()
+            .iter()
+            .map(|row| row.receiving_interface)
     }
 
     /// Copy a held announce's metadata and `app_data` out into `app_data_scratch`,
@@ -232,12 +256,24 @@ mod tests {
     fn holding_parks_an_announce_and_a_resend_replaces_it_in_place() {
         let mut held = Held::default();
         assert_eq!(
-            held.hold(3, iface(1), &announce(dest(0xA1), 1, b"first")),
+            held.hold(
+                3,
+                iface(1),
+                NextHop::Direct,
+                false,
+                &announce(dest(0xA1), 1, b"first")
+            ),
             HoldOutcome::Held,
         );
         assert_eq!(held.len(), 1);
         assert_eq!(
-            held.hold(2, iface(1), &announce(dest(0xA1), 2, b"second")),
+            held.hold(
+                2,
+                iface(1),
+                NextHop::Direct,
+                false,
+                &announce(dest(0xA1), 2, b"second")
+            ),
             HoldOutcome::Replaced,
             "a fresher announce for the same destination supersedes the waiting one",
         );
@@ -254,9 +290,27 @@ mod tests {
     #[test]
     fn release_picks_the_lowest_hop_announce_for_the_interface() {
         let mut held = Held::default();
-        held.hold(5, iface(1), &announce(dest(0xA1), 1, b"far"));
-        held.hold(2, iface(1), &announce(dest(0xB2), 2, b"near"));
-        held.hold(9, iface(1), &announce(dest(0xC3), 3, b"farther"));
+        held.hold(
+            5,
+            iface(1),
+            NextHop::Direct,
+            false,
+            &announce(dest(0xA1), 1, b"far"),
+        );
+        held.hold(
+            2,
+            iface(1),
+            NextHop::Direct,
+            false,
+            &announce(dest(0xB2), 2, b"near"),
+        );
+        held.hold(
+            9,
+            iface(1),
+            NextHop::Direct,
+            false,
+            &announce(dest(0xC3), 3, b"farther"),
+        );
 
         let mut scratch = [0u8; 64];
         let slot = held.lowest_hop_slot(iface(1)).unwrap();
@@ -272,12 +326,24 @@ mod tests {
         let mut held = Held::default();
         for byte in 0..4u8 {
             assert_eq!(
-                held.hold(1, iface(1), &announce(dest(byte), byte, b"x")),
+                held.hold(
+                    1,
+                    iface(1),
+                    NextHop::Direct,
+                    false,
+                    &announce(dest(byte), byte, b"x")
+                ),
                 HoldOutcome::Held,
             );
         }
         assert_eq!(
-            held.hold(1, iface(1), &announce(dest(0xFF), 9, b"x")),
+            held.hold(
+                1,
+                iface(1),
+                NextHop::Direct,
+                false,
+                &announce(dest(0xFF), 9, b"x")
+            ),
             HoldOutcome::QueueFull,
             "the queue's own capacity protects real routes from flood eviction",
         );
@@ -287,8 +353,20 @@ mod tests {
     #[test]
     fn interfaces_release_independently() {
         let mut held = Held::default();
-        held.hold(4, iface(1), &announce(dest(0xA1), 1, b"a"));
-        held.hold(7, iface(2), &announce(dest(0xB2), 2, b"b"));
+        held.hold(
+            4,
+            iface(1),
+            NextHop::Direct,
+            false,
+            &announce(dest(0xA1), 1, b"a"),
+        );
+        held.hold(
+            7,
+            iface(2),
+            NextHop::Direct,
+            false,
+            &announce(dest(0xB2), 2, b"b"),
+        );
 
         assert!(held.has_for(iface(1)) && held.has_for(iface(2)));
         let slot = held.lowest_hop_slot(iface(2)).unwrap();

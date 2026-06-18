@@ -20,6 +20,7 @@ impl<const MAX_INTERFACES: usize> Default for FixedInterfaceAnnounceLimitColumns
                 window_start: InstantMillis(0),
                 window_count: 0,
                 burst: BurstState::Calm,
+                held_release: InstantMillis(0),
             }; MAX_INTERFACES],
         }
     }
