@@ -198,3 +198,127 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
     }
 }
+
+/// `request().await` auto-negotiating up, end to end over real TCP: the same Echo responder, but the
+/// initiator drives the high-level `request` verb and exercises *both* rungs on one link — a small
+/// payload that rides a single packet, and one too fat for the MDU that auto-promotes to a resource
+/// in *both* directions (a request resource out, a response resource back). Proves the consumer
+/// surface, the reactor's packet-vs-resource decision, and the response demux together — a consumer
+/// never meets a size limit and the answer comes back with its round trip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn request_auto_negotiates_both_rungs_over_tcp() {
+    let responder_dest = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects: &["link"],
+        identity: secret(0xC3),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    };
+    let dest_a = responder_dest
+        .destination_hash()
+        .expect("the test destination name is valid");
+
+    let server = TcpServerInterface::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("server binds");
+    let addr = server.local_addr().expect("bound addr").to_string();
+    let node_a = Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [responder_dest],
+        app_state: Responder,
+        storage: GrowableHeap,
+        routes: routes![Echo],
+        on_event: |_event, _state| {},
+        interfaces: interfaces![server],
+    });
+
+    let announcer = node_a.handle();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+        loop {
+            ticker.tick().await;
+            if announcer
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: dest_a,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }))
+                .is_none()
+            {
+                break;
+            }
+        }
+    });
+
+    // The initiator's event lane carries only the announce it needs to find the responder;
+    // `establish_link` and `request` return their own results (the demux suppresses them here).
+    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let node_b = Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [PreConfiguredDestination::Single {
+            app_name: "bench",
+            aspects: &["link"],
+            identity: secret(0xD4),
+            announce_app_data: b"",
+            proof: ProofStrategy::ProveAll,
+            ratchet: RatchetPolicy::NoRatchets,
+        }],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        },
+        interfaces: interfaces![client],
+    });
+    let handle = node_b.handle();
+
+    let conversation = async {
+        let destination = loop {
+            if heard_rx.recv().await.expect("initiator stays alive") == dest_a {
+                break dest_a;
+            }
+        };
+        let link_id = handle
+            .establish_link(destination)
+            .await
+            .expect("the link establishes");
+
+        // Packet rung: a small request rides a single packet.
+        let (small, _rtt) = handle
+            .request(link_id, RequestPathHash::of(QUERY_PATH), b"ping")
+            .await
+            .expect("the small request round-trips");
+        assert_eq!(
+            small.as_slice(),
+            b"ping-pong",
+            "the packet rung round-trips through request()",
+        );
+
+        // Resource rung: a request too fat for a packet auto-promotes both ways.
+        let big = std::vec![0x5au8; 2000];
+        let (large, _rtt) = handle
+            .request(link_id, RequestPathHash::of(QUERY_PATH), &big)
+            .await
+            .expect("the big request round-trips");
+        let mut expected = big.clone();
+        expected.extend_from_slice(b"-pong");
+        assert_eq!(
+            large, expected,
+            "the resource rung round-trips through request(), auto-promoted both directions",
+        );
+    };
+
+    tokio::select! {
+        biased;
+        outcome = tokio::time::timeout(Duration::from_secs(10), conversation) => {
+            outcome.expect("both requests round-trip within 10s");
+        }
+        () = node_a.run() => panic!("the responder's run loop ended unexpectedly"),
+        () = node_b.run() => panic!("the initiator's run loop ended unexpectedly"),
+    }
+}

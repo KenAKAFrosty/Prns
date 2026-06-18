@@ -199,6 +199,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             if correlation.is_request() && segment_index == 1 {
                 self.book_request_resource_receipt(id, &link_id, data, now);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
         } else {
             self.outgoing_resources.remove(&link_id, &hash);

@@ -382,6 +382,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
                 self.conclude_resource(&link_id, &hash, now, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
             IngestPacketOutcome::ResourceConcludedFailed { link_id, hash } => {
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
