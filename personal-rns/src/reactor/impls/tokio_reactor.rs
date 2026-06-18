@@ -27,7 +27,7 @@ use crate::reactor::interface_seam::{
 use crate::reactor::Host;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::RequestId;
-use crate::routing::links::resources::ResourceHash;
+use crate::routing::links::resources::{ResourceCorrelation, ResourceHash};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
@@ -867,7 +867,8 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         send.compressed_candidate
                             .as_ref()
                             .map(HostResourcePayload::as_slice),
-                        send.request_id,
+                        send.request_id
+                            .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
                         now,
                         &mut |entropy| host.fill_entropy(entropy),
                         &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
@@ -879,7 +880,8 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                             send.link_id,
                             send.data.as_slice(),
                             None,
-                            send.request_id,
+                            send.request_id
+                                .map_or(ResourceCorrelation::Unsolicited, ResourceCorrelation::Response),
                             send.segment_index,
                             send.total_segments,
                             send.total_data_size,
@@ -917,7 +919,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                                     .compressed_candidate
                                     .as_ref()
                                     .map(HostResourcePayload::as_slice),
-                                Some(respond.request_id),
+                                ResourceCorrelation::Response(respond.request_id),
                                 now,
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),

@@ -13,7 +13,6 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
 use crate::routing::links::data::{write_link_packet, write_link_raw_packet, LINK_MDU};
-use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
@@ -25,9 +24,9 @@ use crate::routing::links::resources::control::{
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{OutgoingResourceStatus, TrackOutgoingResourceError};
 use crate::routing::links::resources::{
-    resource_sdu, ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_ADV_RETRIES, MAX_RETRIES,
-    PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
-    RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    resource_sdu, ResourceCorrelation, ResourceHash, HASHMAP_MAX_LEN, MAP_HASH_LEN,
+    MAX_ADV_RETRIES, MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR,
+    RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
@@ -44,7 +43,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: LinkId,
         data: &[u8],
         compressed_candidate: Option<&[u8]>,
-        request_id: Option<RequestId>,
+        correlation: ResourceCorrelation,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -57,7 +56,7 @@ impl<S: StorageLayout> EngineState<S> {
             link_id,
             data,
             compressed_candidate,
-            request_id,
+            correlation,
             1,
             1,
             data.len() as u64,
@@ -87,7 +86,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: LinkId,
         data: &[u8],
         compressed_candidate: Option<&[u8]>,
-        request_id: Option<RequestId>,
+        correlation: ResourceCorrelation,
         segment_index: u64,
         total_segments: u64,
         total_data_size: u64,
@@ -135,7 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
         let sdu = resource_sdu(mtu);
         let tracked_result =
             self.outgoing_resources
-                .track(link_id, sdu, id, request_id, |transfer, hashmap| {
+                .track(link_id, sdu, id, correlation, |transfer, hashmap| {
                     build_outgoing_resource(
                         data,
                         compressed_candidate,
@@ -666,13 +665,13 @@ where
             original_hash: state.original_hash,
             segment_index: state.segment_index,
             total_segments: state.total_segments,
-            request_id: state.request_id,
+            request_id: state.correlation.request_id(),
             flags: ResourceFlags {
                 encrypted: true,
                 compressed: state.compression.wire_flag(),
                 split: state.total_segments > 1,
-                is_request: false,
-                is_response: state.request_id.is_some(),
+                is_request: state.correlation.is_request(),
+                is_response: state.correlation.is_response(),
                 has_metadata: false,
             },
             hashmap: first_segment,
@@ -822,7 +821,7 @@ mod tests {
             link_id(),
             data,
             candidate,
-            None,
+            ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {

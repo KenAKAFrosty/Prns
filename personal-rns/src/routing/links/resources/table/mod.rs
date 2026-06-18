@@ -15,8 +15,8 @@ use crate::engine::InstantMillis;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::build_outgoing::{BuildOutgoingResourceError, BuiltResource};
 use crate::routing::links::resources::{
-    ResourceCompression, ResourceHash, ResourceProof, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN,
-    PART_TIMEOUT_FACTOR, WINDOW, WINDOW_MAX_SLOW, WINDOW_MIN,
+    ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof, SaltNonce,
+    HASHMAP_MAX_LEN, MAP_HASH_LEN, PART_TIMEOUT_FACTOR, WINDOW, WINDOW_MAX_SLOW, WINDOW_MIN,
 };
 use crate::routing::links::LinkId;
 
@@ -50,7 +50,7 @@ pub struct OutgoingResourceState {
     pub status: OutgoingResourceStatus,
     pub retries_left: u8,
     pub command_id: CommandId,
-    pub request_id: Option<RequestId>,
+    pub correlation: ResourceCorrelation,
 }
 
 impl Default for OutgoingResourceState {
@@ -71,7 +71,7 @@ impl Default for OutgoingResourceState {
             status: OutgoingResourceStatus::Advertised,
             retries_left: 0,
             command_id: CommandId(0),
-            request_id: None,
+            correlation: ResourceCorrelation::Unsolicited,
         }
     }
 }
@@ -223,7 +223,7 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
         link_id: LinkId,
         sdu: usize,
         command_id: CommandId,
-        request_id: Option<RequestId>,
+        correlation: ResourceCorrelation,
         build: impl FnOnce(&mut [u8], &mut [u8]) -> Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> Result<ResourceHash, TrackOutgoingResourceError> {
         if self.columns.link_ids().contains(&link_id) {
@@ -257,7 +257,7 @@ impl<C: ResourceColumns<OutgoingResourceState>> OutgoingResources<C> {
                     status: OutgoingResourceStatus::Advertised,
                     retries_left: 0,
                     command_id,
-                    request_id,
+                    correlation,
                 };
                 Ok(built.hash)
             }
@@ -664,11 +664,17 @@ mod tests {
         link: u8,
         hash_byte: u8,
     ) -> Result<ResourceHash, TrackOutgoingResourceError> {
-        outgoing.track(link_id(link), 464, CommandId(7), None, |transfer, names| {
-            transfer[..3].copy_from_slice(&[hash_byte; 3]);
-            names[..8].copy_from_slice(&[hash_byte; 8]);
-            Ok(fabricated(hash_byte, 930, 2))
-        })
+        outgoing.track(
+            link_id(link),
+            464,
+            CommandId(7),
+            ResourceCorrelation::Unsolicited,
+            |transfer, names| {
+                transfer[..3].copy_from_slice(&[hash_byte; 3]);
+                names[..8].copy_from_slice(&[hash_byte; 8]);
+                Ok(fabricated(hash_byte, 930, 2))
+            },
+        )
     }
 
     fn offer<'a>(hash_byte: u8, initial_names: &'a [u8]) -> AcceptedResource<'a> {
@@ -722,9 +728,13 @@ mod tests {
     #[test]
     fn a_failed_build_releases_its_slot() {
         let mut outgoing = TestOutgoing::default();
-        let refused = outgoing.track(link_id(1), 464, CommandId(7), None, |_, _| {
-            Err(BuildOutgoingResourceError::SduTooSmall)
-        });
+        let refused = outgoing.track(
+            link_id(1),
+            464,
+            CommandId(7),
+            ResourceCorrelation::Unsolicited,
+            |_, _| Err(BuildOutgoingResourceError::SduTooSmall),
+        );
         assert_eq!(
             refused.unwrap_err(),
             TrackOutgoingResourceError::Build(BuildOutgoingResourceError::SduTooSmall),

@@ -17,6 +17,7 @@ pub mod serve_outgoing;
 pub mod table;
 
 use crate::routing::links::data::LINK_MDU;
+use crate::routing::links::request::RequestId;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN, IFAC_MIN_LEN};
 use sha2::{Digest, Sha256};
 
@@ -244,6 +245,35 @@ impl ResourceCompression {
         } else {
             Self::Uncompressed
         }
+    }
+}
+
+/// RNS 1.3.1 `Resource.is_request` / `is_response` + `request_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResourceCorrelation {
+    #[default]
+    Unsolicited,
+    Request(RequestId),
+    Response(RequestId),
+}
+
+impl ResourceCorrelation {
+    #[must_use]
+    pub fn request_id(self) -> Option<RequestId> {
+        match self {
+            Self::Unsolicited => None,
+            Self::Request(id) | Self::Response(id) => Some(id),
+        }
+    }
+
+    #[must_use]
+    pub const fn is_request(self) -> bool {
+        matches!(self, Self::Request(_))
+    }
+
+    #[must_use]
+    pub const fn is_response(self) -> bool {
+        matches!(self, Self::Response(_))
     }
 }
 

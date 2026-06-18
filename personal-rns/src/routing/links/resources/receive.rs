@@ -1024,7 +1024,7 @@ mod tests_support {
             link_id(),
             data,
             candidate,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1221,7 +1221,7 @@ mod tests {
             link_id(),
             &data,
             None,
-            Some(request_id),
+            crate::routing::links::resources::ResourceCorrelation::Response(request_id),
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1508,7 +1508,7 @@ mod loop_tests {
             link_id(),
             &data,
             None,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -1580,7 +1580,7 @@ mod loop_tests {
             link_id(),
             data,
             None,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             segment_index,
             total_segments,
             total_data_size,
@@ -1713,7 +1713,7 @@ mod loop_tests {
             link_id(),
             data,
             None,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             segment_index,
             total_segments,
             total_data_size,
@@ -1950,7 +1950,7 @@ mod loop_tests {
             link_id(),
             &data,
             None,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2208,7 +2208,7 @@ mod loop_tests {
             link_id(),
             &data,
             None,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2308,7 +2308,7 @@ mod seam_tests {
             link_id(),
             &plaintext,
             Some(&candidate),
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2408,7 +2408,7 @@ mod seam_tests {
             link_id(),
             &plaintext,
             Some(&candidate),
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
@@ -2489,7 +2489,7 @@ mod cancel_tests {
             link_id(),
             &data,
             None,
-            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| {
