@@ -19,6 +19,7 @@ pub struct FixedHeapScheduledAnnounceQueue<const MAX_PENDING: usize, A: Allocato
     emission_count: Vec<u8, A>,
     peer_rebroadcast_count: Vec<u8, A>,
     directed_to: Vec<Option<InterfaceId>, A>,
+    held: Vec<ScheduledAnnounce, A>,
 }
 
 impl<const MAX_PENDING: usize, A: Allocator + Default> Default
@@ -33,6 +34,7 @@ impl<const MAX_PENDING: usize, A: Allocator + Default> Default
             emission_count: Vec::with_capacity_in(MAX_PENDING, A::default()),
             peer_rebroadcast_count: Vec::with_capacity_in(MAX_PENDING, A::default()),
             directed_to: Vec::with_capacity_in(MAX_PENDING, A::default()),
+            held: Vec::with_capacity_in(MAX_PENDING, A::default()),
         }
     }
 }
@@ -118,6 +120,62 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         }
     }
 
+    pub fn held_count(&self) -> usize {
+        self.held.len()
+    }
+
+    fn held_contains(&self, destination: DestinationHash) -> bool {
+        self.held.iter().any(|entry| entry.destination == destination)
+    }
+
+    fn active_directed_index(&self, destination: DestinationHash) -> Option<usize> {
+        self.destination
+            .iter()
+            .zip(self.directed_to.iter())
+            .position(|(dst, directed)| *dst == destination && directed.is_some())
+    }
+
+    fn park_displaced_flood(&mut self, destination: DestinationHash) {
+        let Some(i) = self
+            .destination
+            .iter()
+            .position(|existing| *existing == destination)
+        else {
+            return;
+        };
+        if self.directed_to[i].is_some() {
+            return;
+        }
+        let flood = self.row(i);
+        self.swap_remove_row(i);
+        if self.held.len() < MAX_PENDING {
+            self.held.push(flood);
+        }
+    }
+
+    fn clear_held(&mut self, destination: DestinationHash) {
+        if let Some(j) = self
+            .held
+            .iter()
+            .position(|entry| entry.destination == destination)
+        {
+            self.held.swap_remove(j);
+        }
+    }
+
+    fn restore_orphaned_held(&mut self) {
+        let mut j = 0;
+        while j < self.held.len() {
+            let destination = self.held[j].destination;
+            if self.active_directed_index(destination).is_none() {
+                let flood = self.held.swap_remove(j);
+                self.push_row(flood);
+            } else {
+                j += 1;
+            }
+        }
+    }
+
     pub fn schedule(
         &mut self,
         destination: DestinationHash,
@@ -125,6 +183,7 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         source_interface: InterfaceId,
         hops: u8,
     ) {
+        self.clear_held(destination);
         self.upsert(destination, due_at, source_interface, hops, None);
     }
 
@@ -135,6 +194,7 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
         target: InterfaceId,
         hops: u8,
     ) {
+        self.park_displaced_flood(destination);
         self.upsert(destination, due_at, target, hops, Some(target));
     }
 
@@ -209,6 +269,11 @@ impl<const MAX_PENDING: usize, A: Allocator> ScheduledAnnounceQueue
         let mut i = 0;
         while i < self.due_at.len() {
             if self.due_at[i].0 <= now.0 {
+                if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
+                    self.swap_remove_row(i);
+                    completed += 1;
+                    continue;
+                }
                 let count = self.emission_count[i].saturating_add(1);
                 self.emission_count[i] = count;
                 if count >= max_emission_count {
@@ -220,6 +285,7 @@ impl<const MAX_PENDING: usize, A: Allocator> ScheduledAnnounceQueue
             }
             i += 1;
         }
+        self.restore_orphaned_held();
         completed
     }
     fn absorb_echo(
@@ -386,5 +452,33 @@ mod tests {
         );
         assert_eq!(pending.drain_due(InstantMillis(u64::MAX)), 2048);
         assert_eq!(pending.scheduled_count(), 0);
+    }
+
+    #[test]
+    fn a_directed_answer_parks_then_restores_a_displaced_flood() {
+        let mut pending = FixedHeapScheduledAnnounceQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 2);
+        pending.schedule_directed(dest(1), InstantMillis(200), iface(0xBB), 2);
+        assert_eq!(pending.held_count(), 1);
+        assert_eq!(pending.iter().next().unwrap().directed_to, Some(iface(0xBB)));
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(200), 5_500, 2),
+            1
+        );
+        assert_eq!(pending.held_count(), 0);
+        let restored = pending.iter().next().unwrap();
+        assert_eq!(restored.directed_to, None);
+        assert_eq!(restored.due_at, InstantMillis(100));
+    }
+
+    #[test]
+    fn the_held_store_stays_within_the_fixed_cap() {
+        let mut pending = FixedHeapScheduledAnnounceQueue::<2>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule_directed(dest(1), InstantMillis(100), iface(0xBB), 1);
+        pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
+        pending.schedule_directed(dest(2), InstantMillis(100), iface(0xBB), 1);
+        assert!(pending.held_count() <= 2, "held never exceeds the fixed cap");
     }
 }

@@ -14,6 +14,7 @@ pub struct FixedScheduledAnnounceQueue<const MAX_PENDING: usize> {
     emission_count: Vec<u8, MAX_PENDING>,
     peer_rebroadcast_count: Vec<u8, MAX_PENDING>,
     directed_to: Vec<Option<InterfaceId>, MAX_PENDING>,
+    held: Vec<ScheduledAnnounce, MAX_PENDING>,
 }
 
 impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
@@ -26,6 +27,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
             emission_count: Vec::new(),
             peer_rebroadcast_count: Vec::new(),
             directed_to: Vec::new(),
+            held: Vec::new(),
         }
     }
 
@@ -102,6 +104,60 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         }
     }
 
+    pub fn held_count(&self) -> usize {
+        self.held.len()
+    }
+
+    fn held_contains(&self, destination: DestinationHash) -> bool {
+        self.held.iter().any(|entry| entry.destination == destination)
+    }
+
+    fn active_directed_index(&self, destination: DestinationHash) -> Option<usize> {
+        self.destination
+            .iter()
+            .zip(self.directed_to.iter())
+            .position(|(dst, directed)| *dst == destination && directed.is_some())
+    }
+
+    fn park_displaced_flood(&mut self, destination: DestinationHash) {
+        let Some(i) = self
+            .destination
+            .iter()
+            .position(|existing| *existing == destination)
+        else {
+            return;
+        };
+        if self.directed_to[i].is_some() {
+            return;
+        }
+        let flood = self.row(i);
+        self.swap_remove_row(i);
+        let _ = self.held.push(flood);
+    }
+
+    fn clear_held(&mut self, destination: DestinationHash) {
+        if let Some(j) = self
+            .held
+            .iter()
+            .position(|entry| entry.destination == destination)
+        {
+            self.held.swap_remove(j);
+        }
+    }
+
+    fn restore_orphaned_held(&mut self) {
+        let mut j = 0;
+        while j < self.held.len() {
+            let destination = self.held[j].destination;
+            if self.active_directed_index(destination).is_none() {
+                let flood = self.held.swap_remove(j);
+                self.push_row(flood);
+            } else {
+                j += 1;
+            }
+        }
+    }
+
     pub fn schedule(
         &mut self,
         destination: DestinationHash,
@@ -109,6 +165,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         source_interface: InterfaceId,
         hops: u8,
     ) {
+        self.clear_held(destination);
         self.upsert(destination, due_at, source_interface, hops, None);
     }
 
@@ -119,6 +176,7 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
         target: InterfaceId,
         hops: u8,
     ) {
+        self.park_displaced_flood(destination);
         self.upsert(destination, due_at, target, hops, Some(target));
     }
 
@@ -191,6 +249,11 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
         let mut i = 0;
         while i < self.due_at.len() {
             if self.due_at[i].0 <= now.0 {
+                if self.directed_to[i].is_some() && self.held_contains(self.destination[i]) {
+                    self.swap_remove_row(i);
+                    completed += 1;
+                    continue;
+                }
                 let count = self.emission_count[i].saturating_add(1);
                 self.emission_count[i] = count;
                 if count >= max_emission_count {
@@ -202,6 +265,7 @@ impl<const MAX_PENDING: usize> ScheduledAnnounceQueue for FixedScheduledAnnounce
             }
             i += 1;
         }
+        self.restore_orphaned_held();
         completed
     }
     fn absorb_echo(
@@ -470,5 +534,65 @@ mod tests {
             EchoOutcome::HopsUnrelated
         );
         assert_eq!(pending.iter().next().unwrap().peer_rebroadcast_count, 0);
+    }
+
+    #[test]
+    fn a_directed_answer_parks_a_displaced_flood_and_restores_it_after_it_fires() {
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 2);
+        pending.schedule_directed(dest(1), InstantMillis(200), iface(0xBB), 2);
+
+        assert_eq!(pending.held_count(), 1, "the displaced flood is parked");
+        assert_eq!(pending.scheduled_count(), 1);
+        let active = pending.iter().next().unwrap();
+        assert_eq!(active.directed_to, Some(iface(0xBB)));
+        assert_eq!(active.due_at, InstantMillis(200));
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(200), 5_500, 2),
+            1,
+            "the directed answer is one-shot and retires on its first emission",
+        );
+        assert_eq!(pending.held_count(), 0);
+        assert_eq!(pending.scheduled_count(), 1);
+        let restored = pending.iter().next().unwrap();
+        assert_eq!(restored.directed_to, None, "the parked flood is back, untouched");
+        assert_eq!(restored.source_interface, iface(0xAA));
+        assert_eq!(restored.due_at, InstantMillis(100));
+    }
+
+    #[test]
+    fn a_fresher_flood_clears_the_parked_held_entry() {
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
+        pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 2);
+        pending.schedule_directed(dest(1), InstantMillis(200), iface(0xBB), 2);
+        assert_eq!(pending.held_count(), 1);
+
+        pending.schedule(dest(1), InstantMillis(300), iface(0xCC), 3);
+        assert_eq!(
+            pending.held_count(),
+            0,
+            "a fresher announce supersedes and drops the parked flood",
+        );
+        assert_eq!(pending.scheduled_count(), 1);
+        let active = pending.iter().next().unwrap();
+        assert_eq!(active.directed_to, None);
+        assert_eq!(active.due_at, InstantMillis(300));
+    }
+
+    #[test]
+    fn a_directed_answer_with_no_displaced_flood_retries_like_a_normal_entry() {
+        let mut pending = FixedScheduledAnnounceQueue::<4>::new();
+        pending.schedule_directed(dest(1), InstantMillis(100), iface(0xBB), 2);
+        assert_eq!(pending.held_count(), 0);
+
+        assert_eq!(
+            pending.advance_due_retransmits(InstantMillis(100), 5_500, 2),
+            0,
+            "with nothing parked the directed answer re-arms instead of being one-shot",
+        );
+        let entry = pending.iter().next().unwrap();
+        assert_eq!(entry.emission_count, 1);
+        assert_eq!(entry.due_at, InstantMillis(5_600));
     }
 }
