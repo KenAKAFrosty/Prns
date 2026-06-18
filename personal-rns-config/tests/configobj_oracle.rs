@@ -9,9 +9,13 @@ fn canon(section: &Section) -> serde_json::Value {
     for (key, value) in &section.scalars {
         let json = match value {
             Value::Scalar(text) => serde_json::Value::String(text.clone()),
-            Value::List(items) => {
-                serde_json::Value::Array(items.iter().cloned().map(serde_json::Value::String).collect())
-            }
+            Value::List(items) => serde_json::Value::Array(
+                items
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
         };
         map.insert(key.clone(), json);
     }
@@ -55,7 +59,11 @@ fn run_oracle(corpus: &[String]) -> Vec<serde_json::Value> {
 
 fn compare(corpus: &[String]) {
     let oracle = run_oracle(corpus);
-    assert_eq!(oracle.len(), corpus.len(), "oracle returned one result per config");
+    assert_eq!(
+        oracle.len(),
+        corpus.len(),
+        "oracle returned one result per config"
+    );
     for (index, (text, verdict)) in corpus.iter().zip(&oracle).enumerate() {
         let ours = configobj::parse(text);
         let verdict = verdict.as_object().expect("oracle result is an object");
@@ -109,7 +117,10 @@ struct Generator {
 
 impl Generator {
     fn new(seed: u64) -> Self {
-        Generator { state: seed, counter: 0 }
+        Generator {
+            state: seed,
+            counter: 0,
+        }
     }
 
     fn next(&mut self) -> u64 {
@@ -194,7 +205,10 @@ fn generated_corpus(count: usize, seed: u64) -> Vec<String> {
 fn matches_configobj_on_curated_dialect_corners() {
     let python = venv_python();
     if !python.exists() {
-        eprintln!("skipping oracle test: reference venv python not found at {}", python.display());
+        eprintln!(
+            "skipping oracle test: reference venv python not found at {}",
+            python.display()
+        );
         return;
     }
     let corpus: Vec<String> = CURATED.iter().map(|text| text.to_string()).collect();
@@ -205,7 +219,10 @@ fn matches_configobj_on_curated_dialect_corners() {
 fn matches_configobj_on_generated_configs() {
     let python = venv_python();
     if !python.exists() {
-        eprintln!("skipping oracle test: reference venv python not found at {}", python.display());
+        eprintln!(
+            "skipping oracle test: reference venv python not found at {}",
+            python.display()
+        );
         return;
     }
     compare(&generated_corpus(250, 0x5eed_1337));

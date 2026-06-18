@@ -53,9 +53,14 @@ fn coerced_u64(scalar: &str) -> Result<u64, ()> {
 }
 
 fn coerced_f64(scalar: &str) -> Result<f64, ()> {
-    let config = format!("[interfaces]\n[[H]]\ntype = TCPClientInterface\nannounce_cap = {scalar}\n");
+    let config =
+        format!("[interfaces]\n[[H]]\ntype = TCPClientInterface\nannounce_cap = {scalar}\n");
     match reference::parse(&config) {
-        Ok(parsed) => parsed.interfaces.first().and_then(|i| i.announce_cap).ok_or(()),
+        Ok(parsed) => parsed
+            .interfaces
+            .first()
+            .and_then(|i| i.announce_cap)
+            .ok_or(()),
         Err(_) => Err(()),
     }
 }
@@ -87,7 +92,9 @@ fn compare(corpus: &[String]) {
 
         match (coerced_f64(scalar), verdict["float"].as_str()) {
             (Ok(ours), Some(python_repr)) => {
-                let python: f64 = python_repr.parse().expect("python float repr parses in rust");
+                let python: f64 = python_repr
+                    .parse()
+                    .expect("python float repr parses in rust");
                 assert!(
                     ours == python || (ours.is_nan() && python.is_nan()),
                     "f64 mismatch for {scalar:?}: ours={ours}, python={python}"
@@ -102,11 +109,50 @@ fn compare(corpus: &[String]) {
 }
 
 const CURATED: &[&str] = &[
-    "0", "00", "007", "42", "+7", "-3", "1_000", "1_000_000", "1__0", "_5", "5_", "1_",
-    "999999999999999999999999999999", "0x1f", "3.5", "1 2", "",
-    "1.5", ".5", "5.", "1e10", "1_0.5", "1.0e1_0", "inf", "-inf", "nan", "Infinity", "1.2.3",
-    "yes", "no", "on", "off", "true", "false", "YES", "Off", "True", "FALSE",
-    "y", "n", "enabled", "disabled", "2", "-1",
+    "0",
+    "00",
+    "007",
+    "42",
+    "+7",
+    "-3",
+    "1_000",
+    "1_000_000",
+    "1__0",
+    "_5",
+    "5_",
+    "1_",
+    "999999999999999999999999999999",
+    "0x1f",
+    "3.5",
+    "1 2",
+    "",
+    "1.5",
+    ".5",
+    "5.",
+    "1e10",
+    "1_0.5",
+    "1.0e1_0",
+    "inf",
+    "-inf",
+    "nan",
+    "Infinity",
+    "1.2.3",
+    "yes",
+    "no",
+    "on",
+    "off",
+    "true",
+    "false",
+    "YES",
+    "Off",
+    "True",
+    "FALSE",
+    "y",
+    "n",
+    "enabled",
+    "disabled",
+    "2",
+    "-1",
 ];
 
 struct Generator {
@@ -147,7 +193,10 @@ fn generated_corpus(count: usize, seed: u64) -> Vec<String> {
 fn coercions_match_configobj_on_curated_scalars() {
     let python = venv_python();
     if !python.exists() {
-        eprintln!("skipping coercion oracle: reference venv python not found at {}", python.display());
+        eprintln!(
+            "skipping coercion oracle: reference venv python not found at {}",
+            python.display()
+        );
         return;
     }
     let corpus: Vec<String> = CURATED.iter().map(|scalar| scalar.to_string()).collect();
@@ -158,7 +207,10 @@ fn coercions_match_configobj_on_curated_scalars() {
 fn coercions_match_configobj_on_generated_scalars() {
     let python = venv_python();
     if !python.exists() {
-        eprintln!("skipping coercion oracle: reference venv python not found at {}", python.display());
+        eprintln!(
+            "skipping coercion oracle: reference venv python not found at {}",
+            python.display()
+        );
         return;
     }
     compare(&generated_corpus(400, 0xc0ffee));

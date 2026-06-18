@@ -184,7 +184,9 @@ pub struct ReferenceConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReferenceError {
     Syntax(ConfigError),
-    MissingType { interface: String },
+    MissingType {
+        interface: String,
+    },
     BadValue {
         interface: String,
         key: String,
@@ -205,7 +207,11 @@ impl fmt::Display for ReferenceError {
             ReferenceError::MissingType { interface } => {
                 write!(f, "interface '{interface}': missing required 'type'")
             }
-            ReferenceError::BadValue { interface, key, reason } => {
+            ReferenceError::BadValue {
+                interface,
+                key,
+                reason,
+            } => {
                 write!(f, "interface '{interface}', key '{key}': {reason}")
             }
         }
@@ -238,7 +244,9 @@ fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceError> {
         if name == "reticulum" || name == "interfaces" {
             continue;
         }
-        config.other_sections.insert(name.clone(), scalar_map(section));
+        config
+            .other_sections
+            .insert(name.clone(), scalar_map(section));
     }
     Ok(config)
 }
@@ -247,7 +255,10 @@ fn scalar_map(section: &Section) -> BTreeMap<String, ReferenceValue> {
     section.scalars.iter().cloned().collect()
 }
 
-fn interpret_interface(name: &str, section: &Section) -> Result<ReferenceInterface, ReferenceError> {
+fn interpret_interface(
+    name: &str,
+    section: &Section,
+) -> Result<ReferenceInterface, ReferenceError> {
     let mut rest: BTreeMap<String, Value> = section.scalars.iter().cloned().collect();
 
     let type_name = rest
@@ -429,7 +440,10 @@ fn interpret_subinterfaces(section: &Section) -> Result<Vec<RNodeSubinterface>, 
     Ok(subinterfaces)
 }
 
-fn take_radio(rest: &mut BTreeMap<String, Value>, interface: &str) -> Result<RNodeRadio, ReferenceError> {
+fn take_radio(
+    rest: &mut BTreeMap<String, Value>,
+    interface: &str,
+) -> Result<RNodeRadio, ReferenceError> {
     Ok(RNodeRadio {
         frequency: opt(rest, "frequency", interface, coerce_u64)?,
         bandwidth: opt(rest, "bandwidth", interface, coerce_u32)?,
@@ -439,7 +453,10 @@ fn take_radio(rest: &mut BTreeMap<String, Value>, interface: &str) -> Result<RNo
     })
 }
 
-fn take_enabled(rest: &mut BTreeMap<String, Value>, interface: &str) -> Result<Option<bool>, ReferenceError> {
+fn take_enabled(
+    rest: &mut BTreeMap<String, Value>,
+    interface: &str,
+) -> Result<Option<bool>, ReferenceError> {
     let explicit = rest.remove("interface_enabled");
     let shorthand = rest.remove("enabled");
     if explicit.is_none() && shorthand.is_none() {
@@ -456,7 +473,10 @@ fn take_enabled(rest: &mut BTreeMap<String, Value>, interface: &str) -> Result<O
     Ok(Some(explicit || shorthand))
 }
 
-fn take_mode(rest: &mut BTreeMap<String, Value>, interface: &str) -> Result<Option<ReferenceMode>, ReferenceError> {
+fn take_mode(
+    rest: &mut BTreeMap<String, Value>,
+    interface: &str,
+) -> Result<Option<ReferenceMode>, ReferenceError> {
     let explicit = rest.remove("interface_mode");
     let shorthand = rest.remove("mode");
     match explicit.or(shorthand) {
@@ -501,7 +521,11 @@ fn bad_value(interface: &str, key: &str, reason: &'static str) -> ReferenceError
     }
 }
 
-fn scalar_text<'a>(value: &'a Value, interface: &str, key: &str) -> Result<&'a str, ReferenceError> {
+fn scalar_text<'a>(
+    value: &'a Value,
+    interface: &str,
+    key: &str,
+) -> Result<&'a str, ReferenceError> {
     value
         .as_scalar()
         .ok_or_else(|| bad_value(interface, key, "expected a single value, found a list"))
@@ -523,7 +547,9 @@ fn coerce_int<T: TryFrom<i128>>(
 ) -> Result<T, ReferenceError> {
     let raw = scalar_text(value, interface, key)?.trim();
     let cleaned = cleaned_number(raw).ok_or_else(|| bad_value(interface, key, reason))?;
-    let parsed: i128 = cleaned.parse().map_err(|_| bad_value(interface, key, reason))?;
+    let parsed: i128 = cleaned
+        .parse()
+        .map_err(|_| bad_value(interface, key, reason))?;
     T::try_from(parsed).map_err(|_| bad_value(interface, key, reason))
 }
 
@@ -533,8 +559,8 @@ fn strip_digit_underscores(text: &str) -> Option<String> {
         if byte == b'_' {
             let left = index.checked_sub(1).map(|i| bytes[i]);
             let right = bytes.get(index + 1).copied();
-            let between_digits =
-                left.is_some_and(|b| b.is_ascii_digit()) && right.is_some_and(|b| b.is_ascii_digit());
+            let between_digits = left.is_some_and(|b| b.is_ascii_digit())
+                && right.is_some_and(|b| b.is_ascii_digit());
             if !between_digits {
                 return None;
             }
@@ -544,7 +570,10 @@ fn strip_digit_underscores(text: &str) -> Option<String> {
 }
 
 fn coerce_bool(value: &Value, interface: &str, key: &str) -> Result<bool, ReferenceError> {
-    match scalar_text(value, interface, key)?.to_ascii_lowercase().as_str() {
+    match scalar_text(value, interface, key)?
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "true" | "yes" | "on" | "1" => Ok(true),
         "false" | "no" | "off" | "0" => Ok(false),
         _ => Err(bad_value(
@@ -556,7 +585,10 @@ fn coerce_bool(value: &Value, interface: &str, key: &str) -> Result<bool, Refere
 }
 
 fn coerce_mode(value: &Value, interface: &str) -> Result<ReferenceMode, ReferenceError> {
-    match scalar_text(value, interface, "mode")?.to_ascii_lowercase().as_str() {
+    match scalar_text(value, interface, "mode")?
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "full" => Ok(ReferenceMode::Full),
         "access_point" | "accesspoint" | "ap" => Ok(ReferenceMode::AccessPoint),
         "pointtopoint" | "ptp" => Ok(ReferenceMode::PointToPoint),
@@ -584,7 +616,12 @@ fn coerce_u32(value: &Value, interface: &str, key: &str) -> Result<u32, Referenc
 }
 
 fn coerce_u16(value: &Value, interface: &str, key: &str) -> Result<u16, ReferenceError> {
-    coerce_int(value, interface, key, "expected a port or small integer (0-65535)")
+    coerce_int(
+        value,
+        interface,
+        key,
+        "expected a port or small integer (0-65535)",
+    )
 }
 
 fn coerce_u8(value: &Value, interface: &str, key: &str) -> Result<u8, ReferenceError> {
@@ -601,7 +638,8 @@ fn coerce_usize(value: &Value, interface: &str, key: &str) -> Result<usize, Refe
 
 fn coerce_f64(value: &Value, interface: &str, key: &str) -> Result<f64, ReferenceError> {
     let raw = scalar_text(value, interface, key)?.trim();
-    let cleaned = cleaned_number(raw).ok_or_else(|| bad_value(interface, key, "expected a number"))?;
+    let cleaned =
+        cleaned_number(raw).ok_or_else(|| bad_value(interface, key, "expected a number"))?;
     cleaned
         .parse::<f64>()
         .map_err(|_| bad_value(interface, key, "expected a number"))
@@ -676,7 +714,11 @@ mod tests {
         let config = parse(REALISTIC).unwrap();
         let radio = &config.interfaces[2];
         match &radio.params {
-            ReferenceParams::RnodeMulti { port, subinterfaces, .. } => {
+            ReferenceParams::RnodeMulti {
+                port,
+                subinterfaces,
+                ..
+            } => {
                 assert_eq!(port.as_deref(), Some("/dev/ttyUSB0"));
                 assert_eq!(subinterfaces.len(), 2);
                 assert_eq!(subinterfaces[0].vport.as_deref(), Some("0"));
@@ -749,16 +791,18 @@ mod tests {
         assert_eq!(hub.bitrate, Some(1_000_000));
         assert!(matches!(
             hub.params,
-            ReferenceParams::TcpClient { target_port: Some(4965), .. }
+            ReferenceParams::TcpClient {
+                target_port: Some(4965),
+                ..
+            }
         ));
     }
 
     #[test]
     fn malformed_underscores_are_rejected_like_python_int() {
         for bad in ["1__0", "_5", "5_", "1_"] {
-            let config = format!(
-                "[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nbitrate = {bad}\n"
-            );
+            let config =
+                format!("[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nbitrate = {bad}\n");
             assert!(
                 matches!(parse(&config), Err(ReferenceError::BadValue { .. })),
                 "expected {bad} to be rejected"

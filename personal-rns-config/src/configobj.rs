@@ -46,13 +46,31 @@ impl Section {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
-    UnterminatedQuote { line: usize },
-    UnmatchedSectionBrackets { line: usize },
-    SectionDepthJump { line: usize, found: usize, parent: usize },
-    DuplicateKey { line: usize, key: String },
-    DuplicateSection { line: usize, name: String },
-    MissingEquals { line: usize },
-    EmptyKey { line: usize },
+    UnterminatedQuote {
+        line: usize,
+    },
+    UnmatchedSectionBrackets {
+        line: usize,
+    },
+    SectionDepthJump {
+        line: usize,
+        found: usize,
+        parent: usize,
+    },
+    DuplicateKey {
+        line: usize,
+        key: String,
+    },
+    DuplicateSection {
+        line: usize,
+        name: String,
+    },
+    MissingEquals {
+        line: usize,
+    },
+    EmptyKey {
+        line: usize,
+    },
 }
 
 impl fmt::Display for ConfigError {
@@ -120,7 +138,10 @@ pub fn parse(input: &str) -> Result<Section, ConfigError> {
                 .last()
                 .is_some_and(|frame| frame.section.section(&name).is_some())
             {
-                return Err(ConfigError::DuplicateSection { line: line_no, name });
+                return Err(ConfigError::DuplicateSection {
+                    line: line_no,
+                    name,
+                });
             }
             stack.push(Frame {
                 name,
@@ -131,7 +152,10 @@ pub fn parse(input: &str) -> Result<Section, ConfigError> {
         }
 
         let (key, value) = parse_key_value(raw_line, line_no, &mut lines)?;
-        let current = &mut stack.last_mut().expect("root frame is never popped").section;
+        let current = &mut stack
+            .last_mut()
+            .expect("root frame is never popped")
+            .section;
         if current.get(&key).is_some() {
             return Err(ConfigError::DuplicateKey { line: line_no, key });
         }
@@ -142,12 +166,18 @@ pub fn parse(input: &str) -> Result<Section, ConfigError> {
     Ok(stack.pop().expect("root frame is never popped").section)
 }
 
-fn close_to(stack: &mut Vec<Frame>, target_depth: usize, line_no: usize) -> Result<(), ConfigError> {
+fn close_to(
+    stack: &mut Vec<Frame>,
+    target_depth: usize,
+    line_no: usize,
+) -> Result<(), ConfigError> {
     while stack.last().is_some_and(|frame| frame.depth > target_depth) {
         let frame = stack.pop().expect("checked non-empty");
-        let parent = stack
-            .last_mut()
-            .ok_or(ConfigError::SectionDepthJump { line: line_no, found: frame.depth, parent: 0 })?;
+        let parent = stack.last_mut().ok_or(ConfigError::SectionDepthJump {
+            line: line_no,
+            found: frame.depth,
+            parent: 0,
+        })?;
         parent.section.sections.push((frame.name, frame.section));
     }
     Ok(())
@@ -176,14 +206,18 @@ fn parse_key_value<'a, I>(
 where
     I: Iterator<Item = (usize, &'a str)>,
 {
-    let equals = raw_line.find('=').ok_or(ConfigError::MissingEquals { line: line_no })?;
+    let equals = raw_line
+        .find('=')
+        .ok_or(ConfigError::MissingEquals { line: line_no })?;
     let key = unquote(raw_line[..equals].trim());
     if key.is_empty() {
         return Err(ConfigError::EmptyKey { line: line_no });
     }
     let mut value_text = raw_line[equals + 1..].to_string();
     while unterminated_triple(&value_text).is_some() {
-        let (_, next) = lines.next().ok_or(ConfigError::UnterminatedQuote { line: line_no })?;
+        let (_, next) = lines
+            .next()
+            .ok_or(ConfigError::UnterminatedQuote { line: line_no })?;
         value_text.push('\n');
         value_text.push_str(next);
     }
@@ -245,7 +279,9 @@ fn parse_value(raw: &str, line_no: usize) -> Result<Value, ConfigError> {
         elements.retain(|element| !element.is_empty());
         Ok(Value::List(elements))
     } else {
-        Ok(Value::Scalar(elements.into_iter().next().unwrap_or_default()))
+        Ok(Value::Scalar(
+            elements.into_iter().next().unwrap_or_default(),
+        ))
     }
 }
 
@@ -265,7 +301,11 @@ mod tests {
     use super::*;
 
     fn scalar(section: &Section, key: &str) -> String {
-        section.get(key).and_then(Value::as_scalar).unwrap().to_string()
+        section
+            .get(key)
+            .and_then(Value::as_scalar)
+            .unwrap()
+            .to_string()
     }
 
     #[test]
@@ -279,7 +319,10 @@ mod tests {
                  enabled = Yes\n",
         )
         .unwrap();
-        assert_eq!(scalar(root.section("reticulum").unwrap(), "share_instance"), "Yes");
+        assert_eq!(
+            scalar(root.section("reticulum").unwrap(), "share_instance"),
+            "Yes"
+        );
         let interfaces = root.section("interfaces").unwrap();
         let default = interfaces.section("Default Interface").unwrap();
         assert_eq!(scalar(default, "type"), "AutoInterface");
@@ -297,7 +340,11 @@ mod tests {
                    vport = 1\n",
         )
         .unwrap();
-        let radio = root.section("interfaces").unwrap().section("Radio").unwrap();
+        let radio = root
+            .section("interfaces")
+            .unwrap()
+            .section("Radio")
+            .unwrap();
         assert_eq!(radio.sections.len(), 2);
         assert_eq!(scalar(radio.section("Sub A").unwrap(), "vport"), "0");
         assert_eq!(scalar(radio.section("Sub B").unwrap(), "vport"), "1");
@@ -307,9 +354,15 @@ mod tests {
     fn comma_values_become_lists_and_lone_values_stay_scalar() {
         let root = parse("[x]\ndevices = eth0, wlan0\nsingle = eth0\ntrailing = eth0,\n").unwrap();
         let x = root.section("x").unwrap();
-        assert_eq!(x.get("devices").unwrap().as_list(), std::vec!["eth0", "wlan0"]);
+        assert_eq!(
+            x.get("devices").unwrap().as_list(),
+            std::vec!["eth0", "wlan0"]
+        );
         assert_eq!(x.get("single").unwrap(), &Value::Scalar("eth0".to_string()));
-        assert_eq!(x.get("trailing").unwrap(), &Value::List(std::vec!["eth0".to_string()]));
+        assert_eq!(
+            x.get("trailing").unwrap(),
+            &Value::List(std::vec!["eth0".to_string()])
+        );
     }
 
     #[test]
@@ -336,7 +389,14 @@ mod tests {
     #[test]
     fn a_section_depth_jump_is_an_error() {
         let result = parse("[a]\n[[[c]]]\n");
-        assert!(matches!(result, Err(ConfigError::SectionDepthJump { found: 3, parent: 1, .. })));
+        assert!(matches!(
+            result,
+            Err(ConfigError::SectionDepthJump {
+                found: 3,
+                parent: 1,
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -358,6 +418,9 @@ mod tests {
     #[test]
     fn a_multi_line_triple_quoted_value_is_joined() {
         let root = parse("[x]\nbanner = '''line one\nline two'''\n").unwrap();
-        assert_eq!(scalar(root.section("x").unwrap(), "banner"), "line one\nline two");
+        assert_eq!(
+            scalar(root.section("x").unwrap(), "banner"),
+            "line one\nline two"
+        );
     }
 }
