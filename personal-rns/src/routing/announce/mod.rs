@@ -2,6 +2,7 @@ pub mod acceptance;
 pub mod defaults;
 pub mod emit;
 mod id;
+pub mod interface_announce_limit;
 pub mod rate_limit;
 pub mod retained;
 pub mod schedule;
