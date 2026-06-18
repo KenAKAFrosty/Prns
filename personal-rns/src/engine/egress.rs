@@ -1,5 +1,5 @@
 use crate::crypto::Ed25519Signature;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceMode};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::LinkId;
@@ -248,17 +248,36 @@ pub fn write_path_request_wire_packet(
     Ok(total_len)
 }
 
-/// Whether a transported rebroadcast that arrived on `source` fires on `config` — the
-/// engine's sole say on fan-out, decided off the static config view it is handed: the
-/// source interface only when it repeats, every other interface when it transports.
-/// Capability alone decides membership — liveness is never gated here, so a momentary blip
-/// never evicts an interface (the WiFi-blip rule). The runtime routes each named target to
-/// its handle and sends; a dead lane's queue just buffers until it is back.
-pub(crate) fn firable_on(config: &InterfaceConfig, source: InterfaceId) -> bool {
-    if config.id == source {
+pub(crate) fn firable_on(
+    config: &InterfaceConfig,
+    source: InterfaceId,
+    next_hop_mode: Option<InterfaceMode>,
+) -> bool {
+    let transports = if config.id == source {
         config.capabilities.allows_same_interface_repeat()
     } else {
         config.capabilities.allows_transport()
+    };
+    transports && mode_allows_announce_egress(config.mode, next_hop_mode)
+}
+
+/// RNS 1.3.1 `Transport.handle_outgoing_announces` mode gating (Transport.py:1191).
+fn mode_allows_announce_egress(
+    egress: InterfaceMode,
+    next_hop_mode: Option<InterfaceMode>,
+) -> bool {
+    use InterfaceMode::{AccessPoint, Boundary, Full, Gateway, PointToPoint, Roaming};
+    match egress {
+        AccessPoint => false,
+        Roaming => matches!(
+            next_hop_mode,
+            Some(Full | PointToPoint | AccessPoint | Gateway)
+        ),
+        Boundary => matches!(
+            next_hop_mode,
+            Some(Full | PointToPoint | AccessPoint | Gateway | Boundary)
+        ),
+        Full | PointToPoint | Gateway => true,
     }
 }
 

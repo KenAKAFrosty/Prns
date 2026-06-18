@@ -38,12 +38,13 @@ impl<S: StorageLayout> EngineState<S> {
                 ))
             })
             .flat_map(move |(announce, emit_hops, via, source, directed_to)| {
+                let next_hop_mode = view.iter().find(|c| c.id == source).map(|c| c.mode);
                 view.iter()
                     .filter(move |descriptor| match directed_to {
                         Some(target) => {
                             descriptor.id == target && descriptor.capabilities.allows_transport()
                         }
-                        None => firable_on(descriptor, source),
+                        None => firable_on(descriptor, source, next_hop_mode),
                     })
                     .map(move |descriptor| EgressDirective::ReemitAnnounce {
                         announce: announce.clone(),
@@ -94,7 +95,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::LaneWake;
-    use crate::interfaces::{InboundPacket, InterfaceId};
+    use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};
     use crate::routing::announce::defaults::DEFAULT_REBROADCAST_JITTER_WINDOW_MS;
     use crate::wire::{DestinationType, PacketType, PropagationType, WirePacketHeader};
 
@@ -361,6 +362,81 @@ mod tests {
 
         let mut state = transporting_node();
         assert_eq!(rebroadcast_fan_for(&mut state, &view), std::vec![]);
+    }
+
+    fn moded(mode: InterfaceMode, descriptor: InterfaceConfig) -> InterfaceConfig {
+        InterfaceConfig { mode, ..descriptor }
+    }
+
+    #[test]
+    fn an_access_point_egress_interface_is_withheld_from_the_rebroadcast_fan() {
+        let source = InterfaceId::new([0u8; 8]);
+        let ap = InterfaceId::new([0xFE; 8]);
+        let view = [
+            repeating_descriptor(source),
+            moded(InterfaceMode::AccessPoint, routable_descriptor(ap)),
+        ];
+
+        let mut state = transporting_node();
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, &view),
+            std::vec![source],
+            "an access-point interface never carries an announce rebroadcast",
+        );
+    }
+
+    #[test]
+    fn a_roaming_egress_interface_is_withheld_toward_a_roaming_learned_route() {
+        let source = InterfaceId::new([0u8; 8]);
+        let roaming_out = InterfaceId::new([0xFE; 8]);
+        let other = InterfaceId::new([0xAB; 8]);
+        let view = [
+            moded(InterfaceMode::Roaming, repeating_descriptor(source)),
+            moded(InterfaceMode::Roaming, routable_descriptor(roaming_out)),
+            routable_descriptor(other),
+        ];
+
+        let mut state = transporting_node();
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, &view),
+            std::vec![other],
+            "a roaming interface withholds a roaming-learned route; a full interface carries it",
+        );
+    }
+
+    #[test]
+    fn a_roaming_egress_interface_carries_a_full_learned_route() {
+        let source = InterfaceId::new([0u8; 8]);
+        let roaming_out = InterfaceId::new([0xFE; 8]);
+        let view = [
+            repeating_descriptor(source),
+            moded(InterfaceMode::Roaming, routable_descriptor(roaming_out)),
+        ];
+
+        let mut state = transporting_node();
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, &view),
+            std::vec![source, roaming_out],
+        );
+    }
+
+    #[test]
+    fn a_boundary_egress_carries_a_boundary_learned_route_where_a_roaming_egress_will_not() {
+        let source = InterfaceId::new([0u8; 8]);
+        let boundary_out = InterfaceId::new([0xFE; 8]);
+        let roaming_out = InterfaceId::new([0xAB; 8]);
+        let view = [
+            moded(InterfaceMode::Boundary, repeating_descriptor(source)),
+            moded(InterfaceMode::Boundary, routable_descriptor(boundary_out)),
+            moded(InterfaceMode::Roaming, routable_descriptor(roaming_out)),
+        ];
+
+        let mut state = transporting_node();
+        assert_eq!(
+            rebroadcast_fan_for(&mut state, &view),
+            std::vec![source, boundary_out],
+            "boundary carries a boundary-learned route; roaming withholds the same route",
+        );
     }
 
     #[test]
