@@ -94,6 +94,7 @@ where
                     responsiveness: routes.responsiveness()[i],
                     receiving_interface: routes.receiving_interfaces()[i],
                     next_hop: routes.next_hops()[i],
+                    last_relayed_at: routes.last_relayed_at()[i],
                 },
             )
         })
@@ -109,6 +110,7 @@ where
             responsiveness: self.routes.responsiveness()[i],
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
+            last_relayed_at: self.routes.last_relayed_at()[i],
         })
     }
 
