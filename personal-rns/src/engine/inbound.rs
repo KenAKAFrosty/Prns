@@ -294,6 +294,7 @@ impl<S: StorageLayout> EngineState<S> {
                 request_id,
                 path_hash,
                 requested_at,
+                rtt,
                 data,
             } => {
                 sink(EngineReaction::Journaled(Journaled::RequestReceived {
@@ -301,6 +302,7 @@ impl<S: StorageLayout> EngineState<S> {
                     request_id,
                     path_hash,
                     requested_at,
+                    rtt,
                     data,
                 }));
             }

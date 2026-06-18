@@ -8,6 +8,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 pub enum EngineReaction<'a> {
@@ -47,6 +48,8 @@ pub enum Journaled<'a> {
         request_id: RequestId,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
+        /// The link's measured round trip, carried so a responder can surface it.
+        rtt: Rtt,
         data: &'a [u8],
     },
     /// The response that settled a `SendRequest` — the bytes ride here while

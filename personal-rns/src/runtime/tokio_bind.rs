@@ -302,7 +302,7 @@ impl PrnsHandle {
         settled.await.ok()
     }
 
-    fn send_response(&self, responder: RespondToken, data: HostResourcePayload) -> bool {
+    fn send_response(&self, responder: RespondToken, data: HostResourcePayload) -> Option<Rtt> {
         let id = self.mint();
         self.commands
             .send(HostCommand::RespondAny(RespondAnyHostCommand {
@@ -312,14 +312,17 @@ impl PrnsHandle {
                 data,
                 compressed_candidate: None,
             }))
-            .is_ok()
+            .ok()
+            .map(|()| responder.rtt)
     }
 
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
+    /// Answer a request via its token, returning the link's round trip (the request arrived over
+    /// it) — or `None` if the node has stopped before the answer could be queued.
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<Rtt> {
         self.send_response(responder, body.to_vec().into())
     }
 
-    pub fn respond_owned(&self, responder: RespondToken, body: std::vec::Vec<u8>) -> bool {
+    pub fn respond_owned(&self, responder: RespondToken, body: std::vec::Vec<u8>) -> Option<Rtt> {
         self.send_response(responder, body.into())
     }
 
@@ -446,7 +449,7 @@ impl super::Commands for PrnsHandle {
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
-        self.respond(responder, body)
+        self.respond(responder, body).is_some()
     }
 
     fn close_link(&self, link_id: LinkId) -> bool {
@@ -843,7 +846,7 @@ where
         self.handle.establish_link(destination).await
     }
 
-    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
+    pub fn respond(&self, responder: RespondToken, body: &[u8]) -> Option<Rtt> {
         self.handle.respond(responder, body)
     }
 
@@ -889,6 +892,7 @@ where
                     request_id,
                     path_hash,
                     requested_at,
+                    rtt,
                     data,
                 }) = &event
                 {
@@ -897,6 +901,7 @@ where
                         request_id: *request_id,
                         path_hash: *path_hash,
                         requested_at: *requested_at,
+                        rtt: *rtt,
                         data: data.to_vec(),
                     });
                 }
@@ -947,6 +952,24 @@ mod tests {
         let (data, rtt) = requesting.await.unwrap().unwrap();
         assert_eq!(data, b"pong");
         assert_eq!(rtt, Rtt(42));
+    }
+
+    #[tokio::test]
+    async fn respond_returns_the_links_round_trip() {
+        use crate::routing::links::request::RequestId;
+        use crate::runtime::request_router::RespondToken;
+
+        let (handle, _command_rx) = handle();
+        let token = RespondToken {
+            link_id: LinkId::new([1; 16]),
+            request_id: RequestId([2; 16]),
+            rtt: Rtt(99),
+        };
+        assert_eq!(
+            handle.respond(token, b"answer"),
+            Some(Rtt(99)),
+            "respond surfaces the rtt the request arrived on",
+        );
     }
 
     #[tokio::test]

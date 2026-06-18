@@ -305,6 +305,7 @@ pub enum IngestPacketOutcome<'p> {
         request_id: RequestId,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
+        rtt: Rtt,
         data: &'p [u8],
     },
     /// A sealed response named an outstanding request's id — the command
@@ -1254,6 +1255,7 @@ impl<S: StorageLayout> EngineState<S> {
             key,
             role: LinkRole::Responder { destination, .. },
             remote_identity,
+            rtt,
             ..
         }) = self.links.phase_for(&link_id)
         else {
@@ -1261,6 +1263,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let destination = *destination;
         let remote_identity = *remote_identity;
+        let request_rtt = *rtt;
         let Ok(plaintext) = key.open_in_place(data.payload) else {
             return IngestPacketOutcome::Ignored;
         };
@@ -1280,6 +1283,7 @@ impl<S: StorageLayout> EngineState<S> {
             request_id: RequestId::of_packet(&packet_hash),
             path_hash: parsed.path_hash,
             requested_at: parsed.requested_at,
+            rtt: request_rtt,
             data: parsed.data,
         }
     }

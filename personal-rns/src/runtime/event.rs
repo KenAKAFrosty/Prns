@@ -21,6 +21,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 pub enum PrnsEvent<'a> {
@@ -36,6 +37,7 @@ pub enum Message<'a> {
         request_id: RequestId,
         path_hash: RequestPathHash,
         requested_at: InstantMillis,
+        rtt: Rtt,
         data: &'a [u8],
     },
     Response {
@@ -126,12 +128,14 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 request_id,
                 path_hash,
                 requested_at,
+                rtt,
                 data,
             } => PrnsEvent::Message(Message::Request {
                 link_id,
                 request_id,
                 path_hash,
                 requested_at,
+                rtt,
                 data,
             }),
             Journaled::ResponseReceived {

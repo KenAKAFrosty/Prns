@@ -590,6 +590,7 @@ impl<S: StorageLayout> EngineState<S> {
             key,
             mtu,
             attached_interface,
+            rtt,
             ..
         }) = self.links.phase_for(link_id)
         else {
@@ -597,6 +598,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let mtu = *mtu;
         let fire_on = *attached_interface;
+        let link_rtt = *rtt;
 
         if state.compression == ResourceCompression::Bz2 {
             let mut opened = false;
@@ -695,6 +697,7 @@ impl<S: StorageLayout> EngineState<S> {
                                                 request_id: RequestId::of_request_data(plaintext),
                                                 path_hash: parsed.path_hash,
                                                 requested_at: parsed.requested_at,
+                                                rtt: link_rtt,
                                                 data: parsed.data,
                                             },
                                         ));

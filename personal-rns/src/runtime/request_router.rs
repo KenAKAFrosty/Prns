@@ -3,6 +3,7 @@ use crate::identity::IdentityHash;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use crate::units::Rtt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoutePolicy {
@@ -57,6 +58,8 @@ impl ResponseSink for alloc::vec::Vec<u8> {
 pub struct RespondToken {
     pub link_id: LinkId,
     pub request_id: RequestId,
+    /// The link's measured round trip when the request arrived.
+    pub rtt: Rtt,
 }
 
 pub struct InboundRequest<'a> {
@@ -73,6 +76,7 @@ impl<'a> InboundRequest<'a> {
         request_id: RequestId,
         requester: Option<IdentityHash>,
         requested_at: InstantMillis,
+        rtt: Rtt,
         data: &'a [u8],
     ) -> Self {
         Self {
@@ -82,6 +86,7 @@ impl<'a> InboundRequest<'a> {
             respond_token: RespondToken {
                 link_id,
                 request_id,
+                rtt,
             },
         }
     }
@@ -297,6 +302,7 @@ mod tests {
                 RequestId([2; 16]),
                 None,
                 InstantMillis(0),
+                Rtt(0),
                 b"",
             );
             dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await

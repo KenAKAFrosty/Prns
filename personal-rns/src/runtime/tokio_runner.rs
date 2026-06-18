@@ -5,6 +5,7 @@ use crate::engine::InstantMillis;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::units::Rtt;
 
 use super::request_router::{dispatch_request, Decline, InboundRequest, RouteSet};
 use super::tokio_bind::PrnsHandle;
@@ -17,6 +18,7 @@ pub(super) struct RunnerRequest {
     pub request_id: RequestId,
     pub path_hash: RequestPathHash,
     pub requested_at: InstantMillis,
+    pub rtt: Rtt,
     pub data: std::vec::Vec<u8>,
 }
 
@@ -45,6 +47,7 @@ async fn dispatch<St, R: RouteSet<St>>(state: &St, commands: &PrnsHandle, reques
         request.request_id,
         None,
         request.requested_at,
+        request.rtt,
         &request.data,
     );
     let responder = inbound.respond_token();
