@@ -6,7 +6,7 @@
 //! the decompressed size and compression kind up front, so refusing is free.
 
 use crate::engine::commands::{
-    CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyError,
+    CommandId, CommandOutcome, Delivered, SetResourceStrategy, SetResourceStrategyError, Settlement,
 };
 use crate::engine::Journaled;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
@@ -37,6 +37,7 @@ use crate::routing::links::resources::{
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::{DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
@@ -81,13 +82,7 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return IngestPacketOutcome::Ignored;
         };
-        let ResourceStrategy::Accept {
-            max_uncompressed_len,
-            accept_compressed,
-        } = *resource_strategy
-        else {
-            return IngestPacketOutcome::Ignored;
-        };
+        let resource_strategy = *resource_strategy;
         let mtu = *mtu;
         let packet_hash = PacketHash::of_fields(
             DestinationType::Link,
@@ -117,6 +112,23 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return IngestPacketOutcome::Ignored;
         }
+        let answers_our_request = advertisement.flags.is_response
+            && advertisement.total_segments == 1
+            && !advertisement.flags.compressed
+            && advertisement
+                .request_id
+                .is_some_and(|id| self.receipts.has_pending_request(id.as_bytes()));
+        let (max_uncompressed_len, accept_compressed) = if answers_our_request {
+            (u64::MAX, false)
+        } else {
+            match resource_strategy {
+                ResourceStrategy::Accept {
+                    max_uncompressed_len,
+                    accept_compressed,
+                } => (max_uncompressed_len, accept_compressed),
+                ResourceStrategy::AcceptNone => return IngestPacketOutcome::Ignored,
+            }
+        };
         let compression = ResourceCompression::from_wire_flag(advertisement.flags.compressed);
         if compression == ResourceCompression::Bz2 && !accept_compressed {
             return IngestPacketOutcome::Ignored;
@@ -552,6 +564,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
+        now: InstantMillis,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
@@ -622,6 +635,22 @@ impl<S: StorageLayout> EngineState<S> {
                                     data: plaintext,
                                 },
                             ));
+                        } else if let Some((request_id, proven)) = state.request_id.and_then(|id| {
+                            self.receipts
+                                .settle_by_request_id(id.as_bytes())
+                                .map(|proven| (id, proven))
+                        }) {
+                            sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                                link_id: *link_id,
+                                request_id,
+                                data: plaintext,
+                            }));
+                            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                                id: proven.command_id,
+                                settlement: Settlement::SendRequest(Ok(Delivered {
+                                    rtt: Rtt::measured_between(proven.sent_at, now),
+                                })),
+                            }));
                         } else {
                             sink(EngineReaction::Journaled(Journaled::ResourceReceived {
                                 link_id: *link_id,
@@ -1153,6 +1182,83 @@ mod tests {
             2_000,
         );
         assert!(capture.frames.is_empty());
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
+    fn a_response_resource_settles_its_request_despite_the_default_strategy() {
+        use crate::crypto::Ed25519PublicKey;
+        use crate::engine::test_support::filled_frame;
+        use crate::identity::IdentitySigningPublicKey;
+        use crate::routing::dedup::PacketHash;
+        use crate::routing::delivery::receipts::{OutstandingReceipt, ReceiptKind};
+        use crate::routing::links::request::RequestId;
+        use crate::wire::{DestinationHash, DestinationType, PacketType, WireContext};
+
+        let mut receiver = engine_with_active_link();
+        let packet_hash = PacketHash::of_fields(
+            DestinationType::Link,
+            PacketType::Data,
+            &DestinationHash::new(*link_id().as_bytes()),
+            WireContext::Request,
+            &b"the request we sent"[..],
+        );
+        let request_id = RequestId::of_packet(&packet_hash);
+        receiver.receipts.track(OutstandingReceipt {
+            packet_hash,
+            command_id: CommandId(42),
+            kind: ReceiptKind::SendRequest,
+            peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
+            sent_at: InstantMillis(1_800),
+            timeout_at: InstantMillis(20_000),
+        });
+
+        let data = four_part_payload();
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &data,
+            None,
+            Some(request_id),
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let advertisement = advertisement.expect("the responder advertises its response resource");
+
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        assert_eq!(
+            pull.frames.len(),
+            1,
+            "a response to a request we sent is pulled, default strategy notwithstanding",
+        );
+        assert!(!receiver.incoming_resources.is_empty());
+
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        assert_eq!(serve.frames.len(), 4, "the peer streams every part");
+
+        let mut conclusion = None;
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
+            if !capture.settlements.is_empty() || !capture.received.is_empty() {
+                conclusion = Some(capture);
+            }
+        }
+        let conclusion = conclusion.expect("the last part concludes the response");
+        assert!(
+            conclusion.received.is_empty(),
+            "a response settles its request, not a bare ResourceReceived",
+        );
+        assert!(matches!(
+            conclusion.settlements[0],
+            (CommandId(42), Settlement::SendRequest(Ok(_))),
+        ));
         assert!(receiver.incoming_resources.is_empty());
     }
 

@@ -210,6 +210,20 @@ impl<C: ReceiptColumns> Receipts<C> {
         Some(proven)
     }
 
+    /// Non-removing peek for the resource accept gate: RNS 1.3.1 Link.py:1074
+    /// accepts a response resource only when it names a request we actually
+    /// sent. The settle itself rides [`Self::settle_by_request_id`] at conclusion.
+    pub fn has_pending_request(&self, request_id: &[u8; 16]) -> bool {
+        (0..self.columns.len()).any(|index| {
+            self.columns.kinds().get(index) == Some(&ReceiptKind::SendRequest)
+                && self
+                    .columns
+                    .packet_hashes()
+                    .get(index)
+                    .is_some_and(|hash| &hash.as_bytes()[..16] == request_id)
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.columns.len()
     }

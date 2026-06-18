@@ -379,7 +379,7 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
-                self.conclude_resource(&link_id, &hash, sink);
+                self.conclude_resource(&link_id, &hash, now, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResourceConcludedFailed { link_id, hash } => {
