@@ -5,12 +5,11 @@ A stock ``RNS.Reticulum`` (reference 1.3.1) that connects to the Prns bridge as 
 client over the loopback port (forced to TCP so the path is identical on every platform). It has no
 interfaces of its own: everything it reaches, it reaches through the bridge. It hosts a destination
 (``prns.client``), announces it across the bridge, links to the remote peer (``prns.peer``) and sends
-over that link, and accepts the peer's link *back* to it. This is the path LXMF uses for direct
-messages, exercised both ways through the bridge.
+it a multi-part resource over that link, and accepts the peer's link *back* to it. This is the path
+LXMF uses for direct messages with attachments, exercised both ways through the bridge.
 
-Prints ``PEER_DEST`` is the peer's; this prints ``CLIENT_DEST <hex>``, ``LINK_OUT_UP`` when its link to
-the peer goes active, and ``RECEIVED <text>`` when the peer's link data arrives inbound. RNS's own logs
-go to stderr.
+Prints ``CLIENT_DEST <hex>``, ``LINK_OUT_UP`` when its link to the peer goes active, and
+``RESOURCE_OK <len>`` when the peer's inbound resource completes. RNS's own logs go to stderr.
 
 Env: ``PRNS_LOCAL_PORT`` is the bridge's loopback shared-instance port.
 """
@@ -57,7 +56,7 @@ class PeerSeeker:
 
     def on_up(self, link):
         print("LINK_OUT_UP", flush=True)
-        RNS.Packet(link, b"client-to-peer").send()
+        RNS.Resource(os.urandom(1000000), link, auto_compress=False)
 
 
 def main() -> int:
@@ -75,20 +74,25 @@ def main() -> int:
 
     received = {"hit": False}
 
-    def link_packet(data, _packet):
-        print("RECEIVED " + data.decode("utf-8", "replace"), flush=True)
-        received["hit"] = True
+    def resource_concluded(resource):
+        if resource.status == RNS.Resource.COMPLETE:
+            data = resource.data.read() if hasattr(resource.data, "read") else resource.data
+            print("RESOURCE_OK " + str(len(data)), flush=True)
+            received["hit"] = True
+        else:
+            print("RESOURCE_FAIL status=" + str(resource.status), flush=True)
 
     def link_established(link):
         print("LINK_IN", flush=True)
-        link.set_packet_callback(link_packet)
+        link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+        link.set_resource_concluded_callback(resource_concluded)
 
     mine.set_link_established_callback(link_established)
     print("CLIENT_DEST " + mine.hash.hex(), flush=True)
 
     RNS.Transport.register_announce_handler(PeerSeeker())
 
-    deadline = time.time() + 45
+    deadline = time.time() + 60
     while time.time() < deadline and not received["hit"]:
         mine.announce()
         time.sleep(1.0)

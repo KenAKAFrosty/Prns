@@ -87,25 +87,28 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     )
 }
 
-/// A heap-backed wire frame slot whose capacity is one interface's frame ceiling. `len` is the
-/// bytes currently written; `bytes` is the full slot.
+/// A heap-backed wire frame slot. Its buffer grows to the frame it holds and keeps that capacity
+/// across the slot's reuse, so a deep host lane costs only the frames actually in flight (an RNS
+/// resource window's worth) rather than depth times the interface's theoretical MTU ceiling. The
+/// slot moves by value through the lane's channels, so a filled frame is still read in place — moving
+/// a `Vec` carries its allocation, not a copy. `len` mirrors `bytes.len()` for the seam's frame view.
 pub struct HeapFrameSlot {
     pub len: usize,
-    pub bytes: Box<[u8]>,
+    pub bytes: Vec<u8>,
 }
 
 impl HeapFrameSlot {
-    fn empty(cap: usize) -> Self {
+    fn empty(_cap: usize) -> Self {
         Self {
             len: 0,
-            bytes: std::vec![0u8; cap].into_boxed_slice(),
+            bytes: Vec::new(),
         }
     }
 
     pub fn fill(&mut self, frame: &[u8]) {
-        let len = frame.len().min(self.bytes.len());
-        self.bytes[..len].copy_from_slice(&frame[..len]);
-        self.len = len;
+        self.bytes.clear();
+        self.bytes.extend_from_slice(frame);
+        self.len = frame.len();
     }
 
     pub fn frame(&self) -> &[u8] {
@@ -257,37 +260,31 @@ impl Egress {
         }
     }
 
-    /// Grant-first: borrow the target lane's next free slot and let `fill` seal the frame
-    /// in place, committing on `Some(len)`. A full lane, an unknown target, or a poisoned
-    /// lane still runs `fill` once against `discard` and drops the result — the
-    /// `EmitFrame` contract — so the engine's bookkeeping never depends on lane luck.
+    /// Render the frame into `scratch` (sized to the largest interface frame), then copy just those
+    /// bytes into the target lane's next free slot, which grows to hold them. `fill` runs exactly
+    /// once regardless of lane luck — a full lane, an unknown target, or a poisoned lane drops the
+    /// rendered frame — so the engine's bookkeeping never depends on placement.
     fn emit(
         &self,
         target: InterfaceId,
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
-        discard: &mut [u8],
+        scratch: &mut [u8],
     ) {
+        let Some(len) = fill(scratch) else {
+            return;
+        };
+        let frame = &scratch[..len.min(scratch.len())];
         for (id, producer) in &self.lanes {
             if *id == target {
-                let Ok(mut producer) = producer.lock() else {
-                    let _ = fill(discard);
-                    return;
-                };
-                match producer.try_grant() {
-                    Some(slot) => {
-                        if let Some(len) = fill(&mut slot.bytes) {
-                            slot.len = len.min(slot.bytes.len());
-                            producer.commit();
-                        }
-                    }
-                    None => {
-                        let _ = fill(discard);
+                if let Ok(mut producer) = producer.lock() {
+                    if let Some(slot) = producer.try_grant() {
+                        slot.fill(frame);
+                        producer.commit();
                     }
                 }
                 return;
             }
         }
-        let _ = fill(discard);
     }
 
     fn add_lane(&mut self, id: InterfaceId, producer: TokioGrantProducer) {

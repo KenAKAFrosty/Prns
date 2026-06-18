@@ -34,15 +34,17 @@ use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::{Message, PrnsEvent, PrnsRecipe, SendError};
 
-const LANE_DEPTH_MAX: usize = 64;
-const LANE_DEPTH_MIN: usize = 4;
-const LANE_BUDGET_BYTES: usize = 512 * 1024;
+/// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts
+/// at once — `Resource.WINDOW_MAX_FAST` is 75, plus its flexibility — so a lane carrying a transfer
+/// (an image attachment, say) must be deeper than that window or it sheds parts and the transfer
+/// stalls. The old byte-budget made a fat-MTU interface's lane collapse to a handful of slots, which
+/// is exactly that failure. With the slots growable (`HeapFrameSlot`) the depth costs only the
+/// frames actually in flight, not depth times the MTU ceiling, so we hold generous headroom for
+/// several concurrent transfers on one interface.
+const HOST_LANE_DEPTH: usize = 256;
 
-/// A lane holds up to `LANE_BUDGET_BYTES` of frames in flight: deep for small frames, shallow for
-/// large, so a fat-MTU interface never inflates the lane the way a fixed slot count would. Clamped
-/// to a useful floor and the historical ceiling.
-fn lane_depth_for(slot_cap: usize) -> usize {
-    (LANE_BUDGET_BYTES / slot_cap.max(1)).clamp(LANE_DEPTH_MIN, LANE_DEPTH_MAX)
+fn lane_depth_for(_slot_cap: usize) -> usize {
+    HOST_LANE_DEPTH
 }
 
 /// A cloneable, `Send` handle to a running node — the proactive surface. Hand clones to other tasks

@@ -68,28 +68,27 @@ echo "bridge up; starting the local client..."
 PRNS_LOCAL_PORT="$LOCAL_PORT" "$VENV_PY" "$CLIENT" > "$CLIENT_LOG" 2>/dev/null &
 CLIENT_PID=$!
 
-# 4) Wait for both ends to receive the other's link message across the bridge.
-for _ in $(seq 1 240); do
-    grep -q "RECEIVED client-to-peer" "$PEER_LOG" \
-        && grep -q "RECEIVED peer-to-client" "$CLIENT_LOG" && break
+# 4) Wait for both ends to receive the other's multi-part resource across the bridge.
+for _ in $(seq 1 320); do
+    grep -q "RESOURCE_OK" "$PEER_LOG" && grep -q "RESOURCE_OK" "$CLIENT_LOG" && break
     sleep 0.25
 done
 
 OUT_OK=""; IN_OK=""
-grep -q "RECEIVED client-to-peer" "$PEER_LOG" && OUT_OK=1
-grep -q "RECEIVED peer-to-client" "$CLIENT_LOG" && IN_OK=1
+grep -q "RESOURCE_OK" "$PEER_LOG" && OUT_OK=1
+grep -q "RESOURCE_OK" "$CLIENT_LOG" && IN_OK=1
 
 if [ -n "$OUT_OK" ] && [ -n "$IN_OK" ]; then
-    echo "PASS: real RNS apps linked through the shared instance and delivered messages both ways"
-    echo "  local client -> peer: delivered"
-    echo "  peer -> local client (inbound transit): delivered"
+    echo "PASS: real RNS apps transferred multi-part resources through the shared instance both ways"
+    echo "  local client -> peer: $(grep -o 'RESOURCE_OK [0-9]*' "$PEER_LOG" | head -1)"
+    echo "  peer -> local client (inbound transit): $(grep -o 'RESOURCE_OK [0-9]*' "$CLIENT_LOG" | head -1)"
     exit 0
 fi
 
-echo "FAIL: link delivery across the bridge was not bidirectional"
+echo "FAIL: resource transfer across the bridge was not bidirectional"
 echo "  local client -> peer: $([ -n "$OUT_OK" ] && echo delivered || echo MISSING)"
 echo "  peer -> local client: $([ -n "$IN_OK" ] && echo delivered || echo MISSING)"
 echo "--- bridge log (tail) ---"; tail -30 "$DAEMON_LOG"
-echo "--- client log (tail) ---"; tail -15 "$CLIENT_LOG"
-echo "--- peer log (tail) ---"; tail -15 "$PEER_LOG"
+echo "--- client log (tail) ---"; tail -20 "$CLIENT_LOG"
+echo "--- peer log (tail) ---"; tail -20 "$PEER_LOG"
 exit 1
