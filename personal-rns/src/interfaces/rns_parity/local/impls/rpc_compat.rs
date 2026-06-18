@@ -15,13 +15,18 @@
 //! unmodified RNS client does not fault on a control channel we otherwise do not speak; anything past
 //! the minimal set is intentionally answered `None`.
 //!
-//! Wire protocol is RNS 1.3.1's `multiprocessing.connection`: a 4-byte big-endian length frame, a
-//! mutual HMAC-SHA256 challenge/response keyed on the shared `rpc_key`, then one pickled request dict
-//! and one pickled reply per connection (a client opens a fresh connection per call).
+//! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual HMAC
+//! challenge/response keyed on the shared `rpc_key`, then one pickled request dict and one pickled
+//! reply per connection (a client opens a fresh connection per call). The HMAC digest is *negotiated*
+//! exactly as CPython does, so any client version interoperates: a modern client (Python 3.12+) tags
+//! its messages with a `{sha256}` prefix; a legacy client (Python ≤ 3.11) sends an unprefixed
+//! HMAC-MD5. Honoring both is what lets attachments flow regardless of the client's Python.
 
 use std::string::String;
 use std::vec::Vec;
 
+use hmac::{Hmac, KeyInit, Mac};
+use md5::Md5;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
@@ -36,6 +41,96 @@ const DIGEST_PREFIX: &[u8] = b"{sha256}";
 const CHALLENGE_NONCE_LEN: usize = 40;
 const MAX_FRAME_LEN: usize = 4096;
 const DEFAULT_PER_HOP_TIMEOUT_SECS: i64 = 6;
+const LEGACY_MD5_DIGEST_LEN: usize = 16;
+const LEGACY_MD5_MESSAGE_LEN: usize = 20;
+
+/// The HMAC digests `multiprocessing.connection` negotiates. A modern peer prefixes its message with
+/// `{sha256}`; a legacy peer (Python ≤ 3.11) sends a bare HMAC-MD5 with no prefix at all.
+#[derive(Clone, Copy)]
+enum Digest {
+    Md5,
+    Sha256,
+}
+
+impl Digest {
+    fn label(self) -> &'static [u8] {
+        match self {
+            Digest::Md5 => b"md5",
+            Digest::Sha256 => b"sha256",
+        }
+    }
+
+    #[allow(clippy::expect_used)]
+    fn mac(self, key: &[u8], message: &[u8]) -> Vec<u8> {
+        match self {
+            Digest::Sha256 => hmac_sha256(key, message).to_vec(),
+            Digest::Md5 => {
+                let mut mac =
+                    <Hmac<Md5>>::new_from_slice(key).expect("HMAC accepts a key of any length");
+                mac.update(message);
+                mac.finalize().into_bytes().to_vec()
+            }
+        }
+    }
+
+    #[allow(clippy::expect_used)]
+    fn verify(self, key: &[u8], message: &[u8], tag: &[u8]) -> bool {
+        match self {
+            Digest::Sha256 => hmac_sha256_verify(key, message, tag).is_ok(),
+            Digest::Md5 => {
+                let mut mac =
+                    <Hmac<Md5>>::new_from_slice(key).expect("HMAC accepts a key of any length");
+                mac.update(message);
+                mac.verify_slice(tag).is_ok()
+            }
+        }
+    }
+}
+
+/// Mirror of CPython's `_get_digest_name_and_payload`: a message of a legacy length carries a bare
+/// HMAC-MD5 (digest [`None`], whole message is the payload); a `{digest}`-prefixed message names its
+/// own digest. An unrecognized prefix or digest is rejected (`None`), as CPython raises.
+fn negotiated_digest(message: &[u8]) -> Option<(Option<Digest>, &[u8])> {
+    if message.len() == LEGACY_MD5_DIGEST_LEN || message.len() == LEGACY_MD5_MESSAGE_LEN {
+        return Some((None, message));
+    }
+    let rest = message.strip_prefix(b"{")?;
+    let close = rest.iter().position(|&byte| byte == b'}')?;
+    let digest = match &rest[..close] {
+        b"sha256" => Digest::Sha256,
+        b"md5" => Digest::Md5,
+        _ => return None,
+    };
+    Some((Some(digest), &rest[close + 1..]))
+}
+
+/// Mirror of CPython's `_create_response`: answer a peer's challenge `message` with a MAC over the
+/// whole message. A legacy (unprefixed) challenge gets a bare HMAC-MD5; a `{digest}`-prefixed
+/// challenge gets the same `{digest}` prefix back. [`None`] when the challenge digest is unsupported.
+fn create_response(key: &[u8; 32], message: &[u8]) -> Option<Vec<u8>> {
+    match negotiated_digest(message)? {
+        (None, _) => Some(Digest::Md5.mac(key, message)),
+        (Some(digest), _) => {
+            let mut reply = std::vec![b'{'];
+            reply.extend_from_slice(digest.label());
+            reply.push(b'}');
+            reply.extend_from_slice(&digest.mac(key, message));
+            Some(reply)
+        }
+    }
+}
+
+/// Mirror of CPython's `_verify_challenge`: the peer's `response` to *our* `challenge_message` is a
+/// MAC over that message, in whatever digest the response declares (an unprefixed response means the
+/// legacy HMAC-MD5). Constant-time, length-checked.
+fn response_authenticates(key: &[u8; 32], challenge_message: &[u8], response: &[u8]) -> bool {
+    match negotiated_digest(response) {
+        Some((digest, mac)) => digest
+            .unwrap_or(Digest::Md5)
+            .verify(key, challenge_message, mac),
+        None => false,
+    }
+}
 
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep
 /// attachment delivery from faulting. Stand one up beside a [`LocalServer`](super::tokio::LocalServer)
@@ -135,9 +230,9 @@ async fn serve_connection<S: AsyncRead + AsyncWrite + Unpin>(
     write_frame(&mut stream, &minimal_reply_for(&request)).await
 }
 
-/// Mirror of RNS `Listener.deliver_challenge`: send our challenge, then accept the client's response
-/// `{sha256}` ++ HMAC-SHA256(`rpc_key`, our_message) and reply `#WELCOME#`. The MAC covers the digest
-/// prefix. Returns whether the client authenticated.
+/// Mirror of RNS `Listener.deliver_challenge`: send our `{sha256}`-tagged challenge, accept the
+/// client's MAC over it (sha256 if it tags one, else the legacy unprefixed HMAC-MD5), and reply
+/// `#WELCOME#`. The MAC covers the digest prefix. Returns whether the client authenticated.
 async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     rpc_key: &[u8; 32],
@@ -151,11 +246,7 @@ async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     write_frame(stream, &challenge).await?;
 
     let response = read_frame(stream).await?;
-    let Some(mac) = response.strip_prefix(DIGEST_PREFIX) else {
-        let _ = write_frame(stream, FAILURE).await;
-        return Ok(false);
-    };
-    if hmac_sha256_verify(rpc_key, &our_message, mac).is_err() {
+    if !response_authenticates(rpc_key, &our_message, &response) {
         let _ = write_frame(stream, FAILURE).await;
         return Ok(false);
     }
@@ -163,8 +254,9 @@ async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     Ok(true)
 }
 
-/// Mirror of RNS `Listener.answer_challenge`: reply to the client's challenge with `{sha256}` ++
-/// HMAC-SHA256(`rpc_key`, client_message) and await its `#WELCOME#`. Returns whether it accepted us.
+/// Mirror of RNS `Listener.answer_challenge`: answer the client's challenge in its own negotiated
+/// digest (a `{sha256}` reply for a modern client, a bare HMAC-MD5 for a legacy one) and await its
+/// `#WELCOME#`. Returns whether it accepted us.
 async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     rpc_key: &[u8; 32],
@@ -173,8 +265,9 @@ async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     let Some(client_message) = client_challenge.strip_prefix(CHALLENGE) else {
         return Ok(false);
     };
-    let mut reply = DIGEST_PREFIX.to_vec();
-    reply.extend_from_slice(&hmac_sha256(rpc_key, client_message));
+    let Some(reply) = create_response(rpc_key, client_message) else {
+        return Ok(false);
+    };
     write_frame(stream, &reply).await?;
     Ok(read_frame(stream).await? == WELCOME)
 }
@@ -280,7 +373,26 @@ pub fn reticulum_storage_dir() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
+
+    async fn read_frame_dup(c: &mut tokio::io::DuplexStream) -> Vec<u8> {
+        let mut header = [0u8; 4];
+        c.read_exact(&mut header).await.unwrap();
+        let len = i32::from_be_bytes(header) as usize;
+        let mut body = std::vec![0u8; len];
+        c.read_exact(&mut body).await.unwrap();
+        body
+    }
+
+    async fn write_frame_dup(c: &mut tokio::io::DuplexStream, payload: &[u8]) {
+        c.write_all(&(payload.len() as u32).to_be_bytes())
+            .await
+            .unwrap();
+        c.write_all(payload).await.unwrap();
+        c.flush().await.unwrap();
+    }
 
     #[test]
     fn the_minimal_set_answers_phy_stats_none_and_timeout_default() {
@@ -311,30 +423,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_client_that_completes_the_mutual_auth_gets_a_reply() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
+    async fn a_modern_sha256_client_completes_the_mutual_auth_and_gets_a_reply() {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
         let server_task = tokio::spawn(async move {
             let _ = serve_connection(server, rpc_key).await;
         });
-
-        async fn read_frame_dup(c: &mut tokio::io::DuplexStream) -> Vec<u8> {
-            let mut header = [0u8; 4];
-            c.read_exact(&mut header).await.unwrap();
-            let len = i32::from_be_bytes(header) as usize;
-            let mut body = std::vec![0u8; len];
-            c.read_exact(&mut body).await.unwrap();
-            body
-        }
-        async fn write_frame_dup(c: &mut tokio::io::DuplexStream, payload: &[u8]) {
-            c.write_all(&(payload.len() as u32).to_be_bytes())
-                .await
-                .unwrap();
-            c.write_all(payload).await.unwrap();
-            c.flush().await.unwrap();
-        }
 
         let server_challenge = read_frame_dup(&mut client).await;
         let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
@@ -351,6 +445,33 @@ mod tests {
         let server_reply = read_frame_dup(&mut client).await;
         let server_mac = server_reply.strip_prefix(DIGEST_PREFIX).unwrap();
         assert!(hmac_sha256_verify(&rpc_key, &our_msg, server_mac).is_ok());
+        write_frame_dup(&mut client, WELCOME).await;
+
+        write_frame_dup(&mut client, b"{'get': 'packet_rssi'}").await;
+        assert_eq!(read_frame_dup(&mut client).await, b"N.");
+
+        let _ = server_task.await;
+    }
+
+    #[tokio::test]
+    async fn a_legacy_md5_client_without_a_digest_prefix_still_authenticates() {
+        let rpc_key = [0x5au8; 32];
+        let (mut client, server) = tokio::io::duplex(8192);
+        let server_task = tokio::spawn(async move {
+            let _ = serve_connection(server, rpc_key).await;
+        });
+
+        let server_challenge = read_frame_dup(&mut client).await;
+        let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
+        write_frame_dup(&mut client, &Digest::Md5.mac(&rpc_key, server_message)).await;
+        assert_eq!(read_frame_dup(&mut client).await, WELCOME);
+
+        let our_message = [0x22u8; LEGACY_MD5_MESSAGE_LEN];
+        let mut our_challenge = CHALLENGE.to_vec();
+        our_challenge.extend_from_slice(&our_message);
+        write_frame_dup(&mut client, &our_challenge).await;
+        let server_reply = read_frame_dup(&mut client).await;
+        assert_eq!(server_reply, Digest::Md5.mac(&rpc_key, &our_message));
         write_frame_dup(&mut client, WELCOME).await;
 
         write_frame_dup(&mut client, b"{'get': 'packet_rssi'}").await;

@@ -62,7 +62,7 @@ udp = ["tokio-host", "tokio/net"]
 # a tokio daemon that lets other RNS apps on this host (Sideband, NomadNet, MeshChat) share one
 # instance over loopback TCP (37428) or an AF_UNIX socket. Same HDLC framing as TCP; needs no
 # extra socket crate.
-local = ["tokio-host", "tokio/net"]
+local = ["tokio-host", "tokio/net", "dep:md-5"]
 stream-compression = ["std"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
@@ -91,6 +91,9 @@ serde_json = { workspace = true, optional = true }
 # so these must build alloc-free
 sha2 = { version = "0.11", default-features = false }
 hmac = { version = "0.13", default-features = false }
+# HMAC-MD5 for the shared-instance RPC compat shim only (`local`): pre-3.12 RNS clients
+# negotiate the legacy MD5 handshake of `multiprocessing.connection`. Optional, host-only.
+md-5 = { version = "0.11", optional = true, default-features = false }
 hkdf = { version = "0.13", default-features = false }
 aes = { version = "0.8", default-features = false }
 cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
