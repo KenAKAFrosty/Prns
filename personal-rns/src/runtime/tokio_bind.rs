@@ -12,19 +12,21 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendResourceFailure, SendSingle,
-    SendSingleFailure, SendSinglePayload, Settlement,
+    EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendRequestFailure, SendResourceFailure,
+    SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
-    ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand, TokioGrantConsumer,
-    TokioGrantProducer, TokioHost, TokioInterfaceSeam,
+    RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand,
+    TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
 use crate::routing::links::resources::{ResourceHash, MAX_EFFICIENT_SIZE};
 use crate::routing::links::LinkId;
+use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 use crate::wire::DestinationHash;
 
 use super::byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -131,6 +133,34 @@ impl PrnsHandle {
         {
             Some(Settlement::SendSingle(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    /// Make a request of `path_hash` with `data` of any length and await the response. The runtime
+    /// picks the rung — a single REQUEST packet within the link MDU, or a resource that rides past
+    /// it — so a consumer never meets a size limit; the answer comes back with the round trip the
+    /// exchange measured.
+    pub async fn request(
+        &self,
+        link_id: LinkId,
+        path_hash: RequestPathHash,
+        data: &[u8],
+    ) -> Result<(std::vec::Vec<u8>, Rtt), SendError<SendRequestFailure>> {
+        let id = self.mint();
+        let (completion, settled) = oneshot::channel();
+        self.commands
+            .send(HostCommand::RequestAny(RequestAnyHostCommand {
+                id,
+                link_id,
+                path_hash,
+                data: data.to_vec().into(),
+                completion,
+            }))
+            .map_err(|_| SendError::NodeStopped)?;
+        match settled.await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(failure)) => Err(SendError::Failed(failure)),
+            Err(_) => Err(SendError::NodeStopped),
         }
     }
 
@@ -892,6 +922,31 @@ mod tests {
     fn handle() -> (PrnsHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
         (PrnsHandle::over(commands), command_rx)
+    }
+
+    #[tokio::test]
+    async fn request_emits_a_request_any_and_returns_the_response_with_its_rtt() {
+        let (handle, mut command_rx) = handle();
+        let link = LinkId::new([5; 16]);
+        let path_hash = RequestPathHash::new([0x44; 16]);
+
+        let requesting =
+            tokio::spawn(async move { handle.request(link, path_hash, b"ping").await });
+
+        let HostCommand::RequestAny(request) = command_rx.recv().await.unwrap() else {
+            panic!("request issues a RequestAny host command");
+        };
+        assert_eq!(request.link_id, link);
+        assert_eq!(request.path_hash, path_hash);
+        assert_eq!(request.data.as_slice(), &b"ping"[..]);
+        request
+            .completion
+            .send(Ok((b"pong".to_vec(), Rtt(42))))
+            .unwrap();
+
+        let (data, rtt) = requesting.await.unwrap().unwrap();
+        assert_eq!(data, b"pong");
+        assert_eq!(rtt, Rtt(42));
     }
 
     #[tokio::test]

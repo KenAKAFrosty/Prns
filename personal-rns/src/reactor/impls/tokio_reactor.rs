@@ -10,7 +10,8 @@ use tokio::time::Instant;
 
 use crate::engine::{
     CommandId, Directive, EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis,
-    IssuedCommand, Journaled, ProofRequest, Respond, RespondData, Settlement, WakeSchedules,
+    IssuedCommand, Journaled, ProofRequest, Respond, RespondData, SendRequest, SendRequestData,
+    SendRequestFailure, Settlement, WakeSchedules,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -26,10 +27,12 @@ use crate::reactor::interface_seam::{
 };
 use crate::reactor::Host;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
-use crate::routing::links::request::RequestId;
+use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash};
 use crate::routing::links::LinkId;
+use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
+use crate::units::Rtt;
 
 pub struct TokioHost {
     base: Instant,
@@ -457,6 +460,7 @@ pub enum HostCommand {
     SendResource(SendResourceHostCommand),
     SendResourceSegment(SendResourceSegmentHostCommand),
     RespondAny(RespondAnyHostCommand),
+    RequestAny(RequestAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
     /// Register a runtime-added interface's descriptor and lanes so the reactor routes to it. Its
     /// run loop is driven separately on the runtime's interface driver; only these `Send` lane
@@ -534,6 +538,61 @@ fn settle_or_forward<'a>(
         }
     }
     Some(journaled)
+}
+
+/// A `request()` parked on its answer: the bytes land first (stashed here), then the round trip
+/// arrives with the settlement.
+struct RequestPending {
+    completion: oneshot::Sender<Result<(std::vec::Vec<u8>, Rtt), SendRequestFailure>>,
+    data: Option<std::vec::Vec<u8>>,
+}
+
+/// The outbound-request demux, mirror of [`settle_or_forward`]: a `ResponseReceived` whose
+/// `command_id` has a parked `request()` stashes its bytes (the settlement carries the rtt, which
+/// lands next); the matching `SendRequest` settlement then fires `(data, rtt)` or the typed failure
+/// to the awaiter and drops the events from the app stream. Everything else passes through.
+fn route_request_or_forward<'a>(
+    pending: &RefCell<HashMap<CommandId, RequestPending>>,
+    journaled: Journaled<'a>,
+) -> Option<Journaled<'a>> {
+    match &journaled {
+        Journaled::ResponseReceived {
+            command_id, data, ..
+        } => {
+            if let Some(entry) = pending.borrow_mut().get_mut(command_id) {
+                entry.data = Some(data.to_vec());
+                return None;
+            }
+        }
+        Journaled::CommandSettled {
+            id,
+            settlement: Settlement::SendRequest(result),
+        } => {
+            if let Some(entry) = pending.borrow_mut().remove(id) {
+                let resolved = match (*result, entry.data) {
+                    (Ok(delivered), Some(data)) => Ok((data, delivered.rtt)),
+                    (Ok(_), None) => Err(SendRequestFailure::WriteFailed),
+                    (Err(failure), _) => Err(failure),
+                };
+                let _ = entry.completion.send(resolved);
+                return None;
+            }
+        }
+        _ => {}
+    }
+    Some(journaled)
+}
+
+/// Resolve a parked `request()` with a typed failure — for the request-forming paths the size
+/// yardstick already rules out, so the awaiter never hangs even on the unreachable branch.
+fn fail_request(
+    pending: &RefCell<HashMap<CommandId, RequestPending>>,
+    id: CommandId,
+) -> WakeSchedules {
+    if let Some(entry) = pending.borrow_mut().remove(&id) {
+        let _ = entry.completion.send(Err(SendRequestFailure::WriteFailed));
+    }
+    WakeSchedules::UNCHANGED
 }
 
 /// The byte-stream demux: a `ChannelMessageReceived` of the reserved stream type whose `(link, id)`
@@ -727,6 +786,18 @@ pub struct RespondAnyHostCommand {
     pub compressed_candidate: Option<HostResourcePayload>,
 }
 
+/// Make a request of `path_hash` with `data` of any length and await its response: the reactor
+/// picks the rung — a single REQUEST packet when it fits the link MDU, an outgoing resource
+/// (correlated as a request) when it doesn't — and fires `completion` with the response bytes and
+/// the round trip once the answer settles. The payload is host-held like every owned-bytes verb.
+pub struct RequestAnyHostCommand {
+    pub id: CommandId,
+    pub link_id: LinkId,
+    pub path_hash: RequestPathHash,
+    pub data: HostResourcePayload,
+    pub completion: oneshot::Sender<Result<(std::vec::Vec<u8>, Rtt), SendRequestFailure>>,
+}
+
 pub struct ProvideDecompressedHostCommand {
     pub link_id: LinkId,
     pub hash: ResourceHash,
@@ -799,6 +870,8 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     let mut unmask_scratch = std::vec![0u8; scratch_cap].into_boxed_slice();
     let pending_completions: RefCell<HashMap<CommandId, oneshot::Sender<Settlement>>> =
         RefCell::new(HashMap::new());
+    let pending_responses: RefCell<HashMap<CommandId, RequestPending>> =
+        RefCell::new(HashMap::new());
     let stream_readers: RefCell<HashMap<(LinkId, StreamId), UnboundedSender<StreamInbound>>> =
         RefCell::new(HashMap::new());
     let resource_sinks: RefCell<HashMap<LinkId, UnboundedSender<ResourceInbound>>> =
@@ -807,11 +880,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         () => {
             |journaled: Journaled<'_>| {
                 if let Some(journaled) = settle_or_forward(&pending_completions, journaled) {
-                    if let Some(journaled) = route_stream_or_forward(&stream_readers, journaled) {
-                        if let Some(journaled) =
-                            route_resource_or_forward(&resource_sinks, journaled)
+                    if let Some(journaled) = route_request_or_forward(&pending_responses, journaled)
+                    {
+                        if let Some(journaled) = route_stream_or_forward(&stream_readers, journaled)
                         {
-                            on_journaled(journaled);
+                            if let Some(journaled) =
+                                route_resource_or_forward(&resource_sinks, journaled)
+                            {
+                                on_journaled(journaled);
+                            }
                         }
                     }
                 }
@@ -945,6 +1022,58 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                                 &mut |entropy| host.fill_entropy(entropy),
                                 &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
                             ),
+                        }
+                    }
+                    HostCommand::RequestAny(request) => {
+                        let RequestAnyHostCommand {
+                            id,
+                            link_id,
+                            path_hash,
+                            data,
+                            completion,
+                        } = request;
+                        pending_responses
+                            .borrow_mut()
+                            .insert(id, RequestPending { completion, data: None });
+                        let payload = data.as_slice();
+                        if engine.request_fits_packet(&link_id, payload) {
+                            match SendRequestData::from_slice(payload) {
+                                Ok(send_data) => engine.ingest_command_into(
+                                    IssuedCommand {
+                                        id,
+                                        command: EngineCommand::SendRequest(SendRequest {
+                                            link_id,
+                                            path_hash,
+                                            data: send_data,
+                                        }),
+                                    },
+                                    &interfaces,
+                                    now,
+                                    &mut |entropy| host.fill_entropy(entropy),
+                                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                ),
+                                Err(_) => fail_request(&pending_responses, id),
+                            }
+                        } else {
+                            let mut packed =
+                                std::vec![0u8; REQUEST_WIRE_OVERHEAD + payload.len().max(1)];
+                            match write_request_plaintext(now, &path_hash, payload, &mut packed) {
+                                Ok(plain_len) => {
+                                    let packed_request = &packed[..plain_len];
+                                    let request_id = RequestId::of_request_data(packed_request);
+                                    engine.ingest_send_resource_into(
+                                        id,
+                                        link_id,
+                                        packed_request,
+                                        None,
+                                        ResourceCorrelation::Request(request_id),
+                                        now,
+                                        &mut |entropy| host.fill_entropy(entropy),
+                                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                                    )
+                                }
+                                Err(_) => fail_request(&pending_responses, id),
+                            }
                         }
                     }
                     HostCommand::ProvideDecompressed(provide) => {
