@@ -138,6 +138,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 link_id,
                 request_id,
                 data,
+                ..
             } => PrnsEvent::Message(Message::Response {
                 link_id,
                 request_id,

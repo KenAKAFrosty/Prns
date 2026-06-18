@@ -312,6 +312,7 @@ impl<S: StorageLayout> EngineState<S> {
                 data,
             } => {
                 sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                    command_id: id,
                     link_id,
                     request_id,
                     data,

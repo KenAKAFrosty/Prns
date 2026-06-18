@@ -50,8 +50,11 @@ pub enum Journaled<'a> {
         data: &'a [u8],
     },
     /// The response that settled a `SendRequest` — the bytes ride here while
-    /// the settlement carries the round trip.
+    /// the settlement carries the round trip. `command_id` names the
+    /// `SendRequest` it answers, so a caller awaiting that request can demux the
+    /// data without re-deriving the request id.
     ResponseReceived {
+        command_id: CommandId,
         link_id: LinkId,
         request_id: RequestId,
         data: &'a [u8],
