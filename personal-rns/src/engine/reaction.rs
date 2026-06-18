@@ -1,7 +1,7 @@
 use crate::engine::commands::{CommandId, LinkEstablished, Settlement};
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -130,6 +130,18 @@ pub enum Journaled<'a> {
     },
 }
 
+/// Which members of a fleet a self-originated frame is fanned across, in the supervisor's own
+/// vocabulary. `All` reaches every live member; `Only` exactly one (a directed send); `AllExcept`
+/// every member but one — the source-withheld rebroadcast that never echoes a frame back onto the
+/// interface it arrived on. The engine hands the supervisor this intent for a whole fleet in one
+/// [`Directive::Broadcast`], so a shared lane carries one frame, not one per member.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FanTarget {
+    All,
+    Only(InterfaceId),
+    AllExcept(InterfaceId),
+}
+
 pub enum Directive<'a> {
     Send {
         target: InterfaceId,
@@ -137,6 +149,24 @@ pub enum Directive<'a> {
     },
     SendAnnounce {
         target: InterfaceId,
+        bytes: &'a [u8],
+        hops: u8,
+    },
+    /// Fan one self-originated frame across a whole fleet in a single directive: every live member
+    /// of `supervisor`'s kind that `fan` selects. The supervisor owns one shared lane, so the
+    /// reactor commits one frame carrying `fan`, and the supervisor delivers it to each selected
+    /// peer — never a frame per member colliding on a depth-1 lane. Dedicated 1:1 interfaces keep
+    /// their per-interface [`Send`](Self::Send).
+    Broadcast {
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+        bytes: &'a [u8],
+    },
+    /// The announce twin of [`Broadcast`](Self::Broadcast): a relayed or own announce fanned across
+    /// a fleet, carrying the `hops` count the wire is stamped with on emit.
+    BroadcastAnnounce {
+        supervisor: InterfaceKind,
+        fan: FanTarget,
         bytes: &'a [u8],
         hops: u8,
     },

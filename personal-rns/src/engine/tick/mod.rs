@@ -1,8 +1,9 @@
 use crate::engine::egress::firable_on;
 use crate::engine::{
-    Directive, EgressDirective, EngineReaction, EngineState, InstantMillis, WakeSchedules,
+    Directive, EgressDirective, EngineReaction, EngineState, FanTarget, InstantMillis,
+    WakeSchedules,
 };
-use crate::interfaces::InterfaceConfig;
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::routing::announce::defaults::{
     MAX_ANNOUNCE_REBROADCASTS, REBROADCAST_RETRANSMIT_INTERVAL_MS,
 };
@@ -11,71 +12,79 @@ use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    /// One [`EgressDirective`] per (scheduled announce due at `now` × interface it fires on):
-    /// a `directed_to` entry answers only its one target, else the engine's flood fan-out
-    /// ([`firable_on`]). The caller takes each named target to its handle. The reactor's
-    /// [`fire_due_scheduled_announces`](Self::fire_due_scheduled_announces) serializes
-    /// and drains it.
-    fn due_scheduled_announce_directives<'v>(
-        &'v self,
-        now: InstantMillis,
-        view: &'v [InterfaceConfig],
-    ) -> impl Iterator<Item = EgressDirective<'v>> + 'v {
-        self.scheduled_announces
-            .iter()
-            .filter(move |scheduled| scheduled.due_at.0 <= now.0)
-            .filter_map(move |scheduled| {
-                let via = self.transport_id?;
-                let retained = self
-                    .routing_table
-                    .retained_announce_for(&scheduled.destination)?;
-                Some((
-                    retained.announce,
-                    retained.hops,
-                    via,
-                    scheduled.source_interface,
-                    scheduled.directed_to,
-                ))
-            })
-            .flat_map(move |(announce, emit_hops, via, source, directed_to)| {
-                let next_hop_mode = view.iter().find(|c| c.id == source).map(|c| c.mode);
-                view.iter()
-                    .filter(move |descriptor| match directed_to {
-                        Some(target) => {
-                            descriptor.id == target && descriptor.capabilities.allows_transport()
-                        }
-                        None => firable_on(descriptor, source, next_hop_mode),
-                    })
-                    .map(move |descriptor| EgressDirective::ReemitAnnounce {
-                        announce: announce.clone(),
-                        emit_hops,
-                        via,
-                        target: descriptor.id,
-                        path_response: directed_to.is_some(),
-                    })
-            })
-    }
-
-    /// Fire every scheduled announce due at `now`: serialize each onto a scratch buffer
-    /// lent to `sink` as a [`Directive::SendAnnounce`], then advance the fired entries — the
-    /// reactor's timer edge drives this directly, reading and re-arming in the one pass. Each
-    /// due entry re-emits until [`MAX_ANNOUNCE_REBROADCASTS`], re-armed
-    /// [`REBROADCAST_RETRANSMIT_INTERVAL_MS`] out, then drops. Returns the scheduled-announce
-    /// lane's new soonest deadline as a [`WakeSchedules`] delta.
+    /// Fire every scheduled announce due at `now`: serialize each once onto a scratch buffer, then
+    /// fan it across the interfaces it fires on. A `directed_to` entry answers only its one target;
+    /// otherwise the flood fan-out ([`firable_on`]) — source-withheld, mode-gated, transport-only.
+    /// A dedicated 1:1 interface earns its own [`Directive::SendAnnounce`]; a whole fleet collapses
+    /// to one [`Directive::BroadcastAnnounce`] the supervisor fans across its peers, so a shared lane
+    /// never carries a frame per member. Then advance the fired entries — each re-emits until
+    /// [`MAX_ANNOUNCE_REBROADCASTS`], re-armed [`REBROADCAST_RETRANSMIT_INTERVAL_MS`] out, then
+    /// drops. Returns the scheduled-announce lane's new soonest deadline as a [`WakeSchedules`] delta.
     pub fn fire_due_scheduled_announces(
         &mut self,
         now: InstantMillis,
         view: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        for egress in self.due_scheduled_announce_directives(now, view) {
-            let mut buf = [0u8; BROADCAST_MTU];
-            if let Ok(written) = egress.to_wire(&mut buf) {
-                sink(EngineReaction::Directive(Directive::SendAnnounce {
-                    target: egress.target(),
-                    bytes: &buf[..written],
-                    hops: egress.emit_hops(),
-                }));
+        if let Some(via) = self.transport_id {
+            let scheduled = &self.scheduled_announces;
+            let routing = &self.routing_table;
+            for entry in scheduled.iter().filter(|s| s.due_at.0 <= now.0) {
+                let Some(retained) = routing.retained_announce_for(&entry.destination) else {
+                    continue;
+                };
+                let emit_hops = retained.hops;
+                let source = entry.source_interface;
+                let directed_to = entry.directed_to;
+                let mut buf = [0u8; BROADCAST_MTU];
+                let directive = EgressDirective::ReemitAnnounce {
+                    announce: retained.announce.clone(),
+                    emit_hops,
+                    via,
+                    target: source,
+                    path_response: directed_to.is_some(),
+                };
+                let Ok(written) = directive.to_wire(&mut buf) else {
+                    continue;
+                };
+                let bytes = &buf[..written];
+                let next_hop_mode = view.iter().find(|c| c.id == source).map(|c| c.mode);
+                let mut fleets_emitted: u16 = 0;
+                for descriptor in view {
+                    let eligible = match directed_to {
+                        Some(target) => {
+                            descriptor.id == target && descriptor.capabilities.allows_transport()
+                        }
+                        None => firable_on(descriptor, source, next_hop_mode),
+                    };
+                    if !eligible {
+                        continue;
+                    }
+                    match descriptor
+                        .id
+                        .kind()
+                        .and_then(InterfaceKind::supervisor_kind)
+                    {
+                        Some(supervisor) => {
+                            let bit = 1u16 << (supervisor as u8);
+                            if fleets_emitted & bit == 0 {
+                                fleets_emitted |= bit;
+                                let fan = fleet_announce_fan(view, supervisor, source, directed_to);
+                                sink(EngineReaction::Directive(Directive::BroadcastAnnounce {
+                                    supervisor,
+                                    fan,
+                                    bytes,
+                                    hops: emit_hops,
+                                }));
+                            }
+                        }
+                        None => sink(EngineReaction::Directive(Directive::SendAnnounce {
+                            target: descriptor.id,
+                            bytes,
+                            hops: emit_hops,
+                        })),
+                    }
+                }
             }
         }
         self.scheduled_announces.advance_due_retransmits(
@@ -87,6 +96,35 @@ impl<S: StorageLayout> EngineState<S> {
             scheduled_announces: self.scheduled_announces_wake(),
             ..WakeSchedules::UNCHANGED
         }
+    }
+}
+
+/// The fan a fleet's announce broadcast carries, reconstructed from the same rule `firable_on`
+/// applies per member: a directed answer reaches only its target; a flood reaches every member
+/// except the source it arrived on — unless that source interface permits a same-interface repeat,
+/// in which case it rejoins the fan. A source that is not a member of this fleet excludes nothing.
+/// Sound because a supervisor's members are uniform, so the per-member verdict differs only by the
+/// source-withhold the [`FanTarget`] captures.
+fn fleet_announce_fan(
+    view: &[InterfaceConfig],
+    supervisor: InterfaceKind,
+    source: InterfaceId,
+    directed_to: Option<InterfaceId>,
+) -> FanTarget {
+    if let Some(target) = directed_to {
+        return FanTarget::Only(target);
+    }
+    if source.kind() != supervisor.member_kind() {
+        return FanTarget::All;
+    }
+    let source_repeats = view
+        .iter()
+        .find(|c| c.id == source)
+        .is_some_and(|c| c.capabilities.allows_same_interface_repeat());
+    if source_repeats {
+        FanTarget::All
+    } else {
+        FanTarget::AllExcept(source)
     }
 }
 

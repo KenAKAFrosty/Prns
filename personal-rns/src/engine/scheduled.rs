@@ -1,11 +1,11 @@
-use crate::engine::command::{fan_self_originated, FanTarget};
+use crate::engine::command::fan_self_originated;
 use crate::engine::egress::write_path_request_wire_packet;
 use crate::engine::inbound::{is_egress_eligible, Egress};
 use crate::engine::reaction::LinkClosedReason;
 use crate::engine::{
-    Directive, EngineReaction, EngineState, EstablishLinkFailure, InstantMillis, Journaled,
-    RequestPathFailure, SendLinkFailure, SendRequestFailure, SendSingleFailure, Settlement,
-    WakeSchedules,
+    Directive, EngineReaction, EngineState, EstablishLinkFailure, FanTarget, InstantMillis,
+    Journaled, RequestPathFailure, SendLinkFailure, SendRequestFailure, SendSingleFailure,
+    Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{InterfaceConfig, InterfaceId};

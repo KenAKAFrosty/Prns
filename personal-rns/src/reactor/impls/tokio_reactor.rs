@@ -9,13 +9,13 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::engine::{
-    CommandId, Directive, EngineCommand, EngineReaction, EngineState, InstantMillis, IssuedCommand,
-    Journaled, ProofRequest, Respond, RespondData, Settlement, WakeSchedules,
+    CommandId, Directive, EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis,
+    IssuedCommand, Journaled, ProofRequest, Respond, RespondData, Settlement, WakeSchedules,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
-    InterfaceStatus, TransferRates,
+    InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
@@ -260,6 +260,27 @@ impl Egress {
                 return;
             }
         }
+    }
+
+    /// The member interfaces a fleet broadcast targets: every lane of the supervisor's member kind
+    /// that `fan` selects. The host owns a lane per member, so a broadcast fans out as one per-member
+    /// send each — no shared-lane collision to dodge, unlike the embedded supervisor.
+    fn broadcast_targets(
+        &self,
+        supervisor: InterfaceKind,
+        fan: FanTarget,
+    ) -> std::vec::Vec<InterfaceId> {
+        let member = supervisor.member_kind();
+        self.lanes
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| id.kind() == member)
+            .filter(|id| match fan {
+                FanTarget::All => true,
+                FanTarget::Only(only) => *id == only,
+                FanTarget::AllExcept(except) => *id != except,
+            })
+            .collect()
     }
 
     /// Grant-first: size the target lane's next free slot to the engine's `size_hint` and let `fill`
@@ -1078,6 +1099,25 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
             fill,
         }) => {
             emit_for_wire(egress, ifacs, target, size_hint, fill, scratch);
+        }
+        EngineReaction::Directive(Directive::Broadcast {
+            supervisor,
+            fan,
+            bytes,
+        }) => {
+            for target in egress.broadcast_targets(supervisor, fan) {
+                enqueue_for_wire(egress, ifacs, target, bytes, &mut scratch.masked);
+            }
+        }
+        EngineReaction::Directive(Directive::BroadcastAnnounce {
+            supervisor,
+            fan,
+            bytes,
+            hops,
+        }) => {
+            for target in egress.broadcast_targets(supervisor, fan) {
+                offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
+            }
         }
         EngineReaction::Journaled(journaled) => app(journaled),
     }

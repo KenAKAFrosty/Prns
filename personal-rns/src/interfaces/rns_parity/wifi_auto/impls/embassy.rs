@@ -18,6 +18,7 @@ use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_time::{Duration, Ticker};
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
+use crate::engine::FanTarget;
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress};
 use crate::runtime::Fleet;
@@ -359,18 +360,24 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         now_ms,
                     );
                 }
-                Either4::Fourth((target, frame)) => {
-                    if let Some(slot) = ids.iter().position(|known| *known == target) {
-                        if let Some(peer) = peers[slot] {
-                            if !frame.is_empty()
-                                && self
-                                    .data
-                                    .send_to(
-                                        &frame,
-                                        (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT),
-                                    )
-                                    .await
-                                    .is_ok()
+                Either4::Fourth((target, fan, frame)) => {
+                    if !frame.is_empty() {
+                        for slot in 0..MEMBERS {
+                            let Some(peer) = peers[slot] else { continue };
+                            let selected = match fan {
+                                None => ids[slot] == target,
+                                Some(FanTarget::Only(id)) => ids[slot] == id,
+                                Some(FanTarget::All) => true,
+                                Some(FanTarget::AllExcept(id)) => ids[slot] != id,
+                            };
+                            if !selected {
+                                continue;
+                            }
+                            if self
+                                .data
+                                .send_to(&frame, (IpAddress::Ipv6(peer), core::DEFAULT_DATA_PORT))
+                                .await
+                                .is_ok()
                             {
                                 self.status.member(slot).add_tx(frame.len() as u64);
                             }

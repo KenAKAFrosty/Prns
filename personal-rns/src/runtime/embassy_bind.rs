@@ -23,8 +23,9 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, InterfaceCounts, IssuedCommand,
-    Journaled, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
+    CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget, InterfaceCounts,
+    IssuedCommand, Journaled, Respond, RespondData, SendSingle, SendSingleFailure,
+    SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
@@ -671,19 +672,23 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         true
     }
 
-    /// Park until the reactor grants an outbound frame, returning the peer it targets (the slot's
-    /// tag) and a copy of the frame. The supervisor maps the id to its peer address and sends. The
-    /// frame is copied out (sized `OUT`, the medium's frame ceiling) rather than borrowed, so the
-    /// returned value owns nothing of the fleet — that lets it ride a `select` arm beside the
-    /// supervisor's other fleet uses without a borrow clash. The prior peek is released first, so
-    /// each frame is carried exactly once.
-    pub async fn next_outbound<const OUT: usize>(&mut self) -> (InterfaceId, HeaplessVec<u8, OUT>) {
+    /// Park until the reactor grants an outbound frame, returning a copy of it plus how to deliver
+    /// it: the peer id it targets (the slot's tag) for a direct send, or `Some(fan)` when it is a
+    /// fleet broadcast the supervisor fans across the members the [`FanTarget`] selects. The frame
+    /// is copied out (sized `OUT`, the medium's frame ceiling) rather than borrowed, so the returned
+    /// value owns nothing of the fleet — that lets it ride a `select` arm beside the supervisor's
+    /// other fleet uses without a borrow clash. The prior peek is released first, so each frame is
+    /// carried exactly once.
+    pub async fn next_outbound<const OUT: usize>(
+        &mut self,
+    ) -> (InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>) {
         self.wire.outbound.release();
         let slot = self.wire.outbound.peek().await;
         let id = slot.interface_id;
+        let fan = slot.fan;
         let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
         let _ = bytes.extend_from_slice(slot.frame());
-        (id, bytes)
+        (id, fan, bytes)
     }
 }
 

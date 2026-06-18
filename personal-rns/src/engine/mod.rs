@@ -29,7 +29,7 @@ pub use egress::{
     PATH_REQUEST_DESTINATION, PATH_REQUEST_PAYLOAD_LEN,
 };
 pub use identity_registration::SetTransportIdentityError;
-pub use reaction::{Directive, EngineReaction, Journaled};
+pub use reaction::{Directive, EngineReaction, FanTarget, Journaled};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy, RatchetRotation};
 pub use crate::routing::announce::emit::{

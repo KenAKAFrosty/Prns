@@ -61,6 +61,20 @@ impl InterfaceKind {
             _ => None,
         }
     }
+
+    /// The supervisor kind a member of this kind belongs to, if any — the inverse of
+    /// [`member_kind`](Self::member_kind). A `WifiPeer` reports `AutoWifi`; a 1:1 interface (or a
+    /// supervisor kind itself) reports `None`. The fan-out uses this to tell a fleet member from a
+    /// dedicated interface: members of one supervisor collapse into a single broadcast the supervisor
+    /// fans across its live peers, so a shared lane never has to carry a frame per member.
+    #[must_use]
+    pub const fn supervisor_kind(self) -> Option<Self> {
+        match self {
+            Self::WifiPeer => Some(Self::AutoWifi),
+            Self::LocalClient => Some(Self::LocalServer),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

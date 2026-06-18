@@ -1,3 +1,4 @@
+use crate::engine::FanTarget;
 use crate::interfaces::{InterfaceId, INTERFACE_ID_LEN};
 
 pub struct FrameSlot<const SLOT: usize> {
@@ -6,6 +7,10 @@ pub struct FrameSlot<const SLOT: usize> {
     /// as the ingested frame's `source_interface`, and a supervisor reads it to pick the peer to
     /// send to. A 1:1 lane carries the interface's own id and the tag is read trivially.
     pub interface_id: InterfaceId,
+    /// `Some` when this egress frame is a fleet broadcast: the supervisor delivers it to every live
+    /// member [`FanTarget`] selects, instead of the single peer `interface_id` names. `None` is the
+    /// ordinary direct case (inbound source, or a 1:1 / per-member egress) — one frame, one peer.
+    pub fan: Option<FanTarget>,
     pub len: usize,
     pub bytes: [u8; SLOT],
 }
@@ -14,6 +19,7 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
     pub const fn empty() -> Self {
         Self {
             interface_id: InterfaceId::new([0u8; INTERFACE_ID_LEN]),
+            fan: None,
             len: 0,
             bytes: [0u8; SLOT],
         }
@@ -26,9 +32,18 @@ impl<const SLOT: usize> FrameSlot<SLOT> {
     }
 
     /// Tag the slot with the interface it belongs to, then fill it. The single call every filler
-    /// uses so the tag and the bytes are never out of step.
+    /// uses so the tag and the bytes are never out of step. Clears any broadcast `fan` — a reused
+    /// slot must not carry a stale fan into a direct send.
     pub fn fill_for(&mut self, interface_id: InterfaceId, frame: &[u8]) {
         self.interface_id = interface_id;
+        self.fan = None;
+        self.fill(frame);
+    }
+
+    /// Tag the slot as a fleet broadcast — the supervisor fans it across the members `fan` selects —
+    /// then fill it. The `interface_id` is left unread on this path; the supervisor routes by `fan`.
+    pub fn fill_for_fan(&mut self, fan: FanTarget, frame: &[u8]) {
+        self.fan = Some(fan);
         self.fill(frame);
     }
 
@@ -79,4 +94,8 @@ pub trait AnyGrantConsumer {
 /// so the draining side (a supervisor) knows which child/peer the frame is for.
 pub trait AnyGrantProducer {
     fn try_fill_frame_for(&mut self, interface_id: InterfaceId, frame: &[u8]) -> bool;
+    /// Fill the next free slot as a fleet broadcast tagged with `fan`, for the supervisor that owns
+    /// this lane to fan across its members. One frame, however many peers — never a frame per
+    /// member colliding on a depth-1 lane.
+    fn try_fill_frame_fan(&mut self, fan: FanTarget, frame: &[u8]) -> bool;
 }

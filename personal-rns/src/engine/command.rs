@@ -5,13 +5,13 @@ use crate::engine::{
 };
 use crate::engine::{
     AnnounceNowFailure, AnnounceTarget, CommandOutcome, CommandedAnnounceWriteOutcome, Directive,
-    EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, InstantMillis,
-    IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RatchetEntropy,
+    EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
+    InstantMillis, IssuedCommand, Journaled, PathFound, PathRequestWriteOutcome, RatchetEntropy,
     RequestPathFailure, SendGroupFailure, SendSingleEntropy, SendSingleFailure,
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceMode};
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, InterfaceMode};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
 use crate::routing::links::channel::send::SendChannelWriteError;
@@ -602,59 +602,74 @@ fn send_channel_failure(error: SendChannelWriteError) -> SendChannelFailure {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FanTarget {
-    All,
-    Only(InterfaceId),
-    AllExcept(InterfaceId),
-}
-
-/// Fan one self-originated payload across `fanout`'s interfaces, taking each that is live
-/// and may transmit. The same gate the legacy runtime's `fan_to_handles` applied with
-/// `FanoutClass::SelfOriginated`; the bytes are lent to each `Send` in turn, never copied
-/// into a staging buffer.
+/// Fan one self-originated payload across `fanout`'s interfaces, taking each that is live and may
+/// transmit. A dedicated 1:1 interface earns its own [`Directive::Send`]; every member of a
+/// supervisor's fleet collapses into one [`Directive::Broadcast`] carrying `fanout`, which the
+/// supervisor fans across its live peers — so a shared lane carries one frame, never one per member.
+/// The bytes are lent to each directive in turn, never copied into a staging buffer.
 pub(crate) fn fan_self_originated(
     interfaces: &[InterfaceConfig],
     fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
-    for config in interfaces {
-        let targeted = match fanout {
-            FanTarget::All => true,
-            FanTarget::Only(id) => config.id == id,
-            FanTarget::AllExcept(id) => config.id != id,
-        };
-        if targeted && config.capabilities.allows_transmit() {
-            sink(EngineReaction::Directive(Directive::Send {
-                target: config.id,
-                bytes,
-            }));
-        }
-    }
+    fan_self(interfaces, fanout, bytes, false, sink);
 }
 
-/// Fan our own announce, withheld from an access-point interface (RNS Transport.py:1193).
+/// Fan our own announce, withheld from an access-point interface (RNS Transport.py:1193). Members of
+/// a supervisor are never access-point interfaces, so the withhold only filters dedicated ones; the
+/// fleet collapses to one [`Directive::Broadcast`] exactly as [`fan_self_originated`] does.
 pub(crate) fn fan_self_announce(
     interfaces: &[InterfaceConfig],
     fanout: FanTarget,
     bytes: &[u8],
     sink: &mut impl FnMut(EngineReaction<'_>),
 ) {
+    fan_self(interfaces, fanout, bytes, true, sink);
+}
+
+/// Shared fan: dedicated interfaces emit a per-interface [`Directive::Send`]; fleet members of one
+/// supervisor collapse to a single [`Directive::Broadcast`]. `withhold_access_point` drops an
+/// access-point dedicated interface (the announce rule); a `fleets_emitted` bitmask over supervisor
+/// kinds keeps each fleet to one broadcast even when its members are scattered through the view.
+fn fan_self(
+    interfaces: &[InterfaceConfig],
+    fanout: FanTarget,
+    bytes: &[u8],
+    withhold_access_point: bool,
+    sink: &mut impl FnMut(EngineReaction<'_>),
+) {
+    let mut fleets_emitted: u16 = 0;
     for config in interfaces {
         let targeted = match fanout {
             FanTarget::All => true,
             FanTarget::Only(id) => config.id == id,
             FanTarget::AllExcept(id) => config.id != id,
         };
-        if targeted
-            && config.capabilities.allows_transmit()
-            && config.mode != InterfaceMode::AccessPoint
-        {
-            sink(EngineReaction::Directive(Directive::Send {
-                target: config.id,
-                bytes,
-            }));
+        if !targeted || !config.capabilities.allows_transmit() {
+            continue;
+        }
+        match config.id.kind().and_then(InterfaceKind::supervisor_kind) {
+            Some(supervisor) => {
+                let bit = 1u16 << (supervisor as u8);
+                if fleets_emitted & bit == 0 {
+                    fleets_emitted |= bit;
+                    sink(EngineReaction::Directive(Directive::Broadcast {
+                        supervisor,
+                        fan: fanout,
+                        bytes,
+                    }));
+                }
+            }
+            None => {
+                if withhold_access_point && config.mode == InterfaceMode::AccessPoint {
+                    continue;
+                }
+                sink(EngineReaction::Directive(Directive::Send {
+                    target: config.id,
+                    bytes,
+                }));
+            }
         }
     }
 }

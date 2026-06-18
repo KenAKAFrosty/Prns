@@ -17,13 +17,14 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, ProofRequest,
+    Directive, EngineReaction, EngineState, FanTarget, InstantMillis, IssuedCommand, Journaled,
+    ProofRequest,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::substrate::EmbassyTimebase;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
-    InterfaceStatus, TransferRates,
+    InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
 use crate::reactor::driver::{
@@ -258,6 +259,18 @@ impl<M: RawMutex, const SLOT: usize> AnyGrantProducer for EmbassyGrantProducer<'
         GrantProducer::commit(self);
         true
     }
+
+    fn try_fill_frame_fan(&mut self, fan: FanTarget, frame: &[u8]) -> bool {
+        if frame.len() > SLOT {
+            return false;
+        }
+        let Some(slot) = GrantProducer::try_grant(self) else {
+            return false;
+        };
+        slot.fill_for_fan(fan, frame);
+        GrantProducer::commit(self);
+        true
+    }
 }
 
 pub struct EmbassyGrantConsumer<'a, M: RawMutex, const SLOT: usize> {
@@ -369,6 +382,10 @@ fn lane_serves(lane_key: InterfaceId, target: InterfaceId) -> bool {
 /// fixed-slice `run` and the runtime's [`run_pooled`].
 pub trait ReactorEgress {
     fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]);
+    /// Route one fleet broadcast: find the standing lane owned by a supervisor of `supervisor` kind
+    /// and commit a single frame carrying `fan`, for the supervisor to fan across the members it
+    /// selects. A full lane drops it, exactly as [`enqueue`](Self::enqueue) does for a direct send.
+    fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]);
 }
 
 /// The fixed-set egress: each lane's slot size is erased, so lanes sized to different
@@ -389,6 +406,15 @@ impl ReactorEgress for EmbassyEgress<'_> {
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
                 let _ = producer.try_fill_frame_for(target, bytes);
+                return;
+            }
+        }
+    }
+
+    fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
+        for (id, producer) in self.lanes.iter_mut() {
+            if id.kind() == Some(supervisor) {
+                let _ = producer.try_fill_frame_fan(fan, bytes);
                 return;
             }
         }
@@ -601,6 +627,21 @@ fn route_reaction(
         }) => {
             emit_for_wire(egress, ifacs, target, fill);
         }
+        EngineReaction::Directive(Directive::Broadcast {
+            supervisor,
+            fan,
+            bytes,
+        }) => {
+            egress.enqueue_broadcast(supervisor, fan, bytes);
+        }
+        EngineReaction::Directive(Directive::BroadcastAnnounce {
+            supervisor,
+            fan,
+            bytes,
+            hops: _,
+        }) => {
+            egress.enqueue_broadcast(supervisor, fan, bytes);
+        }
         EngineReaction::Journaled(journaled) => app(journaled),
     }
 }
@@ -739,6 +780,15 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> ReactorEgress
         for (id, producer) in self.lanes.iter_mut() {
             if lane_serves(*id, target) {
                 let _ = producer.try_fill_frame_for(target, bytes);
+                return;
+            }
+        }
+    }
+
+    fn enqueue_broadcast(&mut self, supervisor: InterfaceKind, fan: FanTarget, bytes: &[u8]) {
+        for (id, producer) in self.lanes.iter_mut() {
+            if id.kind() == Some(supervisor) {
+                let _ = producer.try_fill_frame_fan(fan, bytes);
                 return;
             }
         }
