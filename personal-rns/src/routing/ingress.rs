@@ -273,11 +273,21 @@ pub enum IngestPacketOutcome<'p> {
         destination: DestinationHash,
     },
     /// A path request arrived for a destination we neither own nor hold a route to,
-    /// on an interface whose mode discovers unknown paths (RNS `DISCOVER_PATHS_FOR`).
-    /// As a transport node we forward it on the requester's behalf on every other
-    /// transport interface; the asking interface is remembered so the answering
-    /// announce can be steered straight back to it.
+    /// either from a local client of our shared instance or on an interface whose
+    /// mode discovers unknown paths (RNS `DISCOVER_PATHS_FOR`). We forward it on the
+    /// requester's behalf on every other transport interface (RNS Transport.py:3004
+    /// from a local client, :3013 recursive discovery); the asking interface is
+    /// remembered so the answering announce can be steered straight back to it.
     ForwardPathRequestForDiscovery {
+        destination: DestinationHash,
+        id: PathRequestIdBytes,
+    },
+    /// A path request arrived from the wider network for a destination we do not
+    /// hold, while apps share our instance. We offer it to those local clients only
+    /// (RNS Transport.py:3041) in case one owns the destination, without recursing
+    /// out across the network; the asking interface is remembered to steer the
+    /// answer home.
+    RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
     },
@@ -1572,14 +1582,33 @@ impl<S: StorageLayout> EngineState<S> {
                 .forwarding_route_for(&request.destination),
         );
         let Some(route) = held_route else {
-            // No route held: as a transport node on a discover-eligible interface we
-            // forward the request on the stranger's behalf; otherwise we stay silent.
-            if self.transport_id.is_none()
-                || !iface_config(view, source_interface)
-                    .is_some_and(|config| config.mode.discovers_unknown_paths())
-            {
+            // No route held. A shared instance still relays the request so its
+            // local clients take part: a client's own request fans out to the wider
+            // network, a network request is offered to the local clients that might
+            // own the destination, and a discover-eligible transport interface keeps
+            // its recursive discovery. Otherwise we stay silent.
+            if self.transport_id.is_none() {
                 return IngestPacketOutcome::Ignored;
             }
+            let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
+            let discovers = iface_config(view, source_interface)
+                .is_some_and(|config| config.mode.discovers_unknown_paths());
+            let has_local_client = view
+                .iter()
+                .any(|config| config.id.kind() == Some(InterfaceKind::LocalClient));
+            let outcome = if from_local_client || discovers {
+                IngestPacketOutcome::ForwardPathRequestForDiscovery {
+                    destination: request.destination,
+                    id: request.id,
+                }
+            } else if has_local_client {
+                IngestPacketOutcome::RelayPathRequestToLocalClients {
+                    destination: request.destination,
+                    id: request.id,
+                }
+            } else {
+                return IngestPacketOutcome::Ignored;
+            };
             let expires_at = InstantMillis(now.0.saturating_add(DISCOVERY_PATH_REQUEST_TIMEOUT_MS));
             match self.discovery_path_requests.begin(
                 request.destination,
@@ -1589,10 +1618,7 @@ impl<S: StorageLayout> EngineState<S> {
                 DiscoveryOutcome::AlreadyInFlight => return IngestPacketOutcome::Ignored,
                 DiscoveryOutcome::Opened => {}
             }
-            return IngestPacketOutcome::ForwardPathRequestForDiscovery {
-                destination: request.destination,
-                id: request.id,
-            };
+            return outcome;
         };
 
         // A held route whose next hop is the requester itself is suppressed, not
@@ -2326,6 +2352,96 @@ mod tests {
                 &view,
             ),
             IngestPacketOutcome::Ignored,
+        );
+    }
+
+    #[test]
+    fn a_local_clients_unknown_path_request_fans_out_to_the_network() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"sideband");
+        let uplink = iface(0xB2);
+        let mut relay = transporting_node();
+        let view = [routable_descriptor(app), routable_descriptor(uplink)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: app,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::ForwardPathRequestForDiscovery {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+            "a local client's request for an unheard destination fans out so the network can answer",
+        );
+        assert_eq!(
+            relay
+                .discovery_path_requests
+                .begin(stranger, app, InstantMillis(2_000)),
+            DiscoveryOutcome::AlreadyInFlight,
+            "the asking client is remembered so the answer is steered back to it",
+        );
+    }
+
+    #[test]
+    fn a_network_request_for_an_unheld_destination_is_offered_to_local_clients_only() {
+        let stranger = DestinationHash::new([0x44; 16]);
+        let uplink = iface(0xA1);
+        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let mut relay = transporting_node();
+        let view = [routable_descriptor(uplink), routable_descriptor(app)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: uplink,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::RelayPathRequestToLocalClients {
+                destination: stranger,
+                id: [0x55; 16],
+            },
+            "a network request a plain shared instance can't answer is offered to its apps",
+        );
+        assert_eq!(
+            relay
+                .discovery_path_requests
+                .begin(stranger, uplink, InstantMillis(2_000)),
+            DiscoveryOutcome::AlreadyInFlight,
+        );
+    }
+
+    #[test]
+    fn a_full_mode_request_with_no_local_clients_is_still_ignored() {
+        let uplink = iface(0xA1);
+        let other = iface(0xB2);
+        let mut relay = transporting_node();
+        let view = [routable_descriptor(uplink), routable_descriptor(other)];
+
+        let mut wire = stranger_path_request([0x55; 16]);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: uplink,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ),
+            IngestPacketOutcome::Ignored,
+            "with no apps sharing the instance, an unanswerable full-mode request stays silent",
         );
     }
 

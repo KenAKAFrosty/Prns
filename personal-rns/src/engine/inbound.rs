@@ -6,7 +6,7 @@ use crate::engine::{
     PathResponseWriteOutcome, ProofIngest, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::routing::announce::defaults::JitterSeed;
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::Delivery;
@@ -218,6 +218,27 @@ impl<S: StorageLayout> EngineState<S> {
                     {
                         for config in view {
                             if config.id != source && config.capabilities.allows_transport() {
+                                sink(EngineReaction::Directive(Directive::Send {
+                                    target: config.id,
+                                    bytes: &buf[..wire_len],
+                                }));
+                            }
+                        }
+                    }
+                }
+                wake_schedule_changes.path_request_timeout = self.path_request_timeout_wake();
+            }
+            IngestPacketOutcome::RelayPathRequestToLocalClients { destination, id } => {
+                if let Some(via) = self.transport_id {
+                    let mut buf = [0u8; BROADCAST_MTU];
+                    if let Ok(wire_len) =
+                        write_path_request_wire_packet(destination, Some(via), &id, &mut buf)
+                    {
+                        for config in view {
+                            if config.id != source
+                                && config.id.kind() == Some(InterfaceKind::LocalClient)
+                                && config.capabilities.allows_transport()
+                            {
                                 sink(EngineReaction::Directive(Directive::Send {
                                     target: config.id,
                                     bytes: &buf[..wire_len],
