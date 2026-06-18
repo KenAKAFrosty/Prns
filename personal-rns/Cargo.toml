@@ -200,3 +200,7 @@ required-features = ["tcp"]
 [[example]]
 name = "local_shared_instance"
 required-features = ["local"]
+
+[[example]]
+name = "local_transit_daemon"
+required-features = ["local", "tcp"]

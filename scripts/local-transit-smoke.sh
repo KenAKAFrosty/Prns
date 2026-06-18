@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Real-RNS transit smoke test for the local shared-instance bridge.
+#
+# Proves that two real RNS apps separated by the Prns shared instance can establish *links* through it
+# and deliver messages both ways — the path LXMF uses for direct messages, not just announce
+# propagation. Topology: a stock RNS TCP peer <-> the Prns bridge daemon (LocalServer + TCP client, a
+# real transport node) <-> a stock RNS local client. Each hosts a destination, announces it across the
+# bridge, links to the other, and sends over the link. The bridge must transport link requests, proofs,
+# and link data both ways, including inbound to the local client's own destination. Asserts both ends
+# RECEIVED the other's message.
+#
+# Both RNS ends are the reference 1.3.1 from the venv ($SMOKE_PYTHON if set, else the local reference
+# venv) — genuine RNS-on-the-wire. Prints PASS or FAIL and exits accordingly.
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENV_PY="${SMOKE_PYTHON:-$ROOT/benchmarks/reference/.venv/bin/python}"
+PEER="$ROOT/personal-rns/tests/interop/rns_transit_peer.py"
+CLIENT="$ROOT/personal-rns/tests/interop/rns_transit_client.py"
+PEER_LOG="$(mktemp)"
+DAEMON_LOG="$(mktemp)"
+CLIENT_LOG="$(mktemp)"
+PEER_PID=""; DAEMON_PID=""; CLIENT_PID=""
+
+cleanup() {
+    for pid in "$CLIENT_PID" "$DAEMON_PID" "$PEER_PID"; do
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null
+    done
+}
+trap cleanup EXIT
+
+[ -x "$VENV_PY" ] || { echo "FAIL: reference venv python not found at $VENV_PY"; exit 1; }
+
+# Two free loopback ports: the peer's TCP server, and the bridge's shared-instance port.
+read -r PEER_TCP_PORT LOCAL_PORT <<EOF
+$("$VENV_PY" - <<'PY'
+import socket
+def free():
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close(); return p
+print(free(), free())
+PY
+)
+EOF
+[ -n "${PEER_TCP_PORT:-}" ] && [ -n "${LOCAL_PORT:-}" ] || { echo "FAIL: could not allocate ports"; exit 1; }
+echo "peer tcp=$PEER_TCP_PORT  bridge local=$LOCAL_PORT"
+
+echo "building the bridge daemon example..."
+( cd "$ROOT" && cargo build --quiet --example local_transit_daemon --features "local tcp" ) \
+    || { echo "FAIL: daemon build"; exit 1; }
+
+# 1) The remote RNS peer (TCP server). Wait until its destination is up.
+PEER_TCP_PORT="$PEER_TCP_PORT" "$VENV_PY" "$PEER" > "$PEER_LOG" 2>/dev/null &
+PEER_PID=$!
+for _ in $(seq 1 100); do grep -q "PEER_DEST" "$PEER_LOG" && break; sleep 0.2; done
+DEST="$(grep -o 'PEER_DEST [0-9a-f]*' "$PEER_LOG" | head -1 | cut -d' ' -f2)"
+[ -n "$DEST" ] || { echo "FAIL: the RNS peer never came up"; tail -20 "$PEER_LOG"; exit 1; }
+echo "peer up, dest=$DEST"
+
+# 2) The Prns bridge: holds the local bus, dials the peer over TCP.
+PRNS_LOCAL_PORT="$LOCAL_PORT" PRNS_PEER_ADDR="127.0.0.1:$PEER_TCP_PORT" \
+    "$ROOT/target/debug/examples/local_transit_daemon" > "$DAEMON_LOG" 2>&1 &
+DAEMON_PID=$!
+for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
+grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: bridge never became READY"; cat "$DAEMON_LOG"; exit 1; }
+echo "bridge up; starting the local client..."
+
+# 3) The local RNS client: discovers the peer across the bridge and sends it a packet.
+PRNS_LOCAL_PORT="$LOCAL_PORT" "$VENV_PY" "$CLIENT" > "$CLIENT_LOG" 2>/dev/null &
+CLIENT_PID=$!
+
+# 4) Wait for both ends to receive the other's link message across the bridge.
+for _ in $(seq 1 240); do
+    grep -q "RECEIVED client-to-peer" "$PEER_LOG" \
+        && grep -q "RECEIVED peer-to-client" "$CLIENT_LOG" && break
+    sleep 0.25
+done
+
+OUT_OK=""; IN_OK=""
+grep -q "RECEIVED client-to-peer" "$PEER_LOG" && OUT_OK=1
+grep -q "RECEIVED peer-to-client" "$CLIENT_LOG" && IN_OK=1
+
+if [ -n "$OUT_OK" ] && [ -n "$IN_OK" ]; then
+    echo "PASS: real RNS apps linked through the shared instance and delivered messages both ways"
+    echo "  local client -> peer: delivered"
+    echo "  peer -> local client (inbound transit): delivered"
+    exit 0
+fi
+
+echo "FAIL: link delivery across the bridge was not bidirectional"
+echo "  local client -> peer: $([ -n "$OUT_OK" ] && echo delivered || echo MISSING)"
+echo "  peer -> local client: $([ -n "$IN_OK" ] && echo delivered || echo MISSING)"
+echo "--- bridge log (tail) ---"; tail -30 "$DAEMON_LOG"
+echo "--- client log (tail) ---"; tail -15 "$CLIENT_LOG"
+echo "--- peer log (tail) ---"; tail -15 "$PEER_LOG"
+exit 1
