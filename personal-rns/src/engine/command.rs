@@ -576,6 +576,12 @@ impl<S: StorageLayout> EngineState<S> {
                     settlement: Settlement::InterfaceCounts(counts),
                 }));
             }
+            CommandOutcome::RpcQueryRead { id, result } => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id,
+                    settlement: Settlement::RpcQuery(result),
+                }));
+            }
         }
         wake_schedule_changes
     }

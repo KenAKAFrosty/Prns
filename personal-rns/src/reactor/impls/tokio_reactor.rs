@@ -533,7 +533,7 @@ fn settle_or_forward<'a>(
 ) -> Option<Journaled<'a>> {
     if let Journaled::CommandSettled { id, settlement } = &journaled {
         if let Some(completion) = pending.borrow_mut().remove(id) {
-            let _ = completion.send(*settlement);
+            let _ = completion.send(settlement.clone());
             return None;
         }
     }
@@ -1382,7 +1382,7 @@ mod tests {
             &pending,
             Journaled::CommandSettled {
                 id: CommandId(7),
-                settlement,
+                settlement: settlement.clone(),
             },
         );
 

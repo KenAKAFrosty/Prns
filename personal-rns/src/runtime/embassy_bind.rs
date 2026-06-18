@@ -544,7 +544,7 @@ where
             lifecycle,
             |journaled| {
                 if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if handle.pool.settle(*id, *settlement) {
+                    if handle.pool.settle(*id, settlement.clone()) {
                         return;
                     }
                 }
@@ -586,7 +586,7 @@ where
             *lifecycle,
             |journaled| {
                 if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if handle.pool.settle(*id, *settlement) {
+                    if handle.pool.settle(*id, settlement.clone()) {
                         return;
                     }
                 }

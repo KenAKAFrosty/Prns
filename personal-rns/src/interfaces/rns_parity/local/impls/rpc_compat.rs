@@ -1,26 +1,28 @@
-//! Compatibility shim for real RNS shared-instance clients — NOT Prns's RPC.
+//! The RNS shared-instance control RPC, answered for stock clients — the RNS-compatibility control
+//! channel, distinct from Prns's own command API.
 //!
 //! Stock RNS apps (Sideband, NomadNet, MeshChat) that attach to a shared instance speak a control
-//! channel separate from the data bus: an RPC over Python's `multiprocessing.connection`. LXMF turns
-//! on `link.track_phy_stats` on its delivery link, which makes a client fetch per-packet RSSI/SNR/Q
-//! over this RPC for *every* link packet (RNS `Link.__update_phy_stats` → `Reticulum.get_packet_rssi`).
-//! That call is unguarded, so with no listener it raises `ConnectionRefused`, the exception unwinds
-//! through `Link.receive`, and a resource transfer (an LXMF attachment) to that client never
-//! completes — the image "just hangs". This shim answers ONLY the minimal set those clients need for
-//! attachments to flow: phy stats resolve to `None`, the link first-hop timeout to RNS's default, and
-//! everything else to `None`.
+//! channel separate from the data bus: an RPC over Python's `multiprocessing.connection`. Clients
+//! lean on it in ways that fault hard if nobody answers — LXMF turns on `link.track_phy_stats`, so a
+//! client fetches per-packet RSSI/SNR/Q for *every* link packet (`Link.__update_phy_stats` →
+//! `Reticulum.get_packet_rssi`), and that unguarded call raises `ConnectionRefused` that unwinds
+//! through `Link.receive`, hanging an LXMF attachment; NomadNet's TextUI calls `get_interface_stats`
+//! at startup and crashes outright if the reply is missing or the wrong shape.
 //!
-//! THIS IS NOT THE RPC MECHANISM FOR THE PRNS ENGINE. It must not grow toward the real RNS RPC surface
-//! (path tables, interface stats, drop-path, blackholing, rate tables, ...). It exists purely so an
-//! unmodified RNS client does not fault on a control channel we otherwise do not speak; anything past
-//! the minimal set is intentionally answered `None`.
+//! This began as a fault-avoidance stub (answer the minimal set, everything else `None`) and is now
+//! growing into an honest shared instance: each verb is answered from live engine state, read through
+//! the node handle ([`RpcQuerySource`] → [`EngineCommand::RpcQuery`](crate::engine::RpcQuery), settled
+//! on the command lane). `link_count` is live; `path_table`/`next_hop`/`first_hop_timeout` follow the
+//! same mold. Phy stats stay `None` (no phy on host/local interfaces); `interface_stats` is an empty
+//! map until interface byte-counters and status are wired from runtime state.
 //!
 //! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual HMAC
-//! challenge/response keyed on the shared `rpc_key`, then one pickled request dict and one pickled
-//! reply per connection (a client opens a fresh connection per call). The HMAC digest is *negotiated*
-//! exactly as CPython does, so any client version interoperates: a modern client (Python 3.12+) tags
-//! its messages with a `{sha256}` prefix; a legacy client (Python ≤ 3.11) sends an unprefixed
-//! HMAC-MD5. Honoring both is what lets attachments flow regardless of the client's Python.
+//! challenge/response keyed on the shared `rpc_key`, then one request and one reply per connection (a
+//! client opens a fresh connection per call). Two things are negotiated per peer so any client
+//! interoperates: the HMAC digest exactly as CPython does (a modern Python-3.12+ client tags messages
+//! `{sha256}`; a legacy Python-≤3.11 client sends an unprefixed HMAC-MD5), and the payload codec — RNS
+//! 1.3.5 frames msgpack, RNS ≤1.3.x pickle — which the shim detects from the request's first byte and
+//! answers in kind.
 
 use std::string::String;
 use std::vec::Vec;
@@ -32,6 +34,7 @@ use tokio::net::TcpListener;
 #[cfg(target_os = "linux")]
 use tokio::net::UnixListener;
 
+use super::rpc_value::Value;
 use crate::crypto::{hmac_sha256, hmac_sha256_verify};
 
 const CHALLENGE: &[u8] = b"#CHALLENGE#";
@@ -135,9 +138,19 @@ fn response_authenticates(key: &[u8; 32], challenge_message: &[u8], response: &[
 /// Answers the RNS shared-instance control RPC for stock clients, with the minimal replies that keep
 /// attachment delivery from faulting. Stand one up beside a [`LocalServer`](super::tokio::LocalServer)
 /// and drive it with [`run`](Self::run).
-pub struct SharedInstanceRpcCompat {
+pub struct SharedInstanceRpcCompat<Q> {
     rpc_key: [u8; 32],
     bind: RpcBind,
+    query: Q,
+}
+
+/// The shim's read-only window onto the engine: it issues these through the runtime handle to answer
+/// a control-RPC verb with real state instead of a stub. Implemented by the node handle, which demuxes
+/// each onto the command lane (see [`EngineCommand::RpcQuery`](crate::engine::RpcQuery)).
+pub trait RpcQuerySource {
+    /// `get_link_count` — the number of live links the node carries. The future is `Send` so the shim
+    /// can answer each connection on its own task.
+    fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
 }
 
 enum RpcBind {
@@ -146,15 +159,17 @@ enum RpcBind {
     Abstract(String),
 }
 
-impl SharedInstanceRpcCompat {
+impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<Q> {
     /// Answer on a loopback TCP port — RNS's `instance_control_port` (default 37428's sibling 37429),
     /// or whatever a client configured. `rpc_key` MUST equal the clients' key: RNS's `full_hash` of the
     /// shared transport identity's private key, or a value both sides set as `rpc_key` in config.
+    /// `query` is the node handle the shim reads engine state through to answer each verb.
     #[must_use]
-    pub fn tcp(rpc_key: [u8; 32], port: u16) -> Self {
+    pub fn tcp(rpc_key: [u8; 32], port: u16, query: Q) -> Self {
         Self {
             rpc_key,
             bind: RpcBind::Tcp(std::format!("127.0.0.1:{port}")),
+            query,
         }
     }
 
@@ -162,10 +177,11 @@ impl SharedInstanceRpcCompat {
     /// uses on Linux. Linux only.
     #[cfg(target_os = "linux")]
     #[must_use]
-    pub fn abstract_unix(rpc_key: [u8; 32], socket_path: impl Into<String>) -> Self {
+    pub fn abstract_unix(rpc_key: [u8; 32], socket_path: impl Into<String>, query: Q) -> Self {
         Self {
             rpc_key,
             bind: RpcBind::Abstract(socket_path.into()),
+            query,
         }
     }
 
@@ -180,8 +196,9 @@ impl SharedInstanceRpcCompat {
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
                         let key = self.rpc_key;
+                        let query = self.query.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key).await;
+                            let _ = serve_connection(stream, key, query).await;
                         });
                     }
                 }
@@ -194,8 +211,9 @@ impl SharedInstanceRpcCompat {
                 loop {
                     if let Ok((stream, _)) = listener.accept().await {
                         let key = self.rpc_key;
+                        let query = self.query.clone();
                         tokio::spawn(async move {
-                            let _ = serve_connection(stream, key).await;
+                            let _ = serve_connection(stream, key, query).await;
                         });
                     }
                 }
@@ -216,10 +234,11 @@ fn bind_abstract_rpc(socket_path: &str) -> Option<UnixListener> {
     UnixListener::from_std(listener).ok()
 }
 
-async fn serve_connection<S: AsyncRead + AsyncWrite + Unpin>(
-    mut stream: S,
-    rpc_key: [u8; 32],
-) -> std::io::Result<()> {
+async fn serve_connection<S, Q>(mut stream: S, rpc_key: [u8; 32], query: Q) -> std::io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    Q: RpcQuerySource,
+{
     if !deliver_our_challenge(&mut stream, &rpc_key).await? {
         return Ok(());
     }
@@ -227,7 +246,7 @@ async fn serve_connection<S: AsyncRead + AsyncWrite + Unpin>(
         return Ok(());
     }
     let request = read_frame(&mut stream).await?;
-    write_frame(&mut stream, &minimal_reply_for(&request)).await
+    write_frame(&mut stream, &reply_for(&request, &query).await).await
 }
 
 /// Mirror of RNS `Listener.deliver_challenge`: send our `{sha256}`-tagged challenge, accept the
@@ -294,20 +313,20 @@ fn dialect_of(request: &[u8]) -> RpcDialect {
     }
 }
 
-/// The minimal answers, keyed on the method name (a readable substring of the request in either codec)
-/// and encoded in the client's own dialect. `interface_stats` resolves to an empty interface map: a
-/// NomadNet TextUI calls it at startup and immediately indexes `["interfaces"]`, so a bare `None`
-/// crashes it before the UI draws. Phy stats and anything unknown resolve to `None`; the link
-/// first-hop timeout to RNS's default; the link count to zero. NOTHING here is a real RPC answer —
-/// this only keeps a stock client from faulting.
-fn minimal_reply_for(request: &[u8]) -> Vec<u8> {
+/// The control-RPC answers, keyed on the method name (a readable substring of the request in either
+/// codec) and encoded in the client's own dialect. `link_count` is answered with real engine state
+/// read through `query`; `interface_stats` with an empty interface map (a NomadNet TextUI indexes
+/// `["interfaces"]` at startup, so a bare `None` crashes it before the UI draws); the link first-hop
+/// timeout with RNS's default; phy stats and anything unknown with `None`. Msgpack replies are built
+/// through the typed [`Value`] encoder; pickle replies stay hand-rolled for the legacy dialect.
+async fn reply_for(request: &[u8], query: &impl RpcQuerySource) -> Vec<u8> {
     let dialect = dialect_of(request);
     if contains(request, b"interface_stats") {
         empty_interface_stats(dialect)
     } else if contains(request, b"first_hop_timeout") {
         reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
     } else if contains(request, b"link_count") {
-        reply_int(dialect, 0)
+        reply_int(dialect, i64::from(query.link_count().await))
     } else {
         reply_none(dialect)
     }
@@ -323,12 +342,12 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 fn reply_none(dialect: RpcDialect) -> Vec<u8> {
     match dialect {
         RpcDialect::Pickle => b"N.".to_vec(),
-        RpcDialect::Msgpack => std::vec![0xc0],
+        RpcDialect::Msgpack => Value::Nil.to_msgpack(),
     }
 }
 
-/// A non-negative integer (the only ones the minimal set returns: a 6-second timeout, a zero link
-/// count) in the client's dialect: pickle protocol-0 `INT` + `STOP`, or a msgpack positive fixint.
+/// An integer in the client's dialect: pickle protocol-0 `INT` + `STOP`, or msgpack through the typed
+/// [`Value`] encoder (so any width — not just a fixint — encodes correctly).
 fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
     match dialect {
         RpcDialect::Pickle => {
@@ -338,23 +357,19 @@ fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
             out.push(b'.');
             out
         }
-        RpcDialect::Msgpack if (0..=0x7f).contains(&value) => std::vec![value as u8],
-        RpcDialect::Msgpack => std::vec![0xc0],
+        RpcDialect::Msgpack => Value::Int(value).to_msgpack(),
     }
 }
 
 /// The empty interface-stats map `{"interfaces": []}` — the shape a stock client indexes by
-/// `["interfaces"]` — in the client's dialect. The shim is siloed from the engine, so it reports no
-/// interfaces rather than the node's real ones; the point is only to let the client launch, not to
-/// mirror its status screen. Msgpack: fixmap(1) ‖ fixstr("interfaces") ‖ fixarray(0). Pickle:
+/// `["interfaces"]`. The shim is siloed from the engine for this verb (interface byte-counters and
+/// status live in the runtime, not the engine), so it reports no interfaces rather than the node's
+/// real ones; wiring real interface stats from runtime state is the next slice. Pickle:
 /// `pickle.dumps({"interfaces": []}, protocol=2)`.
 fn empty_interface_stats(dialect: RpcDialect) -> Vec<u8> {
     match dialect {
         RpcDialect::Msgpack => {
-            let mut out = std::vec![0x81, 0xaa];
-            out.extend_from_slice(b"interfaces");
-            out.push(0x90);
-            out
+            Value::Map(std::vec![("interfaces".into(), Value::Array(std::vec![]))]).to_msgpack()
         }
         RpcDialect::Pickle => std::vec![
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
@@ -452,31 +467,44 @@ mod tests {
         c.flush().await.unwrap();
     }
 
-    #[test]
-    fn the_minimal_set_answers_phy_stats_none_and_timeout_default() {
-        let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
-        assert_eq!(minimal_reply_for(rssi), b"N.");
-        let timeout = b"{'get': 'first_hop_timeout'}";
-        assert_eq!(minimal_reply_for(timeout), b"I6\n.");
-        let links = b"{'get': 'link_count'}";
-        assert_eq!(minimal_reply_for(links), b"I0\n.");
-        let unknown = b"{'get': 'path_table'}";
-        assert_eq!(minimal_reply_for(unknown), b"N.");
+    #[derive(Clone)]
+    struct StubQuery {
+        links: u32,
     }
 
-    #[test]
-    fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
+    impl RpcQuerySource for StubQuery {
+        async fn link_count(&self) -> u32 {
+            self.links
+        }
+    }
+
+    #[tokio::test]
+    async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() {
+        let query = StubQuery { links: 2 };
+        let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
+        assert_eq!(reply_for(rssi, &query).await, b"N.");
+        let timeout = b"{'get': 'first_hop_timeout'}";
+        assert_eq!(reply_for(timeout, &query).await, b"I6\n.");
+        let links = b"{'get': 'link_count'}";
+        assert_eq!(reply_for(links, &query).await, b"I2\n.");
+        let unknown = b"{'get': 'path_table'}";
+        assert_eq!(reply_for(unknown, &query).await, b"N.");
+    }
+
+    #[tokio::test]
+    async fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
+        let query = StubQuery { links: 2 };
         let interface_stats = b"\x81\xa3get\xafinterface_stats";
         assert_eq!(
-            minimal_reply_for(interface_stats),
-            b"\x81\xaainterfaces\x90",
+            reply_for(interface_stats, &query).await,
+            b"\x81\xaainterfaces\x90"
         );
         let timeout = b"\x81\xa3get\xb1first_hop_timeout";
-        assert_eq!(minimal_reply_for(timeout), b"\x06");
+        assert_eq!(reply_for(timeout, &query).await, b"\x06");
         let links = b"\x81\xa3get\xaalink_count";
-        assert_eq!(minimal_reply_for(links), b"\x00");
+        assert_eq!(reply_for(links, &query).await, b"\x02");
         let rssi = b"\x82\xa3get\xabpacket_rssi";
-        assert_eq!(minimal_reply_for(rssi), b"\xc0");
+        assert_eq!(reply_for(rssi, &query).await, b"\xc0");
     }
 
     #[test]
@@ -500,7 +528,7 @@ mod tests {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
         let server_task = tokio::spawn(async move {
-            let _ = serve_connection(server, rpc_key).await;
+            let _ = serve_connection(server, rpc_key, StubQuery { links: 0 }).await;
         });
 
         let server_challenge = read_frame_dup(&mut client).await;
@@ -531,7 +559,7 @@ mod tests {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
         let server_task = tokio::spawn(async move {
-            let _ = serve_connection(server, rpc_key).await;
+            let _ = serve_connection(server, rpc_key, StubQuery { links: 0 }).await;
         });
 
         let server_challenge = read_frame_dup(&mut client).await;

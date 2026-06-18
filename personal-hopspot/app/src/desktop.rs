@@ -222,10 +222,15 @@ fn run_node(
         );
 
         let rpc_port = local_core::DEFAULT_LOCAL_PORT + 1;
-        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port).run());
+        tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone()).run());
         #[cfg(target_os = "linux")]
         tokio::spawn(
-            SharedInstanceRpcCompat::abstract_unix(rpc_key, local_core::DEFAULT_SOCKET_PATH).run(),
+            SharedInstanceRpcCompat::abstract_unix(
+                rpc_key,
+                local_core::DEFAULT_SOCKET_PATH,
+                handle.clone(),
+            )
+            .run(),
         );
         println!(
             "  attachments to local RNS clients flow over the shared Reticulum identity (rpc_key {})",

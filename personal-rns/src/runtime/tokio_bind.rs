@@ -15,6 +15,8 @@ use crate::engine::{
     EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendRequestFailure, SendResourceFailure,
     SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
+#[cfg(feature = "local")]
+use crate::engine::{RpcQuery, RpcQueryResult};
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
@@ -432,6 +434,21 @@ impl PrnsHandle {
     pub fn remove_interface(&self, id: InterfaceId) {
         let _ = self.commands.send(HostCommand::RemoveInterface { id });
         let _ = self.iface_build.send(DriverMsg::Stop { id });
+    }
+}
+
+/// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
+/// the command lane and awaiting its settlement — the same `settle` path the diagnostic counts use.
+#[cfg(feature = "local")]
+impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for PrnsHandle {
+    async fn link_count(&self) -> u32 {
+        match self
+            .settle(EngineCommand::RpcQuery(RpcQuery::LinkCount))
+            .await
+        {
+            Some(Settlement::RpcQuery(RpcQueryResult::LinkCount(count))) => count,
+            Some(_) | None => 0,
+        }
     }
 }
 
