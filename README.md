@@ -1,6 +1,9 @@
-# Personal Reticulum Suite
+# Prns
 
-A ground-up Rust implementation of the Reticulum Network Stack and the LXMF messaging layer: one pure, `no_std` engine that each platform hosts behind a thin shim.
+
+<p align="center">
+  <img src="docs/website/public/assets/og.png" alt="Prns: a production-grade Reticulum in safe Rust, runs on many targets" width="800" />
+</p>
 
 <!--
 Badges are deliberately limited to state that is real and verifiable today.
