@@ -109,7 +109,9 @@ impl<const MAX_PENDING: usize> FixedScheduledAnnounceQueue<MAX_PENDING> {
     }
 
     fn held_contains(&self, destination: DestinationHash) -> bool {
-        self.held.iter().any(|entry| entry.destination == destination)
+        self.held
+            .iter()
+            .any(|entry| entry.destination == destination)
     }
 
     fn active_directed_index(&self, destination: DestinationHash) -> Option<usize> {
@@ -556,7 +558,10 @@ mod tests {
         assert_eq!(pending.held_count(), 0);
         assert_eq!(pending.scheduled_count(), 1);
         let restored = pending.iter().next().unwrap();
-        assert_eq!(restored.directed_to, None, "the parked flood is back, untouched");
+        assert_eq!(
+            restored.directed_to, None,
+            "the parked flood is back, untouched"
+        );
         assert_eq!(restored.source_interface, iface(0xAA));
         assert_eq!(restored.due_at, InstantMillis(100));
     }

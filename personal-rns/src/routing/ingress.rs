@@ -2836,7 +2836,9 @@ mod tests {
                 TEST_ENTROPY,
                 &full_view,
             ),
-            IngestPacketOutcome::ScheduledPathResponse { destination: cached },
+            IngestPacketOutcome::ScheduledPathResponse {
+                destination: cached
+            },
             "the same-interface suppression is roaming-only; a Full interface still answers",
         );
     }

@@ -125,7 +125,9 @@ impl<const MAX_PENDING: usize, A: Allocator> FixedHeapScheduledAnnounceQueue<MAX
     }
 
     fn held_contains(&self, destination: DestinationHash) -> bool {
-        self.held.iter().any(|entry| entry.destination == destination)
+        self.held
+            .iter()
+            .any(|entry| entry.destination == destination)
     }
 
     fn active_directed_index(&self, destination: DestinationHash) -> Option<usize> {
@@ -460,7 +462,10 @@ mod tests {
         pending.schedule(dest(1), InstantMillis(100), iface(0xAA), 2);
         pending.schedule_directed(dest(1), InstantMillis(200), iface(0xBB), 2);
         assert_eq!(pending.held_count(), 1);
-        assert_eq!(pending.iter().next().unwrap().directed_to, Some(iface(0xBB)));
+        assert_eq!(
+            pending.iter().next().unwrap().directed_to,
+            Some(iface(0xBB))
+        );
 
         assert_eq!(
             pending.advance_due_retransmits(InstantMillis(200), 5_500, 2),
@@ -479,6 +484,9 @@ mod tests {
         pending.schedule_directed(dest(1), InstantMillis(100), iface(0xBB), 1);
         pending.schedule(dest(2), InstantMillis(100), iface(0xAA), 1);
         pending.schedule_directed(dest(2), InstantMillis(100), iface(0xBB), 1);
-        assert!(pending.held_count() <= 2, "held never exceeds the fixed cap");
+        assert!(
+            pending.held_count() <= 2,
+            "held never exceeds the fixed cap"
+        );
     }
 }
