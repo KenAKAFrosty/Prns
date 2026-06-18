@@ -380,6 +380,7 @@ impl<S: StorageLayout> EngineState<S> {
             };
             sink(EngineReaction::Directive(Directive::EmitFrame {
                 target: fire_on,
+                size_hint: mtu,
                 fill: &mut fill,
             }));
             self.outgoing_resources.mark_sent(index, part);
@@ -422,6 +423,7 @@ impl<S: StorageLayout> EngineState<S> {
                     };
                     sink(EngineReaction::Directive(Directive::EmitFrame {
                         target: fire_on,
+                        size_hint: mtu,
                         fill: &mut fill,
                     }));
                 }
@@ -492,6 +494,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 sink(EngineReaction::Directive(Directive::EmitFrame {
                     target: fire_on,
+                    size_hint: mtu,
                     fill: &mut fill,
                 }));
             }
@@ -691,6 +694,7 @@ where
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
         target: fire_on,
+        size_hint: mtu,
         fill: &mut fill,
     }));
     wrote
@@ -789,7 +793,7 @@ mod tests {
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xF1),
             &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         capture.frames.push((target, frame));
                     }
@@ -822,7 +826,7 @@ mod tests {
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         capture.frames.push((target, frame));
                     }
@@ -984,7 +988,7 @@ mod tests {
             &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             &mut |_: &crate::engine::ProofRequest| false,
             &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         capture.frames.push((target, frame));
                     }

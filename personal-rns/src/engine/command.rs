@@ -16,7 +16,7 @@ use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
 use crate::routing::links::channel::send::SendChannelWriteError;
 use crate::routing::links::data::SendLinkWriteError;
-use crate::routing::links::establish::EstablishLinkEntropy;
+use crate::routing::links::establish::{link_mtu_ceiling, EstablishLinkEntropy};
 use crate::routing::links::identify::IdentifyWriteError;
 use crate::routing::links::request::LinkRequestWriteError;
 use crate::routing::links::table::LinkPhase;
@@ -264,6 +264,7 @@ impl<S: StorageLayout> EngineState<S> {
                         };
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
+                            size_hint: link_mtu_ceiling(interfaces, fire_on),
                             fill: &mut fill,
                         }));
                         match wrote {
@@ -326,6 +327,7 @@ impl<S: StorageLayout> EngineState<S> {
                         };
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
+                            size_hint: link_mtu_ceiling(interfaces, fire_on),
                             fill: &mut fill,
                         }));
                         if let Some(error) = wrote {
@@ -404,6 +406,7 @@ impl<S: StorageLayout> EngineState<S> {
                         };
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
+                            size_hint: link_mtu_ceiling(interfaces, fire_on),
                             fill: &mut fill,
                         }));
                         match wrote {
@@ -468,6 +471,7 @@ impl<S: StorageLayout> EngineState<S> {
                         };
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
+                            size_hint: link_mtu_ceiling(interfaces, fire_on),
                             fill: &mut fill,
                         }));
                         match wrote {

@@ -1205,7 +1205,7 @@ mod tests {
                     assert_eq!(target, arrival(), "the data fires on the link's interface");
                     sent.push(bytes.to_vec());
                 }
-                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     assert_eq!(target, arrival(), "the data fires on the link's interface");
                     if let Some(bytes) = filled_frame(fill) {
                         sent.push(bytes);
@@ -1652,7 +1652,7 @@ mod tests {
                     EngineReaction::Directive(Directive::Send { target, bytes }) => {
                         sent.push((target, bytes.to_vec()));
                     }
-                    EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                    EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                         if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
                             sent.push((target, frame));
                         }

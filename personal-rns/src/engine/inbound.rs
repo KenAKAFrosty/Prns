@@ -18,7 +18,7 @@ use crate::routing::proof::{
 };
 use crate::routing::{RemovedRoute, RouteRemovalCause};
 use crate::storage::StorageLayout;
-use crate::wire::BROADCAST_MTU;
+use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
 pub(crate) fn journal_removal(removed: RemovedRoute) -> Journaled<'static> {
     match removed.cause {
@@ -184,9 +184,11 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::Forward(forward) => {
                 if is_egress_eligible(view, forward.fire_on, Egress::Transport) {
+                    let size_hint = HEADER_MAX_LEN + forward.payload.len();
                     let mut fill = |slot: &mut [u8]| forward.to_wire(slot).ok();
                     sink(EngineReaction::Directive(Directive::EmitFrame {
                         target: forward.fire_on,
+                        size_hint,
                         fill: &mut fill,
                     }));
                 }

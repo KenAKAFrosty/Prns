@@ -21,7 +21,9 @@ use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
-use crate::reactor::interface_seam::{frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN};
+use crate::reactor::interface_seam::{
+    frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
+};
 use crate::reactor::Host;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::RequestId;
@@ -260,31 +262,40 @@ impl Egress {
         }
     }
 
-    /// Render the frame into `scratch` (sized to the largest interface frame), then copy just those
-    /// bytes into the target lane's next free slot, which grows to hold them. `fill` runs exactly
-    /// once regardless of lane luck — a full lane, an unknown target, or a poisoned lane drops the
-    /// rendered frame — so the engine's bookkeeping never depends on placement.
+    /// Grant-first: size the target lane's next free slot to the engine's `size_hint` and let `fill`
+    /// seal the frame in place — sealed once, never staged and copied. A full lane, an unknown
+    /// target, or a poisoned lane still runs `fill` once against `discard` and drops the result — the
+    /// `EmitFrame` contract — so the engine's bookkeeping never depends on lane luck.
     fn emit(
         &self,
         target: InterfaceId,
+        size_hint: usize,
         fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
-        scratch: &mut [u8],
+        discard: &mut [u8],
     ) {
-        let Some(len) = fill(scratch) else {
-            return;
-        };
-        let frame = &scratch[..len.min(scratch.len())];
         for (id, producer) in &self.lanes {
             if *id == target {
-                if let Ok(mut producer) = producer.lock() {
-                    if let Some(slot) = producer.try_grant() {
-                        slot.fill(frame);
-                        producer.commit();
+                let Ok(mut producer) = producer.lock() else {
+                    let _ = fill(discard);
+                    return;
+                };
+                match producer.try_grant() {
+                    Some(slot) => {
+                        slot.bytes.resize(size_hint.clamp(1, MAX_WIRE_FRAME_LEN), 0);
+                        if let Some(len) = fill(&mut slot.bytes) {
+                            slot.len = len.min(slot.bytes.len());
+                            slot.bytes.truncate(slot.len);
+                            producer.commit();
+                        }
+                    }
+                    None => {
+                        let _ = fill(discard);
                     }
                 }
                 return;
             }
         }
+        let _ = fill(discard);
     }
 
     fn add_lane(&mut self, id: InterfaceId, producer: TokioGrantProducer) {
@@ -1059,8 +1070,12 @@ fn route_reaction<A: FnMut(Journaled<'_>)>(
         }) => {
             offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
-        EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
-            emit_for_wire(egress, ifacs, target, fill, scratch);
+        EngineReaction::Directive(Directive::EmitFrame {
+            target,
+            size_hint,
+            fill,
+        }) => {
+            emit_for_wire(egress, ifacs, target, size_hint, fill, scratch);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
     }
@@ -1075,6 +1090,7 @@ fn emit_for_wire(
     egress: &Egress,
     ifacs: &[InterfaceIfac],
     target: InterfaceId,
+    size_hint: usize,
     fill: &mut dyn FnMut(&mut [u8]) -> Option<usize>,
     scratch: &mut WireScratch,
 ) {
@@ -1089,7 +1105,7 @@ fn emit_for_wire(
                 }
             }
         }
-        None => egress.emit(target, fill, &mut scratch.emit),
+        None => egress.emit(target, size_hint, fill, &mut scratch.emit),
     }
 }
 

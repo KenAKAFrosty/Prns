@@ -291,6 +291,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         sink(EngineReaction::Directive(Directive::EmitFrame {
             target: fire_on,
+            size_hint: mtu,
             fill: &mut fill,
         }));
         {
@@ -897,6 +898,7 @@ fn emit_proof(
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
         target: fire_on,
+        size_hint: prove.mtu,
         fill: &mut fill,
     }));
 }
@@ -1051,7 +1053,7 @@ mod tests_support {
             &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             &mut |_: &crate::engine::ProofRequest| false,
             &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         capture.frames.push((target, frame));
                     }

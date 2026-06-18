@@ -594,7 +594,11 @@ fn route_reaction(
         }) => {
             offer_to_pacer(pacers, target, bytes, hops, now, egress, ifacs);
         }
-        EngineReaction::Directive(Directive::EmitFrame { target, fill }) => {
+        EngineReaction::Directive(Directive::EmitFrame {
+            target,
+            size_hint: _,
+            fill,
+        }) => {
             emit_for_wire(egress, ifacs, target, fill);
         }
         EngineReaction::Journaled(journaled) => app(journaled),
