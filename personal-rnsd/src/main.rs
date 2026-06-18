@@ -1,240 +1,93 @@
-//! Personal Reticulum daemon on the async reactor: drive the engine over a USB-serial
-//! interface using the shared `InterfaceSeam` — the *same* boundary the embedded hosts
-//! (ESP32) meet, here on the tokio substrate.
+//! The Personal Reticulum daemon: a configurable shared-instance node on the high-level [`Prns`]
+//! runtime.
 //!
-//! The serial interface owns the port (reopening on unplug) and bridges it to the reactor
-//! through the seam: a one inbound funnel, the engine's `Directive::Send`s routed back out
-//! by an `Egress`. The daemon forwards others' announces and emits its own `lxmf.delivery`
-//! announce on its own timer (the engine does not originate announces — cadence is app policy).
+//! It reads a stock RNS config the way a stock RNS user expects (`<dir>/config`, discovered along
+//! RNS's own search order), projects it onto a [`DaemonPlan`], and stands up the interfaces and the
+//! shared instance that plan describes. Local RNS apps (Sideband, NomadNet, MeshChat) connect to
+//! the shared instance over the bus; the control-RPC shim answers their diagnostics, keyed on the
+//! node's own persistent identity. The daemon announces itself as `lxmf.delivery` so it surfaces as
+//! a messageable peer, and forwards others' traffic when the config enables the transport role.
 
-// 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The daemon is
-// async glue around the engine; syscalls go through tokio/std, so no `unsafe`.
+// 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The daemon is async
+// glue around the engine; syscalls go through tokio/std, so no `unsafe`.
 #![forbid(unsafe_code)]
 
 mod cli;
+mod construct;
+mod identity;
 mod splash;
 
+use core::time::Duration;
+use std::process;
+
 use clap::Parser;
-use std::io;
-use std::time::Duration;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
-    IssuedCommand, Journaled, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::ifac::{IfacContext, InterfaceIfac};
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::{
-    run, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::IdentitySigner;
+use personal_rns::interfaces::rns_parity::local::core as local_core;
+use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
+    rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
-use personal_rns::reactor::impls::tokio_reactor::tokio_grant_lane;
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
-use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
-use personal_rns::routing::delivery::Delivery;
-use personal_rns::storage::GrowableHeap;
+use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::wire::DestinationHash;
-use tokio::sync::mpsc;
-use tokio_serial::SerialPortBuilderExt;
+use personal_rns::runtime::{
+    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsHandle, PrnsRecipe,
+};
+use personal_rns::storage::GrowableHeap;
+use personal_rns::wire::{DestinationHash, TransportId};
+use personal_rns::{interfaces, routes};
+use personal_rns_config::{discover, plan, SharedInstance};
 
-/// Stable id for the daemon's USB-serial interface (opaque to the engine).
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new([0xD0; 8]);
-
-/// The destination this daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
+/// The destination the daemon announces itself as: `lxmf.delivery`, the aspect LXMF apps
 /// (Sideband/Columba) message — so the daemon surfaces as a real, messageable peer.
 const ANNOUNCE_APP_NAME: &str = "lxmf";
 const ANNOUNCE_ASPECTS: &[&str] = &["delivery"];
-/// The `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])` =
-/// `fixarray(2)` ‖ `bin8("Personal rnsd")` ‖ `nil` — the shape LXMF 0.9.9 emits, so apps
-/// surface the display name (the `\x0d` length byte = 13 = the name's length).
+/// The `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])` = `fixarray(2)` ‖
+/// `bin8("Personal rnsd")` ‖ `nil` — the shape LXMF emits, so apps surface the display name (the
+/// `\x0d` length byte = 13 = the name's length).
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x0dPersonal rnsd\xc0";
 
-/// CDC-ACM nominal baud (USB ignores it, but `serialport` wants a value).
-const USB_BAUD: u32 = 115_200;
-/// How long to wait before re-opening the port after an open failure or unplug.
-const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// How often the daemon re-announces itself (RNS default 6h; the first fires immediately).
 const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// The daemon's identity secret key (the 64 bytes that *are* its X25519 ‖ Ed25519 private
-/// keys). Handed to the engine through a [`Zeroizing`] buffer so it is wiped from this stack
-/// frame once construction copies it in.
-fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
-    let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
+/// The default config when a host has none yet: a single LAN auto-interface and a shared instance,
+/// the same starting point RNS writes on first run.
+const DEFAULT_CONFIG: &str = "[reticulum]\n\
+    enable_transport = No\n\
+    share_instance = Yes\n\
+    [interfaces]\n\
+      [[Default Interface]]\n\
+        type = AutoInterface\n\
+        interface_enabled = Yes\n";
 
-    #[cfg(feature = "fixture-identity")]
-    {
-        // Deterministic bring-up / HITL identity: the same X25519 0x22 ‖ Ed25519 0x11 keypair
-        // the personal-rns oracle vectors pin. Never ship this — every fixture-identity node
-        // shares one identity.
-        key[..32].fill(0x22);
-        key[32..].fill(0x11);
-    }
-
-    #[cfg(not(feature = "fixture-identity"))]
-    {
-        // A fresh OS-CSPRNG identity each run (a genuine stranger to its peer).
-        getrandom::getrandom(&mut *key).expect("OS CSPRNG must provide identity key material");
-    }
-
-    key
-}
-
-async fn announce_loop(
-    commands: mpsc::UnboundedSender<HostCommand>,
-    destination: DestinationHash,
-) {
+async fn announce_loop(handle: PrnsHandle, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
-    let mut next_id = 0u64;
     loop {
         interval.tick().await;
-        next_id += 1;
-        let command = IssuedCommand {
-            id: CommandId(next_id),
-            command: EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            }),
-        };
-        if commands.send(HostCommand::Engine(command)).is_err() {
-            return;
-        }
+        handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+            destination,
+            target: AnnounceTarget::AllInterfaces,
+            app_data: AnnounceAppData::Registered,
+        }));
     }
 }
 
-/// What the daemon observes — `Journaled` is the only thing the reactor hands the app (it
-/// carries out the `Directive`s itself). Logs heard announces and inbound deliveries; the
-/// command settlements are silent.
-fn log_journaled(journaled: Journaled<'_>) {
-    match journaled {
-        Journaled::AnnounceHeard {
+fn log_event(event: PrnsEvent<'_>) {
+    match event {
+        PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
             destination,
             hops,
             source_interface,
-        } => {
-            println!(
-                "RNSD_ANNOUNCE_HEARD destination={:02x?} hops={hops} interface={:02x?}",
-                destination.as_bytes(),
-                source_interface.as_bytes(),
-            );
-        }
-        Journaled::Delivered(Delivery::Plain(delivery)) => {
-            println!(
-                "RNSD_USB_RX_DELIVERY kind=plain destination={:02x?} bytes={}",
-                delivery.destination.as_bytes(),
-                delivery.payload.len(),
-            );
-        }
-        Journaled::Delivered(Delivery::Single(delivery)) => {
-            println!(
-                "RNSD_USB_RX_DELIVERY kind=single destination={:02x?} bytes={}",
-                delivery.destination.as_bytes(),
-                delivery.plaintext.len(),
-            );
-        }
-        Journaled::Delivered(Delivery::Group(delivery)) => {
-            println!(
-                "RNSD_USB_RX_DELIVERY kind=group destination={:02x?} bytes={}",
-                delivery.destination.as_bytes(),
-                delivery.plaintext.len(),
-            );
-        }
-        Journaled::Delivered(Delivery::Link(delivery)) => {
-            println!(
-                "RNSD_USB_RX_DELIVERY kind=link link_id={:02x?} bytes={}",
-                delivery.link_id.as_bytes(),
-                delivery.plaintext.len(),
-            );
-        }
-        Journaled::RouteExpired { destination } => {
-            println!(
-                "RNSD_ROUTE_EXPIRED destination={:02x?}",
-                destination.as_bytes(),
-            );
-        }
-        Journaled::RouteEvicted { destination } => {
-            println!(
-                "RNSD_ROUTE_EVICTED destination={:02x?}",
-                destination.as_bytes(),
-            );
-        }
-        Journaled::RouteInterfaceGone { destination } => {
-            println!(
-                "RNSD_ROUTE_INTERFACE_GONE destination={:02x?}",
-                destination.as_bytes(),
-            );
-        }
-        Journaled::LinkEstablished(established) => {
-            println!(
-                "RNSD_LINK_ESTABLISHED link_id={:02x?} rtt_ms={}",
-                established.link_id.as_bytes(),
-                established.rtt_ms,
-            );
-        }
-        Journaled::RequestReceived {
-            link_id,
-            request_id,
-            data,
-            ..
-        } => {
-            println!(
-                "RNSD_REQUEST_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
-                link_id.as_bytes(),
-                request_id.as_bytes(),
-                data.len(),
-            );
-        }
-        Journaled::ResponseReceived {
-            link_id,
-            request_id,
-            data,
-        } => {
-            println!(
-                "RNSD_RESPONSE_RECEIVED link_id={:02x?} request_id={:02x?} bytes={}",
-                link_id.as_bytes(),
-                request_id.as_bytes(),
-                data.len(),
-            );
-        }
-        Journaled::PeerIdentified { link_id, identity } => {
-            println!(
-                "RNSD_PEER_IDENTIFIED link_id={:02x?} identity={:02x?}",
-                link_id.as_bytes(),
-                identity.as_bytes(),
-            );
-        }
-        Journaled::LinkClosed { link_id, reason } => {
-            println!(
-                "RNSD_LINK_CLOSED link_id={:02x?} reason={reason:?}",
-                link_id.as_bytes(),
-            );
-        }
-        Journaled::ResourceReceived { link_id, hash, data } => {
-            println!(
-                "RNSD_RESOURCE_RECEIVED link_id={:02x?} hash={:02x?} len={}",
-                link_id.as_bytes(),
-                &hash.as_bytes()[..4],
-                data.len(),
-            );
-        }
-        Journaled::ResourceNeedsDecompression { link_id, hash, stream, uncompressed_data_len } => {
-            println!(
-                "RNSD_RESOURCE_NEEDS_DECOMPRESSION link_id={:02x?} hash={:02x?} stream_len={} data_len={uncompressed_data_len}",
-                link_id.as_bytes(),
-                &hash.as_bytes()[..4],
-                stream.len(),
-            );
-        }
-        Journaled::ResourceFailed { link_id, hash } => {
-            println!(
-                "RNSD_RESOURCE_FAILED link_id={:02x?} hash={:02x?}",
-                link_id.as_bytes(),
-                &hash.as_bytes()[..4],
-            );
-        }
-        Journaled::CommandSettled { .. } => {}
+        }) => println!(
+            "RNSD_ANNOUNCE_HEARD destination={:02x?} hops={hops} kind={:?}",
+            destination.as_bytes(),
+            source_interface.kind(),
+        ),
+        PrnsEvent::Message(_) => println!("RNSD_RX_MESSAGE"),
+        PrnsEvent::Diagnostic(_) => {}
     }
 }
 
@@ -245,76 +98,113 @@ async fn main() {
         "Personal Reticulum daemon · v",
         env!("CARGO_PKG_VERSION")
     ));
-    let path = cli.device;
 
-    let ifacs = match IfacContext::derive(
-        cli.ifac_netname.as_deref(),
-        cli.ifac_netkey.as_deref(),
-        cli.ifac_size,
-    ) {
-        Some(context) => {
-            println!("RNSD_IFAC_ENABLED size={}", context.ifac_size());
-            std::vec![InterfaceIfac {
-                id: USB_INTERFACE_ID,
-                context,
-            }]
-        }
-        None => std::vec::Vec::new(),
-    };
-
-    // A mains-powered std host: unbounded heap storage, no fixed cap.
-    let mut engine = EngineState::<GrowableHeap>::new(load_identity_secret_key());
-    let node = engine.held_identity_hashes()[0];
-    let destination = engine
-        .register_single_destination(
-            &node,
-            ANNOUNCE_APP_NAME,
-            ANNOUNCE_ASPECTS,
-            ANNOUNCE_APP_DATA,
-            ProofStrategy::ProveAll,
-            RatchetPolicy::Ratcheted,
-        )
-        .expect("registers the lxmf.delivery destination");
-
-    // The reactor's three inputs: an inbound funnel every interface deposits into, a command
-    // lane, and this interface's outbound queue routed back out by the egress.
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-    let (usb_in_tx, usb_in_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-    let (outbound_tx, outbound_rx) = tokio_grant_lane::<MAX_WIRE_FRAME_LEN>(8);
-
-    let seam = TokioInterfaceSeam::new(USB_INTERFACE_ID, usb_in_tx, notify_tx, outbound_rx);
-    let egress = Egress::new(std::vec![(USB_INTERFACE_ID, outbound_tx)]);
-
-    // The serial interface owns the port: `open` re-opens it (by path, never enumerated) and
-    // the interface reconnects on unplug on its own.
-    let interface = SerialInterface::new(
-        USB_INTERFACE_ID,
-        move || {
-            let path = path.clone();
-            async move {
-                tokio_serial::new(&path, USB_BAUD)
-                    .open_native_async()
-                    .map_err(io::Error::other)
+    let discovered_config = discover(cli.config.as_deref());
+    let config_text = match &discovered_config.reference {
+        Some(path) => match std::fs::read_to_string(path) {
+            Ok(text) => {
+                println!("RNSD_CONFIG path={}", path.display());
+                text
+            }
+            Err(error) => {
+                eprintln!("RNSD_CONFIG_ERROR path={} error={error}", path.display());
+                process::exit(1);
             }
         },
-        RECONNECT_INTERVAL,
+        None => {
+            println!(
+                "RNSD_CONFIG_DEFAULT dir={} (no config file; using a default AutoInterface shared instance)",
+                discovered_config.dir.display()
+            );
+            DEFAULT_CONFIG.to_string()
+        }
+    };
+
+    let reference = match personal_rns_config::reference::parse(&config_text) {
+        Ok(reference) => reference,
+        Err(error) => {
+            eprintln!("RNSD_CONFIG_PARSE_ERROR {error}");
+            process::exit(1);
+        }
+    };
+    let plan = plan(&reference);
+
+    let storage_dir = discovered_config.dir.join("storage");
+    let secret = identity::load_or_seed_transport_identity(&storage_dir);
+    let transport_id = {
+        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
+        TransportId::new(*signer.identity_hash().as_bytes())
+    };
+    let rpc_key = rpc_key_from_rns_identity(&storage_dir, &secret[..]);
+
+    let announce_destination = PreConfiguredDestination::Single {
+        app_name: ANNOUNCE_APP_NAME,
+        aspects: ANNOUNCE_ASPECTS,
+        identity: secret,
+        announce_app_data: ANNOUNCE_APP_DATA,
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::Ratcheted,
+    };
+    let destination = announce_destination
+        .destination_hash()
+        .expect("the lxmf.delivery name is valid");
+
+    let prns = Prns::new(PrnsRecipe {
+        transport: plan.transport.then_some(transport_id),
+        pre_configured_destinations: [announce_destination],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: interfaces![],
+        on_event: |event, _state: &()| log_event(event),
+    });
+    let prns_handle = prns.handle();
+
+    let views = construct::construct_interfaces(&prns_handle, &plan).await;
+
+    if let SharedInstance::Enabled {
+        instance_port,
+        control_port,
+    } = plan.shared_instance
+    {
+        let local_port = instance_port.unwrap_or(local_core::DEFAULT_LOCAL_PORT);
+        prns_handle.supervise(LocalServer::with_port(local_port));
+        let rpc_port = control_port.unwrap_or(local_port + 1);
+        println!(
+            "RNSD_SHARED_INSTANCE bus=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} (Sideband, NomadNet, MeshChat can connect)"
+        );
+        {
+            let views = views.clone();
+            tokio::spawn(
+                SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, prns_handle.clone())
+                    .with_interfaces(move || views.snapshots())
+                    .run(),
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let views = views.clone();
+            tokio::spawn(
+                SharedInstanceRpcCompat::abstract_unix(
+                    rpc_key,
+                    local_core::DEFAULT_SOCKET_PATH,
+                    prns_handle.clone(),
+                )
+                .with_interfaces(move || views.snapshots())
+                .run(),
+            );
+        }
+    } else {
+        println!("RNSD_SHARED_INSTANCE disabled");
+    }
+
+    tokio::spawn(announce_loop(prns_handle.clone(), destination));
+
+    println!(
+        "RNSD_READY transport={} interfaces={} deferred={}",
+        plan.transport,
+        plan.interfaces.len(),
+        plan.deferred.len(),
     );
-    let interfaces = std::vec![interface.descriptor()];
-
-    tokio::spawn(announce_loop(command_tx, destination));
-    tokio::spawn(interface.run(seam));
-
-    run(
-        engine,
-        interfaces,
-        ifacs,
-        TokioHost::new(),
-        notify_rx,
-        vec![(USB_INTERFACE_ID, usb_in_rx)],
-        command_rx,
-        egress,
-        log_journaled,
-    )
-    .await;
+    prns.run().await;
 }
