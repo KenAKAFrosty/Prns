@@ -11,7 +11,7 @@ use crate::engine::{
     SendSingleWriteOutcome, Settlement, WakeSchedules, WriteSendSingleError,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceMode};
 use crate::routing::announce::AnnounceEntropy;
 use crate::routing::delivery::receipts::{CulledReceipt, ReceiptKind};
 use crate::routing::links::channel::send::SendChannelWriteError;
@@ -80,7 +80,7 @@ impl<S: StorageLayout> EngineState<S> {
                             AnnounceTarget::AllInterfaces => FanTarget::All,
                             AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
                         };
-                        fan_self_originated(interfaces, fanout, &buf[..len], sink);
+                        fan_self_announce(interfaces, fanout, &buf[..len], sink);
                         Settlement::AnnounceNow(Ok(()))
                     }
                     CommandedAnnounceWriteOutcome::Rejected { rejection, .. } => {
@@ -627,5 +627,68 @@ pub(crate) fn fan_self_originated(
                 bytes,
             }));
         }
+    }
+}
+
+/// Fan our own announce, withheld from an access-point interface (RNS Transport.py:1193).
+pub(crate) fn fan_self_announce(
+    interfaces: &[InterfaceConfig],
+    fanout: FanTarget,
+    bytes: &[u8],
+    sink: &mut impl FnMut(EngineReaction<'_>),
+) {
+    for config in interfaces {
+        let targeted = match fanout {
+            FanTarget::All => true,
+            FanTarget::Only(id) => config.id == id,
+            FanTarget::AllExcept(id) => config.id != id,
+        };
+        if targeted
+            && config.capabilities.allows_transmit()
+            && config.mode != InterfaceMode::AccessPoint
+        {
+            sink(EngineReaction::Directive(Directive::Send {
+                target: config.id,
+                bytes,
+            }));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::test_support::routable_descriptor;
+
+    fn iface(byte: u8) -> InterfaceId {
+        InterfaceId::new([byte; 8])
+    }
+
+    #[test]
+    fn a_self_announce_is_withheld_from_an_access_point_interface() {
+        let view = [
+            routable_descriptor(iface(0x01)),
+            InterfaceConfig {
+                mode: InterfaceMode::AccessPoint,
+                ..routable_descriptor(iface(0x02))
+            },
+            InterfaceConfig {
+                mode: InterfaceMode::Roaming,
+                ..routable_descriptor(iface(0x03))
+            },
+        ];
+
+        let mut targets = std::vec::Vec::new();
+        fan_self_announce(&view, FanTarget::All, &[0xAB], &mut |reaction| {
+            if let EngineReaction::Directive(Directive::Send { target, .. }) = reaction {
+                targets.push(target);
+            }
+        });
+
+        assert_eq!(
+            targets,
+            std::vec![iface(0x01), iface(0x03)],
+            "a full and a roaming interface carry our own announce; the access point does not",
+        );
     }
 }
