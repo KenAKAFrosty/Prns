@@ -4,10 +4,10 @@
 # Stands up the Prns LocalServer daemon (the `local_shared_instance` example), then drives a stock
 # RNS.Reticulum client from the reference venv that connects to it as a shared-instance client and
 # announces a destination. Asserts the daemon heard that exact destination over a LocalClient
-# interface at the discounted hop (hops=0) — a genuine RNS-1.3.1-on-the-wire interop check.
+# interface at the discounted hop (hops=0) — a genuine RNS-on-the-wire interop check.
 #
 # The Python interpreter is $SMOKE_PYTHON if set (CI points it at a uv-built venv with the pinned
-# rns==1.3.1 from benchmarks/reference/requirements.txt), otherwise the local reference venv. Needs a
+# rns from benchmarks/reference/requirements.txt), otherwise the local reference venv. Needs a
 # free loopback 37428. Prints PASS or FAIL and exits accordingly.
 set -u
 

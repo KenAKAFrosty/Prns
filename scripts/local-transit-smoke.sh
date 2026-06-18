@@ -9,8 +9,9 @@
 # and link data both ways, including inbound to the local client's own destination. Asserts both ends
 # RECEIVED the other's message.
 #
-# Both RNS ends are the reference 1.3.1 from the venv ($SMOKE_PYTHON if set, else the local reference
-# venv) — genuine RNS-on-the-wire. Prints PASS or FAIL and exits accordingly.
+# Both RNS ends are the pinned reference RNS from the venv (benchmarks/reference/requirements.txt;
+# $SMOKE_PYTHON if set, else the local reference venv) — genuine RNS-on-the-wire. Prints PASS or
+# FAIL and exits accordingly.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
