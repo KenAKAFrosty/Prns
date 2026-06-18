@@ -25,6 +25,7 @@ pub enum InterfaceKind {
     WifiPeer = 8,
     LocalServer = 9,
     LocalClient = 10,
+    TcpServerPeer = 11,
 }
 
 impl InterfaceKind {
@@ -45,6 +46,7 @@ impl InterfaceKind {
             8 => Some(Self::WifiPeer),
             9 => Some(Self::LocalServer),
             10 => Some(Self::LocalClient),
+            11 => Some(Self::TcpServerPeer),
             _ => None,
         }
     }
@@ -58,6 +60,7 @@ impl InterfaceKind {
         match self {
             Self::AutoWifi => Some(Self::WifiPeer),
             Self::LocalServer => Some(Self::LocalClient),
+            Self::TcpServer => Some(Self::TcpServerPeer),
             _ => None,
         }
     }
@@ -72,6 +75,7 @@ impl InterfaceKind {
         match self {
             Self::WifiPeer => Some(Self::AutoWifi),
             Self::LocalClient => Some(Self::LocalServer),
+            Self::TcpServerPeer => Some(Self::TcpServer),
             _ => None,
         }
     }

@@ -15,9 +15,8 @@ use personal_rns::engine::{
     RatchetPolicy, SendRequest, SendRequestData, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::impls::tokio::{
-    TcpClientInterface, TcpServerInterface,
-};
+use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
+use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
 use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
@@ -74,7 +73,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
 
     // Responder node: a TCP server plus the route-backed Single it answers requests on. `Prns::new`
     // registers the routes' handlers on every Single it stands up, so the destination carries them.
-    let server = TcpServerInterface::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -85,11 +84,12 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
         storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
-        interfaces: interfaces![server],
+        interfaces: interfaces![],
     });
 
     // The responder announces on a cadence so the initiator can find it — pure app policy.
     let announcer = node_a.handle();
+    let _server_sup = announcer.supervise(server);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
@@ -219,7 +219,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         .destination_hash()
         .expect("the test destination name is valid");
 
-    let server = TcpServerInterface::bind("127.0.0.1:0", BITRATE)
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
         .await
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
@@ -230,10 +230,11 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         storage: GrowableHeap,
         routes: routes![Echo],
         on_event: |_event, _state| {},
-        interfaces: interfaces![server],
+        interfaces: interfaces![],
     });
 
     let announcer = node_a.handle();
+    let _server_sup = announcer.supervise(server);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {

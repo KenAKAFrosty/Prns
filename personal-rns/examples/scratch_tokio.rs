@@ -9,7 +9,7 @@ use personal_rns::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpServerInterface;
+use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe};
@@ -28,11 +28,11 @@ impl RequestRoute<()> for Hello {
 
 #[tokio::main]
 async fn main() {
-    let tcp1 = TcpServerInterface::bind("127.0.0.1:4040", 1_000_000)
+    let tcp1 = TcpServer::bind("127.0.0.1:4040", 1_000_000)
         .await
         .expect("should bind the first TCP listener");
 
-    let tcp2 = TcpServerInterface::bind("127.0.0.1:7070", 1_000_000)
+    let tcp2 = TcpServer::bind("127.0.0.1:7070", 1_000_000)
         .await
         .expect("should bind the second TCP listener");
 
@@ -54,11 +54,13 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         routes: routes![Hello],
-        interfaces: interfaces![tcp1, tcp2],
+        interfaces: interfaces![],
         on_event: |_event, _state| {},
     });
 
     let announcer = prns.handle();
+    let _sup1 = announcer.supervise(tcp1);
+    let _sup2 = announcer.supervise(tcp2);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(2));
         loop {

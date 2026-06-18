@@ -1,6 +1,8 @@
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
+use std::vec::Vec;
 
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 
 use crate::interfaces::framed_stream;
@@ -11,100 +13,59 @@ use crate::reactor::airtime::AirtimeLedger;
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::throughput::ThroughputLedger;
+use crate::runtime::{Fleet, InterfaceSupervisor};
 
-/// The listening end (`TCPServerInterface` parity, scoped to point-to-point): bind once,
-/// then accept one peer at a time — serve that connection until it drops, accept the next.
-/// The reference spawns a child interface per accepted client; our interface table is fixed
-/// at engine construction, so multi-client fan-out is deferred and a second client waits in
-/// the accept backlog until the first drops.
-pub struct TcpServerInterface {
+/// One client connected to our TCP server — the server-spawned side of an RNS TCP pair (the
+/// reference's `spawned_interface`). A distinct engine interface over an already-accepted
+/// [`TcpStream`](tokio::net::TcpStream), speaking the same HDLC framing the client and serial speak.
+/// The [`TcpServer`] supervisor stands one up per connection and drops it when the stream closes;
+/// unlike the client this end never reconnects — a vanished peer is just gone, and the client owns
+/// the reconnect. Generic over the stream so the body serves a real socket in production and a
+/// duplex pipe under test. `bitrate_bps` is the server's claim about its pipe, carried into the
+/// member's declared MTU through the reference's tier table.
+pub struct TcpServerConnection<S> {
     id: InterfaceId,
-    listener: TcpListener,
+    reachability_tag: Vec<u8>,
+    stream: Option<S>,
     bitrate_bps: u32,
-    reachability_tag: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
 }
 
-/// The bytes that tag this server channel: the address it listens on (one interface per bound
-/// address — the per-client fan-out the reference spawns is deferred, see the type docs).
-fn server_reachability_tag(local: SocketAddr) -> heapless::Vec<u8, 18> {
-    let mut tag = heapless::Vec::new();
-    match local.ip() {
-        IpAddr::V4(v4) => {
-            let _ = tag.extend_from_slice(&v4.octets());
-        }
-        IpAddr::V6(v6) => {
-            let _ = tag.extend_from_slice(&v6.octets());
-        }
-    }
-    let _ = tag.extend_from_slice(&local.port().to_be_bytes());
-    tag
-}
-
-impl TcpServerInterface {
-    /// Bind the listener up front, before [`run`](Interface::run) — so the bound address
-    /// (an OS-assigned port included) is readable and a bind refusal surfaces here, not
-    /// silently inside the accept loop. `bitrate_bps` is the host's claim about its pipe —
-    /// it sets the declared hardware MTU through the reference's tier table, so claim
-    /// honestly ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
-    pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
-        let listener = TcpListener::bind(addr).await?;
-        Self::assemble(None, listener, bitrate_bps)
-    }
-
-    /// Bind with a caller-chosen id instead of one derived from the listen address — for advanced
-    /// setups that drive the reactor by hand and must pin the interface to a routing key their own
-    /// wiring references. Ordinary nodes call [`bind`](Self::bind).
-    pub async fn bind_with_id(
-        id: InterfaceId,
-        addr: impl tokio::net::ToSocketAddrs,
-        bitrate_bps: u32,
-    ) -> io::Result<Self> {
-        let listener = TcpListener::bind(addr).await?;
-        Self::assemble(Some(id), listener, bitrate_bps)
-    }
-
-    fn assemble(
-        id_override: Option<InterfaceId>,
-        listener: TcpListener,
-        bitrate_bps: u32,
-    ) -> io::Result<Self> {
-        let reachability_tag = server_reachability_tag(listener.local_addr()?);
-        let id = id_override.unwrap_or_else(|| {
-            InterfaceId::from_reachability_tag(InterfaceKind::TcpServer, &reachability_tag)
-        });
-        Ok(Self {
+impl<S> TcpServerConnection<S> {
+    /// Wrap an accepted connection. `reachability_tag` uniquely tags this connection within the
+    /// server-peer medium — the peer's `ip:port`. The supervisor owes its uniqueness across
+    /// concurrent clients (distinct source ports give distinct tags); the attach path rejects a live
+    /// collision loudly.
+    #[must_use]
+    pub fn new(reachability_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
+        let id = InterfaceId::from_reachability_tag(InterfaceKind::TcpServerPeer, &reachability_tag);
+        Self {
             id,
-            listener,
-            bitrate_bps,
             reachability_tag,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
-        })
+            stream: Some(stream),
+            bitrate_bps,
+            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+        }
     }
 
-    /// This interface's id: minted by [`bind`](Self::bind), or the one handed to
-    /// [`bind_with_id`](Self::bind_with_id). For the app that wants to name it (an
-    /// [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
+    /// This interface's id, minted from the reachability tag. The supervisor lets the reactor cull
+    /// it when the connection drops (the run future ends), so it never holds the id itself.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
         self.id
     }
 
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.listener.local_addr()
-    }
-
-    /// A clone of this interface's live-status handle for the app to read on its own render
-    /// cadence. Call before [`run`](Interface::run) consumes the interface.
+    /// A clone of this member's live-status handle, for a face to render the connected peer beside
+    /// the server. Call before [`run`](Interface::run) consumes the interface.
     #[must_use]
     pub fn status(&self) -> TokioInterfaceStatus {
         self.status.clone()
     }
 }
 
-impl Interface for TcpServerInterface {
+impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
     const HW_MTU: usize = core::TCP_HW_MTU_CAP;
-    const KIND: InterfaceKind = InterfaceKind::TcpServer;
+    const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
 
     fn descriptor(&self) -> InterfaceConfig {
         core::descriptor(self.id, self.bitrate_bps)
@@ -114,34 +75,96 @@ impl Interface for TcpServerInterface {
         &self.reachability_tag
     }
 
-    async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
+    async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
+        let Some(stream) = self.stream.take() else {
+            return;
+        };
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        framed_stream::serve::<
+            { core::READ_BUF_LEN },
+            { core::FRAME_CAP },
+            { core::FRAMED_LEN },
+            _,
+            _,
+        >(
+            stream,
+            &mut seam,
+            &self.status,
+            &mut airtime,
+            &mut throughput,
+            Some(self.bitrate_bps),
+            started,
+        )
+        .await;
+        self.status.set_connection(ConnectionState::Disconnected);
+    }
+}
+
+/// The listening end of an RNS TCP pair (`TCPServerInterface` parity): bind a port and stand up a
+/// [`TcpServerConnection`] member per client that connects, each a distinct engine interface — the
+/// reference spawns a child interface per accepted connection, and this is that fan-out. It owns no
+/// wire of its own (its `process_outgoing` is the members'); a member whose connection drops
+/// deregisters itself when its run future ends, so the supervisor accepts and forgets, and tearing
+/// the supervisor down cascades to every member. Attach with `handle.supervise(TcpServer::bind(..))`.
+///
+/// `bitrate_bps` is the host's claim about its pipe — it sets each member's declared MTU through the
+/// reference's tier table, so claim honestly ([`core::TCP_BITRATE_GUESS_BPS`] when genuinely unknown).
+pub struct TcpServer {
+    listener: TcpListener,
+    bitrate_bps: u32,
+    reachability_tag: Vec<u8>,
+}
+
+impl TcpServer {
+    /// Bind the listener up front, before [`supervise`](crate::runtime::PrnsHandle::supervise) — so
+    /// the bound address (an OS-assigned port included) is readable through [`local_addr`](Self::local_addr)
+    /// and a bind refusal surfaces here, not silently inside the accept loop.
+    pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
+        let listener = TcpListener::bind(addr).await?;
+        let reachability_tag = listener.local_addr()?.to_string().into_bytes();
+        Ok(Self {
+            listener,
+            bitrate_bps,
+            reachability_tag,
+        })
+    }
+
+    /// This supervisor's id — `TcpServer`-kind, derived from its bound address. The members it stands
+    /// up are `TcpServerPeer`-kind, a distinct id each. For the app that names the server card.
+    #[must_use]
+    pub fn id(&self) -> InterfaceId {
+        InterfaceId::from_reachability_tag(InterfaceKind::TcpServer, &self.reachability_tag)
+    }
+
+    /// The address the listener bound — with the OS-assigned port resolved, for a face to show and a
+    /// client to dial.
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
+}
+
+impl InterfaceSupervisor for TcpServer {
+    const KIND: InterfaceKind = InterfaceKind::TcpServer;
+
+    fn reachability_tag(&self) -> &[u8] {
+        &self.reachability_tag
+    }
+
+    async fn run(self, fleet: Fleet) {
         loop {
-            let Ok((stream, _)) = self.listener.accept().await else {
-                tokio::time::sleep(RECONNECT_WAIT).await;
-                continue;
-            };
-            tune(&stream);
-            self.status.set_connection(ConnectionState::Connected);
-            framed_stream::serve::<
-                { core::READ_BUF_LEN },
-                { core::FRAME_CAP },
-                { core::FRAMED_LEN },
-                _,
-                _,
-            >(
-                stream,
-                &mut seam,
-                &self.status,
-                &mut airtime,
-                &mut throughput,
-                Some(self.bitrate_bps),
-                started,
-            )
-            .await;
-            self.status.set_connection(ConnectionState::Disconnected);
+            match self.listener.accept().await {
+                Ok((stream, peer)) => {
+                    tune(&stream);
+                    let _ = fleet.add(TcpServerConnection::new(
+                        peer.to_string().into_bytes(),
+                        stream,
+                        self.bitrate_bps,
+                    ));
+                }
+                Err(_) => tokio::time::sleep(RECONNECT_WAIT).await,
+            }
         }
     }
 }
@@ -176,7 +199,7 @@ mod tests {
     use tokio::sync::mpsc::{self, UnboundedSender};
 
     /// A hand-driven seam: it captures every `next_inbound` and supplies `next_outbound` from a
-    /// grant lane the test fills — so the interface's framing can be exercised in isolation.
+    /// grant lane the test fills — so a member's framing can be exercised in isolation.
     struct MockSeam {
         inbound: UnboundedSender<std::vec::Vec<u8>>,
         outbound: TokioGrantConsumer,
@@ -218,12 +241,39 @@ mod tests {
         }
     }
 
+    fn duplex_member(tag: &[u8], bitrate_bps: u32) -> TcpServerConnection<tokio::io::DuplexStream> {
+        let (near, _far) = tokio::io::duplex(64);
+        TcpServerConnection::new(tag.to_vec(), near, bitrate_bps)
+    }
+
+    #[test]
+    fn the_member_id_is_a_tcp_server_peer_kind_from_the_tag() {
+        let iface = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_GUESS_BPS);
+        assert_eq!(iface.id().kind(), Some(InterfaceKind::TcpServerPeer));
+        let same = duplex_member(b"127.0.0.1:54321", core::TCP_BITRATE_GUESS_BPS);
+        assert_eq!(iface.id(), same.id(), "the same peer addr is the same id");
+        let other = duplex_member(b"127.0.0.1:54322", core::TCP_BITRATE_GUESS_BPS);
+        assert_ne!(iface.id(), other.id(), "a different peer is a different id");
+    }
+
+    #[test]
+    fn the_member_descriptor_declares_the_servers_bitrate() {
+        let iface = duplex_member(b"peer", 12_345_678);
+        let descriptor = iface.descriptor();
+        assert_eq!(descriptor.id, iface.id());
+        assert_eq!(
+            descriptor.bitrate_bps,
+            Some(12_345_678),
+            "the server's pipe claim rides into the member's descriptor",
+        );
+    }
+
     #[tokio::test]
-    async fn the_server_serves_the_next_connection_after_the_first_drops() {
-        let interface = TcpServerInterface::bind("127.0.0.1:0", core::TCP_BITRATE_GUESS_BPS)
+    async fn a_member_frames_and_deframes_across_a_real_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("binds an ephemeral test port");
-        let addr = interface.local_addr().expect("the bound address is known");
+        let addr = listener.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (mut out_tx, out_rx) = tokio_grant_lane(core::FRAME_CAP, 2);
@@ -231,47 +281,52 @@ mod tests {
             inbound: in_tx,
             outbound: out_rx,
         };
-        tokio::spawn(interface.run(seam));
 
-        let mut first = TcpStream::connect(addr)
+        // The server side: accept one connection and serve it as a member.
+        tokio::spawn(async move {
+            let (stream, peer) = listener.accept().await.expect("the listener accepts");
+            TcpServerConnection::new(
+                peer.to_string().into_bytes(),
+                stream,
+                core::TCP_BITRATE_GUESS_BPS,
+            )
+            .run(seam)
+            .await;
+        });
+
+        let mut client = TcpStream::connect(addr)
             .await
-            .expect("the first client connects");
-        write_framed(&mut first, b"from the first peer").await;
+            .expect("the client connects");
+
+        // Inbound: a framed payload (FLAG/ESC exercise the escaping) crosses the real socket and
+        // lands deframed at the seam.
+        let payload = [0x01u8, 0x02, FLAG, ESC, 0x03];
+        write_framed(&mut client, &payload).await;
         let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
             .await
-            .expect("the server deframes within the window")
-            .expect("the interface task is alive");
-        assert_eq!(received, b"from the first peer");
+            .expect("the member deframes within the window")
+            .expect("the member task is alive");
+        assert_eq!(received, payload);
 
-        let out_payload = [0xC5u8, FLAG, ESC, 0x42];
+        // Outbound: the seam yields a frame; it leaves the socket framed.
+        let out_payload = [0xAAu8, FLAG, 0xBB];
         out_tx
             .try_grant()
             .expect("the outbound lane has a free slot")
             .fill(&out_payload);
         out_tx.commit();
-        let decoded = tokio::time::timeout(Duration::from_secs(2), read_deframed(&mut first))
+        let decoded = tokio::time::timeout(Duration::from_secs(2), read_deframed(&mut client))
             .await
             .expect("the frame leaves within the window");
         assert_eq!(decoded, out_payload);
-
-        // The first peer drops; the next connection is served by the same interface.
-        drop(first);
-        let mut second = TcpStream::connect(addr)
-            .await
-            .expect("the second client connects");
-        write_framed(&mut second, b"from the second peer").await;
-        let received = tokio::time::timeout(Duration::from_secs(2), in_rx.recv())
-            .await
-            .expect("the server serves the next connection within the window")
-            .expect("the interface task is alive");
-        assert_eq!(received, b"from the second peer");
     }
 
-    /// The live-reactor capstone over real TCP: the mirror of
-    /// `a_link_establishes_and_carries_data_across_two_live_reactors`, with the in-memory
-    /// loopback replaced by a `TcpServerInterface` ↔ `TcpClientInterface` pair on localhost —
-    /// announce, establish (MTU signalled by both TCP descriptors), data both ways, the
-    /// ProveAll proof settling Delivered, the unproven direction timing out.
+    /// The live-reactor capstone over real TCP: a `TcpServerConnection` member ↔ `TcpClientInterface`
+    /// pair on localhost across two live reactors — announce, establish (MTU signalled by both TCP
+    /// descriptors), data both ways, the ProveAll proof settling Delivered, the unproven direction
+    /// timing out. The server side here drives the per-connection member directly (the supervisor's
+    /// accept→`fleet.add` is exercised by the multi-client tests that stand a real node up); the
+    /// member carries a fixed tag so the responder reactor can name its id up front.
     #[tokio::test]
     async fn a_link_establishes_and_carries_data_across_two_live_reactors_over_tcp() {
         use crate::engine::test_support::{
@@ -288,13 +343,14 @@ mod tests {
         use crate::routing::links::LinkId;
         use crate::routing::upstream_app_destinations::ProofStrategy;
 
-        let b_interface = TcpServerInterface::bind("127.0.0.1:0", core::TCP_BITRATE_GUESS_BPS)
+        const RESPONDER_TAG: &[u8] = b"responder-peer";
+
+        let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("binds an ephemeral test port");
-        let responder_iface = b_interface.id();
-        let addr = b_interface
-            .local_addr()
-            .expect("the bound address is known");
+        let addr = listener.local_addr().expect("the bound address is known");
+        let responder_iface =
+            InterfaceId::from_reachability_tag(InterfaceKind::TcpServerPeer, RESPONDER_TAG);
         let a_interface = TcpClientInterface::new(
             addr.to_string(),
             core::TCP_BITRATE_GUESS_BPS,
@@ -393,7 +449,19 @@ mod tests {
             b_app,
         ));
         tokio::spawn(a_interface.run(a_seam));
-        tokio::spawn(b_interface.run(b_seam));
+        // The server side: accept the client and serve it as a member under the fixed tag the
+        // responder reactor was wired with.
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("the server accepts the client");
+            tune(&stream);
+            TcpServerConnection::new(
+                RESPONDER_TAG.to_vec(),
+                stream,
+                core::TCP_BITRATE_GUESS_BPS,
+            )
+            .run(b_seam)
+            .await;
+        });
 
         b_command_tx
             .send(HostCommand::Engine(IssuedCommand {
