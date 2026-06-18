@@ -272,16 +272,44 @@ async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
     Ok(read_frame(stream).await? == WELCOME)
 }
 
-/// The minimal answers, keyed on the method name carried in the pickled request. Phy stats and
-/// anything unknown resolve to `None`; the link first-hop timeout to RNS's default. NOTHING here is a
-/// real RPC answer — this only keeps a stock client from faulting.
+/// The wire codec a client's RPC payload speaks. RNS through 1.3.x carried the request and reply as
+/// `multiprocessing.connection`'s pickle (`connection.send`/`recv`); RNS 1.3.5+ frames msgpack
+/// (`send_bytes(mp.packb(..))` / `mp.unpackb(recv_bytes())`). Both share the same length-prefixed
+/// framing and the same auth handshake — only the payload codec differs, so the reply must answer in
+/// the dialect the request arrived in or the client mis-decodes it (a pickle `None` reads back as the
+/// msgpack integer 78, which a client indexing the result then faults on).
+#[derive(Clone, Copy)]
+enum RpcDialect {
+    Pickle,
+    Msgpack,
+}
+
+/// Tell the dialects apart by the request's first byte: every RNS RPC request is a small map, so a
+/// msgpack request opens with a fixmap tag (`0x81..=0x8f`), while a pickle stream opens with the PROTO
+/// opcode `0x80` (or a protocol-0 opcode) — never `0x81..=0x8f`.
+fn dialect_of(request: &[u8]) -> RpcDialect {
+    match request.first() {
+        Some(0x81..=0x8f) => RpcDialect::Msgpack,
+        _ => RpcDialect::Pickle,
+    }
+}
+
+/// The minimal answers, keyed on the method name (a readable substring of the request in either codec)
+/// and encoded in the client's own dialect. `interface_stats` resolves to an empty interface map: a
+/// NomadNet TextUI calls it at startup and immediately indexes `["interfaces"]`, so a bare `None`
+/// crashes it before the UI draws. Phy stats and anything unknown resolve to `None`; the link
+/// first-hop timeout to RNS's default; the link count to zero. NOTHING here is a real RPC answer —
+/// this only keeps a stock client from faulting.
 fn minimal_reply_for(request: &[u8]) -> Vec<u8> {
-    if contains(request, b"first_hop_timeout") {
-        pickle_int(DEFAULT_PER_HOP_TIMEOUT_SECS)
+    let dialect = dialect_of(request);
+    if contains(request, b"interface_stats") {
+        empty_interface_stats(dialect)
+    } else if contains(request, b"first_hop_timeout") {
+        reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
     } else if contains(request, b"link_count") {
-        pickle_int(0)
+        reply_int(dialect, 0)
     } else {
-        pickle_none()
+        reply_none(dialect)
     }
 }
 
@@ -291,18 +319,48 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window == needle)
 }
 
-/// Protocol-0 `NONE` + `STOP` — `pickle.loads` reads it as `None` on any client.
-fn pickle_none() -> Vec<u8> {
-    b"N.".to_vec()
+/// `None` in the client's dialect: pickle protocol-0 `NONE` + `STOP`, or msgpack nil.
+fn reply_none(dialect: RpcDialect) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Pickle => b"N.".to_vec(),
+        RpcDialect::Msgpack => std::vec![0xc0],
+    }
 }
 
-/// Protocol-0 `INT` + `STOP`.
-fn pickle_int(value: i64) -> Vec<u8> {
-    let mut out = std::vec![b'I'];
-    out.extend_from_slice(std::format!("{value}").as_bytes());
-    out.push(b'\n');
-    out.push(b'.');
-    out
+/// A non-negative integer (the only ones the minimal set returns: a 6-second timeout, a zero link
+/// count) in the client's dialect: pickle protocol-0 `INT` + `STOP`, or a msgpack positive fixint.
+fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Pickle => {
+            let mut out = std::vec![b'I'];
+            out.extend_from_slice(std::format!("{value}").as_bytes());
+            out.push(b'\n');
+            out.push(b'.');
+            out
+        }
+        RpcDialect::Msgpack if (0..=0x7f).contains(&value) => std::vec![value as u8],
+        RpcDialect::Msgpack => std::vec![0xc0],
+    }
+}
+
+/// The empty interface-stats map `{"interfaces": []}` — the shape a stock client indexes by
+/// `["interfaces"]` — in the client's dialect. The shim is siloed from the engine, so it reports no
+/// interfaces rather than the node's real ones; the point is only to let the client launch, not to
+/// mirror its status screen. Msgpack: fixmap(1) ‖ fixstr("interfaces") ‖ fixarray(0). Pickle:
+/// `pickle.dumps({"interfaces": []}, protocol=2)`.
+fn empty_interface_stats(dialect: RpcDialect) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Msgpack => {
+            let mut out = std::vec![0x81, 0xaa];
+            out.extend_from_slice(b"interfaces");
+            out.push(0x90);
+            out
+        }
+        RpcDialect::Pickle => std::vec![
+            0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
+            b'r', b'f', b'a', b'c', b'e', b's', 0x71, 0x01, 0x5d, 0x71, 0x02, 0x73, 0x2e,
+        ],
+    }
 }
 
 async fn write_frame<S: AsyncWrite + Unpin>(stream: &mut S, payload: &[u8]) -> std::io::Result<()> {
@@ -404,6 +462,21 @@ mod tests {
         assert_eq!(minimal_reply_for(links), b"I0\n.");
         let unknown = b"{'get': 'path_table'}";
         assert_eq!(minimal_reply_for(unknown), b"N.");
+    }
+
+    #[test]
+    fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
+        let interface_stats = b"\x81\xa3get\xafinterface_stats";
+        assert_eq!(
+            minimal_reply_for(interface_stats),
+            b"\x81\xaainterfaces\x90",
+        );
+        let timeout = b"\x81\xa3get\xb1first_hop_timeout";
+        assert_eq!(minimal_reply_for(timeout), b"\x06");
+        let links = b"\x81\xa3get\xaalink_count";
+        assert_eq!(minimal_reply_for(links), b"\x00");
+        let rssi = b"\x82\xa3get\xabpacket_rssi";
+        assert_eq!(minimal_reply_for(rssi), b"\xc0");
     }
 
     #[test]
