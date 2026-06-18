@@ -125,42 +125,58 @@ async fn serve_connection<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
     rpc_key: [u8; 32],
 ) -> std::io::Result<()> {
-    // RNS `Listener.accept`: deliver our challenge, then answer the client's.
+    if !deliver_our_challenge(&mut stream, &rpc_key).await? {
+        return Ok(());
+    }
+    if !answer_client_challenge(&mut stream, &rpc_key).await? {
+        return Ok(());
+    }
+    let request = read_frame(&mut stream).await?;
+    write_frame(&mut stream, &minimal_reply_for(&request)).await
+}
+
+/// Mirror of RNS `Listener.deliver_challenge`: send our challenge, then accept the client's response
+/// `{sha256}` ++ HMAC-SHA256(`rpc_key`, our_message) and reply `#WELCOME#`. The MAC covers the digest
+/// prefix. Returns whether the client authenticated.
+async fn deliver_our_challenge<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    rpc_key: &[u8; 32],
+) -> std::io::Result<bool> {
     let mut nonce = [0u8; CHALLENGE_NONCE_LEN];
     getrandom::getrandom(&mut nonce).map_err(|_| std::io::Error::other("rpc challenge entropy"))?;
     let mut our_message = DIGEST_PREFIX.to_vec();
     our_message.extend_from_slice(&nonce);
     let mut challenge = CHALLENGE.to_vec();
     challenge.extend_from_slice(&our_message);
-    write_frame(&mut stream, &challenge).await?;
+    write_frame(stream, &challenge).await?;
 
-    let response = read_frame(&mut stream).await?;
-    // The client replies `{sha256}` ++ HMAC-SHA256(rpc_key, our_message); the MAC covers the prefix.
+    let response = read_frame(stream).await?;
     let Some(mac) = response.strip_prefix(DIGEST_PREFIX) else {
-        let _ = write_frame(&mut stream, FAILURE).await;
-        return Ok(());
+        let _ = write_frame(stream, FAILURE).await;
+        return Ok(false);
     };
-    if hmac_sha256_verify(&rpc_key, &our_message, mac).is_err() {
-        let _ = write_frame(&mut stream, FAILURE).await;
-        return Ok(());
+    if hmac_sha256_verify(rpc_key, &our_message, mac).is_err() {
+        let _ = write_frame(stream, FAILURE).await;
+        return Ok(false);
     }
-    write_frame(&mut stream, WELCOME).await?;
+    write_frame(stream, WELCOME).await?;
+    Ok(true)
+}
 
-    let client_challenge = read_frame(&mut stream).await?;
+/// Mirror of RNS `Listener.answer_challenge`: reply to the client's challenge with `{sha256}` ++
+/// HMAC-SHA256(`rpc_key`, client_message) and await its `#WELCOME#`. Returns whether it accepted us.
+async fn answer_client_challenge<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: &mut S,
+    rpc_key: &[u8; 32],
+) -> std::io::Result<bool> {
+    let client_challenge = read_frame(stream).await?;
     let Some(client_message) = client_challenge.strip_prefix(CHALLENGE) else {
-        return Ok(());
+        return Ok(false);
     };
     let mut reply = DIGEST_PREFIX.to_vec();
-    reply.extend_from_slice(&hmac_sha256(&rpc_key, client_message));
-    write_frame(&mut stream, &reply).await?;
-    if read_frame(&mut stream).await? != WELCOME {
-        return Ok(());
-    }
-
-    // One pickled request, one pickled reply (the client opens a fresh connection per call).
-    let request = read_frame(&mut stream).await?;
-    write_frame(&mut stream, &minimal_reply_for(&request)).await?;
-    Ok(())
+    reply.extend_from_slice(&hmac_sha256(rpc_key, client_message));
+    write_frame(stream, &reply).await?;
+    Ok(read_frame(stream).await? == WELCOME)
 }
 
 /// The minimal answers, keyed on the method name carried in the pickled request. Phy stats and
@@ -268,7 +284,6 @@ mod tests {
 
     #[test]
     fn the_minimal_set_answers_phy_stats_none_and_timeout_default() {
-        // Pickled request dicts the way RNS sends them (the method name appears verbatim).
         let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
         assert_eq!(minimal_reply_for(rssi), b"N.");
         let timeout = b"{'get': 'first_hop_timeout'}";
@@ -305,7 +320,6 @@ mod tests {
             let _ = serve_connection(server, rpc_key).await;
         });
 
-        // --- client mirror of RNS answer_challenge then deliver_challenge ---
         async fn read_frame_dup(c: &mut tokio::io::DuplexStream) -> Vec<u8> {
             let mut header = [0u8; 4];
             c.read_exact(&mut header).await.unwrap();
@@ -322,7 +336,6 @@ mod tests {
             c.flush().await.unwrap();
         }
 
-        // answer the server's challenge
         let server_challenge = read_frame_dup(&mut client).await;
         let server_message = server_challenge.strip_prefix(CHALLENGE).unwrap();
         let mut response = DIGEST_PREFIX.to_vec();
@@ -330,7 +343,6 @@ mod tests {
         write_frame_dup(&mut client, &response).await;
         assert_eq!(read_frame_dup(&mut client).await, WELCOME);
 
-        // deliver our own challenge
         let mut our_msg = DIGEST_PREFIX.to_vec();
         our_msg.extend_from_slice(&[0x11u8; CHALLENGE_NONCE_LEN]);
         let mut our_challenge = CHALLENGE.to_vec();
@@ -341,7 +353,6 @@ mod tests {
         assert!(hmac_sha256_verify(&rpc_key, &our_msg, server_mac).is_ok());
         write_frame_dup(&mut client, WELCOME).await;
 
-        // one request, one reply
         write_frame_dup(&mut client, b"{'get': 'packet_rssi'}").await;
         assert_eq!(read_frame_dup(&mut client).await, b"N.");
 
