@@ -226,6 +226,42 @@ async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<Vec
     Ok(body)
 }
 
+/// Adopt the host's RNS transport identity as the shared-instance `rpc_key`, so a default-config
+/// client derives the same key with no manual step. A client keeps its own config dir, but on a
+/// desktop that dir *is* `~/.reticulum`, where RNS persists the node's transport identity as the raw
+/// private key at `{storage_dir}/transport_identity`; its `rpc_key` is `full_hash(get_private_key())`,
+/// the SHA-256 of those bytes. A present identity is honored untouched; an absent one means this is the
+/// first instance on the host, so it is seeded from `seed_if_absent` (owning the identity as a shared
+/// instance does).
+#[must_use]
+pub fn rpc_key_from_rns_identity(storage_dir: &std::path::Path, seed_if_absent: &[u8]) -> [u8; 32] {
+    let path = storage_dir.join("transport_identity");
+    let private = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let _ = std::fs::create_dir_all(storage_dir);
+            let _ = std::fs::write(&path, seed_if_absent);
+            seed_if_absent.to_vec()
+        }
+    };
+    crate::crypto::sha256(&private)
+}
+
+/// RNS's storage directory: `$RETICULUM_CONFIG_DIR/storage`, else `~/.reticulum/storage` — the layout
+/// a stock client uses by default.
+#[must_use]
+pub fn reticulum_storage_dir() -> std::path::PathBuf {
+    std::env::var_os("RETICULUM_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".reticulum")
+        })
+        .join("storage")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +277,22 @@ mod tests {
         assert_eq!(minimal_reply_for(links), b"I0\n.");
         let unknown = b"{'get': 'path_table'}";
         assert_eq!(minimal_reply_for(unknown), b"N.");
+    }
+
+    #[test]
+    fn it_seeds_a_missing_rns_identity_then_honors_the_seeded_one() {
+        let dir =
+            std::env::temp_dir().join(std::format!("prns-rpc-compat-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let seed = [0x33u8; 64];
+        let seeded = rpc_key_from_rns_identity(&dir, &seed);
+        assert_eq!(seeded, crate::crypto::sha256(&seed));
+
+        let honored = rpc_key_from_rns_identity(&dir, &[0x99u8; 64]);
+        assert_eq!(honored, seeded);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

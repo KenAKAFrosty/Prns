@@ -32,7 +32,9 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::local::core as local_core;
-use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
+use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
+    reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
+};
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpClientInterface;
@@ -171,10 +173,7 @@ fn run_node(
             let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key);
             TransportId::new(*signer.identity_hash().as_bytes())
         };
-        // A stable key for the shared-instance control-RPC compat shim, tied to this node's identity.
-        // A connecting RNS client (Sideband, ...) must carry the same `rpc_key` in its config; we log
-        // it below so it can be copied across.
-        let rpc_key = personal_rns::crypto::sha256(&identity_secret_key[..]);
+        let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
 
         let announce_destination = PreConfiguredDestination::Single {
             app_name: ANNOUNCE_APP_NAME,
@@ -222,9 +221,6 @@ fn run_node(
             local_core::DEFAULT_LOCAL_PORT
         );
 
-        // Control-RPC compatibility shim. LXMF clients fetch per-packet phy stats over this channel
-        // during attachment delivery and fault without it; the shim answers the minimal set. The
-        // client's RPC lives on TCP everywhere and additionally on the abstract AF_UNIX socket on Linux.
         let rpc_port = local_core::DEFAULT_LOCAL_PORT + 1;
         tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port).run());
         #[cfg(target_os = "linux")]
@@ -232,7 +228,7 @@ fn run_node(
             SharedInstanceRpcCompat::abstract_unix(rpc_key, local_core::DEFAULT_SOCKET_PATH).run(),
         );
         println!(
-            "  attachments need each client's Reticulum config to carry this rpc_key = {}",
+            "  attachments to local RNS clients flow over the shared Reticulum identity (rpc_key {})",
             rpc_key
                 .iter()
                 .map(|byte| std::format!("{byte:02x}"))
