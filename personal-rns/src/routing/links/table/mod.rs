@@ -11,7 +11,7 @@ use crate::engine::commands::CommandId;
 use crate::engine::InstantMillis;
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
-use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from};
+use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from, timeout_grace_ms_from};
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::upstream_app_destinations::ProofStrategy;
@@ -182,21 +182,34 @@ pub struct DueKeepalive {
     pub attached_interface: InterfaceId,
 }
 
+fn teardown_at(last_inbound: InstantMillis, keepalive_ms: u64, rtt: Rtt) -> u64 {
+    last_inbound
+        .0
+        .saturating_add(stale_ms_from(keepalive_ms))
+        .saturating_add(timeout_grace_ms_from(rtt))
+}
+
 fn active_deadline(
     role: &LinkRole,
     last_inbound: InstantMillis,
     last_keepalive_sent: InstantMillis,
     keepalive_ms: u64,
+    rtt: Rtt,
 ) -> InstantMillis {
-    let stale_at = last_inbound.0.saturating_add(stale_ms_from(keepalive_ms));
+    let teardown_at = teardown_at(last_inbound, keepalive_ms, rtt);
     match role {
-        LinkRole::Responder { .. } => InstantMillis(stale_at),
+        LinkRole::Responder { .. } => InstantMillis(teardown_at),
         LinkRole::Initiator { .. } => {
+            let stale_at = last_inbound.0.saturating_add(stale_ms_from(keepalive_ms));
             let send_at = last_inbound
                 .0
                 .max(last_keepalive_sent.0)
                 .saturating_add(keepalive_ms);
-            InstantMillis(stale_at.min(send_at))
+            if send_at <= stale_at {
+                InstantMillis(send_at)
+            } else {
+                InstantMillis(teardown_at)
+            }
         }
     }
 }
@@ -332,7 +345,7 @@ impl<C: LinkColumns> Links<C> {
             LinkPhase::Pending { link_signing, .. } => {
                 let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Initiator { link_signing };
-                let deadline = active_deadline(&role, now, now, keepalive_ms);
+                let deadline = active_deadline(&role, now, now, keepalive_ms, rtt);
                 *phase = LinkPhase::Active {
                     remote_identity: None,
                     resource_strategy: ResourceStrategy::default(),
@@ -385,7 +398,7 @@ impl<C: LinkColumns> Links<C> {
                     identity,
                     proof_strategy,
                 };
-                let deadline = active_deadline(&role, now, now, keepalive_ms);
+                let deadline = active_deadline(&role, now, now, keepalive_ms, rtt);
                 *phase = LinkPhase::Active {
                     remote_identity: None,
                     resource_strategy: ResourceStrategy::default(),
@@ -467,6 +480,7 @@ impl<C: LinkColumns> Links<C> {
         };
         if let LinkPhase::Active {
             role,
+            rtt,
             last_inbound,
             last_keepalive_sent,
             keepalive_ms,
@@ -474,7 +488,7 @@ impl<C: LinkColumns> Links<C> {
         } = self.columns.phase_mut(index)
         {
             *last_inbound = now;
-            let deadline = active_deadline(role, now, *last_keepalive_sent, *keepalive_ms);
+            let deadline = active_deadline(role, now, *last_keepalive_sent, *keepalive_ms, *rtt);
             self.columns.set_timeout_at(index, Some(deadline));
         }
     }
@@ -498,10 +512,11 @@ impl<C: LinkColumns> Links<C> {
             if let LinkPhase::Active {
                 last_inbound,
                 keepalive_ms,
+                rtt,
                 ..
             } = &self.columns.phases()[index]
             {
-                if now.0 >= last_inbound.0.saturating_add(stale_ms_from(*keepalive_ms)) {
+                if now.0 >= teardown_at(*last_inbound, *keepalive_ms, *rtt) {
                     return Some(self.columns.link_ids()[index]);
                 }
             }
@@ -519,20 +534,22 @@ impl<C: LinkColumns> Links<C> {
             if let LinkPhase::Active {
                 role: role @ LinkRole::Initiator { .. },
                 attached_interface,
+                rtt,
                 last_inbound,
                 last_keepalive_sent,
                 keepalive_ms,
                 ..
             } = self.columns.phase_mut(index)
             {
+                let stale_at = last_inbound.0.saturating_add(stale_ms_from(*keepalive_ms));
                 let send_at = last_inbound
                     .0
                     .max(last_keepalive_sent.0)
                     .saturating_add(*keepalive_ms);
-                if now.0 >= send_at {
+                if now.0 >= send_at && send_at <= stale_at {
                     *last_keepalive_sent = now;
                     let attached_interface = *attached_interface;
-                    let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms);
+                    let deadline = active_deadline(role, *last_inbound, now, *keepalive_ms, *rtt);
                     self.columns.set_timeout_at(index, Some(deadline));
                     return Some(DueKeepalive {
                         link_id,
@@ -917,5 +934,108 @@ mod tests {
         }
         assert_eq!(links.len(), 8);
         assert!(links.phase_for(&link_id(5)).is_some());
+    }
+
+    fn active_initiator(links: &mut TestLinks, id: u8, rtt: Rtt, now: u64) {
+        links.track_initiated(initiated(id, 5_000)).unwrap();
+        links
+            .activate_initiated(
+                &link_id(id),
+                key(id, 9),
+                rtt,
+                500,
+                iface(0xEE),
+                InstantMillis(now),
+                Ed25519PublicKey([0x99; 32]),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_quiet_initiator_waits_out_the_grace_before_teardown() {
+        let mut links = TestLinks::default();
+        active_initiator(&mut links, 1, Rtt(250), 2_000);
+
+        assert_eq!(
+            links.pop_stale(InstantMillis(2_000 + 102_856)),
+            None,
+            "reaching the stale boundary must not tear the link down — RNS waits the grace",
+        );
+        assert_eq!(
+            links.pop_stale(InstantMillis(2_000 + 102_856 + 5_999)),
+            None,
+            "nor anywhere inside the grace window",
+        );
+        assert_eq!(
+            links.pop_stale(InstantMillis(2_000 + 102_856 + 6_000)),
+            Some(link_id(1)),
+            "teardown fires only after rtt*4 + STALE_GRACE past the stale boundary",
+        );
+    }
+
+    #[test]
+    fn a_quiet_responder_also_waits_out_the_grace() {
+        let mut links = TestLinks::default();
+        links.track_responding(responding(2, 5_000)).unwrap();
+        links
+            .activate_responding(&link_id(2), Rtt(500), iface(0xEE), InstantMillis(2_000))
+            .unwrap();
+
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(2_000 + 205_714 + 7_000)),
+            "a responder sends no keepalive of its own, so its only deadline is teardown at stale + grace",
+        );
+        assert_eq!(links.pop_stale(InstantMillis(2_000 + 205_714)), None);
+        assert_eq!(
+            links.pop_stale(InstantMillis(2_000 + 205_714 + 7_000)),
+            Some(link_id(2)),
+        );
+    }
+
+    #[test]
+    fn an_inbound_inside_the_grace_revives_the_link() {
+        let mut links = TestLinks::default();
+        active_initiator(&mut links, 1, Rtt(250), 2_000);
+
+        links.note_inbound(&link_id(1), InstantMillis(105_000));
+
+        assert_eq!(
+            links.pop_stale(InstantMillis(110_856)),
+            None,
+            "an inbound inside the grace window revives the link past the old teardown moment",
+        );
+        assert_eq!(
+            links.earliest_timeout_at(),
+            Some(InstantMillis(105_000 + 51_428)),
+            "the revived link rearms its keepalive cadence from the fresh inbound",
+        );
+    }
+
+    #[test]
+    fn the_final_keepalive_lands_at_the_stale_boundary_and_none_during_grace() {
+        let mut links = TestLinks::default();
+        active_initiator(&mut links, 1, Rtt(10), 2_000);
+
+        let due = DueKeepalive {
+            link_id: link_id(1),
+            attached_interface: iface(0xEE),
+        };
+        assert_eq!(links.pop_due_keepalive(InstantMillis(7_000)), Some(due));
+        assert_eq!(
+            links.pop_due_keepalive(InstantMillis(12_000)),
+            Some(due),
+            "the initiator sends one last keepalive exactly at the stale boundary",
+        );
+        assert_eq!(
+            links.pop_due_keepalive(InstantMillis(17_000)),
+            None,
+            "no keepalive leaves during the grace window even when its cadence comes due",
+        );
+        assert_eq!(
+            links.pop_stale(InstantMillis(17_040)),
+            Some(link_id(1)),
+            "teardown still waits the full rtt*4 + STALE_GRACE grace",
+        );
     }
 }

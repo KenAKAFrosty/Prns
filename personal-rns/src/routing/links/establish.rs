@@ -982,8 +982,8 @@ mod tests {
         );
         assert_eq!(
             delta.link_deadlines,
-            LaneWake::At(InstantMillis(1_600 + 205_714)),
-            "the responder arms its stale deadline at twice the keepalive",
+            LaneWake::At(InstantMillis(1_600 + 205_714 + 7_000)),
+            "the responder arms its teardown at twice the keepalive plus the rtt*4 + STALE_GRACE grace",
         );
 
         let Some(LinkPhase::Active {
@@ -2563,7 +2563,21 @@ mod tests {
         assert_eq!(sent.len(), 1, "a second keepalive rides the new cadence");
 
         let (sent, closed) = fire_deadlines(&mut initiator, 52_700 + 102_856);
-        assert_eq!(sent.len(), 1, "the stale link tells its peer");
+        assert!(
+            closed.is_empty(),
+            "reaching the stale boundary sends a final keepalive, not a teardown",
+        );
+        assert_eq!(sent.len(), 1, "the stale link pings its peer one last time");
+        let (header, payload) = WirePacketHeader::parse(&sent[0]).unwrap();
+        assert_eq!(header.context, WireContext::KeepAlive);
+        assert_eq!(payload, &[KEEPALIVE_REQUEST]);
+
+        let (sent, closed) = fire_deadlines(&mut initiator, 52_700 + 102_856 + 6_000);
+        assert_eq!(
+            sent.len(),
+            1,
+            "only after the rtt*4 + STALE_GRACE grace does the stale link tell its peer",
+        );
         let (header, _) = WirePacketHeader::parse(&sent[0]).unwrap();
         assert_eq!(header.context, WireContext::LinkClose);
         assert_eq!(closed, std::vec![(link_id, LinkClosedReason::Timeout)]);

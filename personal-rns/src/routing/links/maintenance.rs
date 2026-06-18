@@ -22,6 +22,15 @@ pub fn stale_ms_from(keepalive_ms: u64) -> u64 {
     keepalive_ms.saturating_mul(2)
 }
 
+pub const KEEPALIVE_TIMEOUT_FACTOR: u64 = 4;
+pub const STALE_GRACE_MS: u64 = 5_000;
+
+pub fn timeout_grace_ms_from(rtt: Rtt) -> u64 {
+    rtt.millis()
+        .saturating_mul(KEEPALIVE_TIMEOUT_FACTOR)
+        .saturating_add(STALE_GRACE_MS)
+}
+
 fn link_frame_header(link_id: &LinkId, context: WireContext) -> WirePacketHeader {
     WirePacketHeader {
         ifac_flag: IfacFlag::Open,
@@ -136,6 +145,9 @@ mod tests {
         assert_eq!(keepalive_ms_from(Rtt(1_750)), 360_000);
         assert_eq!(keepalive_ms_from(Rtt(10_000)), 360_000);
         assert_eq!(stale_ms_from(51_428), 102_856);
+        assert_eq!(timeout_grace_ms_from(Rtt(0)), 5_000);
+        assert_eq!(timeout_grace_ms_from(Rtt(250)), 6_000);
+        assert_eq!(timeout_grace_ms_from(Rtt(2_000)), 13_000);
     }
 
     #[test]
@@ -204,5 +216,11 @@ mod kani_proofs {
         let rtt_ms: u64 = kani::any();
         let keepalive_ms = keepalive_ms_from(Rtt(rtt_ms));
         assert_eq!(stale_ms_from(keepalive_ms), keepalive_ms * 2);
+    }
+
+    #[kani::proof]
+    fn the_grace_never_dips_below_the_stale_grace_floor() {
+        let rtt_ms: u64 = kani::any();
+        assert!(timeout_grace_ms_from(Rtt(rtt_ms)) >= STALE_GRACE_MS);
     }
 }
