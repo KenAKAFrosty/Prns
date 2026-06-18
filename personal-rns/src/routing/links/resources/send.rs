@@ -197,6 +197,9 @@ impl<S: StorageLayout> EngineState<S> {
                 self.outgoing_resources
                     .set_timeout_at(index, Some(advertised_deadline(now, rtt_ms)));
             }
+            if correlation.is_request() && segment_index == 1 {
+                self.book_request_resource_receipt(id, &link_id, data, now);
+            }
         } else {
             self.outgoing_resources.remove(&link_id, &hash);
             settle(sink, SendResourceFailure::WriteFailed);

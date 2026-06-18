@@ -1380,6 +1380,55 @@ mod tests {
         assert!(receiver.incoming_resources.is_empty());
     }
 
+    #[test]
+    fn a_big_request_rides_a_resource_that_books_its_pending_row() {
+        use crate::engine::test_support::filled_frame;
+        use crate::routing::links::request::{write_request_plaintext, RequestId};
+        use crate::routing::links::resources::ResourceCorrelation;
+        use crate::routing::request_handlers::RequestPathHash;
+
+        let path_hash = RequestPathHash::new([0x55; 16]);
+        let request_data = b"a request too fat for a packet, ".repeat(40);
+        let mut packed = std::vec![0u8; request_data.len() + 64];
+        let plain_len =
+            write_request_plaintext(InstantMillis(1_400), &path_hash, &request_data, &mut packed)
+                .unwrap();
+        let packed_request = &packed[..plain_len];
+        let request_id = RequestId::of_request_data(packed_request);
+
+        let mut requester = engine_with_active_link();
+        assert!(
+            requester.request_fits_packet(&link_id(), b"small enough"),
+            "a tiny request rides a packet",
+        );
+        assert!(
+            !requester.request_fits_packet(&link_id(), packed_request),
+            "a >MDU request does not fit a packet — it must ride a resource",
+        );
+
+        requester.ingest_send_resource_into(
+            CommandId(55),
+            link_id(),
+            packed_request,
+            None,
+            ResourceCorrelation::Request(request_id),
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    let _ = filled_frame(fill);
+                }
+            },
+        );
+
+        assert!(
+            requester
+                .receipts
+                .has_pending_request(request_id.as_bytes()),
+            "the request resource books the pending row its response will settle",
+        );
+    }
+
     fn crafted_split_advertisement(segment_index: u64, total_segments: u64) -> std::vec::Vec<u8> {
         use crate::routing::links::resources::advertisement::{
             ResourceAdvertisement, ResourceFlags,

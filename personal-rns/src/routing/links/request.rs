@@ -294,6 +294,21 @@ impl<S: StorageLayout> EngineState<S> {
         RESPONSE_WIRE_OVERHEAD + data_len <= link_mdu(*mtu) && data.len() <= MAX_RESPOND_DATA_LEN
     }
 
+    /// Would a `data` request fit a single REQUEST packet on this link, or must
+    /// it ride a resource? The mirror of [`Self::response_fits_packet`], bounded
+    /// by the link MDU and the inline [`SendRequest`] capacity
+    /// ([`MAX_SEND_REQUEST_DATA_LEN`]); anything larger — or any non-active link
+    /// — reports `false`, so the API routes the request to a resource correlated
+    /// as RNS 1.3.1 `Resource(is_response=False)`.
+    pub fn request_fits_packet(&self, link_id: &LinkId, data: &[u8]) -> bool {
+        let Some(LinkPhase::Active { mtu, .. }) = self.links.phase_for(link_id) else {
+            return false;
+        };
+        let data_len = if data.is_empty() { 1 } else { data.len() };
+        REQUEST_WIRE_OVERHEAD + data_len <= link_mdu(*mtu)
+            && data.len() <= MAX_SEND_REQUEST_DATA_LEN
+    }
+
     /// Seal a request and book its pending row: the request settles when a
     /// response names its id back, or times out at
     /// `rtt × 6 + `[`REQUEST_RESPONSE_GRACE_MS`] — RNS 1.3.1 `Link.request`'s
@@ -363,6 +378,41 @@ impl<S: StorageLayout> EngineState<S> {
             request_id: RequestId::of_packet(&packet_hash),
             culled,
         })
+    }
+
+    /// Book the pending row a request that rode a resource settles against.
+    /// The request formed no packet, so the row is keyed by `sha256` of the
+    /// pack — its first sixteen bytes are the request id (RNS 1.3.1
+    /// `truncated_hash(packed_request)`) the response names back. The receipt
+    /// half of [`Self::write_commanded_send_request`] for the resource rung; the
+    /// resource send itself carries the bytes.
+    pub(crate) fn book_request_resource_receipt(
+        &mut self,
+        id: CommandId,
+        link_id: &LinkId,
+        packed_request: &[u8],
+        now: InstantMillis,
+    ) {
+        let Some(LinkPhase::Active {
+            rtt, peer_signing, ..
+        }) = self.links.phase_for(link_id)
+        else {
+            return;
+        };
+        let peer_signing = *peer_signing;
+        let timeout_ms = rtt
+            .millis()
+            .saturating_mul(LINK_TRAFFIC_TIMEOUT_FACTOR)
+            .max(LINK_TRAFFIC_TIMEOUT_MIN_MS)
+            .saturating_add(REQUEST_RESPONSE_GRACE_MS);
+        let _ = self.receipts.track(OutstandingReceipt {
+            packet_hash: PacketHash::new(sha256(packed_request)),
+            command_id: id,
+            kind: ReceiptKind::SendRequest,
+            peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
+            sent_at: now,
+            timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
+        });
     }
 
     /// Seal a response naming the request id back. Fire-and-forget: the
