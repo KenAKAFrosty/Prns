@@ -9,6 +9,8 @@ mod scheduled;
 pub(crate) mod test_support;
 pub mod tick;
 
+#[cfg(feature = "alloc")]
+pub use commands::RpcPathEntry;
 pub use commands::{
     AllowRequester, AllowRequesterError, AllowRequesterFailure, AnnounceAppData, AnnounceNow,
     AnnounceNowError, AnnounceNowFailure, AnnounceTarget, CloseLink, CloseLinkError,

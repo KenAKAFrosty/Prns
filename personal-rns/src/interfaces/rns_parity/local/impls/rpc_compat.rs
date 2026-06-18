@@ -36,6 +36,9 @@ use tokio::net::UnixListener;
 
 use super::rpc_value::Value;
 use crate::crypto::{hmac_sha256, hmac_sha256_verify};
+use crate::engine::RpcPathEntry;
+use crate::interfaces::InterfaceId;
+use crate::routing::types::NextHop;
 
 const CHALLENGE: &[u8] = b"#CHALLENGE#";
 const WELCOME: &[u8] = b"#WELCOME#";
@@ -151,6 +154,9 @@ pub trait RpcQuerySource {
     /// `get_link_count` — the number of live links the node carries. The future is `Send` so the shim
     /// can answer each connection on its own task.
     fn link_count(&self) -> impl core::future::Future<Output = u32> + Send;
+
+    /// `get_path_table` — every known destination, how it is reached, and when it was learned.
+    fn path_table(&self) -> impl core::future::Future<Output = Vec<RpcPathEntry>> + Send;
 }
 
 enum RpcBind {
@@ -323,6 +329,8 @@ async fn reply_for(request: &[u8], query: &impl RpcQuerySource) -> Vec<u8> {
     let dialect = dialect_of(request);
     if contains(request, b"interface_stats") {
         empty_interface_stats(dialect)
+    } else if contains(request, b"path_table") {
+        reply_path_table(dialect, query.path_table().await)
     } else if contains(request, b"first_hop_timeout") {
         reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
     } else if contains(request, b"link_count") {
@@ -330,6 +338,58 @@ async fn reply_for(request: &[u8], query: &impl RpcQuerySource) -> Vec<u8> {
     } else {
         reply_none(dialect)
     }
+}
+
+/// The path table in the client's dialect. Msgpack renders each known route as RNS's path-table dict
+/// (`hash`, `via`, `hops`, `timestamp`, `expires`, `interface`); the legacy pickle dialect gets an
+/// empty list — a legacy client lists nothing rather than faulting, and pickle rows are a follow-up.
+/// `timestamp`/`expires` carry the engine's learned-at clock in milliseconds; aligning them to a
+/// stock client's wall-clock seconds is a refinement, the routes themselves are real.
+fn reply_path_table(dialect: RpcDialect, entries: Vec<RpcPathEntry>) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Pickle => b"].".to_vec(),
+        RpcDialect::Msgpack => {
+            let rows = entries
+                .into_iter()
+                .map(|entry| {
+                    let via = match entry.via {
+                        NextHop::Via(transport) => transport.as_bytes().to_vec(),
+                        NextHop::Direct => entry.destination.as_bytes().to_vec(),
+                    };
+                    let learned_ms = entry.learned_at.0 as i64;
+                    Value::Map(std::vec![
+                        (
+                            "hash".into(),
+                            Value::Bytes(entry.destination.as_bytes().to_vec())
+                        ),
+                        ("via".into(), Value::Bytes(via)),
+                        ("hops".into(), Value::Int(i64::from(entry.hops))),
+                        ("timestamp".into(), Value::Int(learned_ms)),
+                        ("expires".into(), Value::Int(learned_ms)),
+                        (
+                            "interface".into(),
+                            Value::Str(interface_name(entry.interface))
+                        ),
+                    ])
+                })
+                .collect();
+            Value::Array(rows).to_msgpack()
+        }
+    }
+}
+
+/// A human name for an interface in the path table — RNS shows `str(interface)`. The kind names the
+/// medium; a short hash prefix disambiguates instances of the same kind.
+fn interface_name(id: InterfaceId) -> String {
+    let mut name = match id.kind() {
+        Some(kind) => std::format!("{kind:?}["),
+        None => std::string::String::from("Interface["),
+    };
+    for byte in id.as_bytes().iter().take(4) {
+        name.push_str(&std::format!("{byte:02x}"));
+    }
+    name.push(']');
+    name
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -470,30 +530,43 @@ mod tests {
     #[derive(Clone)]
     struct StubQuery {
         links: u32,
+        routes: Vec<RpcPathEntry>,
     }
 
     impl RpcQuerySource for StubQuery {
         async fn link_count(&self) -> u32 {
             self.links
         }
+
+        async fn path_table(&self) -> Vec<RpcPathEntry> {
+            self.routes.clone()
+        }
     }
 
     #[tokio::test]
     async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() {
-        let query = StubQuery { links: 2 };
+        let query = StubQuery {
+            links: 2,
+            routes: std::vec![],
+        };
         let rssi = b"\x80\x04\x95...{'get': 'packet_rssi'}";
         assert_eq!(reply_for(rssi, &query).await, b"N.");
         let timeout = b"{'get': 'first_hop_timeout'}";
         assert_eq!(reply_for(timeout, &query).await, b"I6\n.");
         let links = b"{'get': 'link_count'}";
         assert_eq!(reply_for(links, &query).await, b"I2\n.");
-        let unknown = b"{'get': 'path_table'}";
+        let path_table = b"{'get': 'path_table'}";
+        assert_eq!(reply_for(path_table, &query).await, b"].");
+        let unknown = b"{'get': 'rate_table'}";
         assert_eq!(reply_for(unknown, &query).await, b"N.");
     }
 
     #[tokio::test]
     async fn a_msgpack_client_gets_msgpack_replies_in_its_own_dialect() {
-        let query = StubQuery { links: 2 };
+        let query = StubQuery {
+            links: 2,
+            routes: std::vec![],
+        };
         let interface_stats = b"\x81\xa3get\xafinterface_stats";
         assert_eq!(
             reply_for(interface_stats, &query).await,
@@ -505,6 +578,28 @@ mod tests {
         assert_eq!(reply_for(links, &query).await, b"\x02");
         let rssi = b"\x82\xa3get\xabpacket_rssi";
         assert_eq!(reply_for(rssi, &query).await, b"\xc0");
+        let path_table = b"\x81\xa3get\xaapath_table";
+        assert_eq!(reply_for(path_table, &query).await, b"\x90");
+    }
+
+    #[tokio::test]
+    async fn a_msgpack_path_table_renders_each_route_as_a_dict() {
+        let query = StubQuery {
+            links: 0,
+            routes: std::vec![RpcPathEntry {
+                destination: crate::wire::DestinationHash::new([0xab; 16]),
+                hops: 3,
+                via: NextHop::Direct,
+                learned_at: crate::engine::InstantMillis(0),
+                interface: InterfaceId::new([0x07; 8]),
+            }],
+        };
+        let reply = reply_for(b"\x81\xa3get\xaapath_table", &query).await;
+        assert_eq!(reply[0], 0x91, "a one-row path table is a 1-element array");
+        assert_eq!(reply[1], 0x86, "each row is a 6-entry map");
+        let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
+        assert!(contains(b"hash") && contains(b"via") && contains(b"hops"));
+        assert!(contains(b"interface") && contains(&[0xab; 16]));
     }
 
     #[test]
@@ -528,7 +623,15 @@ mod tests {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
         let server_task = tokio::spawn(async move {
-            let _ = serve_connection(server, rpc_key, StubQuery { links: 0 }).await;
+            let _ = serve_connection(
+                server,
+                rpc_key,
+                StubQuery {
+                    links: 0,
+                    routes: std::vec![],
+                },
+            )
+            .await;
         });
 
         let server_challenge = read_frame_dup(&mut client).await;
@@ -559,7 +662,15 @@ mod tests {
         let rpc_key = [0x5au8; 32];
         let (mut client, server) = tokio::io::duplex(8192);
         let server_task = tokio::spawn(async move {
-            let _ = serve_connection(server, rpc_key, StubQuery { links: 0 }).await;
+            let _ = serve_connection(
+                server,
+                rpc_key,
+                StubQuery {
+                    links: 0,
+                    routes: std::vec![],
+                },
+            )
+            .await;
         });
 
         let server_challenge = read_frame_dup(&mut client).await;

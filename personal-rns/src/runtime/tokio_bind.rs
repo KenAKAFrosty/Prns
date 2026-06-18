@@ -16,7 +16,7 @@ use crate::engine::{
     SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
 #[cfg(feature = "local")]
-use crate::engine::{RpcQuery, RpcQueryResult};
+use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
@@ -448,6 +448,16 @@ impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for
         {
             Some(Settlement::RpcQuery(RpcQueryResult::LinkCount(count))) => count,
             Some(_) | None => 0,
+        }
+    }
+
+    async fn path_table(&self) -> std::vec::Vec<RpcPathEntry> {
+        match self
+            .settle(EngineCommand::RpcQuery(RpcQuery::PathTable))
+            .await
+        {
+            Some(Settlement::RpcQuery(RpcQueryResult::PathTable(rows))) => rows,
+            Some(_) | None => std::vec::Vec::new(),
         }
     }
 }

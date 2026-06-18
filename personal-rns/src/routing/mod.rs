@@ -81,6 +81,24 @@ where
             .map(|i| self.routes.responsiveness()[i])
     }
 
+    /// Every live route as `(destination, its `RouteEntry`)` — the engine builds the shared-instance
+    /// RPC's path table from this, one entry per known destination.
+    pub fn path_rows(&self) -> impl Iterator<Item = (DestinationHash, RouteEntry)> + '_ {
+        let routes = &self.routes;
+        (0..routes.len()).map(move |i| {
+            (
+                routes.destinations()[i],
+                RouteEntry {
+                    hops: routes.hops()[i],
+                    learned_at: routes.learned_at()[i],
+                    responsiveness: routes.responsiveness()[i],
+                    receiving_interface: routes.receiving_interfaces()[i],
+                    next_hop: routes.next_hops()[i],
+                },
+            )
+        })
+    }
+
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
         self.routes.index_of(destination)
     }

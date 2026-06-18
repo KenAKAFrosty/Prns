@@ -20,8 +20,14 @@ use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+#[cfg(feature = "alloc")]
+use crate::routing::types::NextHop;
+#[cfg(feature = "alloc")]
+use crate::units::InstantMillis;
 use crate::units::{HopCount, Rtt};
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use heapless::Vec as HeaplessVec;
 
 /// Ephemeral correlation for one issued command: minted by the caller (a
@@ -63,6 +69,9 @@ pub enum EngineCommand {
 pub enum RpcQuery {
     /// `get_link_count` — the number of live links the node carries.
     LinkCount,
+    /// `get_path_table` — every known destination, how it is reached, and when it was learned.
+    #[cfg(feature = "alloc")]
+    PathTable,
 }
 
 /// The answer to an [`RpcQuery`], carried back in [`Settlement::RpcQuery`] and rendered to the
@@ -70,6 +79,21 @@ pub enum RpcQuery {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RpcQueryResult {
     LinkCount(u32),
+    #[cfg(feature = "alloc")]
+    PathTable(Vec<RpcPathEntry>),
+}
+
+/// One row of the shared-instance RPC's path table: a known destination, how it is reached, and when
+/// it was learned — the engine's view, which the RPC shim renders to RNS's path-table dict (`hash`,
+/// `via`, `hops`, `timestamp`, `expires`, `interface`).
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpcPathEntry {
+    pub destination: DestinationHash,
+    pub hops: u8,
+    pub via: NextHop,
+    pub learned_at: InstantMillis,
+    pub interface: InterfaceId,
 }
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data
@@ -1043,6 +1067,19 @@ impl<S: StorageLayout> EngineState<S> {
     fn run_rpc_query(&self, query: RpcQuery) -> RpcQueryResult {
         match query {
             RpcQuery::LinkCount => RpcQueryResult::LinkCount(self.links.len() as u32),
+            #[cfg(feature = "alloc")]
+            RpcQuery::PathTable => RpcQueryResult::PathTable(
+                self.routing_table
+                    .path_rows()
+                    .map(|(destination, entry)| RpcPathEntry {
+                        destination,
+                        hops: entry.hops,
+                        via: entry.next_hop,
+                        learned_at: entry.learned_at,
+                        interface: entry.receiving_interface,
+                    })
+                    .collect(),
+            ),
         }
     }
 
