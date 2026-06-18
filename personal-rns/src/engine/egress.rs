@@ -70,6 +70,22 @@ pub fn write_retransmitted_announce_wire_packet(
     )
 }
 
+pub fn write_relayed_path_response_wire_packet(
+    announce: &Announce,
+    hops: u8,
+    via: TransportId,
+    buf: &mut [u8],
+) -> Result<usize, EgressSerializeError> {
+    frame_announce_wire_packet(
+        announce,
+        hops,
+        PropagationType::Transport,
+        Some(via),
+        WireContext::PathResponse,
+        buf,
+    )
+}
+
 fn frame_announce_wire_packet(
     announce: &Announce,
     hops: u8,
@@ -254,6 +270,7 @@ pub enum EgressDirective<'a> {
         emit_hops: u8,
         via: TransportId,
         target: InterfaceId,
+        path_response: bool,
     },
 }
 
@@ -264,8 +281,15 @@ impl EgressDirective<'_> {
                 announce,
                 emit_hops,
                 via,
+                path_response,
                 ..
-            } => write_retransmitted_announce_wire_packet(announce, *emit_hops, *via, buf),
+            } => {
+                if *path_response {
+                    write_relayed_path_response_wire_packet(announce, *emit_hops, *via, buf)
+                } else {
+                    write_retransmitted_announce_wire_packet(announce, *emit_hops, *via, buf)
+                }
+            }
         }
     }
 
@@ -412,6 +436,7 @@ mod tests {
             emit_hops: orig_header.hops + 1,
             via: TEST_VIA,
             target: iface(0xAA),
+            path_response: false,
         };
 
         let mut buf = [0u8; 500];
@@ -423,6 +448,34 @@ mod tests {
         assert_eq!(parsed_header.destination_type, DestinationType::Single);
         assert_eq!(parsed_header.propagation, PropagationType::Transport);
         assert_eq!(parsed_header.transport_id, Some(TEST_VIA));
+        assert_eq!(parsed_header.hops, orig_header.hops + 1);
+        assert_eq!(parsed_header.destination, orig_header.destination);
+        assert_eq!(parsed_header.context, WireContext::None);
+        assert_eq!(parsed_payload, orig_payload);
+    }
+
+    #[test]
+    fn a_directed_path_response_reemit_carries_the_path_response_context() {
+        let raw = hx(RAW_ANNOUNCE);
+        let (orig_header, orig_payload) = WirePacketHeader::parse(&raw).unwrap();
+        let announce = Announce::from_wire(&orig_header, orig_payload).unwrap();
+
+        let directive = EgressDirective::ReemitAnnounce {
+            announce,
+            emit_hops: orig_header.hops + 1,
+            via: TEST_VIA,
+            target: iface(0xAA),
+            path_response: true,
+        };
+
+        let mut buf = [0u8; 500];
+        let n = directive.to_wire(&mut buf).unwrap();
+        let (parsed_header, parsed_payload) = WirePacketHeader::parse(&buf[..n]).unwrap();
+
+        assert_eq!(parsed_header.context, WireContext::PathResponse);
+        assert_eq!(parsed_header.propagation, PropagationType::Transport);
+        assert_eq!(parsed_header.transport_id, Some(TEST_VIA));
+        assert_eq!(parsed_header.packet_type, PacketType::Announce);
         assert_eq!(parsed_header.hops, orig_header.hops + 1);
         assert_eq!(parsed_header.destination, orig_header.destination);
         assert_eq!(parsed_payload, orig_payload);
@@ -439,6 +492,7 @@ mod tests {
             emit_hops: 1,
             via: TEST_VIA,
             target: iface(0xAB),
+            path_response: false,
         };
 
         let mut tiny_buf = [0u8; 8];
@@ -460,6 +514,7 @@ mod tests {
             emit_hops: 9,
             via: TEST_VIA,
             target: iface(0xAC),
+            path_response: false,
         };
 
         let mut exact_buf = std::vec![0u8; exact_len];
@@ -483,6 +538,7 @@ mod tests {
             emit_hops: header.hops + 9,
             via: TEST_VIA,
             target: iface(0xCD),
+            path_response: false,
         };
 
         assert_eq!(directive.target(), iface(0xCD));
@@ -500,6 +556,7 @@ mod tests {
             emit_hops: 5,
             via: TEST_VIA,
             target: iface(0x42),
+            path_response: false,
         };
 
         let mut buf = [0u8; 500];
@@ -579,6 +636,7 @@ mod kani_proofs {
             emit_hops,
             via,
             target,
+            path_response: false,
         };
 
         let mut buf = [0u8; EXACT_REEMIT_LEN];
@@ -607,6 +665,7 @@ mod kani_proofs {
             emit_hops: kani::any(),
             via: TransportId::new(kani::any()),
             target: InterfaceId::new(kani::any()),
+            path_response: false,
         };
 
         let mut buf = [0u8; EXACT_REEMIT_LEN - 1];

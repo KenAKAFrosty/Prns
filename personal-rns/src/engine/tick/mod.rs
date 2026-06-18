@@ -50,6 +50,7 @@ impl<S: StorageLayout> EngineState<S> {
                         emit_hops,
                         via,
                         target: descriptor.id,
+                        path_response: directed_to.is_some(),
                     })
             })
     }

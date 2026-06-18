@@ -1540,12 +1540,6 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.3.1 `Transport.path_request_handler`: we answer a request only for a
-    /// destination of our own or, as a transport node, a route we hold. We never
-    /// *forward* an unknown onward — that is opt-in recursive discovery (RNS
-    /// `DISCOVER_PATHS_FOR`), gated off and built later. Unlike the reference, we
-    /// also withhold a route we've marked unresponsive, so the requester hears a
-    /// live path from elsewhere instead of relearning the dead one.
     fn ingest_path_request<'p>(
         &mut self,
         data: &DataPacket<'_>,
@@ -2814,7 +2808,7 @@ mod tests {
     #[test]
     fn the_cache_answer_fires_to_the_requester_only_after_the_grace_deadline() {
         use crate::engine::{Directive, EngineReaction};
-        use crate::wire::PropagationType;
+        use crate::wire::{PropagationType, WireContext};
 
         let (mut relay, cached) = relay_holding_a_cached_route();
         let requester = iface(0xA1);
@@ -2869,6 +2863,12 @@ mod tests {
             header.propagation,
             PropagationType::Transport,
             "a transport retransmission of the cached announce, directed at the asker",
+        );
+        assert_eq!(
+            header.context,
+            WireContext::PathResponse,
+            "the directed answer is tagged PATH_RESPONSE so the requester takes it \
+             as a terminal path response instead of re-flooding it as a fresh announce",
         );
     }
 
