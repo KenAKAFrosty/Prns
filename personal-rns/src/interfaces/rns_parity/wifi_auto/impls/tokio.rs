@@ -149,7 +149,7 @@ impl AutoWifi {
     /// A clone of this supervisor's aggregate live-status handle: connection (Offline with no NIC,
     /// Dormant when up with no peers, Live with peers), summed traffic, and peer count, plus a
     /// snapshot of each member's own status through [`members`](AutoWifiStatus::members). Call before
-    /// [`supervise`](crate::runtime::PrnsHandle::supervise) consumes the supervisor.
+    /// [`supervise`](crate::runtime::TokioPrnsHandle::supervise) consumes the supervisor.
     #[must_use]
     pub fn status(&self) -> AutoWifiStatus {
         self.status.clone()
@@ -607,6 +607,19 @@ fn into_tokio(socket: Socket) -> io::Result<UdpSocket> {
 
 fn scoped(addr: Ipv6Addr, port: u16, index: u32) -> SocketAddr {
     SocketAddr::V6(SocketAddrV6::new(addr, port, 0, index))
+}
+
+impl crate::interfaces::ReportsStatus for AutoWifi {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status();
+        Some(std::sync::Arc::new(move || {
+            let mut snapshots = std::vec![crate::interfaces::InterfaceSnapshot::of(&status)];
+            for member in status.members() {
+                snapshots.push(crate::interfaces::InterfaceSnapshot::of(&member));
+            }
+            snapshots
+        }))
+    }
 }
 
 #[cfg(test)]

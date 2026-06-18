@@ -169,10 +169,18 @@ impl Interface for UdpInterface {
     }
 }
 
+impl crate::interfaces::ReportsStatus for UdpInterface {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reactor::grant::{GrantConsumer, GrantProducer};
     use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
     use std::time::Duration;
     use tokio::sync::mpsc::{self, UnboundedSender};

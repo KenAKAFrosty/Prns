@@ -52,6 +52,8 @@ impl InterfaceSupervisor for DialOnce {
     }
 }
 
+impl personal_rns::interfaces::ReportsStatus for DialOnce {}
+
 fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
         app_name: "bench",
@@ -184,6 +186,14 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         BITRATE,
         Duration::from_millis(100),
     ));
+
+    assert!(
+        commands_b
+            .interface_snapshots()
+            .iter()
+            .any(|snapshot| snapshot.id == attached.id()),
+        "the runtime tracks the attached interface's status centrally"
+    );
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));

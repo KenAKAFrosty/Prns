@@ -15,8 +15,8 @@ pub use recipe::{PreConfiguredDestination, PrnsRecipe};
 mod tokio_bind;
 #[cfg(feature = "tokio-host")]
 pub use tokio_bind::{
-    AttachedInterface, AttachedSupervisor, Fleet, InterfaceSupervisor, Prns, PrnsHandle,
-    ResourceReceipt, ResourceReceiveError, ResourceSendError,
+    AttachedInterface, AttachedSupervisor, Fleet, InterfaceSupervisor, Prns, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, TokioPrnsHandle,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -32,4 +32,4 @@ mod embassy_bind;
 #[cfg(all(feature = "embassy-contract", not(feature = "tokio-host")))]
 pub use embassy_bind::Prns;
 #[cfg(feature = "embassy-contract")]
-pub use embassy_bind::{CompletionPool, EmbassyCommands, Fleet, MemberWire, ReactorPlumbing};
+pub use embassy_bind::{CompletionPool, EmbassyPrnsHandle, Fleet, MemberWire, ReactorPlumbing};

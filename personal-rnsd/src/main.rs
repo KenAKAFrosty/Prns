@@ -34,7 +34,7 @@ use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsHandle, PrnsRecipe,
+    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, TokioPrnsHandle, PrnsRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
@@ -63,7 +63,7 @@ const DEFAULT_CONFIG: &str = "[reticulum]\n\
         type = AutoInterface\n\
         interface_enabled = Yes\n";
 
-async fn announce_loop(handle: PrnsHandle, destination: DestinationHash) {
+async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
     loop {
         interval.tick().await;

@@ -1,10 +1,10 @@
-//! The embassy command surface — the embedded twin of `PrnsHandle`, kept warm while the neutral
+//! The embassy command surface — the embedded twin of `TokioPrnsHandle`, kept warm while the neutral
 //! `Prns`/[`PrnsRecipe`](super::PrnsRecipe) entry point is dialed in on the tokio side. The
 //! embassy *runner* (the borrow-bundle that drove the reactor over `static` channels) is parked; what
 //! survives here are the two pieces an embedded node reattaches to once the neutral runner is ported:
 //! the handle and its completion store.
 //!
-//! The handle is [`EmbassyCommands`] — built over the command channel's `Sender` and a
+//! The handle is [`EmbassyPrnsHandle`] — built over the command channel's `Sender` and a
 //! [`CompletionPool`] the app provides as a `static` (the embedded stand-in for tokio's per-command
 //! oneshot, since no_std has no ownable completion to ride the command). The app keeps the `Sender`
 //! wrapped in the handle and holds the matching `Receiver` and the same pool borrow for the runner —
@@ -126,18 +126,18 @@ impl<M: RawMutex, const N: usize> CompletionPool<M, N> {
     }
 }
 
-/// The embassy command handle — the embedded twin of `PrnsHandle`. It
+/// The embassy command handle — the embedded twin of `TokioPrnsHandle`. It
 /// holds the command channel's [`Sender`] and a borrow of the app's [`CompletionPool`], and is
 /// `Copy`, so any task can drive the node through it. Every [`CommandId`] is minted from the pool's
 /// one counter, so the app never picks ids and a fire-and-forget [`issue`](Self::issue) can't
 /// collide with an awaited [`send_single`](Self::send_single).
-pub struct EmbassyCommands<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
+pub struct EmbassyPrnsHandle<'a, M: RawMutex, const COMMANDS: usize, const N: usize> {
     commands: Sender<'a, M, IssuedCommand, COMMANDS>,
     pool: &'a CompletionPool<M, N>,
 }
 
 impl<M: RawMutex, const COMMANDS: usize, const N: usize> Clone
-    for EmbassyCommands<'_, M, COMMANDS, N>
+    for EmbassyPrnsHandle<'_, M, COMMANDS, N>
 {
     fn clone(&self) -> Self {
         *self
@@ -145,11 +145,11 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> Clone
 }
 
 impl<M: RawMutex, const COMMANDS: usize, const N: usize> Copy
-    for EmbassyCommands<'_, M, COMMANDS, N>
+    for EmbassyPrnsHandle<'_, M, COMMANDS, N>
 {
 }
 
-impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a, M, COMMANDS, N> {
+impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'a, M, COMMANDS, N> {
     /// Pair the command channel's sender with the completion pool — the app holds both as `static`s
     /// and passes the matching [`CompletionPool`] reference to the runner too.
     #[must_use]
@@ -170,7 +170,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     }
 
     /// Send one Single data packet to `destination` and await its delivery proof — the embedded peer
-    /// of `PrnsHandle::send_single`. Claims a pool slot,
+    /// of `TokioPrnsHandle::send_single`. Claims a pool slot,
     /// parks on it until the engine settles, and frees the slot on every exit, cancellation
     /// included. `Err(SendError::Busy)` when more awaited sends are in flight than the pool's `N`.
     pub async fn send_single(
@@ -203,7 +203,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
     }
 
     /// One interface's live engine counts (destinations routed via it, links carried over it) — the
-    /// embedded peer of `PrnsHandle::interface_counts`. Claims a pool slot, parks until the engine
+    /// embedded peer of `TokioPrnsHandle::interface_counts`. Claims a pool slot, parks until the engine
     /// settles the synchronous query, frees the slot on every exit. `None` if no slot is free or the
     /// node has stopped.
     pub async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
@@ -238,7 +238,7 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyCommands<'a,
 
     /// Answer a request by moving a prebuilt [`RespondData`] in — the request runner's path, one copy
     /// fewer than [`respond`](Self::respond) since the handler already filled a `RespondData` grant.
-    /// Returns `false` once the command lane is full. The embedded twin of `PrnsHandle::respond_owned`.
+    /// Returns `false` once the command lane is full. The embedded twin of `TokioPrnsHandle::respond_owned`.
     pub fn respond_owned(&self, responder: RespondToken, data: RespondData) -> bool {
         self.issue(EngineCommand::Respond(Respond {
             link_id: responder.link_id,
@@ -270,7 +270,7 @@ impl<M: RawMutex, const N: usize> Drop for SlotGuard<'_, M, N> {
 }
 
 impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
-    for EmbassyCommands<'_, M, COMMANDS, N>
+    for EmbassyPrnsHandle<'_, M, COMMANDS, N>
 {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         self.issue(command)
@@ -318,7 +318,7 @@ pub struct ReactorPlumbing<
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
+    handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
 }
 
 impl<
@@ -342,7 +342,7 @@ impl<
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-        handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
+        handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
     ) -> Self {
         Self {
             inbound,
@@ -386,7 +386,7 @@ pub struct Prns<
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: EmbassyCommands<'static, M, COMMANDS, COMPLETIONS>,
+    handle: EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS>,
     host: H,
     initial: HeaplessVec<InterfaceConfig, MAX_IFACES>,
     state: St,
@@ -488,10 +488,10 @@ where
         }
     }
 
-    /// The command surface for this node — the embedded twin of `PrnsHandle`. `Copy`, so any task
+    /// The command surface for this node — the embedded twin of `TokioPrnsHandle`. `Copy`, so any task
     /// can drive the node through it while [`run`](Self::run) owns the loop.
     #[must_use]
-    pub fn handle(&self) -> EmbassyCommands<'static, M, COMMANDS, COMPLETIONS> {
+    pub fn handle(&self) -> EmbassyPrnsHandle<'static, M, COMMANDS, COMPLETIONS> {
         self.handle
     }
 
@@ -854,7 +854,7 @@ mod tests {
         > = HeaplessVec::new();
         let _ = egress_lanes.push((free, out_producer));
 
-        let handle = EmbassyCommands::new(commands.sender(), completion);
+        let handle = EmbassyPrnsHandle::new(commands.sender(), completion);
         let plumbing = ReactorPlumbing::new(
             inbound,
             PooledEgress::new(egress_lanes),

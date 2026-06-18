@@ -398,6 +398,15 @@ where
     Ok(())
 }
 
+impl<Scan, Open> crate::interfaces::ReportsStatus for UsbAutoHost<Scan, Open> {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

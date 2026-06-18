@@ -1,8 +1,8 @@
 //! Stand up a [`DaemonPlan`]'s interfaces on a running node and report what was not applied.
 //!
 //! Each [`PlannedMedium`] maps to its host constructor: a supervisor (`AutoWifi`) goes through
-//! [`PrnsHandle::supervise`], a one-to-one wire (TCP, UDP, serial) through
-//! [`PrnsHandle::add_interface`]. The `.status()` handle of every interface is collected into the
+//! [`TokioPrnsHandle::supervise`], a one-to-one wire (TCP, UDP, serial) through
+//! [`TokioPrnsHandle::add_interface`]. The `.status()` handle of every interface is collected into the
 //! [`InterfaceViews`] the control-RPC shim reads, so a stock client's `rnstatus` sees the live
 //! fleet. Settings the plan parsed but a host constructor cannot yet honor, and interfaces the plan
 //! could not stand up, are logged rather than dropped silently.
@@ -18,7 +18,7 @@ use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
-use personal_rns::runtime::PrnsHandle;
+use personal_rns::runtime::TokioPrnsHandle;
 use personal_rns_config::{
     DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting,
 };
@@ -57,7 +57,7 @@ impl InterfaceViews {
 
 /// Stand up every planned interface on `handle`, returning their status handles. Deferred
 /// interfaces and unapplied settings are logged as they are encountered.
-pub async fn construct_interfaces(handle: &PrnsHandle, plan: &DaemonPlan) -> InterfaceViews {
+pub async fn construct_interfaces(handle: &TokioPrnsHandle, plan: &DaemonPlan) -> InterfaceViews {
     let mut views = InterfaceViews::default();
     for interface in &plan.interfaces {
         stand_up(handle, interface, &mut views).await;
@@ -67,7 +67,7 @@ pub async fn construct_interfaces(handle: &PrnsHandle, plan: &DaemonPlan) -> Int
     views
 }
 
-async fn stand_up(handle: &PrnsHandle, interface: &PlannedInterface, views: &mut InterfaceViews) {
+async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface, views: &mut InterfaceViews) {
     let name = &interface.name;
     match &interface.medium {
         PlannedMedium::AutoWifi { .. } => {

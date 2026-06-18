@@ -16,7 +16,7 @@ use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsHandle, PrnsRecipe};
+use personal_rns::runtime::{PreConfiguredDestination, Prns, TokioPrnsHandle, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
@@ -186,7 +186,7 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge) {
 
 /// The face's announce cadence: the engine does not originate announces, so the app fires a
 /// scheduled `lxmf.delivery` announce on its own timer. The handle mints the command id.
-async fn announce_loop(handle: PrnsHandle, destination: DestinationHash) {
+async fn announce_loop(handle: TokioPrnsHandle, destination: DestinationHash) {
     let mut interval = tokio::time::interval(ANNOUNCE_INTERVAL);
     loop {
         interval.tick().await;

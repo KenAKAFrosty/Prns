@@ -72,6 +72,25 @@ impl InterfaceSnapshot {
     }
 }
 
+/// A live view of an interface's status, yielding current [`InterfaceSnapshot`]s on each call. A
+/// one-to-one wire yields one; a supervisor yields its own plus one per live fleet member. It is a
+/// closure over the interface's cheap-clone status handle, so it outlives the interface the runtime
+/// consumed when it attached it.
+#[cfg(feature = "tokio-host")]
+pub type StatusView = std::sync::Arc<dyn Fn() -> std::vec::Vec<InterfaceSnapshot> + Send + Sync>;
+
+/// What a host interface (or supervisor) hands the runtime so it can track interface status
+/// centrally: a [`StatusView`] over its own status handle, or `None` for a type that owns no live
+/// status (a bare supervisor like the local-instance server). The runtime stores one per interface
+/// attached through the handle, so a capability such as the shared-instance control RPC reads the
+/// whole fleet without the app collecting status handles by hand.
+#[cfg(feature = "tokio-host")]
+pub trait ReportsStatus {
+    fn status_view(&self) -> Option<StatusView> {
+        None
+    }
+}
+
 /// Read a status through a shared reference, so a renderer can feed `&[&Status]` to the
 /// card builder when the handle itself can't be cloned (the no_std `&'static` handle a board
 /// shares between its interface and display tasks), not only the std `Arc`-clone case.

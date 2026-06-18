@@ -45,7 +45,7 @@ use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsHandle, PrnsRecipe,
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, TokioPrnsHandle, PrnsRecipe,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
@@ -148,7 +148,7 @@ fn interface_snapshots(
 /// supervisor's aggregate, the latter also yielding a card per peer), and the destination its
 /// announces name. The node owns everything else.
 struct WindowHandles {
-    handle: PrnsHandle,
+    handle: TokioPrnsHandle,
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     tcp_status: Option<TokioInterfaceStatus>,

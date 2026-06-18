@@ -3,7 +3,7 @@ use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -17,7 +17,9 @@ use crate::engine::{
 };
 #[cfg(feature = "local")]
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
+use crate::interfaces::{
+    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceSnapshot, ReportsStatus, StatusView,
+};
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
     RequestAnyHostCommand, ResourceInbound, RespondAnyHostCommand, SendResourceSegmentHostCommand,
@@ -57,14 +59,15 @@ fn lane_depth_for(_slot_cap: usize) -> usize {
 /// Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can
 /// never collide with an awaited [`send_single`](Self::send_single) or a runner's respond.
 #[derive(Clone)]
-pub struct PrnsHandle {
+pub struct TokioPrnsHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
     notify_tx: UnboundedSender<InterfaceId>,
     iface_build: UnboundedSender<DriverMsg>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
 }
 
-/// Why a [`send_resource`](PrnsHandle::send_resource) stream did not complete.
+/// Why a [`send_resource`](TokioPrnsHandle::send_resource) stream did not complete.
 #[derive(Debug)]
 pub enum ResourceSendError {
     /// Reading `source` failed before the whole resource was sent.
@@ -75,7 +78,7 @@ pub enum ResourceSendError {
     NodeStopped,
 }
 
-/// What a completed [`receive_resource`](PrnsHandle::receive_resource) yields: the assembled
+/// What a completed [`receive_resource`](TokioPrnsHandle::receive_resource) yields: the assembled
 /// resource's identity and total size. The bytes themselves were streamed to the caller's sink.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceReceipt {
@@ -83,7 +86,7 @@ pub struct ResourceReceipt {
     pub total_size: u64,
 }
 
-/// Why a [`receive_resource`](PrnsHandle::receive_resource) stream did not complete.
+/// Why a [`receive_resource`](TokioPrnsHandle::receive_resource) stream did not complete.
 #[derive(Debug)]
 pub enum ResourceReceiveError {
     /// Writing to `sink` failed before the whole resource arrived.
@@ -94,7 +97,7 @@ pub enum ResourceReceiveError {
     NodeStopped,
 }
 
-impl PrnsHandle {
+impl TokioPrnsHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
         let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
@@ -104,6 +107,7 @@ impl PrnsHandle {
             ids: Arc::new(AtomicU64::new(0)),
             notify_tx,
             iface_build,
+            interfaces: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -387,15 +391,36 @@ impl PrnsHandle {
     /// reactor only learns the `Send` lane halves, so it stays `Send` and spawnable.
     pub fn add_interface<I>(&self, interface: I) -> AttachedInterface
     where
-        I: Interface + Send + 'static,
+        I: Interface + ReportsStatus + Send + 'static,
     {
-        attach_interface(
+        let view = interface.status_view();
+        let attached = attach_interface(
             &self.commands,
             &self.iface_build,
             &self.notify_tx,
             interface,
             None,
-        )
+        );
+        self.register_status(attached.id(), view);
+        attached
+    }
+
+    fn register_status(&self, id: InterfaceId, view: Option<StatusView>) {
+        if let (Some(view), Ok(mut map)) = (view, self.interfaces.lock()) {
+            map.insert(id, view);
+        }
+    }
+
+    /// A snapshot of every interface attached through this handle, each interface's live view read at
+    /// call time: one per one-to-one wire, and for a supervisor its own plus one per live fleet
+    /// member. This is the whole fleet a capability like the shared-instance control RPC renders, with
+    /// no app-side bookkeeping of status handles — the runtime tracked them as they were attached.
+    #[must_use]
+    pub fn interface_snapshots(&self) -> std::vec::Vec<InterfaceSnapshot> {
+        match self.interfaces.lock() {
+            Ok(map) => map.values().flat_map(|view| view()).collect(),
+            Err(_) => std::vec::Vec::new(),
+        }
     }
 
     /// Attach an interface supervisor: a node that owns no wire of its own, but runs a discovery loop
@@ -406,9 +431,10 @@ impl PrnsHandle {
     /// [`AttachedSupervisor`], not an [`AttachedInterface`], because a supervisor is not a wire.
     pub fn supervise<S>(&self, supervisor: S) -> AttachedSupervisor
     where
-        S: InterfaceSupervisor + Send + 'static,
+        S: InterfaceSupervisor + ReportsStatus + Send + 'static,
     {
         let id = InterfaceId::from_reachability_tag(S::KIND, supervisor.reachability_tag());
+        let view = supervisor.status_view();
         let fleet = Fleet {
             supervisor_id: id,
             commands: self.commands.clone(),
@@ -422,6 +448,7 @@ impl PrnsHandle {
             supervisor: None,
             build,
         });
+        self.register_status(id, view);
         AttachedSupervisor {
             id,
             iface_build: self.iface_build.clone(),
@@ -440,7 +467,7 @@ impl PrnsHandle {
 /// The node handle answers the shared-instance control RPC's read-only queries by demuxing each onto
 /// the command lane and awaiting its settlement — the same `settle` path the diagnostic counts use.
 #[cfg(feature = "local")]
-impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for PrnsHandle {
+impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for TokioPrnsHandle {
     async fn link_count(&self) -> u32 {
         match self
             .settle(EngineCommand::RpcQuery(RpcQuery::LinkCount))
@@ -472,7 +499,7 @@ impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for
     }
 }
 
-impl super::PrnsApi for PrnsHandle {
+impl super::PrnsApi for TokioPrnsHandle {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         self.issue(command)
     }
@@ -498,9 +525,9 @@ impl super::PrnsApi for PrnsHandle {
     }
 }
 
-/// A handle to one interface attached at runtime through [`PrnsHandle::add_interface`]: its minted
+/// A handle to one interface attached at runtime through [`TokioPrnsHandle::add_interface`]: its minted
 /// id, and the lever to detach it. Dropping the handle leaves the interface running; only
-/// [`teardown`](Self::teardown) (or [`PrnsHandle::remove_interface`]) takes it down.
+/// [`teardown`](Self::teardown) (or [`TokioPrnsHandle::remove_interface`]) takes it down.
 pub struct AttachedInterface {
     id: InterfaceId,
     commands: UnboundedSender<HostCommand>,
@@ -523,7 +550,7 @@ impl AttachedInterface {
     }
 }
 
-/// A handle to a supervisor attached through [`PrnsHandle::supervise`]: its minted id, and the lever
+/// A handle to a supervisor attached through [`TokioPrnsHandle::supervise`]: its minted id, and the lever
 /// to detach it. A supervisor owns no reactor lanes of its own, so tearing it down is a single stop
 /// on the driver, which both ends its discovery loop and cascades to deregister every member of its
 /// fleet. Dropping the handle leaves the supervisor running.
@@ -548,7 +575,7 @@ impl AttachedSupervisor {
 /// Wire one interface onto the running node: build its grant lanes + seam, hand the reactor the
 /// `Send` lane halves, and hand the driver the `Send` builder that mints its run future. `supervisor`
 /// records it as a fleet member so the driver cascades teardown. Shared by
-/// [`PrnsHandle::add_interface`] (no supervisor) and [`Fleet::add`] (this supervisor's id).
+/// [`TokioPrnsHandle::add_interface`] (no supervisor) and [`Fleet::add`] (this supervisor's id).
 fn attach_interface<I>(
     commands: &UnboundedSender<HostCommand>,
     iface_build: &UnboundedSender<DriverMsg>,
@@ -585,7 +612,7 @@ where
     }
 }
 
-/// A supervisor's lever to stand up fleet members, handed to it by [`PrnsHandle::supervise`]. Each
+/// A supervisor's lever to stand up fleet members, handed to it by [`TokioPrnsHandle::supervise`]. Each
 /// [`add`](Self::add) registers a flat engine interface (its own minted id) recorded as this
 /// supervisor's member; the supervisor typically holds the returned [`AttachedInterface`] so it can
 /// detach that one member when its link drops.
@@ -597,7 +624,7 @@ pub struct Fleet {
 }
 
 impl Fleet {
-    /// Stand up a fleet member under this supervisor — identical to [`PrnsHandle::add_interface`]
+    /// Stand up a fleet member under this supervisor — identical to [`TokioPrnsHandle::add_interface`]
     /// except the member is recorded as this supervisor's, so a supervisor teardown takes it with it.
     pub fn add<I>(&self, interface: I) -> AttachedInterface
     where
@@ -615,7 +642,7 @@ impl Fleet {
 
 /// An interface supervisor: a node that owns no wire of its own, but runs a discovery loop and
 /// stands up a fleet member (a real interface) per validated connection through the [`Fleet`] handle
-/// it is given. Attached with [`PrnsHandle::supervise`] (e.g. the WiFi/LAN auto-interface: multicast
+/// it is given. Attached with [`TokioPrnsHandle::supervise`] (e.g. the WiFi/LAN auto-interface: multicast
 /// discovery plus a peering ack, then a unicast member per confirmed peer).
 #[allow(async_fn_in_trait)]
 pub trait InterfaceSupervisor {
@@ -646,11 +673,12 @@ enum DriverMsg {
 
 /// Drive every interface run future — the recipe's initial set, plus any added through the handle
 /// at runtime — on the `run` task. Each runtime-added interface is wrapped with a stop signal so
-/// [`PrnsHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
+/// [`TokioPrnsHandle::remove_interface`] can drop it mid-flight; the initial set runs for the node's life.
 async fn drive_interfaces(
     initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     mut messages: UnboundedReceiver<DriverMsg>,
     commands: UnboundedSender<HostCommand>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
 ) {
     let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>> = initial
         .into_iter()
@@ -690,6 +718,7 @@ async fn drive_interfaces(
                 Some(DriverMsg::Stop { id }) => {
                     stop_interface(&mut stops, id);
                     supervisor_of.remove(&id);
+                    forget_status(&interfaces, id);
                     let cascaded: std::vec::Vec<InterfaceId> = supervisor_of
                         .iter()
                         .filter(|(_, supervisor_id)| **supervisor_id == id)
@@ -712,11 +741,18 @@ async fn drive_interfaces(
                 if let Some(Some(id)) = done {
                     if stops.remove(&id).is_some() {
                         supervisor_of.remove(&id);
+                        forget_status(&interfaces, id);
                         let _ = commands.send(HostCommand::RemoveInterface { id });
                     }
                 }
             }
         }
+    }
+}
+
+fn forget_status(interfaces: &Arc<Mutex<HashMap<InterfaceId, StatusView>>>, id: InterfaceId) {
+    if let Ok(mut map) = interfaces.lock() {
+        map.remove(&id);
     }
 }
 
@@ -755,7 +791,7 @@ impl InterfaceAttach for TokioAttach {
 /// [`run`](Self::run) (the reactor + the request runner, joined). Hold [`handle`](Self::handle)
 /// clones to drive it from other tasks/threads while `run` owns the loop.
 pub struct Prns<St, R, F, S: StorageLayout> {
-    handle: PrnsHandle,
+    handle: TokioPrnsHandle,
     host: TokioHost,
     engine: EngineState<S>,
     interfaces: std::vec::Vec<InterfaceConfig>,
@@ -787,11 +823,12 @@ where
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-        let handle = PrnsHandle {
+        let handle = TokioPrnsHandle {
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
             notify_tx: notify_tx.clone(),
             iface_build: iface_build_tx,
+            interfaces: Arc::new(Mutex::new(HashMap::new())),
         };
 
         let mut engine = EngineState::<S>::default();
@@ -864,7 +901,7 @@ where
     /// A `Send + Clone` handle for other tasks/threads to drive the node while [`run`](Self::run)
     /// owns the loop.
     #[must_use]
-    pub fn handle(&self) -> PrnsHandle {
+    pub fn handle(&self) -> TokioPrnsHandle {
         self.handle.clone()
     }
 
@@ -950,10 +987,16 @@ where
             },
         );
         let driver_commands = handle.commands.clone();
+        let driver_interfaces = handle.interfaces.clone();
         tokio::join!(
             reactor,
             run_router::<St, R>(&state, req_rx, handle),
-            drive_interfaces(iface_runs, iface_build_rx, driver_commands),
+            drive_interfaces(
+                iface_runs,
+                iface_build_rx,
+                driver_commands,
+                driver_interfaces
+            ),
         );
     }
 }
@@ -965,9 +1008,9 @@ mod tests {
 
     const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
-    fn handle() -> (PrnsHandle, UnboundedReceiver<HostCommand>) {
+    fn handle() -> (TokioPrnsHandle, UnboundedReceiver<HostCommand>) {
         let (commands, command_rx) = mpsc::unbounded_channel();
-        (PrnsHandle::over(commands), command_rx)
+        (TokioPrnsHandle::over(commands), command_rx)
     }
 
     #[tokio::test]
@@ -1038,16 +1081,21 @@ mod tests {
         // cull is done, so the `join!` below terminates.
         drop(msg_tx);
 
-        tokio::join!(drive_interfaces(std::vec![], msg_rx, cmd_tx), async {
-            let command = tokio::time::timeout(std::time::Duration::from_secs(1), cmd_rx.recv())
-                .await
-                .expect("the driver culls the completed interface within 1s")
-                .expect("the command channel stays open");
-            assert!(
-                matches!(command, HostCommand::RemoveInterface { id: removed } if removed == id),
-                "an interface whose run ended on its own deregisters itself"
-            );
-        });
+        let interfaces = Arc::new(Mutex::new(HashMap::new()));
+        tokio::join!(
+            drive_interfaces(std::vec![], msg_rx, cmd_tx, interfaces),
+            async {
+                let command =
+                    tokio::time::timeout(std::time::Duration::from_secs(1), cmd_rx.recv())
+                        .await
+                        .expect("the driver culls the completed interface within 1s")
+                        .expect("the command channel stays open");
+                assert!(
+                    matches!(command, HostCommand::RemoveInterface { id: removed } if removed == id),
+                    "an interface whose run ended on its own deregisters itself"
+                );
+            }
+        );
     }
 
     #[tokio::test]

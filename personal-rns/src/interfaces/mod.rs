@@ -36,5 +36,7 @@ pub use config::{
 };
 pub use packet::{InboundPacket, OutboundPacket};
 pub use status::{AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, TransferRates};
+#[cfg(feature = "tokio-host")]
+pub use status::{ReportsStatus, StatusView};
 
 pub use framing::rns_serial_framing;

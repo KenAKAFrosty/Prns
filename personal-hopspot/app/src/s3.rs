@@ -62,7 +62,7 @@ use personal_rns::reactor::impls::embassy_reactor::{
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    CompletionPool, EmbassyCommands, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent,
+    CompletionPool, EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent,
     PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::wire::TransportId;
@@ -165,7 +165,7 @@ type ReactorEgressLanes = HVec<
     ),
     IFACES,
 >;
-type Handle = EmbassyCommands<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
+type Handle = EmbassyPrnsHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 /// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument — which
 /// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
 type S3Node = Prns<
@@ -350,7 +350,7 @@ pub async fn run(spawner: Spawner) {
     let tcp_status = tcp_built.as_ref().map(|(_, status, _)| *status);
     let tcp_id = tcp_built.as_ref().map(|(_, _, id)| *id);
 
-    let handle: Handle = EmbassyCommands::new(COMMANDS.sender(), &COMPLETION);
+    let handle: Handle = EmbassyPrnsHandle::new(COMMANDS.sender(), &COMPLETION);
     let plumbing = ReactorPlumbing::new(
         inbound,
         PooledEgress::new(egress_lanes),

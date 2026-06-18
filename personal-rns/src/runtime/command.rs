@@ -23,8 +23,8 @@ pub enum SendError<F> {
     Failed(F),
 }
 
-/// The high-level node API every platform's handle presents — `PrnsHandle` over an unbounded channel
-/// and a oneshot, `EmbassyCommands` over a bounded channel and a static completion pool — the same
+/// The high-level node API every platform's handle presents — `TokioPrnsHandle` over an unbounded channel
+/// and a oneshot, `EmbassyPrnsHandle` over a bounded channel and a static completion pool — the same
 /// verbs either way, so engine logic ports between a desktop and a board by recompiling, not
 /// rewriting. Each verb is the same command-roundtrip both runtimes already run: [`issue`](Self::issue)
 /// mints a [`CommandId`] and returns at once; an awaiting verb issues and then `.await`s the

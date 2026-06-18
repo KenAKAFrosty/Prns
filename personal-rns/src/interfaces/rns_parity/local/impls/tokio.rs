@@ -226,6 +226,8 @@ impl InterfaceSupervisor for LocalServer {
     }
 }
 
+impl crate::interfaces::ReportsStatus for LocalServer {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

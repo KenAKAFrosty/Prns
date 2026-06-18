@@ -36,7 +36,7 @@ use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsHandle, PrnsRecipe,
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, TokioPrnsHandle, PrnsRecipe,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
@@ -594,7 +594,7 @@ async fn scenario_main() {
 /// out are all assembled by the runtime; this end keeps only what is genuinely the app's — the
 /// destination's address (to announce itself), the command handle, and the event stream. Because
 /// `Prns::run` owns the reactor and is `!Send`, it is driven on this task in a `select!` against the
-/// role's own firehose loop, which speaks to the node through the cloned [`PrnsHandle`] handle.
+/// role's own firehose loop, which speaks to the node through the cloned [`TokioPrnsHandle`] handle.
 ///
 /// `Prns::new` stands the engine up on `GrowableHeap`; the `fixed-storage` (`Esp32S3`) residence is
 /// not yet a `Prns` knob, so the firehose endpoints always measure heap storage. The hand-rolled
@@ -827,7 +827,7 @@ where
 async fn respond(
     destination: DestinationHash,
     announce_every: Duration,
-    commands: &PrnsHandle,
+    commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut announce = tokio::time::interval(announce_every);
@@ -876,7 +876,7 @@ async fn respond(
 async fn initiate(
     profile: &Profile,
     duration: Duration,
-    commands: &PrnsHandle,
+    commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -976,7 +976,7 @@ async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
     initiator_count: usize,
-    commands: &PrnsHandle,
+    commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut links_up = 0usize;
@@ -1031,7 +1031,7 @@ async fn respond_link(
 async fn initiate_link(
     profile: &Profile,
     duration: Duration,
-    commands: &PrnsHandle,
+    commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -1157,7 +1157,7 @@ async fn initiate_link(
 async fn initiate_channel(
     profile: &Profile,
     duration: Duration,
-    commands: &PrnsHandle,
+    commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let destination = loop {
@@ -1395,7 +1395,7 @@ async fn initiate_resource(
         let transfer_started = tokio::time::Instant::now();
         sent += 1;
         // One logical resource of `len` bytes, sent as MAX_EFFICIENT_SIZE segments — the
-        // host half of PrnsHandle::send_resource, awaiting each segment's proof before the
+        // host half of TokioPrnsHandle::send_resource, awaiting each segment's proof before the
         // next so the engine holds one segment at a time. A payload at or under one segment
         // is a single unsplit transfer.
         let total_segments = (len as u64).div_ceil(MAX_EFFICIENT_SIZE as u64).max(1);

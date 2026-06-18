@@ -450,9 +450,9 @@ pub enum HostCommand {
     /// An engine command whose settlement a caller is awaiting: the `completion` rides the command
     /// to the single reactor task, which stashes it keyed by `issued.id` and fires it when the
     /// matching `CommandSettled` is journaled — so the await-correlation registry has one owner and
-    /// needs no lock. This is the verb [`PrnsHandle::send_single`] issues.
+    /// needs no lock. This is the verb [`TokioPrnsHandle::send_single`] issues.
     ///
-    /// [`PrnsHandle::send_single`]: crate::runtime::PrnsHandle::send_single
+    /// [`TokioPrnsHandle::send_single`]: crate::runtime::TokioPrnsHandle::send_single
     AwaitedEngine {
         issued: IssuedCommand,
         completion: oneshot::Sender<Settlement>,
