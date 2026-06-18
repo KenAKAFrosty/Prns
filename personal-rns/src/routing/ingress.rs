@@ -526,6 +526,16 @@ fn path_response_grace_ms(source_interface: InterfaceId, view: &[InterfaceConfig
     }
 }
 
+fn request_echoes_into_its_own_roaming_segment(
+    route_learned_on: InterfaceId,
+    source_interface: InterfaceId,
+    view: &[InterfaceConfig],
+) -> bool {
+    route_learned_on == source_interface
+        && iface_config(view, source_interface)
+            .is_some_and(|config| config.mode == InterfaceMode::Roaming)
+}
+
 impl<S: StorageLayout> EngineState<S> {
     #[must_use]
     pub fn ingest_packet<'p>(
@@ -1614,6 +1624,14 @@ impl<S: StorageLayout> EngineState<S> {
             }
             return outcome;
         };
+
+        if request_echoes_into_its_own_roaming_segment(
+            route.receiving_interface,
+            source_interface,
+            view,
+        ) {
+            return IngestPacketOutcome::Ignored;
+        }
 
         // A held route whose next hop is the requester itself is suppressed, not
         // discovered onward — we already know the way, it just loops back.
@@ -2773,6 +2791,53 @@ mod tests {
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().due_at,
             InstantMillis(1_000 + PATH_REQUEST_GRACE_MS + PATH_REQUEST_ROAMING_GRACE_MS),
+        );
+    }
+
+    #[test]
+    fn a_path_request_on_the_roaming_interface_the_route_lives_on_is_not_answered() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let learned_on = iface(0xB2);
+        let roaming_view = [discovering_descriptor(learned_on, InterfaceMode::Roaming)];
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: learned_on,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &roaming_view,
+            ),
+            IngestPacketOutcome::Ignored,
+            "a roaming interface does not answer for a route that lives on it",
+        );
+        assert_eq!(
+            relay.scheduled_announces.iter().next().unwrap().directed_to,
+            None,
+            "the suppressed request scheduled no directed answer; the flood rebroadcast stands",
+        );
+    }
+
+    #[test]
+    fn the_same_interface_answers_when_it_is_not_in_roaming_mode() {
+        let (mut relay, cached) = relay_holding_a_cached_route();
+        let learned_on = iface(0xB2);
+        let full_view = [routable_descriptor(learned_on)];
+        let mut wire = path_request_wire(cached);
+        assert_eq!(
+            relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: InstantMillis(1_000),
+                    source_interface: learned_on,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &full_view,
+            ),
+            IngestPacketOutcome::ScheduledPathResponse { destination: cached },
+            "the same-interface suppression is roaming-only; a Full interface still answers",
         );
     }
 
