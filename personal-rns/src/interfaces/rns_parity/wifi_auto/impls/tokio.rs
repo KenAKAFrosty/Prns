@@ -131,10 +131,10 @@ pub struct AutoWifi {
 impl AutoWifi {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_bitrate(core::WIFI_BITRATE_GUESS_BPS)
+        Self::with_bitrate(core::WIFI_LAN_BITRATE_BPS)
     }
 
-    /// Declare a known pipe instead of RNS's 10 Mbps guess; sets the members' announce pacing.
+    /// Declare a known pipe instead of the default wifi LAN bitrate; sets the members' announce pacing.
     #[must_use]
     pub fn with_bitrate(bitrate_bps: u32) -> Self {
         Self {

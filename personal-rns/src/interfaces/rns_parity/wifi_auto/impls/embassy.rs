@@ -230,7 +230,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     }
 
     /// Build the supervisor over the board's stack, sockets, and WiFi MAC, reporting into `shared`.
-    /// Uses RNS's 10 Mbps bitrate guess for the members' announce pacing.
+    /// Clamps the wifi LAN pipe to the board's 2.4 GHz radio ceiling for the members' announce pacing.
     #[must_use]
     pub fn new(
         stack: Stack<'a>,
@@ -245,7 +245,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             data,
             brain: core::AutoInterfaceProtocol::new(MacAddress::new(mac)),
             status: AutoWifiStatus::new(shared),
-            bitrate_bps: core::WIFI_BITRATE_GUESS_BPS,
+            bitrate_bps: core::WIFI_LAN_BITRATE_BPS.min(core::WIFI_EMBEDDED_BITRATE_CEILING_BPS),
         }
     }
 

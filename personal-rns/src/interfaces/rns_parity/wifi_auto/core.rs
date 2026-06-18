@@ -48,6 +48,18 @@ pub const PEERING_TIMEOUT_MS: u64 = 22_000;
 /// [`AutoInterface.py` L70](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L70)).
 pub const WIFI_BITRATE_GUESS_BPS: u32 = 10_000_000;
 
+/// What this stack declares for a real wifi LAN pipe: 500 Mbps, true to form for a modern 802.11
+/// LAN's usable throughput and far less conservative than RNS's 10 Mbps AutoInterface guess. The pipe
+/// sets only a member's announce pacing and airtime accounting — the wifi MTU is the fixed
+/// [`HARDWARE_MTU`], not bitrate-derived — so an honest figure just keeps pacing realistic.
+pub const WIFI_LAN_BITRATE_BPS: u32 = 500_000_000;
+
+/// The ceiling an embedded 2.4 GHz radio clamps the LAN pipe to: a single-stream 802.11n part (an
+/// ESP32-S3, say) tops out around 125 Mbps, well under a host's wired-backed wifi. An embedded impl
+/// declares `WIFI_LAN_BITRATE_BPS.min(WIFI_EMBEDDED_BITRATE_CEILING_BPS)` so its pacing and airtime
+/// reflect the radio it actually has, not a host's pipe.
+pub const WIFI_EMBEDDED_BITRATE_CEILING_BPS: u32 = 125_000_000;
+
 /// The hardware MTU a per-peer member declares. RNS pins the AutoInterface at a fixed
 /// [`HARDWARE_MTU`] (`FIXED_MTU = True`,
 /// [`AutoInterface.py` L44-L45](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L44-L45)),
