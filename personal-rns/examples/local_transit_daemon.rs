@@ -15,6 +15,7 @@ use std::string::String;
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::tcp::impls::tokio::TcpClientInterface;
 use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
@@ -32,6 +33,18 @@ fn hex16(bytes: &[u8]) -> String {
     rendered
 }
 
+fn decode_key(hex: &str) -> Option<[u8; 32]> {
+    let trimmed = hex.trim();
+    if trimmed.len() != 64 {
+        return None;
+    }
+    let mut key = [0u8; 32];
+    for (i, slot) in key.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&trimmed[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(key)
+}
+
 #[tokio::main]
 async fn main() {
     let local_port: u16 = std::env::var("PRNS_LOCAL_PORT")
@@ -39,6 +52,14 @@ async fn main() {
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(37428);
     let peer_addr = std::env::var("PRNS_PEER_ADDR").expect("PRNS_PEER_ADDR (host:port) is set");
+    let rpc_port: u16 = std::env::var("PRNS_RPC_PORT")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(local_port + 1);
+    let rpc_key: [u8; 32] = std::env::var("PRNS_RPC_KEY")
+        .ok()
+        .and_then(|hex| decode_key(&hex))
+        .unwrap_or([0x5a; 32]);
 
     let secret = Zeroizing::new([0xD1u8; IDENTITY_SECRET_KEY_LEN]);
     let transport_id = {
@@ -77,6 +98,10 @@ async fn main() {
         Duration::from_millis(250),
     ));
 
-    println!("READY bridge local=127.0.0.1:{local_port} peer={peer_addr}");
+    // The control-RPC compatibility shim: stock RNS clients fetch per-packet phy stats over this
+    // channel during attachment (resource) delivery, and fault if nobody answers.
+    tokio::spawn(SharedInstanceRpcCompat::tcp(rpc_key, rpc_port).run());
+
+    println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
     node.run().await;
 }

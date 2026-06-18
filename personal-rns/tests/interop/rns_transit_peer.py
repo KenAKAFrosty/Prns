@@ -89,6 +89,7 @@ def main() -> int:
 
     def link_established(link):
         print("LINK_IN", flush=True)
+        link.track_phy_stats(True)
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(resource_concluded)
 

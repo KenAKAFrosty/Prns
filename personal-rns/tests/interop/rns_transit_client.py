@@ -29,6 +29,7 @@ CONFIG = f"""[reticulum]
   shared_instance_type = tcp
   shared_instance_port = {LOCAL_PORT}
   instance_control_port = {LOCAL_PORT + 1}
+  rpc_key = 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
   panic_on_interface_error = No
 
 [logging]
@@ -84,6 +85,7 @@ def main() -> int:
 
     def link_established(link):
         print("LINK_IN", flush=True)
+        link.track_phy_stats(True)
         link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
         link.set_resource_concluded_callback(resource_concluded)
 
