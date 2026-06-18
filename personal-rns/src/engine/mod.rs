@@ -80,6 +80,7 @@ use crate::routing::links::resources::table::{IncomingResources, OutgoingResourc
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::discovery::DiscoveryPathRequests;
+use crate::routing::path_requests::interface_path_request_limit::InterfacePathRequestLimits;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::recent::RecentPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
@@ -219,6 +220,8 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) recent_path_requests: RecentPathRequests<S::RecentPathRequests>,
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
     pub(crate) discovery_path_requests: DiscoveryPathRequests<S::DiscoveryPathRequests>,
+    pub(crate) interface_path_request_limits:
+        InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
     pub(crate) announce_rates: AnnounceRates<S::AnnounceRates>,
     pub(crate) group_keys: GroupKeys<S::GroupKeys>,
     pub(crate) request_handlers: RequestHandlers<S::RequestHandlers>,
@@ -249,6 +252,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             recent_path_requests: RecentPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
             discovery_path_requests: DiscoveryPathRequests::default(),
+            interface_path_request_limits: InterfacePathRequestLimits::default(),
             announce_rates: AnnounceRates::default(),
             group_keys: GroupKeys::default(),
             request_handlers: RequestHandlers::default(),

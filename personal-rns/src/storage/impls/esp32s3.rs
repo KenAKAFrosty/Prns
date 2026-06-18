@@ -25,6 +25,7 @@ use crate::routing::links::resources::table::{
 use crate::routing::links::table::FixedLinkColumns;
 use crate::routing::links::transported::FixedTransportedLinkColumns;
 use crate::routing::path_requests::discovery::FixedDiscoveryPathRequestColumns;
+use crate::routing::path_requests::interface_path_request_limit::FixedInterfacePathRequestLimitColumns;
 use crate::routing::path_requests::pending::FixedPendingPathRequestColumns;
 use crate::routing::path_requests::recent::FixedRecentPathRequestColumns;
 use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
@@ -81,6 +82,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
+    type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type AnnounceRates = FixedHeapAnnounceRateColumns<MAX_TRACKED_DESTINATIONS, A>;
     type GroupKeys = FixedGroupKeyColumns<MAX_UPSTREAM_APP_DESTINATIONS>;
     type RequestHandlers = FixedRequestHandlerColumns<MAX_UPSTREAM_APP_DESTINATIONS>;

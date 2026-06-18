@@ -1597,6 +1597,13 @@ impl<S: StorageLayout> EngineState<S> {
             let from_local_client = source_interface.kind() == Some(InterfaceKind::LocalClient);
             let discovers = iface_config(view, source_interface)
                 .is_some_and(|config| config.mode.discovers_unknown_paths());
+            if discovers
+                && self
+                    .interface_path_request_limits
+                    .record_and_should_limit(source_interface, now)
+            {
+                return IngestPacketOutcome::Ignored;
+            }
             let has_local_client = view
                 .iter()
                 .any(|config| config.id.kind() == Some(InterfaceKind::LocalClient));
@@ -2305,6 +2312,50 @@ mod tests {
                 .discovery_path_requests
                 .begin(stranger, source, InstantMillis(2_000)),
             DiscoveryOutcome::AlreadyInFlight
+        );
+    }
+
+    #[test]
+    fn a_flooded_discover_interface_stops_forwarding_path_requests() {
+        let source = iface(0xA1);
+        let mut relay = transporting_node();
+        let view = [discovering_descriptor(source, InterfaceMode::Gateway)];
+        let now = InstantMillis(1_000);
+
+        let mut forwarded = 0;
+        let mut dropped_after_forwarding = false;
+        for dest_byte in 1..=8u8 {
+            let mut buf = [0u8; BROADCAST_MTU];
+            let n = crate::engine::write_path_request_wire_packet(
+                DestinationHash::new([dest_byte; 16]),
+                None,
+                &[dest_byte; 16],
+                &mut buf,
+            )
+            .unwrap();
+            let mut wire = buf[..n].to_vec();
+            match relay.ingest_packet(
+                InboundPacket {
+                    arrived_at: now,
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                TEST_ENTROPY,
+                &view,
+            ) {
+                IngestPacketOutcome::ForwardPathRequestForDiscovery { .. } => forwarded += 1,
+                IngestPacketOutcome::Ignored if forwarded > 0 => dropped_after_forwarding = true,
+                _ => {}
+            }
+        }
+
+        assert!(
+            forwarded >= 1,
+            "the first unknown-destination requests are forwarded"
+        );
+        assert!(
+            dropped_after_forwarding,
+            "once the interface floods unknown-destination requests, the recursive forward is dropped",
         );
     }
 
