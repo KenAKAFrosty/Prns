@@ -1,10 +1,13 @@
 pub mod configobj;
-pub mod definition;
 pub mod discovery;
+pub mod plan;
 pub mod reference;
 
-pub use definition::{InterfaceDefinition, OwnedInterfaceKind};
 pub use discovery::{discover, DiscoveredConfigs};
+pub use plan::{
+    plan, DaemonPlan, DeferReason, DeferredInterface, PlannedInterface, PlannedMedium,
+    SharedInstance, UnappliedSetting,
+};
 pub use reference::{
     RNodeRadio, RNodeSubinterface, ReferenceConfig, ReferenceInterface, ReferenceMode,
     ReferenceParams, ReferenceValue,
