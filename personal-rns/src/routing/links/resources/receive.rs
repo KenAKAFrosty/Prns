@@ -475,7 +475,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             return IngestPacketOutcome::OwesResourcePull { link_id, hash };
         }
-        IngestPacketOutcome::Ignored
+        IngestPacketOutcome::ResourceProgressed
     }
 
     /// RNS 1.3.1 `Resource.hashmap_update_packet`: a sealed segment of names
@@ -2163,6 +2163,62 @@ mod loop_tests {
             request.requested,
             &receiver.incoming_resources.names_flat(index)[4 * MAP_HASH_LEN..8 * MAP_HASH_LEN],
             "the next pull asks for the remaining four parts",
+        );
+    }
+
+    #[test]
+    fn a_mid_window_part_recomputes_the_resource_lane() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = eight_part_payload();
+
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            CommandId(7),
+            link_id(),
+            &data,
+            None,
+            crate::routing::links::resources::ResourceCorrelation::Unsolicited,
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = filled_frame(fill);
+                }
+            },
+        );
+        let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        assert_eq!(serve.frames.len(), 4, "window four to start");
+
+        let mut raw = serve.frames[0].1.clone();
+        let delta = receiver.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(2_200),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            crate::engine::test_support::TEST_ENTROPY,
+            &[crate::engine::test_support::routable_descriptor(lane())],
+            InstantMillis(2_200),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            &mut |_: &crate::engine::ProofRequest| false,
+            &mut |_| {},
+        );
+        assert!(
+            !receiver.incoming_resources.is_empty(),
+            "the transfer is still in flight after a single mid-window part",
+        );
+        assert_ne!(
+            delta.resource_deadlines,
+            crate::engine::LaneWake::Unchanged,
+            "a mid-window part must recompute the resource lane, not leave it untouched",
+        );
+        assert_eq!(
+            delta.resource_deadlines,
+            receiver.resource_deadlines_wake(),
+            "the recomputed lane delta matches the freshly-set part-round deadline",
         );
     }
 

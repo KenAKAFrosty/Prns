@@ -353,6 +353,11 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
+    /// A part landed mid-window — the transfer advanced and its watchdog moved
+    /// to the next part-round deadline, but no part request or assembly is owed
+    /// yet. Nothing leaves for the peer; the resource lane must still resync to
+    /// the freshly-set deadline, which `Ignored` would silently strand later.
+    ResourceProgressed,
     ResourceConcludedFailed {
         link_id: LinkId,
         hash: ResourceHash,

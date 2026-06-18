@@ -386,6 +386,9 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
+            IngestPacketOutcome::ResourceProgressed => {
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            }
             IngestPacketOutcome::ResourceConcludedFailed { link_id, hash } => {
                 sink(EngineReaction::Journaled(Journaled::ResourceFailed {
                     link_id,

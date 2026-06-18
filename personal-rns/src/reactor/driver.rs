@@ -90,6 +90,20 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
             "the path-timeout lane drifted from a full recompute",
         );
         debug_assert!(
+            never_late(source_wake_schedules.link_deadlines, truth.link_deadlines),
+            "the link-deadline lane must never sit later than the truth: cached {:?}, truth {:?}",
+            source_wake_schedules.link_deadlines,
+            truth.link_deadlines,
+        );
+        debug_assert_eq!(
+            source_wake_schedules.resource_deadlines, truth.resource_deadlines,
+            "the resource-deadline lane drifted from a full recompute",
+        );
+        debug_assert_eq!(
+            source_wake_schedules.channel_timeouts, truth.channel_timeouts,
+            "the channel-timeout lane drifted from a full recompute",
+        );
+        debug_assert!(
             never_late(source_wake_schedules.expired_routes, truth.expired_routes),
             "the expired-routes lane must never sit later than the truth: cached {:?}, truth {:?}",
             source_wake_schedules.expired_routes,
