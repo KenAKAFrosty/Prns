@@ -99,6 +99,19 @@ where
         })
     }
 
+    /// The one route to `destination`, if known — the engine answers the shared-instance RPC's
+    /// `next_hop`/`next_hop_if_name` from this single lookup (RNS's `Transport.next_hop`).
+    pub fn path_row(&self, destination: &DestinationHash) -> Option<RouteEntry> {
+        let i = self.index_of(destination)?;
+        Some(RouteEntry {
+            hops: self.routes.hops()[i],
+            learned_at: self.routes.learned_at()[i],
+            responsiveness: self.routes.responsiveness()[i],
+            receiving_interface: self.routes.receiving_interfaces()[i],
+            next_hop: self.routes.next_hops()[i],
+        })
+    }
+
     fn index_of(&self, destination: &DestinationHash) -> Option<usize> {
         self.routes.index_of(destination)
     }

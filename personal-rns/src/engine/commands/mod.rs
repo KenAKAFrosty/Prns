@@ -72,6 +72,9 @@ pub enum RpcQuery {
     /// `get_path_table` — every known destination, how it is reached, and when it was learned.
     #[cfg(feature = "alloc")]
     PathTable,
+    /// `get_next_hop` / `get_next_hop_if_name` — the one route to a destination, if known.
+    #[cfg(feature = "alloc")]
+    Route(DestinationHash),
 }
 
 /// The answer to an [`RpcQuery`], carried back in [`Settlement::RpcQuery`] and rendered to the
@@ -81,6 +84,8 @@ pub enum RpcQueryResult {
     LinkCount(u32),
     #[cfg(feature = "alloc")]
     PathTable(Vec<RpcPathEntry>),
+    #[cfg(feature = "alloc")]
+    Route(Option<RpcPathEntry>),
 }
 
 /// One row of the shared-instance RPC's path table: a known destination, how it is reached, and when
@@ -1080,6 +1085,18 @@ impl<S: StorageLayout> EngineState<S> {
                     })
                     .collect(),
             ),
+            #[cfg(feature = "alloc")]
+            RpcQuery::Route(destination) => {
+                RpcQueryResult::Route(self.routing_table.path_row(&destination).map(|entry| {
+                    RpcPathEntry {
+                        destination,
+                        hops: entry.hops,
+                        via: entry.next_hop,
+                        learned_at: entry.learned_at,
+                        interface: entry.receiving_interface,
+                    }
+                }))
+            }
         }
     }
 

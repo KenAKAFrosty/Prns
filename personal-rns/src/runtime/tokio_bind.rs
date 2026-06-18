@@ -460,6 +460,16 @@ impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for
             Some(_) | None => std::vec::Vec::new(),
         }
     }
+
+    async fn route(&self, destination: DestinationHash) -> Option<RpcPathEntry> {
+        match self
+            .settle(EngineCommand::RpcQuery(RpcQuery::Route(destination)))
+            .await
+        {
+            Some(Settlement::RpcQuery(RpcQueryResult::Route(entry))) => entry,
+            Some(_) | None => None,
+        }
+    }
 }
 
 impl super::Commands for PrnsHandle {

@@ -12,9 +12,11 @@
 //! This began as a fault-avoidance stub (answer the minimal set, everything else `None`) and is now
 //! growing into an honest shared instance: each verb is answered from live engine state, read through
 //! the node handle ([`RpcQuerySource`] → [`EngineCommand::RpcQuery`](crate::engine::RpcQuery), settled
-//! on the command lane). `link_count` is live; `path_table`/`next_hop`/`first_hop_timeout` follow the
-//! same mold. Phy stats stay `None` (no phy on host/local interfaces); `interface_stats` is an empty
-//! map until interface byte-counters and status are wired from runtime state.
+//! on the command lane). `link_count`, `path_table`, `next_hop`, and `next_hop_if_name` are live, the
+//! last two by decoding the request's `destination_hash` argument and reading the one route. Phy stats
+//! stay `None` (no phy on host/local interfaces); `first_hop_timeout` answers RNS's default (our
+//! host/local interfaces add no per-byte latency); `interface_stats` is an empty map until interface
+//! byte-counters and status are wired from runtime state.
 //!
 //! Wire protocol is `multiprocessing.connection`: a 4-byte big-endian length frame, a mutual HMAC
 //! challenge/response keyed on the shared `rpc_key`, then one request and one reply per connection (a
@@ -39,6 +41,7 @@ use crate::crypto::{hmac_sha256, hmac_sha256_verify};
 use crate::engine::RpcPathEntry;
 use crate::interfaces::InterfaceId;
 use crate::routing::types::NextHop;
+use crate::wire::DestinationHash;
 
 const CHALLENGE: &[u8] = b"#CHALLENGE#";
 const WELCOME: &[u8] = b"#WELCOME#";
@@ -157,6 +160,12 @@ pub trait RpcQuerySource {
 
     /// `get_path_table` — every known destination, how it is reached, and when it was learned.
     fn path_table(&self) -> impl core::future::Future<Output = Vec<RpcPathEntry>> + Send;
+
+    /// `get_next_hop` / `get_next_hop_if_name` — the one route to a destination, if the node holds it.
+    fn route(
+        &self,
+        destination: DestinationHash,
+    ) -> impl core::future::Future<Output = Option<RpcPathEntry>> + Send;
 }
 
 enum RpcBind {
@@ -331,12 +340,68 @@ async fn reply_for(request: &[u8], query: &impl RpcQuerySource) -> Vec<u8> {
         empty_interface_stats(dialect)
     } else if contains(request, b"path_table") {
         reply_path_table(dialect, query.path_table().await)
+    } else if contains(request, b"next_hop_if_name") {
+        reply_next_hop_if_name(dialect, route_arg(request, query).await)
+    } else if contains(request, b"next_hop") {
+        reply_next_hop(dialect, route_arg(request, query).await)
     } else if contains(request, b"first_hop_timeout") {
         reply_int(dialect, DEFAULT_PER_HOP_TIMEOUT_SECS)
     } else if contains(request, b"link_count") {
         reply_int(dialect, i64::from(query.link_count().await))
     } else {
         reply_none(dialect)
+    }
+}
+
+/// Look up the route for the `destination_hash` a `next_hop`/`next_hop_if_name` request carries. A
+/// request with no decodable destination, or one the node holds no route to, resolves to [`None`] —
+/// the same "unknown next hop" a stock instance reports.
+async fn route_arg(request: &[u8], query: &impl RpcQuerySource) -> Option<RpcPathEntry> {
+    match destination_hash_arg(request) {
+        Some(destination) => query.route(destination).await,
+        None => None,
+    }
+}
+
+/// The 16-byte `destination_hash` argument out of a control-RPC request, in either codec. The hash is
+/// a length-16 binary value tagged by msgpack's bin8 (`0xc4 0x10`) or pickle's `SHORT_BINBYTES`
+/// (`0x43 0x10`); both name the key `destination_hash` just ahead of it, so we anchor on the key then
+/// take the next length-16 binary the request carries.
+fn destination_hash_arg(request: &[u8]) -> Option<DestinationHash> {
+    let key_end = position_of(request, b"destination_hash")? + b"destination_hash".len();
+    let tail = &request[key_end..];
+    let value_start = tail
+        .windows(2)
+        .position(|window| matches!(window, [0xc4, 0x10] | [0x43, 0x10]))?
+        + 2;
+    let bytes: [u8; 16] = tail.get(value_start..value_start + 16)?.try_into().ok()?;
+    Some(DestinationHash::new(bytes))
+}
+
+/// `get_next_hop` in the client's dialect: the next-hop hash to reach the destination — the transport
+/// node a route goes via, or the destination itself when it is directly reachable — as bytes, or
+/// [`None`] when no route is held (RNS `Transport.next_hop`).
+fn reply_next_hop(dialect: RpcDialect, route: Option<RpcPathEntry>) -> Vec<u8> {
+    match route {
+        Some(entry) => reply_bytes(dialect, next_hop_bytes(&entry)),
+        None => reply_none(dialect),
+    }
+}
+
+/// `get_next_hop_if_name` in the client's dialect: the name of the interface the route is reached over.
+/// RNS returns `str(interface)`, so an unknown route is the literal string `"None"`, never nil.
+fn reply_next_hop_if_name(dialect: RpcDialect, route: Option<RpcPathEntry>) -> Vec<u8> {
+    let name = route.map_or_else(
+        || String::from("None"),
+        |entry| interface_name(entry.interface),
+    );
+    reply_str(dialect, &name)
+}
+
+fn next_hop_bytes(entry: &RpcPathEntry) -> Vec<u8> {
+    match entry.via {
+        NextHop::Via(transport) => transport.as_bytes().to_vec(),
+        NextHop::Direct => entry.destination.as_bytes().to_vec(),
     }
 }
 
@@ -352,10 +417,7 @@ fn reply_path_table(dialect: RpcDialect, entries: Vec<RpcPathEntry>) -> Vec<u8> 
             let rows = entries
                 .into_iter()
                 .map(|entry| {
-                    let via = match entry.via {
-                        NextHop::Via(transport) => transport.as_bytes().to_vec(),
-                        NextHop::Direct => entry.destination.as_bytes().to_vec(),
-                    };
+                    let via = next_hop_bytes(&entry);
                     let learned_ms = entry.learned_at.0 as i64;
                     Value::Map(std::vec![
                         (
@@ -393,9 +455,13 @@ fn interface_name(id: InterfaceId) -> String {
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    position_of(haystack, needle).is_some()
+}
+
+fn position_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
-        .any(|window| window == needle)
+        .position(|window| window == needle)
 }
 
 /// `None` in the client's dialect: pickle protocol-0 `NONE` + `STOP`, or msgpack nil.
@@ -418,6 +484,37 @@ fn reply_int(dialect: RpcDialect, value: i64) -> Vec<u8> {
             out
         }
         RpcDialect::Msgpack => Value::Int(value).to_msgpack(),
+    }
+}
+
+/// A byte string in the client's dialect: msgpack `bin` through the typed [`Value`] encoder, or pickle
+/// `SHORT_BINBYTES` (`PROTO 3`, since a `bytes` object needs protocol 3) + `STOP`. Lengths over 255 are
+/// truncated by the `as u8`; an RNS hash is 16 bytes, so this is exact for every value the shim sends.
+fn reply_bytes(dialect: RpcDialect, value: Vec<u8>) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Msgpack => Value::Bytes(value).to_msgpack(),
+        RpcDialect::Pickle => {
+            let mut out = std::vec![0x80, 0x03, b'C', value.len() as u8];
+            out.extend_from_slice(&value);
+            out.push(b'.');
+            out
+        }
+    }
+}
+
+/// A string in the client's dialect: msgpack `str` through the typed [`Value`] encoder, or pickle
+/// protocol-0 `UNICODE` (a newline-terminated string) + `STOP`. Interface names are ASCII (a medium
+/// name plus a hex hash prefix), so the raw protocol-0 form needs no escaping.
+fn reply_str(dialect: RpcDialect, value: &str) -> Vec<u8> {
+    match dialect {
+        RpcDialect::Msgpack => Value::Str(value.into()).to_msgpack(),
+        RpcDialect::Pickle => {
+            let mut out = std::vec![b'V'];
+            out.extend_from_slice(value.as_bytes());
+            out.push(b'\n');
+            out.push(b'.');
+            out
+        }
     }
 }
 
@@ -541,6 +638,13 @@ mod tests {
         async fn path_table(&self) -> Vec<RpcPathEntry> {
             self.routes.clone()
         }
+
+        async fn route(&self, destination: DestinationHash) -> Option<RpcPathEntry> {
+            self.routes
+                .iter()
+                .find(|entry| entry.destination == destination)
+                .cloned()
+        }
     }
 
     #[tokio::test]
@@ -600,6 +704,98 @@ mod tests {
         let contains = |needle: &[u8]| reply.windows(needle.len()).any(|w| w == needle);
         assert!(contains(b"hash") && contains(b"via") && contains(b"hops"));
         assert!(contains(b"interface") && contains(&[0xab; 16]));
+    }
+
+    fn mp_route_request(verb: &[u8], destination: &[u8; 16]) -> Vec<u8> {
+        let mut request = std::vec![0x82, 0xa3];
+        request.extend_from_slice(b"get");
+        request.push(0xa0 | verb.len() as u8);
+        request.extend_from_slice(verb);
+        request.push(0xb0);
+        request.extend_from_slice(b"destination_hash");
+        request.extend_from_slice(&[0xc4, 0x10]);
+        request.extend_from_slice(destination);
+        request
+    }
+
+    fn one_via_route() -> StubQuery {
+        StubQuery {
+            links: 0,
+            routes: std::vec![RpcPathEntry {
+                destination: DestinationHash::new([0xab; 16]),
+                hops: 2,
+                via: NextHop::Via(crate::wire::TransportId::new([0xcd; 16])),
+                learned_at: crate::engine::InstantMillis(0),
+                interface: InterfaceId::new([0x07; 8]),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn next_hop_answers_the_via_hash_or_nil_for_an_unknown_destination() {
+        let query = one_via_route();
+
+        let reply = reply_for(&mp_route_request(b"next_hop", &[0xab; 16]), &query).await;
+        assert_eq!(
+            &reply[..2],
+            &[0xc4, 0x10],
+            "a next-hop hash is a 16-byte bin"
+        );
+        assert_eq!(&reply[2..], &[0xcd; 16], "the hash is the via transport");
+
+        let unknown = reply_for(&mp_route_request(b"next_hop", &[0x11; 16]), &query).await;
+        assert_eq!(unknown, b"\xc0", "an unknown destination has no next hop");
+    }
+
+    #[tokio::test]
+    async fn a_directly_reachable_next_hop_is_the_destination_itself() {
+        let query = StubQuery {
+            links: 0,
+            routes: std::vec![RpcPathEntry {
+                destination: DestinationHash::new([0xab; 16]),
+                hops: 1,
+                via: NextHop::Direct,
+                learned_at: crate::engine::InstantMillis(0),
+                interface: InterfaceId::new([0x07; 8]),
+            }],
+        };
+        let reply = reply_for(&mp_route_request(b"next_hop", &[0xab; 16]), &query).await;
+        assert_eq!(
+            &reply[2..],
+            &[0xab; 16],
+            "a direct route hops straight to it"
+        );
+    }
+
+    #[tokio::test]
+    async fn next_hop_if_name_is_the_interface_name_or_the_string_none() {
+        let query = one_via_route();
+
+        let reply = reply_for(&mp_route_request(b"next_hop_if_name", &[0xab; 16]), &query).await;
+        assert_eq!(reply[0] & 0xe0, 0xa0, "a short name is a msgpack fixstr");
+        let name = std::str::from_utf8(&reply[1..]).unwrap();
+        assert!(name.contains('['), "renders kind[hashprefix]: {name}");
+
+        let unknown = reply_for(&mp_route_request(b"next_hop_if_name", &[0x11; 16]), &query).await;
+        assert_eq!(unknown, b"\xa4None", "an unknown route's name is str(None)");
+    }
+
+    #[tokio::test]
+    async fn a_legacy_pickle_client_gets_next_hop_in_pickle() {
+        let query = one_via_route();
+        let mut request = std::vec![0x80, 0x02];
+        request.extend_from_slice(b"next_hopdestination_hash");
+        request.extend_from_slice(&[b'C', 0x10]);
+        request.extend_from_slice(&[0xab; 16]);
+
+        let reply = reply_for(&request, &query).await;
+        assert_eq!(
+            &reply[..4],
+            &[0x80, 0x03, b'C', 0x10],
+            "pickle SHORT_BINBYTES"
+        );
+        assert_eq!(&reply[4..20], &[0xcd; 16]);
+        assert_eq!(reply[20], b'.', "pickle STOP");
     }
 
     #[test]
