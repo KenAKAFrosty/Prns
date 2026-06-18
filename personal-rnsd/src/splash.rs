@@ -117,7 +117,7 @@ fn mark_dot(x: usize, y: usize) -> Option<Rgb> {
     if distance <= 2.5 {
         return Some(ACCENT_STRONG);
     }
-    if (9.3..=11.0).contains(&distance) {
+    if (9.3..=10.7).contains(&distance) {
         return Some(ACCENT);
     }
     let on_tick =
