@@ -667,13 +667,18 @@ impl<S: StorageLayout> EngineState<S> {
                         interfaces,
                     );
                 }
+                let not_for_upstream_app = self
+                    .upstream_app_destinations
+                    .lookup(&data.destination, data.destination_type)
+                    .is_none();
                 let in_transport_through_us = self.transport_id.is_some()
                     && header.transport_id == self.transport_id
-                    && self
-                        .upstream_app_destinations
-                        .lookup(&data.destination, data.destination_type)
-                        .is_none();
-                if in_transport_through_us {
+                    && not_for_upstream_app;
+                let local_client_transit = not_for_upstream_app
+                    && data.destination_type == DestinationType::Single
+                    && (source_interface.kind() == Some(InterfaceKind::LocalClient)
+                        || self.routes_via_local_client(&data.destination));
+                if in_transport_through_us || local_client_transit {
                     return match self.maybe_forward(
                         header,
                         data.payload,
@@ -884,7 +889,11 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
         view: &[InterfaceConfig],
     ) -> IngestPacketOutcome<'static> {
-        if self.transport_id.is_none() || header.transport_id != self.transport_id {
+        let addressed_through_us =
+            self.transport_id.is_some() && header.transport_id == self.transport_id;
+        let local_client_transit = source_interface.kind() == Some(InterfaceKind::LocalClient)
+            || self.routes_via_local_client(&request.destination);
+        if !addressed_through_us && !local_client_transit {
             return IngestPacketOutcome::Ignored;
         }
         let Some(route) = self
@@ -1610,6 +1619,18 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    /// True when the live forwarding route for `destination` leaves over a
+    /// [`InterfaceKind::LocalClient`] interface: RNS Transport.py's
+    /// `for_local_client`, an app sharing our instance for whom we carry traffic
+    /// inward regardless of whether the arriving packet was addressed through us.
+    fn routes_via_local_client(&self, destination: &DestinationHash) -> bool {
+        self.routing_table
+            .forwarding_route_for(destination)
+            .is_some_and(|route| {
+                route.receiving_interface.kind() == Some(InterfaceKind::LocalClient)
+            })
+    }
+
     /// RNS 1.3.1 Transport.py:1556-1580: a transport-addressed packet rides the
     /// path table onward. It's re-addressed at the next relay while more than one
     /// hop remains, stripped back to a plain broadcast for the final hop. It also
@@ -1642,7 +1663,16 @@ impl<S: StorageLayout> EngineState<S> {
             RememberPacketOutcome::StoredFresh | RememberPacketOutcome::StoredAfterRotation => {}
         }
 
-        let forwarded_header = if route.hops.0 == 1 {
+        let forwarded_header = if route.hops.0 > 1 {
+            let NextHop::Via(next) = route.next_hop else {
+                return None;
+            };
+            WirePacketHeader {
+                hops: received_hops,
+                transport_id: Some(next),
+                ..header
+            }
+        } else {
             WirePacketHeader {
                 ifac_flag: IfacFlag::Open,
                 context_flag: ContextFlag::Unset,
@@ -1653,15 +1683,6 @@ impl<S: StorageLayout> EngineState<S> {
                 transport_id: None,
                 destination: header.destination,
                 context: header.context,
-            }
-        } else {
-            let NextHop::Via(next) = route.next_hop else {
-                return None;
-            };
-            WirePacketHeader {
-                hops: received_hops,
-                transport_id: Some(next),
-                ..header
             }
         };
 
@@ -3953,6 +3974,110 @@ mod tests {
             &wire[..n],
             expected.as_slice(),
             "mid-path the only bytes that change are the hop count and the next relay's id",
+        );
+    }
+
+    #[test]
+    fn a_local_clients_direct_data_is_carried_out_to_its_route() {
+        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"sideband");
+        let mut relay = transporting_node();
+        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let mut direct = hx(RAW_SEALED_TO_RATCHET);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: app,
+                bytes: &mut direct,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let IngestPacketOutcome::Forward(forward) = out else {
+            panic!("an app sharing our instance has its direct data carried out, got {out:?}");
+        };
+        assert_eq!(
+            forward.fire_on,
+            iface(0xB2),
+            "the local client's packet rides the route it could not reach itself",
+        );
+    }
+
+    #[test]
+    fn a_strangers_direct_data_to_a_routed_destination_is_still_dropped() {
+        let mut relay = transporting_node();
+        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: iface(0xB2),
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let mut direct = hx(RAW_SEALED_TO_RATCHET);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: iface(0xA1),
+                bytes: &mut direct,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        assert_eq!(
+            out,
+            IngestPacketOutcome::Ignored,
+            "carrying a stranger's direct data would make us an open relay; only the named \
+             transport instance or a local-client app is carried",
+        );
+    }
+
+    #[test]
+    fn a_packet_for_a_destination_on_a_local_client_is_carried_inward() {
+        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let mut relay = transporting_node();
+        let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(500),
+                source_interface: app,
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let mut in_transport = hx(RAW_SEALED_TO_RATCHET_VIA_TRANSPORT);
+        let out = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: iface(0xA1),
+                bytes: &mut in_transport,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+
+        let IngestPacketOutcome::Forward(forward) = out else {
+            panic!("a packet for an app on our instance is carried inward to it, got {out:?}");
+        };
+        assert_eq!(
+            forward.fire_on, app,
+            "the destination announced at zero hops is carried in over its own interface",
         );
     }
 
