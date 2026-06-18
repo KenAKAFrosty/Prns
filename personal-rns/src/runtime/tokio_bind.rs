@@ -472,7 +472,7 @@ impl crate::interfaces::rns_parity::local::impls::rpc_compat::RpcQuerySource for
     }
 }
 
-impl super::Commands for PrnsHandle {
+impl super::PrnsApi for PrnsHandle {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
         self.issue(command)
     }
@@ -483,6 +483,10 @@ impl super::Commands for PrnsHandle {
         data: &[u8],
     ) -> Result<Delivered, SendError<SendSingleFailure>> {
         self.send_single(destination, data).await
+    }
+
+    async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
+        self.interface_counts(interface).await
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
@@ -1177,19 +1181,19 @@ mod tests {
     }
 
     #[test]
-    fn the_commands_trait_dispatches_to_the_handle() {
+    fn the_prns_api_trait_dispatches_to_the_handle() {
         use crate::routing::links::LinkId;
-        use crate::runtime::Commands;
+        use crate::runtime::PrnsApi;
 
         let (prns, mut command_rx) = handle();
-        let queued = Commands::close_link(&prns, LinkId::new([3; 16]));
+        let queued = PrnsApi::close_link(&prns, LinkId::new([3; 16]));
         assert!(
             queued,
             "the trait method reaches the handle and queues the close"
         );
         assert!(
             matches!(command_rx.try_recv(), Ok(HostCommand::Engine(_))),
-            "dispatched through Commands, the close rode the channel"
+            "dispatched through PrnsApi, the close rode the channel"
         );
     }
 

@@ -269,7 +269,7 @@ impl<M: RawMutex, const N: usize> Drop for SlotGuard<'_, M, N> {
     }
 }
 
-impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::Commands
+impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
     for EmbassyCommands<'_, M, COMMANDS, N>
 {
     fn issue(&self, command: EngineCommand) -> Option<CommandId> {
@@ -282,6 +282,10 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::Commands
         data: &[u8],
     ) -> Result<Delivered, SendError<SendSingleFailure>> {
         self.send_single(destination, data).await
+    }
+
+    async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
+        self.interface_counts(interface).await
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {

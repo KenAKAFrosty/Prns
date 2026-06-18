@@ -2,7 +2,8 @@
 //! resolves to the same `Result` whether tokio's unbounded oneshot or embassy's fixed completion
 //! pool carried the awaited settlement.
 
-use crate::engine::{CommandId, Delivered, EngineCommand, SendSingleFailure};
+use crate::engine::{CommandId, Delivered, EngineCommand, InterfaceCounts, SendSingleFailure};
+use crate::interfaces::InterfaceId;
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
@@ -22,16 +23,22 @@ pub enum SendError<F> {
     Failed(F),
 }
 
-/// The one command surface every platform's handle presents — `PrnsHandle` over an unbounded
-/// channel and a oneshot, `EmbassyCommands` over a bounded channel and a static completion pool,
-/// the same four verbs either way. Consumer code (and the request runner) takes `impl Commands` and
-/// runs on whichever platform supplied it; each handle also keeps the platform-specific extras its
-/// runner needs (tokio's zero-copy `respond_owned`) as inherent methods outside this trait.
+/// The high-level node API every platform's handle presents — `PrnsHandle` over an unbounded channel
+/// and a oneshot, `EmbassyCommands` over a bounded channel and a static completion pool — the same
+/// verbs either way, so engine logic ports between a desktop and a board by recompiling, not
+/// rewriting. Each verb is the same command-roundtrip both runtimes already run: [`issue`](Self::issue)
+/// mints a [`CommandId`] and returns at once; an awaiting verb issues and then `.await`s the
+/// settlement demuxed by that id (a host oneshot, a board completion-pool signal).
+///
+/// What genuinely differs between the platforms stays *off* this trait, as inherent methods on each
+/// concrete handle: interface lifecycle (the host's dynamic `add_interface(iface)` against the board's
+/// static slot `activate(slot, config)`), host-only capabilities, and the platform extras a runner
+/// needs (tokio's zero-copy `respond_owned`). The trait is the shared core; the divergence is honest.
 ///
 /// The handle mints every [`CommandId`] from one counter, so the app never picks ids and a
 /// fire-and-forget [`issue`](Self::issue) can't collide with an awaited [`send_single`](Self::send_single).
 #[allow(async_fn_in_trait)]
-pub trait Commands {
+pub trait PrnsApi {
     /// Queue an engine command and return the [`CommandId`] it was minted under — watch the event
     /// stream for the settlement tagged with it. `None` once the node has stopped (or the bounded
     /// embedded lane is full). The fire-and-forget escape hatch.
@@ -44,6 +51,9 @@ pub trait Commands {
         destination: DestinationHash,
         data: &[u8],
     ) -> Result<Delivered, SendError<SendSingleFailure>>;
+
+    /// Read the live packet and byte counts the engine holds for one interface.
+    async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts>;
 
     /// Answer a request with `body`. Returns `false` once the node has stopped (or, on embedded, if
     /// `body` exceeds the single-packet MDU the inline responder can carry).
