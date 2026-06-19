@@ -236,6 +236,15 @@ where
         next_port_key: &mut u64,
         last_confirmed_at: Option<Instant>,
     ) {
+        if !self.status.is_enabled() {
+            // Off: drop every port (aborting its task releases the held serial FD) and report
+            // Disabled, so the OS frees the device for other readers — a log monitor — until resume.
+            for port in ports.drain(..) {
+                port.task.abort();
+            }
+            self.status.set_connection(ConnectionState::Disabled);
+            return;
+        }
         let present = (self.scan)();
         ports.retain(|port| {
             if present.iter().any(|name| name == &port.id) {

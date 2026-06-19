@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -346,6 +346,7 @@ struct StatusCell {
     tx: AtomicU64,
     airtime: AtomicU32,
     transfer_rates: AtomicU64,
+    enabled: AtomicBool,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -376,8 +377,23 @@ impl TokioInterfaceStatus {
                 tx: AtomicU64::new(0),
                 airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
                 transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
+                enabled: AtomicBool::new(true),
             }),
         }
+    }
+
+    /// Turn this interface off or back on from the application. The driver reads
+    /// [`is_enabled`](Self::is_enabled) and tears its wires down — releasing any resource it holds,
+    /// e.g. an open serial port — while off, standing them back up on resume.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.inner.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Whether the interface is enabled (the default). The driver polls this to leave or re-enter
+    /// its dormant state.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.inner.enabled.load(Ordering::Relaxed)
     }
 
     pub fn set_connection(&self, connection: ConnectionState) {

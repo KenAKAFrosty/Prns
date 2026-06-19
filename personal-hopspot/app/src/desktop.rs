@@ -605,6 +605,14 @@ fn finish_press(
     ui_state.handle_input(event, card_count)
 }
 
+/// The interface id of the currently focused card, if any — what a "Turn Off/On" toggle acts on.
+fn selected_card_id(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Option<InterfaceId> {
+    ui_state
+        .selected_card(card_count)
+        .and_then(|index| cards.get(index))
+        .map(|card| card.id)
+}
+
 /// Own the SDL2 window: repaint the interfaces' live status as the Hopspot screen until the
 /// window is closed, and funnel the menu's "Announce" item into the node's command handle.
 fn run_window(handles: WindowHandles) {
@@ -635,7 +643,9 @@ fn run_window(handles: WindowHandles) {
         .build()
         .expect("the window builds a runtime to drive its per-interface count queries");
 
-    let apply_action = move |action: UiAction| match action {
+    let toggle_usb = usb_status.clone();
+    let toggle_tcp = tcp_status.clone();
+    let apply_action = move |action: UiAction, selected_id: Option<InterfaceId>| match action {
         UiAction::None => {}
         UiAction::Announce => {
             if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
@@ -650,7 +660,17 @@ fn run_window(handles: WindowHandles) {
                 );
             }
         }
-        UiAction::ToggleSelectedInterface => {}
+        UiAction::ToggleSelectedInterface => match selected_id {
+            Some(id) if id == USB_INTERFACE_ID => {
+                toggle_usb.set_enabled(!toggle_usb.is_enabled());
+            }
+            Some(id) if Some(id) == tcp_id => {
+                if let Some(tcp) = &toggle_tcp {
+                    tcp.set_enabled(!tcp.is_enabled());
+                }
+            }
+            _ => {}
+        },
     };
 
     let mut ui_state = UiState::new();
@@ -712,12 +732,14 @@ fn run_window(handles: WindowHandles) {
         });
         let card_count = cards.len();
         ui_state.sync_card_count(card_count);
-        apply_action(dispatch_long_press_if_ready(
+        let long_press = dispatch_long_press_if_ready(
             &mut active_press,
             Instant::now(),
             card_count,
             &mut ui_state,
-        ));
+        );
+        let selected = selected_card_id(&ui_state, card_count, &cards);
+        apply_action(long_press, selected);
 
         screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
 
@@ -729,25 +751,29 @@ fn run_window(handles: WindowHandles) {
                     active_press.get_or_insert(press_start(PressSource::Key));
                 }
                 SimulatorEvent::KeyUp { .. } => {
-                    apply_action(finish_press(
+                    let released = finish_press(
                         &mut active_press,
                         PressSource::Key,
                         Instant::now(),
                         card_count,
                         &mut ui_state,
-                    ));
+                    );
+                    let selected = selected_card_id(&ui_state, card_count, &cards);
+                    apply_action(released, selected);
                 }
                 SimulatorEvent::MouseButtonDown { .. } => {
                     active_press.get_or_insert(press_start(PressSource::Mouse));
                 }
                 SimulatorEvent::MouseButtonUp { .. } => {
-                    apply_action(finish_press(
+                    let released = finish_press(
                         &mut active_press,
                         PressSource::Mouse,
                         Instant::now(),
                         card_count,
                         &mut ui_state,
-                    ));
+                    );
+                    let selected = selected_card_id(&ui_state, card_count, &cards);
+                    apply_action(released, selected);
                 }
                 SimulatorEvent::KeyDown { repeat: true, .. }
                 | SimulatorEvent::MouseWheel { .. }
