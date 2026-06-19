@@ -472,8 +472,10 @@ mod heap_transit_link_columns {
     use super::{ColumnsFull, TransportedLink, TransportedLinkColumns};
     use alloc::vec::Vec;
 
-    pub const DEFAULT_MAX_TRANSPORTED_LINKS: usize = 1024;
-
+    /// A capable (heap) transport grows its relayed-link table with demand rather than refusing
+    /// past a fixed count — how many links it carries is the network's business, not a storage
+    /// constant. The fixed-capacity twin ([`FixedTransportedLinkColumns`](super::FixedTransportedLinkColumns))
+    /// keeps a compile-time bound for no-heap hosts. The link-timeout reaper still bounds growth.
     #[derive(Debug, Default)]
     pub struct HeapTransportedLinkColumns {
         entries: Vec<TransportedLink>,
@@ -481,7 +483,7 @@ mod heap_transit_link_columns {
 
     impl TransportedLinkColumns for HeapTransportedLinkColumns {
         fn capacity(&self) -> usize {
-            DEFAULT_MAX_TRANSPORTED_LINKS
+            usize::MAX
         }
         fn len(&self) -> usize {
             self.entries.len()
@@ -493,9 +495,6 @@ mod heap_transit_link_columns {
             &mut self.entries
         }
         fn push(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
-            if self.entries.len() >= DEFAULT_MAX_TRANSPORTED_LINKS {
-                return Err(ColumnsFull);
-            }
             self.entries.push(entry);
             Ok(())
         }
