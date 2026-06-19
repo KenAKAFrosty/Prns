@@ -475,7 +475,7 @@ impl ResourceCycle {
             *link_id,
             &payload[..len],
             None,
-            None,
+            personal_rns::routing::links::resources::ResourceCorrelation::Unsolicited,
             segment_index,
             total_segments,
             total_data_size,
@@ -977,7 +977,7 @@ impl Forward {
             &mut |bytes| relay_entropy.fill(bytes),
             &mut |_| true,
             &mut |reaction| {
-                if let EngineReaction::Directive(Directive::EmitFrame { target, fill }) = reaction {
+                if let EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) = reaction {
                     if target == IF_UP && fill(&mut scratch[..]).is_some() {
                         forwarded = true;
                     }
