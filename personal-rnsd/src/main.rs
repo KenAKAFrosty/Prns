@@ -34,7 +34,7 @@ use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, TokioPrnsHandle, PrnsRecipe,
+    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};

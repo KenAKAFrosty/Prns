@@ -45,7 +45,7 @@ use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, TokioPrnsHandle, PrnsRecipe,
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};

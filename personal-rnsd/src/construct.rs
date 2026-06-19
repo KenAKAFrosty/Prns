@@ -67,7 +67,11 @@ pub async fn construct_interfaces(handle: &TokioPrnsHandle, plan: &DaemonPlan) -
     views
 }
 
-async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface, views: &mut InterfaceViews) {
+async fn stand_up(
+    handle: &TokioPrnsHandle,
+    interface: &PlannedInterface,
+    views: &mut InterfaceViews,
+) {
     let name = &interface.name;
     match &interface.medium {
         PlannedMedium::AutoWifi { .. } => {

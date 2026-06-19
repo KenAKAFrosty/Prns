@@ -36,7 +36,7 @@ use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, TokioPrnsHandle, PrnsRecipe,
+    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;

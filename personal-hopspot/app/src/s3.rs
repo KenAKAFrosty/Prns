@@ -62,8 +62,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    CompletionPool, EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns, PrnsEvent,
-    PrnsRecipe, ReactorPlumbing,
+    CompletionPool, EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns,
+    PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::wire::TransportId;
 

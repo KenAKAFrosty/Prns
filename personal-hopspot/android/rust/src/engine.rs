@@ -16,7 +16,7 @@ use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::{PreConfiguredDestination, Prns, TokioPrnsHandle, PrnsRecipe};
+use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe, TokioPrnsHandle};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
