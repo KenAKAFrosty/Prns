@@ -14,6 +14,7 @@ edition = "2021"
 [features]
 fixed-storage = ["personal-rns/external-alloc"]
 parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
+dhat-heap = ["dep:dhat"]
 
 [lib]
 name = "benchmarks"
@@ -22,6 +23,7 @@ bench = false
 
 [dependencies]
 personal-rns = { path = "../personal-rns", features = ["tcp", "udp", "local"] }
+dhat = { version = "0.3", optional = true }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
@@ -78,6 +80,11 @@ bench = false
 [[bin]]
 name = "resource_profile"
 path = "src/bin/resource_profile.rs"
+bench = false
+
+[[bin]]
+name = "wake_scan_profile"
+path = "src/bin/wake_scan_profile.rs"
 bench = false
 
 # --- Matchup: the shared-instance conformance grid (host + two app clients, our impl outside

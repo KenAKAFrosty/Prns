@@ -359,6 +359,10 @@ fn percentile(sorted: &[u64], p: f64) -> f64 {
 /// conformance pass a debug build is for.
 const SCENARIO_STACK_BYTES: usize = 64 * 1024 * 1024;
 
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static DHAT_ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() {
     if cfg!(debug_assertions) {
         eprintln!("================================================================");
@@ -377,6 +381,8 @@ fn main() {
 }
 
 fn run_scenario() {
+    #[cfg(feature = "dhat-heap")]
+    let dhat = dhat::Profiler::new_heap();
     let worker_threads = std::env::var("SCENARIO_WORKERS")
         .ok()
         .and_then(|raw| raw.parse().ok())
@@ -388,6 +394,15 @@ fn run_scenario() {
         .build()
         .expect("builds the scenario runtime")
         .block_on(scenario_main());
+    #[cfg(feature = "dhat-heap")]
+    {
+        let stats = dhat::HeapStats::get();
+        eprintln!(
+            "DHAT total_blocks={} total_bytes={} max_blocks={} max_bytes={}",
+            stats.total_blocks, stats.total_bytes, stats.max_blocks, stats.max_bytes
+        );
+        drop(dhat);
+    }
 }
 
 async fn scenario_main() {
