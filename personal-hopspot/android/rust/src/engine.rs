@@ -203,6 +203,7 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
                     ble_identity,
                     LinkCapabilities {
                         l2cap: Some(psm),
+                        l2cap_can_open: true,
                         link_mtu: BLE_HW_MTU as u16,
                     },
                 ));

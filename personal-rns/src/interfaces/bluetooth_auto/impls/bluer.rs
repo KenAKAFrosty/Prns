@@ -693,7 +693,7 @@ impl BleLink for DialedLink {
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
         match transport {
-            Transport::L2cap { psm } => {
+            Transport::L2capOpen { psm } => {
                 log::info!(
                     "bluetooth: {} handshake settled, opening L2CAP CoC to PSM {:#x}",
                     self.peer_address,
@@ -723,9 +723,16 @@ impl BleLink for DialedLink {
                 log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
                 Ok(())
             }
-            Transport::Gatt => {
+            Transport::L2capAccept => {
                 log::warn!(
-                    "bluetooth: {} handshake settled on GATT-only transport; the GATT data plane is not implemented on Linux yet, so this member carries no frames",
+                    "bluetooth: {} resolved to L2CAP-accept on a dialed link, which Linux does not expect (a dialing Linux node always opens); no data plane",
+                    self.peer_address
+                );
+                Err(BluerError::GattDataUnsupported)
+            }
+            Transport::GattData => {
+                log::warn!(
+                    "bluetooth: {} handshake settled on the GATT data plane, which is not implemented on Linux yet, so this member carries no frames",
                     self.peer_address
                 );
                 Err(BluerError::GattDataUnsupported)
@@ -797,7 +804,7 @@ impl BleLink for AcceptedLink {
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
         match transport {
-            Transport::L2cap { .. } => {
+            Transport::L2capAccept => {
                 log::info!(
                     "bluetooth: {} handshake settled, accepting L2CAP CoC on our listener",
                     self.address
@@ -807,9 +814,16 @@ impl BleLink for AcceptedLink {
                 log::info!("bluetooth: {} L2CAP data plane up", self.address);
                 Ok(())
             }
-            Transport::Gatt => {
+            Transport::L2capOpen { .. } => {
                 log::warn!(
-                    "bluetooth: {} handshake settled on GATT-only transport; the GATT data plane is not implemented on Linux yet, so this member carries no frames",
+                    "bluetooth: {} resolved to L2CAP-open on an accepted (GATT-server) link — Linux opening a CoC to an accept-only peer (e.g. macOS dialing Linux) is not yet wired; no data plane until the capability-role follow-up",
+                    self.address
+                );
+                Err(BluerError::GattDataUnsupported)
+            }
+            Transport::GattData => {
+                log::warn!(
+                    "bluetooth: {} handshake settled on the GATT data plane, which is not implemented on Linux yet, so this member carries no frames",
                     self.address
                 );
                 Err(BluerError::GattDataUnsupported)

@@ -17,7 +17,7 @@ use objc2_core_bluetooth::{
     CBAttributePermissions, CBCentral, CBCentralManager, CBCentralManagerDelegate,
     CBCharacteristic, CBCharacteristicProperties, CBCharacteristicWriteType, CBL2CAPChannel,
     CBManagerState, CBMutableCharacteristic, CBMutableService, CBPeripheral, CBPeripheralDelegate,
-    CBPeripheralManager, CBPeripheralManagerDelegate, CBService, CBUUID,
+    CBPeripheralManager, CBPeripheralManagerDelegate, CBPeripheralState, CBService, CBUUID,
 };
 use objc2_core_foundation::{
     CFOptionFlags, CFReadStream, CFStreamClientContext, CFStreamEventType, CFWriteStream,
@@ -107,6 +107,9 @@ unsafe impl Send for SendCentralManager {}
 struct SendCentralDelegate(Retained<CentralDelegate>);
 unsafe impl Send for SendCentralDelegate {}
 
+struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
+unsafe impl Send for SendPeripheralDelegate {}
+
 enum ControlPlane {
     Listener {
         manager: SendPeripheralManager,
@@ -115,6 +118,7 @@ enum ControlPlane {
     Central {
         peripheral: SendPeripheral,
         characteristic: SendCharacteristicRef,
+        peripheral_manager: SendPeripheralDelegate,
     },
 }
 
@@ -354,6 +358,9 @@ define_class!(
             _advertisement_data: &NSDictionary<NSString, AnyObject>,
             rssi: &NSNumber,
         ) {
+            if unsafe { peripheral.state() } != CBPeripheralState::Disconnected {
+                return;
+            }
             let dbm = rssi.integerValue();
             let rssi = if dbm == 127 { None } else { i8::try_from(dbm).ok() };
             let identifier = unsafe { peripheral.identifier() };
@@ -755,6 +762,15 @@ impl PeripheralDelegate {
         });
         unsafe { msg_send![super(this), init] }
     }
+
+    fn arm_pending_channel(&self, tx: oneshot::Sender<DataPlane>) {
+        let queue = self.ivars().queue.clone();
+        let this = SendPeripheralDelegate(self.retain());
+        queue.exec_async(move || {
+            let this = this;
+            *this.0.ivars().pending_channel.borrow_mut() = Some(tx);
+        });
+    }
 }
 
 pub struct GattLink {
@@ -810,6 +826,7 @@ impl BleLink for GattLink {
             ControlPlane::Central {
                 peripheral,
                 characteristic,
+                ..
             } => {
                 let max = unsafe {
                     peripheral
@@ -848,15 +865,23 @@ impl BleLink for GattLink {
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), MacosBleError> {
         match transport {
-            Transport::L2cap { psm } => {
-                if let ControlPlane::Central { peripheral, .. } = &self.control {
-                    unsafe { peripheral.0.openL2CAPChannel(psm.get()) };
-                }
-                let rx = self.data_rx.take().ok_or(MacosBleError::Closed)?;
+            Transport::L2capAccept => {
+                let rx = match &self.control {
+                    ControlPlane::Central {
+                        peripheral_manager, ..
+                    } => {
+                        let (tx, rx) = oneshot::channel::<DataPlane>();
+                        peripheral_manager.0.arm_pending_channel(tx);
+                        rx
+                    }
+                    ControlPlane::Listener { .. } => {
+                        self.data_rx.take().ok_or(MacosBleError::Closed)?
+                    }
+                };
                 match tokio::time::timeout(L2CAP_OPEN_TIMEOUT, rx).await {
                     Ok(Ok(data)) => {
                         log::info!(
-                            "bluetooth: {:02x?} L2CAP data plane established",
+                            "bluetooth: {:02x?} L2CAP data plane established (peer opened the CoC to our listener)",
                             self.address.octets()
                         );
                         self.data = Some(data);
@@ -879,12 +904,19 @@ impl BleLink for GattLink {
                     }
                 }
             }
-            Transport::Gatt => {
-                log::info!(
-                    "bluetooth: {:02x?} settled GATT-only (peer offered no L2CAP) — no data plane",
+            Transport::L2capOpen { .. } => {
+                log::warn!(
+                    "bluetooth: {:02x?} L2capOpen requested but macOS cannot open a CoC without bonding — this should not happen",
                     self.address.octets()
                 );
-                Ok(())
+                Err(MacosBleError::CannotOpenL2cap)
+            }
+            Transport::GattData => {
+                log::warn!(
+                    "bluetooth: {:02x?} GATT-data plane not yet implemented on macOS (pass 2) — this member will carry no frames",
+                    self.address.octets()
+                );
+                Err(MacosBleError::GattDataUnsupported)
             }
         }
     }
@@ -1010,6 +1042,7 @@ impl BleSink for GattSink {
 struct Handles {
     central: SendCentralManager,
     central_delegate: SendCentralDelegate,
+    peripheral_delegate: SendPeripheralDelegate,
     queue: DispatchRetained<DispatchQueue>,
 }
 
@@ -1020,6 +1053,7 @@ pub struct MacosBleBackend {
     seen: HashSet<[u8; 6]>,
     central: SendCentralManager,
     central_delegate: SendCentralDelegate,
+    peripheral_delegate: SendPeripheralDelegate,
     peripherals: PeripheralTable,
     dials: JoinSet<Option<(GattLink, Option<i8>)>>,
     queue: DispatchRetained<DispatchQueue>,
@@ -1034,6 +1068,8 @@ pub enum MacosBleError {
     PublishFailed,
     FrameTooLarge,
     DialFailed,
+    CannotOpenL2cap,
+    GattDataUnsupported,
 }
 
 impl MacosBleBackend {
@@ -1073,17 +1109,19 @@ impl MacosBleBackend {
             let _ = handles_tx.send(Handles {
                 central: SendCentralManager(central.clone()),
                 central_delegate: SendCentralDelegate(central_delegate.clone()),
+                peripheral_delegate: SendPeripheralDelegate(peripheral_delegate.clone()),
                 queue: queue.clone(),
             });
 
             let _ = shutdown_rx.recv();
-            let _hold = (central, central_delegate);
+            let _hold = (central, central_delegate, peripheral_delegate, _peripheral);
         });
 
         let handles = handles_rx.await.map_err(|_| MacosBleError::Closed)?;
         let Handles {
             central,
             central_delegate,
+            peripheral_delegate,
             queue,
         } = handles;
 
@@ -1102,6 +1140,7 @@ impl MacosBleBackend {
                         seen: HashSet::new(),
                         central,
                         central_delegate,
+                        peripheral_delegate,
                         peripherals,
                         dials: JoinSet::new(),
                         queue,
@@ -1220,6 +1259,7 @@ impl BleBackend for MacosBleBackend {
             }
         });
         let send_peripheral = SendPeripheral(peripheral);
+        let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
         self.dials.spawn(async move {
             let characteristic = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
                 Ok(Ok(characteristic)) => characteristic,
@@ -1233,6 +1273,7 @@ impl BleBackend for MacosBleBackend {
                     control: ControlPlane::Central {
                         peripheral: send_peripheral,
                         characteristic,
+                        peripheral_manager: send_peripheral_manager,
                     },
                     control_rx,
                     address,

@@ -84,6 +84,7 @@ mod tests {
     use super::*;
     use crate::framebuffer::{ARGB_BYTES, DARK_RGBA};
     use personal_hopspot_ui::{card_label, CardKind, Liveness};
+    use personal_rns::interfaces::InterfaceId;
 
     impl HopspotFace {
         fn detached() -> Self {
@@ -97,6 +98,7 @@ mod tests {
     fn stub_cards() -> HVec<Card, MAX_CARDS> {
         let mut cards = HVec::new();
         let _ = cards.push(Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Usb,
             label: card_label("USB"),
             selected: false,
@@ -109,6 +111,7 @@ mod tests {
             last_activity_secs: Some(2),
         });
         let _ = cards.push(Card {
+            id: InterfaceId::new([0; 8]),
             kind: CardKind::Wifi,
             label: card_label("WiFi"),
             selected: false,

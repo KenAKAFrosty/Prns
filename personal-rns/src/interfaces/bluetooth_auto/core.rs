@@ -29,6 +29,7 @@ pub const COLUMBA_RX_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe5));
 pub const COLUMBA_TX_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe4));
 pub const COLUMBA_IDENTITY_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe6));
 pub const NATIVE_CONTROL_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe7));
+pub const NATIVE_DATA_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe8));
 
 const AD_FLAGS: u8 = 0x01;
 const AD_INCOMPLETE_SERVICE_UUID128: u8 = 0x06;
@@ -173,6 +174,7 @@ pub enum Dialect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkCapabilities {
     pub l2cap: Option<Psm>,
+    pub l2cap_can_open: bool,
     pub link_mtu: u16,
 }
 
@@ -180,8 +182,9 @@ const CONTROL_HELLO: u8 = 0x01;
 const CONTROL_WELCOME: u8 = 0x02;
 const CONTROL_CLOSE: u8 = 0x03;
 const CONTROL_IDENTITY_LEN: usize = 16;
-const CONTROL_CAP_LEN: usize = 3;
+const CONTROL_CAP_LEN: usize = 4;
 const CONTROL_RSSI_LEN: usize = 1;
+const CAP_FLAG_L2CAP_CAN_OPEN: u8 = 0b0000_0001;
 pub const CONTROL_MAX_LEN: usize = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN + CONTROL_RSSI_LEN;
 
 fn encode_rssi(rssi: Option<i8>) -> u8 {
@@ -199,37 +202,54 @@ impl LinkCapabilities {
             Some(psm) => psm.as_byte(),
             None => 0,
         };
-        out[1..3].copy_from_slice(&self.link_mtu.to_be_bytes());
+        out[1] = if self.l2cap_can_open {
+            CAP_FLAG_L2CAP_CAN_OPEN
+        } else {
+            0
+        };
+        out[2..4].copy_from_slice(&self.link_mtu.to_be_bytes());
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
         let psm_byte = *bytes.first()?;
-        let link_mtu = u16::from_be_bytes(bytes.get(1..3)?.try_into().ok()?);
+        let flags = *bytes.get(1)?;
+        let link_mtu = u16::from_be_bytes(bytes.get(2..4)?.try_into().ok()?);
         let l2cap = if psm_byte == 0 {
             None
         } else {
             Some(Psm::from_byte(psm_byte)?)
         };
-        Some(Self { l2cap, link_mtu })
+        let l2cap_can_open = flags & CAP_FLAG_L2CAP_CAN_OPEN != 0;
+        Some(Self {
+            l2cap,
+            l2cap_can_open,
+            link_mtu,
+        })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
-    L2cap { psm: Psm },
-    Gatt,
+    L2capOpen { psm: Psm },
+    L2capAccept,
+    GattData,
 }
 
 impl Transport {
     pub fn select(local: &LinkCapabilities, peer: &LinkCapabilities, role: HandshakeRole) -> Self {
-        match (local.l2cap, peer.l2cap) {
-            (Some(own), Some(theirs)) => Transport::L2cap {
-                psm: match role {
-                    HandshakeRole::Dialer => theirs,
-                    HandshakeRole::Listener => own,
-                },
-            },
-            _ => Transport::Gatt,
+        let (Some(_own), Some(theirs)) = (local.l2cap, peer.l2cap) else {
+            return Transport::GattData;
+        };
+        let local_opens = match (local.l2cap_can_open, peer.l2cap_can_open) {
+            (true, false) => true,
+            (false, true) => false,
+            (true, true) => matches!(role, HandshakeRole::Dialer),
+            (false, false) => return Transport::GattData,
+        };
+        if local_opens {
+            Transport::L2capOpen { psm: theirs }
+        } else {
+            Transport::L2capAccept
         }
     }
 }
@@ -690,6 +710,7 @@ mod tests {
     fn caps(l2cap: Option<u16>) -> LinkCapabilities {
         LinkCapabilities {
             l2cap: l2cap.and_then(Psm::new),
+            l2cap_can_open: l2cap.is_some(),
             link_mtu: 247,
         }
     }
@@ -712,8 +733,16 @@ mod tests {
         assert!(!contains_service(&[0x02, 0x01, 0x06]));
     }
 
+    fn caps_role(l2cap: Option<u16>, l2cap_can_open: bool) -> LinkCapabilities {
+        LinkCapabilities {
+            l2cap: l2cap.and_then(Psm::new),
+            l2cap_can_open,
+            link_mtu: 247,
+        }
+    }
+
     #[test]
-    fn a_criss_cross_handshake_settles_both_sides_on_the_same_l2cap_channel() {
+    fn when_both_can_open_the_dialer_opens_the_listeners_l2cap_channel() {
         let lower = Local {
             identity: identity(1),
             capabilities: caps(Some(0x0081)),
@@ -737,18 +766,61 @@ mod tests {
         {
             assert_eq!(at_listener.identity, identity(1));
             assert_eq!(at_dialer.identity, identity(2));
-            let agreed = Transport::L2cap {
-                psm: Psm::new(0x0082).unwrap(),
-            };
-            assert_eq!(at_listener.transport, agreed);
-            assert_eq!(at_dialer.transport, agreed);
+            assert_eq!(
+                at_dialer.transport,
+                Transport::L2capOpen {
+                    psm: Psm::new(0x0082).unwrap(),
+                }
+            );
+            assert_eq!(at_listener.transport, Transport::L2capAccept);
             assert_eq!(at_listener.peer_rssi, Some(-40));
             assert_eq!(at_dialer.peer_rssi, Some(-55));
         }
     }
 
     #[test]
-    fn a_gatt_only_peer_pulls_both_sides_down_to_gatt() {
+    fn an_accept_only_peer_always_makes_the_other_side_open_regardless_of_dial_role() {
+        let accept_only = caps_role(Some(0x00c0), false);
+        let opener = caps_role(Some(0x0088), true);
+
+        let dialed_by_accept_only = Transport::select(&accept_only, &opener, HandshakeRole::Dialer);
+        let opener_as_listener = Transport::select(&opener, &accept_only, HandshakeRole::Listener);
+        assert_eq!(dialed_by_accept_only, Transport::L2capAccept);
+        assert_eq!(
+            opener_as_listener,
+            Transport::L2capOpen {
+                psm: Psm::new(0x00c0).unwrap(),
+            }
+        );
+
+        let accept_only_as_listener =
+            Transport::select(&accept_only, &opener, HandshakeRole::Listener);
+        let dialed_by_opener = Transport::select(&opener, &accept_only, HandshakeRole::Dialer);
+        assert_eq!(accept_only_as_listener, Transport::L2capAccept);
+        assert_eq!(
+            dialed_by_opener,
+            Transport::L2capOpen {
+                psm: Psm::new(0x00c0).unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn two_accept_only_peers_fall_back_to_gatt_data() {
+        let a = caps_role(Some(0x00c0), false);
+        let b = caps_role(Some(0x00c1), false);
+        assert_eq!(
+            Transport::select(&a, &b, HandshakeRole::Dialer),
+            Transport::GattData
+        );
+        assert_eq!(
+            Transport::select(&b, &a, HandshakeRole::Listener),
+            Transport::GattData
+        );
+    }
+
+    #[test]
+    fn a_gatt_only_peer_pulls_both_sides_down_to_gatt_data() {
         let dialer_local = Local {
             identity: identity(1),
             capabilities: caps(Some(0x0081)),
@@ -766,8 +838,8 @@ mod tests {
         if let (Outcome::Settled(at_listener), Outcome::Settled(at_dialer)) =
             (listener_reaction.outcome, dialer_reaction.outcome)
         {
-            assert_eq!(at_listener.transport, Transport::Gatt);
-            assert_eq!(at_dialer.transport, Transport::Gatt);
+            assert_eq!(at_listener.transport, Transport::GattData);
+            assert_eq!(at_dialer.transport, Transport::GattData);
         }
     }
 
@@ -872,6 +944,7 @@ mod tests {
             identity: identity(9),
             capabilities: LinkCapabilities {
                 l2cap: None,
+                l2cap_can_open: false,
                 link_mtu: 23,
             },
             peer_rssi: None,

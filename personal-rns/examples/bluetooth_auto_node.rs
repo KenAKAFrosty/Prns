@@ -48,6 +48,7 @@ async fn main() {
     let identity = BleIdentity::new([node_byte; 16]);
     let capabilities = LinkCapabilities {
         l2cap: Some(psm),
+        l2cap_can_open: true,
         link_mtu: BLE_HW_MTU as u16,
     };
 

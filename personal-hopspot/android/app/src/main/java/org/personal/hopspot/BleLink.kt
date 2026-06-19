@@ -358,7 +358,7 @@ class BleLink(private val context: Context) {
                     (raw[3].toInt() and 0xff)
                 val psm = ((raw[4].toInt() and 0xff) shl 8) or (raw[5].toInt() and 0xff)
                 val link = links[connId]
-                val device = link?.let { devices[it.address] }
+                val device = link?.let { it.central ?: it.clientGatt?.device ?: devices[it.address] }
                 if (device == null) {
                     Log.w(TAG, "l2cap open[$connId] psm=$psm but no device")
                     continue

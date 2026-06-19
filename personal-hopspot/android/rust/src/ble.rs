@@ -322,7 +322,6 @@ impl BleBackend for AndroidBleBackend {
                     let peer_rssi = pending.rssi;
                     let link = AndroidBleLink {
                         conn_id: pending.conn_id,
-                        dialed,
                         address: pending.address,
                         control_in: pending.control_in,
                         l2cap_in: Some(pending.l2cap_in),
@@ -352,7 +351,6 @@ impl BleBackend for AndroidBleBackend {
 
 pub struct AndroidBleLink {
     conn_id: u32,
-    dialed: bool,
     address: BleAddress,
     control_in: UnboundedReceiver<Vec<u8>>,
     l2cap_in: Option<UnboundedReceiver<Vec<u8>>>,
@@ -399,18 +397,27 @@ impl BleLink for AndroidBleLink {
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), AndroidBleError> {
         match transport {
-            Transport::L2cap { psm } => {
-                if self.dialed {
-                    if let Ok(mut opens) = self.l2cap_opens.lock() {
-                        opens.push_back((self.conn_id, psm.get()));
-                    }
+            Transport::L2capOpen { psm } => {
+                if let Ok(mut opens) = self.l2cap_opens.lock() {
+                    opens.push_back((self.conn_id, psm.get()));
                 }
                 while !self.l2cap_up.is_up.load(Ordering::Acquire) {
                     self.l2cap_up.notify.notified().await;
                 }
                 Ok(())
             }
-            Transport::Gatt => Ok(()),
+            Transport::L2capAccept => {
+                while !self.l2cap_up.is_up.load(Ordering::Acquire) {
+                    self.l2cap_up.notify.notified().await;
+                }
+                Ok(())
+            }
+            Transport::GattData => {
+                log::warn!(
+                    "bluetooth: GATT-data plane not yet implemented on Android (pass 2) — this member carries no frames"
+                );
+                Ok(())
+            }
         }
     }
 

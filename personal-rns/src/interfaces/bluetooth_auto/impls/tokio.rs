@@ -460,6 +460,7 @@ mod tests {
     fn caps(psm: u16) -> LinkCapabilities {
         LinkCapabilities {
             l2cap: Psm::new(psm),
+            l2cap_can_open: true,
             link_mtu: 247,
         }
     }
@@ -692,7 +693,13 @@ mod tests {
 
         assert_eq!(established_a.identity, local_b.identity);
         assert_eq!(established_b.identity, local_a.identity);
-        assert_eq!(established_a.transport, established_b.transport);
+        assert_eq!(
+            established_a.transport,
+            Transport::L2capOpen {
+                psm: local_b.capabilities.l2cap.unwrap(),
+            }
+        );
+        assert_eq!(established_b.transport, Transport::L2capAccept);
 
         let (source_a, sink_a) = link_a.into_data();
         let (source_b, sink_b) = link_b.into_data();
@@ -747,6 +754,7 @@ mod tests {
             identity: BleIdentity::new([2u8; 16]),
             capabilities: LinkCapabilities {
                 l2cap: None,
+                l2cap_can_open: false,
                 link_mtu: 247,
             },
         };
@@ -774,8 +782,8 @@ mod tests {
         };
         let (established_a, established_b) = tokio::join!(dialer, listener);
 
-        assert_eq!(established_a.transport, Transport::Gatt);
-        assert_eq!(established_b.transport, Transport::Gatt);
+        assert_eq!(established_a.transport, Transport::GattData);
+        assert_eq!(established_b.transport, Transport::GattData);
     }
 
     fn idle_seam() -> MockSeam {
@@ -795,8 +803,13 @@ mod tests {
         drop(link_b);
 
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
-        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), Transport::Gatt, source, sink)
-            .report_close_to(addr, closed_tx.clone());
+        let member = BluetoothPeer::new(
+            BleIdentity::new([1u8; 16]),
+            Transport::GattData,
+            source,
+            sink,
+        )
+        .report_close_to(addr, closed_tx.clone());
         tokio::spawn(member.run(idle_seam()));
 
         let reported = tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
@@ -814,8 +827,13 @@ mod tests {
         let _keep_peer_alive = link_b;
 
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
-        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), Transport::Gatt, source, sink)
-            .report_close_to(addr, closed_tx.clone());
+        let member = BluetoothPeer::new(
+            BleIdentity::new([1u8; 16]),
+            Transport::GattData,
+            source,
+            sink,
+        )
+        .report_close_to(addr, closed_tx.clone());
         let handle = tokio::spawn(member.run(idle_seam()));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
