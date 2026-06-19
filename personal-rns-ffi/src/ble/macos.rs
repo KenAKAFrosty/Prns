@@ -27,13 +27,14 @@ use objc2_foundation::{
     NSOutputStream, NSString, NSUUID,
 };
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
+use tokio::task::JoinSet;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
     encode_stream_frame, BleAddress, BleUuid, Control, Dialect, Psm, StreamDeframer, Transport,
     BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource,
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
@@ -48,6 +49,8 @@ const READ_EVENTS: CFOptionFlags = CFStreamEventType::HasBytesAvailable.0
 const WRITE_EVENTS: CFOptionFlags = CFStreamEventType::CanAcceptBytes.0
     | CFStreamEventType::ErrorOccurred.0
     | CFStreamEventType::EndEncountered.0;
+
+type PeripheralTable = Arc<Mutex<HashMap<[u8; 6], (SendPeripheral, Option<i8>)>>>;
 
 fn cbuuid(uuid: BleUuid) -> Retained<CBUUID> {
     match uuid {
@@ -296,7 +299,10 @@ enum Event {
     Powered,
     Published { psm: u16 },
     PublishFailed,
-    Sighting(BleAddress),
+    Sighting {
+        address: BleAddress,
+        rssi: Option<i8>,
+    },
     Inbound(GattLink),
 }
 
@@ -318,7 +324,7 @@ unsafe impl Send for DialCommand {}
 struct CentralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
     queue: DispatchRetained<DispatchQueue>,
-    peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>>,
+    peripherals: PeripheralTable,
     session: RefCell<Option<DialSession>>,
 }
 
@@ -346,17 +352,19 @@ define_class!(
             _central: &CBCentralManager,
             peripheral: &CBPeripheral,
             _advertisement_data: &NSDictionary<NSString, AnyObject>,
-            _rssi: &NSNumber,
+            rssi: &NSNumber,
         ) {
+            let dbm = rssi.integerValue();
+            let rssi = if dbm == 127 { None } else { i8::try_from(dbm).ok() };
             let identifier = unsafe { peripheral.identifier() };
             let token = uuid_token(&identifier);
             if let Ok(mut map) = self.ivars().peripherals.lock() {
-                map.insert(token, SendPeripheral(peripheral.retain()));
+                map.insert(token, (SendPeripheral(peripheral.retain()), rssi));
             }
-            let _ = self
-                .ivars()
-                .events
-                .send(Event::Sighting(BleAddress::new(token)));
+            let _ = self.ivars().events.send(Event::Sighting {
+                address: BleAddress::new(token),
+                rssi,
+            });
         }
 
         #[unsafe(method(centralManager:didConnectPeripheral:))]
@@ -511,7 +519,7 @@ impl CentralDelegate {
     fn new(
         events: tokio_mpsc::UnboundedSender<Event>,
         queue: DispatchRetained<DispatchQueue>,
-        peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>>,
+        peripherals: PeripheralTable,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars {
             events,
@@ -1012,7 +1020,8 @@ pub struct MacosBleBackend {
     seen: HashSet<[u8; 6]>,
     central: SendCentralManager,
     central_delegate: SendCentralDelegate,
-    peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>>,
+    peripherals: PeripheralTable,
+    dials: JoinSet<Option<(GattLink, Option<i8>)>>,
     queue: DispatchRetained<DispatchQueue>,
 }
 
@@ -1032,7 +1041,7 @@ impl MacosBleBackend {
         let (events_tx, mut events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
-        let peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>> =
+        let peripherals: PeripheralTable =
             Arc::new(Mutex::new(HashMap::new()));
         let central_events = events_tx.clone();
         let peripherals_for_thread = peripherals.clone();
@@ -1094,6 +1103,7 @@ impl MacosBleBackend {
                         central,
                         central_delegate,
                         peripherals,
+                        dials: JoinSet::new(),
                         queue,
                     });
                 }
@@ -1120,7 +1130,7 @@ impl MacosBleBackend {
     pub async fn next_sighting(&mut self) -> Option<BleAddress> {
         loop {
             match self.events.recv().await? {
-                Event::Sighting(address) => {
+                Event::Sighting { address, .. } => {
                     if self.seen.insert(*address.octets()) {
                         return Some(address);
                     }
@@ -1142,29 +1152,43 @@ impl BleBackend for MacosBleBackend {
 
     async fn next_event(&mut self) -> BleEvent<GattLink> {
         loop {
-            match self.events.recv().await {
-                Some(Event::Sighting(address)) => {
-                    if self.seen.insert(*address.octets()) {
-                        log::debug!("bluetooth: sighted Prns peer {:02x?}", address.octets());
-                        return BleEvent::Sighting(address);
+            let pending_dials = !self.dials.is_empty();
+            tokio::select! {
+                event = self.events.recv() => match event {
+                    Some(Event::Sighting { address, rssi }) => {
+                        log::debug!(
+                            "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
+                            address.octets()
+                        );
+                        return BleEvent::Sighting { address, rssi };
+                    }
+                    Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
+                    Some(_) => continue,
+                    None => core::future::pending().await,
+                },
+                Some(done) = self.dials.join_next(), if pending_dials => {
+                    if let Ok(Some((link, peer_rssi))) = done {
+                        return BleEvent::LinkReady {
+                            link,
+                            origin: Origin::Dialed,
+                            peer_rssi,
+                        };
                     }
                 }
-                Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
-                Some(_) => continue,
-                None => core::future::pending().await,
             }
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) -> Result<GattLink, MacosBleError> {
+    async fn dial(&mut self, address: BleAddress) {
         let token = *address.octets();
-        let peripheral = {
-            let map = self.peripherals.lock().map_err(|_| MacosBleError::Closed)?;
-            map.get(&token).map(|p| p.0.clone())
-        };
-        let Some(peripheral) = peripheral else {
+        let Some((peripheral, peer_rssi)) = self
+            .peripherals
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&token).map(|(p, rssi)| (p.0.clone(), *rssi)))
+        else {
             log::warn!("bluetooth: dial to {token:02x?} — peripheral not yet sighted");
-            return Err(MacosBleError::DialFailed);
+            return;
         };
         let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
         let (result_tx, result_rx) = oneshot::channel::<SendCharacteristicRef>();
@@ -1195,23 +1219,29 @@ impl BleBackend for MacosBleBackend {
                     .connectPeripheral_options(&command.peripheral, None);
             }
         });
-        let characteristic = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
-            Ok(Ok(characteristic)) => characteristic,
-            _ => {
-                log::warn!("bluetooth: dial to {token:02x?} did not reach control-ready");
-                return Err(MacosBleError::DialFailed);
-            }
-        };
-        Ok(GattLink {
-            control: ControlPlane::Central {
-                peripheral: SendPeripheral(peripheral),
-                characteristic,
-            },
-            control_rx,
-            address,
-            data_rx: Some(data_rx),
-            data: None,
-        })
+        let send_peripheral = SendPeripheral(peripheral);
+        self.dials.spawn(async move {
+            let characteristic = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
+                Ok(Ok(characteristic)) => characteristic,
+                _ => {
+                    log::warn!("bluetooth: dial to {token:02x?} did not reach control-ready");
+                    return None;
+                }
+            };
+            Some((
+                GattLink {
+                    control: ControlPlane::Central {
+                        peripheral: send_peripheral,
+                        characteristic,
+                    },
+                    control_rx,
+                    address,
+                    data_rx: Some(data_rx),
+                    data: None,
+                },
+                peer_rssi,
+            ))
+        });
     }
 }
 
