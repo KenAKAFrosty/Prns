@@ -58,6 +58,14 @@ impl Psm {
     pub const fn get(self) -> u16 {
         self.0
     }
+
+    pub const fn as_byte(self) -> u8 {
+        self.0.to_be_bytes()[1]
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        Self::new(u16::from(byte))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -172,26 +180,25 @@ const CONTROL_HELLO: u8 = 0x01;
 const CONTROL_WELCOME: u8 = 0x02;
 const CONTROL_CLOSE: u8 = 0x03;
 const CONTROL_IDENTITY_LEN: usize = 16;
-const CONTROL_CAP_LEN: usize = 4;
+const CONTROL_CAP_LEN: usize = 3;
 pub const CONTROL_MAX_LEN: usize = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN;
 
 impl LinkCapabilities {
     fn encode(&self, out: &mut [u8; CONTROL_CAP_LEN]) {
-        let psm = match self.l2cap {
-            Some(psm) => psm.get(),
+        out[0] = match self.l2cap {
+            Some(psm) => psm.as_byte(),
             None => 0,
         };
-        out[0..2].copy_from_slice(&psm.to_be_bytes());
-        out[2..4].copy_from_slice(&self.link_mtu.to_be_bytes());
+        out[1..3].copy_from_slice(&self.link_mtu.to_be_bytes());
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        let psm_raw = u16::from_be_bytes(bytes.get(0..2)?.try_into().ok()?);
-        let link_mtu = u16::from_be_bytes(bytes.get(2..4)?.try_into().ok()?);
-        let l2cap = if psm_raw == 0 {
+        let psm_byte = *bytes.first()?;
+        let link_mtu = u16::from_be_bytes(bytes.get(1..3)?.try_into().ok()?);
+        let l2cap = if psm_byte == 0 {
             None
         } else {
-            Some(Psm::new(psm_raw)?)
+            Some(Psm::from_byte(psm_byte)?)
         };
         Some(Self { l2cap, link_mtu })
     }
