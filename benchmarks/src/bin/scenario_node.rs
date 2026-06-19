@@ -36,7 +36,8 @@ use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, Message, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    Diagnostic, InstancePorts, LocalInstance, Message, OnExisting, PreConfiguredDestination, Prns,
+    PrnsEvent, PrnsRecipe, Role, TokioPrnsHandle,
 };
 #[cfg(feature = "fixed-storage")]
 use personal_rns::storage::Esp32S3 as NodeStorage;
@@ -647,9 +648,16 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         }
     };
 
+    let shared_port = shared_instance_port();
     if role == "responder" {
-        let (node, bound) = build_responder_node(single, on_event, manifest, addr).await;
+        let (node, bound) = match shared_port {
+            Some(_) => (build_bus_client_node(single, on_event), "shared".to_string()),
+            None => build_responder_node(single, on_event, manifest, addr).await,
+        };
         let commands = node.handle();
+        if let Some(port) = shared_port {
+            join_bus(&commands, port).await;
+        }
         println!("READY role=responder addr={bound}");
         let firehose = async {
             if mechanism == "link" || mechanism == "channel" {
@@ -663,8 +671,14 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
             () = firehose => {}
         }
     } else if role == "initiator" {
-        let node = build_initiator_node(single, on_event, manifest, addr).await;
+        let node = match shared_port {
+            Some(_) => build_bus_client_node(single, on_event),
+            None => build_initiator_node(single, on_event, manifest, addr).await,
+        };
         let commands = node.handle();
+        if let Some(port) = shared_port {
+            join_bus(&commands, port).await;
+        }
         println!("READY role=initiator");
         let firehose = async {
             if mechanism == "link" {
@@ -685,6 +699,48 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     } else {
         panic!("unknown role {role:?}");
     }
+}
+
+fn shared_instance_port() -> Option<u16> {
+    std::env::var("MATCHUP_SHARED_PORT")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+}
+
+fn build_bus_client_node<F>(
+    single: PreConfiguredDestination<'static>,
+    on_event: F,
+) -> Prns<(), (), F, NodeStorage>
+where
+    F: FnMut(PrnsEvent<'_>, &()),
+{
+    Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [single],
+        app_state: (),
+        storage: NodeStorage::default(),
+        routes: routes![],
+        on_event,
+        interfaces: interfaces![],
+    })
+}
+
+async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
+    let role = commands
+        .join_local_instance(LocalInstance {
+            identity_dir: std::env::temp_dir(),
+            ports: InstancePorts {
+                bus: port,
+                control: port + 1,
+            },
+            on_existing: OnExisting::JoinAsClient,
+        })
+        .await
+        .expect("join the shared-instance bus");
+    assert!(
+        matches!(role, Role::JoinedAsClient { .. }),
+        "expected to join a running host as a client, got {role:?}"
+    );
 }
 
 /// Build the responder's node: its listening wires fold straight into the recipe (a relayed client,

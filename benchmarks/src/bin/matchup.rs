@@ -83,6 +83,13 @@ impl Scenario {
     fn manifest(self) -> PathBuf {
         benchmarks::scenario_dir(self.dir_name()).join("manifest.json")
     }
+
+    fn rides_high_level_runtime(self) -> bool {
+        matches!(
+            self,
+            Scenario::SingleFirehose | Scenario::LinkFirehoseSmallPayload
+        )
+    }
 }
 
 struct Matchup {
@@ -162,18 +169,19 @@ impl RnsImplementation {
 
     fn client_command(
         self,
-        manifest: &Path,
+        scenario: Scenario,
         role: Role,
         duration_ms: u64,
         bus: &Bus,
     ) -> Result<Command, Unavailable> {
+        let manifest = scenario.manifest();
         match self {
             RnsImplementation::Reference => {
                 let mut command = Command::new(reference_python());
                 command
                     .arg("-u")
                     .arg(reference_dir().join("scenario_node.py"))
-                    .arg(manifest)
+                    .arg(&manifest)
                     .arg(role.protocol_role())
                     .arg("shared")
                     .arg(duration_ms.to_string())
@@ -181,9 +189,21 @@ impl RnsImplementation {
                     .env("RNS_BENCH_SHARED_RPC_KEY", &bus.rpc_key);
                 Ok(command)
             }
-            RnsImplementation::Prns => Err(Unavailable(
-                "prns client needs the outbound shared-instance connector (in flight)",
-            )),
+            RnsImplementation::Prns => {
+                if !scenario.rides_high_level_runtime() {
+                    return Err(Unavailable(
+                        "prns client: this mechanism rides the low-level reactor path, not wired yet",
+                    ));
+                }
+                let mut command = Command::new(sibling_binary("scenario_node"));
+                command
+                    .arg(&manifest)
+                    .arg(role.protocol_role())
+                    .arg("shared")
+                    .arg(duration_ms.to_string())
+                    .env("MATCHUP_SHARED_PORT", bus.port.to_string());
+                Ok(command)
+            }
         }
     }
 }
@@ -363,14 +383,14 @@ fn run_loopback(matchup: &Matchup, duration_ms: u64) -> Verdict {
         Err(Unavailable(reason)) => return Verdict::Skipped(format!("host {}: {reason}", host.label())),
     };
     let responder_command =
-        match matchup.receiver.client_command(&manifest, Role::Receiver, duration_ms, &bus) {
+        match matchup.receiver.client_command(matchup.scenario, Role::Receiver, duration_ms, &bus) {
             Ok(command) => command,
             Err(Unavailable(reason)) => {
                 return Verdict::Skipped(format!("receiver {}: {reason}", matchup.receiver.label()))
             }
         };
     let initiator_command =
-        match matchup.sender.client_command(&manifest, Role::Sender, duration_ms, &bus) {
+        match matchup.sender.client_command(matchup.scenario, Role::Sender, duration_ms, &bus) {
             Ok(command) => command,
             Err(Unavailable(reason)) => {
                 return Verdict::Skipped(format!("sender {}: {reason}", matchup.sender.label()))
