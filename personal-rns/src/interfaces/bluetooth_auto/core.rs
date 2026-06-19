@@ -162,11 +162,6 @@ pub enum Dialect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Sighting {
-    pub address: BleAddress,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkCapabilities {
     pub l2cap: Option<Psm>,
     pub link_mtu: u16,
