@@ -430,18 +430,47 @@ impl BleLink for DialedLink {
     async fn control_send(&mut self, msg: &Control) -> Result<(), BluerError> {
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
-        self.control.write(&buf[..len]).await?;
-        Ok(())
+        match self.control.write(&buf[..len]).await {
+            Ok(()) => {
+                log::debug!("bluetooth: {} <- {msg:?}", self.peer_address);
+                Ok(())
+            }
+            Err(error) => {
+                log::warn!(
+                    "bluetooth: {} control write failed: {error}",
+                    self.peer_address
+                );
+                Err(error.into())
+            }
+        }
     }
 
     async fn control_recv(&mut self) -> Result<Control, BluerError> {
         let value = self.notify.next().await.ok_or(BluerError::Closed)?;
-        Control::decode(&value).ok_or(BluerError::MalformedControl)
+        match Control::decode(&value) {
+            Some(control) => {
+                log::debug!("bluetooth: {} -> {control:?}", self.peer_address);
+                Ok(control)
+            }
+            None => {
+                log::warn!(
+                    "bluetooth: {} sent an undecodable control notification ({} bytes)",
+                    self.peer_address,
+                    value.len()
+                );
+                Err(BluerError::MalformedControl)
+            }
+        }
     }
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
         match transport {
             Transport::L2cap { psm } => {
+                log::info!(
+                    "bluetooth: {} handshake settled, opening L2CAP CoC to PSM {:#x}",
+                    self.peer_address,
+                    psm.get()
+                );
                 let socket = Socket::<SeqPacket>::new_seq_packet()?;
                 socket.set_security(Security {
                     level: SecurityLevel::Low,
@@ -453,9 +482,16 @@ impl BleLink for DialedLink {
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
                 let connected = socket.connect(target).await?;
                 self.socket = Some(Arc::new(connected));
+                log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
                 Ok(())
             }
-            Transport::Gatt => Err(BluerError::GattDataUnsupported),
+            Transport::Gatt => {
+                log::warn!(
+                    "bluetooth: {} handshake settled on GATT-only transport; the GATT data plane is not implemented on Linux yet, so this member carries no frames",
+                    self.peer_address
+                );
+                Err(BluerError::GattDataUnsupported)
+            }
         }
     }
 
@@ -496,6 +532,7 @@ impl BleLink for AcceptedLink {
         let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
         self.writer.write_all(&buf[..len]).await?;
         self.writer.flush().await?;
+        log::debug!("bluetooth: {} <- {msg:?}", self.address);
         Ok(())
     }
 
@@ -505,17 +542,40 @@ impl BleLink for AcceptedLink {
         if read == 0 {
             return Err(BluerError::Closed);
         }
-        Control::decode(&buf[..read]).ok_or(BluerError::MalformedControl)
+        match Control::decode(&buf[..read]) {
+            Some(control) => {
+                log::debug!("bluetooth: {} -> {control:?}", self.address);
+                Ok(control)
+            }
+            None => {
+                log::warn!(
+                    "bluetooth: {} sent an undecodable control write ({read} bytes)",
+                    self.address
+                );
+                Err(BluerError::MalformedControl)
+            }
+        }
     }
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
         match transport {
             Transport::L2cap { .. } => {
+                log::info!(
+                    "bluetooth: {} handshake settled, accepting L2CAP CoC on our listener",
+                    self.address
+                );
                 let (connected, _peer) = self.listener.accept().await?;
                 self.socket = Some(Arc::new(connected));
+                log::info!("bluetooth: {} L2CAP data plane up", self.address);
                 Ok(())
             }
-            Transport::Gatt => Err(BluerError::GattDataUnsupported),
+            Transport::Gatt => {
+                log::warn!(
+                    "bluetooth: {} handshake settled on GATT-only transport; the GATT data plane is not implemented on Linux yet, so this member carries no frames",
+                    self.address
+                );
+                Err(BluerError::GattDataUnsupported)
+            }
         }
     }
 
