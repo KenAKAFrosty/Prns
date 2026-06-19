@@ -4,7 +4,7 @@ use core::cell::RefCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::time::Duration;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc as sync_mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -15,9 +15,9 @@ use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBATTError, CBATTRequest, CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey,
     CBAttributePermissions, CBCentral, CBCentralManager, CBCentralManagerDelegate,
-    CBCharacteristic, CBCharacteristicProperties, CBL2CAPChannel, CBManagerState,
-    CBMutableCharacteristic, CBMutableService, CBPeripheral, CBPeripheralManager,
-    CBPeripheralManagerDelegate, CBService, CBUUID,
+    CBCharacteristic, CBCharacteristicProperties, CBCharacteristicWriteType, CBL2CAPChannel,
+    CBManagerState, CBMutableCharacteristic, CBMutableService, CBPeripheral, CBPeripheralDelegate,
+    CBPeripheralManager, CBPeripheralManagerDelegate, CBService, CBUUID,
 };
 use objc2_core_foundation::{
     CFOptionFlags, CFReadStream, CFStreamClientContext, CFStreamEventType, CFWriteStream,
@@ -40,6 +40,7 @@ const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const READ_CHUNK: usize = L2CAP_SDU_LEN;
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const L2CAP_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 const READ_EVENTS: CFOptionFlags = CFStreamEventType::HasBytesAvailable.0
     | CFStreamEventType::ErrorOccurred.0
@@ -90,6 +91,29 @@ unsafe impl Send for SendPeripheralManager {}
 
 struct SendCharacteristic(Retained<CBMutableCharacteristic>);
 unsafe impl Send for SendCharacteristic {}
+
+struct SendPeripheral(Retained<CBPeripheral>);
+unsafe impl Send for SendPeripheral {}
+
+struct SendCharacteristicRef(Retained<CBCharacteristic>);
+unsafe impl Send for SendCharacteristicRef {}
+
+struct SendCentralManager(Retained<CBCentralManager>);
+unsafe impl Send for SendCentralManager {}
+
+struct SendCentralDelegate(Retained<CentralDelegate>);
+unsafe impl Send for SendCentralDelegate {}
+
+enum ControlPlane {
+    Listener {
+        manager: SendPeripheralManager,
+        characteristic: SendCharacteristic,
+    },
+    Central {
+        peripheral: SendPeripheral,
+        characteristic: SendCharacteristicRef,
+    },
+}
 
 struct Outbound {
     pending: VecDeque<u8>,
@@ -276,8 +300,26 @@ enum Event {
     Inbound(GattLink),
 }
 
+struct DialSession {
+    address: BleAddress,
+    control_tx: tokio_mpsc::UnboundedSender<Control>,
+    result_tx: Option<oneshot::Sender<SendCharacteristicRef>>,
+    data_tx: Option<oneshot::Sender<DataPlane>>,
+}
+
+struct DialCommand {
+    central: Retained<CBCentralManager>,
+    delegate: Retained<CentralDelegate>,
+    peripheral: Retained<CBPeripheral>,
+    session: DialSession,
+}
+unsafe impl Send for DialCommand {}
+
 struct CentralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
+    queue: DispatchRetained<DispatchQueue>,
+    peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>>,
+    session: RefCell<Option<DialSession>>,
 }
 
 define_class!(
@@ -308,17 +350,175 @@ define_class!(
         ) {
             let identifier = unsafe { peripheral.identifier() };
             let token = uuid_token(&identifier);
+            if let Ok(mut map) = self.ivars().peripherals.lock() {
+                map.insert(token, SendPeripheral(peripheral.retain()));
+            }
             let _ = self
                 .ivars()
                 .events
                 .send(Event::Sighting(BleAddress::new(token)));
         }
+
+        #[unsafe(method(centralManager:didConnectPeripheral:))]
+        fn did_connect(&self, _central: &CBCentralManager, peripheral: &CBPeripheral) {
+            log::debug!("bluetooth: dial connected over LE, discovering Prns service");
+            let uuid = service_uuid();
+            let services = NSArray::from_slice(&[&*uuid]);
+            unsafe { peripheral.discoverServices(Some(&services)) };
+        }
+
+        #[unsafe(method(centralManager:didFailToConnectPeripheral:error:))]
+        fn did_fail_to_connect(
+            &self,
+            _central: &CBCentralManager,
+            _peripheral: &CBPeripheral,
+            error: Option<&NSError>,
+        ) {
+            log::warn!("bluetooth: dial connect FAILED: {error:?}");
+            self.ivars().session.borrow_mut().take();
+        }
+
+        #[unsafe(method(centralManager:didDisconnectPeripheral:error:))]
+        fn did_disconnect(
+            &self,
+            _central: &CBCentralManager,
+            _peripheral: &CBPeripheral,
+            error: Option<&NSError>,
+        ) {
+            log::warn!("bluetooth: dialed peripheral disconnected: {error:?}");
+            self.ivars().session.borrow_mut().take();
+        }
+    }
+
+    unsafe impl CBPeripheralDelegate for CentralDelegate {
+        #[unsafe(method(peripheral:didDiscoverServices:))]
+        fn did_discover_services(&self, peripheral: &CBPeripheral, error: Option<&NSError>) {
+            if let Some(error) = error {
+                log::warn!("bluetooth: service discovery FAILED: {error:?}");
+                self.ivars().session.borrow_mut().take();
+                return;
+            }
+            let service = unsafe { peripheral.services() }.and_then(|s| s.iter().next());
+            let Some(service) = service else {
+                log::warn!("bluetooth: no Prns service on peripheral — dropping dial");
+                self.ivars().session.borrow_mut().take();
+                return;
+            };
+            let control = control_uuid();
+            let controls = NSArray::from_slice(&[&*control]);
+            unsafe { peripheral.discoverCharacteristics_forService(Some(&controls), &service) };
+        }
+
+        #[unsafe(method(peripheral:didDiscoverCharacteristicsForService:error:))]
+        fn did_discover_characteristics(
+            &self,
+            peripheral: &CBPeripheral,
+            service: &CBService,
+            error: Option<&NSError>,
+        ) {
+            if let Some(error) = error {
+                log::warn!("bluetooth: characteristic discovery FAILED: {error:?}");
+                self.ivars().session.borrow_mut().take();
+                return;
+            }
+            let characteristic = unsafe { service.characteristics() }.and_then(|c| c.iter().next());
+            let Some(characteristic) = characteristic else {
+                log::warn!("bluetooth: no control characteristic — dropping dial");
+                self.ivars().session.borrow_mut().take();
+                return;
+            };
+            log::debug!("bluetooth: control characteristic found, subscribing");
+            unsafe { peripheral.setNotifyValue_forCharacteristic(true, &characteristic) };
+        }
+
+        #[unsafe(method(peripheral:didUpdateNotificationStateForCharacteristic:error:))]
+        fn did_update_notification_state(
+            &self,
+            _peripheral: &CBPeripheral,
+            characteristic: &CBCharacteristic,
+            error: Option<&NSError>,
+        ) {
+            if let Some(error) = error {
+                log::warn!("bluetooth: subscribe FAILED: {error:?}");
+                self.ivars().session.borrow_mut().take();
+                return;
+            }
+            let mut session = self.ivars().session.borrow_mut();
+            let Some(session) = session.as_mut() else {
+                return;
+            };
+            if let Some(result_tx) = session.result_tx.take() {
+                log::info!(
+                    "bluetooth: {:02x?} subscribed — control ready, handshaking as dialer",
+                    session.address.octets()
+                );
+                let _ = result_tx.send(SendCharacteristicRef(characteristic.retain()));
+            }
+        }
+
+        #[unsafe(method(peripheral:didUpdateValueForCharacteristic:error:))]
+        fn did_update_value(
+            &self,
+            _peripheral: &CBPeripheral,
+            characteristic: &CBCharacteristic,
+            _error: Option<&NSError>,
+        ) {
+            let Some(value) = (unsafe { characteristic.value() }) else {
+                return;
+            };
+            let Some(control) = Control::decode(&value.to_vec()) else {
+                return;
+            };
+            if let Some(session) = self.ivars().session.borrow().as_ref() {
+                let _ = session.control_tx.send(control);
+            }
+        }
+
+        #[unsafe(method(peripheral:didOpenL2CAPChannel:error:))]
+        fn did_open_l2cap(
+            &self,
+            _peripheral: &CBPeripheral,
+            channel: Option<&CBL2CAPChannel>,
+            error: Option<&NSError>,
+        ) {
+            if let Some(error) = error {
+                log::warn!("bluetooth: central L2CAP channel open FAILED: {error:?}");
+            }
+            let Some(channel) = channel else {
+                return;
+            };
+            let data_tx = {
+                let mut session = self.ivars().session.borrow_mut();
+                let Some(session) = session.as_mut() else {
+                    return;
+                };
+                match session.data_tx.take() {
+                    Some(tx) => tx,
+                    None => return,
+                }
+            };
+            let Some(data) = wire_l2cap(channel, &self.ivars().queue) else {
+                log::warn!("bluetooth: central L2CAP channel exposes no streams — dropping");
+                return;
+            };
+            log::info!("bluetooth: central L2CAP channel opened, data plane up");
+            let _ = data_tx.send(data);
+        }
     }
 );
 
 impl CentralDelegate {
-    fn new(events: tokio_mpsc::UnboundedSender<Event>) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(CentralDelegateIvars { events });
+    fn new(
+        events: tokio_mpsc::UnboundedSender<Event>,
+        queue: DispatchRetained<DispatchQueue>,
+        peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>>,
+    ) -> Retained<Self> {
+        let this = Self::alloc().set_ivars(CentralDelegateIvars {
+            events,
+            queue,
+            peripherals,
+            session: RefCell::new(None),
+        });
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -462,8 +662,12 @@ define_class!(
                             address.octets()
                         );
                         let link = GattLink {
-                            manager: SendPeripheralManager(peripheral.retain()),
-                            characteristic: SendCharacteristic(self.ivars().characteristic.clone()),
+                            control: ControlPlane::Listener {
+                                manager: SendPeripheralManager(peripheral.retain()),
+                                characteristic: SendCharacteristic(
+                                    self.ivars().characteristic.clone(),
+                                ),
+                            },
                             control_rx: rx,
                             address,
                             data_rx: Some(chan_rx),
@@ -544,8 +748,7 @@ impl PeripheralDelegate {
 }
 
 pub struct GattLink {
-    manager: SendPeripheralManager,
-    characteristic: SendCharacteristic,
+    control: ControlPlane,
     control_rx: tokio_mpsc::UnboundedReceiver<Control>,
     address: BleAddress,
     data_rx: Option<oneshot::Receiver<DataPlane>>,
@@ -569,24 +772,45 @@ impl BleLink for GattLink {
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg.encode(&mut buf).ok_or(MacosBleError::ControlTooLarge)?;
         let data = NSData::with_bytes(&buf[..len]);
-        let sent = unsafe {
-            self.manager
-                .0
-                .updateValue_forCharacteristic_onSubscribedCentrals(
-                    &data,
-                    &self.characteristic.0,
-                    None,
-                )
-        };
-        if sent {
-            log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
-            Ok(())
-        } else {
-            log::warn!(
-                "bluetooth: {:02x?} notify failed — control PDU did not reach the central, handshake will stall",
-                self.address.octets()
-            );
-            Err(MacosBleError::NotifyFailed)
+        match &self.control {
+            ControlPlane::Listener {
+                manager,
+                characteristic,
+            } => {
+                let sent = unsafe {
+                    manager
+                        .0
+                        .updateValue_forCharacteristic_onSubscribedCentrals(
+                            &data,
+                            &characteristic.0,
+                            None,
+                        )
+                };
+                if sent {
+                    log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+                    Ok(())
+                } else {
+                    log::warn!(
+                        "bluetooth: {:02x?} notify failed — control PDU did not reach the central, handshake will stall",
+                        self.address.octets()
+                    );
+                    Err(MacosBleError::NotifyFailed)
+                }
+            }
+            ControlPlane::Central {
+                peripheral,
+                characteristic,
+            } => {
+                unsafe {
+                    peripheral.0.writeValue_forCharacteristic_type(
+                        &data,
+                        &characteristic.0,
+                        CBCharacteristicWriteType::WithResponse,
+                    )
+                };
+                log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+                Ok(())
+            }
         }
     }
 
@@ -598,7 +822,10 @@ impl BleLink for GattLink {
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), MacosBleError> {
         match transport {
-            Transport::L2cap { .. } => {
+            Transport::L2cap { psm } => {
+                if let ControlPlane::Central { peripheral, .. } = &self.control {
+                    unsafe { peripheral.0.openL2CAPChannel(psm.get()) };
+                }
                 let rx = self.data_rx.take().ok_or(MacosBleError::Closed)?;
                 match tokio::time::timeout(L2CAP_OPEN_TIMEOUT, rx).await {
                     Ok(Ok(data)) => {
@@ -754,11 +981,21 @@ impl BleSink for GattSink {
     }
 }
 
+struct Handles {
+    central: SendCentralManager,
+    central_delegate: SendCentralDelegate,
+    queue: DispatchRetained<DispatchQueue>,
+}
+
 pub struct MacosBleBackend {
     _keepalive: sync_mpsc::Sender<()>,
     events: tokio_mpsc::UnboundedReceiver<Event>,
     psm: Psm,
     seen: HashSet<[u8; 6]>,
+    central: SendCentralManager,
+    central_delegate: SendCentralDelegate,
+    peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>>,
+    queue: DispatchRetained<DispatchQueue>,
 }
 
 #[derive(Debug)]
@@ -769,21 +1006,26 @@ pub enum MacosBleError {
     NotifyFailed,
     PublishFailed,
     FrameTooLarge,
-    DialNotImplemented,
+    DialFailed,
 }
 
 impl MacosBleBackend {
     pub async fn new() -> Result<Self, MacosBleError> {
         let (events_tx, mut events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
+        let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
+        let peripherals: Arc<Mutex<HashMap<[u8; 6], SendPeripheral>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let central_events = events_tx.clone();
+        let peripherals_for_thread = peripherals.clone();
 
         std::thread::spawn(move || {
             let queue = DispatchQueue::new("com.personal.prns.ble", None);
 
-            let central_delegate = CentralDelegate::new(central_events);
+            let central_delegate =
+                CentralDelegate::new(central_events, queue.clone(), peripherals_for_thread);
             let central_proto = ProtocolObject::from_ref(&*central_delegate);
-            let _central: Retained<CBCentralManager> = unsafe {
+            let central: Retained<CBCentralManager> = unsafe {
                 CBCentralManager::initWithDelegate_queue(
                     CBCentralManager::alloc(),
                     Some(central_proto),
@@ -801,8 +1043,22 @@ impl MacosBleBackend {
                 )
             };
 
+            let _ = handles_tx.send(Handles {
+                central: SendCentralManager(central.clone()),
+                central_delegate: SendCentralDelegate(central_delegate.clone()),
+                queue: queue.clone(),
+            });
+
             let _ = shutdown_rx.recv();
+            let _hold = (central, central_delegate);
         });
+
+        let handles = handles_rx.await.map_err(|_| MacosBleError::Closed)?;
+        let Handles {
+            central,
+            central_delegate,
+            queue,
+        } = handles;
 
         loop {
             match tokio::time::timeout(POWER_ON_TIMEOUT, events_rx.recv()).await {
@@ -817,6 +1073,10 @@ impl MacosBleBackend {
                         events: events_rx,
                         psm,
                         seen: HashSet::new(),
+                        central,
+                        central_delegate,
+                        peripherals,
+                        queue,
                     });
                 }
                 Ok(Some(Event::PublishFailed)) => {
@@ -879,11 +1139,61 @@ impl BleBackend for MacosBleBackend {
     }
 
     async fn dial(&mut self, address: BleAddress) -> Result<GattLink, MacosBleError> {
-        log::debug!(
-            "bluetooth: dial to {:02x?} skipped — central role not yet implemented (M2a); the Mac only accepts inbound for now",
-            address.octets()
-        );
-        Err(MacosBleError::DialNotImplemented)
+        let token = *address.octets();
+        let peripheral = {
+            let map = self.peripherals.lock().map_err(|_| MacosBleError::Closed)?;
+            map.get(&token).map(|p| p.0.clone())
+        };
+        let Some(peripheral) = peripheral else {
+            log::warn!("bluetooth: dial to {token:02x?} — peripheral not yet sighted");
+            return Err(MacosBleError::DialFailed);
+        };
+        let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
+        let (result_tx, result_rx) = oneshot::channel::<SendCharacteristicRef>();
+        let (data_tx, data_rx) = oneshot::channel::<DataPlane>();
+        let command = DialCommand {
+            central: self.central.0.clone(),
+            delegate: self.central_delegate.0.clone(),
+            peripheral: peripheral.clone(),
+            session: DialSession {
+                address,
+                control_tx,
+                result_tx: Some(result_tx),
+                data_tx: Some(data_tx),
+            },
+        };
+        log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
+        self.queue.exec_async(move || {
+            let command = command;
+            unsafe {
+                command
+                    .peripheral
+                    .setDelegate(Some(ProtocolObject::from_ref(&*command.delegate)));
+            }
+            *command.delegate.ivars().session.borrow_mut() = Some(command.session);
+            unsafe {
+                command
+                    .central
+                    .connectPeripheral_options(&command.peripheral, None);
+            }
+        });
+        let characteristic = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
+            Ok(Ok(characteristic)) => characteristic,
+            _ => {
+                log::warn!("bluetooth: dial to {token:02x?} did not reach control-ready");
+                return Err(MacosBleError::DialFailed);
+            }
+        };
+        Ok(GattLink {
+            control: ControlPlane::Central {
+                peripheral: SendPeripheral(peripheral),
+                characteristic,
+            },
+            control_rx,
+            address,
+            data_rx: Some(data_rx),
+            data: None,
+        })
     }
 }
 
