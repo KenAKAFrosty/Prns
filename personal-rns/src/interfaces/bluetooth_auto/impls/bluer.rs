@@ -292,11 +292,16 @@ impl BleBackend for BluerBackend {
 
     async fn dial(&mut self, address: BleAddress) -> Result<BluerLink, BluerError> {
         let target = Address::new(*address.octets());
-        let device = self.adapter.device(target)?;
-        if !device.is_connected().await? {
-            device.connect().await?;
-        }
-        let peer_address_type = device.address_type().await?;
+        let discovered = self.adapter.device(target)?;
+        let peer_address_type = discovered.address_type().await?;
+        let device = if discovered.is_connected().await? {
+            discovered
+        } else {
+            let _ = self.adapter.remove_device(target).await;
+            self.adapter
+                .connect_device(target, peer_address_type)
+                .await?
+        };
         let control = find_native_control(&device).await?;
         let notify = control.notify().await?;
         Ok(BluerLink::Dialed(DialedLink {
