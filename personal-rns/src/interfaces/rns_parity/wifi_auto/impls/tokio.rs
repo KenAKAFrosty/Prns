@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -300,29 +300,43 @@ impl InterfaceSupervisor for AutoWifi {
     }
 
     async fn run(self, fleet: Fleet) {
-        let Some(nic) = link_local_nic() else { return };
+        // Auto-wifi runs on *every* non-virtual link-local interface present — the WiFi client link,
+        // a hosted AP, wired LAN — not just the default-route one (RNS's AutoInterface is inherently
+        // multi-interface). One socket set joins the discovery group on every interface; each
+        // interface gets its own brain (its own link-local, so its own peering token), and inbound
+        // datagrams demux to the right brain by their source scope id.
+        let nics = link_local_nics();
+        if nics.is_empty() {
+            return;
+        }
         let Ok(Sockets {
             discovery,
             unicast_discovery,
             data,
-        }) = open_sockets(nic.index)
+        }) = open_sockets(&nics)
         else {
             return;
         };
         self.status.mark_up();
 
         let mut sup = Supervisor {
-            brain: core::AutoInterfaceProtocol::from_link_local(nic.link_local),
+            brains: nics
+                .iter()
+                .map(|nic| {
+                    (
+                        nic.index,
+                        core::AutoInterfaceProtocol::from_link_local(nic.link_local),
+                    )
+                })
+                .collect(),
             members: HashMap::new(),
             fleet,
             data: data.clone(),
-            index: nic.index,
             bitrate_bps: self.bitrate_bps,
             status: self.status,
             consecutive_tx_failures: 0,
         };
         sup.publish_status();
-        let token = *sup.brain.our_peering_token().as_bytes();
 
         let started = tokio::time::Instant::now();
         let mut beacon = tokio::time::interval(BEACON_INTERVAL);
@@ -352,17 +366,34 @@ impl InterfaceSupervisor for AutoWifi {
                 }
                 _ = beacon.tick() => {
                     beacon_cycle = beacon_cycle.wrapping_add(1);
-                    let beacon_sent = discovery
-                        .send_to(&token, scoped(core::DISCOVERY_GROUP, core::DEFAULT_DISCOVERY_PORT, nic.index))
-                        .await;
-                    sup.note_beacon(beacon_sent.is_ok());
-                    if beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY) {
-                        for addr in sup.peer_addresses() {
-                            let _ = unicast_discovery
-                                .send_to(&token, scoped(addr, core::UNICAST_DISCOVERY_PORT, nic.index))
-                                .await;
+                    // Beacon every interface with that interface's own token, and periodically
+                    // unicast-repeer each interface's known peers (scoped to that interface).
+                    let repeer = beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY);
+                    let mut any_sent = false;
+                    for (&index, brain) in &sup.brains {
+                        let token = *brain.our_peering_token().as_bytes();
+                        if discovery
+                            .send_to(
+                                &token,
+                                scoped(core::DISCOVERY_GROUP, core::DEFAULT_DISCOVERY_PORT, index),
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            any_sent = true;
+                        }
+                        if repeer {
+                            for addr in brain.known_peer_addresses() {
+                                let _ = unicast_discovery
+                                    .send_to(
+                                        &token,
+                                        scoped(addr, core::UNICAST_DISCOVERY_PORT, index),
+                                    )
+                                    .await;
+                            }
                         }
                     }
+                    sup.note_beacon(any_sent);
                     let now_ms = started.elapsed().as_millis() as u64;
                     sup.retire_stale(now_ms);
                     sup.publish_status();
@@ -379,11 +410,13 @@ struct PeerMember {
 }
 
 struct Supervisor {
-    brain: core::AutoInterfaceProtocol<MAX_PEERS>,
+    /// One protocol brain per interface, keyed by its NIC index — each holds that interface's own
+    /// link-local (so its own peering token) and peer table. Inbound datagrams demux here by the
+    /// source address's scope id (the interface they arrived on).
+    brains: HashMap<u32, core::AutoInterfaceProtocol<MAX_PEERS>>,
     members: HashMap<Ipv6Addr, PeerMember>,
     fleet: Fleet,
     data: Arc<UdpSocket>,
-    index: u32,
     bitrate_bps: u32,
     status: AutoWifiStatus,
     consecutive_tx_failures: u32,
@@ -392,19 +425,22 @@ struct Supervisor {
 impl Supervisor {
     fn ingest_beacon(&mut self, src: SocketAddr, bytes: &[u8], now_ms: u64) {
         let SocketAddr::V6(v6) = src else { return };
+        let scope = v6.scope_id();
+        let Some(brain) = self.brains.get_mut(&scope) else {
+            return;
+        };
         if let core::BeaconVerdict::Peer(addr) =
-            self.brain
-                .ingest_discovery_datagram(*v6.ip(), bytes, now_ms)
+            brain.ingest_discovery_datagram(*v6.ip(), bytes, now_ms)
         {
             if !self.members.contains_key(&addr) {
-                self.spawn_member(addr);
+                self.spawn_member(addr, scope);
             }
         }
     }
 
-    fn spawn_member(&mut self, addr: Ipv6Addr) {
+    fn spawn_member(&mut self, addr: Ipv6Addr, scope: u32) {
         let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
-        let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, self.index);
+        let peer = SocketAddrV6::new(addr, core::DEFAULT_DATA_PORT, 0, scope);
         let member = AutoWifiPeer::new(self.data.clone(), peer, inbound_rx, self.bitrate_bps);
         let status = member.status();
         let attached = self.fleet.add(member);
@@ -453,15 +489,20 @@ impl Supervisor {
         }
     }
 
-    fn peer_addresses(&self) -> std::vec::Vec<Ipv6Addr> {
-        self.brain.known_peer_addresses().collect()
-    }
-
     fn retire_stale(&mut self, now_ms: u64) {
-        if self.brain.prune_stale_peers(now_ms) == 0 {
+        let pruned: usize = self
+            .brains
+            .values_mut()
+            .map(|brain| brain.prune_stale_peers(now_ms))
+            .sum();
+        if pruned == 0 {
             return;
         }
-        let live: HashSet<Ipv6Addr> = self.brain.known_peer_addresses().collect();
+        let live: HashSet<Ipv6Addr> = self
+            .brains
+            .values()
+            .flat_map(|brain| brain.known_peer_addresses())
+            .collect();
         let gone: std::vec::Vec<Ipv6Addr> = self
             .members
             .keys()
@@ -488,58 +529,36 @@ struct Sockets {
     data: Arc<UdpSocket>,
 }
 
-/// Pick the NIC the auto-interface should live on. Prefer the one the OS actually routes the
-/// internet through (so a desk full of VPN tunnels and virtual bridges can't lure us onto the wrong
-/// segment), and fall back to the first real link-local interface. Loopback and known virtual or
-/// tunnel interfaces (utun, awdl, bridge, docker, …) are never chosen either way.
-fn link_local_nic() -> Option<Nic> {
-    routed_nic().or_else(scan_nic)
-}
-
-fn routed_nic() -> Option<Nic> {
-    let source = default_route_source()?;
-    let iface = if_addrs::get_if_addrs()
-        .ok()?
-        .into_iter()
-        .find(|iface| iface.ip() == source)?;
-    if iface.is_loopback() || is_virtual(&iface.name) {
-        return None;
-    }
-    let index = iface.index?;
-    link_local_for_scope(index).map(|link_local| Nic { link_local, index })
-}
-
-fn scan_nic() -> Option<Nic> {
-    for iface in if_addrs::get_if_addrs().ok()? {
-        if iface.is_loopback()
-            || is_virtual(&iface.name)
-            || !matches!(iface.addr, if_addrs::IfAddr::V6(_))
-        {
+/// Every non-virtual link-local interface the node should run auto-wifi on — its WiFi client link, a
+/// hosted AP, wired LAN, all at once (RNS's AutoInterface is inherently multi-interface). Loopback
+/// and known virtual/tunnel interfaces (utun, awdl, bridge, docker, …) are excluded, and the result
+/// is deduplicated by interface index. The per-scope probe gives the kernel's own send-source
+/// link-local for that interface, so the token we beacon matches what a peer recomputes from the
+/// datagram source.
+fn link_local_nics() -> std::vec::Vec<Nic> {
+    let Ok(ifaces) = if_addrs::get_if_addrs() else {
+        return std::vec::Vec::new();
+    };
+    let mut nics = std::vec::Vec::new();
+    let mut seen: HashSet<u32> = HashSet::new();
+    for iface in ifaces {
+        // Don't require an if_addrs *V6 entry*: some platforms only surface a NIC's global addresses
+        // there, never its link-local — so an AP-only interface (just a link-local + a private v4,
+        // e.g. `ap0`) would never qualify. The per-scope probe below is the real test of link-local
+        // capability, and dedup-by-index means each interface is considered once regardless of how
+        // many addresses it carries.
+        if iface.is_loopback() || is_virtual(&iface.name) {
             continue;
         }
         let Some(index) = iface.index else { continue };
+        if !seen.insert(index) {
+            continue;
+        }
         if let Some(link_local) = link_local_for_scope(index) {
-            return Some(Nic { link_local, index });
+            nics.push(Nic { link_local, index });
         }
     }
-    None
-}
-
-/// The source address the OS would send a public datagram from: the address of the default-route
-/// interface. A connected UDP socket sends nothing, it just makes the kernel resolve the route and
-/// pick the egress address, which `local_addr` then reports.
-fn default_route_source() -> Option<IpAddr> {
-    probe_source(
-        "[2001:4860:4860::8888]:53",
-        IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-    )
-    .or_else(|| probe_source("8.8.8.8:53", IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
-}
-
-fn probe_source(public: &str, bind: IpAddr) -> Option<IpAddr> {
-    let probe = std::net::UdpSocket::bind((bind, 0)).ok()?;
-    probe.connect(public).ok()?;
-    Some(probe.local_addr().ok()?.ip())
+    nics
 }
 
 fn is_virtual(name: &str) -> bool {
@@ -564,18 +583,35 @@ fn link_local_for_scope(index: u32) -> Option<Ipv6Addr> {
     ((link_local.segments()[0] & 0xffc0) == 0xfe80).then_some(link_local)
 }
 
-fn open_sockets(index: u32) -> io::Result<Sockets> {
+fn open_sockets(nics: &[Nic]) -> io::Result<Sockets> {
     Ok(Sockets {
-        discovery: discovery_socket(index)?,
+        discovery: discovery_socket(nics)?,
         unicast_discovery: bound_v6(core::UNICAST_DISCOVERY_PORT)?,
         data: Arc::new(bound_v6(core::DEFAULT_DATA_PORT)?),
     })
 }
 
-fn discovery_socket(index: u32) -> io::Result<UdpSocket> {
+/// One discovery socket that joins the multicast group on *every* interface, so it both hears the
+/// group on all of them and (via scoped sends) beacons across all of them. Sends always carry an
+/// explicit scope, so no default multicast interface is set.
+fn discovery_socket(nics: &[Nic]) -> io::Result<UdpSocket> {
     let socket = reusable_socket2(core::DEFAULT_DISCOVERY_PORT)?;
-    socket.set_multicast_if_v6(index)?;
-    socket.join_multicast_v6(&core::DISCOVERY_GROUP, index)?;
+    // Best-effort per interface: a join that fails (an interface that can't do multicast) is skipped,
+    // never fatal — one bad interface must not take auto-wifi down on every other one.
+    let joined = nics
+        .iter()
+        .filter(|nic| {
+            socket
+                .join_multicast_v6(&core::DISCOVERY_GROUP, nic.index)
+                .is_ok()
+        })
+        .count();
+    if joined == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "no interface joined the discovery group",
+        ));
+    }
     into_tokio(socket)
 }
 
