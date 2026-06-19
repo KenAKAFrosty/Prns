@@ -215,3 +215,7 @@ required-features = ["local", "tcp"]
 [[example]]
 name = "tcp_server_host"
 required-features = ["tcp"]
+
+[[example]]
+name = "wifi_auto_node"
+required-features = ["wifi-lan-auto"]
