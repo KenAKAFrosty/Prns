@@ -5,8 +5,6 @@ use crate::routing::request_handlers::{RequestHandlerColumns, RequestPathHash, R
 use crate::storage::ColumnsFull;
 use crate::wire::DestinationHash;
 
-pub const DEFAULT_MAX_REQUEST_HANDLERS: usize = 1024;
-
 #[derive(Debug, Default)]
 pub struct HeapRequestHandlerColumns {
     destinations: Vec<DestinationHash>,
@@ -17,7 +15,7 @@ pub struct HeapRequestHandlerColumns {
 
 impl RequestHandlerColumns for HeapRequestHandlerColumns {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_REQUEST_HANDLERS
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.destinations.len()
@@ -39,9 +37,6 @@ impl RequestHandlerColumns for HeapRequestHandlerColumns {
         path_hash: RequestPathHash,
         policy: RequestPolicy,
     ) -> Result<(), ColumnsFull> {
-        if self.destinations.len() >= DEFAULT_MAX_REQUEST_HANDLERS {
-            return Err(ColumnsFull);
-        }
         self.destinations.push(destination);
         self.path_hashes.push(path_hash);
         self.policies.push(policy);

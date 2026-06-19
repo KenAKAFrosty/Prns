@@ -4,11 +4,6 @@ use crate::engine::InstantMillis;
 use crate::routing::links::table::{LinkColumns, LinkPhase, TrackLinkError};
 use crate::routing::links::LinkId;
 
-/// A daemon-grade cap on tracked links — far above any realistic session
-/// count, but a backstop against a runaway peer, in the same spirit as the
-/// receipts and pending-path-request ceilings.
-pub const DEFAULT_MAX_LINKS: usize = 1024;
-
 #[derive(Debug, Default)]
 pub struct HeapLinkColumns {
     link_ids: Vec<LinkId>,
@@ -18,7 +13,7 @@ pub struct HeapLinkColumns {
 
 impl LinkColumns for HeapLinkColumns {
     fn capacity(&self) -> usize {
-        DEFAULT_MAX_LINKS
+        usize::MAX
     }
     fn len(&self) -> usize {
         self.link_ids.len()
@@ -48,9 +43,6 @@ impl LinkColumns for HeapLinkColumns {
         phase: LinkPhase,
         timeout_at: Option<InstantMillis>,
     ) -> Result<usize, TrackLinkError> {
-        if self.len() >= self.capacity() {
-            return Err(TrackLinkError::TableFull);
-        }
         self.link_ids.push(link_id);
         self.timeout_ats.push(timeout_at);
         self.phases.push(phase);

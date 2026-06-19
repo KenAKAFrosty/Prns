@@ -644,7 +644,7 @@ impl<S: StorageLayout> EngineState<S> {
                                     | RememberPacketOutcome::StoredAfterRotation => {}
                                 }
                             }
-                            return IngestPacketOutcome::Forward(PacketToForward {
+                            let forward = IngestPacketOutcome::Forward(PacketToForward {
                                 header: WirePacketHeader {
                                     ifac_flag: IfacFlag::Open,
                                     context_flag: ContextFlag::Unset,
@@ -659,6 +659,12 @@ impl<S: StorageLayout> EngineState<S> {
                                 payload: data.payload,
                                 fire_on: switch.fire_on,
                             });
+                            // Relay the peer's LINKCLOSE, then drop the row — no need to hold it for
+                            // the idle reaper once both ends are tearing the link down.
+                            if data.context == WireContext::LinkClose {
+                                self.transported_links.remove(&link_id);
+                            }
+                            return forward;
                         }
                     }
                     if let Some(LinkPhase::Active {

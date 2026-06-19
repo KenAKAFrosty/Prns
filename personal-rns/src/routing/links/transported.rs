@@ -80,6 +80,13 @@ pub trait TransportedLinkColumns {
 
     fn entries(&self) -> &[TransportedLink];
     fn entries_mut(&mut self) -> &mut [TransportedLink];
+    /// The slot a link rides in, or `None`. The default scans the rows — fine at the fixed
+    /// backend's small N — and the heap backend overrides it with a side index, the relay's hot lookup.
+    fn index_of(&self, link_id: &LinkId) -> Option<usize> {
+        self.entries()
+            .iter()
+            .position(|entry| entry.link_id == *link_id)
+    }
     fn push(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull>;
     fn swap_remove(&mut self, index: usize);
 }
@@ -91,10 +98,7 @@ pub struct TransportedLinks<C: TransportedLinkColumns> {
 
 impl<C: TransportedLinkColumns> TransportedLinks<C> {
     fn index_of(&self, link_id: &LinkId) -> Option<usize> {
-        self.columns
-            .entries()
-            .iter()
-            .position(|entry| entry.link_id == *link_id)
+        self.columns.index_of(link_id)
     }
 
     pub fn track(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
@@ -102,6 +106,19 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             return Err(ColumnsFull);
         }
         self.columns.push(entry)
+    }
+
+    /// Drop the relayed link `link_id` the moment its close flows through, rather than leaving the
+    /// row for the idle reaper — RNS deletes its `link_table` entry on teardown too. Returns whether
+    /// a row was there. The backend's `swap_remove` keeps the side index consistent.
+    pub fn remove(&mut self, link_id: &LinkId) -> bool {
+        match self.index_of(link_id) {
+            Some(index) => {
+                self.columns.swap_remove(index);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn entry_for(&self, link_id: &LinkId) -> Option<&TransportedLink> {
@@ -433,6 +450,58 @@ mod tests {
         assert_eq!(extra_link_proof_timeout_ms(None), 0);
         assert_eq!(extra_link_proof_timeout_ms(Some(0)), 0);
     }
+
+    #[test]
+    fn the_heap_side_index_stays_consistent_through_track_and_remove_churn() {
+        fn link_n(n: u32) -> LinkId {
+            let key = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let mut b = [0u8; 16];
+            b[..8].copy_from_slice(&key.to_be_bytes());
+            b[8..12].copy_from_slice(&n.to_be_bytes());
+            LinkId::new(b)
+        }
+        fn entry_n(n: u32) -> TransportedLink {
+            let mut e = entry(0, true);
+            e.link_id = link_n(n);
+            e
+        }
+
+        let mut links: TransportedLinks<HeapTransportedLinkColumns> = TransportedLinks::default();
+        let mut live: std::vec::Vec<u32> = std::vec::Vec::new();
+        let mut rng = 0x0123_4567_89AB_CDEFu64;
+        let mut next = 0u32;
+
+        for _ in 0..1_000 {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let insert = live.len() < 2 || !(rng >> 33).is_multiple_of(3);
+            if insert {
+                let id = next;
+                next += 1;
+                links.track(entry_n(id)).expect("the heap table grows");
+                live.push(id);
+            } else {
+                let victim = ((rng >> 17) as usize) % live.len();
+                assert!(
+                    links.remove(&link_n(live[victim])),
+                    "the live link is removed"
+                );
+                live.swap_remove(victim);
+            }
+            for &id in &live {
+                assert!(
+                    links.entry_for(&link_n(id)).is_some(),
+                    "every live relayed link still resolves through the index",
+                );
+            }
+            assert!(links.entry_for(&link_n(next + 7)).is_none());
+        }
+        assert!(
+            live.len() > 50,
+            "the run must grow enough to force reindexing"
+        );
+    }
 }
 
 use heapless::Vec as HeaplessVec;
@@ -470,15 +539,117 @@ impl<const MAX_TRANSIT_LINKS: usize> TransportedLinkColumns
 #[cfg(feature = "alloc")]
 mod heap_transit_link_columns {
     use super::{ColumnsFull, TransportedLink, TransportedLinkColumns};
+    use crate::routing::links::LinkId;
     use alloc::vec::Vec;
 
-    /// A capable (heap) transport grows its relayed-link table with demand rather than refusing
-    /// past a fixed count — how many links it carries is the network's business, not a storage
-    /// constant. The fixed-capacity twin ([`FixedTransportedLinkColumns`](super::FixedTransportedLinkColumns))
+    const EMPTY: usize = usize::MAX;
+    const MIN_BUCKETS: usize = 8;
+
+    /// A capable (heap) transport grows its relayed-link table with demand rather than refusing past
+    /// a fixed count — how many links it carries is the network's business, not a storage constant.
+    /// The fixed-capacity twin ([`FixedTransportedLinkColumns`](super::FixedTransportedLinkColumns))
     /// keeps a compile-time bound for no-heap hosts. The link-timeout reaper still bounds growth.
-    #[derive(Debug, Default)]
+    ///
+    /// At relay scale the per-link lookup is the hot op, so this backend carries the same side index
+    /// the route table does: an open-addressing table of slots keyed by the link id's leading bytes
+    /// (already uniform, so the bucket is a Lemire multiply-shift), kept below ~2/3 load by doubling,
+    /// probed linearly, and deleted by backward-shift so a churning table never silts up.
+    #[derive(Debug)]
     pub struct HeapTransportedLinkColumns {
         entries: Vec<TransportedLink>,
+        index: Vec<usize>,
+    }
+
+    impl Default for HeapTransportedLinkColumns {
+        fn default() -> Self {
+            let mut index = Vec::new();
+            index.resize(MIN_BUCKETS, EMPTY);
+            Self {
+                entries: Vec::new(),
+                index,
+            }
+        }
+    }
+
+    impl HeapTransportedLinkColumns {
+        fn key(link_id: &LinkId) -> u64 {
+            let b = link_id.as_bytes();
+            u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        }
+
+        fn bucket(&self, key: u64) -> usize {
+            ((key as u128 * self.index.len() as u128) >> u64::BITS) as usize
+        }
+
+        fn index_position(&self, link_id: &LinkId) -> Option<usize> {
+            let n = self.index.len();
+            let mut pos = self.bucket(Self::key(link_id));
+            loop {
+                let slot = self.index[pos];
+                if slot == EMPTY {
+                    return None;
+                }
+                if self.entries[slot].link_id == *link_id {
+                    return Some(pos);
+                }
+                pos = (pos + 1) % n;
+            }
+        }
+
+        fn index_insert(&mut self, slot: usize) {
+            let n = self.index.len();
+            let mut pos = self.bucket(Self::key(&self.entries[slot].link_id));
+            while self.index[pos] != EMPTY {
+                pos = (pos + 1) % n;
+            }
+            self.index[pos] = slot;
+        }
+
+        fn index_delete(&mut self, link_id: &LinkId) {
+            let Some(mut hole) = self.index_position(link_id) else {
+                return;
+            };
+            let n = self.index.len();
+            loop {
+                self.index[hole] = EMPTY;
+                let mut scan = hole;
+                loop {
+                    scan = (scan + 1) % n;
+                    let slot = self.index[scan];
+                    if slot == EMPTY {
+                        return;
+                    }
+                    let home = self.bucket(Self::key(&self.entries[slot].link_id));
+                    let blocks_move = if hole <= scan {
+                        home > hole && home <= scan
+                    } else {
+                        home > hole || home <= scan
+                    };
+                    if !blocks_move {
+                        self.index[hole] = slot;
+                        hole = scan;
+                        break;
+                    }
+                }
+            }
+        }
+
+        fn index_repoint(&mut self, link_id: &LinkId, slot: usize) {
+            if let Some(pos) = self.index_position(link_id) {
+                self.index[pos] = slot;
+            }
+        }
+
+        fn grow_index_if_loaded(&mut self) {
+            if (self.entries.len() + 1) * 3 > self.index.len() * 2 {
+                let new_buckets = self.index.len() * 2;
+                self.index.clear();
+                self.index.resize(new_buckets, EMPTY);
+                for slot in 0..self.entries.len() {
+                    self.index_insert(slot);
+                }
+            }
+        }
     }
 
     impl TransportedLinkColumns for HeapTransportedLinkColumns {
@@ -494,14 +665,28 @@ mod heap_transit_link_columns {
         fn entries_mut(&mut self) -> &mut [TransportedLink] {
             &mut self.entries
         }
+        fn index_of(&self, link_id: &LinkId) -> Option<usize> {
+            self.index_position(link_id).map(|pos| self.index[pos])
+        }
         fn push(&mut self, entry: TransportedLink) -> Result<(), ColumnsFull> {
+            self.grow_index_if_loaded();
+            let slot = self.entries.len();
             self.entries.push(entry);
+            self.index_insert(slot);
             Ok(())
         }
         fn swap_remove(&mut self, index: usize) {
-            if index < self.entries.len() {
-                self.entries.swap_remove(index);
+            if index >= self.entries.len() {
+                return;
             }
+            let last = self.entries.len() - 1;
+            let removed = self.entries[index].link_id;
+            self.index_delete(&removed);
+            if index != last {
+                let moved = self.entries[last].link_id;
+                self.index_repoint(&moved, index);
+            }
+            self.entries.swap_remove(index);
         }
     }
 }
