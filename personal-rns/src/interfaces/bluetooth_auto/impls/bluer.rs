@@ -13,7 +13,10 @@ use bluer::gatt::{CharacteristicReader, CharacteristicWriter};
 use bluer::l2cap::{
     Security, SecurityLevel, SeqPacket, SeqPacketListener, Socket, SocketAddr as L2capSocketAddr,
 };
-use bluer::{Adapter, AdapterEvent, Address, AddressType, Device, Session, Uuid};
+use bluer::{
+    Adapter, AdapterEvent, Address, AddressType, Device, DiscoveryFilter, DiscoveryTransport,
+    Session, Uuid,
+};
 use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -214,6 +217,13 @@ impl BleBackend for BluerBackend {
         };
         let application = self.adapter.serve_gatt_application(application).await?;
 
+        self.adapter
+            .set_discovery_filter(DiscoveryFilter {
+                transport: DiscoveryTransport::Le,
+                uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
+                ..Default::default()
+            })
+            .await?;
         let discovery = self.adapter.discover_devices().await?;
         let listener = SeqPacketListener::bind(L2capSocketAddr::new(
             self.address,
