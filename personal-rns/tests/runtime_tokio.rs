@@ -199,6 +199,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         "the runtime tracks the attached interface's status centrally"
     );
 
+    let snapshots_a = commands_a.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_millis(200));
         loop {
@@ -225,6 +226,14 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
                 .expect("B hears A over the runtime-added interface within 5s")
                 .expect("the announce channel stays open");
             assert_eq!(heard, dest_a, "B heard A through the interface it added at runtime");
+
+            assert!(
+                snapshots_a
+                    .interface_snapshots()
+                    .iter()
+                    .any(|snapshot| snapshot.id.kind() == Some(InterfaceKind::TcpServerPeer)),
+                "A's server-spawned member registers centrally too — fleet members, not just one-to-one wires"
+            );
 
             // Tear the interface down; B should fall silent once the wire is gone.
             attached.teardown();

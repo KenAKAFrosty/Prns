@@ -401,14 +401,8 @@ impl TokioPrnsHandle {
             interface,
             None,
         );
-        self.register_status(attached.id(), view);
+        register_status(&self.interfaces, attached.id(), view);
         attached
-    }
-
-    fn register_status(&self, id: InterfaceId, view: Option<StatusView>) {
-        if let (Some(view), Ok(mut map)) = (view, self.interfaces.lock()) {
-            map.insert(id, view);
-        }
     }
 
     /// A snapshot of every interface attached through this handle, each interface's live view read at
@@ -440,6 +434,7 @@ impl TokioPrnsHandle {
             commands: self.commands.clone(),
             iface_build: self.iface_build.clone(),
             notify_tx: self.notify_tx.clone(),
+            interfaces: self.interfaces.clone(),
         };
         let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
             Box::new(move || Box::pin(supervisor.run(fleet)));
@@ -448,7 +443,7 @@ impl TokioPrnsHandle {
             supervisor: None,
             build,
         });
-        self.register_status(id, view);
+        register_status(&self.interfaces, id, view);
         AttachedSupervisor {
             id,
             iface_build: self.iface_build.clone(),
@@ -621,6 +616,7 @@ pub struct Fleet {
     commands: UnboundedSender<HostCommand>,
     iface_build: UnboundedSender<DriverMsg>,
     notify_tx: UnboundedSender<InterfaceId>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
 }
 
 impl Fleet {
@@ -628,15 +624,18 @@ impl Fleet {
     /// except the member is recorded as this supervisor's, so a supervisor teardown takes it with it.
     pub fn add<I>(&self, interface: I) -> AttachedInterface
     where
-        I: Interface + Send + 'static,
+        I: Interface + ReportsStatus + Send + 'static,
     {
-        attach_interface(
+        let view = interface.status_view();
+        let attached = attach_interface(
             &self.commands,
             &self.iface_build,
             &self.notify_tx,
             interface,
             Some(self.supervisor_id),
-        )
+        );
+        register_status(&self.interfaces, attached.id(), view);
+        attached
     }
 }
 
@@ -727,6 +726,7 @@ async fn drive_interfaces(
                     for member in cascaded {
                         stop_interface(&mut stops, member);
                         supervisor_of.remove(&member);
+                        forget_status(&interfaces, member);
                         let _ = commands.send(HostCommand::RemoveInterface { id: member });
                     }
                 }
@@ -747,6 +747,16 @@ async fn drive_interfaces(
                 }
             }
         }
+    }
+}
+
+fn register_status(
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
+    id: InterfaceId,
+    view: Option<StatusView>,
+) {
+    if let (Some(view), Ok(mut map)) = (view, interfaces.lock()) {
+        map.insert(id, view);
     }
 }
 

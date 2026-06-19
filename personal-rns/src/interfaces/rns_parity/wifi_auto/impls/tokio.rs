@@ -648,11 +648,16 @@ impl crate::interfaces::ReportsStatus for AutoWifi {
     fn status_view(&self) -> Option<crate::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            let mut snapshots = std::vec![crate::interfaces::InterfaceSnapshot::of(&status)];
-            for member in status.members() {
-                snapshots.push(crate::interfaces::InterfaceSnapshot::of(&member));
-            }
-            snapshots
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+        }))
+    }
+}
+
+impl crate::interfaces::ReportsStatus for AutoWifiPeer {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
         }))
     }
 }
