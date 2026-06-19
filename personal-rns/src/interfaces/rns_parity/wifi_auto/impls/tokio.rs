@@ -6,11 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use tokio::net::UdpSocket;
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
+use crate::interfaces::rns_parity::tcp::server::tokio::TcpServerConnection;
+use crate::interfaces::rns_parity::tcp::tokio_socket::tune;
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
@@ -31,6 +33,10 @@ const EGRESS_DOWN_AFTER: u32 = 2;
 /// Generous, because on an ordinary network the gateway is no Prns host and this dial never succeeds
 /// — it must not busy-loop — while an isolating hotspot's host comes up well within one interval.
 const GATEWAY_REDIAL: Duration = Duration::from_secs(10);
+/// Beacon cycles between attempts to reclaim the rendezvous port when another local node holds it.
+/// Three cycles of [`BEACON_INTERVAL`] (~5s) — brisk enough to take over promptly once the holder
+/// exits and frees the port, without calling bind() every beacon.
+const REBIND_BEACON_CYCLES: u32 = 3;
 
 pub struct AutoWifiPeer {
     id: InterfaceId,
@@ -351,9 +357,24 @@ impl InterfaceSupervisor for AutoWifi {
         let mut discovery_buf = [0u8; 64];
         let mut unicast_buf = [0u8; 64];
         let mut data_buf = [0u8; core::HARDWARE_MTU];
+        let mut rendezvous = TcpListener::bind(("0.0.0.0", core::TCP_RENDEZVOUS_PORT))
+            .await
+            .ok();
+        let mut loopback = bounce_to_local_core(&rendezvous, &sup.fleet, sup.bitrate_bps);
 
         loop {
+            let mut reclaim_port = false;
             tokio::select! {
+                accepted = accept_maybe(&rendezvous) => {
+                    if let Ok((stream, peer)) = accepted {
+                        tune(&stream);
+                        let _ = sup.fleet.add(TcpServerConnection::new(
+                            peer.to_string().into_bytes(),
+                            stream,
+                            sup.bitrate_bps,
+                        ));
+                    }
+                }
                 received = discovery.recv_from(&mut discovery_buf) => {
                     if let Ok((len, src)) = received {
                         let now_ms = started.elapsed().as_millis() as u64;
@@ -404,6 +425,18 @@ impl InterfaceSupervisor for AutoWifi {
                     let now_ms = started.elapsed().as_millis() as u64;
                     sup.retire_stale(now_ms);
                     sup.publish_status();
+                    reclaim_port =
+                        rendezvous.is_none() && beacon_cycle.is_multiple_of(REBIND_BEACON_CYCLES);
+                }
+            }
+            if reclaim_port {
+                if let Ok(listener) =
+                    TcpListener::bind(("0.0.0.0", core::TCP_RENDEZVOUS_PORT)).await
+                {
+                    rendezvous = Some(listener);
+                    if let Some(loopback) = loopback.take() {
+                        loopback.teardown();
+                    }
                 }
             }
         }
@@ -585,6 +618,31 @@ fn dial_gateways(fleet: &Fleet, nics: &[Nic], bitrate_bps: u32) {
         };
         let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
         let _ = fleet.add(TcpClientInterface::new(target, bitrate_bps, GATEWAY_REDIAL));
+    }
+}
+
+/// Dial the loopback rendezvous when another node on this host already holds the port, so its star
+/// carries our traffic too — we bridge through the local core rather than going dark. `None` when we
+/// hold the port ourselves; we are the core then, not a client of it.
+fn bounce_to_local_core(
+    rendezvous: &Option<TcpListener>,
+    fleet: &Fleet,
+    bitrate_bps: u32,
+) -> Option<AttachedInterface> {
+    if rendezvous.is_some() {
+        return None;
+    }
+    let target = std::format!("127.0.0.1:{}", core::TCP_RENDEZVOUS_PORT);
+    Some(fleet.add(TcpClientInterface::new(target, bitrate_bps, GATEWAY_REDIAL)))
+}
+
+/// Accept on the rendezvous listener when there is one, otherwise stay pending forever — so the
+/// supervisor's `select!` carries a TCP-accept arm whether or not the port could be bound (a second
+/// node on the host, a platform that refused it), without a separate code path.
+async fn accept_maybe(listener: &Option<TcpListener>) -> io::Result<(TcpStream, SocketAddr)> {
+    match listener {
+        Some(listener) => listener.accept().await,
+        None => std::future::pending().await,
     }
 }
 
