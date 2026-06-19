@@ -16,7 +16,7 @@ use personal_rns::crypto::{
 };
 use personal_rns::identity::ENCRYPTION_IV_LEN;
 
-use benchmarks::microscope::{Cycle, PAYLOAD_LEN};
+use benchmarks::microscope::{Cycle, Forward, PAYLOAD_LEN};
 
 fn single_cycle(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_cycle");
@@ -167,9 +167,29 @@ fn primitives(c: &mut Criterion) {
     group.finish();
 }
 
+fn forward_path(c: &mut Criterion) {
+    let mut group = c.benchmark_group("forward_path");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("relay_forward", |b| {
+        let mut forward = Forward::new();
+        b.iter_custom(|iters| {
+            let mut in_stage = Duration::ZERO;
+            for _ in 0..iters {
+                forward.seal_single();
+                let begun = Instant::now();
+                let forwarded = forward.forward();
+                in_stage += begun.elapsed();
+                assert!(forwarded, "relay forwarded the single toward upstream");
+            }
+            in_stage
+        });
+    });
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = single_cycle, settle_depth, primitives
+    targets = single_cycle, settle_depth, primitives, forward_path
 }
 criterion_main!(benches);
