@@ -1,20 +1,24 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use bluer::adv::{Advertisement, AdvertisementHandle};
 use bluer::gatt::local::{
     characteristic_control, service_control, Application, ApplicationHandle, Characteristic,
-    CharacteristicControl, CharacteristicNotify, CharacteristicNotifyMethod, CharacteristicWrite,
-    CharacteristicWriteMethod, Service,
+    CharacteristicControl, CharacteristicControlEvent, CharacteristicNotify,
+    CharacteristicNotifyMethod, CharacteristicWrite, CharacteristicWriteMethod, Service,
 };
 use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
-use bluer::l2cap::{Security, SecurityLevel, SeqPacket, Socket, SocketAddr as L2capSocketAddr};
+use bluer::gatt::{CharacteristicReader, CharacteristicWriter};
+use bluer::l2cap::{
+    Security, SecurityLevel, SeqPacket, SeqPacketListener, Socket, SocketAddr as L2capSocketAddr,
+};
 use bluer::{Adapter, AdapterEvent, Address, AddressType, Device, Session, Uuid};
 use futures_util::{Stream, StreamExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, BleAddress, BleUuid, Control, Dialect, StreamDeframer, Transport,
+    encode_stream_frame, BleAddress, BleUuid, Control, Dialect, Psm, StreamDeframer, Transport,
     BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
@@ -62,28 +66,54 @@ fn uuid_of(uuid: BleUuid) -> Uuid {
     }
 }
 
+#[derive(Default)]
+struct PendingHalves {
+    reader: Option<CharacteristicReader>,
+    writer: Option<CharacteristicWriter>,
+}
+
+enum Half {
+    Reader(CharacteristicReader),
+    Writer(CharacteristicWriter),
+}
+
+enum Observed {
+    Candidate(Address),
+    Greeting { address: Address, half: Half },
+    Idle,
+}
+
 pub struct BluerBackend {
     adapter: Adapter,
     address: Address,
+    address_type: AddressType,
+    psm: Psm,
     seen: HashSet<Address>,
+    pending: HashMap<Address, PendingHalves>,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
     control: Option<Pin<Box<CharacteristicControl>>>,
+    listener: Option<Arc<SeqPacketListener>>,
     _advertisement: Option<AdvertisementHandle>,
     _application: Option<ApplicationHandle>,
 }
 
 impl BluerBackend {
-    pub async fn open() -> Result<Self, BluerError> {
+    pub async fn open(psm: Psm) -> Result<Self, BluerError> {
         let session = Session::new().await?;
         let adapter = session.default_adapter().await?;
         adapter.set_powered(true).await?;
         let address = adapter.address().await?;
+        let address_type = adapter.address_type().await?;
         Ok(Self {
             adapter,
             address,
+            address_type,
+            psm,
             seen: HashSet::new(),
+            pending: HashMap::new(),
             discovery: None,
             control: None,
+            listener: None,
             _advertisement: None,
             _application: None,
         })
@@ -98,11 +128,36 @@ impl BluerBackend {
             _ => false,
         }
     }
-}
 
-enum Observed {
-    Candidate(Address),
-    Idle,
+    fn admit_greeting(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
+        let ready = {
+            let entry = self.pending.entry(address).or_default();
+            match half {
+                Half::Reader(reader) => entry.reader = Some(reader),
+                Half::Writer(writer) => entry.writer = Some(writer),
+            }
+            entry.reader.is_some() && entry.writer.is_some()
+        };
+        if !ready {
+            return None;
+        }
+        match (self.pending.remove(&address), self.listener.clone()) {
+            (
+                Some(PendingHalves {
+                    reader: Some(reader),
+                    writer: Some(writer),
+                }),
+                Some(listener),
+            ) => Some(AcceptedLink {
+                reader,
+                writer,
+                address,
+                listener,
+                socket: None,
+            }),
+            _ => None,
+        }
+    }
 }
 
 async fn next_or_pending<S>(stream: Option<&mut S>) -> Option<S::Item>
@@ -118,7 +173,7 @@ where
 impl BleBackend for BluerBackend {
     const MAX_PEERS: usize = 8;
     type Error = BluerError;
-    type Link = DialedLink;
+    type Link = BluerLink;
 
     async fn advertise(&mut self) -> Result<(), BluerError> {
         let advertisement = Advertisement {
@@ -160,15 +215,23 @@ impl BleBackend for BluerBackend {
         let application = self.adapter.serve_gatt_application(application).await?;
 
         let discovery = self.adapter.discover_devices().await?;
+        let listener = SeqPacketListener::bind(L2capSocketAddr::new(
+            self.address,
+            self.address_type,
+            self.psm.get(),
+        ))
+        .await
+        .ok();
 
         self.control = Some(Box::pin(control));
         self.discovery = Some(Box::pin(discovery));
+        self.listener = listener.map(Arc::new);
         self._advertisement = Some(advertisement);
         self._application = Some(application);
         Ok(())
     }
 
-    async fn next_event(&mut self) -> BleEvent<DialedLink> {
+    async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
             let observed = {
                 let discovery = self.discovery.as_mut();
@@ -178,22 +241,46 @@ impl BleBackend for BluerBackend {
                         Some(AdapterEvent::DeviceAdded(address)) => Observed::Candidate(address),
                         _ => Observed::Idle,
                     },
-                    _ = next_or_pending(control) => Observed::Idle,
+                    event = next_or_pending(control) => match event {
+                        Some(CharacteristicControlEvent::Write(request)) => {
+                            let address = request.device_address();
+                            match request.accept() {
+                                Ok(reader) => Observed::Greeting {
+                                    address,
+                                    half: Half::Reader(reader),
+                                },
+                                Err(_) => Observed::Idle,
+                            }
+                        }
+                        Some(CharacteristicControlEvent::Notify(writer)) => Observed::Greeting {
+                            address: writer.device_address(),
+                            half: Half::Writer(writer),
+                        },
+                        None => Observed::Idle,
+                    },
                 }
             };
-            if let Observed::Candidate(address) = observed {
-                if address != self.address
-                    && !self.seen.contains(&address)
-                    && self.advertises_our_service(address).await
-                {
-                    self.seen.insert(address);
-                    return BleEvent::Sighting(BleAddress::new(address.0));
+            match observed {
+                Observed::Candidate(address) => {
+                    if address != self.address
+                        && !self.seen.contains(&address)
+                        && self.advertises_our_service(address).await
+                    {
+                        self.seen.insert(address);
+                        return BleEvent::Sighting(BleAddress::new(address.0));
+                    }
                 }
+                Observed::Greeting { address, half } => {
+                    if let Some(link) = self.admit_greeting(address, half) {
+                        return BleEvent::Inbound(BluerLink::Accepted(link));
+                    }
+                }
+                Observed::Idle => {}
             }
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) -> Result<DialedLink, BluerError> {
+    async fn dial(&mut self, address: BleAddress) -> Result<BluerLink, BluerError> {
         let target = Address::new(*address.octets());
         let device = self.adapter.device(target)?;
         if !device.is_connected().await? {
@@ -202,14 +289,14 @@ impl BleBackend for BluerBackend {
         let peer_address_type = device.address_type().await?;
         let control = find_native_control(&device).await?;
         let notify = control.notify().await?;
-        Ok(DialedLink {
+        Ok(BluerLink::Dialed(DialedLink {
             control,
             notify: Box::pin(notify),
             peer_address: target,
             peer_address_type,
             socket: None,
             _device: device,
-        })
+        }))
     }
 }
 
@@ -226,6 +313,59 @@ async fn find_native_control(device: &Device) -> Result<RemoteCharacteristic, Bl
         }
     }
     Err(BluerError::NoControlCharacteristic)
+}
+
+pub enum BluerLink {
+    Dialed(DialedLink),
+    Accepted(AcceptedLink),
+}
+
+impl BleLink for BluerLink {
+    type Error = BluerError;
+    type Source = L2capSource;
+    type Sink = L2capSink;
+
+    fn dialect(&self) -> Dialect {
+        match self {
+            BluerLink::Dialed(link) => link.dialect(),
+            BluerLink::Accepted(link) => link.dialect(),
+        }
+    }
+
+    fn address(&self) -> BleAddress {
+        match self {
+            BluerLink::Dialed(link) => link.address(),
+            BluerLink::Accepted(link) => link.address(),
+        }
+    }
+
+    async fn control_send(&mut self, msg: &Control) -> Result<(), BluerError> {
+        match self {
+            BluerLink::Dialed(link) => link.control_send(msg).await,
+            BluerLink::Accepted(link) => link.control_send(msg).await,
+        }
+    }
+
+    async fn control_recv(&mut self) -> Result<Control, BluerError> {
+        match self {
+            BluerLink::Dialed(link) => link.control_recv().await,
+            BluerLink::Accepted(link) => link.control_recv().await,
+        }
+    }
+
+    async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
+        match self {
+            BluerLink::Dialed(link) => link.upgrade(transport).await,
+            BluerLink::Accepted(link) => link.upgrade(transport).await,
+        }
+    }
+
+    fn into_data(self) -> (L2capSource, L2capSink) {
+        match self {
+            BluerLink::Dialed(link) => link.into_data(),
+            BluerLink::Accepted(link) => link.into_data(),
+        }
+    }
 }
 
 pub struct DialedLink {
@@ -275,6 +415,66 @@ impl BleLink for DialedLink {
                 let target =
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
                 let connected = socket.connect(target).await?;
+                self.socket = Some(Arc::new(connected));
+                Ok(())
+            }
+            Transport::Gatt => Err(BluerError::GattDataUnsupported),
+        }
+    }
+
+    fn into_data(self) -> (L2capSource, L2capSink) {
+        (
+            L2capSource {
+                socket: self.socket.clone(),
+                deframer: StreamDeframer::new(),
+            },
+            L2capSink(self.socket),
+        )
+    }
+}
+
+pub struct AcceptedLink {
+    reader: CharacteristicReader,
+    writer: CharacteristicWriter,
+    address: Address,
+    listener: Arc<SeqPacketListener>,
+    socket: Option<Arc<SeqPacket>>,
+}
+
+impl BleLink for AcceptedLink {
+    type Error = BluerError;
+    type Source = L2capSource;
+    type Sink = L2capSink;
+
+    fn dialect(&self) -> Dialect {
+        Dialect::Native
+    }
+
+    fn address(&self) -> BleAddress {
+        BleAddress::new(self.address.0)
+    }
+
+    async fn control_send(&mut self, msg: &Control) -> Result<(), BluerError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg.encode(&mut buf).ok_or(BluerError::ControlPduTooLarge)?;
+        self.writer.write_all(&buf[..len]).await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    async fn control_recv(&mut self) -> Result<Control, BluerError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let read = self.reader.read(&mut buf).await?;
+        if read == 0 {
+            return Err(BluerError::Closed);
+        }
+        Control::decode(&buf[..read]).ok_or(BluerError::MalformedControl)
+    }
+
+    async fn upgrade(&mut self, transport: &Transport) -> Result<(), BluerError> {
+        match transport {
+            Transport::L2cap { .. } => {
+                let (connected, _peer) = self.listener.accept().await?;
                 self.socket = Some(Arc::new(connected));
                 Ok(())
             }

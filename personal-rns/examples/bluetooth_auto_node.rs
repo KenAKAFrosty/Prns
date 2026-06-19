@@ -40,12 +40,13 @@ async fn main() {
         .unwrap_or(0x11);
     let name = std::env::var("NAME").unwrap_or_else(|_| std::format!("{node_byte:02x}"));
 
-    let backend = BluerBackend::open()
+    let psm = Psm::new(CONTROL_PSM).expect("control PSM is in the LE dynamic range");
+    let backend = BluerBackend::open(psm)
         .await
         .expect("open default bluetooth adapter");
     let identity = BleIdentity::new([node_byte; 16]);
     let capabilities = LinkCapabilities {
-        l2cap: Psm::new(CONTROL_PSM),
+        l2cap: Some(psm),
         link_mtu: BLE_HW_MTU as u16,
     };
 
