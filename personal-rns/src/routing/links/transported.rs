@@ -213,6 +213,25 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         }
     }
 
+    /// How many validated links this node carries that ride over `interface`,
+    /// on either the side a frame arrives from or the side it leaves by. The
+    /// transport counterpart to [`Links::links_via`]: a shared instance relaying
+    /// a local client's link terminates no endpoint link of its own and so holds
+    /// the live link only here.
+    ///
+    /// [`Links::links_via`]: crate::routing::links::table::Links::links_via
+    pub fn links_via(&self, interface: InterfaceId) -> usize {
+        self.columns
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry.validated
+                    && (entry.next_hop_interface == interface
+                        || entry.received_interface == interface)
+            })
+            .count()
+    }
+
     pub fn len(&self) -> usize {
         self.columns.len()
     }
@@ -382,6 +401,29 @@ mod tests {
         transported.track(entry(2, false)).unwrap();
         transported.track(entry(3, false)).unwrap();
         assert_eq!(transported.track(entry(4, false)), Err(ColumnsFull));
+    }
+
+    #[test]
+    fn links_via_counts_validated_carried_links_on_either_side() {
+        let mut transported = TestTransported::default();
+        transported.track(entry(1, true)).unwrap();
+        transported.track(entry(2, false)).unwrap();
+
+        assert_eq!(
+            transported.links_via(iface(0xB2)),
+            1,
+            "the validated row counts on the side it leaves by; the unvalidated one never does",
+        );
+        assert_eq!(
+            transported.links_via(iface(0xA1)),
+            1,
+            "and on the side it arrived from, since the link rides over both",
+        );
+        assert_eq!(
+            transported.links_via(iface(0xEE)),
+            0,
+            "an interface this link never touches reads zero",
+        );
     }
 
     #[test]

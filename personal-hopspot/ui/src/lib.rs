@@ -30,9 +30,12 @@ fn liveness(connection: ConnectionState) -> Liveness {
 /// The handle carries the facts the interface knows first-hand: its connection — which resolves the
 /// card's [`Liveness`] (Dormant until a link confirms, then Live) — and the bytes it has moved, which
 /// fill the Live card. `counts` supplies the engine-owned figures the interface itself can't know —
-/// destinations routed via it and live Reticulum links over it — which a face reads through the
-/// runtime's per-interface query. The card's rate is the interface's own published throughput (rx
-/// plus tx, as bytes per second); last-activity is derived state no source carries yet, so it
+/// destinations routed via it and the live Reticulum links over it — which a face reads through the
+/// runtime's per-interface query. The card's link figure sums the two kinds the engine reports
+/// apart: the links this node terminates and the ones it merely carries for others (a shared
+/// instance relaying a local client's link holds only the latter), so the glyph reads one count of
+/// every live link riding the interface. The card's rate is the interface's own published throughput
+/// (rx plus tx, as bytes per second); last-activity is derived state no source carries yet, so it
 /// reports a neutral value until then.
 pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
     statuses: &[S],
@@ -48,6 +51,7 @@ pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
         let InterfaceCounts {
             destinations,
             links,
+            transported_links,
         } = counts(id);
         let _ = cards.push(Card {
             id,
@@ -57,7 +61,7 @@ pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
             liveness: liveness(status.connection()),
             tx_bytes: status.tx_bytes(),
             rx_bytes: status.rx_bytes(),
-            links,
+            links: links.saturating_add(transported_links),
             destinations,
             rate_bytes_per_sec: status
                 .transfer_rates()

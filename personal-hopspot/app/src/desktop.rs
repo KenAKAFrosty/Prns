@@ -722,6 +722,7 @@ fn run_window(handles: WindowHandles) {
                 InterfaceCounts {
                     destinations: total.destinations + member_counts.destinations,
                     links: total.links + member_counts.links,
+                    transported_links: total.transported_links + member_counts.transported_links,
                 }
             });
         let cards: HVec<Card, 8> = screen::statuses_to_cards(&statuses, classify, |id| {

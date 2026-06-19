@@ -507,8 +507,9 @@ pub enum Settlement {
 pub struct InterfaceCounts {
     /// Routing-table destinations reachable via this interface.
     pub destinations: u32,
-    /// Live Reticulum links carried over this interface.
+    /// Live Reticulum links this node terminates over this interface.
     pub links: u32,
+    pub transported_links: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1064,6 +1065,7 @@ impl<S: StorageLayout> EngineState<S> {
         InterfaceCounts {
             destinations: self.route_count_via(interface) as u32,
             links: self.links_via(interface) as u32,
+            transported_links: self.transported_links_via(interface) as u32,
         }
     }
 

@@ -341,6 +341,10 @@ impl<S: StorageLayout> EngineState<S> {
         self.links.links_via(interface)
     }
 
+    pub fn transported_links_via(&self, interface: InterfaceId) -> usize {
+        self.transported_links.links_via(interface)
+    }
+
     pub fn scheduled_announce_count(&self) -> usize {
         self.scheduled_announces.scheduled_count()
     }
