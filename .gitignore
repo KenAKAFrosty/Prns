@@ -6,12 +6,12 @@ godot-smoke/
 # Parked standalone crate builds into its own target dir
 personal-rnsd/target/
 personal-rns-config/target/
+personal-rns-ffi/target/
 examples/*/target/
 dhat-heap.json
 benchmarks/target/
 benchmarks/reference/.venv/
 **/__pycache__/
-hosts/*/target/
 # cargo-mutants run artifacts (mutants.out + the rotated mutants.out.old)
 /mutants.out*/
 # Local design scratch — not part of the committed tree
