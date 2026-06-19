@@ -125,12 +125,15 @@ impl<S: StorageLayout> EngineState<S> {
         let public_keys = retained.announce.public_keys;
         let maybe_ratchet = retained.announce.maybe_ratchet;
 
-        // RNS 1.3.1 `Transport.outbound`: a packet for a destination more than
-        // one hop away is injected into transport, addressed at the relay that
-        // announced the route, instead of broadcast at the destination.
+        // RNS 1.3.1 `Transport.outbound`: a destination reached via a relay (hops > 0) is injected
+        // into transport, addressed at the relay that announced the route; a directly reachable
+        // destination (hops == 0 — including a sibling behind the same shared instance, whose
+        // announce the instance still tags with its own transport id) is broadcast at the
+        // destination, so the instance delivers it locally instead of dropping a stray transport
+        // packet.
         let (propagation, transport_id) = match retained.next_hop {
-            NextHop::Direct => (PropagationType::Broadcast, None),
-            NextHop::Via(via) => (PropagationType::Transport, Some(via)),
+            NextHop::Via(via) if hops > 0 => (PropagationType::Transport, Some(via)),
+            _ => (PropagationType::Broadcast, None),
         };
         let header = WirePacketHeader {
             ifac_flag: IfacFlag::Open,
