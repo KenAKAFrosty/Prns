@@ -12,7 +12,9 @@ async fn main() {
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
     use personal_rns::routing::links::resources::ResourceStrategy;
     use personal_rns::routing::ProofStrategy;
-    use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe};
+    use personal_rns::runtime::{
+        Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
+    };
     use personal_rns::storage::GrowableHeap;
     use personal_rns::{interfaces, routes};
     use personal_rns_ffi::ble::macos::MacosBleBackend;
@@ -27,9 +29,10 @@ async fn main() {
             return;
         }
     };
+    let psm = backend.psm();
     let identity = BleIdentity::new([node_byte; 16]);
     let capabilities = LinkCapabilities {
-        l2cap: None,
+        l2cap: Some(psm),
         link_mtu: BLE_HW_MTU as u16,
     };
 
@@ -50,11 +53,28 @@ async fn main() {
         storage: GrowableHeap,
         routes: routes![],
         interfaces: interfaces![],
-        on_event: move |_event, _state| {},
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                source_interface,
+                hops,
+                destination,
+            }) = event
+            {
+                println!(
+                    "[macos] HEARD dest={:02x}{:02x} via {:?} ({hops} hop) — a frame crossed the L2CAP data plane",
+                    destination.as_bytes()[0],
+                    destination.as_bytes()[1],
+                    source_interface.kind(),
+                );
+            }
+        },
     });
     let handle = node.handle();
     let _bluetooth = handle.supervise(BluetoothAuto::new(backend, identity, capabilities));
-    println!("[macos] up — supervising native bluetooth (CoreBluetooth), GATT-only handshake");
+    println!(
+        "[macos] up — supervising native bluetooth (CoreBluetooth), L2CAP psm {:#06x}",
+        psm.get()
+    );
 
     let roll_call = handle.clone();
     tokio::spawn(async move {
