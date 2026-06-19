@@ -568,6 +568,52 @@ impl<const N: usize> Default for Reassembler<N> {
     }
 }
 
+pub const STREAM_FRAME_PREFIX_LEN: usize = 2;
+
+pub fn encode_stream_frame(frame: &[u8], out: &mut [u8]) -> Option<usize> {
+    let len = u16::try_from(frame.len()).ok()?;
+    let total = STREAM_FRAME_PREFIX_LEN + frame.len();
+    let slot = out.get_mut(..total)?;
+    slot[..STREAM_FRAME_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
+    slot[STREAM_FRAME_PREFIX_LEN..].copy_from_slice(frame);
+    Some(total)
+}
+
+pub struct StreamDeframer<const N: usize> {
+    buf: HVec<u8, N>,
+}
+
+impl<const N: usize> StreamDeframer<N> {
+    pub fn new() -> Self {
+        Self { buf: HVec::new() }
+    }
+
+    pub fn absorb(&mut self, bytes: &[u8]) -> bool {
+        self.buf.extend_from_slice(bytes).is_ok()
+    }
+
+    pub fn next_frame(&mut self, out: &mut [u8]) -> Option<usize> {
+        let prefix: [u8; STREAM_FRAME_PREFIX_LEN] =
+            self.buf.get(..STREAM_FRAME_PREFIX_LEN)?.try_into().ok()?;
+        let len = u16::from_be_bytes(prefix) as usize;
+        let total = STREAM_FRAME_PREFIX_LEN + len;
+        if self.buf.len() < total {
+            return None;
+        }
+        let dst = out.get_mut(..len)?;
+        dst.copy_from_slice(&self.buf[STREAM_FRAME_PREFIX_LEN..total]);
+        self.buf.copy_within(total.., 0);
+        self.buf.truncate(self.buf.len() - total);
+        Some(len)
+    }
+}
+
+impl<const N: usize> Default for StreamDeframer<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn descriptor(id: InterfaceId, bitrate_bps: u32) -> InterfaceConfig {
     InterfaceConfig {
         id,
@@ -795,5 +841,57 @@ mod tests {
         };
         let mut tiny = [0u8; 4];
         assert_eq!(hello.encode(&mut tiny), None);
+    }
+
+    #[test]
+    fn a_frame_round_trips_through_stream_framing() {
+        let frame = [0x10u8, 0x20, 0x30, 0x40, 0x50];
+        let mut wire = [0u8; 64];
+        let n = encode_stream_frame(&frame, &mut wire).unwrap();
+        assert_eq!(n, STREAM_FRAME_PREFIX_LEN + frame.len());
+        let mut deframer = StreamDeframer::<256>::new();
+        assert!(deframer.absorb(&wire[..n]));
+        let mut out = [0u8; 64];
+        let got = deframer.next_frame(&mut out).unwrap();
+        assert_eq!(&out[..got], &frame);
+        assert!(deframer.next_frame(&mut out).is_none());
+    }
+
+    #[test]
+    fn two_frames_in_one_chunk_pop_individually() {
+        let mut wire = [0u8; 64];
+        let mut total = 0;
+        for frame in [&[1u8, 2, 3][..], &[9u8, 8][..]] {
+            total += encode_stream_frame(frame, &mut wire[total..]).unwrap();
+        }
+        let mut deframer = StreamDeframer::<256>::new();
+        assert!(deframer.absorb(&wire[..total]));
+        let mut out = [0u8; 64];
+        let a = deframer.next_frame(&mut out).unwrap();
+        assert_eq!(&out[..a], &[1, 2, 3]);
+        let b = deframer.next_frame(&mut out).unwrap();
+        assert_eq!(&out[..b], &[9, 8]);
+        assert!(deframer.next_frame(&mut out).is_none());
+    }
+
+    #[test]
+    fn a_frame_split_across_chunks_reassembles() {
+        let frame = [7u8; 40];
+        let mut wire = [0u8; 64];
+        let n = encode_stream_frame(&frame, &mut wire).unwrap();
+        let mut deframer = StreamDeframer::<256>::new();
+        let mut out = [0u8; 64];
+        assert!(deframer.absorb(&wire[..10]));
+        assert!(deframer.next_frame(&mut out).is_none());
+        assert!(deframer.absorb(&wire[10..n]));
+        let got = deframer.next_frame(&mut out).unwrap();
+        assert_eq!(&out[..got], &frame);
+    }
+
+    #[test]
+    fn the_stream_deframer_reports_overflow() {
+        let mut deframer = StreamDeframer::<4>::new();
+        assert!(deframer.absorb(&[1, 2, 3, 4]));
+        assert!(!deframer.absorb(&[5]));
     }
 }
