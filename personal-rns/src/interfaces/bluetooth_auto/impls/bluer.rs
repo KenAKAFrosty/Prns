@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use core::time::Duration;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use bluer::{
 };
 use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::Instant;
 
 use crate::interfaces::bluetooth_auto::core::{
     encode_stream_frame, BleAddress, BleUuid, Control, Dialect, Psm, StreamDeframer, Transport,
@@ -29,6 +31,25 @@ use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, Ble
 const ADVERTISED_NAME: &str = "Prns";
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
+
+const SCAN_STOP_POLL: Duration = Duration::from_millis(20);
+const SCAN_STOP_ATTEMPTS: usize = 25;
+
+const DIAL_RETRY_BASE: Duration = Duration::from_secs(2);
+const DIAL_RETRY_MAX: Duration = Duration::from_secs(30);
+const DIAL_GIVEUP_AFTER: u32 = 5;
+const DIAL_GIVEUP_COOLDOWN: Duration = Duration::from_secs(300);
+const STABLE_LINK_UPTIME: Duration = Duration::from_secs(15);
+
+enum DialAttempt {
+    Connected { since: Instant, failures: u32 },
+    Backoff { failures: u32, retry_at: Instant },
+}
+
+fn dial_retry_delay(failures: u32) -> Duration {
+    let shift = failures.saturating_sub(1).min(4);
+    (DIAL_RETRY_BASE * (1u32 << shift)).min(DIAL_RETRY_MAX)
+}
 
 #[derive(Debug)]
 pub enum BluerError {
@@ -83,6 +104,7 @@ enum Half {
 enum Observed {
     Candidate(Address),
     Greeting { address: Address, half: Half },
+    RetryDue,
     Idle,
 }
 
@@ -91,7 +113,7 @@ pub struct BluerBackend {
     address: Address,
     address_type: AddressType,
     psm: Psm,
-    seen: HashSet<Address>,
+    attempts: HashMap<Address, DialAttempt>,
     pending: HashMap<Address, PendingHalves>,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
     control: Option<Pin<Box<CharacteristicControl>>>,
@@ -112,7 +134,7 @@ impl BluerBackend {
             address,
             address_type,
             psm,
-            seen: HashSet::new(),
+            attempts: HashMap::new(),
             pending: HashMap::new(),
             discovery: None,
             control: None,
@@ -130,6 +152,120 @@ impl BluerBackend {
             Ok(Some(uuids)) => uuids.contains(&uuid_of(BLE_SERVICE_UUID)),
             _ => false,
         }
+    }
+
+    async fn await_scan_stopped(&self) {
+        for _ in 0..SCAN_STOP_ATTEMPTS {
+            if matches!(self.adapter.is_discovering().await, Ok(false)) {
+                return;
+            }
+            tokio::time::sleep(SCAN_STOP_POLL).await;
+        }
+    }
+
+    fn dial_suppressed(&self, address: Address) -> bool {
+        match self.attempts.get(&address) {
+            Some(DialAttempt::Connected { .. }) => true,
+            Some(DialAttempt::Backoff { retry_at, .. }) => Instant::now() < *retry_at,
+            None => false,
+        }
+    }
+
+    fn next_wake_deadline(&self) -> Option<Instant> {
+        self.attempts
+            .values()
+            .filter_map(|attempt| match attempt {
+                DialAttempt::Backoff { retry_at, .. } => Some(*retry_at),
+                DialAttempt::Connected { .. } => None,
+            })
+            .min()
+    }
+
+    fn next_redial(&self) -> Option<Address> {
+        let now = Instant::now();
+        self.attempts
+            .iter()
+            .find_map(|(address, attempt)| match attempt {
+                DialAttempt::Backoff { retry_at, .. } if *retry_at <= now => Some(*address),
+                _ => None,
+            })
+    }
+
+    fn carried_failures(&self, target: Address) -> u32 {
+        match self.attempts.get(&target) {
+            Some(DialAttempt::Backoff { failures, .. }) => *failures,
+            Some(DialAttempt::Connected { failures, .. }) => *failures,
+            None => 0,
+        }
+    }
+
+    fn schedule_redial(&mut self, target: Address, failures: u32) -> Duration {
+        let (delay, carried) = if failures >= DIAL_GIVEUP_AFTER {
+            (DIAL_GIVEUP_COOLDOWN, 0)
+        } else {
+            (dial_retry_delay(failures), failures)
+        };
+        self.attempts.insert(
+            target,
+            DialAttempt::Backoff {
+                failures: carried,
+                retry_at: Instant::now() + delay,
+            },
+        );
+        delay
+    }
+
+    fn note_dial_failure(&mut self, target: Address) {
+        let failures = self.carried_failures(target) + 1;
+        let delay = self.schedule_redial(target, failures);
+        if failures >= DIAL_GIVEUP_AFTER {
+            log::warn!(
+                "bluetooth: dial to {target} failed {failures}x; pausing dials to it for {delay:?}"
+            );
+        } else {
+            log::warn!(
+                "bluetooth: dial to {target} failed (attempt {failures}); retrying after {delay:?}"
+            );
+        }
+    }
+
+    async fn dial_inner(&mut self, target: Address) -> Result<BluerLink, BluerError> {
+        let discovered = self.adapter.device(target)?;
+        let peer_address_type = discovered.address_type().await?;
+        log::info!("bluetooth: dialing {target} ({peer_address_type:?})");
+        let device = if discovered.is_connected().await? {
+            discovered
+        } else {
+            self.discovery = None;
+            let _ = self.adapter.remove_device(target).await;
+            self.await_scan_stopped().await;
+            match self.adapter.connect_device(target, peer_address_type).await {
+                Ok(device) => device,
+                Err(error) => {
+                    log::warn!("bluetooth: LE connect to {target} failed: {error}");
+                    return Err(error.into());
+                }
+            }
+        };
+        let control = match find_native_control(&device).await {
+            Ok(control) => control,
+            Err(error) => {
+                log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
+                return Err(error);
+            }
+        };
+        let notify = control.notify().await?;
+        log::info!(
+            "bluetooth: {target} connected over LE, control characteristic ready; handshaking"
+        );
+        Ok(BluerLink::Dialed(DialedLink {
+            control,
+            notify: Box::pin(notify),
+            peer_address: target,
+            peer_address_type,
+            socket: None,
+            _device: device,
+        }))
     }
 
     async fn start_discovery(&mut self) -> Result<(), BluerError> {
@@ -182,6 +318,13 @@ where
 {
     match stream {
         Some(stream) => stream.next().await,
+        None => core::future::pending().await,
+    }
+}
+
+async fn sleep_until_opt(deadline: Option<Instant>) {
+    match deadline {
+        Some(at) => tokio::time::sleep_until(at).await,
         None => core::future::pending().await,
     }
 }
@@ -258,6 +401,7 @@ impl BleBackend for BluerBackend {
                     log::warn!("bluetooth: failed to (re)start scanning: {error:?}");
                 }
             }
+            let wake_deadline = self.next_wake_deadline();
             let observed = {
                 let discovery = self.discovery.as_mut();
                 let control = self.control.as_mut();
@@ -283,14 +427,14 @@ impl BleBackend for BluerBackend {
                         },
                         None => Observed::Idle,
                     },
+                    () = sleep_until_opt(wake_deadline) => Observed::RetryDue,
                 }
             };
             match observed {
                 Observed::Candidate(address) => {
-                    let known = address == self.address || self.seen.contains(&address);
+                    let known = address == self.address || self.dial_suppressed(address);
                     if !known {
                         if self.advertises_our_service(address).await {
-                            self.seen.insert(address);
                             log::info!("bluetooth: sighted Prns peer {address}");
                             return BleEvent::Sighting(BleAddress::new(address.0));
                         }
@@ -303,6 +447,12 @@ impl BleBackend for BluerBackend {
                         return BleEvent::Inbound(BluerLink::Accepted(link));
                     }
                 }
+                Observed::RetryDue => {
+                    if let Some(address) = self.next_redial() {
+                        log::info!("bluetooth: re-dialing {address}");
+                        return BleEvent::Sighting(BleAddress::new(address.0));
+                    }
+                }
                 Observed::Idle => {}
             }
         }
@@ -310,41 +460,45 @@ impl BleBackend for BluerBackend {
 
     async fn dial(&mut self, address: BleAddress) -> Result<BluerLink, BluerError> {
         let target = Address::new(*address.octets());
-        let discovered = self.adapter.device(target)?;
-        let peer_address_type = discovered.address_type().await?;
-        log::info!("bluetooth: dialing {target} ({peer_address_type:?})");
-        let device = if discovered.is_connected().await? {
-            discovered
-        } else {
-            self.discovery = None;
-            let _ = self.adapter.remove_device(target).await;
-            match self.adapter.connect_device(target, peer_address_type).await {
-                Ok(device) => device,
-                Err(error) => {
-                    log::warn!("bluetooth: LE connect to {target} failed: {error}");
-                    return Err(error.into());
-                }
+        match self.dial_inner(target).await {
+            Ok(link) => {
+                let failures = self.carried_failures(target);
+                self.attempts.insert(
+                    target,
+                    DialAttempt::Connected {
+                        since: Instant::now(),
+                        failures,
+                    },
+                );
+                Ok(link)
             }
-        };
-        let control = match find_native_control(&device).await {
-            Ok(control) => control,
             Err(error) => {
-                log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
-                return Err(error);
+                self.note_dial_failure(target);
+                Err(error)
             }
+        }
+    }
+
+    async fn on_link_closed(&mut self, address: BleAddress) {
+        let target = Address::new(*address.octets());
+        let uptime = match self.attempts.get(&target) {
+            Some(DialAttempt::Connected { since, failures }) => Some((since.elapsed(), *failures)),
+            _ => None,
         };
-        let notify = control.notify().await?;
-        log::info!(
-            "bluetooth: {target} connected over LE, control characteristic ready; handshaking"
-        );
-        Ok(BluerLink::Dialed(DialedLink {
-            control,
-            notify: Box::pin(notify),
-            peer_address: target,
-            peer_address_type,
-            socket: None,
-            _device: device,
-        }))
+        let failures = match uptime {
+            Some((up, prior)) if up < STABLE_LINK_UPTIME => prior + 1,
+            _ => 0,
+        };
+        let delay = self.schedule_redial(target, failures);
+        if failures >= DIAL_GIVEUP_AFTER {
+            log::warn!(
+                "bluetooth: {target} link keeps flapping; pausing dials to it for {delay:?}"
+            );
+        } else if let Some((up, _)) = uptime {
+            log::info!("bluetooth: {target} link closed after {up:?}; re-dialing after {delay:?}");
+        } else {
+            log::info!("bluetooth: {target} link closed; re-dialing after {delay:?}");
+        }
     }
 }
 

@@ -15,6 +15,7 @@ pub trait BleBackend {
     async fn advertise(&mut self) -> Result<(), Self::Error>;
     async fn next_event(&mut self) -> BleEvent<Self::Link>;
     async fn dial(&mut self, address: BleAddress) -> Result<Self::Link, Self::Error>;
+    async fn on_link_closed(&mut self, _address: BleAddress) {}
 }
 
 #[allow(async_fn_in_trait)]

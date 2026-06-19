@@ -1,14 +1,21 @@
 use std::collections::HashMap;
 
+use tokio::sync::mpsc;
+
 use crate::interfaces::bluetooth_auto::core::{
-    self, keeps_duplicate, BleIdentity, Established, Handshake, HandshakeRole, LinkCapabilities,
-    Local, Outcome, Transport,
+    self, keeps_duplicate, BleAddress, BleIdentity, Established, Handshake, HandshakeRole,
+    LinkCapabilities, Local, Outcome, Transport,
 };
 use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
+
+struct ClosedSignal {
+    address: BleAddress,
+    sink: mpsc::UnboundedSender<BleAddress>,
+}
 
 pub struct BluetoothPeer<Src, Snk> {
     id: InterfaceId,
@@ -18,6 +25,7 @@ pub struct BluetoothPeer<Src, Snk> {
     sink: Snk,
     reachability_tag: [u8; 16],
     status: TokioInterfaceStatus,
+    closed: Option<ClosedSignal>,
 }
 
 impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
@@ -33,7 +41,17 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
             sink,
             reachability_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            closed: None,
         }
+    }
+
+    fn report_close_to(
+        mut self,
+        address: BleAddress,
+        sink: mpsc::UnboundedSender<BleAddress>,
+    ) -> Self {
+        self.closed = Some(ClosedSignal { address, sink });
+        self
     }
 
     #[must_use]
@@ -69,7 +87,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
         loop {
             tokio::select! {
                 received = self.source.recv_frame(&mut buf) => {
-                    let Ok(len) = received else { return };
+                    let Ok(len) = received else { break };
                     if len == 0 {
                         continue;
                     }
@@ -82,11 +100,14 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                     }
                     let outbound_len = outbound.len();
                     if self.sink.send_frame(outbound).await.is_err() {
-                        return;
+                        break;
                     }
                     self.status.add_tx(outbound_len as u64);
                 }
             }
+        }
+        if let Some(ClosedSignal { address, sink }) = self.closed.take() {
+            let _ = sink.send(address);
         }
     }
 }
@@ -98,6 +119,11 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
             std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
         }))
     }
+}
+
+enum SupervisorStep<L> {
+    Event(BleEvent<L>),
+    LinkClosed(BleAddress),
 }
 
 pub struct BluetoothAuto<B> {
@@ -133,9 +159,14 @@ where
         let Self { mut backend, local } = self;
         let _ = backend.advertise().await;
         let mut members: HashMap<BleIdentity, AttachedInterface> = HashMap::new();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
         loop {
-            match backend.next_event().await {
-                BleEvent::Sighting(address) => {
+            let step = tokio::select! {
+                event = backend.next_event() => SupervisorStep::Event(event),
+                Some(address) = closed_rx.recv() => SupervisorStep::LinkClosed(address),
+            };
+            match step {
+                SupervisorStep::Event(BleEvent::Sighting(address)) => {
                     let Ok(mut link) = backend.dial(address).await else {
                         continue;
                     };
@@ -149,11 +180,12 @@ where
                             HandshakeRole::Dialer,
                             established,
                             link,
+                            &closed_tx,
                         )
                         .await;
                     }
                 }
-                BleEvent::Inbound(mut link) => {
+                SupervisorStep::Event(BleEvent::Inbound(mut link)) => {
                     if let Some(established) =
                         drive_handshake(&mut link, HandshakeRole::Listener, local).await
                     {
@@ -164,9 +196,13 @@ where
                             HandshakeRole::Listener,
                             established,
                             link,
+                            &closed_tx,
                         )
                         .await;
                     }
+                }
+                SupervisorStep::LinkClosed(address) => {
+                    backend.on_link_closed(address).await;
                 }
             }
         }
@@ -205,6 +241,7 @@ async fn admit<L>(
     role: HandshakeRole,
     established: Established,
     mut link: L,
+    closed: &mpsc::UnboundedSender<BleAddress>,
 ) where
     L: BleLink,
     L::Source: Send + 'static,
@@ -219,9 +256,11 @@ async fn admit<L>(
             return;
         }
     }
+    let address = link.address();
     let _ = link.upgrade(&established.transport).await;
     let (source, sink) = link.into_data();
-    let member = BluetoothPeer::new(established.identity, established.transport, source, sink);
+    let member = BluetoothPeer::new(established.identity, established.transport, source, sink)
+        .report_close_to(address, closed.clone());
     let attached = fleet.add(member);
     members.insert(established.identity, attached);
 }
