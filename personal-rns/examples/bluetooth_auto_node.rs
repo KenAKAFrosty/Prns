@@ -50,6 +50,7 @@ async fn main() {
     };
 
     let me = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "hopspot",
         aspects: &["node"],
         identity: Zeroizing::new([node_byte; IDENTITY_SECRET_KEY_LEN]),

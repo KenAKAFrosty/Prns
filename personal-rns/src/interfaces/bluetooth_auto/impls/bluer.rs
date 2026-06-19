@@ -14,12 +14,14 @@ use bluer::{Adapter, AdapterEvent, Address, AddressType, Device, Session, Uuid};
 use futures_util::{Stream, StreamExt};
 
 use crate::interfaces::bluetooth_auto::core::{
-    BleAddress, BleUuid, Control, Dialect, Transport, BLE_HW_MTU, BLE_SERVICE_UUID,
-    CONTROL_MAX_LEN, NATIVE_CONTROL_UUID,
+    encode_stream_frame, BleAddress, BleUuid, Control, Dialect, StreamDeframer, Transport,
+    BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
 
 const ADVERTISED_NAME: &str = "Prns";
+
+const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 
 #[derive(Debug)]
 pub enum BluerError {
@@ -30,6 +32,7 @@ pub enum BluerError {
     MalformedControl,
     GattDataUnsupported,
     NotUpgraded,
+    FrameTooLarge,
     Closed,
 }
 
@@ -263,7 +266,7 @@ impl BleLink for DialedLink {
         match transport {
             Transport::L2cap { psm } => {
                 let socket = Socket::<SeqPacket>::new_seq_packet()?;
-                socket.set_recv_mtu(BLE_HW_MTU as u16)?;
+                socket.set_recv_mtu(L2CAP_SDU_LEN as u16)?;
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
@@ -276,19 +279,40 @@ impl BleLink for DialedLink {
     }
 
     fn into_data(self) -> (L2capSource, L2capSink) {
-        (L2capSource(self.socket.clone()), L2capSink(self.socket))
+        (
+            L2capSource {
+                socket: self.socket.clone(),
+                deframer: StreamDeframer::new(),
+            },
+            L2capSink(self.socket),
+        )
     }
 }
 
-pub struct L2capSource(Option<Arc<SeqPacket>>);
+pub struct L2capSource {
+    socket: Option<Arc<SeqPacket>>,
+    deframer: StreamDeframer<{ 2 * L2CAP_SDU_LEN }>,
+}
 
 impl BleSource for L2capSource {
     type Error = BluerError;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, BluerError> {
-        match &self.0 {
-            Some(socket) => Ok(socket.recv(out).await?),
-            None => Err(BluerError::NotUpgraded),
+        let Some(socket) = self.socket.clone() else {
+            return Err(BluerError::NotUpgraded);
+        };
+        loop {
+            if let Some(len) = self.deframer.next_frame(out) {
+                return Ok(len);
+            }
+            let mut scratch = [0u8; L2CAP_SDU_LEN];
+            let read = socket.recv(&mut scratch).await?;
+            if read == 0 {
+                return Err(BluerError::Closed);
+            }
+            if !self.deframer.absorb(&scratch[..read]) {
+                return Err(BluerError::FrameTooLarge);
+            }
         }
     }
 }
@@ -301,7 +325,9 @@ impl BleSink for L2capSink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), BluerError> {
         match &self.0 {
             Some(socket) => {
-                socket.send(frame).await?;
+                let mut framed = [0u8; L2CAP_SDU_LEN];
+                let n = encode_stream_frame(frame, &mut framed).ok_or(BluerError::FrameTooLarge)?;
+                socket.send(&framed[..n]).await?;
                 Ok(())
             }
             None => Err(BluerError::NotUpgraded),
