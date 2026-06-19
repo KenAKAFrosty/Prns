@@ -27,6 +27,11 @@ pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
 #[cfg(feature = "tokio-host")]
 mod tokio_runner;
 
+#[cfg(feature = "local")]
+mod local_instance;
+#[cfg(feature = "local")]
+pub use local_instance::{InstancePorts, JoinError, LocalInstance, OnExisting, Role};
+
 #[cfg(feature = "embassy-contract")]
 mod embassy_bind;
 #[cfg(all(feature = "embassy-contract", not(feature = "tokio-host")))]
