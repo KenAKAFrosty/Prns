@@ -30,6 +30,10 @@ pub const fn link_mdu(mtu: usize) -> usize {
 
 pub const LINK_MDU: usize = link_mdu(BROADCAST_MTU);
 
+pub const fn link_data_frame_ceiling(plaintext_len: usize) -> usize {
+    HEADER_MIN_LEN + IFAC_MIN_LEN + LINK_TOKEN_OVERHEAD + ((plaintext_len / 16) + 1) * 16
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkDataError {
     PayloadTooLong,
