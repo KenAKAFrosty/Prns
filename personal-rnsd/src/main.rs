@@ -2,11 +2,13 @@
 //! runtime.
 //!
 //! It reads a stock RNS config the way a stock RNS user expects (`<dir>/config`, discovered along
-//! RNS's own search order), projects it onto a [`DaemonPlan`], and stands up the interfaces and the
-//! shared instance that plan describes. Local RNS apps (Sideband, NomadNet, MeshChat) connect to
-//! the shared instance over the bus; the control-RPC shim answers their diagnostics, keyed on the
-//! node's own persistent identity. The daemon announces itself as `lxmf.delivery` so it surfaces as
-//! a messageable peer, and forwards others' traffic when the config enables the transport role.
+//! RNS's own search order) and projects it onto a [`DaemonPlan`]. Then it elects its role on the
+//! host's shared instance: with none running it becomes the instance — standing up the plan's
+//! interfaces and serving the bus and control RPC for local apps (Sideband, NomadNet, MeshChat),
+//! keyed on the node's own persistent identity; with one already running it defers, joining as a
+//! client over that instance's bus and standing up none of its own, the honorable parity behavior a
+//! stock RNS app follows. It announces itself as `lxmf.delivery` so it surfaces as a messageable
+//! peer, and forwards others' traffic when the config enables the transport role.
 
 // 100% safe Rust, compiler-enforced (rationale in personal-rns/src/lib.rs). The daemon is async
 // glue around the engine; syscalls go through tokio/std, so no `unsafe`.
@@ -27,14 +29,10 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
-use personal_rns::interfaces::rns_parity::local::core as local_core;
-use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
-    rpc_key_from_rns_identity, SharedInstanceRpcCompat,
-};
-use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
-    Diagnostic, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, TokioPrnsHandle,
+    Diagnostic, InstancePorts, JoinError, LocalInstance, OnExisting, PreConfiguredDestination,
+    Prns, PrnsEvent, PrnsRecipe, Role, TokioPrnsHandle,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
@@ -135,7 +133,6 @@ async fn main() {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
         TransportId::new(*signer.identity_hash().as_bytes())
     };
-    let rpc_key = rpc_key_from_rns_identity(&storage_dir, &secret[..]);
 
     let announce_destination = PreConfiguredDestination::Single {
         app_name: ANNOUNCE_APP_NAME,
@@ -160,50 +157,57 @@ async fn main() {
     });
     let prns_handle = prns.handle();
 
-    let views = construct::construct_interfaces(&prns_handle, &plan).await;
-
-    if let SharedInstance::Enabled {
-        instance_port,
-        control_port,
-    } = plan.shared_instance
-    {
-        let local_port = instance_port.unwrap_or(local_core::DEFAULT_LOCAL_PORT);
-        prns_handle.supervise(LocalServer::with_port(local_port));
-        let rpc_port = control_port.unwrap_or(local_port + 1);
-        println!(
-            "RNSD_SHARED_INSTANCE bus=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} (Sideband, NomadNet, MeshChat can connect)"
-        );
-        {
-            let views = views.clone();
-            tokio::spawn(
-                SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, prns_handle.clone())
-                    .with_interfaces(move || views.snapshots())
-                    .run(),
-            );
+    // Elect this node's role on the host's shared instance before standing up any interfaces: a
+    // client defers to the running instance and rides its bus, standing up none of its own.
+    match plan.shared_instance {
+        SharedInstance::Enabled {
+            instance_port,
+            control_port,
+        } => {
+            let mut ports = InstancePorts::default();
+            if let Some(bus) = instance_port {
+                ports.bus = bus;
+            }
+            if let Some(control) = control_port {
+                ports.control = control;
+            }
+            match prns_handle
+                .join_local_instance(LocalInstance {
+                    identity_dir: discovered_config.dir.clone(),
+                    ports,
+                    on_existing: OnExisting::JoinAsClient,
+                })
+                .await
+            {
+                Ok(Role::BecameInstance) => {
+                    println!(
+                        "RNSD_BECAME_INSTANCE bus=127.0.0.1:{} rpc=127.0.0.1:{} (Sideband, NomadNet, MeshChat can connect)",
+                        ports.bus, ports.control
+                    );
+                    construct::construct_interfaces(&prns_handle, &plan).await;
+                }
+                Ok(Role::JoinedAsClient { of }) => {
+                    println!(
+                        "RNSD_JOINED_AS_CLIENT of={of} (a shared instance is already running; deferring to it and riding its bus — it owns the interfaces, so this node stands up none of its own)"
+                    );
+                }
+                Err(JoinError::InstanceAlreadyRunning { at }) => {
+                    eprintln!("RNSD_INSTANCE_REFUSED at={at}");
+                    process::exit(1);
+                }
+            }
         }
-        #[cfg(target_os = "linux")]
-        {
-            let views = views.clone();
-            tokio::spawn(
-                SharedInstanceRpcCompat::abstract_unix(
-                    rpc_key,
-                    local_core::DEFAULT_SOCKET_PATH,
-                    prns_handle.clone(),
-                )
-                .with_interfaces(move || views.snapshots())
-                .run(),
-            );
+        SharedInstance::Disabled => {
+            println!("RNSD_SHARED_INSTANCE disabled (standalone node)");
+            construct::construct_interfaces(&prns_handle, &plan).await;
         }
-    } else {
-        println!("RNSD_SHARED_INSTANCE disabled");
     }
 
     tokio::spawn(announce_loop(prns_handle.clone(), destination));
 
     println!(
-        "RNSD_READY transport={} interfaces={} deferred={}",
+        "RNSD_READY transport={} deferred={}",
         plan.transport,
-        plan.interfaces.len(),
         plan.deferred.len(),
     );
     prns.run().await;
