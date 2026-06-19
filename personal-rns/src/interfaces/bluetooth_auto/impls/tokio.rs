@@ -5,7 +5,8 @@ use crate::interfaces::bluetooth_auto::core::{
     Local, Outcome, Transport,
 };
 use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
-use crate::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind};
+use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
@@ -16,6 +17,7 @@ pub struct BluetoothPeer<Src, Snk> {
     source: Src,
     sink: Snk,
     reachability_tag: [u8; 16],
+    status: TokioInterfaceStatus,
 }
 
 impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
@@ -30,6 +32,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
             source,
             sink,
             reachability_tag,
+            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
 
@@ -70,22 +73,32 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                     if len == 0 {
                         continue;
                     }
+                    self.status.add_rx(len as u64);
                     seam.next_inbound(&buf[..len]).await;
                 }
                 outbound = seam.next_outbound() => {
                     if outbound.is_empty() {
                         continue;
                     }
+                    let outbound_len = outbound.len();
                     if self.sink.send_frame(outbound).await.is_err() {
                         return;
                     }
+                    self.status.add_tx(outbound_len as u64);
                 }
             }
         }
     }
 }
 
-impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for BluetoothPeer<Src, Snk> {}
+impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for BluetoothPeer<Src, Snk> {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+        }))
+    }
+}
 
 pub struct BluetoothAuto<B> {
     backend: B,
