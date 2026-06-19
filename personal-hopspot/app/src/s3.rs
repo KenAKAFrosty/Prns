@@ -365,6 +365,8 @@ pub async fn run(spawner: Spawner) {
         PrnsRecipe {
             transport: Some(transport_id),
             pre_configured_destinations: [PreConfiguredDestination::Single {
+                resource_strategy:
+                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
                 app_name: "lxmf",
                 aspects: &["delivery"],
                 identity: secret_key,

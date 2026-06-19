@@ -41,6 +41,7 @@ async fn main() {
     std::println!("tcp-server-host: listening on {bind}");
 
     let me = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "hopspot",
         aspects: &["host"],
         identity: Zeroizing::new([0x33; IDENTITY_SECRET_KEY_LEN]),

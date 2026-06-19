@@ -29,6 +29,8 @@ async fn main() {
     let node = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: "personal",
             aspects: &["smoke"],
             identity,

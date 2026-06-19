@@ -4,6 +4,7 @@ use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, ExpandNameError,
 };
+use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::ProofStrategy;
 use crate::wire::{DestinationHash, TransportId};
 
@@ -21,6 +22,10 @@ pub enum PreConfiguredDestination<'a> {
         announce_app_data: &'a [u8],
         proof: ProofStrategy,
         ratchet: RatchetPolicy,
+        /// Whether links to this destination accept inbound resources, and how large. The runtime
+        /// counterpart is the handle's `set_resource_strategy`; most destinations want
+        /// `ResourceStrategy::AcceptNone` until they expect a transfer.
+        resource_strategy: ResourceStrategy,
     },
 }
 

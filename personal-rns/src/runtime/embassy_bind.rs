@@ -449,6 +449,7 @@ where
                     announce_app_data: app_data,
                     proof,
                     ratchet,
+                    resource_strategy,
                 } => {
                     let held = engine
                         .hold_identity(identity)
@@ -458,6 +459,7 @@ where
                             &held, app_name, aspects, app_data, proof, ratchet,
                         )
                         .expect("recipe single destination is valid");
+                    engine.set_default_resource_strategy(&dest, resource_strategy);
                     for (path, policy) in R::REGISTRATIONS {
                         engine
                             .register_request_handler(&dest, path, policy.engine_policy())

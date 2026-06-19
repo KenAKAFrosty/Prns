@@ -722,6 +722,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
     };
     let destination = single
         .destination_hash()
@@ -876,6 +877,7 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
     };
     if role == "responder" {
         let served = Arc::new(AtomicU64::new(0));
@@ -980,6 +982,7 @@ async fn run_churn_bus_client(manifest: &Manifest, role: &str, duration: Duratio
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
     };
     if role == "responder" {
         let links = Arc::new(AtomicU64::new(0));
@@ -1076,6 +1079,7 @@ async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Dura
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
     };
     if role == "responder" {
         let received = Arc::new(AtomicU64::new(0));

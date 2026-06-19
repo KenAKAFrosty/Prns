@@ -16,6 +16,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
+use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{
     Diagnostic, Fleet, InterfaceSupervisor, PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe,
@@ -57,6 +58,7 @@ impl personal_rns::interfaces::ReportsStatus for DialOnce {}
 
 fn single(identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> PreConfiguredDestination<'static> {
     PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "bench",
         aspects: &["link"],
         identity,
@@ -464,4 +466,100 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         () = node_a.run() => unreachable!("client A's run loop returned"),
         () = node_b.run() => unreachable!("client B's run loop returned"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_recipe_accept_destination_receives_a_resource() {
+    let single_a = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects: &["link"],
+        identity: secret(0xF1),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::Accept {
+            max_uncompressed_len: 1024 * 1024,
+            accept_compressed: false,
+        },
+    };
+    let dest_a = single_a.destination_hash().expect("valid destination");
+
+    let server = TcpServer::bind("127.0.0.1:0", BITRATE)
+        .await
+        .expect("server binds");
+    let addr = server.local_addr().expect("bound addr").to_string();
+    let node_a = Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [single_a],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: interfaces![],
+        on_event: |_event, _state| {},
+    });
+    let commands_a = node_a.handle();
+    let _server_sup = commands_a.supervise(server);
+
+    let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
+    let client = TcpClientInterface::new(addr, BITRATE, Duration::from_millis(100));
+    let node_b = Prns::new(PrnsRecipe {
+        transport: None,
+        pre_configured_destinations: [single(secret(0xF2))],
+        app_state: (),
+        storage: GrowableHeap,
+        routes: routes![],
+        interfaces: interfaces![client],
+        on_event: move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        },
+    });
+    let commands_b = node_b.handle();
+
+    let announcer = commands_a.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_millis(150));
+        loop {
+            ticker.tick().await;
+            if announcer
+                .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination: dest_a,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                }))
+                .is_none()
+            {
+                break;
+            }
+        }
+    });
+
+    let sent = tokio::select! {
+        biased;
+        result = async {
+            let destination = tokio::time::timeout(Duration::from_secs(5), heard_rx.recv())
+                .await
+                .expect("B hears A within 5s")
+                .expect("the announce channel stays open");
+            let link_id = commands_b
+                .establish_link(destination)
+                .await
+                .expect("the link establishes");
+            let payload = std::vec![0x5au8; 64 * 1024];
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                commands_b.send_resource(link_id, payload.len() as u64, &payload[..]),
+            )
+            .await
+            .expect("the resource transfer settles within 5s")
+        } => result,
+        () = node_a.run() => unreachable!("node A's run loop returned"),
+        () = node_b.run() => unreachable!("node B's run loop returned"),
+    };
+
+    assert!(
+        sent.is_ok(),
+        "a recipe Accept destination receives a resource over a link: {sent:?}",
+    );
 }

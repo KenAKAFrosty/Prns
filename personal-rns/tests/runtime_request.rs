@@ -60,6 +60,7 @@ enum Heard {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_request_router_answers_a_live_request_over_tcp() {
     let responder_dest = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "bench",
         aspects: &["link"],
         identity: secret(0xA1),
@@ -113,6 +114,8 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
     let node_b = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: "bench",
             aspects: &["link"],
             identity: secret(0xB2),
@@ -208,6 +211,7 @@ async fn a_request_router_answers_a_live_request_over_tcp() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn request_auto_negotiates_both_rungs_over_tcp() {
     let responder_dest = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "bench",
         aspects: &["link"],
         identity: secret(0xC3),
@@ -259,6 +263,8 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
     let node_b = Prns::new(PrnsRecipe {
         transport: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
             app_name: "bench",
             aspects: &["link"],
             identity: secret(0xD4),

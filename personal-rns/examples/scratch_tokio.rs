@@ -37,6 +37,7 @@ async fn main() {
         .expect("should bind the second TCP listener");
 
     let me = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: "scratch",
         aspects: &["demo"],
         identity: Zeroizing::new([0x11; IDENTITY_SECRET_KEY_LEN]),

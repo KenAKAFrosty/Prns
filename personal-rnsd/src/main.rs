@@ -135,6 +135,7 @@ async fn main() {
     };
 
     let announce_destination = PreConfiguredDestination::Single {
+        resource_strategy: personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
         app_name: ANNOUNCE_APP_NAME,
         aspects: ANNOUNCE_ASPECTS,
         identity: secret,
