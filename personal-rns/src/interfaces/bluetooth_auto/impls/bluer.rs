@@ -9,7 +9,7 @@ use bluer::gatt::local::{
     CharacteristicWriteMethod, Service,
 };
 use bluer::gatt::remote::Characteristic as RemoteCharacteristic;
-use bluer::l2cap::{SeqPacket, Socket, SocketAddr as L2capSocketAddr};
+use bluer::l2cap::{Security, SecurityLevel, SeqPacket, Socket, SocketAddr as L2capSocketAddr};
 use bluer::{Adapter, AdapterEvent, Address, AddressType, Device, Session, Uuid};
 use futures_util::{Stream, StreamExt};
 
@@ -266,6 +266,10 @@ impl BleLink for DialedLink {
         match transport {
             Transport::L2cap { psm } => {
                 let socket = Socket::<SeqPacket>::new_seq_packet()?;
+                socket.set_security(Security {
+                    level: SecurityLevel::Low,
+                    key_size: 0,
+                })?;
                 socket.set_recv_mtu(L2CAP_SDU_LEN as u16)?;
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
