@@ -54,6 +54,10 @@ struct Unavailable(&'static str);
 enum Scenario {
     SingleFirehose,
     LinkFirehoseSmallPayload,
+    ResourceSmall,
+    ResourceTransfer,
+    RequestResponse,
+    EstablishmentChurn,
 }
 
 impl Scenario {
@@ -61,6 +65,10 @@ impl Scenario {
         match self {
             Scenario::SingleFirehose => "single-firehose",
             Scenario::LinkFirehoseSmallPayload => "link-firehose-small-payload",
+            Scenario::ResourceSmall => "resource-small",
+            Scenario::ResourceTransfer => "resource-transfer",
+            Scenario::RequestResponse => "request-response",
+            Scenario::EstablishmentChurn => "establishment-churn",
         }
     }
 
@@ -308,22 +316,40 @@ fn run_loopback(matchup: &Matchup, duration_ms: u64) -> Verdict {
 
     let _ = std::fs::remove_dir_all(&host_dir);
 
-    let sent = field(&initiator_result, "sent").unwrap_or(0.0);
-    let delivered = field(&initiator_result, "delivered").unwrap_or(0.0);
-    let timeouts = field(&initiator_result, "timeouts").unwrap_or(f64::NAN);
-    let responder_delivered = field(&responder_result, "delivered").unwrap_or(0.0);
+    let sent = field(&initiator_result, "sent")
+        .or_else(|| field(&initiator_result, "cycles"))
+        .unwrap_or(0.0);
+    let delivered = field(&initiator_result, "delivered")
+        .or_else(|| field(&initiator_result, "settled"))
+        .or_else(|| field(&initiator_result, "cycles"))
+        .unwrap_or(0.0);
+    let timeouts = field(&initiator_result, "timeouts")
+        .or_else(|| field(&initiator_result, "failures"))
+        .unwrap_or(f64::NAN);
+    let raced = field(&initiator_result, "raced").unwrap_or(0.0);
+    let responder_delivered = field(&responder_result, "delivered")
+        .or_else(|| field(&responder_result, "received"))
+        .or_else(|| field(&responder_result, "served"))
+        .unwrap_or(0.0);
     Verdict::Ran {
         sent,
         delivered,
         timeouts,
         responder_delivered,
-        clean: sent == delivered + timeouts && delivered > 0.0,
+        clean: sent == delivered + timeouts + raced && delivered > 0.0,
     }
 }
 
 const HOSTS: &[RnsImplementation] = &[RnsImplementation::Reference, RnsImplementation::Prns];
 const CLIENTS: &[RnsImplementation] = &[RnsImplementation::Reference, RnsImplementation::Prns];
-const SCENARIOS: &[Scenario] = &[Scenario::SingleFirehose, Scenario::LinkFirehoseSmallPayload];
+const SCENARIOS: &[Scenario] = &[
+    Scenario::SingleFirehose,
+    Scenario::LinkFirehoseSmallPayload,
+    Scenario::ResourceSmall,
+    Scenario::ResourceTransfer,
+    Scenario::RequestResponse,
+    Scenario::EstablishmentChurn,
+];
 
 struct GridFilter {
     scenario: Option<Scenario>,
