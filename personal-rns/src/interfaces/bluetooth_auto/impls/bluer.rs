@@ -253,6 +253,11 @@ impl BleBackend for BluerBackend {
 
     async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
+            if self.discovery.is_none() {
+                if let Err(error) = self.start_discovery().await {
+                    log::warn!("bluetooth: failed to (re)start scanning: {error:?}");
+                }
+            }
             let observed = {
                 let discovery = self.discovery.as_mut();
                 let control = self.control.as_mut();
@@ -313,11 +318,7 @@ impl BleBackend for BluerBackend {
         } else {
             self.discovery = None;
             let _ = self.adapter.remove_device(target).await;
-            let connected = self.adapter.connect_device(target, peer_address_type).await;
-            if let Err(error) = self.start_discovery().await {
-                log::warn!("bluetooth: failed to resume scanning: {error:?}");
-            }
-            match connected {
+            match self.adapter.connect_device(target, peer_address_type).await {
                 Ok(device) => device,
                 Err(error) => {
                     log::warn!("bluetooth: LE connect to {target} failed: {error}");
@@ -490,7 +491,17 @@ impl BleLink for DialedLink {
                 socket.bind(L2capSocketAddr::any_le())?;
                 let target =
                     L2capSocketAddr::new(self.peer_address, self.peer_address_type, psm.get());
-                let connected = socket.connect(target).await?;
+                let connected = match socket.connect(target).await {
+                    Ok(connected) => connected,
+                    Err(error) => {
+                        log::warn!(
+                            "bluetooth: {} L2CAP connect to PSM {:#x} failed: {error}",
+                            self.peer_address,
+                            psm.get()
+                        );
+                        return Err(error.into());
+                    }
+                };
                 self.socket = Some(Arc::new(connected));
                 log::info!("bluetooth: {} L2CAP data plane up", self.peer_address);
                 Ok(())
