@@ -79,6 +79,13 @@ where
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        let mut buffers: Option<
+            framed_stream::FramedBuffers<
+                { core::READ_BUF_LEN },
+                { core::SERIAL_FRAME_LEN },
+                { core::FRAMED_LEN },
+            >,
+        > = None;
         loop {
             if let Ok(stream) = (self.open)().await {
                 self.status.set_connection(ConnectionState::Connected);
@@ -90,6 +97,7 @@ where
                     _,
                 >(
                     stream,
+                    buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
                     &mut seam,
                     &self.status,
                     &mut airtime,

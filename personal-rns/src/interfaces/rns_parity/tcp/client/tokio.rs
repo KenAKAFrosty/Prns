@@ -85,6 +85,13 @@ impl Interface for TcpClientInterface {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        let mut buffers: Option<
+            framed_stream::FramedBuffers<
+                { core::READ_BUF_LEN },
+                { core::FRAME_CAP },
+                { core::FRAMED_LEN },
+            >,
+        > = None;
         loop {
             let connected =
                 tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(self.target.as_str()))
@@ -100,6 +107,7 @@ impl Interface for TcpClientInterface {
                     _,
                 >(
                     stream,
+                    buffers.get_or_insert_with(framed_stream::FramedBuffers::new),
                     &mut seam,
                     &self.status,
                     &mut airtime,

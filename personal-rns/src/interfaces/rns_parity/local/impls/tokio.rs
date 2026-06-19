@@ -78,6 +78,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
+        let mut buffers = framed_stream::FramedBuffers::<
+            { core::READ_BUF_LEN },
+            { core::FRAME_CAP },
+            { core::FRAMED_LEN },
+        >::new();
         framed_stream::serve::<
             { core::READ_BUF_LEN },
             { core::FRAME_CAP },
@@ -86,6 +91,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
             _,
         >(
             stream,
+            &mut buffers,
             &mut seam,
             &self.status,
             &mut airtime,
