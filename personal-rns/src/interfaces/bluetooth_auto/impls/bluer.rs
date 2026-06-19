@@ -132,6 +132,19 @@ impl BluerBackend {
         }
     }
 
+    async fn start_discovery(&mut self) -> Result<(), BluerError> {
+        self.adapter
+            .set_discovery_filter(DiscoveryFilter {
+                transport: DiscoveryTransport::Le,
+                uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
+                ..Default::default()
+            })
+            .await?;
+        let discovery = self.adapter.discover_devices().await?;
+        self.discovery = Some(Box::pin(discovery));
+        Ok(())
+    }
+
     fn admit_greeting(&mut self, address: Address, half: Half) -> Option<AcceptedLink> {
         let ready = {
             let entry = self.pending.entry(address).or_default();
@@ -217,14 +230,6 @@ impl BleBackend for BluerBackend {
         };
         let application = self.adapter.serve_gatt_application(application).await?;
 
-        self.adapter
-            .set_discovery_filter(DiscoveryFilter {
-                transport: DiscoveryTransport::Le,
-                uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
-                ..Default::default()
-            })
-            .await?;
-        let discovery = self.adapter.discover_devices().await?;
         let listener = SeqPacketListener::bind(L2capSocketAddr::new(
             self.address,
             self.address_type,
@@ -234,10 +239,10 @@ impl BleBackend for BluerBackend {
         .ok();
 
         self.control = Some(Box::pin(control));
-        self.discovery = Some(Box::pin(discovery));
         self.listener = listener.map(Arc::new);
         self._advertisement = Some(advertisement);
         self._application = Some(application);
+        self.start_discovery().await?;
         log::info!(
             "bluetooth: advertising as {ADVERTISED_NAME}, scanning LE for Prns peers, control PSM {:#x}, listener {}",
             self.psm.get(),
@@ -306,8 +311,13 @@ impl BleBackend for BluerBackend {
         let device = if discovered.is_connected().await? {
             discovered
         } else {
+            self.discovery = None;
             let _ = self.adapter.remove_device(target).await;
-            match self.adapter.connect_device(target, peer_address_type).await {
+            let connected = self.adapter.connect_device(target, peer_address_type).await;
+            if let Err(error) = self.start_discovery().await {
+                log::warn!("bluetooth: failed to resume scanning: {error:?}");
+            }
+            match connected {
                 Ok(device) => device,
                 Err(error) => {
                     log::warn!("bluetooth: LE connect to {target} failed: {error}");
