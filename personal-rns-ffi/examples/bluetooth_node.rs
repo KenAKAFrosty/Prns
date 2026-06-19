@@ -19,6 +19,8 @@ async fn main() {
     use personal_rns::{interfaces, routes};
     use personal_rns_ffi::ble::macos::MacosBleBackend;
 
+    let _ = env_logger::try_init();
+
     let node_byte: u8 = 0x33;
 
     let backend = match MacosBleBackend::new().await {

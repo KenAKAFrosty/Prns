@@ -13,10 +13,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
-    CBATTError, CBATTRequest, CBAdvertisementDataServiceUUIDsKey, CBAttributePermissions,
-    CBCentralManager, CBCentralManagerDelegate, CBCharacteristic, CBCharacteristicProperties,
-    CBL2CAPChannel, CBManagerState, CBMutableCharacteristic, CBMutableService, CBPeripheral,
-    CBPeripheralManager, CBPeripheralManagerDelegate, CBService, CBUUID,
+    CBATTError, CBATTRequest, CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey,
+    CBAttributePermissions, CBCentral, CBCentralManager, CBCentralManagerDelegate,
+    CBCharacteristic, CBCharacteristicProperties, CBL2CAPChannel, CBManagerState,
+    CBMutableCharacteristic, CBMutableService, CBPeripheral, CBPeripheralManager,
+    CBPeripheralManagerDelegate, CBService, CBUUID,
 };
 use objc2_core_foundation::{
     CFOptionFlags, CFReadStream, CFStreamClientContext, CFStreamEventType, CFWriteStream,
@@ -65,9 +66,13 @@ fn control_uuid() -> Retained<CBUUID> {
 }
 
 fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSString, AnyObject>> {
-    let key: &NSString = unsafe { CBAdvertisementDataServiceUUIDsKey };
-    let value: &AnyObject = services;
-    NSDictionary::from_slices(&[key], &[value])
+    let uuids_key: &NSString = unsafe { CBAdvertisementDataServiceUUIDsKey };
+    let uuids_value: &AnyObject = services;
+    let name_key: &NSString = unsafe { CBAdvertisementDataLocalNameKey };
+    let name = NSString::from_str("Prns");
+    let name_ref: &NSString = &name;
+    let name_value: &AnyObject = name_ref;
+    NSDictionary::from_slices(&[uuids_key, name_key], &[uuids_value, name_value])
 }
 
 fn uuid_token(uuid: &NSUUID) -> [u8; 6] {
@@ -96,6 +101,7 @@ struct StreamPump {
     output: Retained<NSOutputStream>,
     inbound_tx: RefCell<Option<tokio_mpsc::UnboundedSender<Box<[u8]>>>>,
     outbound: Arc<Mutex<Outbound>>,
+    _channel: Retained<CBL2CAPChannel>,
 }
 
 #[derive(Clone, Copy)]
@@ -151,6 +157,7 @@ fn flush(pump: &StreamPump) {
             out.pending.drain(..written as usize);
         } else {
             if written < 0 {
+                log::warn!("bluetooth: L2CAP write returned {written} — data plane down");
                 out.closed = true;
                 pump.inbound_tx.borrow_mut().take();
             }
@@ -182,6 +189,7 @@ unsafe extern "C-unwind" fn read_cb(
         }
     }
     if (event.0 & (CFStreamEventType::ErrorOccurred.0 | CFStreamEventType::EndEncountered.0)) != 0 {
+        log::warn!("bluetooth: L2CAP read stream closed/errored — inbound data plane down");
         pump.inbound_tx.borrow_mut().take();
     }
 }
@@ -196,6 +204,7 @@ unsafe extern "C-unwind" fn write_cb(
         flush(pump);
     }
     if (event.0 & (CFStreamEventType::ErrorOccurred.0 | CFStreamEventType::EndEncountered.0)) != 0 {
+        log::warn!("bluetooth: L2CAP write stream closed/errored — outbound data plane down");
         if let Ok(mut out) = pump.outbound.lock() {
             out.closed = true;
         }
@@ -219,6 +228,7 @@ fn wire_l2cap(
         output,
         inbound_tx: RefCell::new(Some(inbound_tx)),
         outbound: outbound.clone(),
+        _channel: channel.retain(),
     }));
     unsafe {
         let pump_ref = &*pump;
@@ -352,12 +362,34 @@ define_class!(
             &self,
             peripheral: &CBPeripheralManager,
             _service: &CBService,
-            _error: Option<&NSError>,
+            error: Option<&NSError>,
         ) {
+            if let Some(error) = error {
+                log::error!("bluetooth: GATT service add FAILED: {error:?}");
+                return;
+            }
+            log::debug!(
+                "bluetooth: GATT service added (control characteristic live), starting advertising"
+            );
             let uuid = service_uuid();
             let services = NSArray::from_slice(&[&*uuid]);
             let data = advertisement_data(&services);
             unsafe { peripheral.startAdvertising(Some(&data)) };
+        }
+
+        #[unsafe(method(peripheralManagerDidStartAdvertising:error:))]
+        fn did_start_advertising(
+            &self,
+            _peripheral: &CBPeripheralManager,
+            error: Option<&NSError>,
+        ) {
+            if let Some(error) = error {
+                log::error!("bluetooth: advertising FAILED to start: {error:?}");
+            } else {
+                log::info!(
+                    "bluetooth: advertising started — discoverable as Prns, service UUID in the BlueZ-visible packet"
+                );
+            }
         }
 
         #[unsafe(method(peripheralManager:didPublishL2CAPChannel:error:))]
@@ -367,9 +399,11 @@ define_class!(
             psm: u16,
             error: Option<&NSError>,
         ) {
-            if error.is_some() {
+            if let Some(error) = error {
+                log::error!("bluetooth: L2CAP publish FAILED: {error:?}");
                 let _ = self.ivars().events.send(Event::PublishFailed);
             } else {
+                log::info!("bluetooth: published L2CAP channel, PSM {psm:#06x}");
                 let _ = self.ivars().events.send(Event::Published { psm });
             }
         }
@@ -379,17 +413,26 @@ define_class!(
             &self,
             _peripheral: &CBPeripheralManager,
             channel: Option<&CBL2CAPChannel>,
-            _error: Option<&NSError>,
+            error: Option<&NSError>,
         ) {
+            if let Some(error) = error {
+                log::warn!("bluetooth: L2CAP channel open FAILED: {error:?}");
+            }
             let Some(channel) = channel else {
+                log::warn!(
+                    "bluetooth: L2CAP open callback with no channel — data plane not established"
+                );
                 return;
             };
             let Some(tx) = self.ivars().pending_channel.borrow_mut().take() else {
+                log::warn!("bluetooth: L2CAP channel opened but no link is awaiting it — dropping");
                 return;
             };
             let Some(data) = wire_l2cap(channel, &self.ivars().queue) else {
+                log::warn!("bluetooth: L2CAP channel exposes no streams — dropping");
                 return;
             };
+            log::info!("bluetooth: L2CAP channel opened, data plane up");
             let _ = tx.send(data);
         }
 
@@ -413,11 +456,16 @@ define_class!(
                         let (chan_tx, chan_rx) = oneshot::channel::<DataPlane>();
                         let central = unsafe { request.central() };
                         let identifier = unsafe { central.identifier() };
+                        let address = BleAddress::new(uuid_token(&identifier));
+                        log::info!(
+                            "bluetooth: inbound central {:02x?} — control link opened, handshaking",
+                            address.octets()
+                        );
                         let link = GattLink {
                             manager: SendPeripheralManager(peripheral.retain()),
                             characteristic: SendCharacteristic(self.ivars().characteristic.clone()),
                             control_rx: rx,
-                            address: BleAddress::new(uuid_token(&identifier)),
+                            address,
                             data_rx: Some(chan_rx),
                             data: None,
                         };
@@ -431,6 +479,39 @@ define_class!(
                 }
                 unsafe { peripheral.respondToRequest_withResult(&request, CBATTError::Success) };
             }
+        }
+
+        #[unsafe(method(peripheralManager:central:didSubscribeToCharacteristic:))]
+        fn did_subscribe(
+            &self,
+            _peripheral: &CBPeripheralManager,
+            central: &CBCentral,
+            _characteristic: &CBCharacteristic,
+        ) {
+            let identifier = unsafe { central.identifier() };
+            log::info!(
+                "bluetooth: central {:02x?} subscribed to control characteristic — GATT connected, awaiting Hello",
+                uuid_token(&identifier)
+            );
+        }
+
+        #[unsafe(method(peripheralManager:central:didUnsubscribeFromCharacteristic:))]
+        fn did_unsubscribe(
+            &self,
+            _peripheral: &CBPeripheralManager,
+            central: &CBCentral,
+            _characteristic: &CBCharacteristic,
+        ) {
+            let identifier = unsafe { central.identifier() };
+            log::warn!(
+                "bluetooth: central {:02x?} unsubscribed — GATT link dropped before/after handshake",
+                uuid_token(&identifier)
+            );
+        }
+
+        #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
+        fn is_ready_to_update(&self, _peripheral: &CBPeripheralManager) {
+            log::debug!("bluetooth: notify queue drained — ready to update subscribers");
         }
     }
 );
@@ -498,14 +579,21 @@ impl BleLink for GattLink {
                 )
         };
         if sent {
+            log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
             Ok(())
         } else {
+            log::warn!(
+                "bluetooth: {:02x?} notify failed — control PDU did not reach the central, handshake will stall",
+                self.address.octets()
+            );
             Err(MacosBleError::NotifyFailed)
         }
     }
 
     async fn control_recv(&mut self) -> Result<Control, MacosBleError> {
-        self.control_rx.recv().await.ok_or(MacosBleError::Closed)
+        let control = self.control_rx.recv().await.ok_or(MacosBleError::Closed)?;
+        log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
+        Ok(control)
     }
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), MacosBleError> {
@@ -514,13 +602,37 @@ impl BleLink for GattLink {
                 let rx = self.data_rx.take().ok_or(MacosBleError::Closed)?;
                 match tokio::time::timeout(L2CAP_OPEN_TIMEOUT, rx).await {
                     Ok(Ok(data)) => {
+                        log::info!(
+                            "bluetooth: {:02x?} L2CAP data plane established",
+                            self.address.octets()
+                        );
                         self.data = Some(data);
                         Ok(())
                     }
-                    Ok(Err(_)) | Err(_) => Err(MacosBleError::Closed),
+                    Ok(Err(_)) => {
+                        log::warn!(
+                            "bluetooth: {:02x?} L2CAP upgrade aborted — channel setup failed",
+                            self.address.octets()
+                        );
+                        Err(MacosBleError::Closed)
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            "bluetooth: {:02x?} L2CAP upgrade timed out after {}s — peer never opened the CoC; member will carry no data",
+                            self.address.octets(),
+                            L2CAP_OPEN_TIMEOUT.as_secs()
+                        );
+                        Err(MacosBleError::Closed)
+                    }
                 }
             }
-            Transport::Gatt => Ok(()),
+            Transport::Gatt => {
+                log::info!(
+                    "bluetooth: {:02x?} settled GATT-only (peer offered no L2CAP) — no data plane",
+                    self.address.octets()
+                );
+                Ok(())
+            }
         }
     }
 
@@ -696,6 +808,10 @@ impl MacosBleBackend {
             match tokio::time::timeout(POWER_ON_TIMEOUT, events_rx.recv()).await {
                 Ok(Some(Event::Published { psm })) => {
                     let psm = Psm::new(psm).ok_or(MacosBleError::PublishFailed)?;
+                    log::info!(
+                        "bluetooth: powered on, advertising as Prns, L2CAP listener on PSM {:#06x}",
+                        psm.get()
+                    );
                     return Ok(Self {
                         _keepalive: keepalive,
                         events: events_rx,
@@ -703,10 +819,18 @@ impl MacosBleBackend {
                         seen: HashSet::new(),
                     });
                 }
-                Ok(Some(Event::PublishFailed)) => return Err(MacosBleError::PublishFailed),
+                Ok(Some(Event::PublishFailed)) => {
+                    log::error!("bluetooth: L2CAP publish failed at startup");
+                    return Err(MacosBleError::PublishFailed);
+                }
                 Ok(Some(_)) => continue,
                 Ok(None) => return Err(MacosBleError::Closed),
-                Err(_) => return Err(MacosBleError::PowerOnTimeout),
+                Err(_) => {
+                    log::error!(
+                        "bluetooth: timed out waiting for power-on / L2CAP publish — is Bluetooth on and permission granted?"
+                    );
+                    return Err(MacosBleError::PowerOnTimeout);
+                }
             }
         }
     }
@@ -743,6 +867,7 @@ impl BleBackend for MacosBleBackend {
             match self.events.recv().await {
                 Some(Event::Sighting(address)) => {
                     if self.seen.insert(*address.octets()) {
+                        log::debug!("bluetooth: sighted Prns peer {:02x?}", address.octets());
                         return BleEvent::Sighting(address);
                     }
                 }
@@ -753,7 +878,11 @@ impl BleBackend for MacosBleBackend {
         }
     }
 
-    async fn dial(&mut self, _address: BleAddress) -> Result<GattLink, MacosBleError> {
+    async fn dial(&mut self, address: BleAddress) -> Result<GattLink, MacosBleError> {
+        log::debug!(
+            "bluetooth: dial to {:02x?} skipped — central role not yet implemented (M2a); the Mac only accepts inbound for now",
+            address.octets()
+        );
         Err(MacosBleError::DialNotImplemented)
     }
 }

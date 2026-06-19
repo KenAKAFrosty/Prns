@@ -39,9 +39,14 @@ objc2-foundation = "0.3"
 objc2-core-bluetooth = "0.3"
 objc2-core-foundation = { version = "0.3", features = ["CFStream", "dispatch2"] }
 dispatch2 = "0.3"
+# The log facade: the backend traces its connection lifecycle and (especially) its failure paths
+# through it, emitting nothing unless a logger is installed, so the production path is unchanged.
+# Mirrors the Linux BlueR backend's diagnostics; visible under RUST_LOG via the example's logger.
+log = "0.4"
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
+env_logger = "0.11"
 
 # Same panic-free discipline as the engine (an FFI callback that unwinds into Objective-C
 # is undefined behavior), but `undocumented_unsafe_blocks` is deliberately NOT denied: this
