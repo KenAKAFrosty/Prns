@@ -28,11 +28,12 @@ use crate::reactor::interface_seam::{
 use crate::reactor::Host;
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
-use crate::routing::links::resources::{ResourceCorrelation, ResourceHash};
+use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
+use crate::wire::DestinationHash;
 
 pub struct TokioHost {
     base: Instant,
@@ -505,6 +506,14 @@ pub enum HostCommand {
         link_id: LinkId,
         sink: UnboundedSender<ResourceInbound>,
         ready: oneshot::Sender<()>,
+    },
+    /// Set the default resource strategy for `destination`: whether links to it accept inbound
+    /// resources and how large. `ready` carries back whether the destination was held, so a caller
+    /// learns a misaddressed strategy rather than having it silently dropped.
+    SetResourceStrategy {
+        destination: DestinationHash,
+        strategy: ResourceStrategy,
+        ready: oneshot::Sender<bool>,
     },
 }
 
@@ -1164,6 +1173,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     } => {
                         resource_sinks.borrow_mut().insert(link_id, sink);
                         let _ = ready.send(());
+                        WakeSchedules::UNCHANGED
+                    }
+                    HostCommand::SetResourceStrategy {
+                        destination,
+                        strategy,
+                        ready,
+                    } => {
+                        let applied = engine.set_default_resource_strategy(&destination, strategy);
+                        let _ = ready.send(applied);
                         WakeSchedules::UNCHANGED
                     }
                 };

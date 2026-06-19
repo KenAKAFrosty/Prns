@@ -26,7 +26,7 @@ use crate::reactor::impls::tokio_reactor::{
     TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
 };
 use crate::reactor::interface_seam::{frame_cap_for, Interface};
-use crate::routing::links::resources::{ResourceHash, MAX_EFFICIENT_SIZE};
+use crate::routing::links::resources::{ResourceHash, ResourceStrategy, MAX_EFFICIENT_SIZE};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
@@ -262,6 +262,30 @@ impl TokioPrnsHandle {
                 None => return Err(ResourceReceiveError::NodeStopped),
             }
         }
+    }
+
+    /// Set the default resource strategy for one of this node's destinations: whether links to it
+    /// accept inbound resources, and how large. Returns whether the node holds that destination. The
+    /// recipe's `resource_strategy` sets this at construction; this is the runtime counterpart, for a
+    /// destination re-tuned (or opened to resources) while the node runs.
+    pub async fn set_resource_strategy(
+        &self,
+        destination: DestinationHash,
+        strategy: ResourceStrategy,
+    ) -> bool {
+        let (ready, applied) = oneshot::channel();
+        if self
+            .commands
+            .send(HostCommand::SetResourceStrategy {
+                destination,
+                strategy,
+                ready,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        applied.await.unwrap_or(false)
     }
 
     /// Bring a link up to `destination` and await it — `Ok(LinkId)` once the peer's proof validates,

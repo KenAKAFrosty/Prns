@@ -427,6 +427,10 @@ async fn scenario_main() {
             run_churn_bus_client(&manifest, &role, duration, port).await;
             return;
         }
+        if manifest.profile.mechanism == "resource" {
+            run_resource_bus_client(&manifest, &role, duration, port).await;
+            return;
+        }
     }
 
     let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
@@ -753,7 +757,10 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     let shared_port = shared_instance_port();
     if role == "responder" {
         let (node, bound) = match shared_port {
-            Some(_) => (build_bus_client_node(single, on_event), "shared".to_string()),
+            Some(_) => (
+                build_bus_client_node(single, on_event),
+                "shared".to_string(),
+            ),
             None => build_responder_node(single, on_event, manifest, addr).await,
         };
         let commands = node.handle();
@@ -1058,6 +1065,144 @@ async fn run_churn_bus_client(manifest: &Manifest, role: &str, duration: Duratio
     }
 }
 
+async fn run_resource_bus_client(manifest: &Manifest, role: &str, duration: Duration, port: u16) {
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let single = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    };
+    if role == "responder" {
+        let received = Arc::new(AtomicU64::new(0));
+        let bytes = Arc::new(AtomicU64::new(0));
+        let destination = single.destination_hash().expect("valid bench destination");
+        let received_cb = Arc::clone(&received);
+        let bytes_cb = Arc::clone(&bytes);
+        let node = build_bus_client_node(single, move |event, _state| {
+            if let PrnsEvent::Message(Message::Resource { data, .. }) = event {
+                received_cb.fetch_add(1, Ordering::Relaxed);
+                bytes_cb.fetch_add(data.len() as u64, Ordering::Relaxed);
+            }
+        });
+        let commands = node.handle();
+        join_bus(&commands, port).await;
+        // set_resource_strategy awaits the reactor, so it has to run alongside `node.run()`, not before.
+        let report = async {
+            commands
+                .set_resource_strategy(
+                    destination,
+                    ResourceStrategy::Accept {
+                        max_uncompressed_len: 128 * 1024 * 1024,
+                        accept_compressed: false,
+                    },
+                )
+                .await;
+            println!("READY role=responder addr=shared");
+            let announcer = commands.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(announce_every);
+                loop {
+                    ticker.tick().await;
+                    if announcer
+                        .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                            destination,
+                            target: AnnounceTarget::AllInterfaces,
+                            app_data: AnnounceAppData::Registered,
+                        }))
+                        .is_none()
+                    {
+                        break;
+                    }
+                }
+            });
+            tokio::time::sleep(duration + DRAIN_GRACE).await;
+            println!(
+                "RESULT received={} payload_bytes={}",
+                received.load(Ordering::Relaxed),
+                bytes.load(Ordering::Relaxed)
+            );
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = report => {}
+        }
+    } else {
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let node = build_bus_client_node(single, move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        });
+        let commands = node.handle();
+        join_bus(&commands, port).await;
+        println!("READY role=initiator");
+        let firehose = async {
+            let destination = heard_rx.recv().await.expect("hears the responder");
+            let link_id = commands
+                .establish_link(destination)
+                .await
+                .expect("link establishes");
+            let scratch = incompressible_payload(
+                manifest
+                    .profile
+                    .payload_max
+                    .max(manifest.profile.payload_len),
+            );
+            let mut sizes = SizeSequence::new(
+                manifest.profile.size_seed,
+                manifest.profile.payload_min,
+                manifest.profile.payload_max,
+                manifest.profile.payload_len,
+            );
+            let started = tokio::time::Instant::now();
+            let deadline = started + duration;
+            let mut sent = 0u64;
+            let mut settled = 0u64;
+            let mut failures = 0u64;
+            let mut payload_bytes = 0u64;
+            let mut transfer_ms: Vec<u64> = Vec::new();
+            while tokio::time::Instant::now() < deadline {
+                let len = sizes.next_len();
+                sent += 1;
+                let transfer_started = tokio::time::Instant::now();
+                match commands
+                    .send_resource(link_id, len as u64, &scratch[..len])
+                    .await
+                {
+                    Ok(()) => {
+                        settled += 1;
+                        payload_bytes += len as u64;
+                        transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
+                    }
+                    Err(_) => failures += 1,
+                }
+            }
+            let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
+            transfer_ms.sort_unstable();
+            let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+            println!(
+                "RESULT sent={sent} settled={settled} failures={failures} \
+                 payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
+                 goodput_bytes_per_sec={:.0} goodput_mbits_per_sec={:.2} \
+                 transfer_p50_ms={:.0} transfer_p99_ms={:.0} build={BUILD_PROFILE}",
+                payload_bytes as f64 / seconds,
+                payload_bytes as f64 * 8.0 / seconds / 1_000_000.0,
+                percentile(&transfer_ms, 0.50),
+                percentile(&transfer_ms, 0.99),
+            );
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
+        }
+    }
+}
+
 /// Build the responder's node: its listening wires fold straight into the recipe (a relayed client,
 /// a UDP half, or a TCP server plus any fan-in listeners as a homogeneous `Vec`), and the bound
 /// READY address line comes back beside it (the server address, plus fan-in listeners joined by
@@ -1110,13 +1255,10 @@ where
         });
         (node, addr.to_string())
     } else {
-        let primary = BenchTcpListener::bind_with_id(
-            TCP_INTERFACE_ID,
-            addr,
-            tcp_core::TCP_BITRATE_GUESS_BPS,
-        )
-        .await
-        .expect("binds the scenario port");
+        let primary =
+            BenchTcpListener::bind_with_id(TCP_INTERFACE_ID, addr, tcp_core::TCP_BITRATE_GUESS_BPS)
+                .await
+                .expect("binds the scenario port");
         let mut addresses = primary.local_addr().expect("bound address").to_string();
         let mut servers = vec![primary];
         for index in 0..manifest.profile.initiator_count.saturating_sub(1) {

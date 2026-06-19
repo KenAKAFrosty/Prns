@@ -77,7 +77,10 @@ impl Scenario {
     }
 
     fn parse(raw: &str) -> Option<Self> {
-        SCENARIOS.iter().copied().find(|scenario| scenario.dir_name() == raw)
+        SCENARIOS
+            .iter()
+            .copied()
+            .find(|scenario| scenario.dir_name() == raw)
     }
 
     fn manifest(self) -> PathBuf {
@@ -91,6 +94,8 @@ impl Scenario {
                 | Scenario::LinkFirehoseSmallPayload
                 | Scenario::RequestResponse
                 | Scenario::EstablishmentChurn
+                | Scenario::ResourceSmall
+                | Scenario::ResourceTransfer
         )
     }
 }
@@ -383,17 +388,25 @@ fn run_loopback(matchup: &Matchup, duration_ms: u64) -> Verdict {
 
     let host_command = match host.host_command(&bus, &host_dir) {
         Ok(command) => command,
-        Err(Unavailable(reason)) => return Verdict::Skipped(format!("host {}: {reason}", host.label())),
+        Err(Unavailable(reason)) => {
+            return Verdict::Skipped(format!("host {}: {reason}", host.label()))
+        }
     };
     let responder_command =
-        match matchup.receiver.client_command(matchup.scenario, Role::Receiver, duration_ms, &bus) {
+        match matchup
+            .receiver
+            .client_command(matchup.scenario, Role::Receiver, duration_ms, &bus)
+        {
             Ok(command) => command,
             Err(Unavailable(reason)) => {
                 return Verdict::Skipped(format!("receiver {}: {reason}", matchup.receiver.label()))
             }
         };
     let initiator_command =
-        match matchup.sender.client_command(matchup.scenario, Role::Sender, duration_ms, &bus) {
+        match matchup
+            .sender
+            .client_command(matchup.scenario, Role::Sender, duration_ms, &bus)
+        {
             Ok(command) => command,
             Err(Unavailable(reason)) => {
                 return Verdict::Skipped(format!("sender {}: {reason}", matchup.sender.label()))
@@ -473,12 +486,17 @@ fn parse_filter() -> GridFilter {
         match flag.as_str() {
             "--write" => filter.write = true,
             "--scenario" => {
-                let value = args.next().unwrap_or_else(|| panic!("--scenario needs a value"));
-                filter.scenario =
-                    Some(Scenario::parse(&value).unwrap_or_else(|| panic!("unknown scenario {value}")));
+                let value = args
+                    .next()
+                    .unwrap_or_else(|| panic!("--scenario needs a value"));
+                filter.scenario = Some(
+                    Scenario::parse(&value).unwrap_or_else(|| panic!("unknown scenario {value}")),
+                );
             }
             "--duration-ms" => {
-                let value = args.next().unwrap_or_else(|| panic!("--duration-ms needs a value"));
+                let value = args
+                    .next()
+                    .unwrap_or_else(|| panic!("--duration-ms needs a value"));
                 filter.duration_ms = value.parse().expect("duration-ms is a number");
             }
             other => panic!("unknown flag {other}"),
@@ -542,26 +560,48 @@ fn main() {
                     Verdict::Skipped(_) => skip += 1,
                     _ => fail += 1,
                 }
-                if let (Some(stamp), Verdict::Ran { sent, delivered, clean, .. }) =
-                    (&stamp, &verdict)
+                if let (
+                    Some(stamp),
+                    Verdict::Ran {
+                        sent,
+                        delivered,
+                        clean,
+                        ..
+                    },
+                ) = (&stamp, &verdict)
                 {
                     emit_rows(stamp, *scenario, *host, *client, *sent, *delivered, *clean);
                 }
                 let (status, detail) = summarize(&verdict);
-                rows.push((scenario.dir_name(), host.label(), client.label(), status, detail));
+                rows.push((
+                    scenario.dir_name(),
+                    host.label(),
+                    client.label(),
+                    status,
+                    detail,
+                ));
             }
         }
     }
 
     println!();
-    println!("{:<34} {:<11} {:<11} {:<6} {}", "scenario", "host", "client", "", "detail");
+    println!(
+        "{:<34} {:<11} {:<11} {:<6} {}",
+        "scenario", "host", "client", "", "detail"
+    );
     for (scenario, host, client, status, detail) in &rows {
         println!("{scenario:<34} {host:<11} {client:<11} {status:<6} {detail}");
     }
     println!();
-    println!("{} cells: {pass} pass, {skip} skip, {fail} fail", rows.len());
+    println!(
+        "{} cells: {pass} pass, {skip} skip, {fail} fail",
+        rows.len()
+    );
     if let Some(stamp) = &stamp {
-        println!("wrote conformance rows under results/{}/<scenario>/", stamp.host);
+        println!(
+            "wrote conformance rows under results/{}/<scenario>/",
+            stamp.host
+        );
     }
     std::process::exit(if fail > 0 { 1 } else { 0 });
 }
