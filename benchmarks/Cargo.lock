@@ -1087,6 +1087,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "md-5",
+ "rayon",
  "rtrb",
  "sha2 0.11.0",
  "socket2",

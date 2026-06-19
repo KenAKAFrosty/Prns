@@ -64,6 +64,10 @@ udp = ["tokio-host", "tokio/net"]
 # extra socket crate.
 local = ["tokio-host", "tokio/net", "dep:md-5"]
 stream-compression = ["std"]
+# Fan a resource build's per-part SHA-256 hashmap across a rayon work-stealing pool.
+# Bit-identical output (same names, same slots), so wire format and parity are unchanged;
+# std-only, off by default, so embedded and default builds keep the serial loop.
+parallel-resource-hash = ["std", "dep:rayon"]
 bridge-bin = ["std", "dep:serde", "dep:serde_json"]
 differential-coverage = ["std"]
 # The host identity vault's OS secret store (`KeyringVault`). Off by default, never
@@ -125,6 +129,11 @@ getrandom = { version = "0.2", optional = true }
 # freed on drop. The std-native replacement for a leaked `heapless::spsc` — that's
 # an embedded static-storage primitive with no business on a heap-backed host.
 rtrb = { version = "0.3", optional = true }
+
+# Data-parallel resource hashing on capable hosts (`parallel-resource-hash`): a sender's
+# part-name hashmap is one independent SHA-256 per part, so a work-stealing pool fans the
+# hashing across cores. Optional and std-only — embedded builds keep the serial loop.
+rayon = { version = "1", optional = true }
 
 # Async runtime for the `tokio-host` seam: `sync` for the Notify wakers that
 # cross it, `time` for the host's deadline waits, `macros` for the reactor's

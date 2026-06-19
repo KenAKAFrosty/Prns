@@ -85,19 +85,22 @@ pub fn build_outgoing_resource(
     let sealed = &transfer[..sealed_transfer_len];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_nonce());
-        if !write_hashmap_without_collision(sealed, sdu, &salt_nonce, &mut hashmap[..hashmap_len]) {
+        let (no_collision, (hash, expected_proof)) = hashmap_and_digest(
+            sealed,
+            sdu,
+            &salt_nonce,
+            &mut hashmap[..hashmap_len],
+            plaintext,
+        );
+        if !no_collision {
             continue;
         }
-        let (hash, expected_proof) =
-            crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes());
-        let hash = ResourceHash::new(hash);
-        let expected_proof = ResourceProof::new(expected_proof);
         return Ok(BuiltResource {
             sealed_transfer_len,
             part_count,
-            hash,
+            hash: ResourceHash::new(hash),
             salt_nonce,
-            expected_proof,
+            expected_proof: ResourceProof::new(expected_proof),
             compression,
             uncompressed_data_len: plaintext.len() as u64,
         });
@@ -128,6 +131,39 @@ fn write_hashmap_without_collision(
     }
     true
 }
+
+/// One salt attempt's two big hashes: the part-name hashmap over the sealed ciphertext, and the
+/// resource hash + expected proof over the plaintext. They share only the salt, so a capable host
+/// runs them on two cores with `rayon::join` — the resource hash hides under the hashmap pass
+/// instead of following it. The result is bit-identical to the sequential pair; small resources
+/// and embedded keep the sequential path, where the join's coordination would cost more than the
+/// overlap saves. (On a collision the digest is recomputed next attempt, ~1-in-200k, so spending
+/// it eagerly alongside the hashmap is free.)
+fn hashmap_and_digest(
+    sealed: &[u8],
+    sdu: usize,
+    salt_nonce: &SaltNonce,
+    hashmap: &mut [u8],
+    plaintext: &[u8],
+) -> (bool, ([u8; 32], [u8; 32])) {
+    #[cfg(feature = "parallel-resource-hash")]
+    if plaintext.len() >= PARALLEL_RESOURCE_MIN_BYTES {
+        return rayon::join(
+            || write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap),
+            || crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes()),
+        );
+    }
+    (
+        write_hashmap_without_collision(sealed, sdu, salt_nonce, hashmap),
+        crate::crypto::sha256_prefix_and_digest_suffix(plaintext, salt_nonce.as_bytes()),
+    )
+}
+
+/// Below this resource size the `rayon::join` coordination outweighs overlapping the two hashes
+/// (measured break-even ~64 KiB on an M4, a clear win from ~128 KiB up to ~1.24x at 1 MiB), so the
+/// build runs them sequentially. Attachment-band resources stay sequential; bulk transfers join.
+#[cfg(feature = "parallel-resource-hash")]
+const PARALLEL_RESOURCE_MIN_BYTES: usize = 128 * 1024;
 
 /// RNS 1.3.1's collision guard: within any [`COLLISION_GUARD_SIZE`]-wide run
 /// of consecutive parts, every map hash must be unique — that is the span a
