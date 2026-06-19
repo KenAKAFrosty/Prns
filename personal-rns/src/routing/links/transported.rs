@@ -108,19 +108,6 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         self.columns.push(entry)
     }
 
-    /// Drop the relayed link `link_id` the moment its close flows through, rather than leaving the
-    /// row for the idle reaper — RNS deletes its `link_table` entry on teardown too. Returns whether
-    /// a row was there. The backend's `swap_remove` keeps the side index consistent.
-    pub fn remove(&mut self, link_id: &LinkId) -> bool {
-        match self.index_of(link_id) {
-            Some(index) => {
-                self.columns.swap_remove(index);
-                true
-            }
-            None => false,
-        }
-    }
-
     pub fn entry_for(&self, link_id: &LinkId) -> Option<&TransportedLink> {
         self.index_of(link_id)
             .and_then(|index| self.columns.entries().get(index))
@@ -452,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn the_heap_side_index_stays_consistent_through_track_and_remove_churn() {
+    fn the_heap_side_index_stays_consistent_through_track_and_reap_churn() {
         fn link_n(n: u32) -> LinkId {
             let key = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
             let mut b = [0u8; 16];
@@ -482,12 +469,10 @@ mod tests {
                 links.track(entry_n(id)).expect("the heap table grows");
                 live.push(id);
             } else {
-                let victim = ((rng >> 17) as usize) % live.len();
-                assert!(
-                    links.remove(&link_n(live[victim])),
-                    "the live link is removed"
-                );
-                live.swap_remove(victim);
+                let popped = links
+                    .pop_overdue(InstantMillis(u64::MAX))
+                    .expect("a live relayed link drains through the reaper");
+                live.retain(|&id| link_n(id) != popped.link_id);
             }
             for &id in &live {
                 assert!(
