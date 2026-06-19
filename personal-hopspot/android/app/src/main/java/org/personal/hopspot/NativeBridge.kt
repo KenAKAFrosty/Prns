@@ -30,4 +30,20 @@ object NativeBridge {
     external fun nativeUsbRx(buffer: ByteBuffer, len: Int)
 
     external fun nativeUsbTx(buffer: ByteBuffer): Int
+
+    external fun nativeBleSetPsm(psm: Int)
+
+    external fun nativeBleCentralReady(address: ByteBuffer)
+
+    external fun nativeBleControlIn(buffer: ByteBuffer, len: Int)
+
+    external fun nativeBleControlOut(buffer: ByteBuffer): Int
+
+    external fun nativeBleL2capIn(buffer: ByteBuffer, len: Int)
+
+    external fun nativeBleL2capOut(buffer: ByteBuffer): Int
+
+    external fun nativeBleL2capUp()
+
+    external fun nativeBleDisconnected()
 }

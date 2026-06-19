@@ -9,6 +9,9 @@ import android.bluetooth.BluetoothGattServer
 import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -21,6 +24,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.ParcelUuid
 import android.util.Log
+import java.nio.ByteBuffer
 import java.util.UUID
 
 class BleLink(private val context: Context) {
@@ -36,6 +40,21 @@ class BleLink(private val context: Context) {
 
     @Volatile
     private var gattServer: BluetoothGattServer? = null
+
+    @Volatile
+    private var controlChar: BluetoothGattCharacteristic? = null
+
+    @Volatile
+    private var central: BluetoothDevice? = null
+
+    @Volatile
+    private var l2capServer: BluetoothServerSocket? = null
+
+    @Volatile
+    private var l2capSocket: BluetoothSocket? = null
+
+    @Volatile
+    private var running = false
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -63,6 +82,12 @@ class BleLink(private val context: Context) {
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             Log.i(TAG, "server conn ${device.address} status=$status state=$newState")
+            if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                if (central?.address == device.address) {
+                    central = null
+                }
+                NativeBridge.nativeBleDisconnected()
+            }
         }
 
         override fun onServiceAdded(status: Int, service: BluetoothGattService) {
@@ -80,20 +105,13 @@ class BleLink(private val context: Context) {
             offset: Int,
             value: ByteArray,
         ) {
-            Log.i(TAG, "CONTROL-IN ${device.address} ${value.size}B prepared=$preparedWrite off=$offset: ${hex(value)}")
+            Log.i(TAG, "CONTROL-IN ${device.address} ${value.size}B: ${hex(value)}")
+            val direct = ByteBuffer.allocateDirect(value.size)
+            direct.put(value)
+            NativeBridge.nativeBleControlIn(direct, value.size)
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
             }
-        }
-
-        override fun onCharacteristicReadRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            offset: Int,
-            characteristic: BluetoothGattCharacteristic,
-        ) {
-            Log.i(TAG, "read-req ${device.address} ${characteristic.uuid} off=$offset")
-            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, ByteArray(0))
         }
 
         override fun onDescriptorWriteRequest(
@@ -106,6 +124,13 @@ class BleLink(private val context: Context) {
             value: ByteArray,
         ) {
             Log.i(TAG, "subscribe ${device.address} cccd=${descriptor.uuid} value=${hex(value)}")
+            central = device
+            val octets = parseMac(device.address)
+            if (octets != null) {
+                val direct = ByteBuffer.allocateDirect(6)
+                direct.put(octets)
+                NativeBridge.nativeBleCentralReady(direct)
+            }
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
             }
@@ -122,8 +147,113 @@ class BleLink(private val context: Context) {
             Log.w(TAG, "bluetooth adapter unavailable or off")
             return
         }
+        running = true
+        startL2capListener(adapter)
         startGattServer()
         startScan(adapter)
+        startControlOutPump()
+    }
+
+    private fun startL2capListener(adapter: BluetoothAdapter) {
+        val server = try {
+            adapter.listenUsingInsecureL2capChannel()
+        } catch (e: Exception) {
+            Log.w(TAG, "l2cap listen failed: $e")
+            return
+        }
+        l2capServer = server
+        val psm = server.psm
+        Log.i(TAG, "l2cap listener published psm=$psm")
+        NativeBridge.nativeBleSetPsm(psm)
+        Thread {
+            while (running) {
+                val socket = try {
+                    server.accept()
+                } catch (e: Exception) {
+                    Log.w(TAG, "l2cap accept ended: $e")
+                    break
+                }
+                Log.i(TAG, "l2cap accepted from ${socket.remoteDevice?.address}")
+                l2capSocket = socket
+                NativeBridge.nativeBleL2capUp()
+                startL2capPumps(socket)
+            }
+        }.start()
+    }
+
+    private fun startL2capPumps(socket: BluetoothSocket) {
+        Thread {
+            val input = socket.inputStream
+            val buf = ByteArray(L2CAP_CHUNK)
+            val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
+            while (running) {
+                val n = try {
+                    input.read(buf)
+                } catch (e: Exception) {
+                    Log.w(TAG, "l2cap read ended: $e")
+                    break
+                }
+                if (n < 0) break
+                if (n > 0) {
+                    direct.clear()
+                    direct.put(buf, 0, n)
+                    NativeBridge.nativeBleL2capIn(direct, n)
+                }
+            }
+        }.start()
+        Thread {
+            val output = socket.outputStream
+            val direct = ByteBuffer.allocateDirect(L2CAP_CHUNK)
+            val scratch = ByteArray(L2CAP_CHUNK)
+            while (running) {
+                direct.clear()
+                val n = NativeBridge.nativeBleL2capOut(direct)
+                if (n > 0) {
+                    direct.position(0)
+                    direct.get(scratch, 0, n)
+                    try {
+                        output.write(scratch, 0, n)
+                        output.flush()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "l2cap write ended: $e")
+                        break
+                    }
+                } else {
+                    Thread.sleep(IDLE_MS)
+                }
+            }
+        }.start()
+    }
+
+    private fun startControlOutPump() {
+        Thread {
+            val direct = ByteBuffer.allocateDirect(CONTROL_CHUNK)
+            val scratch = ByteArray(CONTROL_CHUNK)
+            while (running) {
+                direct.clear()
+                val n = NativeBridge.nativeBleControlOut(direct)
+                if (n <= 0) {
+                    Thread.sleep(IDLE_MS)
+                    continue
+                }
+                direct.position(0)
+                direct.get(scratch, 0, n)
+                val payload = scratch.copyOf(n)
+                val target = central
+                val char = controlChar
+                val server = gattServer
+                if (target != null && char != null && server != null) {
+                    try {
+                        val result = server.notifyCharacteristicChanged(target, char, false, payload)
+                        Log.i(TAG, "CONTROL-OUT ${n}B result=$result: ${hex(payload)}")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "notify failed: $e")
+                    }
+                } else {
+                    Log.w(TAG, "control-out ${n}B dropped — no subscribed central")
+                }
+            }
+        }.start()
     }
 
     private fun startGattServer() {
@@ -156,6 +286,7 @@ class BleLink(private val context: Context) {
                 BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE,
             ),
         )
+        controlChar = control
         val service = BluetoothGattService(PRNS_SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         service.addCharacteristic(control)
         try {
@@ -211,6 +342,7 @@ class BleLink(private val context: Context) {
     }
 
     fun stop() {
+        running = false
         try {
             scanner?.stopScan(scanCallback)
         } catch (e: SecurityException) {
@@ -226,13 +358,34 @@ class BleLink(private val context: Context) {
         } catch (e: SecurityException) {
             Log.w(TAG, "close server: $e")
         }
+        runCatching { l2capSocket?.close() }
+        runCatching { l2capServer?.close() }
         scanner = null
         advertiser = null
         gattServer = null
+        controlChar = null
+        central = null
+        l2capSocket = null
+        l2capServer = null
+    }
+
+    private fun parseMac(addr: String): ByteArray? {
+        val parts = addr.split(":")
+        if (parts.size != 6) {
+            return null
+        }
+        return try {
+            ByteArray(6) { parts[it].toInt(16).toByte() }
+        } catch (e: NumberFormatException) {
+            null
+        }
     }
 
     private companion object {
         private const val TAG = "HopspotBle"
+        private const val L2CAP_CHUNK = 2048
+        private const val CONTROL_CHUNK = 64
+        private const val IDLE_MS = 2L
         val PRNS_SERVICE: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e3")
         val NATIVE_CONTROL: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e7")
         val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")

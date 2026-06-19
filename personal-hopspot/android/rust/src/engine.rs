@@ -11,6 +11,10 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::bluetooth_auto::core::{
+    BleIdentity, LinkCapabilities, Psm, BLE_HW_MTU,
+};
+use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
 use personal_rns::interfaces::InterfaceId;
@@ -21,6 +25,7 @@ use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 
+use crate::ble::{AndroidBleBackend, AndroidBleBridge};
 use crate::bridge::{AndroidUsbBridge, BridgeStream};
 
 /// Stable id for the USB-auto host over the JNI bridge (opaque to the engine).
@@ -40,6 +45,7 @@ struct Engine {
     usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     bridge: AndroidUsbBridge,
+    ble: AndroidBleBridge,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -58,6 +64,10 @@ pub(crate) fn wifi_status() -> AutoWifiStatus {
 
 pub(crate) fn usb_bridge() -> AndroidUsbBridge {
     engine().bridge.clone()
+}
+
+pub(crate) fn ble_bridge() -> AndroidBleBridge {
+    engine().ble.clone()
 }
 
 /// Trigger the engine to spawn (idempotent), without taking a handle. The face calls this at
@@ -88,11 +98,13 @@ struct Ready {
 
 fn spawn_engine() -> Engine {
     let bridge = AndroidUsbBridge::new();
+    let ble = AndroidBleBridge::new();
     let (ready_tx, ready_rx) = mpsc::channel::<Ready>();
     let worker_bridge = bridge.clone();
+    let worker_ble = ble.clone();
     let _ = thread::Builder::new()
         .name("hopspot-engine".into())
-        .spawn(move || run_engine(ready_tx, worker_bridge));
+        .spawn(move || run_engine(ready_tx, worker_bridge, worker_ble));
     let ready = ready_rx
         .recv()
         .expect("the engine hands its status handles out before run() starts");
@@ -100,6 +112,7 @@ fn spawn_engine() -> Engine {
         usb_status: ready.usb_status,
         wifi_status: ready.wifi_status,
         bridge,
+        ble,
     }
 }
 
@@ -109,7 +122,7 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     key
 }
 
-fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge) {
+fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBleBridge) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -117,10 +130,12 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge) {
 
     runtime.block_on(async move {
         let identity = load_identity_secret_key();
-        let transport_id = {
+        let identity_hash = {
             let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity);
-            TransportId::new(*signer.identity_hash().as_bytes())
+            *signer.identity_hash().as_bytes()
         };
+        let transport_id = TransportId::new(identity_hash);
+        let ble_identity = BleIdentity::new(identity_hash);
 
         let announce_destination = PreConfiguredDestination::Single {
             resource_strategy:
@@ -175,6 +190,24 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge) {
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
         handle.supervise(wifi);
+
+        {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                let psm = ble.await_psm().await;
+                let Some(psm) = Psm::new(psm) else {
+                    return;
+                };
+                handle.supervise(BluetoothAuto::new(
+                    AndroidBleBackend::new(ble),
+                    ble_identity,
+                    LinkCapabilities {
+                        l2cap: Some(psm),
+                        link_mtu: BLE_HW_MTU as u16,
+                    },
+                ));
+            });
+        }
 
         let _ = ready_tx.send(Ready {
             usb_status,
