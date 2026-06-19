@@ -1,5 +1,6 @@
 use core::time::Duration;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ use bluer::{
     Adapter, AdapterEvent, Address, AddressType, Device, DiscoveryFilter, DiscoveryTransport,
     Session, Uuid,
 };
+use futures_util::stream::FuturesUnordered;
 use futures_util::{Stream, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
@@ -26,7 +28,9 @@ use crate::interfaces::bluetooth_auto::core::{
     encode_stream_frame, BleAddress, BleUuid, Control, Dialect, Psm, StreamDeframer, Transport,
     BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
 };
-use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
+use crate::interfaces::bluetooth_auto::seam::{
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+};
 
 const ADVERTISED_NAME: &str = "Prns";
 
@@ -101,9 +105,12 @@ enum Half {
     Writer(CharacteristicWriter),
 }
 
+type ConnectFuture = Pin<Box<dyn Future<Output = (Address, Result<BluerLink, BluerError>)> + Send>>;
+
 enum Observed {
     Candidate(Address),
     Greeting { address: Address, half: Half },
+    Connected(Address, Result<BluerLink, BluerError>),
     RetryDue,
     Idle,
 }
@@ -114,6 +121,8 @@ pub struct BluerBackend {
     address_type: AddressType,
     psm: Psm,
     attempts: HashMap<Address, DialAttempt>,
+    connecting: HashSet<Address>,
+    connects: FuturesUnordered<ConnectFuture>,
     pending: HashMap<Address, PendingHalves>,
     discovery: Option<Pin<Box<dyn Stream<Item = AdapterEvent> + Send>>>,
     control: Option<Pin<Box<CharacteristicControl>>>,
@@ -135,6 +144,8 @@ impl BluerBackend {
             address_type,
             psm,
             attempts: HashMap::new(),
+            connecting: HashSet::new(),
+            connects: FuturesUnordered::new(),
             pending: HashMap::new(),
             discovery: None,
             control: None,
@@ -154,16 +165,10 @@ impl BluerBackend {
         }
     }
 
-    async fn await_scan_stopped(&self) {
-        for _ in 0..SCAN_STOP_ATTEMPTS {
-            if matches!(self.adapter.is_discovering().await, Ok(false)) {
-                return;
-            }
-            tokio::time::sleep(SCAN_STOP_POLL).await;
-        }
-    }
-
     fn dial_suppressed(&self, address: Address) -> bool {
+        if self.connecting.contains(&address) {
+            return true;
+        }
         match self.attempts.get(&address) {
             Some(DialAttempt::Connected { .. }) => true,
             Some(DialAttempt::Backoff { retry_at, .. }) => Instant::now() < *retry_at,
@@ -229,43 +234,10 @@ impl BluerBackend {
         }
     }
 
-    async fn dial_inner(&mut self, target: Address) -> Result<BluerLink, BluerError> {
-        let discovered = self.adapter.device(target)?;
-        let peer_address_type = discovered.address_type().await?;
-        log::info!("bluetooth: dialing {target} ({peer_address_type:?})");
-        let device = if discovered.is_connected().await? {
-            discovered
-        } else {
-            self.discovery = None;
-            let _ = self.adapter.remove_device(target).await;
-            self.await_scan_stopped().await;
-            match self.adapter.connect_device(target, peer_address_type).await {
-                Ok(device) => device,
-                Err(error) => {
-                    log::warn!("bluetooth: LE connect to {target} failed: {error}");
-                    return Err(error.into());
-                }
-            }
-        };
-        let control = match find_native_control(&device).await {
-            Ok(control) => control,
-            Err(error) => {
-                log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
-                return Err(error);
-            }
-        };
-        let notify = control.notify().await?;
-        log::info!(
-            "bluetooth: {target} connected over LE, control characteristic ready; handshaking"
-        );
-        Ok(BluerLink::Dialed(DialedLink {
-            control,
-            notify: Box::pin(notify),
-            peer_address: target,
-            peer_address_type,
-            socket: None,
-            _device: device,
-        }))
+    async fn peer_rssi(&self, address: Address) -> Option<i8> {
+        let device = self.adapter.device(address).ok()?;
+        let rssi = device.rssi().await.ok().flatten()?;
+        Some(rssi.clamp(i8::MIN as i16, i8::MAX as i16) as i8)
     }
 
     async fn start_discovery(&mut self) -> Result<(), BluerError> {
@@ -327,6 +299,60 @@ async fn sleep_until_opt(deadline: Option<Instant>) {
         Some(at) => tokio::time::sleep_until(at).await,
         None => core::future::pending().await,
     }
+}
+
+async fn next_connect(
+    connects: &mut FuturesUnordered<ConnectFuture>,
+) -> (Address, Result<BluerLink, BluerError>) {
+    match connects.next().await {
+        Some(done) => done,
+        None => core::future::pending().await,
+    }
+}
+
+async fn await_scan_stopped(adapter: &Adapter) {
+    for _ in 0..SCAN_STOP_ATTEMPTS {
+        if matches!(adapter.is_discovering().await, Ok(false)) {
+            return;
+        }
+        tokio::time::sleep(SCAN_STOP_POLL).await;
+    }
+}
+
+async fn connect_link(adapter: Adapter, target: Address) -> Result<BluerLink, BluerError> {
+    let discovered = adapter.device(target)?;
+    let peer_address_type = discovered.address_type().await?;
+    log::info!("bluetooth: dialing {target} ({peer_address_type:?})");
+    let device = if discovered.is_connected().await? {
+        discovered
+    } else {
+        let _ = adapter.remove_device(target).await;
+        await_scan_stopped(&adapter).await;
+        match adapter.connect_device(target, peer_address_type).await {
+            Ok(device) => device,
+            Err(error) => {
+                log::warn!("bluetooth: LE connect to {target} failed: {error}");
+                return Err(error.into());
+            }
+        }
+    };
+    let control = match find_native_control(&device).await {
+        Ok(control) => control,
+        Err(error) => {
+            log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
+            return Err(error);
+        }
+    };
+    let notify = control.notify().await?;
+    log::info!("bluetooth: {target} connected over LE, control characteristic ready; handshaking");
+    Ok(BluerLink::Dialed(DialedLink {
+        control,
+        notify: Box::pin(notify),
+        peer_address: target,
+        peer_address_type,
+        socket: None,
+        _device: device,
+    }))
 }
 
 impl BleBackend for BluerBackend {
@@ -396,15 +422,20 @@ impl BleBackend for BluerBackend {
 
     async fn next_event(&mut self) -> BleEvent<BluerLink> {
         loop {
-            if self.discovery.is_none() {
-                if let Err(error) = self.start_discovery().await {
-                    log::warn!("bluetooth: failed to (re)start scanning: {error:?}");
+            if self.connecting.is_empty() {
+                if self.discovery.is_none() {
+                    if let Err(error) = self.start_discovery().await {
+                        log::warn!("bluetooth: failed to (re)start scanning: {error:?}");
+                    }
                 }
+            } else {
+                self.discovery = None;
             }
             let wake_deadline = self.next_wake_deadline();
             let observed = {
                 let discovery = self.discovery.as_mut();
                 let control = self.control.as_mut();
+                let connects = &mut self.connects;
                 tokio::select! {
                     event = next_or_pending(discovery) => match event {
                         Some(AdapterEvent::DeviceAdded(address)) => Observed::Candidate(address),
@@ -427,30 +458,65 @@ impl BleBackend for BluerBackend {
                         },
                         None => Observed::Idle,
                     },
+                    (target, result) = next_connect(connects) => Observed::Connected(target, result),
                     () = sleep_until_opt(wake_deadline) => Observed::RetryDue,
                 }
             };
             match observed {
                 Observed::Candidate(address) => {
                     let known = address == self.address || self.dial_suppressed(address);
+                    if !known && self.advertises_our_service(address).await {
+                        let rssi = self.peer_rssi(address).await;
+                        log::info!("bluetooth: sighted Prns peer {address}");
+                        return BleEvent::Sighting {
+                            address: BleAddress::new(address.0),
+                            rssi,
+                        };
+                    }
                     if !known {
-                        if self.advertises_our_service(address).await {
-                            log::info!("bluetooth: sighted Prns peer {address}");
-                            return BleEvent::Sighting(BleAddress::new(address.0));
-                        }
                         log::debug!("bluetooth: discovered {address}, not advertising our service");
                     }
                 }
                 Observed::Greeting { address, half } => {
                     if let Some(link) = self.admit_greeting(address, half) {
+                        let peer_rssi = self.peer_rssi(address).await;
                         log::info!("bluetooth: inbound link from {address}");
-                        return BleEvent::Inbound(BluerLink::Accepted(link));
+                        return BleEvent::LinkReady {
+                            link: BluerLink::Accepted(link),
+                            origin: Origin::Accepted,
+                            peer_rssi,
+                        };
+                    }
+                }
+                Observed::Connected(target, result) => {
+                    self.connecting.remove(&target);
+                    match result {
+                        Ok(link) => {
+                            let failures = self.carried_failures(target);
+                            self.attempts.insert(
+                                target,
+                                DialAttempt::Connected {
+                                    since: Instant::now(),
+                                    failures,
+                                },
+                            );
+                            let peer_rssi = self.peer_rssi(target).await;
+                            return BleEvent::LinkReady {
+                                link,
+                                origin: Origin::Dialed,
+                                peer_rssi,
+                            };
+                        }
+                        Err(_) => self.note_dial_failure(target),
                     }
                 }
                 Observed::RetryDue => {
                     if let Some(address) = self.next_redial() {
                         log::info!("bluetooth: re-dialing {address}");
-                        return BleEvent::Sighting(BleAddress::new(address.0));
+                        return BleEvent::Sighting {
+                            address: BleAddress::new(address.0),
+                            rssi: None,
+                        };
                     }
                 }
                 Observed::Idle => {}
@@ -458,25 +524,17 @@ impl BleBackend for BluerBackend {
         }
     }
 
-    async fn dial(&mut self, address: BleAddress) -> Result<BluerLink, BluerError> {
+    async fn dial(&mut self, address: BleAddress) {
         let target = Address::new(*address.octets());
-        match self.dial_inner(target).await {
-            Ok(link) => {
-                let failures = self.carried_failures(target);
-                self.attempts.insert(
-                    target,
-                    DialAttempt::Connected {
-                        since: Instant::now(),
-                        failures,
-                    },
-                );
-                Ok(link)
-            }
-            Err(error) => {
-                self.note_dial_failure(target);
-                Err(error)
-            }
+        if self.connecting.contains(&target) {
+            return;
         }
+        self.attempts.remove(&target);
+        self.connecting.insert(target);
+        let adapter = self.adapter.clone();
+        self.connects.push(Box::pin(async move {
+            (target, connect_link(adapter, target).await)
+        }));
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {

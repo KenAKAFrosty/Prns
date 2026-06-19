@@ -1,8 +1,22 @@
 use super::core::{BleAddress, Control, Dialect, Transport};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Dialed,
+    Accepted,
+}
+
 pub enum BleEvent<L> {
-    Sighting(BleAddress),
+    Sighting {
+        address: BleAddress,
+        rssi: Option<i8>,
+    },
     Inbound(L),
+    LinkReady {
+        link: L,
+        origin: Origin,
+        peer_rssi: Option<i8>,
+    },
 }
 
 #[allow(async_fn_in_trait)]
@@ -14,7 +28,7 @@ pub trait BleBackend {
 
     async fn advertise(&mut self) -> Result<(), Self::Error>;
     async fn next_event(&mut self) -> BleEvent<Self::Link>;
-    async fn dial(&mut self, address: BleAddress) -> Result<Self::Link, Self::Error>;
+    async fn dial(&mut self, address: BleAddress);
     async fn on_link_closed(&mut self, _address: BleAddress) {}
 }
 

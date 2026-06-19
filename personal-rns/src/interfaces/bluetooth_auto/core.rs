@@ -181,7 +181,17 @@ const CONTROL_WELCOME: u8 = 0x02;
 const CONTROL_CLOSE: u8 = 0x03;
 const CONTROL_IDENTITY_LEN: usize = 16;
 const CONTROL_CAP_LEN: usize = 3;
-pub const CONTROL_MAX_LEN: usize = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN;
+const CONTROL_RSSI_LEN: usize = 1;
+pub const CONTROL_MAX_LEN: usize = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN + CONTROL_RSSI_LEN;
+
+fn encode_rssi(rssi: Option<i8>) -> u8 {
+    rssi.filter(|&dbm| dbm != i8::MIN).unwrap_or(i8::MIN) as u8
+}
+
+fn decode_rssi(byte: u8) -> Option<i8> {
+    let dbm = byte as i8;
+    (dbm != i8::MIN).then_some(dbm)
+}
 
 impl LinkCapabilities {
     fn encode(&self, out: &mut [u8; CONTROL_CAP_LEN]) {
@@ -261,10 +271,12 @@ pub enum Control {
     Hello {
         identity: BleIdentity,
         capabilities: LinkCapabilities,
+        peer_rssi: Option<i8>,
     },
     Welcome {
         identity: BleIdentity,
         capabilities: LinkCapabilities,
+        peer_rssi: Option<i8>,
     },
     Close {
         reason: CloseReason,
@@ -277,11 +289,13 @@ impl Control {
             Control::Hello {
                 identity,
                 capabilities,
-            } => encode_greeting(CONTROL_HELLO, identity, capabilities, out),
+                peer_rssi,
+            } => encode_greeting(CONTROL_HELLO, identity, capabilities, *peer_rssi, out),
             Control::Welcome {
                 identity,
                 capabilities,
-            } => encode_greeting(CONTROL_WELCOME, identity, capabilities, out),
+                peer_rssi,
+            } => encode_greeting(CONTROL_WELCOME, identity, capabilities, *peer_rssi, out),
             Control::Close { reason } => {
                 let slot = out.get_mut(..2)?;
                 slot[0] = CONTROL_CLOSE;
@@ -295,17 +309,19 @@ impl Control {
         let (tag, body) = bytes.split_first()?;
         match *tag {
             CONTROL_HELLO => {
-                let (identity, capabilities) = decode_greeting(body)?;
+                let (identity, capabilities, peer_rssi) = decode_greeting(body)?;
                 Some(Control::Hello {
                     identity,
                     capabilities,
+                    peer_rssi,
                 })
             }
             CONTROL_WELCOME => {
-                let (identity, capabilities) = decode_greeting(body)?;
+                let (identity, capabilities, peer_rssi) = decode_greeting(body)?;
                 Some(Control::Welcome {
                     identity,
                     capabilities,
+                    peer_rssi,
                 })
             }
             CONTROL_CLOSE => Some(Control::Close {
@@ -320,6 +336,7 @@ fn encode_greeting(
     tag: u8,
     identity: &BleIdentity,
     capabilities: &LinkCapabilities,
+    peer_rssi: Option<i8>,
     out: &mut [u8],
 ) -> Option<usize> {
     let slot = out.get_mut(..CONTROL_MAX_LEN)?;
@@ -327,17 +344,20 @@ fn encode_greeting(
     slot[1..1 + CONTROL_IDENTITY_LEN].copy_from_slice(identity.as_bytes());
     let mut caps = [0u8; CONTROL_CAP_LEN];
     capabilities.encode(&mut caps);
-    slot[1 + CONTROL_IDENTITY_LEN..CONTROL_MAX_LEN].copy_from_slice(&caps);
+    let caps_end = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN;
+    slot[1 + CONTROL_IDENTITY_LEN..caps_end].copy_from_slice(&caps);
+    slot[caps_end] = encode_rssi(peer_rssi);
     Some(CONTROL_MAX_LEN)
 }
 
-fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, LinkCapabilities)> {
+fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, LinkCapabilities, Option<i8>)> {
     let identity_bytes: [u8; CONTROL_IDENTITY_LEN] =
         body.get(..CONTROL_IDENTITY_LEN)?.try_into().ok()?;
     let capabilities = LinkCapabilities::decode(
         body.get(CONTROL_IDENTITY_LEN..CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)?,
     )?;
-    Some((BleIdentity::new(identity_bytes), capabilities))
+    let peer_rssi = decode_rssi(*body.get(CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)?);
+    Some((BleIdentity::new(identity_bytes), capabilities, peer_rssi))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,6 +370,7 @@ pub struct Local {
 pub struct Established {
     pub identity: BleIdentity,
     pub transport: Transport,
+    pub peer_rssi: Option<i8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -368,18 +389,31 @@ pub struct Reaction {
 pub struct Handshake {
     role: HandshakeRole,
     local: Local,
+    measured_rssi: Option<i8>,
 }
 
 impl Handshake {
-    pub fn begin(role: HandshakeRole, local: Local) -> (Self, Option<Control>) {
+    pub fn begin(
+        role: HandshakeRole,
+        local: Local,
+        measured_rssi: Option<i8>,
+    ) -> (Self, Option<Control>) {
         let opening = match role {
             HandshakeRole::Dialer => Some(Control::Hello {
                 identity: local.identity,
                 capabilities: local.capabilities,
+                peer_rssi: measured_rssi,
             }),
             HandshakeRole::Listener => None,
         };
-        (Self { role, local }, opening)
+        (
+            Self {
+                role,
+                local,
+                measured_rssi,
+            },
+            opening,
+        )
     }
 
     pub fn absorb(&mut self, msg: Control) -> Reaction {
@@ -389,6 +423,7 @@ impl Handshake {
                 Control::Hello {
                     identity,
                     capabilities,
+                    peer_rssi,
                 },
             ) => {
                 if identity == self.local.identity {
@@ -400,10 +435,12 @@ impl Handshake {
                     reply: Some(Control::Welcome {
                         identity: self.local.identity,
                         capabilities: self.local.capabilities,
+                        peer_rssi: self.measured_rssi,
                     }),
                     outcome: Outcome::Settled(Established {
                         identity,
                         transport,
+                        peer_rssi,
                     }),
                 }
             }
@@ -412,6 +449,7 @@ impl Handshake {
                 Control::Welcome {
                     identity,
                     capabilities,
+                    peer_rssi,
                 },
             ) => {
                 if identity == self.local.identity {
@@ -424,6 +462,7 @@ impl Handshake {
                     outcome: Outcome::Settled(Established {
                         identity,
                         transport,
+                        peer_rssi,
                     }),
                 }
             }
@@ -681,8 +720,8 @@ mod tests {
             capabilities: caps(Some(0x0082)),
         };
 
-        let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, lower);
-        let (mut listener, silent) = Handshake::begin(HandshakeRole::Listener, higher);
+        let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, lower, Some(-40));
+        let (mut listener, silent) = Handshake::begin(HandshakeRole::Listener, higher, Some(-55));
         assert!(silent.is_none());
 
         let listener_reaction = listener.absorb(opening.unwrap());
@@ -700,6 +739,8 @@ mod tests {
             };
             assert_eq!(at_listener.transport, agreed);
             assert_eq!(at_dialer.transport, agreed);
+            assert_eq!(at_listener.peer_rssi, Some(-40));
+            assert_eq!(at_dialer.peer_rssi, Some(-55));
         }
     }
 
@@ -713,8 +754,8 @@ mod tests {
             identity: identity(2),
             capabilities: caps(None),
         };
-        let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local);
-        let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, gatt_only);
+        let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local, None);
+        let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, gatt_only, None);
         let listener_reaction = listener.absorb(opening.unwrap());
         let dialer_reaction = dialer.absorb(listener_reaction.reply.unwrap());
         assert!(matches!(listener_reaction.outcome, Outcome::Settled(_)));
@@ -733,10 +774,11 @@ mod tests {
             identity: identity(5),
             capabilities: caps(Some(0x0090)),
         };
-        let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local);
+        let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local, None);
         let reaction = listener.absorb(Control::Hello {
             identity: identity(5),
             capabilities: caps(Some(0x0090)),
+            peer_rssi: None,
         });
         assert_eq!(
             reaction.outcome,
@@ -794,6 +836,7 @@ mod tests {
         let hello = Control::Hello {
             identity: identity(7),
             capabilities: caps(Some(0x0081)),
+            peer_rssi: Some(-63),
         };
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = hello.encode(&mut buf).unwrap();
@@ -808,6 +851,7 @@ mod tests {
                 l2cap: None,
                 link_mtu: 23,
             },
+            peer_rssi: None,
         };
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = welcome.encode(&mut buf).unwrap();
@@ -845,6 +889,7 @@ mod tests {
         let hello = Control::Hello {
             identity: identity(1),
             capabilities: caps(Some(0x0090)),
+            peer_rssi: None,
         };
         let mut tiny = [0u8; 4];
         assert_eq!(hello.encode(&mut tiny), None);

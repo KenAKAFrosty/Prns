@@ -1,13 +1,20 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::{Duration, Instant};
 
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::interfaces::bluetooth_auto::core::{
     self, keeps_duplicate, BleAddress, BleIdentity, Established, Handshake, HandshakeRole,
     LinkCapabilities, Local, Outcome, Transport,
 };
-use crate::interfaces::bluetooth_auto::seam::{BleBackend, BleEvent, BleLink, BleSink, BleSource};
+use crate::interfaces::bluetooth_auto::seam::{
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
+};
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
@@ -122,9 +129,30 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
     }
 }
 
-enum SupervisorStep<L> {
+enum PeerState {
+    Dialing,
+    Handshaking,
+    Settled {
+        identity: BleIdentity,
+        member: AttachedInterface,
+        since: Instant,
+        link_rssi: Option<i8>,
+    },
+}
+
+struct HandshakeDone<L: BleLink> {
+    address: BleAddress,
+    origin: Origin,
+    outcome: Option<(Established, L)>,
+    link_rssi: Option<i8>,
+}
+
+type HandshakeQueue<L> = FuturesUnordered<Pin<Box<dyn Future<Output = HandshakeDone<L>>>>>;
+
+enum Step<L: BleLink> {
     Event(BleEvent<L>),
-    LinkClosed(BleAddress),
+    Handshake(HandshakeDone<L>),
+    Closed(BleAddress),
 }
 
 pub struct BluetoothAuto<B> {
@@ -147,6 +175,7 @@ impl<B: BleBackend> BluetoothAuto<B> {
 impl<B> InterfaceSupervisor for BluetoothAuto<B>
 where
     B: BleBackend,
+    B::Link: 'static,
     <B::Link as BleLink>::Source: Send + 'static,
     <B::Link as BleLink>::Sink: Send + 'static,
 {
@@ -159,50 +188,64 @@ where
     async fn run(self, fleet: Fleet) {
         let Self { mut backend, local } = self;
         let _ = backend.advertise().await;
-        let mut members: HashMap<BleIdentity, AttachedInterface> = HashMap::new();
+        let mut peers: HashMap<BleAddress, PeerState> = HashMap::new();
+        let mut by_identity: HashMap<BleIdentity, BleAddress> = HashMap::new();
+        let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
         loop {
             let step = tokio::select! {
-                event = backend.next_event() => SupervisorStep::Event(event),
-                Some(address) = closed_rx.recv() => SupervisorStep::LinkClosed(address),
+                event = backend.next_event() => Step::Event(event),
+                Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
+                Some(address) = closed_rx.recv() => Step::Closed(address),
             };
             match step {
-                SupervisorStep::Event(BleEvent::Sighting(address)) => {
-                    let Ok(mut link) = backend.dial(address).await else {
-                        continue;
+                Step::Event(BleEvent::Sighting { address, .. }) => {
+                    if let Entry::Vacant(slot) = peers.entry(address) {
+                        slot.insert(PeerState::Dialing);
+                        backend.dial(address).await;
+                    }
+                }
+                Step::Event(BleEvent::LinkReady {
+                    link,
+                    origin,
+                    peer_rssi,
+                }) => {
+                    let address = link.address();
+                    peers.insert(address, PeerState::Handshaking);
+                    let role = match origin {
+                        Origin::Dialed => HandshakeRole::Dialer,
+                        Origin::Accepted => HandshakeRole::Listener,
                     };
-                    if let Some(established) =
-                        drive_handshake(&mut link, HandshakeRole::Dialer, local).await
-                    {
-                        admit(
-                            &fleet,
-                            &mut members,
-                            local.identity,
-                            HandshakeRole::Dialer,
-                            established,
-                            link,
-                            &closed_tx,
-                        )
-                        .await;
-                    }
+                    handshakes.push(Box::pin(run_handshake_task(
+                        link, role, local, address, origin, peer_rssi,
+                    )));
                 }
-                SupervisorStep::Event(BleEvent::Inbound(mut link)) => {
-                    if let Some(established) =
-                        drive_handshake(&mut link, HandshakeRole::Listener, local).await
-                    {
-                        admit(
-                            &fleet,
-                            &mut members,
-                            local.identity,
-                            HandshakeRole::Listener,
-                            established,
-                            link,
-                            &closed_tx,
-                        )
-                        .await;
-                    }
+                Step::Event(BleEvent::Inbound(link)) => {
+                    let address = link.address();
+                    peers.insert(address, PeerState::Handshaking);
+                    handshakes.push(Box::pin(run_handshake_task(
+                        link,
+                        HandshakeRole::Listener,
+                        local,
+                        address,
+                        Origin::Accepted,
+                        None,
+                    )));
                 }
-                SupervisorStep::LinkClosed(address) => {
+                Step::Handshake(done) => {
+                    resolve(
+                        done,
+                        &fleet,
+                        &mut peers,
+                        &mut by_identity,
+                        local,
+                        &closed_tx,
+                        &mut backend,
+                    )
+                    .await;
+                }
+                Step::Closed(address) => {
+                    retire(address, &mut peers, &mut by_identity);
                     backend.on_link_closed(address).await;
                 }
             }
@@ -213,14 +256,47 @@ where
 impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {}
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const STABLE_LINK_UPTIME: Duration = Duration::from_secs(15);
+
+fn link_quality(mine: Option<i8>, theirs: Option<i8>) -> Option<i8> {
+    match (mine, theirs) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (rssi, None) | (None, rssi) => rssi,
+    }
+}
+
+async fn run_handshake_task<L: BleLink>(
+    mut link: L,
+    role: HandshakeRole,
+    local: Local,
+    address: BleAddress,
+    origin: Origin,
+    measured_rssi: Option<i8>,
+) -> HandshakeDone<L> {
+    let settled = drive_handshake(&mut link, role, local, measured_rssi).await;
+    let (outcome, link_rssi) = match settled {
+        Some(established) => {
+            let link_rssi = link_quality(measured_rssi, established.peer_rssi);
+            (Some((established, link)), link_rssi)
+        }
+        None => (None, None),
+    };
+    HandshakeDone {
+        address,
+        origin,
+        outcome,
+        link_rssi,
+    }
+}
 
 async fn drive_handshake<L: BleLink>(
     link: &mut L,
     role: HandshakeRole,
     local: Local,
+    measured_rssi: Option<i8>,
 ) -> Option<Established> {
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-        let (mut handshake, opening) = Handshake::begin(role, local);
+        let (mut handshake, opening) = Handshake::begin(role, local, measured_rssi);
         if let Some(msg) = opening {
             link.control_send(&msg).await.ok()?;
         }
@@ -242,35 +318,104 @@ async fn drive_handshake<L: BleLink>(
     .flatten()
 }
 
-async fn admit<L>(
+async fn resolve<B>(
+    done: HandshakeDone<B::Link>,
     fleet: &Fleet,
-    members: &mut HashMap<BleIdentity, AttachedInterface>,
-    ours: BleIdentity,
-    role: HandshakeRole,
-    established: Established,
-    mut link: L,
+    peers: &mut HashMap<BleAddress, PeerState>,
+    by_identity: &mut HashMap<BleIdentity, BleAddress>,
+    local: Local,
     closed: &mpsc::UnboundedSender<BleAddress>,
+    backend: &mut B,
 ) where
-    L: BleLink,
-    L::Source: Send + 'static,
-    L::Sink: Send + 'static,
+    B: BleBackend,
+    B::Link: 'static,
+    <B::Link as BleLink>::Source: Send + 'static,
+    <B::Link as BleLink>::Sink: Send + 'static,
 {
-    if members.contains_key(&established.identity) {
-        if keeps_duplicate(&ours, &established.identity, role) {
-            if let Some(superseded) = members.remove(&established.identity) {
-                superseded.teardown();
+    let HandshakeDone {
+        address,
+        origin,
+        outcome,
+        link_rssi,
+    } = done;
+    let Some((established, mut link)) = outcome else {
+        if matches!(peers.get(&address), Some(PeerState::Handshaking)) {
+            peers.remove(&address);
+        }
+        if matches!(origin, Origin::Dialed) {
+            backend.on_link_closed(address).await;
+        }
+        return;
+    };
+    let identity = established.identity;
+    let role = match origin {
+        Origin::Dialed => HandshakeRole::Dialer,
+        Origin::Accepted => HandshakeRole::Listener,
+    };
+    if let Some(&incumbent_addr) = by_identity.get(&identity) {
+        let (incumbent_stable, incumbent_rssi) = match peers.get(&incumbent_addr) {
+            Some(PeerState::Settled {
+                since, link_rssi, ..
+            }) => (since.elapsed() >= STABLE_LINK_UPTIME, *link_rssi),
+            _ => (false, None),
+        };
+        let challenger_wins = !incumbent_stable
+            && challenger_supersedes(incumbent_rssi, link_rssi, &local.identity, &identity, role);
+        if !challenger_wins {
+            if address != incumbent_addr {
+                peers.remove(&address);
             }
-        } else {
             return;
         }
+        if let Some(PeerState::Settled { member, .. }) = peers.remove(&incumbent_addr) {
+            member.teardown();
+        }
+        by_identity.remove(&identity);
     }
-    let address = link.address();
-    let _ = link.upgrade(&established.transport).await;
+    if link.upgrade(&established.transport).await.is_err() {
+        peers.remove(&address);
+        if matches!(origin, Origin::Dialed) {
+            backend.on_link_closed(address).await;
+        }
+        return;
+    }
     let (source, sink) = link.into_data();
-    let member = BluetoothPeer::new(established.identity, established.transport, source, sink)
+    let member = BluetoothPeer::new(identity, established.transport, source, sink)
         .report_close_to(address, closed.clone());
     let attached = fleet.add(member);
-    members.insert(established.identity, attached);
+    peers.insert(
+        address,
+        PeerState::Settled {
+            identity,
+            member: attached,
+            since: Instant::now(),
+            link_rssi,
+        },
+    );
+    by_identity.insert(identity, address);
+}
+
+fn challenger_supersedes(
+    incumbent_rssi: Option<i8>,
+    challenger_rssi: Option<i8>,
+    ours: &BleIdentity,
+    theirs: &BleIdentity,
+    challenger_role: HandshakeRole,
+) -> bool {
+    match (incumbent_rssi, challenger_rssi) {
+        (Some(incumbent), Some(challenger)) if incumbent != challenger => challenger > incumbent,
+        _ => keeps_duplicate(ours, theirs, challenger_role),
+    }
+}
+
+fn retire(
+    address: BleAddress,
+    peers: &mut HashMap<BleAddress, PeerState>,
+    by_identity: &mut HashMap<BleIdentity, BleAddress>,
+) {
+    if let Some(PeerState::Settled { identity, .. }) = peers.remove(&address) {
+        by_identity.remove(&identity);
+    }
 }
 
 #[cfg(test)]
@@ -411,6 +556,7 @@ mod tests {
         our_address: BleAddress,
         peer_address: BleAddress,
         sighting_pending: bool,
+        dialed: Option<LoopbackLink>,
     }
 
     impl LoopbackBleBackend {
@@ -425,6 +571,7 @@ mod tests {
                 our_address: addr_a,
                 peer_address: addr_b,
                 sighting_pending: true,
+                dialed: None,
             };
             let b = Self {
                 inbound_rx: b_inbound_rx,
@@ -432,6 +579,7 @@ mod tests {
                 our_address: addr_b,
                 peer_address: addr_a,
                 sighting_pending: false,
+                dialed: None,
             };
             (a, b)
         }
@@ -449,21 +597,33 @@ mod tests {
         async fn next_event(&mut self) -> BleEvent<LoopbackLink> {
             if self.sighting_pending {
                 self.sighting_pending = false;
-                return BleEvent::Sighting(self.peer_address);
+                return BleEvent::Sighting {
+                    address: self.peer_address,
+                    rssi: None,
+                };
+            }
+            if let Some(link) = self.dialed.take() {
+                return BleEvent::LinkReady {
+                    link,
+                    origin: Origin::Dialed,
+                    peer_rssi: None,
+                };
             }
             match self.inbound_rx.recv().await {
-                Some(link) => BleEvent::Inbound(link),
+                Some(link) => BleEvent::LinkReady {
+                    link,
+                    origin: Origin::Accepted,
+                    peer_rssi: None,
+                },
                 None => std::future::pending().await,
             }
         }
 
-        async fn dial(&mut self, address: BleAddress) -> Result<LoopbackLink, Closed> {
+        async fn dial(&mut self, address: BleAddress) {
             let (mine, theirs) = link_pair(self.our_address, address);
-            self.peer_inbound_tx
-                .send(theirs)
-                .await
-                .map_err(|_| Closed)?;
-            Ok(mine)
+            if self.peer_inbound_tx.send(theirs).await.is_ok() {
+                self.dialed = Some(mine);
+            }
         }
     }
 
@@ -480,20 +640,23 @@ mod tests {
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
 
         let dialer = async move {
-            let BleEvent::Sighting(address) = backend_a.next_event().await else {
+            let BleEvent::Sighting { address, .. } = backend_a.next_event().await else {
                 unreachable!("the dialer side only sights")
             };
-            let mut link = backend_a.dial(address).await.unwrap();
-            let established = drive_handshake(&mut link, HandshakeRole::Dialer, local_a)
+            backend_a.dial(address).await;
+            let BleEvent::LinkReady { mut link, .. } = backend_a.next_event().await else {
+                unreachable!("the dial completes into a link")
+            };
+            let established = drive_handshake(&mut link, HandshakeRole::Dialer, local_a, None)
                 .await
                 .unwrap();
             (established, link)
         };
         let listener = async move {
-            let BleEvent::Inbound(mut link) = backend_b.next_event().await else {
-                unreachable!("the listener side only accepts")
+            let BleEvent::LinkReady { mut link, .. } = backend_b.next_event().await else {
+                unreachable!("the listener side accepts an inbound link")
             };
-            let established = drive_handshake(&mut link, HandshakeRole::Listener, local_b)
+            let established = drive_handshake(&mut link, HandshakeRole::Listener, local_b, None)
                 .await
                 .unwrap();
             (established, link)
@@ -563,19 +726,22 @@ mod tests {
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
 
         let dialer = async move {
-            let BleEvent::Sighting(address) = backend_a.next_event().await else {
+            let BleEvent::Sighting { address, .. } = backend_a.next_event().await else {
                 unreachable!("the dialer side only sights")
             };
-            let mut link = backend_a.dial(address).await.unwrap();
-            drive_handshake(&mut link, HandshakeRole::Dialer, local_a)
+            backend_a.dial(address).await;
+            let BleEvent::LinkReady { mut link, .. } = backend_a.next_event().await else {
+                unreachable!("the dial completes into a link")
+            };
+            drive_handshake(&mut link, HandshakeRole::Dialer, local_a, None)
                 .await
                 .unwrap()
         };
         let listener = async move {
-            let BleEvent::Inbound(mut link) = backend_b.next_event().await else {
-                unreachable!("the listener side only accepts")
+            let BleEvent::LinkReady { mut link, .. } = backend_b.next_event().await else {
+                unreachable!("the listener side accepts an inbound link")
             };
-            drive_handshake(&mut link, HandshakeRole::Listener, local_b)
+            drive_handshake(&mut link, HandshakeRole::Listener, local_b, None)
                 .await
                 .unwrap()
         };
@@ -583,5 +749,52 @@ mod tests {
 
         assert_eq!(established_a.transport, Transport::Gatt);
         assert_eq!(established_b.transport, Transport::Gatt);
+    }
+
+    fn idle_seam() -> MockSeam {
+        let (discard, _discard_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
+        let (_idle_producer, idle_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
+        MockSeam {
+            inbound: discard,
+            outbound: idle_consumer,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dying_member_fires_its_close_signal() {
+        let addr = BleAddress::new([0x11; 6]);
+        let (link_a, link_b) = link_pair(addr, BleAddress::new([0x22; 6]));
+        let (source, sink) = link_a.into_data();
+        drop(link_b);
+
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
+        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), Transport::Gatt, source, sink)
+            .report_close_to(addr, closed_tx.clone());
+        tokio::spawn(member.run(idle_seam()));
+
+        let reported = tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reported, addr);
+    }
+
+    #[tokio::test]
+    async fn a_torn_down_member_does_not_fire_its_close_signal() {
+        let addr = BleAddress::new([0x11; 6]);
+        let (link_a, link_b) = link_pair(addr, BleAddress::new([0x22; 6]));
+        let (source, sink) = link_a.into_data();
+        let _keep_peer_alive = link_b;
+
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
+        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), Transport::Gatt, source, sink)
+            .report_close_to(addr, closed_tx.clone());
+        let handle = tokio::spawn(member.run(idle_seam()));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handle.abort();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(closed_rx.try_recv().is_err());
     }
 }
