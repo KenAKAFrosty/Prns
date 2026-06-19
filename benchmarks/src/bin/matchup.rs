@@ -90,6 +90,7 @@ impl Scenario {
             Scenario::SingleFirehose
                 | Scenario::LinkFirehoseSmallPayload
                 | Scenario::RequestResponse
+                | Scenario::EstablishmentChurn
         )
     }
 }

@@ -423,6 +423,10 @@ async fn scenario_main() {
             run_request_bus_client(&manifest, &role, duration, port).await;
             return;
         }
+        if manifest.profile.mechanism == "churn" {
+            run_churn_bus_client(&manifest, &role, duration, port).await;
+            return;
+        }
     }
 
     let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
@@ -949,6 +953,102 @@ async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Durat
                  rtt_p50_ms={:.0} rtt_p99_ms={:.0} build={BUILD_PROFILE}",
                 percentile(&rtts, 0.50),
                 percentile(&rtts, 0.99),
+            );
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
+        }
+    }
+}
+
+async fn run_churn_bus_client(manifest: &Manifest, role: &str, duration: Duration, port: u16) {
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let single = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    };
+    if role == "responder" {
+        let links = Arc::new(AtomicU64::new(0));
+        let destination = single.destination_hash().expect("valid bench destination");
+        let links_seen = Arc::clone(&links);
+        let node = build_bus_client_node(single, move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) = event {
+                links_seen.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        let commands = node.handle();
+        join_bus(&commands, port).await;
+        println!("READY role=responder addr=shared");
+        let announcer = commands.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(announce_every);
+            loop {
+                ticker.tick().await;
+                if announcer
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    break;
+                }
+            }
+        });
+        let report = async {
+            tokio::time::sleep(duration + DRAIN_GRACE).await;
+            println!("RESULT received={}", links.load(Ordering::Relaxed));
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = report => {}
+        }
+    } else {
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let node = build_bus_client_node(single, move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        });
+        let commands = node.handle();
+        join_bus(&commands, port).await;
+        println!("READY role=initiator");
+        let firehose = async {
+            let destination = heard_rx.recv().await.expect("hears the responder");
+            let started = tokio::time::Instant::now();
+            let deadline = started + duration;
+            let mut cycles = 0u64;
+            let mut failures = 0u64;
+            let mut establish_ms: Vec<u64> = Vec::new();
+            while tokio::time::Instant::now() < deadline {
+                let cycle_started = tokio::time::Instant::now();
+                match commands.establish_link(destination).await {
+                    Ok(link_id) => {
+                        establish_ms.push(cycle_started.elapsed().as_millis() as u64);
+                        commands.close_link(link_id);
+                        cycles += 1;
+                    }
+                    Err(_) => failures += 1,
+                }
+            }
+            let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
+            establish_ms.sort_unstable();
+            let attempts = cycles + failures;
+            let per_sec = cycles * 1000 / elapsed_ms;
+            println!(
+                "RESULT sent={attempts} delivered={cycles} timeouts={failures} cycles={cycles} \
+                 failures={failures} elapsed_ms={elapsed_ms} cycles_per_sec={per_sec} \
+                 establish_p50_ms={:.0} establish_p99_ms={:.0} build={BUILD_PROFILE}",
+                percentile(&establish_ms, 0.50),
+                percentile(&establish_ms, 0.99),
             );
         };
         tokio::select! {
