@@ -10,10 +10,9 @@
 use core::time::Duration;
 
 use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
+use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
-use personal_rns::interfaces::rns_parity::tcp::impls::tokio::{
-    TcpClientInterface, TcpServerInterface,
-};
+use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer;
 use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
 use personal_rns::interfaces::rns_parity::wifi_auto::AutoWifi;
 use personal_rns::runtime::TokioPrnsHandle;
@@ -57,9 +56,9 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             println!("RNSD_INTERFACE_UP name={name:?} medium=tcp-client target={target}");
         }
         PlannedMedium::TcpServer { bind } => {
-            match TcpServerInterface::bind(bind.clone(), bitrate(interface)).await {
+            match TcpServer::bind(bind.clone(), bitrate(interface)).await {
                 Ok(server) => {
-                    handle.add_interface(server);
+                    handle.supervise(server);
                     println!("RNSD_INTERFACE_UP name={name:?} medium=tcp-server bind={bind}");
                 }
                 Err(error) => {

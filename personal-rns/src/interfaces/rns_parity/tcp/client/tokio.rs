@@ -115,6 +115,15 @@ impl Interface for TcpClientInterface {
     }
 }
 
+impl crate::interfaces::ReportsStatus for TcpClientInterface {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
