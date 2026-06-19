@@ -14,6 +14,7 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::data::write_link_packet;
 use crate::routing::links::data::write_link_raw_packet;
+use crate::routing::links::data::{link_data_frame_ceiling, link_raw_frame_ceiling, LINK_MDU};
 use crate::routing::links::request::{parse_request_plaintext, RequestId};
 use crate::routing::links::resources::advertisement::{
     parse_hashmap_update_plaintext, ResourceAdvertisement,
@@ -318,7 +319,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         sink(EngineReaction::Directive(Directive::EmitFrame {
             target: fire_on,
-            size_hint: mtu,
+            size_hint: link_data_frame_ceiling(LINK_MDU),
             fill: &mut fill,
         }));
         {
@@ -981,7 +982,7 @@ fn emit_proof(
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
         target: fire_on,
-        size_hint: prove.mtu,
+        size_hint: link_raw_frame_ceiling(prove.plaintext.len()),
         fill: &mut fill,
     }));
 }

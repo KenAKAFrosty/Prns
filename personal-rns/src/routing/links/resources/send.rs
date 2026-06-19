@@ -12,7 +12,10 @@ use crate::interfaces::InterfaceId;
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
 use crate::routing::ingress::{DataPacket, IngestPacketOutcome};
 use crate::routing::links::data::LINK_TRAFFIC_TIMEOUT_FACTOR;
-use crate::routing::links::data::{write_link_packet, write_link_raw_packet, LINK_MDU};
+use crate::routing::links::data::{
+    link_data_frame_ceiling, link_raw_frame_ceiling, write_link_packet, write_link_raw_packet,
+    LINK_MDU,
+};
 use crate::routing::links::resources::advertisement::{
     write_hashmap_update_plaintext, ResourceAdvertisement, ResourceFlags,
 };
@@ -366,11 +369,12 @@ impl<S: StorageLayout> EngineState<S> {
             requested,
         ) {
             let outgoing = &self.outgoing_resources;
+            let sdu = outgoing.state(index).sdu;
+            let sealed_len = outgoing.sealed_transfer(index).len();
+            let start = part * sdu;
+            let end = (start + sdu).min(sealed_len);
             let mut fill = |slot: &mut [u8]| -> Option<usize> {
-                let state = outgoing.state(index);
                 let sealed = outgoing.sealed_transfer(index);
-                let start = part * state.sdu;
-                let end = (start + state.sdu).min(sealed.len());
                 write_link_raw_packet(
                     link_id,
                     PacketType::Data,
@@ -383,7 +387,7 @@ impl<S: StorageLayout> EngineState<S> {
             };
             sink(EngineReaction::Directive(Directive::EmitFrame {
                 target: fire_on,
-                size_hint: mtu,
+                size_hint: link_raw_frame_ceiling(end - start),
                 fill: &mut fill,
             }));
             self.outgoing_resources.mark_sent(index, part);
@@ -426,7 +430,7 @@ impl<S: StorageLayout> EngineState<S> {
                     };
                     sink(EngineReaction::Directive(Directive::EmitFrame {
                         target: fire_on,
-                        size_hint: mtu,
+                        size_hint: link_data_frame_ceiling(LINK_MDU),
                         fill: &mut fill,
                     }));
                 }
@@ -497,7 +501,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 sink(EngineReaction::Directive(Directive::EmitFrame {
                     target: fire_on,
-                    size_hint: mtu,
+                    size_hint: link_data_frame_ceiling(RESOURCE_HASH_LEN),
                     fill: &mut fill,
                 }));
             }
@@ -697,7 +701,7 @@ where
     };
     sink(EngineReaction::Directive(Directive::EmitFrame {
         target: fire_on,
-        size_hint: mtu,
+        size_hint: link_data_frame_ceiling(LINK_MDU),
         fill: &mut fill,
     }));
     wrote

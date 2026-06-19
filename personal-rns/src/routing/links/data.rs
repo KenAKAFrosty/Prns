@@ -34,6 +34,10 @@ pub const fn link_data_frame_ceiling(plaintext_len: usize) -> usize {
     HEADER_MIN_LEN + IFAC_MIN_LEN + LINK_TOKEN_OVERHEAD + ((plaintext_len / 16) + 1) * 16
 }
 
+pub const fn link_raw_frame_ceiling(payload_len: usize) -> usize {
+    HEADER_MIN_LEN + IFAC_MIN_LEN + payload_len
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkDataError {
     PayloadTooLong,
