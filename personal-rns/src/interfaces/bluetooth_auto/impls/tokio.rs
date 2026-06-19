@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -211,27 +212,34 @@ where
 
 impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {}
 
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 async fn drive_handshake<L: BleLink>(
     link: &mut L,
     role: HandshakeRole,
     local: Local,
 ) -> Option<Established> {
-    let (mut handshake, opening) = Handshake::begin(role, local);
-    if let Some(msg) = opening {
-        link.control_send(&msg).await.ok()?;
-    }
-    loop {
-        let msg = link.control_recv().await.ok()?;
-        let reaction = handshake.absorb(msg);
-        if let Some(reply) = reaction.reply {
-            link.control_send(&reply).await.ok()?;
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let (mut handshake, opening) = Handshake::begin(role, local);
+        if let Some(msg) = opening {
+            link.control_send(&msg).await.ok()?;
         }
-        match reaction.outcome {
-            Outcome::Settled(established) => return Some(established),
-            Outcome::Aborted(_) => return None,
-            Outcome::Pending => {}
+        loop {
+            let msg = link.control_recv().await.ok()?;
+            let reaction = handshake.absorb(msg);
+            if let Some(reply) = reaction.reply {
+                link.control_send(&reply).await.ok()?;
+            }
+            match reaction.outcome {
+                Outcome::Settled(established) => return Some(established),
+                Outcome::Aborted(_) => return None,
+                Outcome::Pending => {}
+            }
         }
-    }
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn admit<L>(
