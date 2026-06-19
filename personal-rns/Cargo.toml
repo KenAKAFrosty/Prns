@@ -87,7 +87,7 @@ flash = ["dep:embedded-storage"]
 # server + LE advertising (the control plane); `l2cap` gives the connection-oriented
 # channel the data plane rides. Linux-only by construction — the dep lives in a target
 # table, so this feature is a hard error off Linux and must stay out of `--all-features`.
-bluetooth-bluer = ["tokio-host", "tokio/net", "dep:bluer"]
+bluetooth-bluer = ["tokio-host", "tokio/net", "dep:bluer", "dep:log"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -209,6 +209,9 @@ critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 # Executor + macros for the tokio seam's cross-task tests (`--features tokio-host`).
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "test-util"] }
+# Log sink for the example binaries (e.g. `bluetooth_auto_node`) so the backend's
+# `log` diagnostics and BlueR's own traces surface under `RUST_LOG`. Dev-only.
+env_logger = "0.11"
 
 [lints]
 workspace = true

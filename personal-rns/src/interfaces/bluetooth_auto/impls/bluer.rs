@@ -238,6 +238,11 @@ impl BleBackend for BluerBackend {
         self.listener = listener.map(Arc::new);
         self._advertisement = Some(advertisement);
         self._application = Some(application);
+        log::info!(
+            "bluetooth: advertising as {ADVERTISED_NAME}, scanning LE for Prns peers, control PSM {:#x}, listener {}",
+            self.psm.get(),
+            if self.listener.is_some() { "bound" } else { "unavailable" },
+        );
         Ok(())
     }
 
@@ -272,16 +277,19 @@ impl BleBackend for BluerBackend {
             };
             match observed {
                 Observed::Candidate(address) => {
-                    if address != self.address
-                        && !self.seen.contains(&address)
-                        && self.advertises_our_service(address).await
-                    {
-                        self.seen.insert(address);
-                        return BleEvent::Sighting(BleAddress::new(address.0));
+                    let known = address == self.address || self.seen.contains(&address);
+                    if !known {
+                        if self.advertises_our_service(address).await {
+                            self.seen.insert(address);
+                            log::info!("bluetooth: sighted Prns peer {address}");
+                            return BleEvent::Sighting(BleAddress::new(address.0));
+                        }
+                        log::debug!("bluetooth: discovered {address}, not advertising our service");
                     }
                 }
                 Observed::Greeting { address, half } => {
                     if let Some(link) = self.admit_greeting(address, half) {
+                        log::info!("bluetooth: inbound link from {address}");
                         return BleEvent::Inbound(BluerLink::Accepted(link));
                     }
                 }
@@ -294,16 +302,30 @@ impl BleBackend for BluerBackend {
         let target = Address::new(*address.octets());
         let discovered = self.adapter.device(target)?;
         let peer_address_type = discovered.address_type().await?;
+        log::info!("bluetooth: dialing {target} ({peer_address_type:?})");
         let device = if discovered.is_connected().await? {
             discovered
         } else {
             let _ = self.adapter.remove_device(target).await;
-            self.adapter
-                .connect_device(target, peer_address_type)
-                .await?
+            match self.adapter.connect_device(target, peer_address_type).await {
+                Ok(device) => device,
+                Err(error) => {
+                    log::warn!("bluetooth: LE connect to {target} failed: {error}");
+                    return Err(error.into());
+                }
+            }
         };
-        let control = find_native_control(&device).await?;
+        let control = match find_native_control(&device).await {
+            Ok(control) => control,
+            Err(error) => {
+                log::warn!("bluetooth: no native control characteristic on {target}: {error:?}");
+                return Err(error);
+            }
+        };
         let notify = control.notify().await?;
+        log::info!(
+            "bluetooth: {target} connected over LE, control characteristic ready; handshaking"
+        );
         Ok(BluerLink::Dialed(DialedLink {
             control,
             notify: Box::pin(notify),

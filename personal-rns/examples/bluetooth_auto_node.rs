@@ -34,6 +34,7 @@ const CONTROL_PSM: u16 = 0x0083;
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
     let node_byte = std::env::var("NODE")
         .ok()
         .and_then(|v| u8::from_str_radix(v.trim_start_matches("0x"), 16).ok())
