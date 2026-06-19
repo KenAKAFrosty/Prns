@@ -207,6 +207,8 @@ jobs:
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-transit-smoke.sh
       - name: real-RNS inverse smoke (personal-rnsd joins a stock instance as a client)
         run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/local-client-smoke.sh
+      - name: real-RNS TCP server smoke (stock RNS TCPClientInterface dials our TcpServer)
+        run: SMOKE_PYTHON=/tmp/rns/bin/python bash scripts/tcp-server-interop-smoke.sh
 
   deny:
     # License (no copyleft) + RUSTSEC advisories + source policy, from deny.toml.
