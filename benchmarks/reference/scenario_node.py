@@ -137,10 +137,20 @@ def chain(name, addr):
         time.sleep(3600)
 
 
+def shared_instance_port():
+    """The loopback shared-instance bus port for the Matchup loopback topology, or None for the
+    default node-to-node wiring. When set, a participant attaches to that already-running host as a
+    stock shared-instance client (no interface of its own) instead of standing up a TCP listener."""
+    raw = os.environ.get("RNS_BENCH_SHARED_PORT")
+    return int(raw) if raw else None
+
+
 def interface_block(wire, role, addr, topology="direct"):
     """One role's interface config plus the address its READY line should carry. UDP is
     symmetric (the orchestrator pre-assigns both ends as local>peer, the reference's
     fixed listen/forward model); TCP keeps the listen-then-connect flow."""
+    if shared_instance_port() is not None:
+        return "", "shared-instance"
     if wire == "udp":
         local, peer = addr.split(">")
         local_host, local_port = local.rsplit(":", 1)
@@ -175,8 +185,23 @@ def interface_block(wire, role, addr, topology="direct"):
 
 def start_reticulum(interface_block):
     configdir = tempfile.mkdtemp(prefix="rns-scenario-")
-    with open(os.path.join(configdir, "config"), "w") as f:
-        f.write(
+    port = shared_instance_port()
+    if port is not None:
+        rpc_key = os.environ.get("RNS_BENCH_SHARED_RPC_KEY", "5a" * 32)
+        config = (
+            "[reticulum]\n"
+            "  enable_transport = No\n"
+            "  share_instance = Yes\n"
+            "  shared_instance_type = tcp\n"
+            f"  shared_instance_port = {port}\n"
+            f"  instance_control_port = {port + 1}\n"
+            f"  rpc_key = {rpc_key}\n"
+            "  panic_on_interface_error = No\n"
+            "[logging]\n"
+            f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
+        )
+    else:
+        config = (
             "[reticulum]\n"
             "  enable_transport = False\n"
             "  share_instance = No\n"
@@ -185,6 +210,8 @@ def start_reticulum(interface_block):
             f"  loglevel = {os.environ.get('RNS_BENCH_LOGLEVEL', '0')}\n"
             "[interfaces]\n" + interface_block
         )
+    with open(os.path.join(configdir, "config"), "w") as f:
+        f.write(config)
     RNS.Reticulum(configdir=configdir)
 
 

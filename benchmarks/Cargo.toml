@@ -20,7 +20,7 @@ path = "src/lib.rs"
 bench = false
 
 [dependencies]
-personal-rns = { path = "../personal-rns", features = ["tcp", "udp"] }
+personal-rns = { path = "../personal-rns", features = ["tcp", "udp", "local"] }
 # The result substrate is JSON rows (the cross-implementation schema); the energy drivers
 # emit them and `render_results` reads them back to render RESULTS.md.
 serde = { version = "1", features = ["derive"] }
@@ -77,6 +77,20 @@ bench = false
 [[bin]]
 name = "resource_profile"
 path = "src/bin/resource_profile.rs"
+bench = false
+
+# --- Matchup: the shared-instance conformance grid (host + two app clients, our impl outside
+# the measured boundary) — stands up the cell and reports the conformance verdict ---
+[[bin]]
+name = "matchup"
+path = "src/bin/matchup.rs"
+bench = false
+
+# The Prns side of a shared-instance Matchup: a transport host that holds the local bus so app
+# clients meet through our engine. Stood up by the runner for the Prns-host cells.
+[[bin]]
+name = "matchup_host"
+path = "src/bin/matchup_host.rs"
 bench = false
 
 # --- Microscope: drive the engine directly, no I/O — the control baseline for crypto work ---
