@@ -18,6 +18,10 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use benchmarks::{
+    load_host, load_or_create_submitter_id, write_rows, Axis, DeviceId, ResultRow, SubmitterId,
+};
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RnsImplementation {
     Prns,
@@ -254,6 +258,84 @@ fn field(line: &str, key: &str) -> Option<f64> {
         .and_then(|v| v.parse().ok())
 }
 
+fn command_line(program: &str, args: &[&str]) -> Option<String> {
+    let out = Command::new(program).args(args).output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn rustc_host_triple() -> String {
+    command_line("rustc", &["-vV"])
+        .and_then(|version| {
+            version
+                .lines()
+                .find_map(|line| line.strip_prefix("host: ").map(str::to_string))
+        })
+        .unwrap_or_else(|| "unknown-host".into())
+}
+
+struct RunStamp {
+    host: String,
+    commit: String,
+    toolchain: String,
+    device_id: Option<DeviceId>,
+    submitter_id: Option<SubmitterId>,
+}
+
+fn run_stamp() -> RunStamp {
+    let host = rustc_host_triple();
+    RunStamp {
+        device_id: load_host(&host).and_then(|descriptor| descriptor.device_id),
+        submitter_id: Some(load_or_create_submitter_id()),
+        commit: command_line("git", &["rev-parse", "--short", "HEAD"]).unwrap_or_default(),
+        toolchain: command_line("rustc", &["--version"]).unwrap_or_default(),
+        host,
+    }
+}
+
+fn scenario_version(scenario: Scenario) -> u32 {
+    std::fs::read_to_string(scenario.manifest())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|manifest| manifest.get("version").and_then(serde_json::Value::as_u64))
+        .unwrap_or(0) as u32
+}
+
+fn emit_rows(
+    stamp: &RunStamp,
+    scenario: Scenario,
+    host: RnsImplementation,
+    client: RnsImplementation,
+    sent: f64,
+    delivered: f64,
+    clean: bool,
+) {
+    let implementation = format!("{}-host/{}-client", host.label(), client.label());
+    let impl_slug = format!("matchup-{}-host-{}-client", host.label(), client.label());
+    let version = scenario_version(scenario);
+    let row = |metric: &str, value: f64, unit: &str| ResultRow {
+        scenario: scenario.dir_name().to_string(),
+        scenario_version: version,
+        implementation: implementation.clone(),
+        commit: stamp.commit.clone(),
+        toolchain: stamp.toolchain.clone(),
+        host: stamp.host.clone(),
+        axis: Axis::Conformance,
+        metric: metric.to_string(),
+        value: Some(value),
+        unit: unit.to_string(),
+        device_id: stamp.device_id,
+        submitter_id: stamp.submitter_id,
+    };
+    let rows = [
+        row("settled_clean", if clean { 1.0 } else { 0.0 }, "bool"),
+        row("sent", sent, "msgs"),
+        row("delivered", delivered, "msgs"),
+    ];
+    write_rows(&stamp.host, scenario.dir_name(), &impl_slug, &rows);
+}
+
 enum Verdict {
     Ran {
         sent: f64,
@@ -354,22 +436,28 @@ const SCENARIOS: &[Scenario] = &[
 struct GridFilter {
     scenario: Option<Scenario>,
     duration_ms: u64,
+    write: bool,
 }
 
 fn parse_filter() -> GridFilter {
     let mut filter = GridFilter {
         scenario: None,
         duration_ms: 3000,
+        write: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
-        let value = args.next().unwrap_or_else(|| panic!("{flag} needs a value"));
         match flag.as_str() {
+            "--write" => filter.write = true,
             "--scenario" => {
+                let value = args.next().unwrap_or_else(|| panic!("--scenario needs a value"));
                 filter.scenario =
-                    Some(Scenario::parse(&value).unwrap_or_else(|| panic!("unknown scenario {value}")))
+                    Some(Scenario::parse(&value).unwrap_or_else(|| panic!("unknown scenario {value}")));
             }
-            "--duration-ms" => filter.duration_ms = value.parse().expect("duration-ms is a number"),
+            "--duration-ms" => {
+                let value = args.next().unwrap_or_else(|| panic!("--duration-ms needs a value"));
+                filter.duration_ms = value.parse().expect("duration-ms is a number");
+            }
             other => panic!("unknown flag {other}"),
         }
     }
@@ -407,6 +495,7 @@ fn main() {
         CLIENTS.len()
     );
 
+    let stamp = filter.write.then(run_stamp);
     let mut rows = Vec::new();
     let (mut pass, mut skip, mut fail) = (0u32, 0u32, 0u32);
     for scenario in &scenarios {
@@ -430,6 +519,11 @@ fn main() {
                     Verdict::Skipped(_) => skip += 1,
                     _ => fail += 1,
                 }
+                if let (Some(stamp), Verdict::Ran { sent, delivered, clean, .. }) =
+                    (&stamp, &verdict)
+                {
+                    emit_rows(stamp, *scenario, *host, *client, *sent, *delivered, *clean);
+                }
                 let (status, detail) = summarize(&verdict);
                 rows.push((scenario.dir_name(), host.label(), client.label(), status, detail));
             }
@@ -443,5 +537,8 @@ fn main() {
     }
     println!();
     println!("{} cells: {pass} pass, {skip} skip, {fail} fail", rows.len());
+    if let Some(stamp) = &stamp {
+        println!("wrote conformance rows under results/{}/<scenario>/", stamp.host);
+    }
     std::process::exit(if fail > 0 { 1 } else { 0 });
 }
