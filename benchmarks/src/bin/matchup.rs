@@ -195,7 +195,7 @@ impl RnsImplementation {
             RnsImplementation::Prns => {
                 if !scenario.rides_high_level_runtime() {
                     return Err(Unavailable(
-                        "prns client: this mechanism rides the low-level reactor path, not wired yet",
+                        "prns client: resource needs a responder-side resource strategy, not yet a recipe knob",
                     ));
                 }
                 let mut command = Command::new(sibling_binary("scenario_node"));
