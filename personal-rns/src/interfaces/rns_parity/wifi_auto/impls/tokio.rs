@@ -607,9 +607,7 @@ fn discovery_socket(nics: &[Nic]) -> io::Result<UdpSocket> {
         })
         .count();
     if joined == 0 {
-        return Err(io::Error::other(
-            "no interface joined the discovery group",
-        ));
+        return Err(io::Error::other("no interface joined the discovery group"));
     }
     into_tokio(socket)
 }

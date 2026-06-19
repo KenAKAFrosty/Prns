@@ -38,7 +38,8 @@ impl<S> TcpServerConnection<S> {
     /// collision loudly.
     #[must_use]
     pub fn new(reachability_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
-        let id = InterfaceId::from_reachability_tag(InterfaceKind::TcpServerPeer, &reachability_tag);
+        let id =
+            InterfaceId::from_reachability_tag(InterfaceKind::TcpServerPeer, &reachability_tag);
         Self {
             id,
             reachability_tag,
@@ -287,9 +288,7 @@ mod tests {
             .await;
         });
 
-        let mut client = TcpStream::connect(addr)
-            .await
-            .expect("the client connects");
+        let mut client = TcpStream::connect(addr).await.expect("the client connects");
 
         // Inbound: a framed payload (FLAG/ESC exercise the escaping) crosses the real socket and
         // lands deframed at the seam.
@@ -445,15 +444,14 @@ mod tests {
         // The server side: accept the client and serve it as a member under the fixed tag the
         // responder reactor was wired with.
         tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("the server accepts the client");
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("the server accepts the client");
             tune(&stream);
-            TcpServerConnection::new(
-                RESPONDER_TAG.to_vec(),
-                stream,
-                core::TCP_BITRATE_GUESS_BPS,
-            )
-            .run(b_seam)
-            .await;
+            TcpServerConnection::new(RESPONDER_TAG.to_vec(), stream, core::TCP_BITRATE_GUESS_BPS)
+                .run(b_seam)
+                .await;
         });
 
         b_command_tx
