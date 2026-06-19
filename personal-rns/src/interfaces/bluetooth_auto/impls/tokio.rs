@@ -115,6 +115,7 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
         }
         if let Some(ClosedSignal { address, sink }) = self.closed.take() {
             let _ = sink.send(address);
+            std::future::pending::<()>().await;
         }
     }
 }
@@ -412,7 +413,11 @@ fn retire(
     peers: &mut HashMap<BleAddress, PeerState>,
     by_identity: &mut HashMap<BleIdentity, BleAddress>,
 ) {
-    if let Some(PeerState::Settled { identity, .. }) = peers.remove(&address) {
+    if let Some(PeerState::Settled {
+        identity, member, ..
+    }) = peers.remove(&address)
+    {
+        member.teardown();
         by_identity.remove(&identity);
     }
 }
