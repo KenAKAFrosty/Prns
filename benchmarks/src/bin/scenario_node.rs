@@ -158,6 +158,8 @@ struct Profile {
     announce_every_ms: u64,
     #[serde(default = "default_initiator_count")]
     initiator_count: usize,
+    #[serde(default = "default_link_count")]
+    link_count: usize,
     #[serde(default = "default_size_seed")]
     size_seed: u64,
     #[serde(default = "default_topology")]
@@ -224,6 +226,10 @@ fn default_announce_every_ms() -> u64 {
 
 fn default_initiator_count() -> usize {
     1
+}
+
+fn default_link_count() -> usize {
+    256
 }
 
 /// The varied-size law every node speaks identically: a seeded xorshift draws
@@ -413,7 +419,7 @@ async fn scenario_main() {
     // resource strategy is not yet a recipe knob.
     if matches!(
         manifest.profile.mechanism.as_str(),
-        "single" | "link" | "channel"
+        "single" | "link" | "channel" | "links-breadth"
     ) {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
         return;
@@ -769,9 +775,21 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
             join_bus(&commands, port).await;
         }
         println!("READY role=responder addr={bound}");
+        let expected_links = if mechanism == "links-breadth" {
+            manifest.profile.link_count
+        } else {
+            initiators
+        };
         let firehose = async {
-            if mechanism == "link" || mechanism == "channel" {
-                respond_link(destination, announce_every, initiators, &commands, event_rx).await;
+            if matches!(mechanism, "link" | "channel" | "links-breadth") {
+                respond_link(
+                    destination,
+                    announce_every,
+                    expected_links,
+                    &commands,
+                    event_rx,
+                )
+                .await;
             } else {
                 respond(destination, announce_every, &commands, event_rx).await;
             }
@@ -793,6 +811,8 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
         let firehose = async {
             if mechanism == "link" {
                 initiate_link(&manifest.profile, duration, &commands, event_rx).await;
+            } else if mechanism == "links-breadth" {
+                initiate_links_breadth(&manifest.profile, duration, &commands, event_rx).await;
             } else if mechanism == "channel" {
                 initiate_channel(&manifest.profile, duration, &commands, event_rx).await;
             } else {
@@ -1492,7 +1512,7 @@ async fn initiate(
 async fn respond_link(
     destination: DestinationHash,
     announce_every: Duration,
-    initiator_count: usize,
+    expected_links: usize,
     commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
@@ -1520,7 +1540,7 @@ async fn respond_link(
                 match event {
                     Some(Event::LinkUp) => {
                         links_up += 1;
-                        if links_up >= initiator_count {
+                        if links_up >= expected_links {
                             announcing = false;
                         }
                     }
@@ -1528,7 +1548,7 @@ async fn respond_link(
                         delivered += 1;
                         payload_bytes += bytes as u64;
                     }
-                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
+                    Some(Event::Closed) if closed_links + 1 < expected_links => {
                         closed_links += 1;
                     }
                     Some(Event::Closed) | None => {
@@ -1661,6 +1681,160 @@ async fn initiate_link(
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
         died_marker(died),
+    );
+}
+
+/// The breadth end: establish `link_count` links at once and hold them all open, keeping exactly one
+/// send in flight on each (refilling the link that just settled) until the wall-time elapses, then
+/// close them all. Where `initiate_link` measures depth on one link, this measures how many links a
+/// host carries concurrently. Establishing all N proves the host's transported-link table held them;
+/// a delivery on every link proves it kept switching each — a link the host silently dropped goes
+/// quiet and trips the per-link assertion.
+async fn initiate_links_breadth(
+    profile: &Profile,
+    duration: Duration,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+
+    let link_count = profile.link_count;
+    for _ in 0..link_count {
+        commands
+            .issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+            .expect("reactor alive");
+    }
+    let mut links = Vec::with_capacity(link_count);
+    let establish_deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while links.len() < link_count {
+        match tokio::time::timeout_at(establish_deadline, events.recv()).await {
+            Ok(Some(Event::Settled(_, Settlement::EstablishLink(Ok(established))))) => {
+                links.push(established.link_id);
+            }
+            Ok(Some(Event::Settled(_, Settlement::EstablishLink(Err(failure))))) => {
+                panic!(
+                    "link {} of {link_count} refused: {failure:?}",
+                    links.len() + 1
+                );
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => panic!(
+                "only {} of {link_count} links established before the deadline",
+                links.len()
+            ),
+        }
+    }
+
+    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len));
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut sent = 0u64;
+    let mut delivered = 0u64;
+    let mut timeouts = 0u64;
+    let mut delivered_bytes = 0u64;
+    let mut in_flight = 0usize;
+    let mut rtts: Vec<u64> = Vec::new();
+    let mut per_link_delivered = vec![0u64; link_count];
+    let mut id_to_link: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut id_to_size: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut send_on =
+        |link_index: usize,
+         in_flight: &mut usize,
+         sent: &mut u64,
+         id_to_link: &mut std::collections::HashMap<u64, usize>,
+         id_to_size: &mut std::collections::HashMap<u64, usize>| {
+            let len = sizes.next_len();
+            if let Some(id) = commands.issue(EngineCommand::SendLink(SendLink {
+                link_id: links[link_index],
+                payload: SendLinkPayload::from_slice(&scratch[..len]).expect("payload fits"),
+            })) {
+                id_to_link.insert(id.0, link_index);
+                id_to_size.insert(id.0, len);
+                *sent += 1;
+                *in_flight += 1;
+            }
+        };
+
+    for link_index in 0..link_count {
+        send_on(
+            link_index,
+            &mut in_flight,
+            &mut sent,
+            &mut id_to_link,
+            &mut id_to_size,
+        );
+    }
+
+    let drain_deadline = deadline + DRAIN_GRACE;
+    while in_flight > 0 {
+        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
+        let Ok(Some(event)) = event else { break };
+        if let Event::Settled(id, Settlement::SendLink(result)) = event {
+            in_flight -= 1;
+            let link_index = id_to_link.remove(&id.0).expect("a tracked send");
+            let size = id_to_size.remove(&id.0).unwrap_or(0) as u64;
+            match result {
+                Ok(receipt) => {
+                    delivered += 1;
+                    delivered_bytes += size;
+                    per_link_delivered[link_index] += 1;
+                    rtts.push(receipt.rtt.millis());
+                }
+                Err(_) => timeouts += 1,
+            }
+            if tokio::time::Instant::now() < deadline {
+                send_on(
+                    link_index,
+                    &mut in_flight,
+                    &mut sent,
+                    &mut id_to_link,
+                    &mut id_to_size,
+                );
+            }
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    for &link_id in &links {
+        commands.close_link(link_id);
+    }
+    let mut closed = 0usize;
+    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
+    while closed < link_count {
+        match tokio::time::timeout_at(close_deadline, events.recv()).await {
+            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) => closed += 1,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+
+    let silent_links = per_link_delivered.iter().filter(|&&d| d == 0).count();
+    assert!(
+        silent_links == 0,
+        "{silent_links} of {link_count} relayed links delivered nothing — a carried link was dropped",
+    );
+
+    rtts.sort_unstable();
+    let payload_bytes = delivered_bytes;
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+         links_established={link_count} payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
+         delivered_per_sec={:.1} rtt_p50_ms={:.0} rtt_p99_ms={:.0} build={BUILD_PROFILE}",
+        delivered as f64 / seconds,
+        percentile(&rtts, 0.50),
+        percentile(&rtts, 0.99),
     );
 }
 

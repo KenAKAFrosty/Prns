@@ -17,6 +17,7 @@ import RNS
 
 ANNOUNCE_EVERY = 0.5
 INITIATOR_COUNT = 1
+LINK_COUNT = 256
 DRAIN_GRACE = 5.0
 QUIET_AFTER_TRAFFIC = 1.5
 REQUEST_RACE_GRACE = 0.05
@@ -467,6 +468,144 @@ def initiate_link(name, block, profile, duration):
         f"goodput_bytes_per_sec={payload_bytes / seconds:.0f} "
         f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}"
         + (" died=1" if died else ""),
+        flush=True,
+    )
+    os._exit(0)
+
+
+def respond_links_breadth(name, block, ready_addr):
+    start_reticulum(block)
+    identity = RNS.Identity()
+    destination = RNS.Destination(
+        identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
+    )
+    destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
+
+    state = {"delivered": 0, "payload_bytes": 0}
+    done = threading.Event()
+
+    def on_packet(message, packet):
+        state["delivered"] += 1
+        state["payload_bytes"] += len(message)
+
+    links = {"up": 0, "closed": 0}
+    links_lock = threading.Lock()
+
+    def on_closed(_link):
+        with links_lock:
+            links["closed"] += 1
+        if links["closed"] >= LINK_COUNT:
+            done.set()
+
+    def on_link(link):
+        with links_lock:
+            links["up"] += 1
+        link.set_packet_callback(on_packet)
+        link.set_link_closed_callback(on_closed)
+
+    destination.set_link_established_callback(on_link)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
+    while not done.is_set():
+        if links["up"] < LINK_COUNT:
+            destination.announce()
+        done.wait(ANNOUNCE_EVERY)
+    print(
+        f"RESULT delivered={state['delivered']} payload_bytes={state['payload_bytes']}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def initiate_links_breadth(name, block, profile, duration):
+    start_reticulum(block)
+
+    heard = {"hash": None, "identity": None}
+    announced = threading.Event()
+
+    class Handler:
+        aspect_filter = f"bench.{name}"
+
+        def received_announce(self, destination_hash, announced_identity, app_data):
+            heard["hash"] = destination_hash
+            heard["identity"] = announced_identity
+            announced.set()
+
+    RNS.Transport.register_announce_handler(Handler())
+    print("READY role=initiator", flush=True)
+    if not announced.wait(30):
+        sys.exit("no announce heard")
+
+    destination = RNS.Destination(
+        heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
+    )
+    link_count = int(profile.get("link_count", LINK_COUNT))
+    ups = [threading.Event() for _ in range(link_count)]
+    links = [
+        RNS.Link(destination, established_callback=(lambda ev: lambda _l: ev.set())(ups[i]))
+        for i in range(link_count)
+    ]
+    establish_deadline = time.monotonic() + 60
+    for index, ev in enumerate(ups):
+        if not ev.wait(max(0.0, establish_deadline - time.monotonic())):
+            sys.exit(f"link {index} of {link_count} did not establish")
+
+    sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len")
+    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    state = {"sent": 0, "delivered": 0, "timeouts": 0, "delivered_bytes": 0}
+    per_link_delivered = [0] * link_count
+    rtts = []
+    started = time.monotonic()
+    deadline = started + duration
+    drain_deadline = deadline + DRAIN_GRACE
+
+    def send_on(index):
+        state["sent"] += 1
+        size = sizes.next_len()
+        return (RNS.Packet(links[index], scratch[:size]).send(), size, index)
+
+    outstanding = [send_on(index) for index in range(link_count)]
+    while outstanding and time.monotonic() < drain_deadline:
+        still = []
+        settled = 0
+        for receipt, size, index in outstanding:
+            status = receipt.status if receipt else RNS.PacketReceipt.FAILED
+            if status == RNS.PacketReceipt.DELIVERED:
+                state["delivered"] += 1
+                state["delivered_bytes"] += size
+                per_link_delivered[index] += 1
+                rtts.append(receipt.get_rtt() * 1000.0)
+                settled += 1
+                if time.monotonic() < deadline:
+                    still.append(send_on(index))
+            elif status in (RNS.PacketReceipt.FAILED, RNS.PacketReceipt.CULLED):
+                state["timeouts"] += 1
+                settled += 1
+                if time.monotonic() < deadline:
+                    still.append(send_on(index))
+            else:
+                still.append((receipt, size, index))
+        outstanding = still
+        if settled == 0:
+            time.sleep(0.0005)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    for link in links:
+        link.teardown()
+    time.sleep(0.5)
+
+    silent = sum(1 for delivered in per_link_delivered if delivered == 0)
+    if silent:
+        sys.exit(f"{silent} of {link_count} relayed links delivered nothing")
+
+    rtts = sorted(rtts)
+    pct = lambda p: rtts[min(round((len(rtts) - 1) * p), len(rtts) - 1)] if rtts else float("nan")
+    payload_bytes = state["delivered_bytes"]
+    seconds = max(elapsed_ms / 1000.0, 1e-9)
+    print(
+        f"RESULT sent={state['sent']} delivered={state['delivered']} "
+        f"timeouts={state['timeouts']} links_established={link_count} "
+        f"payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} "
+        f"delivered_per_sec={state['delivered'] / seconds:.1f} "
+        f"rtt_p50_ms={pct(0.50):.0f} rtt_p99_ms={pct(0.99):.0f}",
         flush=True,
     )
     os._exit(0)
@@ -968,9 +1107,10 @@ def main():
     role, addr = sys.argv[2], sys.argv[3]
     duration_ms = int(sys.argv[4]) if len(sys.argv) > 4 else manifest["profile"]["duration_ms"]
 
-    global ANNOUNCE_EVERY, INITIATOR_COUNT
+    global ANNOUNCE_EVERY, INITIATOR_COUNT, LINK_COUNT
     ANNOUNCE_EVERY = manifest["profile"].get("announce_every_ms", 500) / 1000.0
     INITIATOR_COUNT = int(manifest["profile"].get("initiator_count", 1))
+    LINK_COUNT = int(manifest["profile"].get("link_count", 256))
 
     mechanism = manifest["profile"]["mechanism"]
     wire = manifest["profile"].get("wire", "tcp")
@@ -985,23 +1125,31 @@ def main():
         sys.exit(usage)
     block, ready_addr = interface_block(wire, role, addr, topology)
     responders = {
+        "single": respond,
         "link": respond_link,
+        "links-breadth": respond_links_breadth,
         "resource": respond_resource,
         "request": respond_request,
         "churn": respond_churn,
     }
     initiators = {
+        "single": initiate,
         "link": initiate_link,
+        "links-breadth": initiate_links_breadth,
         "resource": initiate_resource,
         "request": initiate_request,
         "churn": initiate_churn,
     }
     if role == "responder":
-        responders.get(mechanism, respond)(manifest["name"], block, ready_addr)
+        handler = responders.get(mechanism)
+        if handler is None:
+            sys.exit(f"reference node has no responder for mechanism {mechanism!r}")
+        handler(manifest["name"], block, ready_addr)
     else:
-        initiators.get(mechanism, initiate)(
-            manifest["name"], block, manifest["profile"], duration_ms / 1000.0
-        )
+        handler = initiators.get(mechanism)
+        if handler is None:
+            sys.exit(f"reference node has no initiator for mechanism {mechanism!r}")
+        handler(manifest["name"], block, manifest["profile"], duration_ms / 1000.0)
 
 
 if __name__ == "__main__":
