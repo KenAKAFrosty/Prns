@@ -28,6 +28,7 @@ pub const BLE_SERVICE_UUID: BleUuid = BleUuid::Bit128(BLE_SERVICE_UUID_BYTES);
 pub const COLUMBA_RX_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe5));
 pub const COLUMBA_TX_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe4));
 pub const COLUMBA_IDENTITY_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe6));
+pub const NATIVE_CONTROL_UUID: BleUuid = BleUuid::Bit128(ble_reticulum_uuid(0xe7));
 
 const AD_FLAGS: u8 = 0x01;
 const AD_INCOMPLETE_SERVICE_UUID128: u8 = 0x06;
@@ -167,6 +168,35 @@ pub struct LinkCapabilities {
     pub link_mtu: u16,
 }
 
+const CONTROL_HELLO: u8 = 0x01;
+const CONTROL_WELCOME: u8 = 0x02;
+const CONTROL_CLOSE: u8 = 0x03;
+const CONTROL_IDENTITY_LEN: usize = 16;
+const CONTROL_CAP_LEN: usize = 4;
+pub const CONTROL_MAX_LEN: usize = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN;
+
+impl LinkCapabilities {
+    fn encode(&self, out: &mut [u8; CONTROL_CAP_LEN]) {
+        let psm = match self.l2cap {
+            Some(psm) => psm.get(),
+            None => 0,
+        };
+        out[0..2].copy_from_slice(&psm.to_be_bytes());
+        out[2..4].copy_from_slice(&self.link_mtu.to_be_bytes());
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let psm_raw = u16::from_be_bytes(bytes.get(0..2)?.try_into().ok()?);
+        let link_mtu = u16::from_be_bytes(bytes.get(2..4)?.try_into().ok()?);
+        let l2cap = if psm_raw == 0 {
+            None
+        } else {
+            Some(Psm::new(psm_raw)?)
+        };
+        Some(Self { l2cap, link_mtu })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     L2cap { psm: Psm },
@@ -200,6 +230,25 @@ pub enum CloseReason {
     Incompatible,
 }
 
+impl CloseReason {
+    const fn as_u8(self) -> u8 {
+        match self {
+            CloseReason::SelfConnection => 0x01,
+            CloseReason::DuplicateLink => 0x02,
+            CloseReason::Incompatible => 0x03,
+        }
+    }
+
+    const fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0x01 => Some(CloseReason::SelfConnection),
+            0x02 => Some(CloseReason::DuplicateLink),
+            0x03 => Some(CloseReason::Incompatible),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Control {
     Hello {
@@ -213,6 +262,75 @@ pub enum Control {
     Close {
         reason: CloseReason,
     },
+}
+
+impl Control {
+    pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
+        match self {
+            Control::Hello {
+                identity,
+                capabilities,
+            } => encode_greeting(CONTROL_HELLO, identity, capabilities, out),
+            Control::Welcome {
+                identity,
+                capabilities,
+            } => encode_greeting(CONTROL_WELCOME, identity, capabilities, out),
+            Control::Close { reason } => {
+                let slot = out.get_mut(..2)?;
+                slot[0] = CONTROL_CLOSE;
+                slot[1] = reason.as_u8();
+                Some(2)
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let (tag, body) = bytes.split_first()?;
+        match *tag {
+            CONTROL_HELLO => {
+                let (identity, capabilities) = decode_greeting(body)?;
+                Some(Control::Hello {
+                    identity,
+                    capabilities,
+                })
+            }
+            CONTROL_WELCOME => {
+                let (identity, capabilities) = decode_greeting(body)?;
+                Some(Control::Welcome {
+                    identity,
+                    capabilities,
+                })
+            }
+            CONTROL_CLOSE => Some(Control::Close {
+                reason: CloseReason::from_u8(*body.first()?)?,
+            }),
+            _ => None,
+        }
+    }
+}
+
+fn encode_greeting(
+    tag: u8,
+    identity: &BleIdentity,
+    capabilities: &LinkCapabilities,
+    out: &mut [u8],
+) -> Option<usize> {
+    let slot = out.get_mut(..CONTROL_MAX_LEN)?;
+    slot[0] = tag;
+    slot[1..1 + CONTROL_IDENTITY_LEN].copy_from_slice(identity.as_bytes());
+    let mut caps = [0u8; CONTROL_CAP_LEN];
+    capabilities.encode(&mut caps);
+    slot[1 + CONTROL_IDENTITY_LEN..CONTROL_MAX_LEN].copy_from_slice(&caps);
+    Some(CONTROL_MAX_LEN)
+}
+
+fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, LinkCapabilities)> {
+    let identity_bytes: [u8; CONTROL_IDENTITY_LEN] =
+        body.get(..CONTROL_IDENTITY_LEN)?.try_into().ok()?;
+    let capabilities = LinkCapabilities::decode(
+        body.get(CONTROL_IDENTITY_LEN..CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)?,
+    )?;
+    Some((BleIdentity::new(identity_bytes), capabilities))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -616,5 +734,66 @@ mod tests {
         assert_eq!(only.kind, FragmentKind::End);
         assert_eq!(only.total, 1);
         assert!(fragments.next().is_none());
+    }
+
+    #[test]
+    fn a_hello_round_trips_through_the_control_codec() {
+        let hello = Control::Hello {
+            identity: identity(7),
+            capabilities: caps(Some(0x0081)),
+        };
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = hello.encode(&mut buf).unwrap();
+        assert_eq!(Control::decode(&buf[..len]), Some(hello));
+    }
+
+    #[test]
+    fn a_gatt_only_welcome_round_trips_with_no_psm() {
+        let welcome = Control::Welcome {
+            identity: identity(9),
+            capabilities: LinkCapabilities {
+                l2cap: None,
+                link_mtu: 23,
+            },
+        };
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = welcome.encode(&mut buf).unwrap();
+        let decoded = Control::decode(&buf[..len]).unwrap();
+        assert_eq!(decoded, welcome);
+        if let Control::Welcome { capabilities, .. } = decoded {
+            assert!(capabilities.l2cap.is_none());
+        }
+    }
+
+    #[test]
+    fn every_close_reason_round_trips() {
+        for reason in [
+            CloseReason::SelfConnection,
+            CloseReason::DuplicateLink,
+            CloseReason::Incompatible,
+        ] {
+            let close = Control::Close { reason };
+            let mut buf = [0u8; CONTROL_MAX_LEN];
+            let len = close.encode(&mut buf).unwrap();
+            assert_eq!(Control::decode(&buf[..len]), Some(close));
+        }
+    }
+
+    #[test]
+    fn the_control_codec_rejects_garbage() {
+        assert_eq!(Control::decode(&[]), None);
+        assert_eq!(Control::decode(&[0xFF]), None);
+        assert_eq!(Control::decode(&[CONTROL_HELLO, 0x00]), None);
+        assert_eq!(Control::decode(&[CONTROL_CLOSE, 0x00]), None);
+    }
+
+    #[test]
+    fn control_encode_refuses_a_short_buffer() {
+        let hello = Control::Hello {
+            identity: identity(1),
+            capabilities: caps(Some(0x0090)),
+        };
+        let mut tiny = [0u8; 4];
+        assert_eq!(hello.encode(&mut tiny), None);
     }
 }
