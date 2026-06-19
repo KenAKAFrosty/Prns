@@ -49,7 +49,7 @@ embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:embedded-io-async-07
 # seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
 # reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
 # hosts that don't want it never link either crate.
-wifi-lan-auto = ["tokio-host", "tokio/net", "dep:socket2", "dep:if-addrs"]
+wifi-lan-auto = ["tokio-host", "tcp", "tokio/net", "dep:socket2", "dep:if-addrs", "dep:netdev"]
 # The RNS-parity TCP interface (TcpClientInterface / TcpServerInterface) on the reactor
 # seam: tokio's own TCP plus socket2 for the reference's socket discipline (TCP_NODELAY,
 # keepalive probes, user timeout). Opt-in, so tokio hosts that don't want TCP never link
@@ -140,6 +140,10 @@ socket2 = { version = "0.6", optional = true, features = ["all"] }
 # chosen NIC's real `fe80::` link-local and its interface index. The peering token must
 # hash over the address peers actually see as our source, so a synthesized one won't do.
 if-addrs = { version = "0.13", optional = true }
+# Default-gateway discovery for the beyond-parity TCP fold (under `wifi-lan-auto`): the
+# cross-platform routing-table read that tells a node which address to dial for the rendezvous
+# link — the AP host on an isolating hotspot. Off unless the auto-interface is built.
+netdev = { version = "0.45", optional = true }
 
 # Embassy stack for the embassy WiFi worker shells. Optional + version-matched
 # to the ESP hosts (embassy-net 0.9.1 / esp-rtos 0.3 both pin embassy-sync 0.8),

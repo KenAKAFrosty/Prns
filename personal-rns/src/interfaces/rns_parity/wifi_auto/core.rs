@@ -37,6 +37,13 @@ pub const UNICAST_DISCOVERY_PORT: u16 = DEFAULT_DISCOVERY_PORT + 1;
 
 pub const DEFAULT_DATA_PORT: u16 = 42671;
 
+/// The well-known TCP port for the beyond-parity gateway/relay fold: a node dials its default
+/// gateway here, and an AP host listens here, so peers behind an isolating hotspot (multicast
+/// blocked, only the gateway reachable) still rendezvous over a unicast TCP link the engine relays
+/// across. A distinct number from [`DEFAULT_DATA_PORT`] — its own transport, its own port, no
+/// UDP/TCP overload. Not part of RNS AutoInterface; a Prns extension.
+pub const TCP_RENDEZVOUS_PORT: u16 = 42699;
+
 /// The interface's hardware (link-layer) MTU, distinct from Reticulum's
 /// logical 500-byte `MTU`. RNS pins it at 1196 for the AutoInterface
 /// ([`AutoInterface.py` L44](https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/AutoInterface.py#L44)).

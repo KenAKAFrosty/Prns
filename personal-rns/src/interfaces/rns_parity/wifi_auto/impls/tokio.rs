@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,6 +10,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::engine::InstantMillis;
+use crate::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use crate::interfaces::rns_parity::wifi_auto::core;
 use crate::interfaces::{
     ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
@@ -26,6 +27,10 @@ const UNICAST_REPEER_EVERY: u32 = 3;
 /// Consecutive failed discovery beacons before the supervisor reports its egress as down. Two
 /// intervals of [`BEACON_INTERVAL`] so a single transient send error does not flap the card.
 const EGRESS_DOWN_AFTER: u32 = 2;
+/// How long a gateway rendezvous link waits before redialing after a failed or dropped connection.
+/// Generous, because on an ordinary network the gateway is no Prns host and this dial never succeeds
+/// — it must not busy-loop — while an isolating hotspot's host comes up well within one interval.
+const GATEWAY_REDIAL: Duration = Duration::from_secs(10);
 
 pub struct AutoWifiPeer {
     id: InterfaceId,
@@ -319,6 +324,8 @@ impl InterfaceSupervisor for AutoWifi {
         };
         self.status.mark_up();
 
+        dial_gateways(&fleet, &nics, self.bitrate_bps);
+
         let mut sup = Supervisor {
             brains: nics
                 .iter()
@@ -559,6 +566,39 @@ fn link_local_nics() -> std::vec::Vec<Nic> {
         }
     }
     nics
+}
+
+/// Beyond parity: dial each NIC's default gateway over TCP ([`TCP_RENDEZVOUS_PORT`]), standing up a
+/// reconnecting [`TcpClientInterface`] member per gateway. On an ordinary network the gateway is no
+/// Prns host and the member just retries in the background; on an isolating hotspot it is the one
+/// reachable rendezvous, and the engine relays peer-to-peer through the link it forms. A hosted-AP
+/// NIC has no gateway of its own, so a host never dials itself.
+fn dial_gateways(fleet: &Fleet, nics: &[Nic], bitrate_bps: u32) {
+    let interfaces = netdev::get_interfaces();
+    for nic in nics {
+        let Some(gateway) = interfaces
+            .iter()
+            .find(|iface| iface.index == nic.index)
+            .and_then(gateway_addr)
+        else {
+            continue;
+        };
+        let target = SocketAddr::new(gateway, core::TCP_RENDEZVOUS_PORT).to_string();
+        let _ = fleet.add(TcpClientInterface::new(target, bitrate_bps, GATEWAY_REDIAL));
+    }
+}
+
+/// The default-gateway address an interface routes through — IPv4 preferred (a hotspot hands out a v4
+/// gateway), else IPv6. `None` when the NIC has no default route (a hosted AP, a link-local-only
+/// segment), so a host's own AP interface is skipped.
+fn gateway_addr(iface: &netdev::Interface) -> Option<IpAddr> {
+    let gateway = iface.gateway.as_ref()?;
+    gateway
+        .ipv4
+        .first()
+        .copied()
+        .map(IpAddr::V4)
+        .or_else(|| gateway.ipv6.first().copied().map(IpAddr::V6))
 }
 
 fn is_virtual(name: &str) -> bool {
