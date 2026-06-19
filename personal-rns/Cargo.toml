@@ -82,6 +82,12 @@ _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-na
 # boot. no_std, no alloc; the board supplies the driver and the region bounds. Off by
 # default — only an embedded host links it.
 flash = ["dep:embedded-storage"]
+# The native Bluetooth LE auto-interface's Linux radio (`BluetoothAuto` over BlueR): the
+# tokio host plus BlueR, the official BlueZ binding. `bluetoothd` gives the D-Bus GATT
+# server + LE advertising (the control plane); `l2cap` gives the connection-oriented
+# channel the data plane rides. Linux-only by construction — the dep lives in a target
+# table, so this feature is a hard error off Linux and must stay out of `--all-features`.
+bluetooth-bluer = ["tokio-host", "tokio/net", "dep:bluer"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
@@ -185,6 +191,14 @@ keyring = { version = "3", optional = true, default-features = false }
 # (esp-storage on ESP, the nRF flash HAL, …) so the vault stays HAL-agnostic. no_std.
 embedded-storage = { version = "0.3", optional = true, default-features = false }
 
+# BlueR (the official BlueZ binding) backs the native Bluetooth LE interface on Linux —
+# our reference radio, the most mature Rust BLE + L2CAP stack. `l2cap` for the LE
+# connection-oriented data plane, `bluetoothd` for the D-Bus GATT server + advertising.
+# Optional and Linux-only (target-gated table), so only a `bluetooth-bluer` build on Linux
+# ever links it; Mac/embedded/`--all-features` never pull the dbus C tree.
+[target.'cfg(target_os = "linux")'.dependencies]
+bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
+
 [dev-dependencies]
 proptest = "1"
 # Host-side execution of the embassy seam + reactor tests (`--features
@@ -219,3 +233,7 @@ required-features = ["tcp"]
 [[example]]
 name = "wifi_auto_node"
 required-features = ["wifi-lan-auto"]
+
+[[example]]
+name = "bluetooth_auto_node"
+required-features = ["bluetooth-bluer"]
