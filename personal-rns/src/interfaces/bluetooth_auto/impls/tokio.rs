@@ -1,4 +1,3 @@
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -200,8 +199,8 @@ where
             };
             match step {
                 Step::Event(BleEvent::Sighting { address, .. }) => {
-                    if let Entry::Vacant(slot) = peers.entry(address) {
-                        slot.insert(PeerState::Dialing);
+                    if !matches!(peers.get(&address), Some(PeerState::Settled { .. })) {
+                        peers.insert(address, PeerState::Dialing);
                         backend.dial(address).await;
                     }
                 }

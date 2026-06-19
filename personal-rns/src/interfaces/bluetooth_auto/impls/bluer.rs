@@ -178,10 +178,12 @@ impl BluerBackend {
 
     fn next_wake_deadline(&self) -> Option<Instant> {
         self.attempts
-            .values()
-            .filter_map(|attempt| match attempt {
-                DialAttempt::Backoff { retry_at, .. } => Some(*retry_at),
-                DialAttempt::Connected { .. } => None,
+            .iter()
+            .filter_map(|(address, attempt)| match attempt {
+                DialAttempt::Backoff { retry_at, .. } if !self.connecting.contains(address) => {
+                    Some(*retry_at)
+                }
+                _ => None,
             })
             .min()
     }
@@ -191,7 +193,11 @@ impl BluerBackend {
         self.attempts
             .iter()
             .find_map(|(address, attempt)| match attempt {
-                DialAttempt::Backoff { retry_at, .. } if *retry_at <= now => Some(*address),
+                DialAttempt::Backoff { retry_at, .. }
+                    if *retry_at <= now && !self.connecting.contains(address) =>
+                {
+                    Some(*address)
+                }
                 _ => None,
             })
     }
@@ -529,7 +535,6 @@ impl BleBackend for BluerBackend {
         if self.connecting.contains(&target) {
             return;
         }
-        self.attempts.remove(&target);
         self.connecting.insert(target);
         let adapter = self.adapter.clone();
         self.connects.push(Box::pin(async move {
