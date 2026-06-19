@@ -7,6 +7,7 @@
 //! throughput from the settlement counts, latency straight from the proofs (`rtt_ms`).
 //! Another implementation joins a pairing by speaking this same surface, nothing more.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
@@ -35,6 +36,7 @@ use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SI
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::ProofStrategy;
+use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
 use personal_rns::runtime::{
     Diagnostic, InstancePorts, LocalInstance, Message, OnExisting, PreConfiguredDestination, Prns,
     PrnsEvent, PrnsRecipe, Role, TokioPrnsHandle,
@@ -405,16 +407,22 @@ async fn scenario_main() {
         chain_node(&addr).await;
         return;
     }
-    // The single- and link-firehose endpoints ride the high-level runtime. Request, resource,
-    // and churn still hand-roll the reactor below: they need responder-side registration
-    // (request handlers, resource strategies) and the resource host command that the recipe and
-    // the command handle do not yet surface.
+    // The single- and link-firehose endpoints ride the high-level runtime. Request joins them on the
+    // shared-instance bus through `routes!` and the request/respond handle; resource and churn still
+    // hand-roll the reactor below for the node-to-node perf path, resource because the responder-side
+    // resource strategy is not yet a recipe knob.
     if matches!(
         manifest.profile.mechanism.as_str(),
         "single" | "link" | "channel"
     ) {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
         return;
+    }
+    if let Some(port) = shared_instance_port() {
+        if manifest.profile.mechanism == "request" {
+            run_request_bus_client(&manifest, &role, duration, port).await;
+            return;
+        }
     }
 
     let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
@@ -831,6 +839,123 @@ async fn join_bus(commands: &TokioPrnsHandle, port: u16) {
         matches!(role, Role::JoinedAsClient { .. }),
         "expected to join a running host as a client, got {role:?}"
     );
+}
+
+struct RequestServed(Arc<AtomicU64>);
+
+struct BenchRequestRoute;
+
+impl RequestRoute<RequestServed> for BenchRequestRoute {
+    const PATH: &'static str = REQUEST_PATH;
+    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    async fn handle(mut cx: RequestContext<'_, RequestServed>) -> Result<(), Decline> {
+        cx.state.0.fetch_add(1, Ordering::Relaxed);
+        cx.respond(b"pong")
+    }
+}
+
+async fn run_request_bus_client(manifest: &Manifest, role: &str, duration: Duration, port: u16) {
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let single = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+    };
+    if role == "responder" {
+        let served = Arc::new(AtomicU64::new(0));
+        let destination = single.destination_hash().expect("valid bench destination");
+        let node = Prns::new(PrnsRecipe {
+            transport: None,
+            pre_configured_destinations: [single],
+            app_state: RequestServed(Arc::clone(&served)),
+            storage: NodeStorage::default(),
+            routes: routes![BenchRequestRoute],
+            on_event: |_event, _state| {},
+            interfaces: interfaces![],
+        });
+        let commands = node.handle();
+        join_bus(&commands, port).await;
+        println!("READY role=responder addr=shared");
+        let announcer = commands.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(announce_every);
+            loop {
+                ticker.tick().await;
+                if announcer
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    break;
+                }
+            }
+        });
+        let report = async {
+            tokio::time::sleep(duration + DRAIN_GRACE).await;
+            let served = served.load(Ordering::Relaxed);
+            println!("RESULT served={served} response_bytes={}", served * 4);
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = report => {}
+        }
+    } else {
+        let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+        let node = build_bus_client_node(single, move |event, _state| {
+            if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) = event {
+                let _ = heard_tx.send(destination);
+            }
+        });
+        let commands = node.handle();
+        join_bus(&commands, port).await;
+        println!("READY role=initiator");
+        let firehose = async {
+            let destination = heard_rx.recv().await.expect("hears the responder");
+            let link_id = commands
+                .establish_link(destination)
+                .await
+                .expect("link establishes");
+            let path_hash = RequestPathHash::of(REQUEST_PATH);
+            let started = tokio::time::Instant::now();
+            let deadline = started + duration;
+            let mut sent = 0u64;
+            let mut delivered = 0u64;
+            let mut timeouts = 0u64;
+            let mut rtts: Vec<u64> = Vec::new();
+            while tokio::time::Instant::now() < deadline {
+                sent += 1;
+                match commands.request(link_id, path_hash, b"ping").await {
+                    Ok((_response, rtt)) => {
+                        delivered += 1;
+                        rtts.push(rtt.millis());
+                    }
+                    Err(_) => timeouts += 1,
+                }
+            }
+            let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
+            rtts.sort_unstable();
+            let per_sec = sent * 1000 / elapsed_ms;
+            println!(
+                "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+                 elapsed_ms={elapsed_ms} requests_per_sec={per_sec} \
+                 rtt_p50_ms={:.0} rtt_p99_ms={:.0} build={BUILD_PROFILE}",
+                percentile(&rtts, 0.50),
+                percentile(&rtts, 0.99),
+            );
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
+        }
+    }
 }
 
 /// Build the responder's node: its listening wires fold straight into the recipe (a relayed client,

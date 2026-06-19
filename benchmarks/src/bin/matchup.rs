@@ -87,7 +87,9 @@ impl Scenario {
     fn rides_high_level_runtime(self) -> bool {
         matches!(
             self,
-            Scenario::SingleFirehose | Scenario::LinkFirehoseSmallPayload
+            Scenario::SingleFirehose
+                | Scenario::LinkFirehoseSmallPayload
+                | Scenario::RequestResponse
         )
     }
 }
