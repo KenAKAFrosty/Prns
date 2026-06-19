@@ -188,33 +188,59 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleSetPsm(
     }
 }
 
+fn ble_rssi(value: jint) -> Option<i8> {
+    if value == 127 {
+        None
+    } else {
+        i8::try_from(value).ok()
+    }
+}
+
+fn ble_octets(env: &JNIEnv, buffer: &JByteBuffer) -> Option<[u8; 6]> {
+    let address = env.get_direct_buffer_address(buffer).ok()?;
+    let capacity = env.get_direct_buffer_capacity(buffer).ok()?;
+    if address.is_null() || capacity < 6 {
+        return None;
+    }
+    // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; we read
+    // exactly the 6 bytes whose presence the reported capacity just confirmed.
+    let bytes = unsafe { core::slice::from_raw_parts(address, 6) };
+    let mut octets = [0u8; 6];
+    octets.copy_from_slice(bytes);
+    Some(octets)
+}
+
 #[no_mangle]
-pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleCentralReady(
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleSighting(
     env: JNIEnv,
     _class: JClass,
     address: JByteBuffer,
+    rssi: jint,
 ) {
-    let Ok(addr) = env.get_direct_buffer_address(&address) else {
-        return;
-    };
-    let Ok(capacity) = env.get_direct_buffer_capacity(&address) else {
-        return;
-    };
-    if addr.is_null() || capacity < 6 {
-        return;
+    if let Some(octets) = ble_octets(&env, &address) {
+        ble_bridge().sighting(octets, ble_rssi(rssi));
     }
-    // SAFETY: `addr` points at the JVM-owned direct buffer, pinned for this call; we just
-    // checked its capacity holds at least the 6 address bytes we read, and we only read from it.
-    let bytes = unsafe { core::slice::from_raw_parts(addr, 6) };
-    let mut octets = [0u8; 6];
-    octets.copy_from_slice(bytes);
-    ble_bridge().central_ready(octets);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleLinkUp(
+    env: JNIEnv,
+    _class: JClass,
+    conn_id: jint,
+    address: JByteBuffer,
+    rssi: jint,
+    dialed: jboolean,
+) {
+    if let Some(octets) = ble_octets(&env, &address) {
+        ble_bridge().link_up(conn_id as u32, octets, ble_rssi(rssi), dialed != 0);
+    }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlIn(
     env: JNIEnv,
     _class: JClass,
+    conn_id: jint,
     buffer: JByteBuffer,
     len: jint,
 ) {
@@ -231,13 +257,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlIn
     // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; `n` is
     // clamped to the buffer's reported capacity and we only read from it.
     let bytes = unsafe { core::slice::from_raw_parts(address, n) };
-    ble_bridge().control_in(bytes);
+    ble_bridge().control_in(conn_id as u32, bytes);
 }
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlOut(
     env: JNIEnv,
     _class: JClass,
+    conn_id: jint,
     buffer: JByteBuffer,
 ) -> jint {
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
@@ -252,13 +279,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleControlOu
     // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
     // nothing else aliases it while we drain the outgoing control PDU into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
-    ble_bridge().control_out(out) as jint
+    ble_bridge().control_out(conn_id as u32, out) as jint
 }
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleL2capIn(
     env: JNIEnv,
     _class: JClass,
+    conn_id: jint,
     buffer: JByteBuffer,
     len: jint,
 ) {
@@ -275,13 +303,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleL2capIn(
     // SAFETY: `address` points at the JVM-owned direct buffer, pinned for this call; `n` is
     // clamped to the buffer's reported capacity and we only read from it.
     let bytes = unsafe { core::slice::from_raw_parts(address, n) };
-    ble_bridge().l2cap_in(bytes);
+    ble_bridge().l2cap_in(conn_id as u32, bytes);
 }
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleL2capOut(
     env: JNIEnv,
     _class: JClass,
+    conn_id: jint,
     buffer: JByteBuffer,
 ) -> jint {
     let Ok(address) = env.get_direct_buffer_address(&buffer) else {
@@ -296,21 +325,65 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleL2capOut(
     // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
     // nothing else aliases it while we drain outbound L2CAP bytes into it.
     let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
-    ble_bridge().l2cap_out(out) as jint
+    ble_bridge().l2cap_out(conn_id as u32, out) as jint
 }
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleL2capUp(
     _env: JNIEnv,
     _class: JClass,
+    conn_id: jint,
 ) {
-    ble_bridge().l2cap_up();
+    ble_bridge().l2cap_up(conn_id as u32);
 }
 
 #[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDisconnected(
     _env: JNIEnv,
     _class: JClass,
+    conn_id: jint,
 ) {
-    ble_bridge().disconnected();
+    ble_bridge().disconnected(conn_id as u32);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleNextDial(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+) -> jboolean {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return 0;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return 0;
+    };
+    if address.is_null() || capacity < 6 {
+        return 0;
+    }
+    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
+    // nothing else aliases it while we write the 6 dial-target bytes into it.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, 6) };
+    jboolean::from(ble_bridge().next_dial(out))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleNextL2capOpen(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+) -> jboolean {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return 0;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return 0;
+    };
+    if address.is_null() || capacity < 6 {
+        return 0;
+    }
+    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for this call;
+    // nothing else aliases it while we write the 4-byte conn id and 2-byte PSM into it.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, 6) };
+    jboolean::from(ble_bridge().next_l2cap_open(out))
 }

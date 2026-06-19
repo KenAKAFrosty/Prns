@@ -33,17 +33,23 @@ object NativeBridge {
 
     external fun nativeBleSetPsm(psm: Int)
 
-    external fun nativeBleCentralReady(address: ByteBuffer)
+    external fun nativeBleSighting(address: ByteBuffer, rssi: Int)
 
-    external fun nativeBleControlIn(buffer: ByteBuffer, len: Int)
+    external fun nativeBleLinkUp(connId: Int, address: ByteBuffer, rssi: Int, dialed: Boolean)
 
-    external fun nativeBleControlOut(buffer: ByteBuffer): Int
+    external fun nativeBleControlIn(connId: Int, buffer: ByteBuffer, len: Int)
 
-    external fun nativeBleL2capIn(buffer: ByteBuffer, len: Int)
+    external fun nativeBleControlOut(connId: Int, buffer: ByteBuffer): Int
 
-    external fun nativeBleL2capOut(buffer: ByteBuffer): Int
+    external fun nativeBleL2capIn(connId: Int, buffer: ByteBuffer, len: Int)
 
-    external fun nativeBleL2capUp()
+    external fun nativeBleL2capOut(connId: Int, buffer: ByteBuffer): Int
 
-    external fun nativeBleDisconnected()
+    external fun nativeBleL2capUp(connId: Int)
+
+    external fun nativeBleDisconnected(connId: Int)
+
+    external fun nativeBleNextDial(buffer: ByteBuffer): Boolean
+
+    external fun nativeBleNextL2capOpen(buffer: ByteBuffer): Boolean
 }

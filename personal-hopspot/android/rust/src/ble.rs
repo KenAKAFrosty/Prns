@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +10,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
     CONTROL_MAX_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource,
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
@@ -22,23 +22,45 @@ pub enum AndroidBleError {
     FrameTooLarge,
 }
 
-struct LinkSlot {
+struct LinkSignal {
+    is_up: AtomicBool,
+    notify: Notify,
+}
+
+struct Endpoints {
+    control_in_tx: UnboundedSender<Vec<u8>>,
+    l2cap_in_tx: UnboundedSender<Vec<u8>>,
+    control_out: Arc<Mutex<VecDeque<u8>>>,
+    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
+    l2cap_up: Arc<LinkSignal>,
+}
+
+struct PendingLink {
+    conn_id: u32,
     address: BleAddress,
+    rssi: Option<i8>,
+    dialed: bool,
     control_in: UnboundedReceiver<Vec<u8>>,
     l2cap_in: UnboundedReceiver<Vec<u8>>,
+    control_out: Arc<Mutex<VecDeque<u8>>>,
+    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
+    l2cap_up: Arc<LinkSignal>,
+    l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
+}
+
+enum Event {
+    Sighting { address: BleAddress, rssi: Option<i8> },
+    Link(PendingLink),
 }
 
 struct Shared {
     psm: Mutex<Option<u16>>,
     psm_ready: Notify,
-    control_in_tx: Mutex<Option<UnboundedSender<Vec<u8>>>>,
-    l2cap_in_tx: Mutex<Option<UnboundedSender<Vec<u8>>>>,
-    control_out: Mutex<VecDeque<u8>>,
-    l2cap_out: Mutex<VecDeque<u8>>,
-    l2cap_is_up: AtomicBool,
-    l2cap_up: Notify,
-    pending: Mutex<Option<LinkSlot>>,
-    inbound_ready: Notify,
+    links: Mutex<HashMap<u32, Endpoints>>,
+    events: Mutex<VecDeque<Event>>,
+    events_ready: Notify,
+    dial_requests: Mutex<VecDeque<[u8; 6]>>,
+    l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
 }
 
 pub struct AndroidBleBridge {
@@ -60,14 +82,11 @@ impl AndroidBleBridge {
             shared: Arc::new(Shared {
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
-                control_in_tx: Mutex::new(None),
-                l2cap_in_tx: Mutex::new(None),
-                control_out: Mutex::new(VecDeque::new()),
-                l2cap_out: Mutex::new(VecDeque::new()),
-                l2cap_is_up: AtomicBool::new(false),
-                l2cap_up: Notify::new(),
-                pending: Mutex::new(None),
-                inbound_ready: Notify::new(),
+                links: Mutex::new(HashMap::new()),
+                events: Mutex::new(VecDeque::new()),
+                events_ready: Notify::new(),
+                dial_requests: Mutex::new(VecDeque::new()),
+                l2cap_opens: Arc::new(Mutex::new(VecDeque::new())),
             }),
         }
     }
@@ -90,68 +109,157 @@ impl AndroidBleBridge {
         }
     }
 
-    pub fn central_ready(&self, address: [u8; 6]) {
-        let (control_tx, control_rx) = unbounded_channel::<Vec<u8>>();
-        let (l2cap_tx, l2cap_rx) = unbounded_channel::<Vec<u8>>();
-        if let Ok(mut tx) = self.shared.control_in_tx.lock() {
-            *tx = Some(control_tx);
-        }
-        if let Ok(mut tx) = self.shared.l2cap_in_tx.lock() {
-            *tx = Some(l2cap_tx);
-        }
-        if let Ok(mut out) = self.shared.control_out.lock() {
-            out.clear();
-        }
-        if let Ok(mut out) = self.shared.l2cap_out.lock() {
-            out.clear();
-        }
-        self.shared.l2cap_is_up.store(false, Ordering::Release);
-        if let Ok(mut pending) = self.shared.pending.lock() {
-            *pending = Some(LinkSlot {
+    pub fn sighting(&self, address: [u8; 6], rssi: Option<i8>) {
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.push_back(Event::Sighting {
                 address: BleAddress::new(address),
-                control_in: control_rx,
-                l2cap_in: l2cap_rx,
+                rssi,
             });
         }
-        self.shared.inbound_ready.notify_one();
+        self.shared.events_ready.notify_one();
     }
 
-    pub fn control_in(&self, bytes: &[u8]) {
-        if let Ok(tx) = self.shared.control_in_tx.lock() {
-            if let Some(tx) = tx.as_ref() {
-                let _ = tx.send(bytes.to_vec());
+    pub fn link_up(&self, conn_id: u32, address: [u8; 6], rssi: Option<i8>, dialed: bool) {
+        let (control_tx, control_rx) = unbounded_channel::<Vec<u8>>();
+        let (l2cap_tx, l2cap_rx) = unbounded_channel::<Vec<u8>>();
+        let control_out = Arc::new(Mutex::new(VecDeque::new()));
+        let l2cap_out = Arc::new(Mutex::new(VecDeque::new()));
+        let l2cap_up = Arc::new(LinkSignal {
+            is_up: AtomicBool::new(false),
+            notify: Notify::new(),
+        });
+        if let Ok(mut links) = self.shared.links.lock() {
+            links.insert(
+                conn_id,
+                Endpoints {
+                    control_in_tx: control_tx,
+                    l2cap_in_tx: l2cap_tx,
+                    control_out: Arc::clone(&control_out),
+                    l2cap_out: Arc::clone(&l2cap_out),
+                    l2cap_up: Arc::clone(&l2cap_up),
+                },
+            );
+        }
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.push_back(Event::Link(PendingLink {
+                conn_id,
+                address: BleAddress::new(address),
+                rssi,
+                dialed,
+                control_in: control_rx,
+                l2cap_in: l2cap_rx,
+                control_out,
+                l2cap_out,
+                l2cap_up,
+                l2cap_opens: Arc::clone(&self.shared.l2cap_opens),
+            }));
+        }
+        self.shared.events_ready.notify_one();
+    }
+
+    pub fn control_in(&self, conn_id: u32, bytes: &[u8]) {
+        if let Ok(links) = self.shared.links.lock() {
+            if let Some(ep) = links.get(&conn_id) {
+                let _ = ep.control_in_tx.send(bytes.to_vec());
             }
         }
     }
 
-    pub fn control_out(&self, out: &mut [u8]) -> usize {
-        drain(&self.shared.control_out, out)
+    pub fn control_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
+        match self.out_queue(conn_id, |ep| Arc::clone(&ep.control_out)) {
+            Some(queue) => drain(&queue, out),
+            None => 0,
+        }
     }
 
-    pub fn l2cap_in(&self, bytes: &[u8]) {
-        if let Ok(tx) = self.shared.l2cap_in_tx.lock() {
-            if let Some(tx) = tx.as_ref() {
-                let _ = tx.send(bytes.to_vec());
+    pub fn l2cap_in(&self, conn_id: u32, bytes: &[u8]) {
+        if let Ok(links) = self.shared.links.lock() {
+            if let Some(ep) = links.get(&conn_id) {
+                let _ = ep.l2cap_in_tx.send(bytes.to_vec());
             }
         }
     }
 
-    pub fn l2cap_out(&self, out: &mut [u8]) -> usize {
-        drain(&self.shared.l2cap_out, out)
+    pub fn l2cap_out(&self, conn_id: u32, out: &mut [u8]) -> usize {
+        match self.out_queue(conn_id, |ep| Arc::clone(&ep.l2cap_out)) {
+            Some(queue) => drain(&queue, out),
+            None => 0,
+        }
     }
 
-    pub fn l2cap_up(&self) {
-        self.shared.l2cap_is_up.store(true, Ordering::Release);
-        self.shared.l2cap_up.notify_one();
+    pub fn l2cap_up(&self, conn_id: u32) {
+        let signal = self.out_signal(conn_id);
+        if let Some(signal) = signal {
+            signal.is_up.store(true, Ordering::Release);
+            signal.notify.notify_one();
+        }
     }
 
-    pub fn disconnected(&self) {
-        if let Ok(mut tx) = self.shared.control_in_tx.lock() {
-            *tx = None;
+    pub fn disconnected(&self, conn_id: u32) {
+        if let Ok(mut links) = self.shared.links.lock() {
+            links.remove(&conn_id);
         }
-        if let Ok(mut tx) = self.shared.l2cap_in_tx.lock() {
-            *tx = None;
+    }
+
+    pub fn push_dial(&self, address: [u8; 6]) {
+        if let Ok(mut requests) = self.shared.dial_requests.lock() {
+            requests.push_back(address);
         }
+    }
+
+    pub fn next_dial(&self, out: &mut [u8]) -> bool {
+        if out.len() < 6 {
+            return false;
+        }
+        let address = match self.shared.dial_requests.lock() {
+            Ok(mut requests) => requests.pop_front(),
+            Err(_) => None,
+        };
+        match address {
+            Some(address) => {
+                out[..6].copy_from_slice(&address);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn next_l2cap_open(&self, out: &mut [u8]) -> bool {
+        if out.len() < 6 {
+            return false;
+        }
+        let request = match self.shared.l2cap_opens.lock() {
+            Ok(mut requests) => requests.pop_front(),
+            Err(_) => None,
+        };
+        match request {
+            Some((conn_id, psm)) => {
+                out[..4].copy_from_slice(&conn_id.to_be_bytes());
+                out[4..6].copy_from_slice(&psm.to_be_bytes());
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn out_queue(
+        &self,
+        conn_id: u32,
+        pick: impl Fn(&Endpoints) -> Arc<Mutex<VecDeque<u8>>>,
+    ) -> Option<Arc<Mutex<VecDeque<u8>>>> {
+        self.shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| links.get(&conn_id).map(pick))
+    }
+
+    fn out_signal(&self, conn_id: u32) -> Option<Arc<LinkSignal>> {
+        self.shared
+            .links
+            .lock()
+            .ok()
+            .and_then(|links| links.get(&conn_id).map(|ep| Arc::clone(&ep.l2cap_up)))
     }
 }
 
@@ -198,33 +306,60 @@ impl BleBackend for AndroidBleBackend {
 
     async fn next_event(&mut self) -> BleEvent<AndroidBleLink> {
         loop {
-            let slot = self
+            let event = self
                 .bridge
                 .shared
-                .pending
+                .events
                 .lock()
                 .ok()
-                .and_then(|mut pending| pending.take());
-            if let Some(slot) = slot {
-                return BleEvent::Inbound(AndroidBleLink {
-                    address: slot.address,
-                    control_in: slot.control_in,
-                    l2cap_in: Some(slot.l2cap_in),
-                    shared: Arc::clone(&self.bridge.shared),
-                });
+                .and_then(|mut events| events.pop_front());
+            match event {
+                Some(Event::Sighting { address, rssi }) => {
+                    return BleEvent::Sighting { address, rssi };
+                }
+                Some(Event::Link(pending)) => {
+                    let dialed = pending.dialed;
+                    let peer_rssi = pending.rssi;
+                    let link = AndroidBleLink {
+                        conn_id: pending.conn_id,
+                        dialed,
+                        address: pending.address,
+                        control_in: pending.control_in,
+                        l2cap_in: Some(pending.l2cap_in),
+                        control_out: pending.control_out,
+                        l2cap_out: pending.l2cap_out,
+                        l2cap_up: pending.l2cap_up,
+                        l2cap_opens: pending.l2cap_opens,
+                    };
+                    if dialed {
+                        return BleEvent::LinkReady {
+                            link,
+                            origin: Origin::Dialed,
+                            peer_rssi,
+                        };
+                    }
+                    return BleEvent::Inbound(link);
+                }
+                None => self.bridge.shared.events_ready.notified().await,
             }
-            self.bridge.shared.inbound_ready.notified().await;
         }
     }
 
-    async fn dial(&mut self, _address: BleAddress) {}
+    async fn dial(&mut self, address: BleAddress) {
+        self.bridge.push_dial(*address.octets());
+    }
 }
 
 pub struct AndroidBleLink {
+    conn_id: u32,
+    dialed: bool,
     address: BleAddress,
     control_in: UnboundedReceiver<Vec<u8>>,
     l2cap_in: Option<UnboundedReceiver<Vec<u8>>>,
-    shared: Arc<Shared>,
+    control_out: Arc<Mutex<VecDeque<u8>>>,
+    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
+    l2cap_up: Arc<LinkSignal>,
+    l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
 }
 
 impl BleLink for AndroidBleLink {
@@ -243,7 +378,7 @@ impl BleLink for AndroidBleLink {
     async fn control_send(&mut self, msg: &Control) -> Result<(), AndroidBleError> {
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = msg.encode(&mut buf).ok_or(AndroidBleError::ControlTooLarge)?;
-        if let Ok(mut out) = self.shared.control_out.lock() {
+        if let Ok(mut out) = self.control_out.lock() {
             out.extend(buf[..len].iter().copied());
         }
         Ok(())
@@ -264,9 +399,14 @@ impl BleLink for AndroidBleLink {
 
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), AndroidBleError> {
         match transport {
-            Transport::L2cap { .. } => {
-                while !self.shared.l2cap_is_up.load(Ordering::Acquire) {
-                    self.shared.l2cap_up.notified().await;
+            Transport::L2cap { psm } => {
+                if self.dialed {
+                    if let Ok(mut opens) = self.l2cap_opens.lock() {
+                        opens.push_back((self.conn_id, psm.get()));
+                    }
+                }
+                while !self.l2cap_up.is_up.load(Ordering::Acquire) {
+                    self.l2cap_up.notify.notified().await;
                 }
                 Ok(())
             }
@@ -281,7 +421,7 @@ impl BleLink for AndroidBleLink {
                 deframer: StreamDeframer::new(),
             },
             AndroidBleSink {
-                shared: self.shared,
+                l2cap_out: self.l2cap_out,
             },
         )
     }
@@ -312,7 +452,7 @@ impl BleSource for AndroidBleSource {
 }
 
 pub struct AndroidBleSink {
-    shared: Arc<Shared>,
+    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
 }
 
 impl BleSink for AndroidBleSink {
@@ -321,7 +461,7 @@ impl BleSink for AndroidBleSink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), AndroidBleError> {
         let mut framed = [0u8; L2CAP_SDU_LEN];
         let len = encode_stream_frame(frame, &mut framed).ok_or(AndroidBleError::FrameTooLarge)?;
-        if let Ok(mut out) = self.shared.l2cap_out.lock() {
+        if let Ok(mut out) = self.l2cap_out.lock() {
             out.extend(framed[..len].iter().copied());
         }
         Ok(())
