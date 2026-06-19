@@ -750,6 +750,63 @@ mod tests {
     }
 
     #[test]
+    fn links_via_counts_only_active_links_attached_to_that_interface() {
+        let mut links = TestLinks::default();
+
+        links.track_initiated(initiated(1, 5_000)).unwrap();
+        links
+            .activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                Rtt(250),
+                500,
+                iface(0xAA),
+                InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
+            )
+            .unwrap();
+
+        links.track_responding(responding(2, 5_000)).unwrap();
+        links
+            .activate_responding(&link_id(2), Rtt(120), iface(0xAA), InstantMillis(2_000))
+            .unwrap();
+
+        links.track_initiated(initiated(3, 5_000)).unwrap();
+        links
+            .activate_initiated(
+                &link_id(3),
+                key(3, 9),
+                Rtt(250),
+                500,
+                iface(0xBB),
+                InstantMillis(2_000),
+                Ed25519PublicKey([0x99; 32]),
+            )
+            .unwrap();
+
+        links.track_initiated(initiated(4, 5_000)).unwrap();
+
+        assert_eq!(
+            links.links_via(iface(0xAA)),
+            2,
+            "both an initiator and a responder link attach here; the still-pending one is not live",
+        );
+        assert_eq!(links.links_via(iface(0xBB)), 1);
+        assert_eq!(
+            links.links_via(iface(0xCC)),
+            0,
+            "an interface holding no live link reads zero",
+        );
+
+        assert!(links.remove(&link_id(1)));
+        assert_eq!(
+            links.links_via(iface(0xAA)),
+            1,
+            "tearing a live link down drops its interface's count",
+        );
+    }
+
+    #[test]
     fn activation_demands_the_matching_phase() {
         let mut links = TestLinks::default();
         assert_eq!(
