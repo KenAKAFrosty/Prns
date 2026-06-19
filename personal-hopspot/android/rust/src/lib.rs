@@ -90,6 +90,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
     match face.post_input(event) {
         UiAction::Announce => ACTION_ANNOUNCE,
         UiAction::None => ACTION_NONE,
+        UiAction::ToggleSelectedInterface => ACTION_NONE,
     }
 }
 

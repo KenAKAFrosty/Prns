@@ -2,6 +2,7 @@ use heapless::Vec as HVec;
 use personal_hopspot_ui::{
     draw_with_state, splash, statuses_to_cards, BatteryState, Card, InputEvent, UiAction, UiState,
 };
+use personal_rns::engine::InterfaceCounts;
 use personal_rns::interfaces::InterfaceStatus;
 
 use crate::engine::{classify, ensure_started, usb_status, wifi_status};
@@ -48,7 +49,11 @@ impl HopspotFace {
             statuses.push(member);
         }
         let wifi_id = wifi.id();
-        statuses_to_cards(&statuses, |id| classify(id, wifi_id))
+        statuses_to_cards(
+            &statuses,
+            |id| classify(id, wifi_id),
+            |_id| InterfaceCounts::default(),
+        )
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {

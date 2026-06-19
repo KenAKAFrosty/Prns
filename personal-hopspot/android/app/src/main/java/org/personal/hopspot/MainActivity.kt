@@ -1,10 +1,13 @@
 package org.personal.hopspot
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -15,6 +18,7 @@ class MainActivity : Activity() {
     private var handle: Long = 0L
     private var usbLink: UsbLink? = null
     private var wifiAutoLink: WifiAutoLink? = null
+    private var bleLink: BleLink? = null
     private var hopspotView: HopspotView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -22,6 +26,8 @@ class MainActivity : Activity() {
         handle = NativeBridge.nativeInit()
         wifiAutoLink = WifiAutoLink(this).also { it.start() }
         usbLink = UsbLink(this).also { it.start() }
+        bleLink = BleLink(this)
+        ensureBlePermissionsThenStart()
         hopspotView = HopspotView(this, handle).also { setContentView(it) }
     }
 
@@ -31,12 +37,56 @@ class MainActivity : Activity() {
         hopspotView = null
         usbLink?.stop()
         usbLink = null
+        bleLink?.stop()
+        bleLink = null
         wifiAutoLink?.stop()
         wifiAutoLink = null
         if (handle != 0L) {
             NativeBridge.nativeFree(handle)
             handle = 0L
         }
+    }
+
+    private fun ensureBlePermissionsThenStart() {
+        val needed = blePermissions().filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isEmpty()) {
+            bleLink?.start()
+        } else {
+            requestPermissions(needed.toTypedArray(), BLE_PERMISSION_REQUEST)
+        }
+    }
+
+    private fun blePermissions(): List<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != BLE_PERMISSION_REQUEST) {
+            return
+        }
+        val granted = grantResults.isNotEmpty() &&
+            grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        if (granted) {
+            bleLink?.start()
+        }
+    }
+
+    private companion object {
+        private const val BLE_PERMISSION_REQUEST = 1
     }
 }
 
