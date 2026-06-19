@@ -9,9 +9,9 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 
 use crate::engine::{
-    CommandId, Directive, EngineCommand, EngineReaction, EngineState, FanTarget, InstantMillis,
-    IssuedCommand, Journaled, ProofRequest, Respond, RespondData, SendRequest, SendRequestData,
-    SendRequestFailure, Settlement, WakeSchedules,
+    CommandId, Directive, DueLane, EngineCommand, EngineReaction, EngineState, FanTarget,
+    InstantMillis, IssuedCommand, Journaled, ProofRequest, Respond, RespondData, ScheduledWake,
+    SendRequest, SendRequestData, SendRequestFailure, Settlement, WakeSchedules,
 };
 use crate::interfaces::ifac::InterfaceIfac;
 use crate::interfaces::{
@@ -20,7 +20,7 @@ use crate::interfaces::{
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
-    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
+    draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_pacer,
 };
 use crate::reactor::interface_seam::{
     frame_cap_for, InterfaceSeam, BROADCAST_WIRE_FRAME_LEN, MAX_WIRE_FRAME_LEN,
@@ -920,9 +920,28 @@ pub async fn run_with_proof_decider<S, H, J, P>(
             }
         };
     }
+    let timer_base = Instant::now();
+    let wall_base = host.now();
+    let due_timer = tokio::time::sleep_until(timer_base);
+    tokio::pin!(due_timer);
+    let mut armed: Option<(InstantMillis, DueLane)> = None;
     loop {
-        let wake = wake_schedules.soonest(host.now());
         let pacer_wake = soonest_pacer_release(&pacers);
+        match wake_schedules.soonest(host.now()) {
+            ScheduledWake::Idle => armed = None,
+            ScheduledWake::Due(lane) => {
+                due_timer.as_mut().reset(Instant::now());
+                armed = Some((InstantMillis(0), lane));
+            }
+            ScheduledWake::At { at, lane } => {
+                if armed.map(|(deadline, _)| deadline) != Some(at) {
+                    due_timer.as_mut().reset(
+                        timer_base + Duration::from_millis(at.0.saturating_sub(wall_base.0)),
+                    );
+                }
+                armed = Some((at, lane));
+            }
+        }
         tokio::select! {
             arrived = notify.recv() => {
                 let Some(source) = arrived else { return };
@@ -1187,17 +1206,19 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                 };
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
             }
-            lane = wait_for_due_lane(&host, wake) => {
-                let now = host.now();
-                let wake_schedules_delta = fire_due_lane(
-                    &mut engine,
-                    lane,
-                    now,
-                    &interfaces,
-                    &mut |bytes| host.fill_entropy(bytes),
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                );
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+            () = &mut due_timer, if armed.is_some() => {
+                if let Some((_, lane)) = armed.take() {
+                    let now = host.now();
+                    let wake_schedules_delta = fire_due_lane(
+                        &mut engine,
+                        lane,
+                        now,
+                        &interfaces,
+                        &mut |bytes| host.fill_entropy(bytes),
+                        &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                    );
+                    merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                }
             }
             _ = wait_for_pacer(&host, pacer_wake) => {
                 let now = host.now();
