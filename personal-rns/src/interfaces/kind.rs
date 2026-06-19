@@ -26,6 +26,8 @@ pub enum InterfaceKind {
     LocalServer = 9,
     LocalClient = 10,
     TcpServerPeer = 11,
+    BluetoothAuto = 12,
+    BluetoothPeer = 13,
 }
 
 impl InterfaceKind {
@@ -47,6 +49,8 @@ impl InterfaceKind {
             9 => Some(Self::LocalServer),
             10 => Some(Self::LocalClient),
             11 => Some(Self::TcpServerPeer),
+            12 => Some(Self::BluetoothAuto),
+            13 => Some(Self::BluetoothPeer),
             _ => None,
         }
     }
@@ -61,6 +65,7 @@ impl InterfaceKind {
             Self::AutoWifi => Some(Self::WifiPeer),
             Self::LocalServer => Some(Self::LocalClient),
             Self::TcpServer => Some(Self::TcpServerPeer),
+            Self::BluetoothAuto => Some(Self::BluetoothPeer),
             _ => None,
         }
     }
@@ -76,6 +81,7 @@ impl InterfaceKind {
             Self::WifiPeer => Some(Self::AutoWifi),
             Self::LocalClient => Some(Self::LocalServer),
             Self::TcpServerPeer => Some(Self::TcpServer),
+            Self::BluetoothPeer => Some(Self::BluetoothAuto),
             _ => None,
         }
     }
@@ -99,5 +105,25 @@ mod tests {
             Some(InterfaceKind::LocalClient)
         );
         assert_eq!(InterfaceKind::LocalClient.member_kind(), None);
+    }
+
+    #[test]
+    fn bluetooth_auto_supervises_bluetooth_peers() {
+        assert_eq!(
+            InterfaceKind::from_u8(12),
+            Some(InterfaceKind::BluetoothAuto)
+        );
+        assert_eq!(
+            InterfaceKind::from_u8(13),
+            Some(InterfaceKind::BluetoothPeer)
+        );
+        assert_eq!(
+            InterfaceKind::BluetoothAuto.member_kind(),
+            Some(InterfaceKind::BluetoothPeer)
+        );
+        assert_eq!(
+            InterfaceKind::BluetoothPeer.supervisor_kind(),
+            Some(InterfaceKind::BluetoothAuto)
+        );
     }
 }

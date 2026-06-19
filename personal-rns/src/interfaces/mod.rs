@@ -13,6 +13,8 @@ pub mod impls;
 mod packet;
 mod status;
 
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod bluetooth_auto;
 #[cfg(feature = "tokio-host")]
 pub mod framed_stream;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
