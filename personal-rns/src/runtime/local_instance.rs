@@ -162,7 +162,10 @@ impl TokioPrnsHandle {
 /// link), `None` if nothing answers within [`PROBE_TIMEOUT`].
 async fn probe_tcp(addr: &str) -> Option<TcpStream> {
     match tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(addr)).await {
-        Ok(Ok(stream)) => Some(stream),
+        Ok(Ok(stream)) => {
+            let _ = stream.set_nodelay(true);
+            Some(stream)
+        }
         _ => None,
     }
 }
