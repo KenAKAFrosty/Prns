@@ -130,13 +130,18 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
 }
 
 enum PeerState {
-    Dialing,
+    Dialing {
+        since: Instant,
+    },
     Handshaking,
     Settled {
         identity: BleIdentity,
         member: AttachedInterface,
         since: Instant,
         link_rssi: Option<i8>,
+    },
+    Suppressed {
+        since: Instant,
     },
 }
 
@@ -200,8 +205,19 @@ where
             };
             match step {
                 Step::Event(BleEvent::Sighting { address, .. }) => {
-                    if !matches!(peers.get(&address), Some(PeerState::Settled { .. })) {
-                        peers.insert(address, PeerState::Dialing);
+                    let dialable = match peers.get(&address) {
+                        None => true,
+                        Some(PeerState::Dialing { since }) => since.elapsed() >= DIAL_RETRY_TTL,
+                        Some(PeerState::Suppressed { since }) => since.elapsed() >= SUPPRESS_TTL,
+                        Some(PeerState::Handshaking | PeerState::Settled { .. }) => false,
+                    };
+                    if dialable {
+                        peers.insert(
+                            address,
+                            PeerState::Dialing {
+                                since: Instant::now(),
+                            },
+                        );
                         backend.dial(address).await;
                     }
                 }
@@ -257,6 +273,8 @@ impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {}
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const STABLE_LINK_UPTIME: Duration = Duration::from_secs(15);
+const SUPPRESS_TTL: Duration = Duration::from_secs(8);
+const DIAL_RETRY_TTL: Duration = Duration::from_secs(16);
 
 fn link_quality(mine: Option<i8>, theirs: Option<i8>) -> Option<i8> {
     match (mine, theirs) {
@@ -363,7 +381,12 @@ async fn resolve<B>(
             && challenger_supersedes(incumbent_rssi, link_rssi, &local.identity, &identity, role);
         if !challenger_wins {
             if address != incumbent_addr {
-                peers.remove(&address);
+                peers.insert(
+                    address,
+                    PeerState::Suppressed {
+                        since: Instant::now(),
+                    },
+                );
             }
             return;
         }
