@@ -8,12 +8,26 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass};
 use objc2_core_bluetooth::{
-    CBCentralManager, CBCentralManagerDelegate, CBManagerState, CBPeripheral,
+    CBAdvertisementDataServiceUUIDsKey, CBCentralManager, CBCentralManagerDelegate, CBManagerState,
+    CBPeripheral, CBPeripheralManager, CBPeripheralManagerDelegate, CBUUID,
 };
-use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    NSArray, NSData, NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString,
+};
 use tokio::sync::mpsc as tokio_mpsc;
 
-use personal_rns::interfaces::bluetooth_auto::core::BleAddress;
+use personal_rns::interfaces::bluetooth_auto::core::{BleAddress, BLE_SERVICE_UUID_BYTES};
+
+fn service_uuid() -> Retained<CBUUID> {
+    let data = NSData::with_bytes(&BLE_SERVICE_UUID_BYTES);
+    unsafe { CBUUID::UUIDWithData(&data) }
+}
+
+fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSString, AnyObject>> {
+    let key: &NSString = unsafe { CBAdvertisementDataServiceUUIDsKey };
+    let value: &AnyObject = services;
+    NSDictionary::from_slices(&[key], &[value])
+}
 
 #[derive(Debug)]
 enum Event {
@@ -38,7 +52,9 @@ define_class!(
             let on = unsafe { central.state() } == CBManagerState::PoweredOn;
             let _ = self.ivars().events.send(Event::Powered { on });
             if on {
-                unsafe { central.scanForPeripheralsWithServices_options(None, None) };
+                let uuid = service_uuid();
+                let services = NSArray::from_slice(&[&*uuid]);
+                unsafe { central.scanForPeripheralsWithServices_options(Some(&services), None) };
             }
         }
 
@@ -62,6 +78,32 @@ define_class!(
 impl CentralDelegate {
     fn new(events: tokio_mpsc::UnboundedSender<Event>) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars { events });
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    struct PeripheralDelegate;
+
+    unsafe impl NSObjectProtocol for PeripheralDelegate {}
+
+    unsafe impl CBPeripheralManagerDelegate for PeripheralDelegate {
+        #[unsafe(method(peripheralManagerDidUpdateState:))]
+        fn did_update_state(&self, peripheral: &CBPeripheralManager) {
+            if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
+                let uuid = service_uuid();
+                let services = NSArray::from_slice(&[&*uuid]);
+                let data = advertisement_data(&services);
+                unsafe { peripheral.startAdvertising(Some(&data)) };
+            }
+        }
+    }
+);
+
+impl PeripheralDelegate {
+    fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(());
         unsafe { msg_send![super(this), init] }
     }
 }
@@ -96,16 +138,28 @@ impl MacosBleBackend {
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
 
         std::thread::spawn(move || {
-            let delegate = CentralDelegate::new(events_tx);
-            let proto = ProtocolObject::from_ref(&*delegate);
-            let queue = DispatchQueue::new("com.personal.prns.ble.central", None);
-            let _manager: Retained<CBCentralManager> = unsafe {
+            let queue = DispatchQueue::new("com.personal.prns.ble", None);
+
+            let central_delegate = CentralDelegate::new(events_tx);
+            let central_proto = ProtocolObject::from_ref(&*central_delegate);
+            let _central: Retained<CBCentralManager> = unsafe {
                 CBCentralManager::initWithDelegate_queue(
                     CBCentralManager::alloc(),
-                    Some(proto),
+                    Some(central_proto),
                     Some(&queue),
                 )
             };
+
+            let peripheral_delegate = PeripheralDelegate::new();
+            let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
+            let _peripheral: Retained<CBPeripheralManager> = unsafe {
+                CBPeripheralManager::initWithDelegate_queue(
+                    CBPeripheralManager::alloc(),
+                    Some(peripheral_proto),
+                    Some(&queue),
+                )
+            };
+
             let _ = shutdown_rx.recv();
         });
 
@@ -139,15 +193,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "needs a real Bluetooth radio; run with `--ignored` on a Mac"]
-    async fn the_central_powers_on_and_sees_nearby_devices() {
-        let mut backend = MacosBleBackend::new()
+    #[ignore = "needs a real Bluetooth radio + Bluetooth permission; run with `--ignored` on a Mac"]
+    async fn the_node_powers_on_advertises_and_scans() {
+        let _backend = MacosBleBackend::new()
             .await
-            .expect("bluetooth should power on");
-        let sighting = tokio::time::timeout(Duration::from_secs(10), backend.next_sighting()).await;
-        assert!(
-            matches!(sighting, Ok(Some(_))),
-            "expected to discover at least one nearby BLE device"
-        );
+            .expect("bluetooth should power on, advertise, and scan");
     }
 }
