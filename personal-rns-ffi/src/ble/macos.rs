@@ -801,6 +801,22 @@ impl BleLink for GattLink {
                 peripheral,
                 characteristic,
             } => {
+                let max = unsafe {
+                    peripheral
+                        .0
+                        .maximumWriteValueLengthForType(CBCharacteristicWriteType::WithResponse)
+                };
+                if max < len {
+                    log::warn!(
+                        "bluetooth: {:02x?} control write {len}B exceeds max single write {max}B (negotiated ATT MTU is small) — CoreBluetooth will use a long/prepared write; the peer GATT server must reassemble it",
+                        self.address.octets()
+                    );
+                } else {
+                    log::debug!(
+                        "bluetooth: {:02x?} control write {len}B fits one ATT packet (max {max}B)",
+                        self.address.octets()
+                    );
+                }
                 unsafe {
                     peripheral.0.writeValue_forCharacteristic_type(
                         &data,
