@@ -356,7 +356,10 @@ fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, LinkCapabilities, Option
     let capabilities = LinkCapabilities::decode(
         body.get(CONTROL_IDENTITY_LEN..CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)?,
     )?;
-    let peer_rssi = decode_rssi(*body.get(CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)?);
+    let peer_rssi = body
+        .get(CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)
+        .copied()
+        .and_then(decode_rssi);
     Some((BleIdentity::new(identity_bytes), capabilities, peer_rssi))
 }
 
@@ -841,6 +844,26 @@ mod tests {
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = hello.encode(&mut buf).unwrap();
         assert_eq!(Control::decode(&buf[..len]), Some(hello));
+    }
+
+    #[test]
+    fn a_legacy_greeting_without_the_rssi_byte_still_decodes() {
+        let hello = Control::Hello {
+            identity: identity(7),
+            capabilities: caps(Some(0x0081)),
+            peer_rssi: Some(-63),
+        };
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = hello.encode(&mut buf).unwrap();
+        let legacy = Control::decode(&buf[..len - 1]).unwrap();
+        assert_eq!(
+            legacy,
+            Control::Hello {
+                identity: identity(7),
+                capabilities: caps(Some(0x0081)),
+                peer_rssi: None,
+            }
+        );
     }
 
     #[test]
