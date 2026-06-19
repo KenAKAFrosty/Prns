@@ -707,10 +707,12 @@ define_class!(
             _characteristic: &CBCharacteristic,
         ) {
             let identifier = unsafe { central.identifier() };
-            log::warn!(
-                "bluetooth: central {:02x?} unsubscribed — GATT link dropped before/after handshake",
+            log::debug!(
+                "bluetooth: central {:02x?} unsubscribed — clearing listener slot so the next central can re-accept",
                 uuid_token(&identifier)
             );
+            self.ivars().active.borrow_mut().take();
+            self.ivars().pending_channel.borrow_mut().take();
         }
 
         #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
