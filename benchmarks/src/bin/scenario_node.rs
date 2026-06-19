@@ -16,18 +16,18 @@ use personal_rns::engine::{
     SendSingle, SendSinglePayload, Settlement,
 };
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
-use personal_rns::interfaces::rns_parity::tcp::impls::tokio::{
-    TcpClientInterface, TcpServerInterface,
-};
+use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServerConnection;
+use personal_rns::interfaces::rns_parity::tcp::tokio_socket::tune;
 use personal_rns::interfaces::rns_parity::udp::core as udp_core;
 use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
-use personal_rns::interfaces::InterfaceId;
+use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
     run, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, SendResourceHostCommand,
     SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
-use personal_rns::reactor::interface_seam::{Interface, MAX_WIRE_FRAME_LEN};
+use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
 use personal_rns::routing::links::request::RequestId;
@@ -49,6 +49,71 @@ use tokio::sync::{mpsc, oneshot};
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 8]);
 const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 8]);
+
+/// The optimization profile this binary was built under, tagged onto every measuring `RESULT` line
+/// so a perf consumer can refuse a debug build: unoptimized crypto runs ~10x slower, so a debug
+/// run's throughput and latency are meaningless while its conformance counts stay valid.
+const BUILD_PROFILE: &str = if cfg!(debug_assertions) {
+    "debug"
+} else {
+    "release"
+};
+
+/// A point-to-point TCP listener with a fixed interface id, the shape the benchmark's nodes wire
+/// their seams and lanes to. It binds a port, accepts one client, and serves that connection as a
+/// single engine interface (the reference's per-connection TCP child), delegating the framing to a
+/// [`TcpServerConnection`]. The fleet-wide [`TcpServer`](personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServer)
+/// supervisor is the production multi-client shape; a one-shot benchmark pairing is point-to-point,
+/// so it keeps the fixed id its hand-rolled reactor and recipe already key on.
+struct BenchTcpListener {
+    id: InterfaceId,
+    listener: tokio::net::TcpListener,
+    bitrate_bps: u32,
+}
+
+impl BenchTcpListener {
+    async fn bind_with_id(
+        id: InterfaceId,
+        addr: impl tokio::net::ToSocketAddrs,
+        bitrate_bps: u32,
+    ) -> std::io::Result<Self> {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        Ok(Self {
+            id,
+            listener,
+            bitrate_bps,
+        })
+    }
+
+    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.listener.local_addr()
+    }
+}
+
+impl Interface for BenchTcpListener {
+    const HW_MTU: usize = tcp_core::TCP_HW_MTU_CAP;
+    const KIND: InterfaceKind = InterfaceKind::TcpServerPeer;
+
+    fn descriptor(&self) -> InterfaceConfig {
+        tcp_core::descriptor(self.id, self.bitrate_bps)
+    }
+
+    fn reachability_tag(&self) -> &[u8] {
+        self.id.as_bytes()
+    }
+
+    async fn run<Seam: InterfaceSeam>(self, seam: Seam) {
+        let Ok((stream, peer)) = self.listener.accept().await else {
+            return;
+        };
+        tune(&stream);
+        TcpServerConnection::new(peer.to_string().into_bytes(), stream, self.bitrate_bps)
+            .run(seam)
+            .await;
+    }
+}
+
+impl ReportsStatus for BenchTcpListener {}
 
 fn fanin_listener_id(index: usize) -> InterfaceId {
     let mut id = [0xC0u8; 8];
@@ -279,13 +344,38 @@ fn percentile(sorted: &[u64], p: f64) -> f64 {
     sorted[rank.min(sorted.len() - 1)] as f64
 }
 
+/// The engine is constructed by value, so it lands on the stack before it is boxed into storage — a
+/// frame that fits a release build's 8 MiB but overflows it unoptimized, where every local is
+/// spilled. The node (its construction, the reactor, the interface drivers) is driven on one thread,
+/// so that thread carries the frame; a generous stack is what lets a debug build run at all — the
+/// conformance pass a debug build is for.
+const SCENARIO_STACK_BYTES: usize = 64 * 1024 * 1024;
+
 fn main() {
+    if cfg!(debug_assertions) {
+        eprintln!("================================================================");
+        eprintln!("scenario_node is a DEBUG build: crypto runs ~10x slower than release.");
+        eprintln!("Throughput and latency numbers are INVALID and must not be recorded as");
+        eprintln!("performance. Conformance counts (sent/delivered/timeouts) stay valid.");
+        eprintln!("Rebuild with --release before any performance measurement.");
+        eprintln!("================================================================");
+    }
+    std::thread::Builder::new()
+        .stack_size(SCENARIO_STACK_BYTES)
+        .spawn(run_scenario)
+        .expect("spawns the scenario thread")
+        .join()
+        .expect("the scenario thread runs to completion");
+}
+
+fn run_scenario() {
     let worker_threads = std::env::var("SCENARIO_WORKERS")
         .ok()
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(2);
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(worker_threads)
+        .thread_stack_size(SCENARIO_STACK_BYTES)
         .enable_all()
         .build()
         .expect("builds the scenario runtime")
@@ -468,7 +558,7 @@ async fn scenario_main() {
                 tokio::spawn(interface.run(seam));
                 addr.clone()
             } else {
-                let interface = TcpServerInterface::bind_with_id(
+                let interface = BenchTcpListener::bind_with_id(
                     TCP_INTERFACE_ID,
                     addr.as_str(),
                     tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -479,7 +569,7 @@ async fn scenario_main() {
                 tokio::spawn(interface.run(seam));
                 let mut addresses = bound.to_string();
                 for (id, extra_seam, extra_in_rx) in extra_listeners.drain(..) {
-                    let extra = TcpServerInterface::bind_with_id(
+                    let extra = BenchTcpListener::bind_with_id(
                         id,
                         "127.0.0.1:0",
                         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -795,7 +885,7 @@ where
         });
         (node, addr.to_string())
     } else {
-        let primary = TcpServerInterface::bind_with_id(
+        let primary = BenchTcpListener::bind_with_id(
             TCP_INTERFACE_ID,
             addr,
             tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -805,7 +895,7 @@ where
         let mut addresses = primary.local_addr().expect("bound address").to_string();
         let mut servers = vec![primary];
         for index in 0..manifest.profile.initiator_count.saturating_sub(1) {
-            let extra = TcpServerInterface::bind_with_id(
+            let extra = BenchTcpListener::bind_with_id(
                 fanin_listener_id(index),
                 "127.0.0.1:0",
                 tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -1016,7 +1106,7 @@ async fn initiate(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}",
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         payload_bytes as f64 / seconds,
         percentile(&rtts, 0.50),
@@ -1194,7 +1284,7 @@ async fn initiate_link(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}",
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         payload_bytes as f64 / seconds,
         percentile(&rtts, 0.50),
@@ -1321,7 +1411,7 @@ async fn initiate_channel(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}",
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         payload_bytes as f64 / seconds,
         percentile(&rtts, 0.50),
@@ -1525,7 +1615,7 @@ async fn initiate_resource(
         "RESULT sent={sent} settled={settled} failures={failures} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          goodput_bytes_per_sec={:.0} goodput_mbits_per_sec={:.2} \
-         transfer_p50_ms={:.0} transfer_p99_ms={:.0}",
+         transfer_p50_ms={:.0} transfer_p99_ms={:.0} build={BUILD_PROFILE}",
         payload_bytes as f64 / seconds,
         payload_bytes as f64 * 8.0 / seconds / 1_000_000.0,
         percentile(&transfer_ms, 0.50),
@@ -1747,7 +1837,7 @@ async fn initiate_request(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
          request_bytes={request_bytes} response_bytes={response_bytes} \
          elapsed_ms={elapsed_ms} requests_per_sec={:.1} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}",
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
@@ -1781,7 +1871,7 @@ async fn relay_node(manifest: &Manifest) {
         tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
     ];
 
-    let side_a = TcpServerInterface::bind_with_id(
+    let side_a = BenchTcpListener::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -1789,7 +1879,7 @@ async fn relay_node(manifest: &Manifest) {
     .await
     .expect("binds side a");
     let addr_a = side_a.local_addr().expect("bound address");
-    let side_b = TcpServerInterface::bind_with_id(
+    let side_b = BenchTcpListener::bind_with_id(
         RELAY_SECOND_INTERFACE_ID,
         "127.0.0.1:0",
         tcp_core::TCP_BITRATE_GUESS_BPS,
@@ -1841,7 +1931,7 @@ async fn chain_node(upstream: &str) {
         tcp_core::descriptor(RELAY_SECOND_INTERFACE_ID, tcp_core::TCP_BITRATE_GUESS_BPS),
     ];
 
-    let downstream = TcpServerInterface::bind_with_id(
+    let downstream = BenchTcpListener::bind_with_id(
         TCP_INTERFACE_ID,
         "127.0.0.1:0",
         tcp_core::TCP_BITRATE_GUESS_BPS,

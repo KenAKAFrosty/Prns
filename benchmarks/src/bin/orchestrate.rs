@@ -669,6 +669,17 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
              throughput/latency/energy withheld (a dead run's last gasp is not a measurement)"
         );
     }
+    // A debug-built participant runs its crypto ~10x slower, so its throughput, latency, and memory
+    // are not measurements — only its conformance counts survive. Either side being debug taints the
+    // initiator's measured RTT (it waits on the slow side's proofs), so both lines are checked.
+    let perf_valid = !result.contains("build=debug") && !responder_result.contains("build=debug");
+    if !perf_valid {
+        eprintln!(
+            "verdict: a participant is a DEBUG build (build=debug) — crypto ~10x slower; \
+             conformance filed, throughput/latency/memory/energy withheld (debug perf is not a \
+             measurement; rebuild --release)"
+        );
+    }
     assert!(
         delivered <= sent,
         "delivery accounting holds (initiator-proven <= sent): {delivered} <= {sent}",
@@ -733,37 +744,37 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Throughput,
             "delivered_per_sec",
-            delivered_per_sec.filter(|_| !died),
+            delivered_per_sec.filter(|_| !died && perf_valid),
             "msgs/s",
         ),
         row(
             Axis::Throughput,
             "goodput_bytes_per_sec",
-            field(&result, "goodput_bytes_per_sec").filter(|_| !died),
+            field(&result, "goodput_bytes_per_sec").filter(|_| !died && perf_valid),
             "B/s",
         ),
         row(
             Axis::Latency,
             "rtt_p50_ms",
-            rtt_p50_ms.filter(|_| !died),
+            rtt_p50_ms.filter(|_| !died && perf_valid),
             "ms",
         ),
         row(
             Axis::Latency,
             "rtt_p99_ms",
-            rtt_p99_ms.filter(|_| !died),
+            rtt_p99_ms.filter(|_| !died && perf_valid),
             "ms",
         ),
         row(
             Axis::Memory,
             "initiator_peak_rss_bytes",
-            Some(initiator_rss as f64),
+            Some(initiator_rss as f64).filter(|_| perf_valid),
             "bytes",
         ),
         row(
             Axis::Memory,
             "responder_peak_rss_bytes",
-            Some(responder_rss as f64),
+            Some(responder_rss as f64).filter(|_| perf_valid),
             "bytes",
         ),
         // Per-role CPU seconds, sampled from outside each process — the raw signal that lets a
@@ -775,8 +786,8 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
         let net_joules = raw_joules - idle_watts * wall_seconds;
         let measurable = net_joules > 0.0;
-        let per_delivered_mj =
-            (measurable && delivered > 0.0 && !died).then(|| net_joules * 1_000.0 / delivered);
+        let per_delivered_mj = (measurable && delivered > 0.0 && !died && perf_valid)
+            .then(|| net_joules * 1_000.0 / delivered);
         rows.push(row(
             Axis::Energy,
             "package_joules_raw",
