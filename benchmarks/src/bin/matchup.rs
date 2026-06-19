@@ -63,6 +63,7 @@ enum Scenario {
     RequestResponse,
     EstablishmentChurn,
     ConcurrentLinks,
+    ResourceFanout,
 }
 
 impl Scenario {
@@ -75,6 +76,7 @@ impl Scenario {
             Scenario::RequestResponse => "request-response",
             Scenario::EstablishmentChurn => "establishment-churn",
             Scenario::ConcurrentLinks => "concurrent-links",
+            Scenario::ResourceFanout => "resource-fanout",
         }
     }
 
@@ -99,6 +101,7 @@ impl Scenario {
                 | Scenario::ResourceSmall
                 | Scenario::ResourceTransfer
                 | Scenario::ConcurrentLinks
+                | Scenario::ResourceFanout
         )
     }
 }
@@ -471,6 +474,7 @@ const SCENARIOS: &[Scenario] = &[
     Scenario::RequestResponse,
     Scenario::EstablishmentChurn,
     Scenario::ConcurrentLinks,
+    Scenario::ResourceFanout,
 ];
 
 struct GridFilter {

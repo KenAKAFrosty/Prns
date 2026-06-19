@@ -1,0 +1,18 @@
+{
+  "name": "resource-fanout",
+  "version": 1,
+  "description": "The resource throughput firehose spread across links: one initiator opens link_count links to a single responder and runs one resource transfer in flight per link concurrently for the wall-time - the same 20-120 KB attachment band as resource-small, but fanned out. Where resource-transfer measures one link's window-bound stream, this asks whether more links pipeline more aggregate goodput and stresses the per-transfer resource state at breadth: link_count concurrent send/receive state machines competing for one engine, the resource-table analog of concurrent-links. Goodput counts settled transfers' payload bytes across all links; the protocol hash-proves every byte that arrives.",
+  "roles": [
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "resource-fanout",
+    "link_count": 16,
+    "payload_min": 20000,
+    "payload_max": 120000,
+    "window": 1,
+    "duration_ms": 30000
+  },
+  "conformance": "sent == settled + failures, every transfer hash-proved by the receiver before it settles, and every one of link_count links completes at least one transfer (a link that goes silent trips the per-link check). A Prns pair settles zero failures. Aggregate goodput across the links is the headline; the single-link resource-small number is the baseline it scales against."
+}

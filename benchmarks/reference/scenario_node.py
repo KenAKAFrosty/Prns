@@ -742,6 +742,144 @@ def initiate_resource(name, block, profile, duration):
     os._exit(0)
 
 
+def respond_resource_fanout(name, block, ready_addr):
+    start_reticulum(block)
+    identity = RNS.Identity()
+    destination = RNS.Destination(
+        identity, RNS.Destination.IN, RNS.Destination.SINGLE, "bench", name
+    )
+    destination.set_proof_strategy(RNS.Destination.PROVE_ALL)
+
+    state = {"received": 0, "payload_bytes": 0}
+    done = threading.Event()
+
+    def on_concluded(resource):
+        if resource.status == RNS.Resource.COMPLETE:
+            state["received"] += 1
+            data = resource.data.read()
+            state["payload_bytes"] += len(data)
+
+    links = {"up": 0, "closed": 0}
+    links_lock = threading.Lock()
+
+    def on_closed(_link):
+        with links_lock:
+            links["closed"] += 1
+        if links["closed"] >= LINK_COUNT:
+            done.set()
+
+    def on_link(link):
+        with links_lock:
+            links["up"] += 1
+        link.set_resource_strategy(RNS.Link.ACCEPT_ALL)
+        link.set_resource_concluded_callback(on_concluded)
+        link.set_link_closed_callback(on_closed)
+
+    destination.set_link_established_callback(on_link)
+    print(f"READY role=responder addr={ready_addr}", flush=True)
+    while not done.is_set():
+        if links["up"] < LINK_COUNT:
+            destination.announce()
+        done.wait(ANNOUNCE_EVERY)
+    time.sleep(0.5)
+    print(
+        f"RESULT received={state['received']} payload_bytes={state['payload_bytes']}",
+        flush=True,
+    )
+    os._exit(0)
+
+
+def initiate_resource_fanout(name, block, profile, duration):
+    start_reticulum(block)
+
+    heard = {"hash": None, "identity": None}
+    announced = threading.Event()
+
+    class Handler:
+        aspect_filter = f"bench.{name}"
+
+        def received_announce(self, destination_hash, announced_identity, app_data):
+            heard["hash"] = destination_hash
+            heard["identity"] = announced_identity
+            announced.set()
+
+    RNS.Transport.register_announce_handler(Handler())
+    print("READY role=initiator", flush=True)
+    if not announced.wait(30):
+        sys.exit("no announce heard")
+
+    destination = RNS.Destination(
+        heard["identity"], RNS.Destination.OUT, RNS.Destination.SINGLE, "bench", name
+    )
+    link_count = int(profile.get("link_count", LINK_COUNT))
+    ups = [threading.Event() for _ in range(link_count)]
+    links = [
+        RNS.Link(destination, established_callback=(lambda ev: lambda _l: ev.set())(ups[i]))
+        for i in range(link_count)
+    ]
+    establish_deadline = time.monotonic() + 60
+    for index, ev in enumerate(ups):
+        if not ev.wait(max(0.0, establish_deadline - time.monotonic())):
+            sys.exit(f"link {index} of {link_count} did not establish")
+
+    scratch = os.urandom(max(profile.get("payload_max", 0), profile.get("payload_len", 0)))
+    started = time.monotonic()
+    deadline = started + duration
+    results = [(0, 0, 0, 0)] * link_count
+
+    def worker(index):
+        sizes = sizes_from(profile, "payload_min", "payload_max", "payload_len", seed_xor=index)
+        sent = settled = failures = sent_bytes = 0
+        while time.monotonic() < deadline:
+            concluded = threading.Event()
+            outcome = {}
+
+            def callback(resource):
+                outcome["status"] = resource.status
+                concluded.set()
+
+            sent += 1
+            size = sizes.next_len()
+            RNS.Resource(scratch[:size], links[index], auto_compress=False, callback=callback)
+            if not concluded.wait(120):
+                failures += 1
+                break
+            if outcome["status"] == RNS.Resource.COMPLETE:
+                settled += 1
+                sent_bytes += size
+            else:
+                failures += 1
+        results[index] = (sent, settled, failures, sent_bytes)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(link_count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    for link in links:
+        link.teardown()
+    time.sleep(0.5)
+
+    total_sent = sum(r[0] for r in results)
+    total_settled = sum(r[1] for r in results)
+    total_failures = sum(r[2] for r in results)
+    total_bytes = sum(r[3] for r in results)
+    silent = sum(1 for r in results if r[1] == 0)
+    if silent:
+        sys.exit(f"{silent} of {link_count} links completed no resource transfer")
+
+    seconds = max(elapsed_ms / 1000.0, 1e-9)
+    print(
+        f"RESULT sent={total_sent} settled={total_settled} failures={total_failures} "
+        f"links={link_count} payload_bytes={total_bytes} elapsed_ms={elapsed_ms} "
+        f"goodput_bytes_per_sec={total_bytes / seconds:.0f} "
+        f"goodput_mbits_per_sec={total_bytes * 8.0 / seconds / 1e6:.2f}",
+        flush=True,
+    )
+    os._exit(0)
+
+
 def respond_request(name, block, ready_addr):
     """The serving end of the RPC shape: the registered handler answers every
     allowed request with exactly the byte count the request names."""
@@ -1129,6 +1267,7 @@ def main():
         "link": respond_link,
         "links-breadth": respond_links_breadth,
         "resource": respond_resource,
+        "resource-fanout": respond_resource_fanout,
         "request": respond_request,
         "churn": respond_churn,
     }
@@ -1137,6 +1276,7 @@ def main():
         "link": initiate_link,
         "links-breadth": initiate_links_breadth,
         "resource": initiate_resource,
+        "resource-fanout": initiate_resource_fanout,
         "request": initiate_request,
         "churn": initiate_churn,
     }
