@@ -72,6 +72,35 @@ impl InterfaceSnapshot {
     }
 }
 
+/// A snapshot reads back as the status it captured, so a face can render an owned `Vec` of
+/// snapshots — the whole fleet the runtime tracks centrally, members and all — through the same
+/// card builder it feeds live handles.
+impl InterfaceStatus for InterfaceSnapshot {
+    fn id(&self) -> InterfaceId {
+        self.id
+    }
+
+    fn connection(&self) -> ConnectionState {
+        self.connection
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        self.rx_bytes
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        self.tx_bytes
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
+        self.transfer_rates
+    }
+
+    fn links(&self) -> u32 {
+        self.links
+    }
+}
+
 /// A live view of an interface's status, yielding current [`InterfaceSnapshot`]s on each call. A
 /// one-to-one wire yields one; a supervisor yields its own plus one per live fleet member. It is a
 /// closure over the interface's cheap-clone status handle, so it outlives the interface the runtime

@@ -40,7 +40,7 @@ use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, InterfaceStatus};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::ProofStrategy;
@@ -101,9 +101,10 @@ fn load_identity_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 }
 
 /// The card icon and label for an interface id: the fixed USB interface, the WiFi supervisor's
-/// aggregate, or one of its peers. Returning `None` would drop the card; every id we render maps.
-/// A peer's medium-derived id is meaningful now, so its card carries a short hex tag (`Peer 1a2b`)
-/// to tell two peers apart instead of a bare `Peer`.
+/// aggregate, an explicit TCP client, or one of its fleet members — a direct WiFi LAN peer
+/// (`Peer 1a2b`) or an auto-wifi TCP-fold rendezvous link (`TCP 1a2b`, the TCP icon setting it apart
+/// from a WiFi peer at a glance). Returning `None` would drop the card; every id we render maps, the
+/// medium-derived hex tag telling two of a kind apart.
 fn classify(
     id: InterfaceId,
     wifi_id: InterfaceId,
@@ -121,31 +122,20 @@ fn classify(
         ))
     } else {
         let bytes = id.as_bytes();
+        let (kind, tag) = match id.kind() {
+            Some(InterfaceKind::TcpClient | InterfaceKind::TcpServerPeer) => (CardKind::Tcp, "TCP"),
+            _ => (CardKind::Peer, "Peer"),
+        };
         let mut label = screen::CardLabel::new();
-        let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
-        Some((CardKind::Peer, label))
+        let _ = write!(label, "{tag} {:02x}{:02x}", bytes[1], bytes[2]);
+        Some((kind, label))
     }
 }
 
-fn interface_snapshots(
-    usb: &TokioInterfaceStatus,
-    wifi: &AutoWifiStatus,
-    tcp: Option<&TokioInterfaceStatus>,
-) -> Vec<InterfaceSnapshot> {
-    let mut snapshots = vec![InterfaceSnapshot::of(usb)];
-    if let Some(tcp) = tcp {
-        snapshots.push(InterfaceSnapshot::of(tcp));
-    }
-    snapshots.push(InterfaceSnapshot::of(wifi));
-    for member in wifi.members() {
-        snapshots.push(InterfaceSnapshot::of(&member));
-    }
-    snapshots
-}
-
-/// What the node thread hands the window once the runtime is assembled: a command handle to issue
-/// announces on, the two live status handles it renders (the USB interface and the WiFi
-/// supervisor's aggregate, the latter also yielding a card per peer), and the destination its
+/// What the node thread hands the window once the runtime is assembled: a command handle — which
+/// issues announces and yields the whole fleet's status snapshots from the runtime's central
+/// registry, the cards the window draws — the interface status handles it toggles enabled (USB and
+/// the optional TCP client) and reads the WiFi supervisor's id from, and the destination its
 /// announces name. The node owns everything else.
 struct WindowHandles {
     handle: TokioPrnsHandle,
@@ -263,31 +253,23 @@ fn run_node(
         };
 
         {
-            let usb_status = usb_status.clone();
-            let wifi_status = wifi_status.clone();
-            let tcp_status = tcp_status.clone();
+            let snapshot_handle = handle.clone();
             tokio::spawn(
                 SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-                    .with_interfaces(move || {
-                        interface_snapshots(&usb_status, &wifi_status, tcp_status.as_ref())
-                    })
+                    .with_interfaces(move || snapshot_handle.interface_snapshots())
                     .run(),
             );
         }
         #[cfg(target_os = "linux")]
         {
-            let usb_status = usb_status.clone();
-            let wifi_status = wifi_status.clone();
-            let tcp_status = tcp_status.clone();
+            let snapshot_handle = handle.clone();
             tokio::spawn(
                 SharedInstanceRpcCompat::abstract_unix(
                     rpc_key,
                     local_core::DEFAULT_SOCKET_PATH,
                     handle.clone(),
                 )
-                .with_interfaces(move || {
-                    interface_snapshots(&usb_status, &wifi_status, tcp_status.as_ref())
-                })
+                .with_interfaces(move || snapshot_handle.interface_snapshots())
                 .run(),
             );
         }
@@ -678,36 +660,27 @@ fn run_window(handles: WindowHandles) {
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
     loop {
-        let members = wifi_status.members();
-        let mut statuses: Vec<&dyn InterfaceStatus> = Vec::with_capacity(3 + members.len());
-        statuses.push(&usb_status);
-        if let Some(tcp_status) = &tcp_status {
-            statuses.push(tcp_status);
-        }
-        statuses.push(&wifi_status);
-        for member in &members {
-            statuses.push(member);
-        }
+        let snapshots = query_handle.interface_snapshots();
 
-        for status in &statuses {
-            let connection = status.connection();
-            if last_logged.get(&status.id()) != Some(&connection) {
+        for status in &snapshots {
+            let connection = status.connection;
+            if last_logged.get(&status.id) != Some(&connection) {
                 println!(
                     "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
-                    classify(status.id())
+                    classify(status.id)
                         .as_ref()
                         .map_or("?", |(_, label)| label.as_str()),
-                    status.rx_bytes(),
-                    status.tx_bytes(),
+                    status.rx_bytes,
+                    status.tx_bytes,
                 );
-                last_logged.insert(status.id(), connection);
+                last_logged.insert(status.id, connection);
             }
         }
 
         let counts: HashMap<InterfaceId, InterfaceCounts> = query_rt.block_on(async {
             let mut counts = HashMap::new();
-            for status in &statuses {
-                let id = status.id();
+            for status in &snapshots {
+                let id = status.id;
                 let _ = counts.insert(
                     id,
                     query_handle.interface_counts(id).await.unwrap_or_default(),
@@ -715,17 +688,18 @@ fn run_window(handles: WindowHandles) {
             }
             counts
         });
-        let wifi_counts = members
+        let wifi_counts = snapshots
             .iter()
+            .filter(|snapshot| snapshot.id.kind() == Some(InterfaceKind::WifiPeer))
             .fold(InterfaceCounts::default(), |total, member| {
-                let member_counts = counts.get(&member.id()).copied().unwrap_or_default();
+                let member_counts = counts.get(&member.id).copied().unwrap_or_default();
                 InterfaceCounts {
                     destinations: total.destinations + member_counts.destinations,
                     links: total.links + member_counts.links,
                     transported_links: total.transported_links + member_counts.transported_links,
                 }
             });
-        let cards: HVec<Card, 8> = screen::statuses_to_cards(&statuses, classify, |id| {
+        let cards: HVec<Card, 8> = screen::statuses_to_cards(&snapshots, classify, |id| {
             if id == wifi_id {
                 wifi_counts
             } else {
