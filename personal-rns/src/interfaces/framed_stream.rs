@@ -36,7 +36,7 @@ pub async fn serve<
     Seam: InterfaceSeam,
 {
     let mut decoder = std::boxed::Box::new(RnsSerialDecoder::<FRAME_CAP>::new());
-    let mut read_buf = [0u8; READ_LEN];
+    let mut read_buf = std::vec![0u8; READ_LEN].into_boxed_slice();
     let mut frame_buf = std::vec![0u8; FRAMED_LEN].into_boxed_slice();
 
     loop {
