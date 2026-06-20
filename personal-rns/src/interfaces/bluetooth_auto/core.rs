@@ -171,10 +171,115 @@ pub enum Dialect {
     Columba,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Endpoint {
+    CoreBluetooth(AppleHost),
+    BlueZ(BlueZHost),
+    Android(AndroidHost),
+    WinRt(WinRtHost),
+    Esp32(Esp32Host),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppleHost {
+    MacOs,
+    Ios,
+    IpadOs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BlueZHost {
+    Linux,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AndroidHost {
+    Android,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WinRtHost {
+    Windows,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Esp32Host {
+    Esp32,
+}
+
+impl AppleHost {
+    fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::MacOs),
+            1 => Some(Self::Ios),
+            2 => Some(Self::IpadOs),
+            _ => None,
+        }
+    }
+}
+
+impl BlueZHost {
+    fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Linux),
+            _ => None,
+        }
+    }
+}
+
+impl AndroidHost {
+    fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Android),
+            _ => None,
+        }
+    }
+}
+
+impl WinRtHost {
+    fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Windows),
+            _ => None,
+        }
+    }
+}
+
+impl Esp32Host {
+    fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Esp32),
+            _ => None,
+        }
+    }
+}
+
+fn endpoint_bytes(endpoint: Endpoint) -> [u8; ENDPOINT_LEN] {
+    match endpoint {
+        Endpoint::CoreBluetooth(host) => [1, host as u8],
+        Endpoint::BlueZ(host) => [2, host as u8],
+        Endpoint::Android(host) => [3, host as u8],
+        Endpoint::WinRt(host) => [4, host as u8],
+        Endpoint::Esp32(host) => [5, host as u8],
+    }
+}
+
+fn decode_endpoint(bytes: &[u8]) -> Option<Endpoint> {
+    let stack = *bytes.first()?;
+    let host = *bytes.get(1)?;
+    Some(match stack {
+        1 => Endpoint::CoreBluetooth(AppleHost::from_u8(host)?),
+        2 => Endpoint::BlueZ(BlueZHost::from_u8(host)?),
+        3 => Endpoint::Android(AndroidHost::from_u8(host)?),
+        4 => Endpoint::WinRt(WinRtHost::from_u8(host)?),
+        5 => Endpoint::Esp32(Esp32Host::from_u8(host)?),
+        _ => return None,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkCapabilities {
     pub l2cap: Option<Psm>,
-    pub l2cap_can_open: bool,
     pub link_mtu: u16,
 }
 
@@ -182,10 +287,14 @@ const CONTROL_HELLO: u8 = 0x01;
 const CONTROL_WELCOME: u8 = 0x02;
 const CONTROL_CLOSE: u8 = 0x03;
 const CONTROL_IDENTITY_LEN: usize = 16;
-const CONTROL_CAP_LEN: usize = 4;
+const ENDPOINT_LEN: usize = 2;
+const CONTROL_CAP_LEN: usize = 3;
 const CONTROL_RSSI_LEN: usize = 1;
-const CAP_FLAG_L2CAP_CAN_OPEN: u8 = 0b0000_0001;
-pub const CONTROL_MAX_LEN: usize = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN + CONTROL_RSSI_LEN;
+const GREETING_ID_AT: usize = 1;
+const GREETING_ENDPOINT_AT: usize = GREETING_ID_AT + CONTROL_IDENTITY_LEN;
+const GREETING_CAP_AT: usize = GREETING_ENDPOINT_AT + ENDPOINT_LEN;
+const GREETING_RSSI_AT: usize = GREETING_CAP_AT + CONTROL_CAP_LEN;
+pub const CONTROL_MAX_LEN: usize = GREETING_RSSI_AT + CONTROL_RSSI_LEN;
 
 fn encode_rssi(rssi: Option<i8>) -> u8 {
     rssi.filter(|&dbm| dbm != i8::MIN).unwrap_or(i8::MIN) as u8
@@ -202,54 +311,108 @@ impl LinkCapabilities {
             Some(psm) => psm.as_byte(),
             None => 0,
         };
-        out[1] = if self.l2cap_can_open {
-            CAP_FLAG_L2CAP_CAN_OPEN
-        } else {
-            0
-        };
-        out[2..4].copy_from_slice(&self.link_mtu.to_be_bytes());
+        out[1..3].copy_from_slice(&self.link_mtu.to_be_bytes());
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
         let psm_byte = *bytes.first()?;
-        let flags = *bytes.get(1)?;
-        let link_mtu = u16::from_be_bytes(bytes.get(2..4)?.try_into().ok()?);
+        let link_mtu = u16::from_be_bytes(bytes.get(1..3)?.try_into().ok()?);
         let l2cap = if psm_byte == 0 {
             None
         } else {
             Some(Psm::from_byte(psm_byte)?)
         };
-        let l2cap_can_open = flags & CAP_FLAG_L2CAP_CAN_OPEN != 0;
-        Some(Self {
-            l2cap,
-            l2cap_can_open,
-            link_mtu,
-        })
+        Some(Self { l2cap, link_mtu })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Transport {
-    L2capOpen { psm: Psm },
-    L2capAccept,
-    GattData,
+pub enum Arrangement {
+    GattOnly,
+    EitherOpens,
+    Opens(Endpoint),
 }
 
-impl Transport {
-    pub fn select(local: &LinkCapabilities, peer: &LinkCapabilities, role: HandshakeRole) -> Self {
-        let (Some(_own), Some(theirs)) = (local.l2cap, peer.l2cap) else {
-            return Transport::GattData;
-        };
-        let local_opens = match (local.l2cap_can_open, peer.l2cap_can_open) {
-            (true, false) => true,
-            (false, true) => false,
-            (true, true) => matches!(role, HandshakeRole::Dialer),
-            (false, false) => return Transport::GattData,
-        };
-        if local_opens {
-            Transport::L2capOpen { psm: theirs }
-        } else {
-            Transport::L2capAccept
+pub fn arrangement(local: Endpoint, peer: Endpoint) -> Arrangement {
+    known_arrangement(local, peer)
+        .or_else(|| known_arrangement(peer, local))
+        .unwrap_or(Arrangement::GattOnly)
+}
+
+fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
+    use AppleHost::MacOs;
+    use Endpoint::{Android, BlueZ, CoreBluetooth};
+    match (a, b) {
+        (CoreBluetooth(MacOs), BlueZ(_)) => Some(Arrangement::EitherOpens),
+        (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
+        _ => None,
+    }
+}
+
+pub fn we_should_be_central(
+    arrangement: Arrangement,
+    ours: BleIdentity,
+    our_endpoint: Endpoint,
+    theirs: BleIdentity,
+) -> bool {
+    match arrangement {
+        Arrangement::Opens(opener) => opener == our_endpoint,
+        Arrangement::GattOnly | Arrangement::EitherOpens => ours < theirs,
+    }
+}
+
+pub fn is_keeper(
+    arrangement: Arrangement,
+    our_role: HandshakeRole,
+    ours: BleIdentity,
+    our_endpoint: Endpoint,
+    theirs: BleIdentity,
+) -> bool {
+    matches!(our_role, HandshakeRole::Dialer)
+        == we_should_be_central(arrangement, ours, our_endpoint, theirs)
+}
+
+pub fn needs_redial(
+    arrangement: Arrangement,
+    our_role: HandshakeRole,
+    our_endpoint: Endpoint,
+) -> bool {
+    let we_open = matches!(arrangement, Arrangement::Opens(opener) if opener == our_endpoint);
+    we_open && matches!(our_role, HandshakeRole::Listener)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum L2capPlan {
+    Open { psm: Psm },
+    Accept,
+    None,
+}
+
+pub fn l2cap_plan(
+    arrangement: Arrangement,
+    our_role: HandshakeRole,
+    our_endpoint: Endpoint,
+    our_capabilities: &LinkCapabilities,
+    peer_capabilities: &LinkCapabilities,
+) -> L2capPlan {
+    let we_are_central = matches!(our_role, HandshakeRole::Dialer);
+    let we_open = match arrangement {
+        Arrangement::GattOnly => return L2capPlan::None,
+        Arrangement::EitherOpens => we_are_central,
+        Arrangement::Opens(opener) => opener == our_endpoint,
+    };
+    if we_open {
+        if !we_are_central {
+            return L2capPlan::None;
+        }
+        match peer_capabilities.l2cap {
+            Some(psm) => L2capPlan::Open { psm },
+            None => L2capPlan::None,
+        }
+    } else {
+        match our_capabilities.l2cap {
+            Some(_) => L2capPlan::Accept,
+            None => L2capPlan::None,
         }
     }
 }
@@ -290,11 +453,13 @@ impl CloseReason {
 pub enum Control {
     Hello {
         identity: BleIdentity,
+        endpoint: Endpoint,
         capabilities: LinkCapabilities,
         peer_rssi: Option<i8>,
     },
     Welcome {
         identity: BleIdentity,
+        endpoint: Endpoint,
         capabilities: LinkCapabilities,
         peer_rssi: Option<i8>,
     },
@@ -308,14 +473,30 @@ impl Control {
         match self {
             Control::Hello {
                 identity,
+                endpoint,
                 capabilities,
                 peer_rssi,
-            } => encode_greeting(CONTROL_HELLO, identity, capabilities, *peer_rssi, out),
+            } => encode_greeting(
+                CONTROL_HELLO,
+                identity,
+                *endpoint,
+                capabilities,
+                *peer_rssi,
+                out,
+            ),
             Control::Welcome {
                 identity,
+                endpoint,
                 capabilities,
                 peer_rssi,
-            } => encode_greeting(CONTROL_WELCOME, identity, capabilities, *peer_rssi, out),
+            } => encode_greeting(
+                CONTROL_WELCOME,
+                identity,
+                *endpoint,
+                capabilities,
+                *peer_rssi,
+                out,
+            ),
             Control::Close { reason } => {
                 let slot = out.get_mut(..2)?;
                 slot[0] = CONTROL_CLOSE;
@@ -329,17 +510,19 @@ impl Control {
         let (tag, body) = bytes.split_first()?;
         match *tag {
             CONTROL_HELLO => {
-                let (identity, capabilities, peer_rssi) = decode_greeting(body)?;
+                let (identity, endpoint, capabilities, peer_rssi) = decode_greeting(body)?;
                 Some(Control::Hello {
                     identity,
+                    endpoint,
                     capabilities,
                     peer_rssi,
                 })
             }
             CONTROL_WELCOME => {
-                let (identity, capabilities, peer_rssi) = decode_greeting(body)?;
+                let (identity, endpoint, capabilities, peer_rssi) = decode_greeting(body)?;
                 Some(Control::Welcome {
                     identity,
+                    endpoint,
                     capabilities,
                     peer_rssi,
                 })
@@ -355,44 +538,50 @@ impl Control {
 fn encode_greeting(
     tag: u8,
     identity: &BleIdentity,
+    endpoint: Endpoint,
     capabilities: &LinkCapabilities,
     peer_rssi: Option<i8>,
     out: &mut [u8],
 ) -> Option<usize> {
     let slot = out.get_mut(..CONTROL_MAX_LEN)?;
     slot[0] = tag;
-    slot[1..1 + CONTROL_IDENTITY_LEN].copy_from_slice(identity.as_bytes());
+    slot[GREETING_ID_AT..GREETING_ENDPOINT_AT].copy_from_slice(identity.as_bytes());
+    slot[GREETING_ENDPOINT_AT..GREETING_CAP_AT].copy_from_slice(&endpoint_bytes(endpoint));
     let mut caps = [0u8; CONTROL_CAP_LEN];
     capabilities.encode(&mut caps);
-    let caps_end = 1 + CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN;
-    slot[1 + CONTROL_IDENTITY_LEN..caps_end].copy_from_slice(&caps);
-    slot[caps_end] = encode_rssi(peer_rssi);
+    slot[GREETING_CAP_AT..GREETING_RSSI_AT].copy_from_slice(&caps);
+    slot[GREETING_RSSI_AT] = encode_rssi(peer_rssi);
     Some(CONTROL_MAX_LEN)
 }
 
-fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, LinkCapabilities, Option<i8>)> {
-    let identity_bytes: [u8; CONTROL_IDENTITY_LEN] =
-        body.get(..CONTROL_IDENTITY_LEN)?.try_into().ok()?;
-    let capabilities = LinkCapabilities::decode(
-        body.get(CONTROL_IDENTITY_LEN..CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)?,
-    )?;
-    let peer_rssi = body
-        .get(CONTROL_IDENTITY_LEN + CONTROL_CAP_LEN)
-        .copied()
-        .and_then(decode_rssi);
-    Some((BleIdentity::new(identity_bytes), capabilities, peer_rssi))
+fn decode_greeting(body: &[u8]) -> Option<(BleIdentity, Endpoint, LinkCapabilities, Option<i8>)> {
+    let id_end = CONTROL_IDENTITY_LEN;
+    let endpoint_end = id_end + ENDPOINT_LEN;
+    let cap_end = endpoint_end + CONTROL_CAP_LEN;
+    let identity_bytes: [u8; CONTROL_IDENTITY_LEN] = body.get(..id_end)?.try_into().ok()?;
+    let endpoint = decode_endpoint(body.get(id_end..endpoint_end)?)?;
+    let capabilities = LinkCapabilities::decode(body.get(endpoint_end..cap_end)?)?;
+    let peer_rssi = body.get(cap_end).copied().and_then(decode_rssi);
+    Some((
+        BleIdentity::new(identity_bytes),
+        endpoint,
+        capabilities,
+        peer_rssi,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Local {
     pub identity: BleIdentity,
+    pub endpoint: Endpoint,
     pub capabilities: LinkCapabilities,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Established {
     pub identity: BleIdentity,
-    pub transport: Transport,
+    pub endpoint: Endpoint,
+    pub capabilities: LinkCapabilities,
     pub peer_rssi: Option<i8>,
 }
 
@@ -424,6 +613,7 @@ impl Handshake {
         let opening = match role {
             HandshakeRole::Dialer => Some(Control::Hello {
                 identity: local.identity,
+                endpoint: local.endpoint,
                 capabilities: local.capabilities,
                 peer_rssi: measured_rssi,
             }),
@@ -445,6 +635,7 @@ impl Handshake {
                 HandshakeRole::Listener,
                 Control::Hello {
                     identity,
+                    endpoint,
                     capabilities,
                     peer_rssi,
                 },
@@ -452,17 +643,17 @@ impl Handshake {
                 if identity == self.local.identity {
                     return self.we_close(CloseReason::SelfConnection);
                 }
-                let transport =
-                    Transport::select(&self.local.capabilities, &capabilities, self.role);
                 Reaction {
                     reply: Some(Control::Welcome {
                         identity: self.local.identity,
+                        endpoint: self.local.endpoint,
                         capabilities: self.local.capabilities,
                         peer_rssi: self.measured_rssi,
                     }),
                     outcome: Outcome::Settled(Established {
                         identity,
-                        transport,
+                        endpoint,
+                        capabilities,
                         peer_rssi,
                     }),
                 }
@@ -471,6 +662,7 @@ impl Handshake {
                 HandshakeRole::Dialer,
                 Control::Welcome {
                     identity,
+                    endpoint,
                     capabilities,
                     peer_rssi,
                 },
@@ -478,13 +670,12 @@ impl Handshake {
                 if identity == self.local.identity {
                     return self.we_close(CloseReason::SelfConnection);
                 }
-                let transport =
-                    Transport::select(&self.local.capabilities, &capabilities, self.role);
                 Reaction {
                     reply: None,
                     outcome: Outcome::Settled(Established {
                         identity,
-                        transport,
+                        endpoint,
+                        capabilities,
                         peer_rssi,
                     }),
                 }
@@ -503,11 +694,6 @@ impl Handshake {
             outcome: Outcome::Aborted(reason),
         }
     }
-}
-
-pub fn keeps_duplicate(ours: &BleIdentity, theirs: &BleIdentity, our_role: HandshakeRole) -> bool {
-    let we_are_lower = ours < theirs;
-    matches!(our_role, HandshakeRole::Dialer) == we_are_lower
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -710,9 +896,20 @@ mod tests {
     fn caps(l2cap: Option<u16>) -> LinkCapabilities {
         LinkCapabilities {
             l2cap: l2cap.and_then(Psm::new),
-            l2cap_can_open: l2cap.is_some(),
             link_mtu: 247,
         }
+    }
+
+    fn mac() -> Endpoint {
+        Endpoint::CoreBluetooth(AppleHost::MacOs)
+    }
+
+    fn linux() -> Endpoint {
+        Endpoint::BlueZ(BlueZHost::Linux)
+    }
+
+    fn android() -> Endpoint {
+        Endpoint::Android(AndroidHost::Android)
     }
 
     #[test]
@@ -733,113 +930,245 @@ mod tests {
         assert!(!contains_service(&[0x02, 0x01, 0x06]));
     }
 
-    fn caps_role(l2cap: Option<u16>, l2cap_can_open: bool) -> LinkCapabilities {
-        LinkCapabilities {
-            l2cap: l2cap.and_then(Psm::new),
-            l2cap_can_open,
-            link_mtu: 247,
+    #[test]
+    fn mac_and_linux_open_in_either_direction() {
+        assert_eq!(arrangement(mac(), linux()), Arrangement::EitherOpens);
+        assert_eq!(arrangement(linux(), mac()), Arrangement::EitherOpens);
+    }
+
+    #[test]
+    fn mac_and_android_only_open_when_android_opens() {
+        assert_eq!(arrangement(mac(), android()), Arrangement::Opens(android()));
+        assert_eq!(arrangement(android(), mac()), Arrangement::Opens(android()));
+    }
+
+    #[test]
+    fn an_untested_pair_falls_to_the_gatt_floor() {
+        assert_eq!(arrangement(linux(), android()), Arrangement::GattOnly);
+        assert_eq!(arrangement(mac(), mac()), Arrangement::GattOnly);
+        assert_eq!(arrangement(android(), android()), Arrangement::GattOnly);
+        assert_eq!(
+            arrangement(mac(), Endpoint::WinRt(WinRtHost::Windows)),
+            Arrangement::GattOnly
+        );
+    }
+
+    #[test]
+    fn the_arrangement_table_is_order_independent() {
+        let endpoints = [
+            mac(),
+            linux(),
+            android(),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            Endpoint::Esp32(Esp32Host::Esp32),
+            Endpoint::WinRt(WinRtHost::Windows),
+        ];
+        for &a in &endpoints {
+            for &b in &endpoints {
+                assert_eq!(arrangement(a, b), arrangement(b, a));
+            }
         }
     }
 
     #[test]
-    fn when_both_can_open_the_dialer_opens_the_listeners_l2cap_channel() {
-        let lower = Local {
-            identity: identity(1),
-            capabilities: caps(Some(0x0081)),
-        };
-        let higher = Local {
-            identity: identity(2),
-            capabilities: caps(Some(0x0082)),
-        };
+    fn opens_always_names_one_of_the_pair() {
+        let endpoints = [
+            mac(),
+            linux(),
+            android(),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            Endpoint::Esp32(Esp32Host::Esp32),
+            Endpoint::WinRt(WinRtHost::Windows),
+        ];
+        for &a in &endpoints {
+            for &b in &endpoints {
+                if let Arrangement::Opens(opener) = arrangement(a, b) {
+                    assert!(opener == a || opener == b);
+                }
+            }
+        }
+    }
 
-        let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, lower, Some(-40));
-        let (mut listener, silent) = Handshake::begin(HandshakeRole::Listener, higher, Some(-55));
+    #[test]
+    fn both_ends_keep_the_same_connection_for_an_opens_pair() {
+        let arr = arrangement(mac(), android());
+        let mac_id = identity(1);
+        let android_id = identity(2);
+
+        let mac_dials_mac_view = is_keeper(arr, HandshakeRole::Dialer, mac_id, mac(), android_id);
+        let mac_dials_android_view =
+            is_keeper(arr, HandshakeRole::Listener, android_id, android(), mac_id);
+        assert_eq!(mac_dials_mac_view, mac_dials_android_view);
+        assert!(!mac_dials_mac_view);
+
+        let android_dials_mac_view =
+            is_keeper(arr, HandshakeRole::Listener, mac_id, mac(), android_id);
+        let android_dials_android_view =
+            is_keeper(arr, HandshakeRole::Dialer, android_id, android(), mac_id);
+        assert_eq!(android_dials_mac_view, android_dials_android_view);
+        assert!(android_dials_mac_view);
+    }
+
+    #[test]
+    fn both_ends_keep_the_same_connection_for_an_either_opens_pair() {
+        let arr = arrangement(mac(), linux());
+        let low = identity(1);
+        let high = identity(9);
+
+        let low_dials_low_view = is_keeper(arr, HandshakeRole::Dialer, low, mac(), high);
+        let low_dials_high_view = is_keeper(arr, HandshakeRole::Listener, high, linux(), low);
+        assert_eq!(low_dials_low_view, low_dials_high_view);
+        assert!(low_dials_low_view);
+
+        let high_dials_low_view = is_keeper(arr, HandshakeRole::Listener, low, mac(), high);
+        let high_dials_high_view = is_keeper(arr, HandshakeRole::Dialer, high, linux(), low);
+        assert_eq!(high_dials_low_view, high_dials_high_view);
+        assert!(!high_dials_low_view);
+    }
+
+    #[test]
+    fn only_the_designated_opener_stuck_as_peripheral_redials() {
+        let opens_android = arrangement(mac(), android());
+        assert!(needs_redial(
+            opens_android,
+            HandshakeRole::Listener,
+            android()
+        ));
+        assert!(!needs_redial(
+            opens_android,
+            HandshakeRole::Dialer,
+            android()
+        ));
+        assert!(!needs_redial(opens_android, HandshakeRole::Listener, mac()));
+        assert!(!needs_redial(opens_android, HandshakeRole::Dialer, mac()));
+
+        let either = arrangement(mac(), linux());
+        assert!(!needs_redial(either, HandshakeRole::Listener, mac()));
+        assert!(!needs_redial(either, HandshakeRole::Dialer, mac()));
+    }
+
+    #[test]
+    fn either_opens_central_opens_and_peripheral_accepts() {
+        let arr = arrangement(mac(), linux());
+        let mine = caps(Some(0x00c0));
+        let theirs = caps(Some(0x0083));
+        assert_eq!(
+            l2cap_plan(arr, HandshakeRole::Dialer, mac(), &mine, &theirs),
+            L2capPlan::Open {
+                psm: Psm::new(0x0083).unwrap()
+            }
+        );
+        assert_eq!(
+            l2cap_plan(arr, HandshakeRole::Listener, mac(), &mine, &theirs),
+            L2capPlan::Accept
+        );
+    }
+
+    #[test]
+    fn opens_lets_only_the_named_side_open_and_only_as_central() {
+        let arr = arrangement(mac(), android());
+        let android_caps = caps(Some(0x0080));
+        let mac_caps = caps(Some(0x00c0));
+
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Dialer,
+                android(),
+                &android_caps,
+                &mac_caps
+            ),
+            L2capPlan::Open {
+                psm: Psm::new(0x00c0).unwrap()
+            }
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                android(),
+                &android_caps,
+                &mac_caps
+            ),
+            L2capPlan::None
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                mac(),
+                &mac_caps,
+                &android_caps
+            ),
+            L2capPlan::Accept
+        );
+        assert_eq!(
+            l2cap_plan(arr, HandshakeRole::Dialer, mac(), &mac_caps, &android_caps),
+            L2capPlan::Accept
+        );
+    }
+
+    #[test]
+    fn gatt_only_never_plans_l2cap() {
+        assert_eq!(
+            l2cap_plan(
+                Arrangement::GattOnly,
+                HandshakeRole::Dialer,
+                mac(),
+                &caps(Some(0x00c0)),
+                &caps(Some(0x0080))
+            ),
+            L2capPlan::None
+        );
+    }
+
+    #[test]
+    fn an_opener_whose_peer_has_no_listener_cannot_open() {
+        let arr = arrangement(mac(), linux());
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Dialer,
+                mac(),
+                &caps(Some(0x00c0)),
+                &caps(None)
+            ),
+            L2capPlan::None
+        );
+    }
+
+    #[test]
+    fn a_dialer_and_listener_settle_exchanging_endpoints_and_caps() {
+        let dialer_local = Local {
+            identity: identity(1),
+            endpoint: mac(),
+            capabilities: caps(Some(0x00c0)),
+        };
+        let listener_local = Local {
+            identity: identity(2),
+            endpoint: android(),
+            capabilities: caps(Some(0x0080)),
+        };
+        let (mut dialer, opening) =
+            Handshake::begin(HandshakeRole::Dialer, dialer_local, Some(-40));
+        let (mut listener, silent) =
+            Handshake::begin(HandshakeRole::Listener, listener_local, Some(-55));
         assert!(silent.is_none());
 
         let listener_reaction = listener.absorb(opening.unwrap());
         let dialer_reaction = dialer.absorb(listener_reaction.reply.unwrap());
 
-        assert!(matches!(listener_reaction.outcome, Outcome::Settled(_)));
-        assert!(matches!(dialer_reaction.outcome, Outcome::Settled(_)));
         if let (Outcome::Settled(at_listener), Outcome::Settled(at_dialer)) =
             (listener_reaction.outcome, dialer_reaction.outcome)
         {
             assert_eq!(at_listener.identity, identity(1));
-            assert_eq!(at_dialer.identity, identity(2));
-            assert_eq!(
-                at_dialer.transport,
-                Transport::L2capOpen {
-                    psm: Psm::new(0x0082).unwrap(),
-                }
-            );
-            assert_eq!(at_listener.transport, Transport::L2capAccept);
+            assert_eq!(at_listener.endpoint, mac());
             assert_eq!(at_listener.peer_rssi, Some(-40));
+            assert_eq!(at_dialer.identity, identity(2));
+            assert_eq!(at_dialer.endpoint, android());
             assert_eq!(at_dialer.peer_rssi, Some(-55));
-        }
-    }
-
-    #[test]
-    fn an_accept_only_peer_always_makes_the_other_side_open_regardless_of_dial_role() {
-        let accept_only = caps_role(Some(0x00c0), false);
-        let opener = caps_role(Some(0x0088), true);
-
-        let dialed_by_accept_only = Transport::select(&accept_only, &opener, HandshakeRole::Dialer);
-        let opener_as_listener = Transport::select(&opener, &accept_only, HandshakeRole::Listener);
-        assert_eq!(dialed_by_accept_only, Transport::L2capAccept);
-        assert_eq!(
-            opener_as_listener,
-            Transport::L2capOpen {
-                psm: Psm::new(0x00c0).unwrap(),
-            }
-        );
-
-        let accept_only_as_listener =
-            Transport::select(&accept_only, &opener, HandshakeRole::Listener);
-        let dialed_by_opener = Transport::select(&opener, &accept_only, HandshakeRole::Dialer);
-        assert_eq!(accept_only_as_listener, Transport::L2capAccept);
-        assert_eq!(
-            dialed_by_opener,
-            Transport::L2capOpen {
-                psm: Psm::new(0x00c0).unwrap(),
-            }
-        );
-    }
-
-    #[test]
-    fn two_accept_only_peers_fall_back_to_gatt_data() {
-        let a = caps_role(Some(0x00c0), false);
-        let b = caps_role(Some(0x00c1), false);
-        assert_eq!(
-            Transport::select(&a, &b, HandshakeRole::Dialer),
-            Transport::GattData
-        );
-        assert_eq!(
-            Transport::select(&b, &a, HandshakeRole::Listener),
-            Transport::GattData
-        );
-    }
-
-    #[test]
-    fn a_gatt_only_peer_pulls_both_sides_down_to_gatt_data() {
-        let dialer_local = Local {
-            identity: identity(1),
-            capabilities: caps(Some(0x0081)),
-        };
-        let gatt_only = Local {
-            identity: identity(2),
-            capabilities: caps(None),
-        };
-        let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local, None);
-        let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, gatt_only, None);
-        let listener_reaction = listener.absorb(opening.unwrap());
-        let dialer_reaction = dialer.absorb(listener_reaction.reply.unwrap());
-        assert!(matches!(listener_reaction.outcome, Outcome::Settled(_)));
-        assert!(matches!(dialer_reaction.outcome, Outcome::Settled(_)));
-        if let (Outcome::Settled(at_listener), Outcome::Settled(at_dialer)) =
-            (listener_reaction.outcome, dialer_reaction.outcome)
-        {
-            assert_eq!(at_listener.transport, Transport::GattData);
-            assert_eq!(at_dialer.transport, Transport::GattData);
+        } else {
+            panic!("expected both sides to settle");
         }
     }
 
@@ -847,11 +1176,13 @@ mod tests {
     fn a_self_connection_aborts_and_closes() {
         let local = Local {
             identity: identity(5),
+            endpoint: mac(),
             capabilities: caps(Some(0x0090)),
         };
         let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local, None);
         let reaction = listener.absorb(Control::Hello {
             identity: identity(5),
+            endpoint: mac(),
             capabilities: caps(Some(0x0090)),
             peer_rssi: None,
         });
@@ -865,19 +1196,6 @@ mod tests {
                 reason: CloseReason::SelfConnection
             })
         );
-    }
-
-    #[test]
-    fn the_keep_rule_picks_the_same_duplicate_on_both_sides() {
-        let low = identity(1);
-        let high = identity(9);
-        let low_dialed = keeps_duplicate(&low, &high, HandshakeRole::Dialer);
-        let low_listened = keeps_duplicate(&low, &high, HandshakeRole::Listener);
-        let high_listened = keeps_duplicate(&high, &low, HandshakeRole::Listener);
-        let high_dialed = keeps_duplicate(&high, &low, HandshakeRole::Dialer);
-        assert!(low_dialed && !low_listened);
-        assert!(high_listened && !high_dialed);
-        assert_eq!(low_dialed, high_listened);
     }
 
     #[test]
@@ -910,6 +1228,7 @@ mod tests {
     fn a_hello_round_trips_through_the_control_codec() {
         let hello = Control::Hello {
             identity: identity(7),
+            endpoint: android(),
             capabilities: caps(Some(0x0081)),
             peer_rssi: Some(-63),
         };
@@ -919,19 +1238,49 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_greeting_without_the_rssi_byte_still_decodes() {
+    fn every_endpoint_round_trips_through_the_greeting() {
+        for endpoint in [
+            mac(),
+            linux(),
+            android(),
+            Endpoint::CoreBluetooth(AppleHost::Ios),
+            Endpoint::CoreBluetooth(AppleHost::IpadOs),
+            Endpoint::WinRt(WinRtHost::Windows),
+            Endpoint::Esp32(Esp32Host::Esp32),
+        ] {
+            let hello = Control::Hello {
+                identity: identity(3),
+                endpoint,
+                capabilities: caps(None),
+                peer_rssi: None,
+            };
+            let mut buf = [0u8; CONTROL_MAX_LEN];
+            let len = hello.encode(&mut buf).unwrap();
+            match Control::decode(&buf[..len]) {
+                Some(Control::Hello {
+                    endpoint: decoded, ..
+                }) => assert_eq!(decoded, endpoint),
+                other => panic!("endpoint failed to round-trip: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_greeting_without_the_trailing_rssi_byte_still_decodes() {
         let hello = Control::Hello {
             identity: identity(7),
+            endpoint: mac(),
             capabilities: caps(Some(0x0081)),
             peer_rssi: Some(-63),
         };
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = hello.encode(&mut buf).unwrap();
-        let legacy = Control::decode(&buf[..len - 1]).unwrap();
+        let trimmed = Control::decode(&buf[..len - 1]).unwrap();
         assert_eq!(
-            legacy,
+            trimmed,
             Control::Hello {
                 identity: identity(7),
+                endpoint: mac(),
                 capabilities: caps(Some(0x0081)),
                 peer_rssi: None,
             }
@@ -942,9 +1291,9 @@ mod tests {
     fn a_gatt_only_welcome_round_trips_with_no_psm() {
         let welcome = Control::Welcome {
             identity: identity(9),
+            endpoint: linux(),
             capabilities: LinkCapabilities {
                 l2cap: None,
-                l2cap_can_open: false,
                 link_mtu: 23,
             },
             peer_rssi: None,
@@ -984,6 +1333,7 @@ mod tests {
     fn control_encode_refuses_a_short_buffer() {
         let hello = Control::Hello {
             identity: identity(1),
+            endpoint: mac(),
             capabilities: caps(Some(0x0090)),
             peer_rssi: None,
         };

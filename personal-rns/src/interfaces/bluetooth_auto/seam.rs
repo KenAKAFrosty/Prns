@@ -1,4 +1,4 @@
-use super::core::{BleAddress, Control, Dialect, Transport};
+use super::core::{BleAddress, Control, Dialect, L2capPlan};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
@@ -26,7 +26,7 @@ pub trait BleBackend {
     type Error: core::fmt::Debug;
     type Link: BleLink<Error = Self::Error>;
 
-    async fn advertise(&mut self) -> Result<(), Self::Error>;
+    async fn set_advertising(&mut self, enabled: bool) -> Result<(), Self::Error>;
     async fn next_event(&mut self) -> BleEvent<Self::Link>;
     async fn dial(&mut self, address: BleAddress);
     async fn on_link_closed(&mut self, _address: BleAddress) {}
@@ -44,7 +44,7 @@ pub trait BleLink {
     async fn control_send(&mut self, msg: &Control) -> Result<(), Self::Error>;
     async fn control_recv(&mut self) -> Result<Control, Self::Error>;
 
-    async fn upgrade(&mut self, transport: &Transport) -> Result<(), Self::Error>;
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), Self::Error>;
 
     fn into_data(self) -> (Self::Source, Self::Sink);
 }

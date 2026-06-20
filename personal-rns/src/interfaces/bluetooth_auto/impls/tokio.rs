@@ -8,9 +8,10 @@ use futures_util::StreamExt;
 use tokio::sync::mpsc;
 
 use crate::interfaces::bluetooth_auto::core::{
-    self, keeps_duplicate, BleAddress, BleIdentity, Established, Handshake, HandshakeRole,
-    LinkCapabilities, Local, Outcome, Transport,
+    self, arrangement, is_keeper, l2cap_plan, BleAddress, BleIdentity, Established, Handshake,
+    HandshakeRole, LinkCapabilities, Local, Outcome,
 };
+use crate::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
 use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
@@ -27,7 +28,6 @@ struct ClosedSignal {
 pub struct BluetoothPeer<Src, Snk> {
     id: InterfaceId,
     identity: BleIdentity,
-    transport: Transport,
     source: Src,
     sink: Snk,
     reachability_tag: [u8; 16],
@@ -36,14 +36,13 @@ pub struct BluetoothPeer<Src, Snk> {
 }
 
 impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
-    pub fn new(identity: BleIdentity, transport: Transport, source: Src, sink: Snk) -> Self {
+    pub fn new(identity: BleIdentity, source: Src, sink: Snk) -> Self {
         let reachability_tag = *identity.as_bytes();
         let id =
             InterfaceId::from_reachability_tag(InterfaceKind::BluetoothPeer, &reachability_tag);
         Self {
             id,
             identity,
-            transport,
             source,
             sink,
             reachability_tag,
@@ -69,11 +68,6 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     #[must_use]
     pub fn identity(&self) -> BleIdentity {
         self.identity
-    }
-
-    #[must_use]
-    pub fn transport(&self) -> Transport {
-        self.transport
     }
 }
 
@@ -137,8 +131,7 @@ enum PeerState {
     Settled {
         identity: BleIdentity,
         member: AttachedInterface,
-        since: Instant,
-        link_rssi: Option<i8>,
+        keeper: bool,
     },
     Suppressed {
         since: Instant,
@@ -149,7 +142,6 @@ struct HandshakeDone<L: BleLink> {
     address: BleAddress,
     origin: Origin,
     outcome: Option<(Established, L)>,
-    link_rssi: Option<i8>,
 }
 
 type HandshakeQueue<L> = FuturesUnordered<Pin<Box<dyn Future<Output = HandshakeDone<L>>>>>;
@@ -166,11 +158,17 @@ pub struct BluetoothAuto<B> {
 }
 
 impl<B: BleBackend> BluetoothAuto<B> {
-    pub fn new(backend: B, identity: BleIdentity, capabilities: LinkCapabilities) -> Self {
+    pub fn new(
+        backend: B,
+        identity: BleIdentity,
+        endpoint: Endpoint,
+        capabilities: LinkCapabilities,
+    ) -> Self {
         Self {
             backend,
             local: Local {
                 identity,
+                endpoint,
                 capabilities,
             },
         }
@@ -192,7 +190,7 @@ where
 
     async fn run(self, fleet: Fleet) {
         let Self { mut backend, local } = self;
-        let _ = backend.advertise().await;
+        let mut advertising = backend.set_advertising(true).await.is_ok();
         let mut peers: HashMap<BleAddress, PeerState> = HashMap::new();
         let mut by_identity: HashMap<BleIdentity, BleAddress> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
@@ -205,12 +203,15 @@ where
             };
             match step {
                 Step::Event(BleEvent::Sighting { address, .. }) => {
-                    let dialable = match peers.get(&address) {
-                        None => true,
-                        Some(PeerState::Dialing { since }) => since.elapsed() >= DIAL_RETRY_TTL,
-                        Some(PeerState::Suppressed { since }) => since.elapsed() >= SUPPRESS_TTL,
-                        Some(PeerState::Handshaking | PeerState::Settled { .. }) => false,
-                    };
+                    let dialable = by_identity.len() < B::MAX_PEERS
+                        && match peers.get(&address) {
+                            None => true,
+                            Some(PeerState::Dialing { since }) => since.elapsed() >= DIAL_RETRY_TTL,
+                            Some(PeerState::Suppressed { since }) => {
+                                since.elapsed() >= SUPPRESS_TTL
+                            }
+                            Some(PeerState::Handshaking | PeerState::Settled { .. }) => false,
+                        };
                     if dialable {
                         peers.insert(
                             address,
@@ -265,6 +266,12 @@ where
                     backend.on_link_closed(address).await;
                 }
             }
+            reconcile_advertising(
+                &mut backend,
+                &mut advertising,
+                by_identity.len() < B::MAX_PEERS,
+            )
+            .await;
         }
     }
 }
@@ -272,14 +279,13 @@ where
 impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {}
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const STABLE_LINK_UPTIME: Duration = Duration::from_secs(15);
 const SUPPRESS_TTL: Duration = Duration::from_secs(8);
 const DIAL_RETRY_TTL: Duration = Duration::from_secs(16);
 
-fn link_quality(mine: Option<i8>, theirs: Option<i8>) -> Option<i8> {
-    match (mine, theirs) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (rssi, None) | (None, rssi) => rssi,
+async fn reconcile_advertising<B: BleBackend>(backend: &mut B, advertising: &mut bool, want: bool) {
+    if want != *advertising {
+        let _ = backend.set_advertising(want).await;
+        *advertising = want;
     }
 }
 
@@ -291,19 +297,13 @@ async fn run_handshake_task<L: BleLink>(
     origin: Origin,
     measured_rssi: Option<i8>,
 ) -> HandshakeDone<L> {
-    let settled = drive_handshake(&mut link, role, local, measured_rssi).await;
-    let (outcome, link_rssi) = match settled {
-        Some(established) => {
-            let link_rssi = link_quality(measured_rssi, established.peer_rssi);
-            (Some((established, link)), link_rssi)
-        }
-        None => (None, None),
-    };
+    let outcome = drive_handshake(&mut link, role, local, measured_rssi)
+        .await
+        .map(|established| (established, link));
     HandshakeDone {
         address,
         origin,
         outcome,
-        link_rssi,
     }
 }
 
@@ -354,12 +354,9 @@ async fn resolve<B>(
         address,
         origin,
         outcome,
-        link_rssi,
     } = done;
     let Some((established, mut link)) = outcome else {
-        if matches!(peers.get(&address), Some(PeerState::Handshaking)) {
-            peers.remove(&address);
-        }
+        forget_pending(peers, address);
         if matches!(origin, Origin::Dialed) {
             backend.on_link_closed(address).await;
         }
@@ -370,15 +367,15 @@ async fn resolve<B>(
         Origin::Dialed => HandshakeRole::Dialer,
         Origin::Accepted => HandshakeRole::Listener,
     };
+    let plan = arrangement(local.endpoint, established.endpoint);
+    let keeper = is_keeper(plan, role, local.identity, local.endpoint, identity);
+
     if let Some(&incumbent_addr) = by_identity.get(&identity) {
-        let (incumbent_stable, incumbent_rssi) = match peers.get(&incumbent_addr) {
-            Some(PeerState::Settled {
-                since, link_rssi, ..
-            }) => (since.elapsed() >= STABLE_LINK_UPTIME, *link_rssi),
-            _ => (false, None),
-        };
-        let challenger_wins = !incumbent_stable
-            && challenger_supersedes(incumbent_rssi, link_rssi, &local.identity, &identity, role);
+        let incumbent_keeper = matches!(
+            peers.get(&incumbent_addr),
+            Some(PeerState::Settled { keeper: true, .. })
+        );
+        let challenger_wins = keeper && !incumbent_keeper;
         if !challenger_wins {
             if address != incumbent_addr {
                 peers.insert(
@@ -388,46 +385,59 @@ async fn resolve<B>(
                     },
                 );
             }
+            if matches!(origin, Origin::Dialed) {
+                backend.on_link_closed(address).await;
+            }
             return;
         }
         if let Some(PeerState::Settled { member, .. }) = peers.remove(&incumbent_addr) {
             member.teardown();
         }
         by_identity.remove(&identity);
-    }
-    if link.upgrade(&established.transport).await.is_err() {
-        peers.remove(&address);
+    } else if by_identity.len() >= B::MAX_PEERS {
+        forget_pending(peers, address);
         if matches!(origin, Origin::Dialed) {
             backend.on_link_closed(address).await;
         }
         return;
     }
+
+    let lane = l2cap_plan(
+        plan,
+        role,
+        local.endpoint,
+        &local.capabilities,
+        &established.capabilities,
+    );
+    arm_fast_lane(&mut link, &lane).await;
     let (source, sink) = link.into_data();
-    let member = BluetoothPeer::new(identity, established.transport, source, sink)
-        .report_close_to(address, closed.clone());
+    let member =
+        BluetoothPeer::new(identity, source, sink).report_close_to(address, closed.clone());
     let attached = fleet.add(member);
     peers.insert(
         address,
         PeerState::Settled {
             identity,
             member: attached,
-            since: Instant::now(),
-            link_rssi,
+            keeper,
         },
     );
     by_identity.insert(identity, address);
 }
 
-fn challenger_supersedes(
-    incumbent_rssi: Option<i8>,
-    challenger_rssi: Option<i8>,
-    ours: &BleIdentity,
-    theirs: &BleIdentity,
-    challenger_role: HandshakeRole,
-) -> bool {
-    match (incumbent_rssi, challenger_rssi) {
-        (Some(incumbent), Some(challenger)) if incumbent != challenger => challenger > incumbent,
-        _ => keeps_duplicate(ours, theirs, challenger_role),
+async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {
+    if matches!(lane, L2capPlan::None) {
+        return;
+    }
+    let _ = link.upgrade(lane).await;
+}
+
+fn forget_pending(peers: &mut HashMap<BleAddress, PeerState>, address: BleAddress) {
+    if matches!(
+        peers.get(&address),
+        Some(PeerState::Dialing { .. } | PeerState::Handshaking)
+    ) {
+        peers.remove(&address);
     }
 }
 
@@ -452,15 +462,28 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::interfaces::bluetooth_auto::core::{BleAddress, Control, Dialect, Psm};
+    use crate::interfaces::bluetooth_auto::core::{
+        AndroidHost, AppleHost, BleAddress, BlueZHost, Control, Dialect, Psm,
+    };
     use crate::reactor::impls::tokio_reactor::{tokio_grant_lane, TokioGrantConsumer};
 
     const TEST_FRAME_CAP: usize = 2_048;
 
+    fn mac() -> Endpoint {
+        Endpoint::CoreBluetooth(AppleHost::MacOs)
+    }
+
+    fn linux() -> Endpoint {
+        Endpoint::BlueZ(BlueZHost::Linux)
+    }
+
+    fn android() -> Endpoint {
+        Endpoint::Android(AndroidHost::Android)
+    }
+
     fn caps(psm: u16) -> LinkCapabilities {
         LinkCapabilities {
             l2cap: Psm::new(psm),
-            l2cap_can_open: true,
             link_mtu: 247,
         }
     }
@@ -521,7 +544,7 @@ mod tests {
             self.control_rx.recv().await.ok_or(Closed)
         }
 
-        async fn upgrade(&mut self, _transport: &Transport) -> Result<(), Closed> {
+        async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), Closed> {
             Ok(())
         }
 
@@ -618,7 +641,7 @@ mod tests {
         type Error = Closed;
         type Link = LoopbackLink;
 
-        async fn advertise(&mut self) -> Result<(), Closed> {
+        async fn set_advertising(&mut self, _enabled: bool) -> Result<(), Closed> {
             Ok(())
         }
 
@@ -659,10 +682,12 @@ mod tests {
     async fn two_nodes_handshake_over_loopback_and_a_frame_crosses() {
         let local_a = Local {
             identity: BleIdentity::new([1u8; 16]),
+            endpoint: mac(),
             capabilities: caps(0x0081),
         };
         let local_b = Local {
             identity: BleIdentity::new([2u8; 16]),
+            endpoint: linux(),
             capabilities: caps(0x0082),
         };
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
@@ -692,29 +717,14 @@ mod tests {
         let ((established_a, link_a), (established_b, link_b)) = tokio::join!(dialer, listener);
 
         assert_eq!(established_a.identity, local_b.identity);
+        assert_eq!(established_a.endpoint, local_b.endpoint);
         assert_eq!(established_b.identity, local_a.identity);
-        assert_eq!(
-            established_a.transport,
-            Transport::L2capOpen {
-                psm: local_b.capabilities.l2cap.unwrap(),
-            }
-        );
-        assert_eq!(established_b.transport, Transport::L2capAccept);
+        assert_eq!(established_b.endpoint, local_a.endpoint);
 
         let (source_a, sink_a) = link_a.into_data();
         let (source_b, sink_b) = link_b.into_data();
-        let member_a = BluetoothPeer::new(
-            established_a.identity,
-            established_a.transport,
-            source_a,
-            sink_a,
-        );
-        let member_b = BluetoothPeer::new(
-            established_b.identity,
-            established_b.transport,
-            source_b,
-            sink_b,
-        );
+        let member_a = BluetoothPeer::new(established_a.identity, source_a, sink_a);
+        let member_b = BluetoothPeer::new(established_b.identity, source_b, sink_b);
 
         let (discard_a, _discard_a_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
         let (mut out_a_producer, out_a_consumer) = tokio_grant_lane(TEST_FRAME_CAP, 2);
@@ -745,16 +755,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_gatt_only_listener_settles_the_link_on_gatt() {
+    async fn a_gatt_only_listener_settles_the_link_on_the_floor() {
         let local_a = Local {
             identity: BleIdentity::new([1u8; 16]),
+            endpoint: mac(),
             capabilities: caps(0x0081),
         };
         let local_b = Local {
             identity: BleIdentity::new([2u8; 16]),
+            endpoint: linux(),
             capabilities: LinkCapabilities {
                 l2cap: None,
-                l2cap_can_open: false,
                 link_mtu: 247,
             },
         };
@@ -782,8 +793,103 @@ mod tests {
         };
         let (established_a, established_b) = tokio::join!(dialer, listener);
 
-        assert_eq!(established_a.transport, Transport::GattData);
-        assert_eq!(established_b.transport, Transport::GattData);
+        let arr_a = arrangement(local_a.endpoint, established_a.endpoint);
+        let arr_b = arrangement(local_b.endpoint, established_b.endpoint);
+        assert_eq!(
+            l2cap_plan(
+                arr_a,
+                HandshakeRole::Dialer,
+                local_a.endpoint,
+                &local_a.capabilities,
+                &established_a.capabilities,
+            ),
+            L2capPlan::None
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr_b,
+                HandshakeRole::Listener,
+                local_b.endpoint,
+                &local_b.capabilities,
+                &established_b.capabilities,
+            ),
+            L2capPlan::None
+        );
+    }
+
+    #[tokio::test]
+    async fn an_android_peer_is_the_l2cap_opener_and_the_mac_accepts() {
+        let mac_local = Local {
+            identity: BleIdentity::new([1u8; 16]),
+            endpoint: mac(),
+            capabilities: caps(0x00c0),
+        };
+        let android_local = Local {
+            identity: BleIdentity::new([2u8; 16]),
+            endpoint: android(),
+            capabilities: caps(0x0080),
+        };
+        let (mut mac_backend, mut android_backend) = LoopbackBleBackend::pair();
+
+        let mac_side = async move {
+            let BleEvent::Sighting { address, .. } = mac_backend.next_event().await else {
+                unreachable!("mac sights android")
+            };
+            mac_backend.dial(address).await;
+            let BleEvent::LinkReady { mut link, .. } = mac_backend.next_event().await else {
+                unreachable!("the dial completes into a link")
+            };
+            drive_handshake(&mut link, HandshakeRole::Dialer, mac_local, None)
+                .await
+                .unwrap()
+        };
+        let android_side = async move {
+            let BleEvent::LinkReady { mut link, .. } = android_backend.next_event().await else {
+                unreachable!("android accepts an inbound link")
+            };
+            drive_handshake(&mut link, HandshakeRole::Listener, android_local, None)
+                .await
+                .unwrap()
+        };
+        let (mac_established, android_established) = tokio::join!(mac_side, android_side);
+
+        let arr = arrangement(mac_local.endpoint, mac_established.endpoint);
+        let mac_keeper = is_keeper(
+            arr,
+            HandshakeRole::Dialer,
+            mac_local.identity,
+            mac_local.endpoint,
+            mac_established.identity,
+        );
+        let android_keeper = is_keeper(
+            arr,
+            HandshakeRole::Listener,
+            android_local.identity,
+            android_local.endpoint,
+            android_established.identity,
+        );
+        assert!(!mac_keeper);
+        assert!(!android_keeper);
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                android_local.endpoint,
+                &android_local.capabilities,
+                &android_established.capabilities,
+            ),
+            L2capPlan::None
+        );
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Dialer,
+                mac_local.endpoint,
+                &mac_local.capabilities,
+                &mac_established.capabilities,
+            ),
+            L2capPlan::Accept
+        );
     }
 
     fn idle_seam() -> MockSeam {
@@ -803,13 +909,8 @@ mod tests {
         drop(link_b);
 
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
-        let member = BluetoothPeer::new(
-            BleIdentity::new([1u8; 16]),
-            Transport::GattData,
-            source,
-            sink,
-        )
-        .report_close_to(addr, closed_tx.clone());
+        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
+            .report_close_to(addr, closed_tx.clone());
         tokio::spawn(member.run(idle_seam()));
 
         let reported = tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
@@ -827,13 +928,8 @@ mod tests {
         let _keep_peer_alive = link_b;
 
         let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
-        let member = BluetoothPeer::new(
-            BleIdentity::new([1u8; 16]),
-            Transport::GattData,
-            source,
-            sink,
-        )
-        .report_close_to(addr, closed_tx.clone());
+        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
+            .report_close_to(addr, closed_tx.clone());
         let handle = tokio::spawn(member.run(idle_seam()));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
