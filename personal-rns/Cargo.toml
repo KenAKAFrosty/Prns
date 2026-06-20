@@ -191,8 +191,14 @@ log = { version = "0.4", optional = true, default-features = false }
 # u32's 4 GiB. portable-atomic emulates them through critical-section (esp-hal supplies the
 # impl in the firmware binary; native on the host), keeping the counters true u64.
 portable-atomic = { version = "1", optional = true, default-features = false, features = ["critical-section"] }
-# The SX1262 LoRa driver — generic over an embedded-hal-async SPI + GPIO RadioKind, so the run loop
-# stays HAL-agnostic. Version-matched to the proven Heltec V4 bring-up. Only under `embassy-lora`.
+# The HAL-agnostic trait surface our own SX1262 driver (`subghz_rf`) is generic over: an
+# `embedded-hal-async` SpiDevice + Wait/DelayNs, plus the blocking `OutputPin`. Tiny no_std
+# trait-only crates, so `subghz_rf` stays a core module (no feature gate, like `crypto`).
+embedded-hal = { version = "1", default-features = false }
+embedded-hal-async = { version = "1", default-features = false }
+# The lora-phy-backed SX1262 interface shell — generic over an embedded-hal-async SPI + GPIO
+# RadioKind, HAL-agnostic. Version-matched to the proven Heltec V4 bring-up. Only under
+# `embassy-lora`; superseded on nRF by our own `subghz_rf` driver.
 lora-phy = { version = "3.0.1", optional = true, default-features = false }
 
 # OS secret store for the host identity vault (under `keyring`): the platform's

@@ -24,5 +24,6 @@ pub mod reactor;
 pub mod routing;
 pub mod runtime;
 pub mod storage;
+pub mod subghz_rf;
 pub mod units;
 pub mod wire;

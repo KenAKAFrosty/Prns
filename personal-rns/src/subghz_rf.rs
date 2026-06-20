@@ -1,0 +1,823 @@
+//! Our own SX1262 sub-GHz radio driver.
+//!
+//! HAL-agnostic: the one driver body is generic over `embedded-hal-async` (an
+//! `SpiDevice`, BUSY and DIO1 as `Wait` pins, RESET as an `OutputPin`, and a `DelayNs`),
+//! so the same code drives the SX1262 on any MCU — proven crossing real air between the
+//! Heltec V4 (esp-hal / Xtensa) and the LilyGo T-Echo (embassy-nrf / Cortex-M). Only a
+//! small [`BoardConfig`] differs per board.
+//!
+//! [`Modulation`] is the change point: today the [`Modulation::Lora`] arm issues the
+//! SX1262's LoRa packet-engine commands; the GFSK/FSK arms are the reserved seam the
+//! `SetPacketType` / `SetModulationParams` split lights up later.
+//!
+//! Build note: on nRF/Cortex-M (`thumbv7em`) this must be built with `lto = "thin"` or
+//! `lto = false` — `lto = "fat"` miscompiles the command sequence into a layout-dependent
+//! boot HardFault on that target (the Xtensa/esp-hal path is unaffected).
+
+use embedded_hal::digital::OutputPin;
+use embedded_hal_async::delay::DelayNs;
+use embedded_hal_async::digital::Wait;
+use embedded_hal_async::spi::{Operation, SpiDevice};
+
+/// SX1262 command opcodes (datasheet table 11-1). Kept as a complete reference table; the
+/// GFSK seam and sleep mode use the rest.
+#[allow(dead_code)]
+mod op {
+    pub const SET_SLEEP: u8 = 0x84;
+    pub const SET_STANDBY: u8 = 0x80;
+    pub const SET_TX: u8 = 0x83;
+    pub const SET_RX: u8 = 0x82;
+    pub const SET_REGULATOR_MODE: u8 = 0x96;
+    pub const CALIBRATE: u8 = 0x89;
+    pub const CALIBRATE_IMAGE: u8 = 0x98;
+    pub const SET_PA_CONFIG: u8 = 0x95;
+    pub const WRITE_REGISTER: u8 = 0x0D;
+    pub const READ_REGISTER: u8 = 0x1D;
+    pub const WRITE_BUFFER: u8 = 0x0E;
+    pub const READ_BUFFER: u8 = 0x1E;
+    pub const SET_DIO_IRQ_PARAMS: u8 = 0x08;
+    pub const GET_IRQ_STATUS: u8 = 0x12;
+    pub const CLEAR_IRQ_STATUS: u8 = 0x02;
+    pub const SET_DIO2_AS_RF_SWITCH_CTRL: u8 = 0x9D;
+    pub const SET_DIO3_AS_TCXO_CTRL: u8 = 0x97;
+    pub const SET_RF_FREQUENCY: u8 = 0x86;
+    pub const SET_PACKET_TYPE: u8 = 0x8A;
+    pub const SET_TX_PARAMS: u8 = 0x8E;
+    pub const SET_MODULATION_PARAMS: u8 = 0x8B;
+    pub const SET_PACKET_PARAMS: u8 = 0x8C;
+    pub const SET_BUFFER_BASE_ADDRESS: u8 = 0x8F;
+    pub const GET_RX_BUFFER_STATUS: u8 = 0x13;
+    pub const GET_STATUS: u8 = 0xC0;
+    pub const CLEAR_DEVICE_ERRORS: u8 = 0x07;
+    pub const SET_STOP_RX_TIMER_ON_PREAMBLE: u8 = 0x9F;
+    pub const SET_LORA_SYMB_NUM_TIMEOUT: u8 = 0xA0;
+}
+
+/// SX1262 registers we touch (datasheet table 12-1).
+mod reg {
+    /// LoRa sync word, high byte (low byte at +1).
+    pub const LORA_SYNC_WORD_MSB: u16 = 0x0740;
+    /// TX clamp config — errata 15.2 workaround.
+    pub const TX_CLAMP_CONFIG: u16 = 0x08D8;
+    /// RX gain — 0x96 for boosted-gain RX.
+    pub const RX_GAIN: u16 = 0x08AC;
+    /// TX modulation quality — errata 15.1 workaround (bit 2).
+    pub const TX_MODULATION: u16 = 0x0889;
+    /// IQ polarity — errata 15.4 workaround (bit 2).
+    pub const IQ_POLARITY: u16 = 0x0736;
+}
+
+/// IRQ status bit masks (datasheet table 13-29). Complete reference; not every bit is
+/// discriminated in the LoRa path.
+#[allow(dead_code)]
+mod irq {
+    pub const TX_DONE: u16 = 1 << 0;
+    pub const RX_DONE: u16 = 1 << 1;
+    pub const PREAMBLE_DETECTED: u16 = 1 << 2;
+    pub const HEADER_VALID: u16 = 1 << 4;
+    pub const HEADER_ERR: u16 = 1 << 5;
+    pub const CRC_ERR: u16 = 1 << 6;
+    pub const TIMEOUT: u16 = 1 << 9;
+    /// The SX1262's literal "all IRQs" mask (lora-phy unmasks 0xFFFF onto DIO1 for RX).
+    pub const ALL: u16 = 0xFFFF;
+}
+
+/// The TCXO supply voltage the SX1262 drives out of DIO3 (datasheet table 13-35).
+/// Both our boards use 1.8 V.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TcxoVoltage {
+    V1_6 = 0x00,
+    V1_7 = 0x01,
+    V1_8 = 0x02,
+    V2_2 = 0x03,
+    V2_4 = 0x04,
+    V2_7 = 0x05,
+    V3_0 = 0x06,
+    V3_3 = 0x07,
+}
+
+/// LoRa spreading factor — the SX1262 byte is the SF number itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SpreadingFactor {
+    Sf5 = 0x05,
+    Sf6 = 0x06,
+    Sf7 = 0x07,
+    Sf8 = 0x08,
+    Sf9 = 0x09,
+    Sf10 = 0x0A,
+    Sf11 = 0x0B,
+    Sf12 = 0x0C,
+}
+
+/// LoRa bandwidth — the SX1262 modulation-param code (datasheet table 13-38).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Bandwidth {
+    Bw125 = 0x04,
+    Bw250 = 0x05,
+    Bw500 = 0x06,
+}
+
+/// LoRa coding rate — the SX1262 modulation-param code (datasheet table 13-39).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CodingRate {
+    Cr4_5 = 0x01,
+    Cr4_6 = 0x02,
+    Cr4_7 = 0x03,
+    Cr4_8 = 0x04,
+}
+
+/// The change point. Today only LoRa is driven; the GFSK arm is the reserved seam.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modulation {
+    Lora {
+        spreading_factor: SpreadingFactor,
+        bandwidth: Bandwidth,
+        coding_rate: CodingRate,
+    },
+}
+
+/// LoRa on-air packet shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoraPacket {
+    pub preamble_symbols: u16,
+    pub explicit_header: bool,
+    pub crc_on: bool,
+    pub invert_iq: bool,
+}
+
+/// The private LoRa network sync word (RNode): 0x1424.
+pub const PRIVATE_SYNC_WORD: u16 = 0x1424;
+
+/// Per-board wiring/analog facts the one driver body needs.
+#[derive(Debug, Clone, Copy)]
+pub struct BoardConfig {
+    /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
+    pub tcxo_voltage: Option<TcxoVoltage>,
+    /// Use the on-chip DC-DC (vs LDO-only).
+    pub use_dcdc: bool,
+    /// Apply the boosted-gain RX register.
+    pub rx_boost: bool,
+    /// Let the SX1262 drive its own RF switch off DIO2 (true for both our boards).
+    pub dio2_as_rf_switch: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    Spi,
+    Busy,
+    Dio1,
+    Reset,
+    /// An on-air receive failed its CRC.
+    Crc,
+    /// A TX or RX completed with the SX1262's timeout IRQ set.
+    Timeout,
+    /// The receive buffer was smaller than the frame.
+    BufferTooSmall,
+}
+
+/// The SX1262 driver. One body for every board; the pin/bus types are the only
+/// per-platform variation.
+pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
+    spi: SPI,
+    busy: BUSY,
+    dio1: DIO1,
+    reset: RST,
+    delay: DLY,
+    config: BoardConfig,
+    freq_hz: u32,
+    modulation: Modulation,
+    packet: LoraPacket,
+    tx_power_dbm: i8,
+}
+
+impl<SPI, BUSY, DIO1, RST, DLY> Sx126x<SPI, BUSY, DIO1, RST, DLY>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    pub fn new(
+        spi: SPI,
+        busy: BUSY,
+        dio1: DIO1,
+        reset: RST,
+        delay: DLY,
+        config: BoardConfig,
+    ) -> Self {
+        Self {
+            spi,
+            busy,
+            dio1,
+            reset,
+            delay,
+            config,
+            freq_hz: 915_000_000,
+            modulation: Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf7,
+                bandwidth: Bandwidth::Bw125,
+                coding_rate: CodingRate::Cr4_5,
+            },
+            packet: LoraPacket {
+                preamble_symbols: 8,
+                explicit_header: true,
+                crc_on: true,
+                invert_iq: false,
+            },
+            tx_power_dbm: 14,
+        }
+    }
+
+    /// Wait for the SX1262 to lower BUSY before clocking the next command.
+    async fn wait_busy(&mut self) -> Result<(), Error> {
+        self.busy.wait_for_low().await.map_err(|_| Error::Busy)
+    }
+
+    /// Hard-reset the chip: hold RESET low, release, wait for BUSY low. Timing matches
+    /// the lora-phy sx126x interface variant (10 ms settle, 20 ms low, 10 ms rise).
+    async fn hard_reset(&mut self) -> Result<(), Error> {
+        self.delay.delay_ms(10).await;
+        self.reset.set_low().map_err(|_| Error::Reset)?;
+        self.delay.delay_ms(20).await;
+        self.reset.set_high().map_err(|_| Error::Reset)?;
+        self.delay.delay_ms(10).await;
+        self.wait_busy().await
+    }
+
+    /// Send one command frame (opcode + params) in a single CS assertion.
+    async fn command(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        self.wait_busy().await?;
+        self.spi.write(bytes).await.map_err(|_| Error::Spi)
+    }
+
+    /// Send `opcode`, then clock `buf.len()` bytes back: `buf[0]` is the status byte,
+    /// `buf[1..]` the requested data.
+    async fn read_command(&mut self, opcode: u8, buf: &mut [u8]) -> Result<(), Error> {
+        self.wait_busy().await?;
+        self.spi
+            .transaction(&mut [Operation::Write(&[opcode]), Operation::Read(buf)])
+            .await
+            .map_err(|_| Error::Spi)
+    }
+
+    async fn write_register(&mut self, addr: u16, data: &[u8]) -> Result<(), Error> {
+        self.wait_busy().await?;
+        let header = [op::WRITE_REGISTER, (addr >> 8) as u8, addr as u8];
+        self.spi
+            .transaction(&mut [Operation::Write(&header), Operation::Write(data)])
+            .await
+            .map_err(|_| Error::Spi)
+    }
+
+    async fn read_register(&mut self, addr: u16, buf: &mut [u8]) -> Result<(), Error> {
+        self.wait_busy().await?;
+        // opcode, addr hi/lo, one status NOP, then the register bytes.
+        let header = [op::READ_REGISTER, (addr >> 8) as u8, addr as u8, 0x00];
+        self.spi
+            .transaction(&mut [Operation::Write(&header), Operation::Read(buf)])
+            .await
+            .map_err(|_| Error::Spi)
+    }
+
+    async fn write_buffer(&mut self, offset: u8, data: &[u8]) -> Result<(), Error> {
+        self.wait_busy().await?;
+        let header = [op::WRITE_BUFFER, offset];
+        self.spi
+            .transaction(&mut [Operation::Write(&header), Operation::Write(data)])
+            .await
+            .map_err(|_| Error::Spi)
+    }
+
+    async fn read_buffer(&mut self, offset: u8, buf: &mut [u8]) -> Result<(), Error> {
+        self.wait_busy().await?;
+        // opcode, offset, one status NOP, then the payload bytes.
+        let header = [op::READ_BUFFER, offset, 0x00];
+        self.spi
+            .transaction(&mut [Operation::Write(&header), Operation::Read(buf)])
+            .await
+            .map_err(|_| Error::Spi)
+    }
+
+    async fn irq_status(&mut self) -> Result<u16, Error> {
+        let mut buf = [0u8; 3];
+        self.read_command(op::GET_IRQ_STATUS, &mut buf).await?;
+        Ok(((buf[1] as u16) << 8) | buf[2] as u16)
+    }
+
+    async fn clear_irq(&mut self, mask: u16) -> Result<(), Error> {
+        self.command(&[op::CLEAR_IRQ_STATUS, (mask >> 8) as u8, mask as u8])
+            .await
+    }
+}
+
+impl<SPI, BUSY, DIO1, RST, DLY> Sx126x<SPI, BUSY, DIO1, RST, DLY>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    /// Reset the SX1262 and run the LoRa cold-start sequence for `frequency_hz` /
+    /// `modulation` / `packet` / `tx_power_dbm`, mirroring lora-phy's command stream so
+    /// our frames are wire-compatible. Leaves the chip in standby, configured for this
+    /// band; call [`transmit`](Self::transmit) / [`receive`](Self::receive) next.
+    /// Reset the SX1262 and run the LoRa cold-start sequence for `frequency_hz` /
+    /// `modulation` / `packet` / `tx_power_dbm`. Leaves the chip in standby, configured
+    /// for this band; call [`transmit`](Self::transmit) / [`receive`](Self::receive) next.
+    pub async fn init(
+        &mut self,
+        frequency_hz: u32,
+        modulation: Modulation,
+        packet: LoraPacket,
+        tx_power_dbm: i8,
+    ) -> Result<(), Error> {
+        self.freq_hz = frequency_hz;
+        self.modulation = modulation;
+        self.packet = packet;
+        self.tx_power_dbm = tx_power_dbm;
+
+        self.hard_reset().await?;
+        self.command(&[op::GET_STATUS, 0x00]).await?;
+        self.standby().await?;
+        if self.config.use_dcdc {
+            self.command(&[op::SET_REGULATOR_MODE, 0x01]).await?;
+        }
+        if self.config.dio2_as_rf_switch {
+            self.command(&[op::SET_DIO2_AS_RF_SWITCH_CTRL, 0x01])
+                .await?;
+        }
+        if let Some(voltage) = self.config.tcxo_voltage {
+            self.command(&[op::CLEAR_DEVICE_ERRORS, 0x00, 0x00]).await?;
+            // TCXO startup timeout 640 (= 10 ms / 15.625 us), MSB-first.
+            self.command(&[op::SET_DIO3_AS_TCXO_CTRL, voltage as u8, 0x00, 0x02, 0x80])
+                .await?;
+            self.command(&[op::CALIBRATE, 0x7F]).await?;
+        }
+        self.command(&[op::SET_PACKET_TYPE, 0x01]).await?;
+        self.write_register(reg::LORA_SYNC_WORD_MSB, &PRIVATE_SYNC_WORD.to_be_bytes())
+            .await?;
+        self.command(&[op::SET_BUFFER_BASE_ADDRESS, 0x00, 0x00])
+            .await?;
+        // Image calibration for the 902-928 MHz band.
+        self.command(&[op::CALIBRATE_IMAGE, 0xE1, 0xE9]).await?;
+        Ok(())
+    }
+
+    /// Transmit one LoRa frame and wait for TxDone. Re-issues modulation / power /
+    /// packet / frequency each call (matching the oracle), so it is safe to interleave
+    /// with [`receive`](Self::receive).
+    pub async fn transmit(&mut self, payload: &[u8]) -> Result<(), Error> {
+        let len = payload.len();
+        if len > 255 {
+            return Err(Error::BufferTooSmall);
+        }
+        // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may
+        // be flash-resident (`&'static`), so stage it through a RAM buffer.
+        let mut scratch = [0u8; 255];
+        scratch[..len].copy_from_slice(payload);
+
+        self.standby().await?;
+        self.set_modulation_params().await?;
+        self.set_tx_power().await?;
+        self.set_packet_params(len as u8).await?;
+        self.set_rf_frequency().await?;
+        self.write_buffer(0x00, &scratch[..len]).await?;
+        let mask = (irq::TX_DONE | irq::TIMEOUT).to_be_bytes();
+        self.command(&[
+            op::SET_DIO_IRQ_PARAMS,
+            mask[0],
+            mask[1],
+            mask[0],
+            mask[1],
+            0,
+            0,
+            0,
+            0,
+        ])
+        .await?;
+        self.clear_irq(irq::ALL).await?;
+        // SetTx with timeout 0 = single shot, no timeout.
+        self.command(&[op::SET_TX, 0x00, 0x00, 0x00]).await?;
+        self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
+        let flags = self.irq_status().await?;
+        self.clear_irq(flags).await?;
+        if flags & irq::TIMEOUT != 0 {
+            return Err(Error::Timeout);
+        }
+        Ok(())
+    }
+
+    /// Listen in continuous RX and return the first frame's length, written into `buf`.
+    /// Blocks until RxDone — wrap in a host-side timeout to bound the listen. `Err(Crc)`
+    /// on a CRC failure, `Err(BufferTooSmall)` if the frame exceeds `buf`.
+    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        self.standby().await?;
+        self.set_modulation_params().await?;
+        self.set_packet_params(0xFF).await?;
+        self.set_rf_frequency().await?;
+        // Unmask all IRQs onto DIO1; discriminate in software.
+        let all = irq::ALL.to_be_bytes();
+        self.command(&[
+            op::SET_DIO_IRQ_PARAMS,
+            all[0],
+            all[1],
+            all[0],
+            all[1],
+            0,
+            0,
+            0,
+            0,
+        ])
+        .await?;
+        self.command(&[op::SET_STOP_RX_TIMER_ON_PREAMBLE, 0x01])
+            .await?;
+        self.command(&[op::SET_LORA_SYMB_NUM_TIMEOUT, 0x00]).await?;
+        if self.config.rx_boost {
+            self.write_register(reg::RX_GAIN, &[0x96]).await?;
+        }
+        self.clear_irq(irq::ALL).await?;
+        // SetRx 0xFFFFFF = continuous.
+        self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await?;
+
+        loop {
+            self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
+            let flags = self.irq_status().await?;
+            self.clear_irq(flags).await?;
+            if flags & irq::RX_DONE != 0 {
+                if flags & irq::CRC_ERR != 0 {
+                    return Err(Error::Crc);
+                }
+                let mut status = [0u8; 3];
+                self.read_command(op::GET_RX_BUFFER_STATUS, &mut status)
+                    .await?;
+                let len = status[1] as usize;
+                let offset = status[2];
+                if len > buf.len() {
+                    return Err(Error::BufferTooSmall);
+                }
+                self.read_buffer(offset, &mut buf[..len]).await?;
+                return Ok(len);
+            }
+            if flags & irq::TIMEOUT != 0 {
+                return Err(Error::Timeout);
+            }
+        }
+    }
+
+    async fn standby(&mut self) -> Result<(), Error> {
+        self.command(&[op::SET_STANDBY, 0x00]).await
+    }
+
+    async fn set_rf_frequency(&mut self) -> Result<(), Error> {
+        // PLL step = freq * 2^25 / 32 MHz (u64 to avoid overflow).
+        let steps = (((self.freq_hz as u64) << 25) / 32_000_000) as u32;
+        let b = steps.to_be_bytes();
+        self.command(&[op::SET_RF_FREQUENCY, b[0], b[1], b[2], b[3]])
+            .await
+    }
+
+    async fn set_modulation_params(&mut self) -> Result<(), Error> {
+        match self.modulation {
+            Modulation::Lora {
+                spreading_factor,
+                bandwidth,
+                coding_rate,
+            } => {
+                let ldro = lora_ldro(spreading_factor, bandwidth);
+                self.command(&[
+                    op::SET_MODULATION_PARAMS,
+                    spreading_factor as u8,
+                    bandwidth as u8,
+                    coding_rate as u8,
+                    ldro,
+                ])
+                .await?;
+                // TxModulation errata (DS 15.1): set bit 2 unless BW500.
+                let mut v = [0u8; 1];
+                self.read_register(reg::TX_MODULATION, &mut v).await?;
+                let fixed = if bandwidth == Bandwidth::Bw500 {
+                    v[0] & !0x04
+                } else {
+                    v[0] | 0x04
+                };
+                self.write_register(reg::TX_MODULATION, &[fixed]).await
+            }
+        }
+    }
+
+    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
+        let pre = self.packet.preamble_symbols.to_be_bytes();
+        let header = u8::from(!self.packet.explicit_header);
+        let crc = u8::from(self.packet.crc_on);
+        let iq = u8::from(self.packet.invert_iq);
+        self.command(&[
+            op::SET_PACKET_PARAMS,
+            pre[0],
+            pre[1],
+            header,
+            payload_len,
+            crc,
+            iq,
+        ])
+        .await?;
+        // IQPolarity errata (DS 15.4): set bit 2 unless inverted IQ.
+        let mut v = [0u8; 1];
+        self.read_register(reg::IQ_POLARITY, &mut v).await?;
+        let fixed = if self.packet.invert_iq {
+            v[0] & !0x04
+        } else {
+            v[0] | 0x04
+        };
+        self.write_register(reg::IQ_POLARITY, &[fixed]).await
+    }
+
+    async fn set_tx_power(&mut self) -> Result<(), Error> {
+        // TxClampCfg errata (DS 15.2): set bits 1-4.
+        let mut v = [0u8; 1];
+        self.read_register(reg::TX_CLAMP_CONFIG, &mut v).await?;
+        self.write_register(reg::TX_CLAMP_CONFIG, &[v[0] | 0x1E])
+            .await?;
+
+        let (pa_duty, hp_max, tx_power) = pa_params(self.tx_power_dbm);
+        self.command(&[op::SET_PA_CONFIG, pa_duty, hp_max, 0x00, 0x01])
+            .await?;
+        // Ramp 40 us (0x02) for a TX preparation.
+        self.command(&[op::SET_TX_PARAMS, tx_power, 0x02]).await
+    }
+}
+
+/// LoRa low-data-rate optimize: on only for the slow SF/BW combos (DS 6.1.4).
+fn lora_ldro(sf: SpreadingFactor, bw: Bandwidth) -> u8 {
+    u8::from(matches!(
+        (sf, bw),
+        (
+            SpreadingFactor::Sf11 | SpreadingFactor::Sf12,
+            Bandwidth::Bw125
+        ) | (SpreadingFactor::Sf12, Bandwidth::Bw250)
+    ))
+}
+
+/// SX1262 high-power-PA config for a clamped dBm: (paDutyCycle, hpMax, SetTxParams power).
+fn pa_params(power_dbm: i8) -> (u8, u8, u8) {
+    let txp = power_dbm.clamp(-9, 22);
+    match txp {
+        21..=22 => (0x04, 0x07, 22),
+        18..=20 => (0x03, 0x05, (txp + 2) as u8),
+        15..=17 => (0x02, 0x03, (txp + 5) as u8),
+        _ => (0x02, 0x02, (txp + 8) as u8),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Drives `init`/`transmit`/`receive` against a mock `SpiDevice` that records every
+    //! command and answers reads with canned values, then asserts the recorded command
+    //! stream byte-for-byte against the lora-phy oracle — pins the wire-relevant encoding
+    //! (opcodes, parameter order, syncword, frequency, errata RMWs) with no hardware.
+
+    use super::*;
+    use core::future::Future;
+    use core::task::{Context, Poll, Waker};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use embedded_hal::digital::{
+        Error as DigError, ErrorKind as DigErrorKind, ErrorType as DigErrorType, OutputPin,
+    };
+    use embedded_hal::spi::{
+        Error as SpiError, ErrorKind as SpiErrorKind, ErrorType as SpiErrorType, Operation,
+    };
+    use embedded_hal_async::delay::DelayNs;
+    use embedded_hal_async::digital::Wait;
+    use embedded_hal_async::spi::SpiDevice;
+
+    #[derive(Debug)]
+    struct MockErr;
+    impl SpiError for MockErr {
+        fn kind(&self) -> SpiErrorKind {
+            SpiErrorKind::Other
+        }
+    }
+    impl DigError for MockErr {
+        fn kind(&self) -> DigErrorKind {
+            DigErrorKind::Other
+        }
+    }
+
+    type Log = Rc<RefCell<Vec<Vec<u8>>>>;
+
+    struct MockSpi {
+        log: Log,
+    }
+    impl SpiErrorType for MockSpi {
+        type Error = MockErr;
+    }
+    impl SpiDevice<u8> for MockSpi {
+        async fn transaction(&mut self, ops: &mut [Operation<'_, u8>]) -> Result<(), MockErr> {
+            // The leading run of writes is the command header (opcode + addr/offset).
+            let mut header = Vec::new();
+            for op in ops.iter() {
+                match op {
+                    Operation::Write(w) => header.extend_from_slice(w),
+                    _ => break,
+                }
+            }
+            let mut full = Vec::new();
+            for op in ops.iter() {
+                if let Operation::Write(w) = op {
+                    full.extend_from_slice(w);
+                }
+            }
+            if !full.is_empty() {
+                self.log.borrow_mut().push(full);
+            }
+            for op in ops.iter_mut() {
+                if let Operation::Read(buf) = op {
+                    fill_read(&header, buf);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// Canned read responses keyed on the command opcode.
+    fn fill_read(header: &[u8], buf: &mut [u8]) {
+        match header.first().copied().unwrap_or(0) {
+            // GetIrqStatus -> status + TxDone|RxDone, so both flows complete.
+            0x12 => {
+                if buf.len() >= 3 {
+                    buf[0] = 0x00;
+                    buf[1] = 0x00;
+                    buf[2] = 0x03;
+                }
+            }
+            // GetRxBufferStatus -> status, len 16, offset 0.
+            0x13 => {
+                if buf.len() >= 3 {
+                    buf[0] = 0x00;
+                    buf[1] = 16;
+                    buf[2] = 0x00;
+                }
+            }
+            // ReadBuffer -> a 16-byte canned payload.
+            0x1E => {
+                let p = b"PRNS-HELTEC-SMOK";
+                for (i, b) in buf.iter_mut().enumerate() {
+                    *b = p.get(i).copied().unwrap_or(0);
+                }
+            }
+            // ReadRegister and the rest read back 0 (errata RMW then sets bit 2 -> 0x04).
+            _ => buf.iter_mut().for_each(|b| *b = 0),
+        }
+    }
+
+    struct MockWait;
+    impl DigErrorType for MockWait {
+        type Error = MockErr;
+    }
+    impl Wait for MockWait {
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+    }
+
+    struct MockOut;
+    impl DigErrorType for MockOut {
+        type Error = MockErr;
+    }
+    impl OutputPin for MockOut {
+        fn set_low(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+    }
+
+    struct MockDelay;
+    impl DelayNs for MockDelay {
+        async fn delay_ns(&mut self, _ns: u32) {}
+    }
+
+    /// Every mock future is immediately ready, so a noop-waker poll loop drives the driver
+    /// future to completion. No `unsafe`: `Waker::noop` is stable (Rust 1.85+).
+    fn block_on<F: Future>(f: F) -> F::Output {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut f = Box::pin(f);
+        loop {
+            if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    #[test]
+    fn command_stream_matches_lora_phy_oracle() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let board = BoardConfig {
+            tcxo_voltage: Some(TcxoVoltage::V1_8),
+            use_dcdc: true,
+            rx_boost: true,
+            dio2_as_rf_switch: true,
+        };
+        let mut radio = Sx126x::new(
+            MockSpi { log: log.clone() },
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board,
+        );
+        let modulation = Modulation::Lora {
+            spreading_factor: SpreadingFactor::Sf8,
+            bandwidth: Bandwidth::Bw125,
+            coding_rate: CodingRate::Cr4_5,
+        };
+        let packet = LoraPacket {
+            preamble_symbols: 18,
+            explicit_header: true,
+            crc_on: true,
+            invert_iq: false,
+        };
+
+        block_on(radio.init(915_000_000, modulation, packet, 14)).expect("init");
+        block_on(radio.transmit(b"PRNS-HELTEC-SMOK")).expect("transmit");
+        let mut buf = [0u8; 255];
+        let n = block_on(radio.receive(&mut buf)).expect("receive");
+        assert_eq!(n, 16, "received frame length");
+        assert_eq!(&buf[..n], b"PRNS-HELTEC-SMOK");
+
+        let cmds = log.borrow();
+        let has = |bytes: &[u8]| cmds.iter().any(|c| c.as_slice() == bytes);
+
+        // init — the channel-defining bytes
+        assert!(has(&[0x80, 0x00]), "SetStandby RC");
+        assert!(has(&[0x96, 0x01]), "SetRegulatorMode DCDC");
+        assert!(has(&[0x9D, 0x01]), "SetDIO2AsRfSwitch");
+        assert!(has(&[0x97, 0x02, 0x00, 0x02, 0x80]), "SetTCXOMode 1.8V/640");
+        assert!(has(&[0x89, 0x7F]), "Calibrate all");
+        assert!(has(&[0x8A, 0x01]), "SetPacketType LoRa");
+        assert!(
+            has(&[0x0D, 0x07, 0x40, 0x14, 0x24]),
+            "Syncword 0x1424 (private)"
+        );
+        assert!(has(&[0x8F, 0x00, 0x00]), "SetBufferBaseAddress");
+        assert!(has(&[0x98, 0xE1, 0xE9]), "CalibrateImage 915 band");
+        // TX
+        assert!(
+            has(&[0x8B, 0x08, 0x04, 0x01, 0x00]),
+            "SetModulationParams SF8/BW125/CR45/LDRO0"
+        );
+        assert!(has(&[0x95, 0x02, 0x02, 0x00, 0x01]), "SetPaConfig 14dBm");
+        assert!(has(&[0x8E, 0x16, 0x02]), "SetTxParams power22/ramp40us");
+        assert!(
+            has(&[0x8C, 0x00, 0x12, 0x00, 16, 0x01, 0x00]),
+            "SetPacketParams TX preamble18/explicit/len16/crc"
+        );
+        assert!(
+            has(&[0x86, 0x39, 0x30, 0x00, 0x00]),
+            "SetRfFrequency 915 MHz"
+        );
+        assert!(
+            has(&[0x08, 0x02, 0x01, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00]),
+            "SetDioIrq TX = TxDone|Timeout"
+        );
+        assert!(has(&[0x83, 0x00, 0x00, 0x00]), "SetTx no-timeout");
+        // RX
+        assert!(
+            has(&[0x8C, 0x00, 0x12, 0x00, 0xFF, 0x01, 0x00]),
+            "SetPacketParams RX max len"
+        );
+        assert!(
+            has(&[0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]),
+            "SetDioIrq RX = all"
+        );
+        assert!(has(&[0x9F, 0x01]), "SetStopRxTimerOnPreamble");
+        assert!(has(&[0xA0, 0x00]), "SetLoRaSymbNumTimeout 0 (continuous)");
+        assert!(has(&[0x0D, 0x08, 0xAC, 0x96]), "RxGain boost");
+        assert!(has(&[0x82, 0xFF, 0xFF, 0xFF]), "SetRx continuous");
+        // errata read-modify-writes (mock reads 0x00, bit-2 set -> 0x04 / bits1-4 -> 0x1E)
+        assert!(has(&[0x0D, 0x08, 0x89, 0x04]), "TxModulation errata bit2");
+        assert!(has(&[0x0D, 0x07, 0x36, 0x04]), "IQPolarity errata bit2");
+        assert!(has(&[0x0D, 0x08, 0xD8, 0x1E]), "TxClampCfg errata bits1-4");
+    }
+}
