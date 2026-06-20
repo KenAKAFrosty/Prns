@@ -25,6 +25,7 @@ use crate::interfaces::rns_parity::rnode_lora::core::{
 use crate::engine::InstantMillis;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
+use crate::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use crate::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::throughput::ThroughputLedger;
@@ -34,6 +35,9 @@ use crate::reactor::throughput::ThroughputLedger;
 pub const ENABLED_POLL: Duration = Duration::from_millis(250);
 /// The pause after a failed `prepare_for_rx` before retrying, so a transient radio fault doesn't spin.
 const RX_RETRY_WAIT: Duration = Duration::from_millis(500);
+/// How many held packets the duty gate buffers before dropping the oldest. The region's airtime
+/// budget caps the queue sooner on a slow link, so this only bounds the buffer's memory.
+const DUTY_QUEUE_FRAMES: usize = 4;
 
 /// The signal the app holds to reconfigure a running radio: it sends a whole new [`RadioProfile`]
 /// and the worker rebuilds the silicon's params from it. The granular, menu-shaped control surface
@@ -124,6 +128,62 @@ fn retag_message(current_id: InterfaceId, new_profile: &RadioProfile) -> Option<
     })
 }
 
+/// The summed on-air airtime of a packet's frames (1 or 2) — the currency the duty gate budgets in.
+fn packet_airtime(packet: &[u8], bitrate_bps: u32) -> u64 {
+    let mut scratch = [0u8; LORA_SINGLE_FRAME_MAX];
+    let mut total = 0;
+    for index in 0..air_frame_count(packet.len()) {
+        if let Ok(n) = encode_air_frame_part(packet, 0, index, &mut scratch) {
+            total += frame_airtime_us(n, bitrate_bps);
+        }
+    }
+    total
+}
+
+/// Split a packet into its RNode frames and transmit each, recording airtime and throughput. Shared
+/// by the immediate path and the duty gate's release, so a held packet rides out byte-for-byte the
+/// same as an unheld one.
+#[allow(clippy::too_many_arguments)]
+async fn transmit_packet<RK: RadioKind, DLY: DelayNs>(
+    radio: &mut LoRa<RK, DLY>,
+    params: &mut RadioParams,
+    power_dbm: i32,
+    packet: &[u8],
+    seq: &mut u8,
+    airtime: &mut AirtimeLedger,
+    throughput: &mut ThroughputLedger,
+    status: &EmbassyInterfaceStatus,
+    bitrate_bps: u32,
+    now: InstantMillis,
+    tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
+) {
+    for index in 0..air_frame_count(packet.len()) {
+        let n = match encode_air_frame_part(packet, *seq, index, tx_frame) {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("RNS_LORA frame {index} encode failed: {e:?}");
+                break;
+            }
+        };
+        if let Err(e) = radio
+            .prepare_for_tx(&params.modulation, &mut params.tx_pkt, power_dbm, &tx_frame[..n])
+            .await
+        {
+            log::warn!("RNS_LORA prepare_for_tx failed: {e:?}");
+            break;
+        }
+        if let Err(e) = radio.tx().await {
+            log::warn!("RNS_LORA tx failed: {e:?}");
+            break;
+        }
+        status.add_tx(n as u64);
+        throughput.record_tx(now, n as u64);
+        status.set_transfer_rates(throughput.rates());
+        status.set_airtime(airtime.record_tx(now, frame_airtime_us(n, bitrate_bps)));
+    }
+    *seq = seq.wrapping_add(0x10);
+}
+
 /// One SX1262 spoken as an RNode-compatible LoRa interface. Owns the radio for its whole life; the
 /// `control` signal lets the app retune it live, the `status` handle carries its enable gate and
 /// counters. `tag` is the channel identity the id derived from, recomputed only on a re-key.
@@ -209,6 +269,8 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
         let mut airtime = AirtimeLedger::new();
         let mut throughput = ThroughputLedger::new();
         let mut bitrate_bps = profile.nominal_bitrate_bps();
+        let mut duty_cycle = profile.region.duty_cycle();
+        let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES>> = DutyGate::new();
         let started = Instant::now();
         status.set_connection(ConnectionState::Connected);
 
@@ -255,42 +317,38 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                 }
                 Either4::Second(outbound) => {
                     let now = InstantMillis(started.elapsed().as_millis());
-                    for index in 0..air_frame_count(outbound.len()) {
-                        let n = match encode_air_frame_part(outbound, seq, index, &mut tx_frame) {
-                            Ok(n) => n,
-                            Err(e) => {
-                                log::warn!("RNS_LORA frame {index} encode failed: {e:?}");
-                                break;
-                            }
-                        };
-                        if let Err(e) = radio
-                            .prepare_for_tx(
-                                &params.modulation,
-                                &mut params.tx_pkt,
-                                profile.tx_power.dbm() as i32,
-                                &tx_frame[..n],
-                            )
-                            .await
-                        {
-                            log::warn!("RNS_LORA prepare_for_tx failed: {e:?}");
-                            break;
+                    let power_dbm = profile.tx_power.dbm() as i32;
+                    let transmit = match duty_cycle {
+                        None => true,
+                        Some(duty) => {
+                            let air = packet_airtime(outbound, bitrate_bps);
+                            let util = airtime.utilization(now);
+                            matches!(gate.offer(outbound, air, util, &duty), DutyVerdict::Transmit)
                         }
-                        if let Err(e) = radio.tx().await {
-                            log::warn!("RNS_LORA tx failed: {e:?}");
-                            break;
-                        }
-                        status.add_tx(n as u64);
-                        throughput.record_tx(now, n as u64);
-                        status.set_transfer_rates(throughput.rates());
-                        status.set_airtime(airtime.record_tx(now, frame_airtime_us(n, bitrate_bps)));
+                    };
+                    if transmit {
+                        transmit_packet(
+                            &mut radio,
+                            &mut params,
+                            power_dbm,
+                            outbound,
+                            &mut seq,
+                            &mut airtime,
+                            &mut throughput,
+                            status,
+                            bitrate_bps,
+                            now,
+                            &mut tx_frame,
+                        )
+                        .await;
                     }
-                    seq = seq.wrapping_add(0x10);
                 }
                 Either4::Third(new_profile) => match build_params(&mut radio, &new_profile) {
                     Some(rebuilt) => {
                         params = rebuilt;
                         profile = new_profile;
                         bitrate_bps = profile.nominal_bitrate_bps();
+                        duty_cycle = profile.region.duty_cycle();
                         if let Some(message) = retag_message(current_id, &profile) {
                             if let InterfaceLifecycle::Retag { new_id, .. } = &message {
                                 current_id = *new_id;
@@ -302,7 +360,41 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                         log::warn!("RNS_LORA reconfigure to an unsupported modulation ignored");
                     }
                 },
-                Either4::Fourth(()) => {}
+                Either4::Fourth(()) => {
+                    if let Some(duty) = duty_cycle {
+                        let now = InstantMillis(started.elapsed().as_millis());
+                        let power_dbm = profile.tx_power.dbm() as i32;
+                        let mut released_packet = [0u8; LORA_MAX_PAYLOAD];
+                        loop {
+                            let util = airtime.utilization(now);
+                            let mut released_len = None;
+                            let released = gate.release_ready(util, &duty, |bytes| {
+                                let len = bytes.len().min(released_packet.len());
+                                released_packet[..len].copy_from_slice(&bytes[..len]);
+                                released_len = Some(len);
+                            });
+                            if !released {
+                                break;
+                            }
+                            if let Some(len) = released_len {
+                                transmit_packet(
+                                    &mut radio,
+                                    &mut params,
+                                    power_dbm,
+                                    &released_packet[..len],
+                                    &mut seq,
+                                    &mut airtime,
+                                    &mut throughput,
+                                    status,
+                                    bitrate_bps,
+                                    now,
+                                    &mut tx_frame,
+                                )
+                                .await;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -348,5 +440,23 @@ mod tests {
             retag_message(current, &next).is_none(),
             "transmit power and preamble are local knobs, not channel identity"
         );
+    }
+
+    #[test]
+    fn packet_airtime_sums_both_frames_of_a_split() {
+        let bitrate = 5_000;
+        let one_frame = packet_airtime(&[0u8; 100], bitrate);
+        let two_frames = packet_airtime(&[0u8; 400], bitrate);
+        assert_eq!(
+            one_frame,
+            frame_airtime_us(101, bitrate),
+            "one frame: the header plus 100 payload bytes on air"
+        );
+        assert_eq!(
+            two_frames,
+            frame_airtime_us(255, bitrate) + frame_airtime_us(147, bitrate),
+            "two frames: a full 255-byte frame plus the 147-byte remainder"
+        );
+        assert!(two_frames > one_frame);
     }
 }
