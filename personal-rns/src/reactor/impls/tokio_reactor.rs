@@ -920,6 +920,9 @@ pub async fn run_with_proof_decider<S, H, J, P>(
             }
         };
     }
+    const MAX_INBOUND_BATCH: usize = 64;
+    const MAX_COMMAND_BATCH: usize = 64;
+    let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
     let wall_base = host.now();
     let due_timer = tokio::time::sleep_until(timer_base);
@@ -945,45 +948,58 @@ pub async fn run_with_proof_decider<S, H, J, P>(
         tokio::select! {
             arrived = notify.recv() => {
                 let Some(source) = arrived else { return };
-                let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source)
-                else {
-                    continue;
-                };
-                let Some(slot) = lane.try_peek() else { continue };
-                let bytes = match ifac_for(&ifacs, source) {
-                    Some(entry) => {
-                        let Some(clean_len) =
-                            entry.context.unmask_inbound(slot.frame(), &mut unmask_scratch)
-                        else {
-                            lane.release();
-                            continue;
-                        };
-                        &mut unmask_scratch[..clean_len]
+                dirty.clear();
+                dirty.push(source);
+                while let Ok(more) = notify.try_recv() {
+                    if !dirty.contains(&more) {
+                        dirty.push(more);
                     }
-                    None => slot.frame_mut(),
-                };
+                }
                 let now = host.now();
-                let jitter = draw_jitter(&mut host);
-                let packet = InboundPacket {
-                    arrived_at: now,
-                    source_interface: source,
-                    bytes,
-                };
-                let wake_schedules_delta = engine.ingest_packet_into(
-                    packet,
-                    jitter,
-                    &interfaces,
-                    now,
-                    &mut |entropy| host.fill_entropy(entropy),
-                    &mut should_prove,
-                    &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                );
-                lane.release();
-                merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                for &source in &dirty {
+                    let Some((_, lane)) = inbound_lanes.iter_mut().find(|(id, _)| *id == source)
+                    else {
+                        continue;
+                    };
+                    for _ in 0..MAX_INBOUND_BATCH {
+                        let Some(slot) = lane.try_peek() else { break };
+                        let bytes = match ifac_for(&ifacs, source) {
+                            Some(entry) => {
+                                let Some(clean_len) =
+                                    entry.context.unmask_inbound(slot.frame(), &mut unmask_scratch)
+                                else {
+                                    lane.release();
+                                    continue;
+                                };
+                                &mut unmask_scratch[..clean_len]
+                            }
+                            None => slot.frame_mut(),
+                        };
+                        let jitter = draw_jitter(&mut host);
+                        let packet = InboundPacket {
+                            arrived_at: now,
+                            source_interface: source,
+                            bytes,
+                        };
+                        let wake_schedules_delta = engine.ingest_packet_into(
+                            packet,
+                            jitter,
+                            &interfaces,
+                            now,
+                            &mut |entropy| host.fill_entropy(entropy),
+                            &mut should_prove,
+                            &mut |reaction| route_reaction(reaction, &egress, &ifacs, &mut pacers, &mut wire_scratch, now, &mut journaled_sink!()),
+                        );
+                        lane.release();
+                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                    }
+                }
             }
             issued = commands.recv() => {
-                let Some(issued) = issued else { return };
+                let Some(mut issued) = issued else { return };
                 let now = host.now();
+                let mut command_budget = MAX_COMMAND_BATCH;
+                loop {
                 let wake_schedules_delta = match issued {
                     HostCommand::Engine(issued) => engine.ingest_command_into(
                         issued,
@@ -1205,6 +1221,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                     }
                 };
                 merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, &interfaces);
+                command_budget -= 1;
+                if command_budget == 0 {
+                    break;
+                }
+                match commands.try_recv() {
+                    Ok(next) => issued = next,
+                    Err(_) => break,
+                }
+                }
             }
             () = &mut due_timer, if armed.is_some() => {
                 if let Some((_, lane)) = armed.take() {
