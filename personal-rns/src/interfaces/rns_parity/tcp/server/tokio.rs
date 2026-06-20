@@ -38,8 +38,7 @@ impl<S> TcpServerConnection<S> {
     /// collision loudly.
     #[must_use]
     pub fn new(channel_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
-        let id =
-            InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
         Self {
             id,
             channel_tag,

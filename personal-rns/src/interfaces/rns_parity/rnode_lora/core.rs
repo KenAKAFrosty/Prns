@@ -633,8 +633,7 @@ mod tests {
         let id_a = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&a));
         let id_b = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&b));
         assert_ne!(id_a, id_b);
-        let id_a_again =
-            InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&a));
+        let id_a_again = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&a));
         assert_eq!(id_a, id_a_again);
     }
 
@@ -670,7 +669,9 @@ mod tests {
 
     #[test]
     fn the_one_percent_regions_cap_the_hour_and_the_americas_declare_no_duty() {
-        let eu = Region::Eu868.duty_cycle().expect("the EU band is duty-limited");
+        let eu = Region::Eu868
+            .duty_cycle()
+            .expect("the EU band is duty-limited");
         assert_eq!(eu.limit_long_per_mille, Some(10), "1% over the hour window");
         assert_eq!(eu.limit_short_per_mille, None);
         assert_eq!(Region::As923.duty_cycle(), Region::Eu868.duty_cycle());
@@ -688,7 +689,10 @@ mod tests {
         eu.region = Region::Eu868;
         let d = descriptor(InterfaceId::new([0x5C; INTERFACE_ID_LEN]), &eu);
         assert_eq!(d.airtime_duty_cycle, Region::Eu868.duty_cycle());
-        let us = descriptor(InterfaceId::new([0x5C; INTERFACE_ID_LEN]), &DEFAULT_915_PROFILE);
+        let us = descriptor(
+            InterfaceId::new([0x5C; INTERFACE_ID_LEN]),
+            &DEFAULT_915_PROFILE,
+        );
         assert_eq!(
             us.airtime_duty_cycle, None,
             "the US default declares no duty cycle"

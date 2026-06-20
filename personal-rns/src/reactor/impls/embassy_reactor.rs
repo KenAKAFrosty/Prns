@@ -742,8 +742,12 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 /// byte), so a fleet of members shares one lane and `Add`/`Remove` only touch the cheap descriptor
 /// set.
 pub enum InterfaceLifecycle {
-    Add { config: InterfaceConfig },
-    Remove { id: InterfaceId },
+    Add {
+        config: InterfaceConfig,
+    },
+    Remove {
+        id: InterfaceId,
+    },
     Retag {
         old_id: InterfaceId,
         new_id: InterfaceId,
@@ -1532,7 +1536,9 @@ mod tests {
             };
 
             match select(reactor, with_timeout(WATCHDOG, driver)).await {
-                Either::Second(result) => result.expect("the retagged slot is heard before the watchdog"),
+                Either::Second(result) => {
+                    result.expect("the retagged slot is heard before the watchdog")
+                }
                 Either::First(()) => unreachable!("the reactor loop never returns"),
             }
         });

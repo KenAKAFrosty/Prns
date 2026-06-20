@@ -330,7 +330,9 @@ impl<S: StorageLayout> EngineState<S> {
                         };
                         sink(EngineReaction::Directive(Directive::EmitFrame {
                             target: fire_on,
-                            size_hint: link_data_frame_ceiling(ENVELOPE_HEADER_LEN + send.body.len()),
+                            size_hint: link_data_frame_ceiling(
+                                ENVELOPE_HEADER_LEN + send.body.len(),
+                            ),
                             fill: &mut fill,
                         }));
                         if let Some(error) = wrote {

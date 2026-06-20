@@ -901,8 +901,7 @@ mod tests {
             HeaplessVec::<InterfaceConfig, 1>::new(),
         );
         // The fleet's one lane is keyed by the supervisor's id; the WiFi peer routes to it by kind.
-        let supervisor =
-            InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
+        let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
         node.activate_fleet(0, supervisor);
 
         let raw = hx(RAW_ANNOUNCE);

@@ -45,8 +45,7 @@ impl InterfaceId {
         let digest = sha256(channel_tag);
         let mut bytes = [0u8; INTERFACE_ID_LEN];
         bytes[0] = kind as u8;
-        bytes[1..1 + CHANNEL_TAG_HASH_LEN]
-            .copy_from_slice(&digest[..CHANNEL_TAG_HASH_LEN]);
+        bytes[1..1 + CHANNEL_TAG_HASH_LEN].copy_from_slice(&digest[..CHANNEL_TAG_HASH_LEN]);
         Self(bytes)
     }
 }

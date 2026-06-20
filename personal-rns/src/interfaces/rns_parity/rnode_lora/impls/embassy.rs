@@ -17,12 +17,12 @@ use lora_phy::mod_params::{
 use lora_phy::mod_traits::RadioKind;
 use lora_phy::{DelayNs, LoRa};
 
+use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::rnode_lora::core::{
     self, air_frame_count, encode_air_frame_part, CodingRate, LoRaReassembler, LoraBandwidth,
-    Modulation, RadioProfile, SpreadingFactor, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
-    CHANNEL_TAG_CAP,
+    Modulation, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
+    LORA_SINGLE_FRAME_MAX,
 };
-use crate::engine::InstantMillis;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
 use crate::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
@@ -119,8 +119,12 @@ fn build_params<RK: RadioKind, DLY: DelayNs>(
 /// The [`Retag`](InterfaceLifecycle::Retag) a reconfigure to `new_profile` warrants, or `None` when
 /// the change leaves the channel identity untouched — a local knob like transmit power or preamble.
 /// The channel_tag (frequency + modulation) is what mints the id, so only a change to it re-keys.
-fn retag_message(current_id: InterfaceId, new_profile: &RadioProfile) -> Option<InterfaceLifecycle> {
-    let new_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(new_profile));
+fn retag_message(
+    current_id: InterfaceId,
+    new_profile: &RadioProfile,
+) -> Option<InterfaceLifecycle> {
+    let new_id =
+        InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(new_profile));
     (new_id != current_id).then(|| InterfaceLifecycle::Retag {
         old_id: current_id,
         new_id,
@@ -166,7 +170,12 @@ async fn transmit_packet<RK: RadioKind, DLY: DelayNs>(
             }
         };
         if let Err(e) = radio
-            .prepare_for_tx(&params.modulation, &mut params.tx_pkt, power_dbm, &tx_frame[..n])
+            .prepare_for_tx(
+                &params.modulation,
+                &mut params.tx_pkt,
+                power_dbm,
+                &tx_frame[..n],
+            )
             .await
         {
             log::warn!("RNS_LORA prepare_for_tx failed: {e:?}");
@@ -323,7 +332,10 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                         Some(duty) => {
                             let air = packet_airtime(outbound, bitrate_bps);
                             let util = airtime.utilization(now);
-                            matches!(gate.offer(outbound, air, util, &duty), DutyVerdict::Transmit)
+                            matches!(
+                                gate.offer(outbound, air, util, &duty),
+                                DutyVerdict::Transmit
+                            )
                         }
                     };
                     if transmit {
@@ -402,7 +414,7 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
 
 #[cfg(test)]
 mod tests {
-    use super::core::{DEFAULT_915_PROFILE, PreambleSymbols, TxPower};
+    use super::core::{PreambleSymbols, TxPower, DEFAULT_915_PROFILE};
     use super::*;
 
     fn id_of(profile: &RadioProfile) -> InterfaceId {
@@ -419,10 +431,7 @@ mod tests {
             coding_rate: CodingRate::Cr45,
         };
         let message = retag_message(current, &next).expect("a channel change re-keys");
-        let InterfaceLifecycle::Retag {
-            old_id, new_id, ..
-        } = message
-        else {
+        let InterfaceLifecycle::Retag { old_id, new_id, .. } = message else {
             panic!("expected a Retag");
         };
         assert_eq!(old_id, current);

@@ -86,9 +86,8 @@ impl UdpInterface {
         bitrate_bps: u32,
     ) -> Self {
         let channel_tag = udp_channel_tag(peer);
-        let id = id_override.unwrap_or_else(|| {
-            InterfaceId::from_channel_tag(InterfaceKind::Udp, &channel_tag)
-        });
+        let id = id_override
+            .unwrap_or_else(|| InterfaceId::from_channel_tag(InterfaceKind::Udp, &channel_tag));
         Self {
             id,
             socket,

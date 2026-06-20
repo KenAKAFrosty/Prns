@@ -39,8 +39,7 @@ pub struct BluetoothPeer<Src, Snk> {
 impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     pub fn new(identity: BleIdentity, source: Src, sink: Snk) -> Self {
         let channel_tag = *identity.as_bytes();
-        let id =
-            InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, &channel_tag);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, &channel_tag);
         Self {
             id,
             identity,
