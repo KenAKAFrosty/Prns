@@ -1,11 +1,12 @@
 //! The embassy SX1262 worker: owns the radio over `lora-phy`, bridges its RX/TX to the reactor
 //! seam, and reconfigures the radio in place when the app signals a new profile. Generic over the
 //! `lora-phy` `RadioKind`, so the same body drives a Heltec V4 (esp-hal SPI) or an nRF SX1262 board
-//! and compile-checks on the host. The reactor-side re-key that a reconfigure should trigger is a
-//! later step; here a reconfigure changes the silicon and keeps the interface's id.
+//! and compile-checks on the host. A reconfigure retunes the silicon and, when it changes the
+//! channel identity, emits a `Retag` so the reactor re-keys the interface in place.
 
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::DynamicSender;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
 use heapless::Vec as HeaplessVec;
@@ -24,7 +25,7 @@ use crate::interfaces::rns_parity::rnode_lora::core::{
 use crate::engine::InstantMillis;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
-use crate::reactor::impls::embassy_reactor::EmbassyInterfaceStatus;
+use crate::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::throughput::ThroughputLedger;
 
@@ -111,6 +112,18 @@ fn build_params<RK: RadioKind, DLY: DelayNs>(
     })
 }
 
+/// The [`Retag`](InterfaceLifecycle::Retag) a reconfigure to `new_profile` warrants, or `None` when
+/// the change leaves the channel identity untouched — a local knob like transmit power or preamble.
+/// The channel_tag (frequency + modulation) is what mints the id, so only a change to it re-keys.
+fn retag_message(current_id: InterfaceId, new_profile: &RadioProfile) -> Option<InterfaceLifecycle> {
+    let new_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(new_profile));
+    (new_id != current_id).then(|| InterfaceLifecycle::Retag {
+        old_id: current_id,
+        new_id,
+        config: core::descriptor(new_id, new_profile),
+    })
+}
+
 /// One SX1262 spoken as an RNode-compatible LoRa interface. Owns the radio for its whole life; the
 /// `control` signal lets the app retune it live, the `status` handle carries its enable gate and
 /// counters. `tag` is the channel identity the id derived from, recomputed only on a re-key.
@@ -121,6 +134,7 @@ pub struct LoRaInterface<'a, RK: RadioKind, DLY: DelayNs> {
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
+    retag: DynamicSender<'a, InterfaceLifecycle>,
 }
 
 impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
@@ -137,6 +151,7 @@ impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
         profile: RadioProfile,
         control: &'a LoRaControl,
         status: &'a EmbassyInterfaceStatus,
+        retag: DynamicSender<'a, InterfaceLifecycle>,
     ) -> Self {
         let tag = core::channel_tag(&profile);
         let id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &tag);
@@ -147,6 +162,7 @@ impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
             tag,
             control,
             status,
+            retag,
         }
     }
 
@@ -170,13 +186,15 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
         let LoRaInterface {
-            id: _,
+            id,
             mut radio,
             mut profile,
             tag: _,
             control,
             status,
+            retag,
         } = self;
+        let mut current_id = id;
 
         let Some(mut params) = build_params(&mut radio, &profile) else {
             log::error!("RNS_LORA unsupported modulation profile; interface offline");
@@ -273,6 +291,12 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                         params = rebuilt;
                         profile = new_profile;
                         bitrate_bps = profile.nominal_bitrate_bps();
+                        if let Some(message) = retag_message(current_id, &profile) {
+                            if let InterfaceLifecycle::Retag { new_id, .. } = &message {
+                                current_id = *new_id;
+                            }
+                            retag.send(message).await;
+                        }
                     }
                     None => {
                         log::warn!("RNS_LORA reconfigure to an unsupported modulation ignored");
@@ -281,5 +305,48 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                 Either4::Fourth(()) => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::core::{DEFAULT_915_PROFILE, PreambleSymbols, TxPower};
+    use super::*;
+
+    fn id_of(profile: &RadioProfile) -> InterfaceId {
+        InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(profile))
+    }
+
+    #[test]
+    fn a_channel_change_re_keys_to_the_new_id() {
+        let current = id_of(&DEFAULT_915_PROFILE);
+        let mut next = DEFAULT_915_PROFILE;
+        next.modulation = Modulation::Lora {
+            spreading_factor: SpreadingFactor::Sf10,
+            bandwidth: LoraBandwidth::Bw125kHz,
+            coding_rate: CodingRate::Cr45,
+        };
+        let message = retag_message(current, &next).expect("a channel change re-keys");
+        let InterfaceLifecycle::Retag {
+            old_id, new_id, ..
+        } = message
+        else {
+            panic!("expected a Retag");
+        };
+        assert_eq!(old_id, current);
+        assert_eq!(new_id, id_of(&next));
+        assert_ne!(new_id, current);
+    }
+
+    #[test]
+    fn a_local_only_change_does_not_re_key() {
+        let current = id_of(&DEFAULT_915_PROFILE);
+        let mut next = DEFAULT_915_PROFILE;
+        next.tx_power = TxPower::new(2);
+        next.preamble = PreambleSymbols::new(24);
+        assert!(
+            retag_message(current, &next).is_none(),
+            "transmit power and preamble are local knobs, not channel identity"
+        );
     }
 }
