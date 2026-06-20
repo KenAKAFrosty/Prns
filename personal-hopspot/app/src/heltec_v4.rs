@@ -74,14 +74,14 @@ use personal_hopspot_ui as screen;
 esp_app_desc!();
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
-const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"hopsp-s3");
+const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"heltecv4");
 
 /// This node's `lxmf.delivery` announce app_data: `msgpack([display_name, stamp_cost])`
-/// = `fixarray(2)` ‖ `bin8("Personal Hopspot S3")` ‖ `nil`, the shape LXMF apps parse.
-const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x13Personal Hopspot S3\xc0";
+/// = `fixarray(2)` ‖ `bin8("Personal Hopspot HeltecV4")` ‖ `nil`, the shape LXMF apps parse.
+const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x19Personal Hopspot HeltecV4\xc0";
 
 /// The WiFi network the board joins (station mode), read at build time. Export them (e.g.
-/// `source .wifi-env`) before `cargo s3`; an unset SSID leaves WiFi down and the board runs USB-only.
+/// `source .wifi-env`) before `cargo heltec-v4`; an unset SSID leaves WiFi down, board runs USB-only.
 const WIFI_SSID: &str = match option_env!("HOPSPOT_WIFI_SSID") {
     Some(ssid) => ssid,
     None => "",
@@ -273,7 +273,7 @@ pub async fn run(spawner: Spawner) {
     rtc.swd.disable();
     let timebase = EmbassyTimebase::start_at(InstantMillis(rtc.current_time_us() / 1000));
 
-    println!("HOPSPOT_S3 boot — recipe runtime, engine core 1 + I/O core 0");
+    println!("HOPSPOT_HELTECV4 boot — recipe runtime, engine core 1 + I/O core 0");
 
     // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
     let mut _vext = Output::new(p.GPIO36, Level::Low, OutputConfig::default());
@@ -775,8 +775,8 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 /// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
 /// multicast between them unreliably, so a station left to roam can land on a node that never
 /// receives the discovery group. To avoid that, this scans first and pins to the strongest BSSID
-/// for the SSID — landing the S3 on one node and holding it there, where the discovery multicast
-/// reaches it.
+/// for the SSID — landing the Heltec V4 on one node and holding it there, where the discovery
+/// multicast reaches it.
 #[embassy_executor::task]
 async fn wifi_connect_task(mut controller: WifiController<'static>) -> ! {
     let base = StationConfig::default()

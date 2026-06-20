@@ -37,7 +37,7 @@ cargo build -p personal-rns --no-default-features --features embassy-contract
 echo "[7/9] embassy contract runtime (ESP32-C6 / ${C6_TARGET})"
 cargo build -p personal-rns --no-default-features --features embassy-contract --target "${C6_TARGET}"
 
-# The shared Hopspot screen renderer is consumed by the S3 firmware (Xtensa), so
+# The shared Hopspot screen renderer is consumed by the Heltec V4 firmware (Xtensa), so
 # it must stay no_std. The real Xtensa proof is the heltec build (not in this
 # gate); these two cheap builds catch std creep on the host + a riscv cross.
 echo "[8/9] hopspot UI: shared renderer (host, no_std)"

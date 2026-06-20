@@ -6,7 +6,7 @@
 //!
 //! Run: `cargo run --release --example tcp_server_host --features tcp` (set `PORT` to override 4242).
 //! Then point any dialer at `this-host-ip:PORT` — e.g. `HOPSPOT_TCP_TARGET=127.0.0.1:4242 cargo desktop`
-//! for the loopback node, or the S3 firmware's `HOPSPOT_TCP_TARGET` for the board.
+//! for the loopback node, or the Heltec V4 firmware's `HOPSPOT_TCP_TARGET` for the board.
 
 #![cfg(feature = "tcp")]
 #![allow(clippy::expect_used)]

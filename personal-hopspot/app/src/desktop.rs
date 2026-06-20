@@ -1,6 +1,6 @@
 //! The desktop face of the Personal Hopspot — one of the app's two targets.
 //!
-//! Runs the *same* announcing engine the S3 firmware does, here on the high-level [`Prns`]
+//! Runs the *same* announcing engine the Heltec V4 firmware does, here on the high-level [`Prns`]
 //! runtime: the recipe stands up the `lxmf.delivery` destination and the transport role, then the
 //! app attaches the plug-and-play USB-auto interface (every Personal board on a CDC port) and
 //! supervises the WiFi/LAN auto-interface (every Personal node on the same WiFi). It renders the

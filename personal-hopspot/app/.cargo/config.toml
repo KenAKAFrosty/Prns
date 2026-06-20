@@ -1,9 +1,9 @@
 # The `esp` toolchain ships host std + rust-src, so it builds both faces. build-std
 # stays target-scoped (not global) so the host build isn't dragged into core/alloc.
 #
-#   cargo desktop    run the desktop window (host: Mac or Linux)
-#   cargo s3         build the S3 firmware
-#   cargo s3-flash   build + flash + monitor (board on USB)
+#   cargo desktop          run the desktop window (host: Mac or Linux)
+#   cargo heltec-v4        build the Heltec V4 firmware
+#   cargo heltec-v4-flash  build + flash + monitor (board on USB)
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor --after watchdog-reset"
@@ -19,5 +19,5 @@ rustflags = ["-L", "/usr/local/lib"]
 
 [alias]
 desktop = "run"
-s3 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
-s3-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+heltec-v4 = "build --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+heltec-v4-flash = "run --release --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"

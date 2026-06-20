@@ -12,7 +12,7 @@ mod desktop;
 #[cfg(target_arch = "xtensa")]
 mod engine_storage;
 #[cfg(all(target_arch = "xtensa", not(feature = "device-firehose")))]
-mod s3;
+mod heltec_v4;
 
 #[cfg(not(target_arch = "xtensa"))]
 fn main() {
@@ -22,7 +22,7 @@ fn main() {
 #[cfg(all(target_arch = "xtensa", not(feature = "device-firehose")))]
 #[esp_rtos::main]
 async fn main(spawner: embassy_executor::Spawner) {
-    s3::run(spawner).await
+    heltec_v4::run(spawner).await
 }
 
 #[cfg(all(target_arch = "xtensa", feature = "device-firehose"))]

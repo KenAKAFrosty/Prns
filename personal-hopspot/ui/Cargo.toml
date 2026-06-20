@@ -7,7 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Shared Personal Hopspot status-screen renderer: one DrawTarget-generic draw path for the S3 OLED and the Linux debug window."
+description = "Shared Personal Hopspot status-screen renderer: one DrawTarget-generic draw path for the Heltec V4 OLED and the Linux debug window."
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false }

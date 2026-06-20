@@ -2,7 +2,7 @@
 
 The Android face of Personal Hopspot. The shared `personal-hopspot-ui` renderer
 (generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
-identical 64x128 screen here that it draws on the S3 OLED and the Linux debug
+identical 64x128 screen here that it draws on the Heltec V4 OLED and the Linux debug
 window. This crate adds only the two platform adapters Android needs:
 
 - a `DrawTarget` backed by a flat RGBA framebuffer (`rust/src/framebuffer.rs`)
