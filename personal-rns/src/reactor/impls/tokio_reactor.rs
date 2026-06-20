@@ -18,6 +18,7 @@ use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
     InterfaceKind, InterfaceStatus, TransferRates,
 };
+use crate::runtime::InterfaceStore;
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_pacer,
@@ -862,6 +863,73 @@ pub async fn run<S, H, J>(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_with_proof_decider<S, H, J, P>(
+    engine: EngineState<S>,
+    interfaces: std::vec::Vec<InterfaceConfig>,
+    ifacs: std::vec::Vec<InterfaceIfac>,
+    host: H,
+    notify: UnboundedReceiver<InterfaceId>,
+    inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
+    commands: UnboundedReceiver<HostCommand>,
+    egress: Egress,
+    on_journaled: J,
+    should_prove: P,
+) where
+    S: StorageLayout,
+    H: Host,
+    J: FnMut(Journaled<'_>),
+    P: FnMut(&ProofRequest) -> bool,
+{
+    run_inner(
+        engine,
+        interfaces,
+        ifacs,
+        host,
+        notify,
+        inbound_lanes,
+        commands,
+        egress,
+        on_journaled,
+        should_prove,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_store<S, H, J>(
+    engine: EngineState<S>,
+    interfaces: std::vec::Vec<InterfaceConfig>,
+    ifacs: std::vec::Vec<InterfaceIfac>,
+    host: H,
+    notify: UnboundedReceiver<InterfaceId>,
+    inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
+    commands: UnboundedReceiver<HostCommand>,
+    egress: Egress,
+    on_journaled: J,
+    store: InterfaceStore,
+) where
+    S: StorageLayout,
+    H: Host,
+    J: FnMut(Journaled<'_>),
+{
+    run_inner(
+        engine,
+        interfaces,
+        ifacs,
+        host,
+        notify,
+        inbound_lanes,
+        commands,
+        egress,
+        on_journaled,
+        |_: &ProofRequest| false,
+        Some(store),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_inner<S, H, J, P>(
     mut engine: EngineState<S>,
     mut interfaces: std::vec::Vec<InterfaceConfig>,
     ifacs: std::vec::Vec<InterfaceIfac>,
@@ -872,6 +940,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     mut egress: Egress,
     mut on_journaled: J,
     mut should_prove: P,
+    store: Option<InterfaceStore>,
 ) where
     S: StorageLayout,
     H: Host,
@@ -923,6 +992,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
     let mut dirty: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
+    let mut recompute: std::vec::Vec<InterfaceId> = std::vec::Vec::new();
     let timer_base = Instant::now();
     let wall_base = host.now();
     let due_timer = tokio::time::sleep_until(timer_base);
@@ -1248,6 +1318,15 @@ pub async fn run_with_proof_decider<S, H, J, P>(
             _ = wait_for_pacer(&host, pacer_wake) => {
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &egress, &ifacs);
+            }
+        }
+        if let Some(store) = &store {
+            engine.drain_dirty_interfaces(|interface| recompute.push(interface));
+            if !recompute.is_empty() {
+                for interface in recompute.drain(..) {
+                    store.set(interface, engine.interface_counts(interface));
+                }
+                store.bump();
             }
         }
     }

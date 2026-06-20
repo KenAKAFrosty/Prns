@@ -1061,7 +1061,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
+    pub(crate) fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
         InterfaceCounts {
             destinations: self.route_count_via(interface) as u32,
             links: self.links_via(interface) as u32,

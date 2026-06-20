@@ -351,6 +351,11 @@ impl<S: StorageLayout> EngineState<S> {
         self.dirty_interfaces.mark(interface);
     }
 
+    #[cfg(feature = "tokio-host")]
+    pub(crate) fn drain_dirty_interfaces(&mut self, visit: impl FnMut(InterfaceId)) {
+        self.dirty_interfaces.drain(visit);
+    }
+
     pub fn scheduled_announce_count(&self) -> usize {
         self.scheduled_announces.scheduled_count()
     }

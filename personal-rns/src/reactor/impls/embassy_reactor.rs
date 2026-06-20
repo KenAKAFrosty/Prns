@@ -27,6 +27,8 @@ use crate::interfaces::{
     InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
+use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
+use crate::storage::DirtyInterfaceSet;
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
@@ -459,6 +461,72 @@ pub async fn run<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
+    engine: EngineState<S>,
+    interfaces: &[InterfaceConfig],
+    ifacs: &[InterfaceIfac],
+    host: H,
+    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
+    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
+    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
+    egress: EmbassyEgress<'_>,
+    on_journaled: impl FnMut(Journaled<'_>),
+    should_prove: impl FnMut(&ProofRequest) -> bool,
+) where
+    S: StorageLayout,
+    H: Host,
+    M: RawMutex,
+{
+    run_inner(
+        engine,
+        interfaces,
+        ifacs,
+        host,
+        notify,
+        inbound_lanes,
+        commands,
+        egress,
+        on_journaled,
+        should_prove,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize, const N: usize>(
+    engine: EngineState<S>,
+    interfaces: &[InterfaceConfig],
+    ifacs: &[InterfaceIfac],
+    host: H,
+    notify: Receiver<'_, M, InterfaceId, NOTIFY>,
+    inbound_lanes: &mut [(InterfaceId, &mut dyn AnyGrantConsumer)],
+    commands: Receiver<'_, M, IssuedCommand, COMMANDS>,
+    egress: EmbassyEgress<'_>,
+    on_journaled: impl FnMut(Journaled<'_>),
+    store: &EmbassyInterfaceStore<M, N>,
+) where
+    S: StorageLayout,
+    H: Host,
+    M: RawMutex,
+{
+    run_inner(
+        engine,
+        interfaces,
+        ifacs,
+        host,
+        notify,
+        inbound_lanes,
+        commands,
+        egress,
+        on_journaled,
+        |_: &ProofRequest| false,
+        Some(store as &dyn InterfaceCountSink),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
     mut engine: EngineState<S>,
     interfaces: &[InterfaceConfig],
     ifacs: &[InterfaceIfac],
@@ -469,6 +537,7 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
     mut egress: EmbassyEgress<'_>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     mut should_prove: impl FnMut(&ProofRequest) -> bool,
+    store: Option<&dyn InterfaceCountSink>,
 ) where
     S: StorageLayout,
     H: Host,
@@ -588,6 +657,17 @@ pub async fn run_with_proof_decider<S, H, M, const NOTIFY: usize, const COMMANDS
             Either4::Fourth(()) => {
                 let now = host.now();
                 flush_due_pacers(&mut pacers, now, &mut egress, ifacs);
+            }
+        }
+        if let Some(sink) = store {
+            let mut dirty = core::mem::take(&mut engine.dirty_interfaces);
+            let mut changed = false;
+            dirty.drain(|interface| {
+                sink.set(interface, engine.interface_counts(interface));
+                changed = true;
+            });
+            if changed {
+                sink.signal_changed();
             }
         }
     }

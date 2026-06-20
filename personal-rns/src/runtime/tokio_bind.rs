@@ -38,7 +38,7 @@ use super::interface_set::{InterfaceAttach, InterfaceSet};
 use super::recipe::PreConfiguredDestination;
 use super::request_router::{RespondToken, RouteSet};
 use super::tokio_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
-use super::{Message, PrnsEvent, PrnsRecipe, SendError};
+use super::{InterfaceStore, Message, PrnsEvent, PrnsRecipe, SendError};
 
 /// How many frames a host lane holds in flight. RNS resource transfer bursts a whole window of parts
 /// at once — `Resource.WINDOW_MAX_FAST` is 75, plus its flexibility — so a lane carrying a transfer
@@ -65,6 +65,7 @@ pub struct TokioPrnsHandle {
     notify_tx: UnboundedSender<InterfaceId>,
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
+    store: InterfaceStore,
 }
 
 /// Why a [`send_resource`](TokioPrnsHandle::send_resource) stream did not complete.
@@ -108,11 +109,17 @@ impl TokioPrnsHandle {
             notify_tx,
             iface_build,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
+            store: InterfaceStore::new(),
         }
     }
 
     fn mint(&self) -> CommandId {
         CommandId(self.ids.fetch_add(1, Ordering::Relaxed))
+    }
+
+    #[must_use]
+    pub fn interface_store(&self) -> InterfaceStore {
+        self.store.clone()
     }
 
     pub fn issue(&self, command: EngineCommand) -> Option<CommandId> {
@@ -863,6 +870,7 @@ where
             notify_tx: notify_tx.clone(),
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
+            store: InterfaceStore::new(),
         };
 
         let mut engine = EngineState::<S>::default();
@@ -989,8 +997,9 @@ where
             _routes,
         } = self;
         let egress = Egress::new(egress_lanes);
+        let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
-        let reactor = tokio_reactor::run(
+        let reactor = tokio_reactor::run_with_store(
             engine,
             interfaces,
             std::vec::Vec::new(),
@@ -1021,6 +1030,7 @@ where
                 }
                 on_event(event, &state);
             },
+            store,
         );
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();
