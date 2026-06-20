@@ -3,6 +3,7 @@
 //! Reticulum counterpart and live at the `interfaces` root.
 
 pub mod local;
+pub mod rnode_lora;
 pub mod serial;
 pub mod tcp;
 pub mod udp;
