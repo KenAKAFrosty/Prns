@@ -62,7 +62,7 @@ impl<'a> TcpClient<'a> {
     /// [`EmbassyInterfaceStatus`] up under the same key before it builds the interface.
     #[must_use]
     pub fn interface_id(tag: &[u8]) -> InterfaceId {
-        InterfaceId::from_reachability_tag(InterfaceKind::TcpClient, tag)
+        InterfaceId::from_channel_tag(InterfaceKind::TcpClient, tag)
     }
 
     #[must_use]
@@ -106,7 +106,7 @@ impl Interface for TcpClient<'_> {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         self.tag
     }
 

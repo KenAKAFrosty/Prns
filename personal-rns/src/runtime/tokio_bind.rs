@@ -451,7 +451,7 @@ impl TokioPrnsHandle {
     where
         S: InterfaceSupervisor + ReportsStatus + Send + 'static,
     {
-        let id = InterfaceId::from_reachability_tag(S::KIND, supervisor.reachability_tag());
+        let id = InterfaceId::from_channel_tag(S::KIND, supervisor.channel_tag());
         let view = supervisor.status_view();
         let fleet = Fleet {
             supervisor_id: id,
@@ -674,8 +674,8 @@ pub trait InterfaceSupervisor {
 
     /// The bytes that uniquely tag this supervisor. A node runs few supervisors, so this is
     /// typically config-derived (the group it serves); the same rules as
-    /// [`reachability_tag`](crate::reactor::interface_seam::Interface::reachability_tag) apply.
-    fn reachability_tag(&self) -> &[u8];
+    /// [`channel_tag`](crate::reactor::interface_seam::Interface::channel_tag) apply.
+    fn channel_tag(&self) -> &[u8];
 
     async fn run(self, fleet: Fleet);
 }
@@ -1099,7 +1099,7 @@ mod tests {
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<DriverMsg>();
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
 
-        let id = InterfaceId::from_reachability_tag(
+        let id = InterfaceId::from_channel_tag(
             crate::interfaces::InterfaceKind::LocalClient,
             b"ephemeral-peer",
         );

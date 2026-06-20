@@ -59,7 +59,7 @@ pub trait Interface {
     const HW_MTU: usize;
 
     /// The medium this interface speaks — the namespace root of its id
-    /// ([`from_reachability_tag`](crate::interfaces::InterfaceId::from_reachability_tag)).
+    /// ([`from_channel_tag`](crate::interfaces::InterfaceId::from_channel_tag)).
     const KIND: InterfaceKind;
 
     fn descriptor(&self) -> InterfaceConfig;
@@ -69,7 +69,7 @@ pub trait Interface {
     /// distinct concurrent channels must never return the same bytes (the attach path rejects a
     /// live collision loudly); stability across a reconnect is best-effort, whatever the medium
     /// can offer.
-    fn reachability_tag(&self) -> &[u8];
+    fn channel_tag(&self) -> &[u8];
 
     async fn run<S: InterfaceSeam>(self, seam: S);
 }

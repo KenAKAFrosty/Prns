@@ -24,13 +24,13 @@ pub struct UdpInterface {
     socket: UdpSocket,
     peer: SocketAddr,
     bitrate_bps: u32,
-    reachability_tag: heapless::Vec<u8, 18>,
+    channel_tag: heapless::Vec<u8, 18>,
     status: TokioInterfaceStatus,
 }
 
 /// The bytes that tag this UDP channel: the fixed forward target it speaks to (RNS forwards every
 /// datagram to one `forward_ip:forward_port`), the same target across a reconnect.
-fn udp_reachability_tag(peer: SocketAddr) -> heapless::Vec<u8, 18> {
+fn udp_channel_tag(peer: SocketAddr) -> heapless::Vec<u8, 18> {
     let mut tag = heapless::Vec::new();
     match peer.ip() {
         IpAddr::V4(v4) => {
@@ -85,16 +85,16 @@ impl UdpInterface {
         peer: SocketAddr,
         bitrate_bps: u32,
     ) -> Self {
-        let reachability_tag = udp_reachability_tag(peer);
+        let channel_tag = udp_channel_tag(peer);
         let id = id_override.unwrap_or_else(|| {
-            InterfaceId::from_reachability_tag(InterfaceKind::Udp, &reachability_tag)
+            InterfaceId::from_channel_tag(InterfaceKind::Udp, &channel_tag)
         });
         Self {
             id,
             socket,
             peer,
             bitrate_bps,
-            reachability_tag,
+            channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -127,8 +127,8 @@ impl Interface for UdpInterface {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {

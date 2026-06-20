@@ -183,7 +183,7 @@ impl PreambleSymbols {
 
 /// The on-air modulation, a setting on the [`RadioProfile`]. Flipping between
 /// LoRa and GFSK is the same kind of change as nudging a spreading factor — both
-/// re-key the channel's identity through the reachability tag.
+/// re-key the channel's identity through the channel tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modulation {
     Lora {
@@ -221,7 +221,7 @@ impl Modulation {
 }
 
 /// The full radio configuration both endpoints must agree on for a channel. The
-/// reachability tag hashes over [`frequency`](Self::frequency) and
+/// channel tag hashes over [`frequency`](Self::frequency) and
 /// [`modulation`](Self::modulation) — the settings that decide *who can hear whom*
 /// — so a change to either re-keys the interface's identity. Transmit power and
 /// preamble are local knobs, deliberately outside the tag.
@@ -256,15 +256,15 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
 const MODULATION_TAG_LORA: u8 = 0x00;
 const MODULATION_TAG_GFSK: u8 = 0x01;
 
-/// The widest reachability tag [`reachability_tag`] emits: frequency (4) plus the
+/// The widest channel tag [`channel_tag`] emits: frequency (4) plus the
 /// GFSK block (kind 1 + bitrate 4 + deviation 4 + shaping 1).
-pub const REACHABILITY_TAG_CAP: usize = 14;
+pub const CHANNEL_TAG_CAP: usize = 14;
 
 /// The channel-identity bytes the interface id hashes over — a canonical encoding
 /// of the profile's frequency and modulation. Two nodes on the same channel derive
 /// the same tag (so they share an interface id); any settings change yields a new
 /// one (so it re-keys). Transmit power and preamble are excluded as local-only.
-pub fn reachability_tag(profile: &RadioProfile) -> HeaplessVec<u8, REACHABILITY_TAG_CAP> {
+pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
     match profile.modulation {
@@ -587,11 +587,11 @@ mod tests {
             bandwidth: LoraBandwidth::Bw125kHz,
             coding_rate: CodingRate::Cr45,
         };
-        let id_a = InterfaceId::from_reachability_tag(InterfaceKind::LoRa, &reachability_tag(&a));
-        let id_b = InterfaceId::from_reachability_tag(InterfaceKind::LoRa, &reachability_tag(&b));
+        let id_a = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&a));
+        let id_b = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&b));
         assert_ne!(id_a, id_b);
         let id_a_again =
-            InterfaceId::from_reachability_tag(InterfaceKind::LoRa, &reachability_tag(&a));
+            InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&a));
         assert_eq!(id_a, id_a_again);
     }
 
@@ -602,7 +602,7 @@ mod tests {
         low.tx_power = TxPower::new(2);
         high.tx_power = TxPower::new(22);
         high.preamble = PreambleSymbols::new(24);
-        assert_eq!(reachability_tag(&low), reachability_tag(&high));
+        assert_eq!(channel_tag(&low), channel_tag(&high));
     }
 
     #[test]

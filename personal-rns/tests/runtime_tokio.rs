@@ -40,7 +40,7 @@ struct DialOnce {
 impl InterfaceSupervisor for DialOnce {
     const KIND: InterfaceKind = InterfaceKind::Loopback;
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         self.addr.as_bytes()
     }
 

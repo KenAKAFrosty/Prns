@@ -25,31 +25,31 @@ use crate::runtime::{Fleet, InterfaceSupervisor};
 /// member's declared MTU through the reference's tier table.
 pub struct TcpServerConnection<S> {
     id: InterfaceId,
-    reachability_tag: Vec<u8>,
+    channel_tag: Vec<u8>,
     stream: Option<S>,
     bitrate_bps: u32,
     status: TokioInterfaceStatus,
 }
 
 impl<S> TcpServerConnection<S> {
-    /// Wrap an accepted connection. `reachability_tag` uniquely tags this connection within the
+    /// Wrap an accepted connection. `channel_tag` uniquely tags this connection within the
     /// server-peer medium — the peer's `ip:port`. The supervisor owes its uniqueness across
     /// concurrent clients (distinct source ports give distinct tags); the attach path rejects a live
     /// collision loudly.
     #[must_use]
-    pub fn new(reachability_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
+    pub fn new(channel_tag: Vec<u8>, stream: S, bitrate_bps: u32) -> Self {
         let id =
-            InterfaceId::from_reachability_tag(InterfaceKind::TcpServerPeer, &reachability_tag);
+            InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &channel_tag);
         Self {
             id,
-            reachability_tag,
+            channel_tag,
             stream: Some(stream),
             bitrate_bps,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
 
-    /// This interface's id, minted from the reachability tag. The supervisor lets the reactor cull
+    /// This interface's id, minted from the channel tag. The supervisor lets the reactor cull
     /// it when the connection drops (the run future ends), so it never holds the id itself.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
@@ -72,8 +72,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
@@ -121,7 +121,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for TcpServerConnection<S> {
 pub struct TcpServer {
     listener: TcpListener,
     bitrate_bps: u32,
-    reachability_tag: Vec<u8>,
+    channel_tag: Vec<u8>,
 }
 
 impl TcpServer {
@@ -130,11 +130,11 @@ impl TcpServer {
     /// and a bind refusal surfaces here, not silently inside the accept loop.
     pub async fn bind(addr: impl tokio::net::ToSocketAddrs, bitrate_bps: u32) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        let reachability_tag = listener.local_addr()?.to_string().into_bytes();
+        let channel_tag = listener.local_addr()?.to_string().into_bytes();
         Ok(Self {
             listener,
             bitrate_bps,
-            reachability_tag,
+            channel_tag,
         })
     }
 
@@ -142,7 +142,7 @@ impl TcpServer {
     /// up are `TcpServerPeer`-kind, a distinct id each. For the app that names the server card.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
-        InterfaceId::from_reachability_tag(InterfaceKind::TcpServer, &self.reachability_tag)
+        InterfaceId::from_channel_tag(InterfaceKind::TcpServer, &self.channel_tag)
     }
 
     /// The address the listener bound — with the OS-assigned port resolved, for a face to show and a
@@ -155,8 +155,8 @@ impl TcpServer {
 impl InterfaceSupervisor for TcpServer {
     const KIND: InterfaceKind = InterfaceKind::TcpServer;
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run(self, fleet: Fleet) {
@@ -348,7 +348,7 @@ mod tests {
             .expect("binds an ephemeral test port");
         let addr = listener.local_addr().expect("the bound address is known");
         let responder_iface =
-            InterfaceId::from_reachability_tag(InterfaceKind::TcpServerPeer, RESPONDER_TAG);
+            InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, RESPONDER_TAG);
         let a_interface = TcpClientInterface::new(
             addr.to_string(),
             core::TCP_BITRATE_GUESS_BPS,

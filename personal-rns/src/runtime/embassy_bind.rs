@@ -902,11 +902,11 @@ mod tests {
         );
         // The fleet's one lane is keyed by the supervisor's id; the WiFi peer routes to it by kind.
         let supervisor =
-            InterfaceId::from_reachability_tag(InterfaceKind::AutoWifi, b"test-supervisor");
+            InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"test-supervisor");
         node.activate_fleet(0, supervisor);
 
         let raw = hx(RAW_ANNOUNCE);
-        let peer = InterfaceId::from_reachability_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
+        let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"test-peer-medium");
 
         let drive = async move {
             let mut fleet = fleet;

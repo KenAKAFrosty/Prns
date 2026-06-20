@@ -30,7 +30,7 @@ pub struct TcpClientInterface {
 impl TcpClientInterface {
     #[must_use]
     pub fn new(target: String, bitrate_bps: u32, reconnect: Duration) -> Self {
-        let id = InterfaceId::from_reachability_tag(InterfaceKind::TcpClient, target.as_bytes());
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, target.as_bytes());
         Self::new_with_id(id, target, bitrate_bps, reconnect)
     }
 
@@ -77,7 +77,7 @@ impl Interface for TcpClientInterface {
         core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         self.target.as_bytes()
     }
 

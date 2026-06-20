@@ -23,28 +23,28 @@ use crate::runtime::{Fleet, InterfaceSupervisor};
 /// `TcpStream` and a `UnixStream`.
 pub struct LocalClientInterface<S> {
     id: InterfaceId,
-    reachability_tag: Vec<u8>,
+    channel_tag: Vec<u8>,
     stream: Option<S>,
     status: TokioInterfaceStatus,
 }
 
 impl<S> LocalClientInterface<S> {
-    /// Wrap an accepted connection. `reachability_tag` uniquely tags this connection within the
+    /// Wrap an accepted connection. `channel_tag` uniquely tags this connection within the
     /// local-client medium — the peer's `ip:port` for loopback TCP, or a per-connection counter for
     /// AF_UNIX. The supervisor owes its uniqueness across concurrent clients; the attach path
     /// rejects a live collision loudly.
     #[must_use]
-    pub fn new(reachability_tag: Vec<u8>, stream: S) -> Self {
-        let id = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, &reachability_tag);
+    pub fn new(channel_tag: Vec<u8>, stream: S) -> Self {
+        let id = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, &channel_tag);
         Self {
             id,
-            reachability_tag,
+            channel_tag,
             stream: Some(stream),
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
         }
     }
 
-    /// This interface's id, minted from the reachability tag. The supervisor holds it to deregister
+    /// This interface's id, minted from the channel tag. The supervisor holds it to deregister
     /// the member when the connection drops.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
@@ -67,8 +67,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
         core::descriptor(self.id)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
@@ -118,7 +118,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
 /// either. macOS/Windows have no abstract sockets, so TCP is the only endpoint, matching RNS's own
 /// `use_af_unix` (Linux/Android only).
 pub struct LocalServer {
-    reachability_tag: Vec<u8>,
+    channel_tag: Vec<u8>,
     bind_addr: String,
     #[cfg(target_os = "linux")]
     socket_path: Option<String>,
@@ -138,7 +138,7 @@ impl LocalServer {
     pub fn with_port(port: u16) -> Self {
         let bind_addr = std::format!("127.0.0.1:{port}");
         Self {
-            reachability_tag: bind_addr.clone().into_bytes(),
+            channel_tag: bind_addr.clone().into_bytes(),
             bind_addr,
             #[cfg(target_os = "linux")]
             socket_path: Some(core::DEFAULT_SOCKET_PATH.into()),
@@ -158,7 +158,7 @@ impl LocalServer {
     /// stands up are `LocalClient`-kind, a distinct id each.
     #[must_use]
     pub fn id(&self) -> InterfaceId {
-        InterfaceId::from_reachability_tag(InterfaceKind::LocalServer, &self.reachability_tag)
+        InterfaceId::from_channel_tag(InterfaceKind::LocalServer, &self.channel_tag)
     }
 }
 
@@ -185,8 +185,8 @@ fn bind_abstract_unix(socket_path: &str) -> Option<UnixListener> {
 impl InterfaceSupervisor for LocalServer {
     const KIND: InterfaceKind = InterfaceKind::LocalServer;
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run(self, fleet: Fleet) {

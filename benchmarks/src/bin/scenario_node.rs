@@ -100,7 +100,7 @@ impl Interface for BenchTcpListener {
         tcp_core::descriptor(self.id, self.bitrate_bps)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         self.id.as_bytes()
     }
 

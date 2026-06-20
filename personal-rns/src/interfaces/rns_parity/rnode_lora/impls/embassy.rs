@@ -19,7 +19,7 @@ use lora_phy::{DelayNs, LoRa};
 use crate::interfaces::rns_parity::rnode_lora::core::{
     self, air_frame_count, encode_air_frame_part, CodingRate, LoRaReassembler, LoraBandwidth,
     Modulation, RadioProfile, SpreadingFactor, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
-    REACHABILITY_TAG_CAP,
+    CHANNEL_TAG_CAP,
 };
 use crate::engine::InstantMillis;
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
@@ -118,7 +118,7 @@ pub struct LoRaInterface<'a, RK: RadioKind, DLY: DelayNs> {
     id: InterfaceId,
     radio: LoRa<RK, DLY>,
     profile: RadioProfile,
-    tag: HeaplessVec<u8, REACHABILITY_TAG_CAP>,
+    tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
 }
@@ -128,7 +128,7 @@ impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
     /// [`EmbassyInterfaceStatus`] up under the same key before building the interface.
     #[must_use]
     pub fn interface_id(profile: &RadioProfile) -> InterfaceId {
-        InterfaceId::from_reachability_tag(InterfaceKind::LoRa, &core::reachability_tag(profile))
+        InterfaceId::from_channel_tag(InterfaceKind::LoRa, &core::channel_tag(profile))
     }
 
     #[must_use]
@@ -138,8 +138,8 @@ impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
         control: &'a LoRaControl,
         status: &'a EmbassyInterfaceStatus,
     ) -> Self {
-        let tag = core::reachability_tag(&profile);
-        let id = InterfaceId::from_reachability_tag(InterfaceKind::LoRa, &tag);
+        let tag = core::channel_tag(&profile);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &tag);
         Self {
             id,
             radio,
@@ -164,7 +164,7 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
         core::descriptor(self.id, &self.profile)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         &self.tag
     }
 

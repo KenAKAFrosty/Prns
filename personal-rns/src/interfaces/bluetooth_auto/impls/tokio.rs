@@ -31,22 +31,22 @@ pub struct BluetoothPeer<Src, Snk> {
     identity: BleIdentity,
     source: Src,
     sink: Snk,
-    reachability_tag: [u8; 16],
+    channel_tag: [u8; 16],
     status: TokioInterfaceStatus,
     closed: Option<ClosedSignal>,
 }
 
 impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     pub fn new(identity: BleIdentity, source: Src, sink: Snk) -> Self {
-        let reachability_tag = *identity.as_bytes();
+        let channel_tag = *identity.as_bytes();
         let id =
-            InterfaceId::from_reachability_tag(InterfaceKind::BluetoothPeer, &reachability_tag);
+            InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, &channel_tag);
         Self {
             id,
             identity,
             source,
             sink,
-            reachability_tag,
+            channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
             closed: None,
         }
@@ -84,8 +84,8 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
         core::descriptor(self.id, core::BLE_BITRATE_GUESS_BPS)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {
@@ -185,7 +185,7 @@ where
 {
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         self.local.identity.as_bytes()
     }
 

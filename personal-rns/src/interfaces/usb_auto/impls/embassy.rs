@@ -74,7 +74,7 @@ where
         core::device_descriptor(self.id)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
+    fn channel_tag(&self) -> &[u8] {
         self.id.as_bytes()
     }
 

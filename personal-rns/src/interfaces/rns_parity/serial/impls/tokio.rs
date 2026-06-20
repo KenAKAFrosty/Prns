@@ -20,29 +20,29 @@ pub struct SerialInterface<Open> {
     id: InterfaceId,
     open: Open,
     reconnect: Duration,
-    reachability_tag: std::vec::Vec<u8>,
+    channel_tag: std::vec::Vec<u8>,
     status: TokioInterfaceStatus,
 }
 
 impl<Open> SerialInterface<Open> {
-    /// `reachability_tag` names *which* serial device this is — the port name or a stable
+    /// `channel_tag` names *which* serial device this is — the port name or a stable
     /// device id the caller knows (the `open` closure that yields the stream hides it from
     /// us). Two distinct serial channels must pass distinct bytes; the same device across a
     /// reopen should pass the same, so its routes survive the reconnect.
     #[must_use]
-    pub fn new(open: Open, reconnect: Duration, reachability_tag: &[u8]) -> Self {
-        let reachability_tag = reachability_tag.to_vec();
-        let id = InterfaceId::from_reachability_tag(InterfaceKind::Serial, &reachability_tag);
+    pub fn new(open: Open, reconnect: Duration, channel_tag: &[u8]) -> Self {
+        let channel_tag = channel_tag.to_vec();
+        let id = InterfaceId::from_channel_tag(InterfaceKind::Serial, &channel_tag);
         Self {
             id,
             open,
             reconnect,
-            reachability_tag,
+            channel_tag,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
 
-    /// This interface's id, derived from its device `reachability_tag`, for the app that wants
+    /// This interface's id, derived from its device `channel_tag`, for the app that wants
     /// to name it (an [`AnnounceTarget::Interface`](crate::engine::AnnounceTarget), a log line).
     #[must_use]
     pub fn id(&self) -> InterfaceId {
@@ -70,8 +70,8 @@ where
         core::descriptor(self.id)
     }
 
-    fn reachability_tag(&self) -> &[u8] {
-        &self.reachability_tag
+    fn channel_tag(&self) -> &[u8] {
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(mut self, mut seam: Seam) {

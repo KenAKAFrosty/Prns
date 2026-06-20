@@ -227,7 +227,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     /// id to [`AutoWifiShared::new`] so the card and the supervisor agree.
     #[must_use]
     pub fn aggregate_id() -> InterfaceId {
-        InterfaceId::from_reachability_tag(InterfaceKind::AutoWifi, core::GROUP_ID)
+        InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, core::GROUP_ID)
     }
 
     /// Build the supervisor over the board's stack, sockets, and WiFi MAC, reporting into `shared`.
@@ -417,7 +417,7 @@ fn ingest_beacon<
     let Some(slot) = peers.iter().position(Option::is_none) else {
         return;
     };
-    let id = InterfaceId::from_reachability_tag(InterfaceKind::WifiPeer, &addr.octets());
+    let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
     peers[slot] = Some(addr);
     ids[slot] = id;
     status.member(slot).assign(id);

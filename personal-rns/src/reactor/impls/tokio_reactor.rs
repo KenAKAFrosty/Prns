@@ -1155,7 +1155,7 @@ pub async fn run_with_proof_decider<S, H, J, P>(
                         if interfaces.iter().any(|config| config.id == id) {
                             debug_assert!(
                                 false,
-                                "interface id collision (kind byte {}): two live channels produced the same reachability tag — an interface returned a non-unique reachability_tag",
+                                "interface id collision (kind byte {}): two live channels produced the same channel tag — an interface returned a non-unique channel_tag",
                                 id.as_bytes()[0],
                             );
                             drop((inbound, egress_producer));
@@ -1723,7 +1723,7 @@ mod tests {
             self.descriptor
         }
 
-        fn reachability_tag(&self) -> &[u8] {
+        fn channel_tag(&self) -> &[u8] {
             self.descriptor.id.as_bytes()
         }
 

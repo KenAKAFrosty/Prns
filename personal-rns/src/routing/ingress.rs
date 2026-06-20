@@ -1949,8 +1949,8 @@ mod tests {
 
     #[test]
     fn a_local_client_transit_is_discounted_one_hop() {
-        let local_client = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"app-1");
-        let tcp = InterfaceId::from_reachability_tag(InterfaceKind::TcpClient, b"1.2.3.4:4242");
+        let local_client = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"app-1");
+        let tcp = InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"1.2.3.4:4242");
         assert_eq!(local_adjusted_hops(5, local_client), 4);
         assert_eq!(local_adjusted_hops(5, tcp), 5);
         assert_eq!(local_adjusted_hops(0, local_client), 0);
@@ -2460,7 +2460,7 @@ mod tests {
     #[test]
     fn a_local_clients_unknown_path_request_fans_out_to_the_network() {
         let stranger = DestinationHash::new([0x44; 16]);
-        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"sideband");
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
         let uplink = iface(0xB2);
         let mut relay = transporting_node();
         let view = [routable_descriptor(app), routable_descriptor(uplink)];
@@ -2495,7 +2495,7 @@ mod tests {
     fn a_network_request_for_an_unheld_destination_is_offered_to_local_clients_only() {
         let stranger = DestinationHash::new([0x44; 16]);
         let uplink = iface(0xA1);
-        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let mut relay = transporting_node();
         let view = [routable_descriptor(uplink), routable_descriptor(app)];
 
@@ -4297,7 +4297,7 @@ mod tests {
 
     #[test]
     fn a_local_clients_direct_data_is_carried_out_to_its_route() {
-        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"sideband");
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
         let mut relay = transporting_node();
         let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let _ = relay.ingest_packet(
@@ -4366,7 +4366,7 @@ mod tests {
 
     #[test]
     fn a_packet_for_a_destination_on_a_local_client_is_carried_inward() {
-        let app = InterfaceId::from_reachability_tag(InterfaceKind::LocalClient, b"nomadnet");
+        let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let mut relay = transporting_node();
         let mut announce = hx(RATCHETED_ANNOUNCE_RNS_WIRE);
         let _ = relay.ingest_packet(

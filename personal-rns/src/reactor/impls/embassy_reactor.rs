@@ -1068,7 +1068,7 @@ mod tests {
             self.descriptor
         }
 
-        fn reachability_tag(&self) -> &[u8] {
+        fn channel_tag(&self) -> &[u8] {
             self.descriptor.id.as_bytes()
         }
 
