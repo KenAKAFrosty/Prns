@@ -343,7 +343,7 @@ fn known_arrangement(a: Endpoint, b: Endpoint) -> Option<Arrangement> {
     use AppleHost::MacOs;
     use Endpoint::{Android, BlueZ, CoreBluetooth};
     match (a, b) {
-        (CoreBluetooth(MacOs), BlueZ(_)) => Some(Arrangement::EitherOpens),
+        (CoreBluetooth(MacOs), BlueZ(host)) => Some(Arrangement::Opens(BlueZ(host))),
         (CoreBluetooth(MacOs), Android(host)) => Some(Arrangement::Opens(Android(host))),
         _ => None,
     }
@@ -410,9 +410,9 @@ pub fn l2cap_plan(
             None => L2capPlan::None,
         }
     } else {
-        match our_capabilities.l2cap {
-            Some(_) => L2capPlan::Accept,
-            None => L2capPlan::None,
+        match (our_capabilities.l2cap, peer_capabilities.l2cap) {
+            (Some(_), Some(_)) => L2capPlan::Accept,
+            _ => L2capPlan::None,
         }
     }
 }
@@ -931,9 +931,9 @@ mod tests {
     }
 
     #[test]
-    fn mac_and_linux_open_in_either_direction() {
-        assert_eq!(arrangement(mac(), linux()), Arrangement::EitherOpens);
-        assert_eq!(arrangement(linux(), mac()), Arrangement::EitherOpens);
+    fn mac_and_linux_open_when_linux_opens() {
+        assert_eq!(arrangement(mac(), linux()), Arrangement::Opens(linux()));
+        assert_eq!(arrangement(linux(), mac()), Arrangement::Opens(linux()));
     }
 
     #[test]
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[test]
     fn both_ends_keep_the_same_connection_for_an_either_opens_pair() {
-        let arr = arrangement(mac(), linux());
+        let arr = Arrangement::EitherOpens;
         let low = identity(1);
         let high = identity(9);
 
@@ -1049,7 +1049,7 @@ mod tests {
 
     #[test]
     fn either_opens_central_opens_and_peripheral_accepts() {
-        let arr = arrangement(mac(), linux());
+        let arr = Arrangement::EitherOpens;
         let mine = caps(Some(0x00c0));
         let theirs = caps(Some(0x0083));
         assert_eq!(
@@ -1109,6 +1109,21 @@ mod tests {
     }
 
     #[test]
+    fn the_acceptor_stands_down_when_the_peer_has_no_listener() {
+        let arr = arrangement(mac(), android());
+        assert_eq!(
+            l2cap_plan(
+                arr,
+                HandshakeRole::Listener,
+                mac(),
+                &caps(Some(0x00c0)),
+                &caps(None),
+            ),
+            L2capPlan::None
+        );
+    }
+
+    #[test]
     fn gatt_only_never_plans_l2cap() {
         assert_eq!(
             l2cap_plan(
@@ -1124,7 +1139,7 @@ mod tests {
 
     #[test]
     fn an_opener_whose_peer_has_no_listener_cannot_open() {
-        let arr = arrangement(mac(), linux());
+        let arr = Arrangement::EitherOpens;
         assert_eq!(
             l2cap_plan(
                 arr,
