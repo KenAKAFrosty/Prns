@@ -59,7 +59,7 @@ pub(crate) fn wifi_status() -> AutoWifiStatus {
 }
 
 pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
-    engine().handle.interface_snapshots()
+    engine().handle.interfaces()
 }
 
 /// Fire an immediate `lxmf.delivery` announce across every interface — the manual counterpart to the

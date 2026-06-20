@@ -1,8 +1,7 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, splash, statuses_to_cards, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
 };
-use personal_rns::engine::InterfaceCounts;
 use personal_rns::interfaces::InterfaceStatus;
 
 use crate::engine::{classify, ensure_started, interface_snapshots, wifi_status};
@@ -35,16 +34,12 @@ impl HopspotFace {
         self.render_cards(&cards, out_rgba);
     }
 
-    /// Pull the live statuses each frame: the USB host, the WiFi supervisor's aggregate, and one
-    /// card per peer it has stood up — over a `&dyn` slice, the same shape the desktop face renders.
+    /// The unified snapshot per interface each frame: the USB host and the WiFi supervisor at the
+    /// root with their fleets folded in, the same shape every other face renders.
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
         let snapshots = interface_snapshots();
         let wifi_id = wifi_status().id();
-        statuses_to_cards(
-            &snapshots,
-            |id| classify(id, wifi_id),
-            |_id| InterfaceCounts::default(),
-        )
+        snapshots_to_cards(&snapshots, |id| classify(id, wifi_id))
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {

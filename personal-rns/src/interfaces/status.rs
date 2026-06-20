@@ -36,30 +36,29 @@ pub trait InterfaceStatus {
     fn transfer_rates(&self) -> Option<TransferRates> {
         None
     }
-
-    /// The number of live Reticulum links carried over this interface, `0` until a source publishes
-    /// it. A supervisor's aggregate handle leaves this at the default — its members each report their
-    /// own; fleet size is read from the per-member cards, not conflated into a link count.
-    fn links(&self) -> u32 {
-        0
-    }
 }
 
-/// An owned, point-in-time read of an [`InterfaceStatus`] — the live facts copied out so a consumer
-/// can hold a `Vec` of them past the borrow of the handle they came from. The shared-instance RPC's
-/// `interface_stats` collects these from the handles the app holds (the same ones the display reads),
-/// then renders them to a stock client.
+/// Where an interface sits in the runtime's topology: standing on its own, or one of a supervisor's
+/// fleet. The runtime records this when the interface attaches, so a face can fold a supervisor's
+/// members under it instead of showing every peer at the root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InterfaceSnapshot {
+pub enum Membership {
+    Independent,
+    FleetMember { supervisor_id: InterfaceId },
+}
+
+/// The facts an interface owns first-hand because it touches the wire. A status handle yields these;
+/// the runtime joins them with the engine's counts and the topology to mint an [`InterfaceSnapshot`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceVitals {
     pub id: InterfaceId,
     pub connection: ConnectionState,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub transfer_rates: Option<TransferRates>,
-    pub links: u32,
 }
 
-impl InterfaceSnapshot {
+impl InterfaceVitals {
     pub fn of(status: &impl InterfaceStatus) -> Self {
         Self {
             id: status.id(),
@@ -67,46 +66,32 @@ impl InterfaceSnapshot {
             rx_bytes: status.rx_bytes(),
             tx_bytes: status.tx_bytes(),
             transfer_rates: status.transfer_rates(),
-            links: status.links(),
         }
     }
 }
 
-/// A snapshot reads back as the status it captured, so a face can render an owned `Vec` of
-/// snapshots — the whole fleet the runtime tracks centrally, members and all — through the same
-/// card builder it feeds live handles.
-impl InterfaceStatus for InterfaceSnapshot {
-    fn id(&self) -> InterfaceId {
-        self.id
-    }
-
-    fn connection(&self) -> ConnectionState {
-        self.connection
-    }
-
-    fn rx_bytes(&self) -> u64 {
-        self.rx_bytes
-    }
-
-    fn tx_bytes(&self) -> u64 {
-        self.tx_bytes
-    }
-
-    fn transfer_rates(&self) -> Option<TransferRates> {
-        self.transfer_rates
-    }
-
-    fn links(&self) -> u32 {
-        self.links
-    }
+/// One interface's complete live view: the [`InterfaceVitals`] it owns, the engine counts that ride
+/// over it, and where it sits in the fleet. Only the runtime mints one — it alone holds the status
+/// handle, the count store, and the topology together — so a snapshot can never carry zeroed counts
+/// by accident the way a status-only read could.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceSnapshot {
+    pub id: InterfaceId,
+    pub connection: ConnectionState,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub transfer_rates: Option<TransferRates>,
+    pub destinations: u32,
+    pub links: u32,
+    pub transported_links: u32,
+    pub membership: Membership,
 }
 
-/// A live view of an interface's status, yielding current [`InterfaceSnapshot`]s on each call. A
-/// one-to-one wire yields one; a supervisor yields its own plus one per live fleet member. It is a
-/// closure over the interface's cheap-clone status handle, so it outlives the interface the runtime
-/// consumed when it attached it.
+/// A live view of an interface's status, yielding the current [`InterfaceVitals`] on each call. It
+/// is a closure over the interface's cheap-clone status handle, so it outlives the interface the
+/// runtime consumed when it attached it.
 #[cfg(feature = "tokio-host")]
-pub type StatusView = std::sync::Arc<dyn Fn() -> std::vec::Vec<InterfaceSnapshot> + Send + Sync>;
+pub type StatusView = std::sync::Arc<dyn Fn() -> std::vec::Vec<InterfaceVitals> + Send + Sync>;
 
 /// What a host interface (or supervisor) hands the runtime so it can track interface status
 /// centrally: a [`StatusView`] over its own status handle, or `None` for a type that owns no live
@@ -146,9 +131,5 @@ impl<T: InterfaceStatus + ?Sized> InterfaceStatus for &T {
 
     fn transfer_rates(&self) -> Option<TransferRates> {
         (**self).transfer_rates()
-    }
-
-    fn links(&self) -> u32 {
-        (**self).links()
     }
 }

@@ -43,8 +43,7 @@ use esp_radio::wifi::{
 };
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, InterfaceCounts,
-    RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InstantMillis, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -54,7 +53,9 @@ use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, 
 use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceKind, MacAddress};
+use personal_rns::interfaces::{
+    ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, MacAddress, Membership,
+};
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyHost,
@@ -595,46 +596,35 @@ async fn build_cards(
             Some((screen::CardKind::Peer, label))
         }
     };
-    let mut statuses: HVec<&dyn InterfaceStatus, 8> = HVec::new();
-    let _ = statuses.push(usb);
+    let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
+    let _ = entries.push((usb, Membership::Independent));
     if let Some(tcp) = tcp {
-        let _ = statuses.push(tcp);
+        let _ = entries.push((tcp, Membership::Independent));
     }
     if let Some(wifi) = wifi {
-        let _ = statuses.push(wifi);
+        let supervisor_id = wifi.id();
+        let _ = entries.push((wifi, Membership::Independent));
         for member in wifi.members() {
-            let _ = statuses.push(member);
+            let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
     }
-    let mut counts: HVec<(InterfaceId, InterfaceCounts), 8> = HVec::new();
-    for status in &statuses {
+    let mut snapshots: HVec<InterfaceSnapshot, 8> = HVec::new();
+    for (status, membership) in &entries {
         let id = status.id();
-        let _ = counts.push((id, handle.interface_counts(id).await.unwrap_or_default()));
+        let counts = handle.interface_counts(id).await.unwrap_or_default();
+        let _ = snapshots.push(InterfaceSnapshot {
+            id,
+            connection: status.connection(),
+            rx_bytes: status.rx_bytes(),
+            tx_bytes: status.tx_bytes(),
+            transfer_rates: status.transfer_rates(),
+            destinations: counts.destinations,
+            links: counts.links,
+            transported_links: counts.transported_links,
+            membership: *membership,
+        });
     }
-    let lookup = |id: InterfaceId| {
-        counts
-            .iter()
-            .find(|(cid, _)| *cid == id)
-            .map_or_else(InterfaceCounts::default, |(_, c)| *c)
-    };
-    let wifi_counts = wifi.map(|wifi| {
-        wifi.members()
-            .fold(InterfaceCounts::default(), |total, member| {
-                let member_counts = lookup(member.id());
-                InterfaceCounts {
-                    destinations: total.destinations + member_counts.destinations,
-                    links: total.links + member_counts.links,
-                    transported_links: total.transported_links + member_counts.transported_links,
-                }
-            })
-    });
-    screen::statuses_to_cards(&statuses, classify, |id| {
-        if Some(id) == wifi_id {
-            wifi_counts.unwrap_or_default()
-        } else {
-            lookup(id)
-        }
-    })
+    screen::snapshots_to_cards(&snapshots, classify)
 }
 
 /// The board's concrete USB-auto device over the serial-jtag halves, reporting into [`USB_STATUS`].

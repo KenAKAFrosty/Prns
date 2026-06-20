@@ -8,7 +8,7 @@ use heapless::FnvIndexMap;
 use crate::engine::InterfaceCounts;
 use crate::interfaces::InterfaceId;
 
-pub trait InterfaceCountSink {
+pub trait InterfaceCountSink: Sync {
     fn set(&self, interface: InterfaceId, counts: InterfaceCounts);
     fn forget(&self, interface: InterfaceId);
     fn signal_changed(&self);
@@ -49,7 +49,7 @@ impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
     }
 }
 
-impl<M: RawMutex, const N: usize> InterfaceCountSink for EmbassyInterfaceStore<M, N> {
+impl<M: RawMutex + Sync, const N: usize> InterfaceCountSink for EmbassyInterfaceStore<M, N> {
     fn set(&self, interface: InterfaceId, counts: InterfaceCounts) {
         self.counts.lock(|cell| {
             let stored = cell.borrow_mut().insert(interface, counts);
@@ -75,11 +75,11 @@ impl<M: RawMutex, const N: usize> InterfaceCountSink for EmbassyInterfaceStore<M
 mod tests {
     use super::*;
     use crate::interfaces::INTERFACE_ID_LEN;
-    use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
     #[test]
     fn set_reads_back_per_interface_in_fixed_capacity() {
-        let store = EmbassyInterfaceStore::<NoopRawMutex, 8>::new();
+        let store = EmbassyInterfaceStore::<CriticalSectionRawMutex, 8>::new();
         let interface = InterfaceId::new([5; INTERFACE_ID_LEN]);
 
         assert_eq!(store.counts(interface), InterfaceCounts::default());

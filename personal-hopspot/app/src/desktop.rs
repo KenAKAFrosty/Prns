@@ -27,7 +27,7 @@ use embedded_graphics_simulator::{
 use heapless::Vec as HVec;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, InterfaceCounts, RatchetPolicy,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EngineCommand, RatchetPolicy,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -304,7 +304,7 @@ fn run_node(
             let snapshot_handle = handle.clone();
             tokio::spawn(
                 SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-                    .with_interfaces(move || snapshot_handle.interface_snapshots())
+                    .with_interfaces(move || snapshot_handle.interfaces())
                     .run(),
             );
         }
@@ -317,7 +317,7 @@ fn run_node(
                     local_core::DEFAULT_SOCKET_PATH,
                     handle.clone(),
                 )
-                .with_interfaces(move || snapshot_handle.interface_snapshots())
+                .with_interfaces(move || snapshot_handle.interfaces())
                 .run(),
             );
         }
@@ -669,10 +669,6 @@ fn run_window(handles: WindowHandles) {
     let classify = move |id: InterfaceId| classify(id, wifi_id, tcp_id, tcp_target);
 
     let query_handle = handle.clone();
-    let query_rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("the window builds a runtime to drive its per-interface count queries");
 
     let toggle_usb = usb_status.clone();
     let toggle_tcp = tcp_status.clone();
@@ -708,7 +704,7 @@ fn run_window(handles: WindowHandles) {
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
     loop {
-        let snapshots = query_handle.interface_snapshots();
+        let snapshots = query_handle.interfaces();
 
         for status in &snapshots {
             let connection = status.connection;
@@ -725,35 +721,7 @@ fn run_window(handles: WindowHandles) {
             }
         }
 
-        let counts: HashMap<InterfaceId, InterfaceCounts> = query_rt.block_on(async {
-            let mut counts = HashMap::new();
-            for status in &snapshots {
-                let id = status.id;
-                let _ = counts.insert(
-                    id,
-                    query_handle.interface_counts(id).await.unwrap_or_default(),
-                );
-            }
-            counts
-        });
-        let wifi_counts = snapshots
-            .iter()
-            .filter(|snapshot| snapshot.id.kind() == Some(InterfaceKind::WifiPeer))
-            .fold(InterfaceCounts::default(), |total, member| {
-                let member_counts = counts.get(&member.id).copied().unwrap_or_default();
-                InterfaceCounts {
-                    destinations: total.destinations + member_counts.destinations,
-                    links: total.links + member_counts.links,
-                    transported_links: total.transported_links + member_counts.transported_links,
-                }
-            });
-        let cards: HVec<Card, 16> = screen::statuses_to_cards(&snapshots, classify, |id| {
-            if id == wifi_id {
-                wifi_counts
-            } else {
-                counts.get(&id).copied().unwrap_or_default()
-            }
-        });
+        let cards: HVec<Card, 16> = screen::snapshots_to_cards(&snapshots, classify);
         let card_count = cards.len();
         ui_state.sync_card_count(card_count);
         let long_press = dispatch_long_press_if_ready(

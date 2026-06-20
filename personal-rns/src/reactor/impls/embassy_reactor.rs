@@ -507,7 +507,7 @@ pub async fn run_with_store<S, H, M, const NOTIFY: usize, const COMMANDS: usize,
 ) where
     S: StorageLayout,
     H: Host,
-    M: RawMutex,
+    M: RawMutex + Sync,
 {
     run_inner(
         engine,

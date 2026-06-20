@@ -7,8 +7,7 @@ pub use screen::{
     CardLabel, InputEvent, Liveness, UiAction, UiState,
 };
 
-use personal_rns::engine::InterfaceCounts;
-use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceStatus};
+use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
 
 fn liveness(connection: ConnectionState) -> Liveness {
     match connection {
@@ -21,50 +20,54 @@ fn liveness(connection: ConnectionState) -> Liveness {
     }
 }
 
-/// Build the renderable [`Card`] list from the interfaces' live status handles,
-/// one card per handle, in the order given. `classify` maps each interface's
-/// [`InterfaceId`] to its `(icon kind, label)`; returning `None` drops that
-/// interface from the screen. `N` bounds the returned vector — pass the panel's
-/// card capacity.
+/// Build the renderable [`Card`] list from one [`InterfaceSnapshot`] per interface. `classify` maps
+/// an [`InterfaceId`] to its `(icon kind, label)`; returning `None` drops that interface. `N` bounds
+/// the returned vector — pass the panel's card capacity.
 ///
-/// The handle carries the facts the interface knows first-hand: its connection — which resolves the
-/// card's [`Liveness`] (Dormant until a link confirms, then Live) — and the bytes it has moved, which
-/// fill the Live card. `counts` supplies the engine-owned figures the interface itself can't know —
-/// destinations routed via it and the live Reticulum links over it — which a face reads through the
-/// runtime's per-interface query. The card's link figure sums the two kinds the engine reports
-/// apart: the links this node terminates and the ones it merely carries for others (a shared
-/// instance relaying a local client's link holds only the latter), so the glyph reads one count of
-/// every live link riding the interface. The card's rate is the interface's own published throughput
-/// (rx plus tx, as bytes per second); last-activity is derived state no source carries yet, so it
-/// reports a neutral value until then.
-pub fn statuses_to_cards<S: InterfaceStatus, const N: usize>(
-    statuses: &[S],
+/// A supervisor's fleet folds in: a [`FleetMember`](Membership::FleetMember) gets no card of its own,
+/// and its engine counts roll up into its supervisor's card, so the root shows one card per
+/// independent interface with the whole fleet's traffic summed under it — never a card per peer.
+///
+/// The snapshot carries everything else a card shows: the connection (which resolves the card's
+/// [`Liveness`]), the bytes and rate the interface moved, and the engine counts riding over it. The
+/// link glyph sums the two kinds the engine reports apart — links this node terminates and links it
+/// merely carries for others — into one count of every live link on the interface.
+pub fn snapshots_to_cards<const N: usize>(
+    snapshots: &[InterfaceSnapshot],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,
-    mut counts: impl FnMut(InterfaceId) -> InterfaceCounts,
 ) -> heapless::Vec<Card, N> {
     let mut cards = heapless::Vec::new();
-    for status in statuses {
-        let id = status.id();
-        let Some((kind, label)) = classify(id) else {
+    for snapshot in snapshots {
+        if let Membership::FleetMember { .. } = snapshot.membership {
+            continue;
+        }
+        let Some((kind, label)) = classify(snapshot.id) else {
             continue;
         };
-        let InterfaceCounts {
-            destinations,
-            links,
-            transported_links,
-        } = counts(id);
+        let mut destinations = snapshot.destinations;
+        let mut links = snapshot.links;
+        let mut transported_links = snapshot.transported_links;
+        for member in snapshots {
+            if let Membership::FleetMember { supervisor_id } = member.membership {
+                if supervisor_id == snapshot.id {
+                    destinations = destinations.saturating_add(member.destinations);
+                    links = links.saturating_add(member.links);
+                    transported_links = transported_links.saturating_add(member.transported_links);
+                }
+            }
+        }
         let _ = cards.push(Card {
-            id,
+            id: snapshot.id,
             kind,
             label,
             selected: false,
-            liveness: liveness(status.connection()),
-            tx_bytes: status.tx_bytes(),
-            rx_bytes: status.rx_bytes(),
+            liveness: liveness(snapshot.connection),
+            tx_bytes: snapshot.tx_bytes,
+            rx_bytes: snapshot.rx_bytes,
             links: links.saturating_add(transported_links),
             destinations,
-            rate_bytes_per_sec: status
-                .transfer_rates()
+            rate_bytes_per_sec: snapshot
+                .transfer_rates
                 .map(|rates| rates.rx_bps.saturating_add(rates.tx_bps) / 8)
                 .unwrap_or(0),
             last_activity_secs: None,

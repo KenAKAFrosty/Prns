@@ -84,7 +84,7 @@ async fn main() {
         loop {
             ticker.tick().await;
             let summary: std::vec::Vec<String> = roll_call
-                .interface_snapshots()
+                .interfaces()
                 .iter()
                 .map(|snap| std::format!("{:?}/{:?}", snap.id.kind(), snap.connection))
                 .collect();

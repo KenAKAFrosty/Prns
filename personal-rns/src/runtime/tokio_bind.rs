@@ -18,7 +18,8 @@ use crate::engine::{
 #[cfg(feature = "local")]
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::interfaces::{
-    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceSnapshot, ReportsStatus, StatusView,
+    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, ReportsStatus,
+    StatusView,
 };
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
@@ -64,7 +65,7 @@ pub struct TokioPrnsHandle {
     ids: Arc<AtomicU64>,
     notify_tx: UnboundedSender<InterfaceId>,
     iface_build: UnboundedSender<DriverMsg>,
-    interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
 }
 
@@ -432,20 +433,43 @@ impl TokioPrnsHandle {
             interface,
             None,
         );
-        register_status(&self.interfaces, attached.id(), view);
+        register_status(
+            &self.interfaces,
+            attached.id(),
+            view,
+            Membership::Independent,
+        );
         attached
     }
 
-    /// A snapshot of every interface attached through this handle, each interface's live view read at
-    /// call time: one per one-to-one wire, and for a supervisor its own plus one per live fleet
-    /// member. This is the whole fleet a capability like the shared-instance control RPC renders, with
-    /// no app-side bookkeeping of status handles — the runtime tracked them as they were attached.
+    /// Every interface attached through this handle, as a complete [`InterfaceSnapshot`]: the live
+    /// vitals read at call time joined with the engine counts riding over each, and where it sits in
+    /// the fleet. The whole fleet a face or the shared-instance control RPC renders, with no app-side
+    /// bookkeeping — the runtime tracked the status handles as they attached and owns the count store.
     #[must_use]
-    pub fn interface_snapshots(&self) -> std::vec::Vec<InterfaceSnapshot> {
-        match self.interfaces.lock() {
-            Ok(map) => map.values().flat_map(|view| view()).collect(),
-            Err(_) => std::vec::Vec::new(),
-        }
+    pub fn interfaces(&self) -> std::vec::Vec<InterfaceSnapshot> {
+        let Ok(map) = self.interfaces.lock() else {
+            return std::vec::Vec::new();
+        };
+        map.values()
+            .flat_map(|registered| {
+                let membership = registered.membership;
+                (registered.view)().into_iter().map(move |vitals| {
+                    let counts = self.store.counts(vitals.id);
+                    InterfaceSnapshot {
+                        id: vitals.id,
+                        connection: vitals.connection,
+                        rx_bytes: vitals.rx_bytes,
+                        tx_bytes: vitals.tx_bytes,
+                        transfer_rates: vitals.transfer_rates,
+                        destinations: counts.destinations,
+                        links: counts.links,
+                        transported_links: counts.transported_links,
+                        membership,
+                    }
+                })
+            })
+            .collect()
     }
 
     /// Attach an interface supervisor: a node that owns no wire of its own, but runs a discovery loop
@@ -474,7 +498,7 @@ impl TokioPrnsHandle {
             supervisor: None,
             build,
         });
-        register_status(&self.interfaces, id, view);
+        register_status(&self.interfaces, id, view, Membership::Independent);
         AttachedSupervisor {
             id,
             iface_build: self.iface_build.clone(),
@@ -647,7 +671,7 @@ pub struct Fleet {
     commands: UnboundedSender<HostCommand>,
     iface_build: UnboundedSender<DriverMsg>,
     notify_tx: UnboundedSender<InterfaceId>,
-    interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
 }
 
 impl Fleet {
@@ -665,7 +689,14 @@ impl Fleet {
             interface,
             Some(self.supervisor_id),
         );
-        register_status(&self.interfaces, attached.id(), view);
+        register_status(
+            &self.interfaces,
+            attached.id(),
+            view,
+            Membership::FleetMember {
+                supervisor_id: self.supervisor_id,
+            },
+        );
         attached
     }
 }
@@ -708,7 +739,7 @@ async fn drive_interfaces(
     initial: std::vec::Vec<Pin<Box<dyn Future<Output = ()>>>>,
     mut messages: UnboundedReceiver<DriverMsg>,
     commands: UnboundedSender<HostCommand>,
-    interfaces: Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
+    interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
 ) {
     let mut futures: FuturesUnordered<Pin<Box<dyn Future<Output = Option<InterfaceId>>>>> = initial
         .into_iter()
@@ -781,17 +812,25 @@ async fn drive_interfaces(
     }
 }
 
+/// A status view the runtime tracks centrally, tagged with where its interface sits in the fleet.
+/// `interfaces()` joins each with the engine's count store to mint an `InterfaceSnapshot`.
+struct RegisteredInterface {
+    view: StatusView,
+    membership: Membership,
+}
+
 fn register_status(
-    interfaces: &Arc<Mutex<HashMap<InterfaceId, StatusView>>>,
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     id: InterfaceId,
     view: Option<StatusView>,
+    membership: Membership,
 ) {
     if let (Some(view), Ok(mut map)) = (view, interfaces.lock()) {
-        map.insert(id, view);
+        map.insert(id, RegisteredInterface { view, membership });
     }
 }
 
-fn forget_status(interfaces: &Arc<Mutex<HashMap<InterfaceId, StatusView>>>, id: InterfaceId) {
+fn forget_status(interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>, id: InterfaceId) {
     if let Ok(mut map) = interfaces.lock() {
         map.remove(&id);
     }

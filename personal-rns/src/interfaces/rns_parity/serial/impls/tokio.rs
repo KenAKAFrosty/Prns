@@ -117,7 +117,7 @@ impl<Open> crate::interfaces::ReportsStatus for SerialInterface<Open> {
     fn status_view(&self) -> Option<crate::interfaces::StatusView> {
         let status = self.status();
         Some(std::sync::Arc::new(move || {
-            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+            std::vec![crate::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }

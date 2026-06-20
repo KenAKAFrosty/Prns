@@ -136,7 +136,7 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
     fn status_view(&self) -> Option<crate::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
-            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+            std::vec![crate::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }
@@ -382,7 +382,7 @@ impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {
     fn status_view(&self) -> Option<crate::interfaces::StatusView> {
         let status = self.status.clone();
         Some(std::sync::Arc::new(move || {
-            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+            std::vec![crate::interfaces::InterfaceVitals::of(&status)]
         }))
     }
 }

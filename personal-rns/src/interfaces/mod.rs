@@ -37,7 +37,10 @@ pub use config::{
     InterfaceConfig,
 };
 pub use packet::{InboundPacket, OutboundPacket};
-pub use status::{AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, TransferRates};
+pub use status::{
+    AirtimeUtilization, InterfaceSnapshot, InterfaceStatus, InterfaceVitals, Membership,
+    TransferRates,
+};
 #[cfg(feature = "tokio-host")]
 pub use status::{ReportsStatus, StatusView};
 

@@ -1,7 +1,8 @@
 use heapless::Vec as HVec;
 use personal_hopspot_ui::{
-    draw_with_state, splash, statuses_to_cards, BatteryState, Card, InputEvent, UiAction, UiState,
+    draw_with_state, snapshots_to_cards, splash, BatteryState, Card, InputEvent, UiAction, UiState,
 };
+use personal_rns::interfaces::{InterfaceSnapshot, InterfaceStatus, Membership};
 use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 
 use crate::cards::MAX_CARDS;
@@ -35,7 +36,22 @@ impl HopspotFace {
     }
 
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        statuses_to_cards(&self.statuses, classify)
+        let snapshots: HVec<InterfaceSnapshot, MAX_CARDS> = self
+            .statuses
+            .iter()
+            .map(|status| InterfaceSnapshot {
+                id: status.id(),
+                connection: status.connection(),
+                rx_bytes: status.rx_bytes(),
+                tx_bytes: status.tx_bytes(),
+                transfer_rates: status.transfer_rates(),
+                destinations: 0,
+                links: 0,
+                transported_links: 0,
+                membership: Membership::Independent,
+            })
+            .collect();
+        snapshots_to_cards(&snapshots, classify)
     }
 
     fn render_cards(&mut self, cards: &[Card], out_rgba: &mut [u8]) {

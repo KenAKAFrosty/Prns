@@ -195,7 +195,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
 
     assert!(
         commands_b
-            .interface_snapshots()
+            .interfaces()
             .iter()
             .any(|snapshot| snapshot.id == attached.id()),
         "the runtime tracks the attached interface's status centrally"
@@ -231,7 +231,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
 
             assert!(
                 snapshots_a
-                    .interface_snapshots()
+                    .interfaces()
                     .iter()
                     .any(|snapshot| snapshot.id.kind() == Some(InterfaceKind::TcpServerPeer)),
                 "A's server-spawned member registers centrally too — fleet members, not just one-to-one wires"

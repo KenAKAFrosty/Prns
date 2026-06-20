@@ -102,7 +102,7 @@ async fn main() {
     // state (e.g. link_count) through the handle to answer with real values.
     tokio::spawn(
         SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-            .with_interfaces(move || std::vec![InterfaceSnapshot::of(&tcp_status)])
+            .with_interfaces(move || std::vec![InterfaceVitals::of(&tcp_status)])
             .run(),
     );
 
