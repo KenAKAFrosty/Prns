@@ -5,7 +5,7 @@ use personal_hopspot_ui::{
 use personal_rns::engine::InterfaceCounts;
 use personal_rns::interfaces::InterfaceStatus;
 
-use crate::engine::{classify, ensure_started, usb_status, wifi_status};
+use crate::engine::{classify, ensure_started, interface_snapshots, wifi_status};
 use crate::framebuffer::FrameBuffer;
 
 const MAX_CARDS: usize = 8;
@@ -38,19 +38,10 @@ impl HopspotFace {
     /// Pull the live statuses each frame: the USB host, the WiFi supervisor's aggregate, and one
     /// card per peer it has stood up — over a `&dyn` slice, the same shape the desktop face renders.
     fn build_cards(&self) -> HVec<Card, MAX_CARDS> {
-        let usb = usb_status();
-        let wifi = wifi_status();
-        let members = wifi.members();
-        let mut statuses: std::vec::Vec<&dyn InterfaceStatus> =
-            std::vec::Vec::with_capacity(2 + members.len());
-        statuses.push(&usb);
-        statuses.push(&wifi);
-        for member in &members {
-            statuses.push(member);
-        }
-        let wifi_id = wifi.id();
+        let snapshots = interface_snapshots();
+        let wifi_id = wifi_status().id();
         statuses_to_cards(
-            &statuses,
+            &snapshots,
             |id| classify(id, wifi_id),
             |_id| InterfaceCounts::default(),
         )

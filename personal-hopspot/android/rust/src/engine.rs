@@ -17,8 +17,7 @@ use personal_rns::interfaces::bluetooth_auto::core::{
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::interfaces::usb_auto::impls::tokio::UsbAutoHost;
-use personal_rns::interfaces::InterfaceId;
-use personal_rns::reactor::impls::tokio_reactor::TokioInterfaceStatus;
+use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot};
 use personal_rns::routing::ProofStrategy;
 use personal_rns::runtime::{PreConfiguredDestination, Prns, PrnsRecipe, TokioPrnsHandle};
 use personal_rns::storage::GrowableHeap;
@@ -42,10 +41,10 @@ const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(8);
 /// WiFi supervisor's aggregate status (whose `members()` yield the per-peer cards), and the USB
 /// bridge the JNI layer feeds. The node owns the runtime and drives it forever.
 struct Engine {
-    usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
     bridge: AndroidUsbBridge,
     ble: AndroidBleBridge,
+    handle: TokioPrnsHandle,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -54,12 +53,12 @@ fn engine() -> &'static Engine {
     ENGINE.get_or_init(spawn_engine)
 }
 
-pub(crate) fn usb_status() -> TokioInterfaceStatus {
-    engine().usb_status.clone()
-}
-
 pub(crate) fn wifi_status() -> AutoWifiStatus {
     engine().wifi_status.clone()
+}
+
+pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
+    engine().handle.interface_snapshots()
 }
 
 pub(crate) fn usb_bridge() -> AndroidUsbBridge {
@@ -83,17 +82,23 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
         Some((CardKind::Usb, card_label("USB")))
     } else if id == wifi_id {
         Some((CardKind::Wifi, card_label("WiFi")))
+    } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
+        Some((CardKind::Ble, card_label("BLE")))
     } else {
         let bytes = id.as_bytes();
+        let (kind, tag) = match id.kind() {
+            Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
+            _ => (CardKind::Peer, "Peer"),
+        };
         let mut label = CardLabel::new();
-        let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
-        Some((CardKind::Peer, label))
+        let _ = write!(label, "{tag} {:02x}{:02x}", bytes[1], bytes[2]);
+        Some((kind, label))
     }
 }
 
 struct Ready {
-    usb_status: TokioInterfaceStatus,
     wifi_status: AutoWifiStatus,
+    handle: TokioPrnsHandle,
 }
 
 fn spawn_engine() -> Engine {
@@ -109,10 +114,10 @@ fn spawn_engine() -> Engine {
         .recv()
         .expect("the engine hands its status handles out before run() starts");
     Engine {
-        usb_status: ready.usb_status,
         wifi_status: ready.wifi_status,
         bridge,
         ble,
+        handle: ready.handle,
     }
 }
 
@@ -182,7 +187,6 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
             }
         };
         let usb = UsbAutoHost::new(USB_INTERFACE_ID, scan, open, bridge.rescan());
-        let usb_status = usb.status();
         handle.add_interface(usb);
 
         // WiFi/LAN: the Kotlin WifiAutoLink holds the multicast lock, so the supervisor's IPv6
@@ -211,8 +215,8 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
         }
 
         let _ = ready_tx.send(Ready {
-            usb_status,
             wifi_status,
+            handle: handle.clone(),
         });
 
         tokio::spawn(announce_loop(handle, destination));
