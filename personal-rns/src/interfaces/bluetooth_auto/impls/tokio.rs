@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::stream::FuturesUnordered;
@@ -15,7 +17,9 @@ use crate::interfaces::bluetooth_auto::core::{Endpoint, L2capPlan};
 use crate::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
-use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
+use crate::interfaces::{
+    ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind, InterfaceStatus, TransferRates,
+};
 use crate::reactor::impls::tokio_reactor::TokioInterfaceStatus;
 use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
@@ -155,6 +159,7 @@ enum Step<L: BleLink> {
 pub struct BluetoothAuto<B> {
     backend: B,
     local: Local,
+    status: BluetoothAutoStatus,
 }
 
 impl<B: BleBackend> BluetoothAuto<B> {
@@ -164,6 +169,10 @@ impl<B: BleBackend> BluetoothAuto<B> {
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
     ) -> Self {
+        let status = BluetoothAutoStatus::new(InterfaceId::from_reachability_tag(
+            InterfaceKind::BluetoothAuto,
+            identity.as_bytes(),
+        ));
         Self {
             backend,
             local: Local {
@@ -171,7 +180,75 @@ impl<B: BleBackend> BluetoothAuto<B> {
                 endpoint,
                 capabilities,
             },
+            status,
         }
+    }
+
+    #[must_use]
+    pub fn status(&self) -> BluetoothAutoStatus {
+        self.status.clone()
+    }
+}
+
+/// The Bluetooth supervisor's aggregate live status, rendered as one "BLE" card: Dormant while the
+/// radio is up and scanning with no peer linked, Live once a peer settles. The per-peer
+/// [`BluetoothPeer`] members carry their own traffic on their own cards beside it.
+#[derive(Clone)]
+pub struct BluetoothAutoStatus {
+    shared: Arc<BluetoothAutoShared>,
+}
+
+struct BluetoothAutoShared {
+    id: InterfaceId,
+    up: AtomicBool,
+    peers: AtomicU32,
+}
+
+impl BluetoothAutoStatus {
+    fn new(id: InterfaceId) -> Self {
+        Self {
+            shared: Arc::new(BluetoothAutoShared {
+                id,
+                up: AtomicBool::new(false),
+                peers: AtomicU32::new(0),
+            }),
+        }
+    }
+
+    fn mark_up(&self) {
+        self.shared.up.store(true, Ordering::Relaxed);
+    }
+
+    fn set_peers(&self, peers: u32) {
+        self.shared.peers.store(peers, Ordering::Relaxed);
+    }
+}
+
+impl InterfaceStatus for BluetoothAutoStatus {
+    fn id(&self) -> InterfaceId {
+        self.shared.id
+    }
+
+    fn connection(&self) -> ConnectionState {
+        if !self.shared.up.load(Ordering::Relaxed) {
+            ConnectionState::Initializing
+        } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
+            ConnectionState::Connected
+        } else {
+            ConnectionState::Disconnected
+        }
+    }
+
+    fn rx_bytes(&self) -> u64 {
+        0
+    }
+
+    fn tx_bytes(&self) -> u64 {
+        0
+    }
+
+    fn transfer_rates(&self) -> Option<TransferRates> {
+        None
     }
 }
 
@@ -189,8 +266,13 @@ where
     }
 
     async fn run(self, fleet: Fleet) {
-        let Self { mut backend, local } = self;
+        let Self {
+            mut backend,
+            local,
+            status,
+        } = self;
         let mut advertising = backend.set_advertising(true).await.is_ok();
+        status.mark_up();
         let mut dialing: HashMap<BleAddress, Instant> = HashMap::new();
         let mut suppressed: HashMap<BleAddress, Instant> = HashMap::new();
         let mut settled: HashMap<BleIdentity, Settled> = HashMap::new();
@@ -261,13 +343,21 @@ where
                     backend.on_link_closed(address).await;
                 }
             }
+            status.set_peers(settled.len() as u32);
             reconcile_advertising(&mut backend, &mut advertising, settled.len() < B::MAX_PEERS)
                 .await;
         }
     }
 }
 
-impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {}
+impl<B: BleBackend> crate::interfaces::ReportsStatus for BluetoothAuto<B> {
+    fn status_view(&self) -> Option<crate::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![crate::interfaces::InterfaceSnapshot::of(&status)]
+        }))
+    }
+}
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const SUPPRESS_TTL: Duration = Duration::from_secs(8);
