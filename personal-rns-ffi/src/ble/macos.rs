@@ -30,8 +30,8 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, Psm,
-    Reassembler, StreamDeframer, Transport, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
+    encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan,
+    Psm, Reassembler, StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
     NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -44,7 +44,6 @@ const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
 const GATT_FRAGMENT_BUF: usize = 256;
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
-const L2CAP_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 const READ_EVENTS: CFOptionFlags = CFStreamEventType::HasBytesAvailable.0
@@ -152,7 +151,9 @@ impl GattWriter {
     fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
         let mut buf = [0u8; GATT_FRAGMENT_BUF];
         for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
-            let len = fragment.encode(&mut buf).ok_or(MacosBleError::FrameTooLarge)?;
+            let len = fragment
+                .encode(&mut buf)
+                .ok_or(MacosBleError::FrameTooLarge)?;
             let data = NSData::with_bytes(&buf[..len]);
             match self {
                 GattWriter::Central {
@@ -170,11 +171,13 @@ impl GattWriter {
                     characteristic,
                 } => {
                     let sent = unsafe {
-                        manager.0.updateValue_forCharacteristic_onSubscribedCentrals(
-                            &data,
-                            &characteristic.0,
-                            None,
-                        )
+                        manager
+                            .0
+                            .updateValue_forCharacteristic_onSubscribedCentrals(
+                                &data,
+                                &characteristic.0,
+                                None,
+                            )
                     };
                     if !sent {
                         log::warn!(
@@ -186,17 +189,6 @@ impl GattWriter {
         }
         Ok(())
     }
-}
-
-struct GattDataPlane {
-    inbound_rx: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
-    writer: GattWriter,
-}
-
-enum LinkData {
-    None,
-    L2cap(DataPlane),
-    Gatt(GattDataPlane),
 }
 
 struct Outbound {
@@ -415,7 +407,9 @@ impl PendingL2cap {
 
 enum Event {
     Powered,
-    Published { psm: u16 },
+    Published {
+        psm: u16,
+    },
     PublishFailed,
     Sighting {
         address: BleAddress,
@@ -481,7 +475,11 @@ define_class!(
                 return;
             }
             let dbm = rssi.integerValue();
-            let rssi = if dbm == 127 { None } else { i8::try_from(dbm).ok() };
+            let rssi = if dbm == 127 {
+                None
+            } else {
+                i8::try_from(dbm).ok()
+            };
             let identifier = unsafe { peripheral.identifier() };
             let token = uuid_token(&identifier);
             if let Ok(mut map) = self.ivars().peripherals.lock() {
@@ -641,7 +639,6 @@ define_class!(
                 let _ = session.control_tx.send(control);
             }
         }
-
     }
 );
 
@@ -664,6 +661,7 @@ struct PeripheralDelegateIvars {
     characteristic: Retained<CBMutableCharacteristic>,
     data_characteristic: Retained<CBMutableCharacteristic>,
     queue: DispatchRetained<DispatchQueue>,
+    manager: RefCell<Option<SendPeripheralManager>>,
     active: RefCell<Option<tokio_mpsc::UnboundedSender<Control>>>,
     data_inbound: RefCell<Option<tokio_mpsc::UnboundedSender<Box<[u8]>>>>,
     pending: RefCell<PendingL2cap>,
@@ -680,6 +678,8 @@ define_class!(
         #[unsafe(method(peripheralManagerDidUpdateState:))]
         fn did_update_state(&self, peripheral: &CBPeripheralManager) {
             if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
+                *self.ivars().manager.borrow_mut() =
+                    Some(SendPeripheralManager(peripheral.retain()));
                 let control: &CBCharacteristic = &self.ivars().characteristic;
                 let data: &CBCharacteristic = &self.ivars().data_characteristic;
                 let characteristics = NSArray::from_slice(&[control, data]);
@@ -821,7 +821,7 @@ define_class!(
                             control_rx: rx,
                             address,
                             data_inbound_rx: Some(data_rx),
-                            data: LinkData::None,
+                            l2cap_pending: None,
                         };
                         let _ = self.ivars().events.send(Event::Inbound(link));
                         *active = Some(tx);
@@ -904,6 +904,7 @@ impl PeripheralDelegate {
             characteristic,
             data_characteristic,
             queue,
+            manager: RefCell::new(None),
             active: RefCell::new(None),
             data_inbound: RefCell::new(None),
             pending: RefCell::new(PendingL2cap::default()),
@@ -919,6 +920,33 @@ impl PeripheralDelegate {
             this.0.ivars().pending.borrow_mut().arm(tx);
         });
     }
+
+    fn set_advertising(&self, enabled: bool) {
+        let queue = self.ivars().queue.clone();
+        let this = SendPeripheralDelegate(self.retain());
+        queue.exec_async(move || {
+            let this = this;
+            let Some(manager) = this
+                .0
+                .ivars()
+                .manager
+                .borrow()
+                .as_ref()
+                .map(|m| m.0.clone())
+            else {
+                return;
+            };
+            if enabled {
+                let uuid = service_uuid();
+                let services = NSArray::from_slice(&[&*uuid]);
+                let data = advertisement_data(&services);
+                unsafe { manager.startAdvertising(Some(&data)) };
+            } else {
+                unsafe { manager.stopAdvertising() };
+                log::info!("bluetooth: advertising stopped — at connection capacity");
+            }
+        });
+    }
 }
 
 pub struct GattLink {
@@ -926,7 +954,7 @@ pub struct GattLink {
     control_rx: tokio_mpsc::UnboundedReceiver<Control>,
     address: BleAddress,
     data_inbound_rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
-    data: LinkData,
+    l2cap_pending: Option<oneshot::Receiver<DataPlane>>,
 }
 
 impl BleLink for GattLink {
@@ -1012,243 +1040,213 @@ impl BleLink for GattLink {
         Ok(control)
     }
 
-    async fn upgrade(&mut self, transport: &Transport) -> Result<(), MacosBleError> {
-        match transport {
-            Transport::L2capAccept => {
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), MacosBleError> {
+        match plan {
+            L2capPlan::Accept => {
                 let (tx, rx) = oneshot::channel::<DataPlane>();
                 match &self.control {
                     ControlPlane::Central {
                         peripheral_manager, ..
                     } => peripheral_manager.0.arm_pending_channel(tx),
-                    ControlPlane::Listener { delegate, .. } => {
-                        delegate.0.arm_pending_channel(tx)
-                    }
+                    ControlPlane::Listener { delegate, .. } => delegate.0.arm_pending_channel(tx),
                 };
-                match tokio::time::timeout(L2CAP_OPEN_TIMEOUT, rx).await {
-                    Ok(Ok(data)) => {
-                        log::info!(
-                            "bluetooth: {:02x?} L2CAP data plane established (peer opened the CoC to our listener)",
-                            self.address.octets()
-                        );
-                        self.data = LinkData::L2cap(data);
-                        Ok(())
-                    }
-                    Ok(Err(_)) => {
-                        log::warn!(
-                            "bluetooth: {:02x?} L2CAP upgrade aborted — channel setup failed",
-                            self.address.octets()
-                        );
-                        Err(MacosBleError::Closed)
-                    }
-                    Err(_) => {
-                        log::warn!(
-                            "bluetooth: {:02x?} L2CAP upgrade timed out after {}s — peer never opened the CoC; member will carry no data",
-                            self.address.octets(),
-                            L2CAP_OPEN_TIMEOUT.as_secs()
-                        );
-                        Err(MacosBleError::Closed)
-                    }
-                }
-            }
-            Transport::L2capOpen { .. } => {
-                log::warn!(
-                    "bluetooth: {:02x?} L2capOpen requested but macOS cannot open a CoC without bonding — this should not happen",
-                    self.address.octets()
-                );
-                Err(MacosBleError::CannotOpenL2cap)
-            }
-            Transport::GattData => {
-                let inbound_rx = self.data_inbound_rx.take().ok_or(MacosBleError::Closed)?;
-                let writer = match &self.control {
-                    ControlPlane::Central {
-                        peripheral,
-                        data_characteristic: Some(data_characteristic),
-                        ..
-                    } => GattWriter::Central {
-                        peripheral: SendPeripheral(peripheral.0.clone()),
-                        characteristic: SendCharacteristicRef(data_characteristic.0.clone()),
-                    },
-                    ControlPlane::Central {
-                        data_characteristic: None,
-                        ..
-                    } => {
-                        log::warn!(
-                            "bluetooth: {:02x?} settled on GATT-data but the peer exposed no data characteristic — no data plane",
-                            self.address.octets()
-                        );
-                        return Err(MacosBleError::GattDataUnsupported);
-                    }
-                    ControlPlane::Listener {
-                        manager,
-                        data_characteristic,
-                        ..
-                    } => GattWriter::Listener {
-                        manager: SendPeripheralManager(manager.0.clone()),
-                        characteristic: SendCharacteristic(data_characteristic.0.clone()),
-                    },
-                };
-                self.data = LinkData::Gatt(GattDataPlane { inbound_rx, writer });
-                log::info!(
-                    "bluetooth: {:02x?} GATT-data plane established (write/notify, fragmented)",
+                self.l2cap_pending = Some(rx);
+                log::debug!(
+                    "bluetooth: {:02x?} armed the L2CAP acceptor — the peer's CoC will upgrade the live GATT-floor link in the background",
                     self.address.octets()
                 );
                 Ok(())
             }
+            L2capPlan::Open { .. } => {
+                log::warn!(
+                    "bluetooth: {:02x?} asked to open a CoC, but the macOS backend is acceptor-only (a central-side open bonds) — staying on the GATT floor",
+                    self.address.octets()
+                );
+                Ok(())
+            }
+            L2capPlan::None => Ok(()),
         }
     }
 
     fn into_data(self) -> (GattSource, GattSink) {
-        match self.data {
-            LinkData::L2cap(data) => {
-                let pump = data.pump;
-                (
-                    GattSource {
-                        inner: SourceInner::L2cap(Box::new(L2capReader {
-                            inbound_rx: data.inbound_rx,
-                            deframer: StreamDeframer::new(),
-                            _pump: pump.clone(),
-                        })),
-                    },
-                    GattSink {
-                        inner: SinkInner::L2cap(L2capWriter {
-                            outbound: data.outbound,
-                            queue: data.queue,
-                            pump_ptr: data.pump_ptr,
-                            _pump: pump,
-                        }),
-                    },
-                )
-            }
-            LinkData::Gatt(plane) => {
-                let GattDataPlane { inbound_rx, writer } = plane;
-                (
-                    GattSource {
-                        inner: SourceInner::Gatt(Box::new(GattReader {
-                            inbound_rx,
-                            reassembler: Reassembler::new(),
-                        })),
-                    },
-                    GattSink {
-                        inner: SinkInner::Gatt(writer),
-                    },
-                )
-            }
-            LinkData::None => (
-                GattSource {
-                    inner: SourceInner::Pending,
-                },
-                GattSink {
-                    inner: SinkInner::Noop,
-                },
-            ),
+        let (merged_tx, merged_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+
+        if let Some(mut inbound_rx) = self.data_inbound_rx {
+            let frames = merged_tx.clone();
+            tokio::spawn(async move {
+                let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
+                while let Some(message) = inbound_rx.recv().await {
+                    let Some(fragment) = Fragment::decode(&message) else {
+                        continue;
+                    };
+                    if let Some(frame) = reassembler.absorb(&fragment) {
+                        if frames.send(Box::from(frame)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
         }
+
+        let l2cap_pending = self.l2cap_pending.map(|pending| {
+            let (write_tx, write_rx) = oneshot::channel::<L2capWriteHalf>();
+            let frames = merged_tx.clone();
+            tokio::spawn(async move {
+                let Ok(data) = pending.await else {
+                    return;
+                };
+                log::info!("bluetooth: L2CAP fast lane up — data now rides the channel, GATT stays the floor");
+                let DataPlane {
+                    mut inbound_rx,
+                    outbound,
+                    queue,
+                    pump_ptr,
+                    pump,
+                } = data;
+                let _ = write_tx.send(L2capWriteHalf {
+                    outbound,
+                    queue,
+                    pump_ptr,
+                    _pump: pump.clone(),
+                });
+                let _read_pump = pump;
+                let mut deframer = StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new();
+                let mut frame = std::vec![0u8; 2 * L2CAP_SDU_LEN];
+                while let Some(chunk) = inbound_rx.recv().await {
+                    if !deframer.absorb(&chunk) {
+                        break;
+                    }
+                    while let Some(len) = deframer.next_frame(&mut frame) {
+                        if frames.send(Box::from(&frame[..len])).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+            write_rx
+        });
+
+        drop(merged_tx);
+        (
+            GattSource { inbound: merged_rx },
+            GattSink {
+                gatt: gatt_writer(&self.control),
+                l2cap: None,
+                l2cap_pending,
+            },
+        )
     }
 }
 
-struct L2capReader {
-    inbound_rx: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
-    deframer: StreamDeframer<{ 2 * L2CAP_SDU_LEN }>,
-    _pump: Arc<PumpHandle>,
-}
-
-struct GattReader {
-    inbound_rx: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
-    reassembler: Reassembler<GATT_REASSEMBLY_CAP>,
-}
-
-enum SourceInner {
-    Pending,
-    L2cap(Box<L2capReader>),
-    Gatt(Box<GattReader>),
+fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
+    match control {
+        ControlPlane::Central {
+            peripheral,
+            data_characteristic: Some(data_characteristic),
+            ..
+        } => Some(GattWriter::Central {
+            peripheral: SendPeripheral(peripheral.0.clone()),
+            characteristic: SendCharacteristicRef(data_characteristic.0.clone()),
+        }),
+        ControlPlane::Central {
+            data_characteristic: None,
+            ..
+        } => None,
+        ControlPlane::Listener {
+            manager,
+            data_characteristic,
+            ..
+        } => Some(GattWriter::Listener {
+            manager: SendPeripheralManager(manager.0.clone()),
+            characteristic: SendCharacteristic(data_characteristic.0.clone()),
+        }),
+    }
 }
 
 pub struct GattSource {
-    inner: SourceInner,
+    inbound: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
 }
 
 impl BleSource for GattSource {
     type Error = MacosBleError;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, MacosBleError> {
-        match &mut self.inner {
-            SourceInner::Pending => core::future::pending().await,
-            SourceInner::L2cap(reader) => loop {
-                if let Some(len) = reader.deframer.next_frame(out) {
-                    return Ok(len);
-                }
-                let chunk = reader
-                    .inbound_rx
-                    .recv()
-                    .await
-                    .ok_or(MacosBleError::Closed)?;
-                if !reader.deframer.absorb(&chunk) {
-                    return Err(MacosBleError::FrameTooLarge);
-                }
-            },
-            SourceInner::Gatt(reader) => loop {
-                let message = reader
-                    .inbound_rx
-                    .recv()
-                    .await
-                    .ok_or(MacosBleError::Closed)?;
-                let Some(fragment) = Fragment::decode(&message) else {
-                    continue;
-                };
-                if let Some(frame) = reader.reassembler.absorb(&fragment) {
-                    let len = frame.len().min(out.len());
-                    out[..len].copy_from_slice(&frame[..len]);
-                    return Ok(len);
-                }
-            },
-        }
+        let frame = self.inbound.recv().await.ok_or(MacosBleError::Closed)?;
+        let len = frame.len().min(out.len());
+        out[..len].copy_from_slice(&frame[..len]);
+        Ok(len)
     }
 }
 
-struct L2capWriter {
+struct L2capWriteHalf {
     outbound: Arc<Mutex<Outbound>>,
     queue: DispatchRetained<DispatchQueue>,
     pump_ptr: PumpPtr,
     _pump: Arc<PumpHandle>,
 }
 
-enum SinkInner {
-    Noop,
-    L2cap(L2capWriter),
-    Gatt(GattWriter),
+impl L2capWriteHalf {
+    fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
+        let mut framed = [0u8; L2CAP_SDU_LEN];
+        let len = encode_stream_frame(frame, &mut framed).ok_or(MacosBleError::FrameTooLarge)?;
+        {
+            let Ok(mut out) = self.outbound.lock() else {
+                return Err(MacosBleError::Closed);
+            };
+            if out.closed {
+                return Err(MacosBleError::Closed);
+            }
+            out.pending.extend(framed[..len].iter().copied());
+        }
+        let ptr = self.pump_ptr;
+        self.queue.exec_async(move || {
+            let ptr = ptr;
+            flush(unsafe { &*ptr.0 });
+        });
+        Ok(())
+    }
 }
 
 pub struct GattSink {
-    inner: SinkInner,
+    gatt: Option<GattWriter>,
+    l2cap: Option<L2capWriteHalf>,
+    l2cap_pending: Option<oneshot::Receiver<L2capWriteHalf>>,
 }
 
 impl BleSink for GattSink {
     type Error = MacosBleError;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), MacosBleError> {
-        match &mut self.inner {
-            SinkInner::Noop => Ok(()),
-            SinkInner::Gatt(writer) => writer.send(frame),
-            SinkInner::L2cap(writer) => {
-                let mut framed = [0u8; L2CAP_SDU_LEN];
-                let len =
-                    encode_stream_frame(frame, &mut framed).ok_or(MacosBleError::FrameTooLarge)?;
-                {
-                    let Ok(mut out) = writer.outbound.lock() else {
-                        return Err(MacosBleError::Closed);
-                    };
-                    if out.closed {
-                        return Err(MacosBleError::Closed);
+        if self.l2cap.is_none() {
+            if let Some(pending) = self.l2cap_pending.as_mut() {
+                match pending.try_recv() {
+                    Ok(half) => {
+                        self.l2cap = Some(half);
+                        self.l2cap_pending = None;
                     }
-                    out.pending.extend(framed[..len].iter().copied());
+                    Err(oneshot::error::TryRecvError::Closed) => self.l2cap_pending = None,
+                    Err(oneshot::error::TryRecvError::Empty) => {}
                 }
-                let ptr = writer.pump_ptr;
-                writer.queue.exec_async(move || {
-                    let ptr = ptr;
-                    flush(unsafe { &*ptr.0 });
-                });
-                Ok(())
             }
         }
+        if let Some(l2cap) = &self.l2cap {
+            match l2cap.send(frame) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    self.l2cap = None;
+                    if self.gatt.is_none() {
+                        return Err(err);
+                    }
+                    log::warn!(
+                        "bluetooth: L2CAP send failed — the fast lane is down, frames fall back to the GATT floor"
+                    );
+                }
+            }
+        }
+        if let Some(gatt) = &self.gatt {
+            return gatt.send(frame);
+        }
+        Ok(())
     }
 }
 
@@ -1281,8 +1279,6 @@ pub enum MacosBleError {
     PublishFailed,
     FrameTooLarge,
     DialFailed,
-    CannotOpenL2cap,
-    GattDataUnsupported,
 }
 
 impl MacosBleBackend {
@@ -1290,16 +1286,14 @@ impl MacosBleBackend {
         let (events_tx, mut events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
-        let peripherals: PeripheralTable =
-            Arc::new(Mutex::new(HashMap::new()));
+        let peripherals: PeripheralTable = Arc::new(Mutex::new(HashMap::new()));
         let central_events = events_tx.clone();
         let peripherals_for_thread = peripherals.clone();
 
         std::thread::spawn(move || {
             let queue = DispatchQueue::new("com.personal.prns.ble", None);
 
-            let central_delegate =
-                CentralDelegate::new(central_events, peripherals_for_thread);
+            let central_delegate = CentralDelegate::new(central_events, peripherals_for_thread);
             let central_proto = ProtocolObject::from_ref(&*central_delegate);
             let central: Retained<CBCentralManager> = unsafe {
                 CBCentralManager::initWithDelegate_queue(
@@ -1398,7 +1392,8 @@ impl BleBackend for MacosBleBackend {
     type Error = MacosBleError;
     type Link = GattLink;
 
-    async fn advertise(&mut self) -> Result<(), MacosBleError> {
+    async fn set_advertising(&mut self, enabled: bool) -> Result<(), MacosBleError> {
+        self.peripheral_delegate.0.set_advertising(enabled);
         Ok(())
     }
 
@@ -1493,7 +1488,7 @@ impl BleBackend for MacosBleBackend {
                     control_rx,
                     address,
                     data_inbound_rx: Some(data_inbound_rx),
-                    data: LinkData::None,
+                    l2cap_pending: None,
                 },
                 peer_rssi,
             ))

@@ -7,7 +7,7 @@ async fn main() {
     use personal_rns::engine::RatchetPolicy;
     use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use personal_rns::interfaces::bluetooth_auto::core::{
-        BleIdentity, LinkCapabilities, BLE_HW_MTU,
+        AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
     use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
     use personal_rns::routing::links::resources::ResourceStrategy;
@@ -33,9 +33,9 @@ async fn main() {
     };
     let psm = backend.psm();
     let identity = BleIdentity::new([node_byte; 16]);
+    let endpoint = Endpoint::CoreBluetooth(AppleHost::MacOs);
     let capabilities = LinkCapabilities {
         l2cap: Some(psm),
-        l2cap_can_open: false,
         link_mtu: BLE_HW_MTU as u16,
     };
 
@@ -73,7 +73,12 @@ async fn main() {
         },
     });
     let handle = node.handle();
-    let _bluetooth = handle.supervise(BluetoothAuto::new(backend, identity, capabilities));
+    let _bluetooth = handle.supervise(BluetoothAuto::new(
+        backend,
+        identity,
+        endpoint,
+        capabilities,
+    ));
     println!(
         "[macos] up — supervising native bluetooth (CoreBluetooth), L2CAP psm {:#06x}",
         psm.get()
