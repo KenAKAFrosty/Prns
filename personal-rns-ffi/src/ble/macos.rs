@@ -114,6 +114,7 @@ enum ControlPlane {
     Listener {
         manager: SendPeripheralManager,
         characteristic: SendCharacteristic,
+        delegate: SendPeripheralDelegate,
     },
     Central {
         peripheral: SendPeripheral,
@@ -299,6 +300,43 @@ struct DataPlane {
     pump: Arc<PumpHandle>,
 }
 
+const MAX_BUFFERED_L2CAP: usize = 4;
+
+#[derive(Default)]
+struct PendingL2cap {
+    waiters: VecDeque<oneshot::Sender<DataPlane>>,
+    ready: VecDeque<DataPlane>,
+}
+
+impl PendingL2cap {
+    fn deliver(&mut self, mut data: DataPlane) {
+        while let Some(tx) = self.waiters.pop_front() {
+            match tx.send(data) {
+                Ok(()) => return,
+                Err(returned) => data = returned,
+            }
+        }
+        self.ready.push_back(data);
+        while self.ready.len() > MAX_BUFFERED_L2CAP {
+            self.ready.pop_front();
+        }
+    }
+
+    fn arm(&mut self, tx: oneshot::Sender<DataPlane>) {
+        match self.ready.pop_front() {
+            Some(data) => {
+                let _ = tx.send(data);
+            }
+            None => self.waiters.push_back(tx),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.waiters.clear();
+        self.ready.clear();
+    }
+}
+
 enum Event {
     Powered,
     Published { psm: u16 },
@@ -314,7 +352,6 @@ struct DialSession {
     address: BleAddress,
     control_tx: tokio_mpsc::UnboundedSender<Control>,
     result_tx: Option<oneshot::Sender<SendCharacteristicRef>>,
-    data_tx: Option<oneshot::Sender<DataPlane>>,
 }
 
 struct DialCommand {
@@ -327,7 +364,6 @@ unsafe impl Send for DialCommand {}
 
 struct CentralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
-    queue: DispatchRetained<DispatchQueue>,
     peripherals: PeripheralTable,
     session: RefCell<Option<DialSession>>,
 }
@@ -489,48 +525,16 @@ define_class!(
             }
         }
 
-        #[unsafe(method(peripheral:didOpenL2CAPChannel:error:))]
-        fn did_open_l2cap(
-            &self,
-            _peripheral: &CBPeripheral,
-            channel: Option<&CBL2CAPChannel>,
-            error: Option<&NSError>,
-        ) {
-            if let Some(error) = error {
-                log::warn!("bluetooth: central L2CAP channel open FAILED: {error:?}");
-            }
-            let Some(channel) = channel else {
-                return;
-            };
-            let data_tx = {
-                let mut session = self.ivars().session.borrow_mut();
-                let Some(session) = session.as_mut() else {
-                    return;
-                };
-                match session.data_tx.take() {
-                    Some(tx) => tx,
-                    None => return,
-                }
-            };
-            let Some(data) = wire_l2cap(channel, &self.ivars().queue) else {
-                log::warn!("bluetooth: central L2CAP channel exposes no streams — dropping");
-                return;
-            };
-            log::info!("bluetooth: central L2CAP channel opened, data plane up");
-            let _ = data_tx.send(data);
-        }
     }
 );
 
 impl CentralDelegate {
     fn new(
         events: tokio_mpsc::UnboundedSender<Event>,
-        queue: DispatchRetained<DispatchQueue>,
         peripherals: PeripheralTable,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(CentralDelegateIvars {
             events,
-            queue,
             peripherals,
             session: RefCell::new(None),
         });
@@ -543,7 +547,7 @@ struct PeripheralDelegateIvars {
     characteristic: Retained<CBMutableCharacteristic>,
     queue: DispatchRetained<DispatchQueue>,
     active: RefCell<Option<tokio_mpsc::UnboundedSender<Control>>>,
-    pending_channel: RefCell<Option<oneshot::Sender<DataPlane>>>,
+    pending: RefCell<PendingL2cap>,
 }
 
 define_class!(
@@ -639,16 +643,12 @@ define_class!(
                 );
                 return;
             };
-            let Some(tx) = self.ivars().pending_channel.borrow_mut().take() else {
-                log::warn!("bluetooth: L2CAP channel opened but no link is awaiting it — dropping");
-                return;
-            };
             let Some(data) = wire_l2cap(channel, &self.ivars().queue) else {
                 log::warn!("bluetooth: L2CAP channel exposes no streams — dropping");
                 return;
             };
             log::info!("bluetooth: L2CAP channel opened, data plane up");
-            let _ = tx.send(data);
+            self.ivars().pending.borrow_mut().deliver(data);
         }
 
         #[unsafe(method(peripheralManager:didReceiveWriteRequests:))]
@@ -668,7 +668,6 @@ define_class!(
                     let mut active = self.ivars().active.borrow_mut();
                     if active.is_none() {
                         let (tx, rx) = tokio_mpsc::unbounded_channel::<Control>();
-                        let (chan_tx, chan_rx) = oneshot::channel::<DataPlane>();
                         let central = unsafe { request.central() };
                         let identifier = unsafe { central.identifier() };
                         let address = BleAddress::new(uuid_token(&identifier));
@@ -682,15 +681,14 @@ define_class!(
                                 characteristic: SendCharacteristic(
                                     self.ivars().characteristic.clone(),
                                 ),
+                                delegate: SendPeripheralDelegate(self.retain()),
                             },
                             control_rx: rx,
                             address,
-                            data_rx: Some(chan_rx),
                             data: None,
                         };
                         let _ = self.ivars().events.send(Event::Inbound(link));
                         *active = Some(tx);
-                        *self.ivars().pending_channel.borrow_mut() = Some(chan_tx);
                     }
                     if let Some(tx) = active.as_ref() {
                         let _ = tx.send(control);
@@ -727,7 +725,7 @@ define_class!(
                 uuid_token(&identifier)
             );
             self.ivars().active.borrow_mut().take();
-            self.ivars().pending_channel.borrow_mut().take();
+            self.ivars().pending.borrow_mut().clear();
         }
 
         #[unsafe(method(peripheralManagerIsReadyToUpdateSubscribers:))]
@@ -758,7 +756,7 @@ impl PeripheralDelegate {
             characteristic,
             queue,
             active: RefCell::new(None),
-            pending_channel: RefCell::new(None),
+            pending: RefCell::new(PendingL2cap::default()),
         });
         unsafe { msg_send![super(this), init] }
     }
@@ -768,7 +766,7 @@ impl PeripheralDelegate {
         let this = SendPeripheralDelegate(self.retain());
         queue.exec_async(move || {
             let this = this;
-            *this.0.ivars().pending_channel.borrow_mut() = Some(tx);
+            this.0.ivars().pending.borrow_mut().arm(tx);
         });
     }
 }
@@ -777,7 +775,6 @@ pub struct GattLink {
     control: ControlPlane,
     control_rx: tokio_mpsc::UnboundedReceiver<Control>,
     address: BleAddress,
-    data_rx: Option<oneshot::Receiver<DataPlane>>,
     data: Option<DataPlane>,
 }
 
@@ -802,6 +799,7 @@ impl BleLink for GattLink {
             ControlPlane::Listener {
                 manager,
                 characteristic,
+                ..
             } => {
                 let sent = unsafe {
                     manager
@@ -866,16 +864,13 @@ impl BleLink for GattLink {
     async fn upgrade(&mut self, transport: &Transport) -> Result<(), MacosBleError> {
         match transport {
             Transport::L2capAccept => {
-                let rx = match &self.control {
+                let (tx, rx) = oneshot::channel::<DataPlane>();
+                match &self.control {
                     ControlPlane::Central {
                         peripheral_manager, ..
-                    } => {
-                        let (tx, rx) = oneshot::channel::<DataPlane>();
-                        peripheral_manager.0.arm_pending_channel(tx);
-                        rx
-                    }
-                    ControlPlane::Listener { .. } => {
-                        self.data_rx.take().ok_or(MacosBleError::Closed)?
+                    } => peripheral_manager.0.arm_pending_channel(tx),
+                    ControlPlane::Listener { delegate, .. } => {
+                        delegate.0.arm_pending_channel(tx)
                     }
                 };
                 match tokio::time::timeout(L2CAP_OPEN_TIMEOUT, rx).await {
@@ -1086,7 +1081,7 @@ impl MacosBleBackend {
             let queue = DispatchQueue::new("com.personal.prns.ble", None);
 
             let central_delegate =
-                CentralDelegate::new(central_events, queue.clone(), peripherals_for_thread);
+                CentralDelegate::new(central_events, peripherals_for_thread);
             let central_proto = ProtocolObject::from_ref(&*central_delegate);
             let central: Retained<CBCentralManager> = unsafe {
                 CBCentralManager::initWithDelegate_queue(
@@ -1231,7 +1226,6 @@ impl BleBackend for MacosBleBackend {
         };
         let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
         let (result_tx, result_rx) = oneshot::channel::<SendCharacteristicRef>();
-        let (data_tx, data_rx) = oneshot::channel::<DataPlane>();
         let command = DialCommand {
             central: self.central.0.clone(),
             delegate: self.central_delegate.0.clone(),
@@ -1240,7 +1234,6 @@ impl BleBackend for MacosBleBackend {
                 address,
                 control_tx,
                 result_tx: Some(result_tx),
-                data_tx: Some(data_tx),
             },
         };
         log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
@@ -1277,7 +1270,6 @@ impl BleBackend for MacosBleBackend {
                     },
                     control_rx,
                     address,
-                    data_rx: Some(data_rx),
                     data: None,
                 },
                 peer_rssi,
