@@ -57,7 +57,6 @@ pub enum EngineCommand {
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
-    QueryInterfaceCounts { interface: InterfaceId },
     RpcQuery(RpcQuery),
 }
 
@@ -222,10 +221,6 @@ pub enum CommandOutcome {
     CloseLinkRejected {
         id: CommandId,
         error: CloseLinkError,
-    },
-    InterfaceCountsRead {
-        id: CommandId,
-        counts: InterfaceCounts,
     },
     RpcQueryRead {
         id: CommandId,
@@ -493,16 +488,13 @@ pub enum Settlement {
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
     SendChannel(Result<Delivered, SendChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
-    InterfaceCounts(InterfaceCounts),
     RpcQuery(RpcQueryResult),
 }
 
-/// A curated, borrowed-then-copied read of one interface's live engine counts — the diagnostic
-/// figures a face shows per card. Settled synchronously by a [`QueryInterfaceCounts`] command, so
-/// the app reads them across the same thread/core boundary as every other settlement. Kept small and
-/// `Copy`; grow the fields here as a face needs more.
-///
-/// [`QueryInterfaceCounts`]: EngineCommand::QueryInterfaceCounts
+/// A curated read of one interface's live engine counts — the diagnostic figures a face shows per
+/// card. The reactor recomputes these for a touched interface and pushes them into the runtime's
+/// interface store; a face reads the store on its change signal. Kept small and `Copy`; grow the
+/// fields here as a face needs more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct InterfaceCounts {
     /// Routing-table destinations reachable via this interface.
@@ -677,7 +669,6 @@ impl Settleable for AnnounceNow {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -707,7 +698,6 @@ impl Settleable for SendGroup {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -737,7 +727,6 @@ impl Settleable for SendSingle {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -767,7 +756,6 @@ impl Settleable for RequestPath {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -799,7 +787,6 @@ impl Settleable for EstablishLink {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -829,7 +816,6 @@ impl Settleable for SendLink {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -859,7 +845,6 @@ impl Settleable for Identify {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -921,7 +906,6 @@ impl Settleable for CloseLink {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -951,7 +935,6 @@ impl Settleable for SetResourceStrategy {
             | Settlement::SendResource(_)
             | Settlement::SendChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -981,7 +964,6 @@ impl Settleable for SendChannel {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::AllowRequester(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -1011,7 +993,6 @@ impl Settleable for AllowRequester {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendChannel(_)
-            | Settlement::InterfaceCounts(_)
             | Settlement::RpcQuery(_) => None,
         }
     }
@@ -1048,12 +1029,6 @@ impl<S: StorageLayout> EngineState<S> {
             EngineCommand::CloseLink(close) => self.ingest_close_link(id, close),
             EngineCommand::SetResourceStrategy(set) => self.ingest_set_resource_strategy(id, set),
             EngineCommand::AllowRequester(allow) => self.ingest_allow_requester(id, allow),
-            EngineCommand::QueryInterfaceCounts { interface } => {
-                CommandOutcome::InterfaceCountsRead {
-                    id,
-                    counts: self.interface_counts(interface),
-                }
-            }
             EngineCommand::RpcQuery(query) => CommandOutcome::RpcQueryRead {
                 id,
                 result: self.run_rpc_query(query),
@@ -1061,6 +1036,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
     pub(crate) fn interface_counts(&self, interface: InterfaceId) -> InterfaceCounts {
         InterfaceCounts {
             destinations: self.route_count_via(interface) as u32,

@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, InterfaceCounts, IssuedCommand, SendRequestFailure, SendResourceFailure,
+    EstablishLinkFailure, IssuedCommand, SendRequestFailure, SendResourceFailure,
     SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
 #[cfg(feature = "local")]
@@ -315,19 +315,6 @@ impl TokioPrnsHandle {
         }
     }
 
-    /// One interface's live engine counts (destinations routed via it, links carried over it) — a
-    /// synchronous query the engine settles at once, for a face to read on its render cadence.
-    /// `None` if the node has stopped.
-    pub async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
-        match self
-            .settle(EngineCommand::QueryInterfaceCounts { interface })
-            .await
-        {
-            Some(Settlement::InterfaceCounts(counts)) => Some(counts),
-            Some(_) | None => None,
-        }
-    }
-
     pub(crate) async fn settle(&self, command: EngineCommand) -> Option<Settlement> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
@@ -560,10 +547,6 @@ impl super::PrnsApi for TokioPrnsHandle {
         data: &[u8],
     ) -> Result<Delivered, SendError<SendSingleFailure>> {
         self.send_single(destination, data).await
-    }
-
-    async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
-        self.interface_counts(interface).await
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {

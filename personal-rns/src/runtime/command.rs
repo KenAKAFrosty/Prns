@@ -2,8 +2,7 @@
 //! resolves to the same `Result` whether tokio's unbounded oneshot or embassy's fixed completion
 //! pool carried the awaited settlement.
 
-use crate::engine::{CommandId, Delivered, EngineCommand, InterfaceCounts, SendSingleFailure};
-use crate::interfaces::InterfaceId;
+use crate::engine::{CommandId, Delivered, EngineCommand, SendSingleFailure};
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
 
@@ -51,9 +50,6 @@ pub trait PrnsApi {
         destination: DestinationHash,
         data: &[u8],
     ) -> Result<Delivered, SendError<SendSingleFailure>>;
-
-    /// Read the live packet and byte counts the engine holds for one interface.
-    async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts>;
 
     /// Answer a request with `body`. Returns `false` once the node has stopped (or, on embedded, if
     /// `body` exceeds the single-packet MDU the inline responder can carry).

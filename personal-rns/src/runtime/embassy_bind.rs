@@ -23,7 +23,7 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget, InterfaceCounts,
+    CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget,
     IssuedCommand, Journaled, Respond, RespondData, SendSingle, SendSingleFailure,
     SendSinglePayload, Settlement,
 };
@@ -202,29 +202,6 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
         }
     }
 
-    /// One interface's live engine counts (destinations routed via it, links carried over it) — the
-    /// embedded peer of `TokioPrnsHandle::interface_counts`. Claims a pool slot, parks until the engine
-    /// settles the synchronous query, frees the slot on every exit. `None` if no slot is free or the
-    /// node has stopped.
-    pub async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
-        let id = self.pool.mint();
-        let slot = self.pool.claim(id)?;
-        let _guard = SlotGuard {
-            pool: self.pool,
-            slot,
-            id,
-        };
-        self.commands
-            .try_send(IssuedCommand {
-                id,
-                command: EngineCommand::QueryInterfaceCounts { interface },
-            })
-            .ok()?;
-        match self.pool.parked(slot).await {
-            Settlement::InterfaceCounts(counts) => Some(counts),
-            _ => None,
-        }
-    }
 
     /// Answer a request with `body` as a single RESPONSE packet — the request runner's path. Embedded
     /// responds inline, so a `body` past the link MDU is refused here (returns `false`); the host
@@ -282,10 +259,6 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> super::PrnsApi
         data: &[u8],
     ) -> Result<Delivered, SendError<SendSingleFailure>> {
         self.send_single(destination, data).await
-    }
-
-    async fn interface_counts(&self, interface: InterfaceId) -> Option<InterfaceCounts> {
-        self.interface_counts(interface).await
     }
 
     fn respond(&self, responder: RespondToken, body: &[u8]) -> bool {
