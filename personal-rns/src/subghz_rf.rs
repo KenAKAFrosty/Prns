@@ -323,13 +323,10 @@ where
     RST: OutputPin,
     DLY: DelayNs,
 {
-    /// Reset the SX1262 and run the LoRa cold-start sequence for `frequency_hz` /
-    /// `modulation` / `packet` / `tx_power_dbm`, mirroring lora-phy's command stream so
-    /// our frames are wire-compatible. Leaves the chip in standby, configured for this
-    /// band; call [`transmit`](Self::transmit) / [`receive`](Self::receive) next.
-    /// Reset the SX1262 and run the LoRa cold-start sequence for `frequency_hz` /
-    /// `modulation` / `packet` / `tx_power_dbm`. Leaves the chip in standby, configured
-    /// for this band; call [`transmit`](Self::transmit) / [`receive`](Self::receive) next.
+    /// Reset the SX1262, run the LoRa cold-start sequence, then apply the channel config
+    /// via [`configure`](Self::configure). Leaves the chip in standby, fully configured for
+    /// `frequency_hz` / `modulation` / `packet` / `tx_power_dbm`; call
+    /// [`transmit`](Self::transmit) / [`receive`](Self::receive) next.
     pub async fn init(
         &mut self,
         frequency_hz: u32,
@@ -366,12 +363,24 @@ where
             .await?;
         // Image calibration for the 902-928 MHz band.
         self.command(&[op::CALIBRATE_IMAGE, 0xE1, 0xE9]).await?;
-        Ok(())
+        self.configure().await
     }
 
-    /// Transmit one LoRa frame and wait for TxDone. Re-issues modulation / power /
-    /// packet / frequency each call (matching the oracle), so it is safe to interleave
-    /// with [`receive`](Self::receive).
+    /// Apply the channel config — modulation, frequency, TX power, packet shape — to the
+    /// chip. The SX1262 RETAINS these in its registers across SetStandby / SetTx / SetRx
+    /// (only Sleep or reset clears them), so this runs ONCE from [`init`](Self::init), and
+    /// again only on a discrete channel change — never per packet. The per-packet path
+    /// then only restamps the payload length and writes the buffer.
+    pub async fn configure(&mut self) -> Result<(), Error> {
+        self.set_modulation_params().await?; // + TxModulation errata
+        self.set_tx_power().await?; // TxClampCfg errata + PA config + tx params
+        self.set_packet_params(0xFF).await?; // + IQPolarity errata; 0xFF = RX-friendly max
+        self.set_rf_frequency().await
+    }
+
+    /// Transmit one LoRa frame and wait for TxDone. The channel must already be configured
+    /// (via [`init`](Self::init) / [`configure`](Self::configure)); only the payload length
+    /// is restamped per frame, so this is safe to interleave with [`receive`](Self::receive).
     pub async fn transmit(&mut self, payload: &[u8]) -> Result<(), Error> {
         let len = payload.len();
         if len > 255 {
@@ -383,10 +392,9 @@ where
         scratch[..len].copy_from_slice(payload);
 
         self.standby().await?;
-        self.set_modulation_params().await?;
-        self.set_tx_power().await?;
-        self.set_packet_params(len as u8).await?;
-        self.set_rf_frequency().await?;
+        // Modulation / power / frequency / packet shape were set by `configure` and the
+        // chip retains them — only the per-frame payload length changes here.
+        self.set_payload_length(len as u8).await?;
         self.write_buffer(0x00, &scratch[..len]).await?;
         let mask = (irq::TX_DONE | irq::TIMEOUT).to_be_bytes();
         self.command(&[
@@ -418,9 +426,8 @@ where
     /// on a CRC failure, `Err(BufferTooSmall)` if the frame exceeds `buf`.
     pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         self.standby().await?;
-        self.set_modulation_params().await?;
-        self.set_packet_params(0xFF).await?;
-        self.set_rf_frequency().await?;
+        // Config is retained from `configure`; restamp the RX-side max payload length.
+        self.set_payload_length(0xFF).await?;
         // Unmask all IRQs onto DIO1; discriminate in software.
         let all = irq::ALL.to_be_bytes();
         self.command(&[
@@ -511,7 +518,10 @@ where
         }
     }
 
-    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
+    /// Lean per-frame call: SetPacketParams with the stored (constant) packet shape and
+    /// `payload_len`. No IQ-polarity errata RMW — [`set_packet_params`](Self::set_packet_params)
+    /// applies that once in [`configure`](Self::configure).
+    async fn set_payload_length(&mut self, payload_len: u8) -> Result<(), Error> {
         let pre = self.packet.preamble_symbols.to_be_bytes();
         let header = u8::from(!self.packet.explicit_header);
         let crc = u8::from(self.packet.crc_on);
@@ -525,7 +535,11 @@ where
             crc,
             iq,
         ])
-        .await?;
+        .await
+    }
+
+    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
+        self.set_payload_length(payload_len).await?;
         // IQPolarity errata (DS 15.4): set bit 2 unless inverted IQ.
         let mut v = [0u8; 1];
         self.read_register(reg::IQ_POLARITY, &mut v).await?;
