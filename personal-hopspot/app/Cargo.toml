@@ -48,6 +48,12 @@ serialport = { version = "4" }
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 
+# Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
+# crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
+# through personal-rns itself.
+[target.'cfg(target_os = "macos")'.dependencies]
+personal-rns-ffi = { path = "../../personal-rns-ffi" }
+
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }

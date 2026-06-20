@@ -120,10 +120,13 @@ fn classify(
             CardKind::Tcp,
             screen::tcp_card_label(tcp_target.unwrap_or("")),
         ))
+    } else if id.kind() == Some(InterfaceKind::BluetoothAuto) {
+        Some((CardKind::Ble, screen::card_label("BLE")))
     } else {
         let bytes = id.as_bytes();
         let (kind, tag) = match id.kind() {
             Some(InterfaceKind::TcpClient | InterfaceKind::TcpServerPeer) => (CardKind::Tcp, "TCP"),
+            Some(InterfaceKind::BluetoothPeer) => (CardKind::Ble, "BLE"),
             _ => (CardKind::Peer, "Peer"),
         };
         let mut label = screen::CardLabel::new();
@@ -165,6 +168,47 @@ pub fn run() {
     run_window(handles);
 }
 
+/// Stand up the native CoreBluetooth BLE auto-interface as a supervised fleet, on its own task so a
+/// slow or denied radio never blocks the node coming up. `MacosBleBackend::new` awaits power-on and
+/// the L2CAP publish; on failure (most often Bluetooth not granted to this binary) it logs and the
+/// node runs without BLE. The supervisor's id is medium-stable to the node identity, so the Hopspot
+/// renders it as one "BLE" card the same way the Android face does.
+#[cfg(target_os = "macos")]
+fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
+    use personal_rns::interfaces::bluetooth_auto::core::{
+        AppleHost, BleIdentity, Endpoint, LinkCapabilities, BLE_HW_MTU,
+    };
+    use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns_ffi::ble::macos::MacosBleBackend;
+
+    let ble_identity = BleIdentity::new(identity_hash);
+    tokio::spawn(async move {
+        match MacosBleBackend::new().await {
+            Ok(backend) => {
+                let psm = backend.psm();
+                handle.supervise(BluetoothAuto::new(
+                    backend,
+                    ble_identity,
+                    Endpoint::CoreBluetooth(AppleHost::MacOs),
+                    LinkCapabilities {
+                        l2cap: Some(psm),
+                        link_mtu: BLE_HW_MTU as u16,
+                    },
+                ));
+                println!(
+                    "bluetooth: supervising CoreBluetooth, L2CAP psm {:#06x}",
+                    psm.get()
+                );
+            }
+            Err(error) => {
+                eprintln!(
+                    "bluetooth disabled ({error:?}); grant Bluetooth in System Settings > Privacy & Security > Bluetooth"
+                );
+            }
+        }
+    });
+}
+
 fn run_node(
     ready_tx: Sender<WindowHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
@@ -175,10 +219,11 @@ fn run_node(
         .expect("the node thread builds its tokio runtime");
 
     runtime.block_on(async move {
-        let transport_id = {
+        let identity_hash = {
             let signer = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret_key);
-            TransportId::new(*signer.identity_hash().as_bytes())
+            *signer.identity_hash().as_bytes()
         };
+        let transport_id = TransportId::new(identity_hash);
         let rpc_key = rpc_key_from_rns_identity(&reticulum_storage_dir(), &identity_secret_key[..]);
 
         let announce_destination = PreConfiguredDestination::Single {
@@ -221,6 +266,9 @@ fn run_node(
         let wifi = AutoWifi::new();
         let wifi_status = wifi.status();
         handle.supervise(wifi);
+
+        #[cfg(target_os = "macos")]
+        spawn_bluetooth(handle.clone(), identity_hash);
 
         handle.supervise(LocalServer::new());
         println!(
