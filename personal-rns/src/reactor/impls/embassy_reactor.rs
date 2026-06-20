@@ -744,6 +744,11 @@ fn soonest_pacer_release(pacers: &[InterfacePacer]) -> Option<InstantMillis> {
 pub enum InterfaceLifecycle {
     Add { config: InterfaceConfig },
     Remove { id: InterfaceId },
+    Retag {
+        old_id: InterfaceId,
+        new_id: InterfaceId,
+        config: InterfaceConfig,
+    },
 }
 
 /// The dynamic egress: a fixed pool of `N` permanently-owned outbound lane endpoints, each tagged
@@ -769,6 +774,14 @@ impl<M: RawMutex + 'static, const SLOT: usize, const N: usize> PooledEgress<M, S
     pub(crate) fn activate(&mut self, slot: usize, id: InterfaceId) {
         if let Some(entry) = self.lanes.get_mut(slot) {
             entry.0 = id;
+        }
+    }
+
+    pub(crate) fn retag(&mut self, old_id: InterfaceId, new_id: InterfaceId) {
+        for (id, _) in self.lanes.iter_mut() {
+            if *id == old_id {
+                *id = new_id;
+            }
         }
     }
 }
@@ -990,6 +1003,32 @@ pub async fn run_pooled<
                         )
                     });
                     wake_schedules = engine.wake_schedules(&configs);
+                }
+                InterfaceLifecycle::Retag {
+                    old_id,
+                    new_id,
+                    config,
+                } => {
+                    let config = clamp_to_embedded_ceiling(config);
+                    let present = configs.iter().position(|existing| existing.id == old_id);
+                    let collides = configs.iter().any(|existing| existing.id == new_id);
+                    if let (Some(slot), false) = (present, collides) {
+                        configs[slot] = config;
+                        egress.retag(old_id, new_id);
+                        if let Some(entry) = inbound.iter_mut().find(|(id, _)| *id == old_id) {
+                            entry.0 = new_id;
+                        }
+                        if let Some(pos) = pacers.iter().position(|pacer| pacer.id == old_id) {
+                            pacers[pos] = InterfacePacer {
+                                id: new_id,
+                                pacer: AnnouncePacer::new(
+                                    config.announce_bandwidth_cap,
+                                    config.bitrate_bps,
+                                ),
+                            };
+                        }
+                        wake_schedules = engine.wake_schedules(&configs);
+                    }
                 }
             },
         }
@@ -1359,6 +1398,148 @@ mod tests {
         assert_eq!(
             count, 1,
             "the runtime-added slot carried exactly the one announce"
+        );
+    }
+
+    #[test]
+    fn pooled_egress_retag_relabels_a_lane_and_ignores_a_missing_id() {
+        let old_id = InterfaceId::new([0x11; 8]);
+        let new_id = InterfaceId::new([0x22; 8]);
+        const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+        let (producer, _consumer) = leaked_grant_lane::<SLOT>(2);
+        let mut lanes: HeaplessVec<
+            (
+                InterfaceId,
+                EmbassyGrantProducer<'static, CriticalSectionRawMutex, SLOT>,
+            ),
+            1,
+        > = HeaplessVec::new();
+        let _ = lanes.push((old_id, producer));
+        let mut egress = PooledEgress::new(lanes);
+
+        egress.retag(old_id, new_id);
+        assert_eq!(egress.lanes[0].0, new_id, "the lane carries the new id");
+        egress.retag(old_id, new_id);
+        assert_eq!(egress.lanes[0].0, new_id, "retagging a gone id is a no-op");
+    }
+
+    #[test]
+    fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
+        let old_id = InterfaceId::new([0xA1; 8]);
+        let new_id = InterfaceId::new([0xB2; 8]);
+
+        let mut engine = EngineState::<Cap>::default();
+        engine.set_transport_id(TEST_TRANSPORT_ID);
+
+        let notify: Channel<CriticalSectionRawMutex, InterfaceId, 4> = Channel::new();
+        let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 2> = Channel::new();
+        let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 2> = Channel::new();
+
+        const SLOT: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+        let (mut source_in_tx, source_in_rx) = leaked_grant_lane::<SLOT>(2);
+        let (source_out_tx, _source_out_rx) = leaked_grant_lane::<SLOT>(2);
+
+        let mut inbound: HeaplessVec<
+            (
+                InterfaceId,
+                EmbassyGrantConsumer<'static, CriticalSectionRawMutex, SLOT>,
+            ),
+            1,
+        > = HeaplessVec::new();
+        let _ = inbound.push((old_id, source_in_rx));
+        let mut egress_lanes: HeaplessVec<
+            (
+                InterfaceId,
+                EmbassyGrantProducer<'static, CriticalSectionRawMutex, SLOT>,
+            ),
+            1,
+        > = HeaplessVec::new();
+        let _ = egress_lanes.push((old_id, source_out_tx));
+
+        let raw = hx(RAW_ANNOUNCE);
+
+        let heard: Rc<RefCell<usize>> = Rc::new(RefCell::new(0));
+        let heard_sink = heard.clone();
+        let app = move |journaled: Journaled<'_>| match journaled {
+            Journaled::AnnounceHeard { .. } => {
+                *heard_sink.borrow_mut() += 1;
+            }
+            Journaled::Delivered(_)
+            | Journaled::CommandSettled { .. }
+            | Journaled::RouteExpired { .. }
+            | Journaled::RouteEvicted { .. }
+            | Journaled::RouteInterfaceGone { .. }
+            | Journaled::LinkEstablished(_)
+            | Journaled::PeerIdentified { .. }
+            | Journaled::RequestReceived { .. }
+            | Journaled::ResponseReceived { .. }
+            | Journaled::ChannelMessageReceived { .. }
+            | Journaled::LinkClosed { .. }
+            | Journaled::ResourceReceived { .. }
+            | Journaled::ResourceFailed { .. }
+            | Journaled::ResourceNeedsDecompression { .. }
+            | Journaled::ResourceSegmentReceived { .. }
+            | Journaled::ResourceAssembled { .. }
+            | Journaled::LinkInterfaceMismatch { .. } => {}
+        };
+
+        let mut egress = PooledEgress::new(egress_lanes);
+        let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
+        let count = block_on(async {
+            let initial: HeaplessVec<InterfaceConfig, 1> = HeaplessVec::new();
+            let reactor = run_pooled(
+                &mut engine,
+                &initial,
+                &mut inbound,
+                &mut egress,
+                &mut host,
+                notify.receiver(),
+                commands.receiver(),
+                lifecycle.receiver(),
+                app,
+                |_: &ProofRequest| false,
+            );
+
+            let driver = async {
+                lifecycle
+                    .sender()
+                    .send(InterfaceLifecycle::Add {
+                        config: descriptor(old_id),
+                    })
+                    .await;
+                Timer::after(Duration::from_millis(30)).await;
+                // Retag the live interface onto a new channel id; its lane endpoints never move.
+                lifecycle
+                    .sender()
+                    .send(InterfaceLifecycle::Retag {
+                        old_id,
+                        new_id,
+                        config: descriptor(new_id),
+                    })
+                    .await;
+                Timer::after(Duration::from_millis(30)).await;
+                // The announce crosses only if the inbound lane and the config now carry new_id.
+                source_in_tx.grant().await.fill_for(new_id, &raw);
+                source_in_tx.commit();
+                notify.sender().send(new_id).await;
+                loop {
+                    if *heard.borrow() >= 1 {
+                        break;
+                    }
+                    yield_now().await;
+                }
+                *heard.borrow()
+            };
+
+            match select(reactor, with_timeout(WATCHDOG, driver)).await {
+                Either::Second(result) => result.expect("the retagged slot is heard before the watchdog"),
+                Either::First(()) => unreachable!("the reactor loop never returns"),
+            }
+        });
+
+        assert_eq!(
+            count, 1,
+            "the retagged slot carried the announce under its new channel id"
         );
     }
 }
