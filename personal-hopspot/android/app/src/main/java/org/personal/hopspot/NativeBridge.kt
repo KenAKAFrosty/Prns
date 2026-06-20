@@ -45,6 +45,10 @@ object NativeBridge {
 
     external fun nativeBleL2capOut(connId: Int, buffer: ByteBuffer): Int
 
+    external fun nativeBleDataIn(connId: Int, buffer: ByteBuffer, len: Int)
+
+    external fun nativeBleDataOut(connId: Int, buffer: ByteBuffer): Int
+
     external fun nativeBleL2capUp(connId: Int)
 
     external fun nativeBleDisconnected(connId: Int)

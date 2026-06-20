@@ -30,8 +30,9 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tokio::task::JoinSet;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, BleAddress, BleUuid, Control, Dialect, Psm, StreamDeframer, Transport,
-    BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, STREAM_FRAME_PREFIX_LEN,
+    encode_stream_frame, fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, Psm,
+    Reassembler, StreamDeframer, Transport, BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN,
+    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
@@ -39,6 +40,9 @@ use personal_rns::interfaces::bluetooth_auto::seam::{
 
 const L2CAP_SDU_LEN: usize = STREAM_FRAME_PREFIX_LEN + BLE_HW_MTU;
 const READ_CHUNK: usize = L2CAP_SDU_LEN;
+const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
+const GATT_FRAGMENT_PAYLOAD: usize = 180;
+const GATT_FRAGMENT_BUF: usize = 256;
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const L2CAP_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -67,6 +71,14 @@ fn service_uuid() -> Retained<CBUUID> {
 
 fn control_uuid() -> Retained<CBUUID> {
     cbuuid(NATIVE_CONTROL_UUID)
+}
+
+fn data_uuid() -> Retained<CBUUID> {
+    cbuuid(NATIVE_DATA_UUID)
+}
+
+fn cbuuid_eq(a: &CBUUID, b: &CBUUID) -> bool {
+    unsafe { a.data() }.to_vec() == unsafe { b.data() }.to_vec()
 }
 
 fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSString, AnyObject>> {
@@ -114,13 +126,77 @@ enum ControlPlane {
     Listener {
         manager: SendPeripheralManager,
         characteristic: SendCharacteristic,
+        data_characteristic: SendCharacteristic,
         delegate: SendPeripheralDelegate,
     },
     Central {
         peripheral: SendPeripheral,
         characteristic: SendCharacteristicRef,
+        data_characteristic: Option<SendCharacteristicRef>,
         peripheral_manager: SendPeripheralDelegate,
     },
+}
+
+enum GattWriter {
+    Central {
+        peripheral: SendPeripheral,
+        characteristic: SendCharacteristicRef,
+    },
+    Listener {
+        manager: SendPeripheralManager,
+        characteristic: SendCharacteristic,
+    },
+}
+
+impl GattWriter {
+    fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
+        let mut buf = [0u8; GATT_FRAGMENT_BUF];
+        for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
+            let len = fragment.encode(&mut buf).ok_or(MacosBleError::FrameTooLarge)?;
+            let data = NSData::with_bytes(&buf[..len]);
+            match self {
+                GattWriter::Central {
+                    peripheral,
+                    characteristic,
+                } => unsafe {
+                    peripheral.0.writeValue_forCharacteristic_type(
+                        &data,
+                        &characteristic.0,
+                        CBCharacteristicWriteType::WithoutResponse,
+                    );
+                },
+                GattWriter::Listener {
+                    manager,
+                    characteristic,
+                } => {
+                    let sent = unsafe {
+                        manager.0.updateValue_forCharacteristic_onSubscribedCentrals(
+                            &data,
+                            &characteristic.0,
+                            None,
+                        )
+                    };
+                    if !sent {
+                        log::warn!(
+                            "bluetooth: GATT-data notify queue full — fragment dropped, peer will retransmit"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+struct GattDataPlane {
+    inbound_rx: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
+    writer: GattWriter,
+}
+
+enum LinkData {
+    None,
+    L2cap(DataPlane),
+    Gatt(GattDataPlane),
 }
 
 struct Outbound {
@@ -348,10 +424,17 @@ enum Event {
     Inbound(GattLink),
 }
 
+struct DialChars {
+    control: SendCharacteristicRef,
+    data: Option<SendCharacteristicRef>,
+}
+
 struct DialSession {
     address: BleAddress,
     control_tx: tokio_mpsc::UnboundedSender<Control>,
-    result_tx: Option<oneshot::Sender<SendCharacteristicRef>>,
+    result_tx: Option<oneshot::Sender<DialChars>>,
+    data_tx: tokio_mpsc::UnboundedSender<Box<[u8]>>,
+    data_char: Option<SendCharacteristicRef>,
 }
 
 struct DialCommand {
@@ -455,9 +538,7 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             };
-            let control = control_uuid();
-            let controls = NSArray::from_slice(&[&*control]);
-            unsafe { peripheral.discoverCharacteristics_forService(Some(&controls), &service) };
+            unsafe { peripheral.discoverCharacteristics_forService(None, &service) };
         }
 
         #[unsafe(method(peripheral:didDiscoverCharacteristicsForService:error:))]
@@ -472,14 +553,36 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             }
-            let characteristic = unsafe { service.characteristics() }.and_then(|c| c.iter().next());
-            let Some(characteristic) = characteristic else {
+            let Some(characteristics) = (unsafe { service.characteristics() }) else {
+                log::warn!("bluetooth: no characteristics on Prns service — dropping dial");
+                self.ivars().session.borrow_mut().take();
+                return;
+            };
+            let control_id = control_uuid();
+            let data_id = data_uuid();
+            let mut control = None;
+            let mut data = None;
+            for characteristic in characteristics.iter() {
+                let uuid = unsafe { characteristic.UUID() };
+                if cbuuid_eq(&uuid, &control_id) {
+                    control = Some(characteristic);
+                } else if cbuuid_eq(&uuid, &data_id) {
+                    data = Some(characteristic);
+                }
+            }
+            let Some(control) = control else {
                 log::warn!("bluetooth: no control characteristic — dropping dial");
                 self.ivars().session.borrow_mut().take();
                 return;
             };
+            if let Some(data) = &data {
+                if let Some(session) = self.ivars().session.borrow_mut().as_mut() {
+                    session.data_char = Some(SendCharacteristicRef(data.retain()));
+                }
+                unsafe { peripheral.setNotifyValue_forCharacteristic(true, data) };
+            }
             log::debug!("bluetooth: control characteristic found, subscribing");
-            unsafe { peripheral.setNotifyValue_forCharacteristic(true, &characteristic) };
+            unsafe { peripheral.setNotifyValue_forCharacteristic(true, &control) };
         }
 
         #[unsafe(method(peripheral:didUpdateNotificationStateForCharacteristic:error:))]
@@ -494,6 +597,10 @@ define_class!(
                 self.ivars().session.borrow_mut().take();
                 return;
             }
+            let subscribed_uuid = unsafe { characteristic.UUID() };
+            if !cbuuid_eq(&subscribed_uuid, &control_uuid()) {
+                return;
+            }
             let mut session = self.ivars().session.borrow_mut();
             let Some(session) = session.as_mut() else {
                 return;
@@ -503,7 +610,10 @@ define_class!(
                     "bluetooth: {:02x?} subscribed — control ready, handshaking as dialer",
                     session.address.octets()
                 );
-                let _ = result_tx.send(SendCharacteristicRef(characteristic.retain()));
+                let _ = result_tx.send(DialChars {
+                    control: SendCharacteristicRef(characteristic.retain()),
+                    data: session.data_char.take(),
+                });
             }
         }
 
@@ -517,6 +627,13 @@ define_class!(
             let Some(value) = (unsafe { characteristic.value() }) else {
                 return;
             };
+            let updated_uuid = unsafe { characteristic.UUID() };
+            if cbuuid_eq(&updated_uuid, &data_uuid()) {
+                if let Some(session) = self.ivars().session.borrow().as_ref() {
+                    let _ = session.data_tx.send(Box::from(&value.to_vec()[..]));
+                }
+                return;
+            }
             let Some(control) = Control::decode(&value.to_vec()) else {
                 return;
             };
@@ -545,8 +662,10 @@ impl CentralDelegate {
 struct PeripheralDelegateIvars {
     events: tokio_mpsc::UnboundedSender<Event>,
     characteristic: Retained<CBMutableCharacteristic>,
+    data_characteristic: Retained<CBMutableCharacteristic>,
     queue: DispatchRetained<DispatchQueue>,
     active: RefCell<Option<tokio_mpsc::UnboundedSender<Control>>>,
+    data_inbound: RefCell<Option<tokio_mpsc::UnboundedSender<Box<[u8]>>>>,
     pending: RefCell<PendingL2cap>,
 }
 
@@ -562,7 +681,8 @@ define_class!(
         fn did_update_state(&self, peripheral: &CBPeripheralManager) {
             if unsafe { peripheral.state() } == CBManagerState::PoweredOn {
                 let control: &CBCharacteristic = &self.ivars().characteristic;
-                let characteristics = NSArray::from_slice(&[control]);
+                let data: &CBCharacteristic = &self.ivars().data_characteristic;
+                let characteristics = NSArray::from_slice(&[control, data]);
                 let service = unsafe {
                     CBMutableService::initWithType_primary(
                         CBMutableService::alloc(),
@@ -658,16 +778,28 @@ define_class!(
             requests: &NSArray<CBATTRequest>,
         ) {
             for request in requests.iter() {
-                let Some(data) = (unsafe { request.value() }) else {
+                let Some(value) = (unsafe { request.value() }) else {
                     unsafe {
                         peripheral.respondToRequest_withResult(&request, CBATTError::Success)
                     };
                     continue;
                 };
-                if let Some(control) = Control::decode(&data.to_vec()) {
+                let characteristic = unsafe { request.characteristic() };
+                let written_uuid = unsafe { characteristic.UUID() };
+                if cbuuid_eq(&written_uuid, &data_uuid()) {
+                    if let Some(tx) = self.ivars().data_inbound.borrow().as_ref() {
+                        let _ = tx.send(Box::from(&value.to_vec()[..]));
+                    }
+                    unsafe {
+                        peripheral.respondToRequest_withResult(&request, CBATTError::Success)
+                    };
+                    continue;
+                }
+                if let Some(control) = Control::decode(&value.to_vec()) {
                     let mut active = self.ivars().active.borrow_mut();
                     if active.is_none() {
                         let (tx, rx) = tokio_mpsc::unbounded_channel::<Control>();
+                        let (data_tx, data_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
                         let central = unsafe { request.central() };
                         let identifier = unsafe { central.identifier() };
                         let address = BleAddress::new(uuid_token(&identifier));
@@ -681,14 +813,19 @@ define_class!(
                                 characteristic: SendCharacteristic(
                                     self.ivars().characteristic.clone(),
                                 ),
+                                data_characteristic: SendCharacteristic(
+                                    self.ivars().data_characteristic.clone(),
+                                ),
                                 delegate: SendPeripheralDelegate(self.retain()),
                             },
                             control_rx: rx,
                             address,
-                            data: None,
+                            data_inbound_rx: Some(data_rx),
+                            data: LinkData::None,
                         };
                         let _ = self.ivars().events.send(Event::Inbound(link));
                         *active = Some(tx);
+                        *self.ivars().data_inbound.borrow_mut() = Some(data_tx);
                     }
                     if let Some(tx) = active.as_ref() {
                         let _ = tx.send(control);
@@ -725,6 +862,7 @@ define_class!(
                 uuid_token(&identifier)
             );
             self.ivars().active.borrow_mut().take();
+            self.ivars().data_inbound.borrow_mut().take();
             self.ivars().pending.borrow_mut().clear();
         }
 
@@ -740,13 +878,23 @@ impl PeripheralDelegate {
         events: tokio_mpsc::UnboundedSender<Event>,
         queue: DispatchRetained<DispatchQueue>,
     ) -> Retained<Self> {
+        let data_plane_properties = CBCharacteristicProperties::Write
+            | CBCharacteristicProperties::WriteWithoutResponse
+            | CBCharacteristicProperties::Notify;
         let characteristic = unsafe {
             CBMutableCharacteristic::initWithType_properties_value_permissions(
                 CBMutableCharacteristic::alloc(),
                 &control_uuid(),
-                CBCharacteristicProperties::Write
-                    | CBCharacteristicProperties::WriteWithoutResponse
-                    | CBCharacteristicProperties::Notify,
+                data_plane_properties,
+                None,
+                CBAttributePermissions::Writeable,
+            )
+        };
+        let data_characteristic = unsafe {
+            CBMutableCharacteristic::initWithType_properties_value_permissions(
+                CBMutableCharacteristic::alloc(),
+                &data_uuid(),
+                data_plane_properties,
                 None,
                 CBAttributePermissions::Writeable,
             )
@@ -754,8 +902,10 @@ impl PeripheralDelegate {
         let this = Self::alloc().set_ivars(PeripheralDelegateIvars {
             events,
             characteristic,
+            data_characteristic,
             queue,
             active: RefCell::new(None),
+            data_inbound: RefCell::new(None),
             pending: RefCell::new(PendingL2cap::default()),
         });
         unsafe { msg_send![super(this), init] }
@@ -775,7 +925,8 @@ pub struct GattLink {
     control: ControlPlane,
     control_rx: tokio_mpsc::UnboundedReceiver<Control>,
     address: BleAddress,
-    data: Option<DataPlane>,
+    data_inbound_rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
+    data: LinkData,
 }
 
 impl BleLink for GattLink {
@@ -879,7 +1030,7 @@ impl BleLink for GattLink {
                             "bluetooth: {:02x?} L2CAP data plane established (peer opened the CoC to our listener)",
                             self.address.octets()
                         );
-                        self.data = Some(data);
+                        self.data = LinkData::L2cap(data);
                         Ok(())
                     }
                     Ok(Err(_)) => {
@@ -907,18 +1058,48 @@ impl BleLink for GattLink {
                 Err(MacosBleError::CannotOpenL2cap)
             }
             Transport::GattData => {
-                log::warn!(
-                    "bluetooth: {:02x?} GATT-data plane not yet implemented on macOS (pass 2) — this member will carry no frames",
+                let inbound_rx = self.data_inbound_rx.take().ok_or(MacosBleError::Closed)?;
+                let writer = match &self.control {
+                    ControlPlane::Central {
+                        peripheral,
+                        data_characteristic: Some(data_characteristic),
+                        ..
+                    } => GattWriter::Central {
+                        peripheral: SendPeripheral(peripheral.0.clone()),
+                        characteristic: SendCharacteristicRef(data_characteristic.0.clone()),
+                    },
+                    ControlPlane::Central {
+                        data_characteristic: None,
+                        ..
+                    } => {
+                        log::warn!(
+                            "bluetooth: {:02x?} settled on GATT-data but the peer exposed no data characteristic — no data plane",
+                            self.address.octets()
+                        );
+                        return Err(MacosBleError::GattDataUnsupported);
+                    }
+                    ControlPlane::Listener {
+                        manager,
+                        data_characteristic,
+                        ..
+                    } => GattWriter::Listener {
+                        manager: SendPeripheralManager(manager.0.clone()),
+                        characteristic: SendCharacteristic(data_characteristic.0.clone()),
+                    },
+                };
+                self.data = LinkData::Gatt(GattDataPlane { inbound_rx, writer });
+                log::info!(
+                    "bluetooth: {:02x?} GATT-data plane established (write/notify, fragmented)",
                     self.address.octets()
                 );
-                Err(MacosBleError::GattDataUnsupported)
+                Ok(())
             }
         }
     }
 
     fn into_data(self) -> (GattSource, GattSink) {
         match self.data {
-            Some(data) => {
+            LinkData::L2cap(data) => {
                 let pump = data.pump;
                 (
                     GattSource {
@@ -938,7 +1119,21 @@ impl BleLink for GattLink {
                     },
                 )
             }
-            None => (
+            LinkData::Gatt(plane) => {
+                let GattDataPlane { inbound_rx, writer } = plane;
+                (
+                    GattSource {
+                        inner: SourceInner::Gatt(Box::new(GattReader {
+                            inbound_rx,
+                            reassembler: Reassembler::new(),
+                        })),
+                    },
+                    GattSink {
+                        inner: SinkInner::Gatt(writer),
+                    },
+                )
+            }
+            LinkData::None => (
                 GattSource {
                     inner: SourceInner::Pending,
                 },
@@ -956,9 +1151,15 @@ struct L2capReader {
     _pump: Arc<PumpHandle>,
 }
 
+struct GattReader {
+    inbound_rx: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
+    reassembler: Reassembler<GATT_REASSEMBLY_CAP>,
+}
+
 enum SourceInner {
     Pending,
     L2cap(Box<L2capReader>),
+    Gatt(Box<GattReader>),
 }
 
 pub struct GattSource {
@@ -984,6 +1185,21 @@ impl BleSource for GattSource {
                     return Err(MacosBleError::FrameTooLarge);
                 }
             },
+            SourceInner::Gatt(reader) => loop {
+                let message = reader
+                    .inbound_rx
+                    .recv()
+                    .await
+                    .ok_or(MacosBleError::Closed)?;
+                let Some(fragment) = Fragment::decode(&message) else {
+                    continue;
+                };
+                if let Some(frame) = reader.reassembler.absorb(&fragment) {
+                    let len = frame.len().min(out.len());
+                    out[..len].copy_from_slice(&frame[..len]);
+                    return Ok(len);
+                }
+            },
         }
     }
 }
@@ -998,6 +1214,7 @@ struct L2capWriter {
 enum SinkInner {
     Noop,
     L2cap(L2capWriter),
+    Gatt(GattWriter),
 }
 
 pub struct GattSink {
@@ -1010,6 +1227,7 @@ impl BleSink for GattSink {
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), MacosBleError> {
         match &mut self.inner {
             SinkInner::Noop => Ok(()),
+            SinkInner::Gatt(writer) => writer.send(frame),
             SinkInner::L2cap(writer) => {
                 let mut framed = [0u8; L2CAP_SDU_LEN];
                 let len =
@@ -1225,7 +1443,8 @@ impl BleBackend for MacosBleBackend {
             return;
         };
         let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
-        let (result_tx, result_rx) = oneshot::channel::<SendCharacteristicRef>();
+        let (result_tx, result_rx) = oneshot::channel::<DialChars>();
+        let (data_inbound_tx, data_inbound_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
         let command = DialCommand {
             central: self.central.0.clone(),
             delegate: self.central_delegate.0.clone(),
@@ -1234,6 +1453,8 @@ impl BleBackend for MacosBleBackend {
                 address,
                 control_tx,
                 result_tx: Some(result_tx),
+                data_tx: data_inbound_tx,
+                data_char: None,
             },
         };
         log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
@@ -1254,8 +1475,8 @@ impl BleBackend for MacosBleBackend {
         let send_peripheral = SendPeripheral(peripheral);
         let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
         self.dials.spawn(async move {
-            let characteristic = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
-                Ok(Ok(characteristic)) => characteristic,
+            let chars = match tokio::time::timeout(DIAL_TIMEOUT, result_rx).await {
+                Ok(Ok(chars)) => chars,
                 _ => {
                     log::warn!("bluetooth: dial to {token:02x?} did not reach control-ready");
                     return None;
@@ -1265,12 +1486,14 @@ impl BleBackend for MacosBleBackend {
                 GattLink {
                     control: ControlPlane::Central {
                         peripheral: send_peripheral,
-                        characteristic,
+                        characteristic: chars.control,
+                        data_characteristic: chars.data,
                         peripheral_manager: send_peripheral_manager,
                     },
                     control_rx,
                     address,
-                    data: None,
+                    data_inbound_rx: Some(data_inbound_rx),
+                    data: LinkData::None,
                 },
                 peer_rssi,
             ))
