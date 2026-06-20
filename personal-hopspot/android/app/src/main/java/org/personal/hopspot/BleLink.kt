@@ -445,13 +445,18 @@ class BleLink(private val context: Context) {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     links[connId]?.clientGatt = gatt
-                    gatt.discoverServices()
+                    gatt.requestMtu(MAX_ATT_MTU)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     Log.i(TAG, "dialer[$connId] $address disconnected")
                     dialingAddrs.remove(address)
                     runCatching { gatt.close() }
                     closeLink(connId)
                 }
+            }
+
+            override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                Log.i(TAG, "dialer[$connId] att mtu=$mtu status=$status; discovering services")
+                gatt.discoverServices()
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -640,6 +645,7 @@ class BleLink(private val context: Context) {
         private const val DATA_CHUNK = 512
         private const val IDLE_MS = 2L
         private const val RSSI_NONE = 127
+        private const val MAX_ATT_MTU = 517
         val PRNS_SERVICE: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e3")
         val NATIVE_CONTROL: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e7")
         val NATIVE_DATA: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e8")

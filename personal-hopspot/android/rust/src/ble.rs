@@ -6,8 +6,8 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::Notify;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment, Reassembler,
-    StreamDeframer, Transport, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    encode_stream_frame, fragments_of, BleAddress, Control, Dialect, Fragment, L2capPlan,
+    Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
     STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
@@ -342,7 +342,7 @@ impl BleBackend for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 
-    async fn advertise(&mut self) -> Result<(), AndroidBleError> {
+    async fn set_advertising(&mut self, _enabled: bool) -> Result<(), AndroidBleError> {
         Ok(())
     }
 
@@ -373,7 +373,6 @@ impl BleBackend for AndroidBleBackend {
                         data_out: pending.data_out,
                         l2cap_up: pending.l2cap_up,
                         l2cap_opens: pending.l2cap_opens,
-                        mode: DataMode::L2cap,
                     };
                     if dialed {
                         return BleEvent::LinkReady {
@@ -394,12 +393,6 @@ impl BleBackend for AndroidBleBackend {
     }
 }
 
-#[derive(Clone, Copy)]
-enum DataMode {
-    L2cap,
-    Gatt,
-}
-
 pub struct AndroidBleLink {
     conn_id: u32,
     address: BleAddress,
@@ -411,7 +404,6 @@ pub struct AndroidBleLink {
     data_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
     l2cap_up: Arc<LinkSignal>,
     l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
-    mode: DataMode,
 }
 
 impl BleLink for AndroidBleLink {
@@ -449,138 +441,107 @@ impl BleLink for AndroidBleLink {
         }
     }
 
-    async fn upgrade(&mut self, transport: &Transport) -> Result<(), AndroidBleError> {
-        match transport {
-            Transport::L2capOpen { psm } => {
-                if let Ok(mut opens) = self.l2cap_opens.lock() {
-                    opens.push_back((self.conn_id, psm.get()));
-                }
-                while !self.l2cap_up.is_up.load(Ordering::Acquire) {
-                    self.l2cap_up.notify.notified().await;
-                }
-                Ok(())
-            }
-            Transport::L2capAccept => {
-                while !self.l2cap_up.is_up.load(Ordering::Acquire) {
-                    self.l2cap_up.notify.notified().await;
-                }
-                Ok(())
-            }
-            Transport::GattData => {
-                self.mode = DataMode::Gatt;
-                Ok(())
+    async fn upgrade(&mut self, plan: &L2capPlan) -> Result<(), AndroidBleError> {
+        if let L2capPlan::Open { psm } = plan {
+            if let Ok(mut opens) = self.l2cap_opens.lock() {
+                opens.push_back((self.conn_id, psm.get()));
             }
         }
+        Ok(())
     }
 
     fn into_data(self) -> (AndroidBleSource, AndroidBleSink) {
-        match self.mode {
-            DataMode::L2cap => (
-                AndroidBleSource::L2cap {
-                    rx: self.l2cap_in,
-                    deframer: Box::new(StreamDeframer::new()),
-                },
-                AndroidBleSink::L2cap {
-                    out: self.l2cap_out,
-                },
-            ),
-            DataMode::Gatt => (
-                AndroidBleSource::Gatt {
-                    rx: self.data_in,
-                    reassembler: Box::new(Reassembler::new()),
-                },
-                AndroidBleSink::Gatt {
-                    out: self.data_out,
-                },
-            ),
+        let (merged_tx, merged_rx) = unbounded_channel::<Vec<u8>>();
+
+        if let Some(mut data_in) = self.data_in {
+            let frames = merged_tx.clone();
+            tokio::spawn(async move {
+                let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
+                while let Some(message) = data_in.recv().await {
+                    if let Some(fragment) = Fragment::decode(&message) {
+                        if let Some(frame) = reassembler.absorb(&fragment) {
+                            if frames.send(frame.to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
         }
+
+        if let Some(mut l2cap_in) = self.l2cap_in {
+            let frames = merged_tx.clone();
+            tokio::spawn(async move {
+                let mut deframer = StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new();
+                let mut frame = std::vec![0u8; 2 * L2CAP_SDU_LEN];
+                while let Some(chunk) = l2cap_in.recv().await {
+                    if !deframer.absorb(&chunk) {
+                        break;
+                    }
+                    while let Some(len) = deframer.next_frame(&mut frame) {
+                        if frames.send(frame[..len].to_vec()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+
+        drop(merged_tx);
+        (
+            AndroidBleSource { inbound: merged_rx },
+            AndroidBleSink {
+                l2cap_out: self.l2cap_out,
+                gatt_out: self.data_out,
+                l2cap_up: self.l2cap_up,
+            },
+        )
     }
 }
 
-pub enum AndroidBleSource {
-    L2cap {
-        rx: Option<UnboundedReceiver<Vec<u8>>>,
-        deframer: Box<StreamDeframer<{ 2 * L2CAP_SDU_LEN }>>,
-    },
-    Gatt {
-        rx: Option<UnboundedReceiver<Vec<u8>>>,
-        reassembler: Box<Reassembler<GATT_REASSEMBLY_CAP>>,
-    },
+pub struct AndroidBleSource {
+    inbound: UnboundedReceiver<Vec<u8>>,
 }
 
 impl BleSource for AndroidBleSource {
     type Error = AndroidBleError;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, AndroidBleError> {
-        match self {
-            AndroidBleSource::L2cap { rx, deframer } => {
-                let Some(rx) = rx.as_mut() else {
-                    return core::future::pending().await;
-                };
-                loop {
-                    if let Some(len) = deframer.next_frame(out) {
-                        return Ok(len);
-                    }
-                    let chunk = rx.recv().await.ok_or(AndroidBleError::Closed)?;
-                    if !deframer.absorb(&chunk) {
-                        return Err(AndroidBleError::FrameTooLarge);
-                    }
-                }
-            }
-            AndroidBleSource::Gatt { rx, reassembler } => {
-                let Some(rx) = rx.as_mut() else {
-                    return core::future::pending().await;
-                };
-                loop {
-                    let message = rx.recv().await.ok_or(AndroidBleError::Closed)?;
-                    if let Some(fragment) = Fragment::decode(&message) {
-                        if let Some(frame) = reassembler.absorb(&fragment) {
-                            let n = frame.len().min(out.len());
-                            out[..n].copy_from_slice(&frame[..n]);
-                            return Ok(n);
-                        }
-                    }
-                }
-            }
-        }
+        let frame = self.inbound.recv().await.ok_or(AndroidBleError::Closed)?;
+        let n = frame.len().min(out.len());
+        out[..n].copy_from_slice(&frame[..n]);
+        Ok(n)
     }
 }
 
-pub enum AndroidBleSink {
-    L2cap {
-        out: Arc<Mutex<VecDeque<u8>>>,
-    },
-    Gatt {
-        out: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    },
+pub struct AndroidBleSink {
+    l2cap_out: Arc<Mutex<VecDeque<u8>>>,
+    gatt_out: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    l2cap_up: Arc<LinkSignal>,
 }
 
 impl BleSink for AndroidBleSink {
     type Error = AndroidBleError;
 
     async fn send_frame(&mut self, frame: &[u8]) -> Result<(), AndroidBleError> {
-        match self {
-            AndroidBleSink::L2cap { out } => {
-                let mut framed = [0u8; L2CAP_SDU_LEN];
-                let len =
-                    encode_stream_frame(frame, &mut framed).ok_or(AndroidBleError::FrameTooLarge)?;
-                if let Ok(mut out) = out.lock() {
-                    out.extend(framed[..len].iter().copied());
-                }
-                Ok(())
+        if self.l2cap_up.is_up.load(Ordering::Acquire) {
+            let mut framed = [0u8; L2CAP_SDU_LEN];
+            let len =
+                encode_stream_frame(frame, &mut framed).ok_or(AndroidBleError::FrameTooLarge)?;
+            if let Ok(mut out) = self.l2cap_out.lock() {
+                out.extend(framed[..len].iter().copied());
             }
-            AndroidBleSink::Gatt { out } => {
-                let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
-                for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
-                    let len = fragment
-                        .encode(&mut buf)
-                        .ok_or(AndroidBleError::FrameTooLarge)?;
-                    if let Ok(mut out) = out.lock() {
-                        out.push_back(buf[..len].to_vec());
-                    }
+        } else {
+            let mut buf = [0u8; FRAGMENT_HEADER_LEN + GATT_FRAGMENT_PAYLOAD];
+            for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
+                let len = fragment
+                    .encode(&mut buf)
+                    .ok_or(AndroidBleError::FrameTooLarge)?;
+                if let Ok(mut out) = self.gatt_out.lock() {
+                    out.push_back(buf[..len].to_vec());
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 }

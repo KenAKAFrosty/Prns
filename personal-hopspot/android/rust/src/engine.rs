@@ -12,7 +12,7 @@ use personal_rns::engine::{
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::bluetooth_auto::core::{
-    BleIdentity, LinkCapabilities, Psm, BLE_HW_MTU,
+    AndroidHost, BleIdentity, Endpoint, LinkCapabilities, Psm, BLE_HW_MTU,
 };
 use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -201,9 +201,9 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
                 handle.supervise(BluetoothAuto::new(
                     AndroidBleBackend::new(ble),
                     ble_identity,
+                    Endpoint::Android(AndroidHost::Android),
                     LinkCapabilities {
                         l2cap: Some(psm),
-                        l2cap_can_open: true,
                         link_mtu: BLE_HW_MTU as u16,
                     },
                 ));
