@@ -21,8 +21,9 @@ use crate::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LE
 use crate::runtime::{AttachedInterface, Fleet, InterfaceSupervisor};
 
 struct ClosedSignal {
+    identity: BleIdentity,
     address: BleAddress,
-    sink: mpsc::UnboundedSender<BleAddress>,
+    sink: mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
 }
 
 pub struct BluetoothPeer<Src, Snk> {
@@ -54,9 +55,13 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     fn report_close_to(
         mut self,
         address: BleAddress,
-        sink: mpsc::UnboundedSender<BleAddress>,
+        sink: mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
     ) -> Self {
-        self.closed = Some(ClosedSignal { address, sink });
+        self.closed = Some(ClosedSignal {
+            identity: self.identity,
+            address,
+            sink,
+        });
         self
     }
 
@@ -107,8 +112,13 @@ impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
                 }
             }
         }
-        if let Some(ClosedSignal { address, sink }) = self.closed.take() {
-            let _ = sink.send(address);
+        if let Some(ClosedSignal {
+            identity,
+            address,
+            sink,
+        }) = self.closed.take()
+        {
+            let _ = sink.send((identity, address));
             std::future::pending::<()>().await;
         }
     }
@@ -123,19 +133,10 @@ impl<Src: BleSource, Snk: BleSink> crate::interfaces::ReportsStatus for Bluetoot
     }
 }
 
-enum PeerState {
-    Dialing {
-        since: Instant,
-    },
-    Handshaking,
-    Settled {
-        identity: BleIdentity,
-        member: AttachedInterface,
-        keeper: bool,
-    },
-    Suppressed {
-        since: Instant,
-    },
+struct Settled {
+    member: AttachedInterface,
+    keeper: bool,
+    address: BleAddress,
 }
 
 struct HandshakeDone<L: BleLink> {
@@ -149,7 +150,7 @@ type HandshakeQueue<L> = FuturesUnordered<Pin<Box<dyn Future<Output = HandshakeD
 enum Step<L: BleLink> {
     Event(BleEvent<L>),
     Handshake(HandshakeDone<L>),
-    Closed(BleAddress),
+    Closed(BleIdentity, BleAddress),
 }
 
 pub struct BluetoothAuto<B> {
@@ -191,34 +192,29 @@ where
     async fn run(self, fleet: Fleet) {
         let Self { mut backend, local } = self;
         let mut advertising = backend.set_advertising(true).await.is_ok();
-        let mut peers: HashMap<BleAddress, PeerState> = HashMap::new();
-        let mut by_identity: HashMap<BleIdentity, BleAddress> = HashMap::new();
+        let mut dialing: HashMap<BleAddress, Instant> = HashMap::new();
+        let mut suppressed: HashMap<BleAddress, Instant> = HashMap::new();
+        let mut settled: HashMap<BleIdentity, Settled> = HashMap::new();
+        let mut settled_by_addr: HashMap<BleAddress, BleIdentity> = HashMap::new();
         let mut handshakes: HandshakeQueue<B::Link> = FuturesUnordered::new();
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
         loop {
             let step = tokio::select! {
                 event = backend.next_event() => Step::Event(event),
                 Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
-                Some(address) = closed_rx.recv() => Step::Closed(address),
+                Some((identity, address)) = closed_rx.recv() => Step::Closed(identity, address),
             };
             match step {
                 Step::Event(BleEvent::Sighting { address, .. }) => {
-                    let dialable = by_identity.len() < B::MAX_PEERS
-                        && match peers.get(&address) {
-                            None => true,
-                            Some(PeerState::Dialing { since }) => since.elapsed() >= DIAL_RETRY_TTL,
-                            Some(PeerState::Suppressed { since }) => {
-                                since.elapsed() >= SUPPRESS_TTL
-                            }
-                            Some(PeerState::Handshaking | PeerState::Settled { .. }) => false,
+                    let dialable = settled.len() < B::MAX_PEERS
+                        && !settled_by_addr.contains_key(&address)
+                        && match (dialing.get(&address), suppressed.get(&address)) {
+                            (Some(since), _) => since.elapsed() >= DIAL_RETRY_TTL,
+                            (None, Some(since)) => since.elapsed() >= SUPPRESS_TTL,
+                            (None, None) => true,
                         };
                     if dialable {
-                        peers.insert(
-                            address,
-                            PeerState::Dialing {
-                                since: Instant::now(),
-                            },
-                        );
+                        dialing.insert(address, Instant::now());
                         backend.dial(address).await;
                     }
                 }
@@ -228,7 +224,6 @@ where
                     peer_rssi,
                 }) => {
                     let address = link.address();
-                    peers.insert(address, PeerState::Handshaking);
                     let role = match origin {
                         Origin::Dialed => HandshakeRole::Dialer,
                         Origin::Accepted => HandshakeRole::Listener,
@@ -239,7 +234,6 @@ where
                 }
                 Step::Event(BleEvent::Inbound(link)) => {
                     let address = link.address();
-                    peers.insert(address, PeerState::Handshaking);
                     handshakes.push(Box::pin(run_handshake_task(
                         link,
                         HandshakeRole::Listener,
@@ -253,25 +247,23 @@ where
                     resolve(
                         done,
                         &fleet,
-                        &mut peers,
-                        &mut by_identity,
+                        &mut dialing,
+                        &mut suppressed,
+                        &mut settled,
+                        &mut settled_by_addr,
                         local,
                         &closed_tx,
                         &mut backend,
                     )
                     .await;
                 }
-                Step::Closed(address) => {
-                    retire(address, &mut peers, &mut by_identity);
+                Step::Closed(identity, address) => {
+                    retire(identity, address, &mut settled, &mut settled_by_addr);
                     backend.on_link_closed(address).await;
                 }
             }
-            reconcile_advertising(
-                &mut backend,
-                &mut advertising,
-                by_identity.len() < B::MAX_PEERS,
-            )
-            .await;
+            reconcile_advertising(&mut backend, &mut advertising, settled.len() < B::MAX_PEERS)
+                .await;
         }
     }
 }
@@ -336,13 +328,16 @@ async fn drive_handshake<L: BleLink>(
     .flatten()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve<B>(
     done: HandshakeDone<B::Link>,
     fleet: &Fleet,
-    peers: &mut HashMap<BleAddress, PeerState>,
-    by_identity: &mut HashMap<BleIdentity, BleAddress>,
+    dialing: &mut HashMap<BleAddress, Instant>,
+    suppressed: &mut HashMap<BleAddress, Instant>,
+    settled: &mut HashMap<BleIdentity, Settled>,
+    settled_by_addr: &mut HashMap<BleAddress, BleIdentity>,
     local: Local,
-    closed: &mpsc::UnboundedSender<BleAddress>,
+    closed: &mpsc::UnboundedSender<(BleIdentity, BleAddress)>,
     backend: &mut B,
 ) where
     B: BleBackend,
@@ -355,48 +350,41 @@ async fn resolve<B>(
         origin,
         outcome,
     } = done;
+    let dialed = matches!(origin, Origin::Dialed);
+    if dialed {
+        dialing.remove(&address);
+    }
     let Some((established, mut link)) = outcome else {
-        forget_pending(peers, address);
-        if matches!(origin, Origin::Dialed) {
+        if dialed {
             backend.on_link_closed(address).await;
         }
         return;
     };
     let identity = established.identity;
-    let role = match origin {
-        Origin::Dialed => HandshakeRole::Dialer,
-        Origin::Accepted => HandshakeRole::Listener,
+    let role = if dialed {
+        HandshakeRole::Dialer
+    } else {
+        HandshakeRole::Listener
     };
     let plan = arrangement(local.endpoint, established.endpoint);
     let keeper = is_keeper(plan, role, local.identity, local.endpoint, identity);
 
-    if let Some(&incumbent_addr) = by_identity.get(&identity) {
-        let incumbent_keeper = matches!(
-            peers.get(&incumbent_addr),
-            Some(PeerState::Settled { keeper: true, .. })
-        );
-        let challenger_wins = keeper && !incumbent_keeper;
+    if let Some(incumbent) = settled.get(&identity) {
+        let challenger_wins = keeper && !incumbent.keeper;
         if !challenger_wins {
-            if address != incumbent_addr {
-                peers.insert(
-                    address,
-                    PeerState::Suppressed {
-                        since: Instant::now(),
-                    },
-                );
-            }
-            if matches!(origin, Origin::Dialed) {
+            suppressed.insert(address, Instant::now());
+            if dialed {
                 backend.on_link_closed(address).await;
             }
             return;
         }
-        if let Some(PeerState::Settled { member, .. }) = peers.remove(&incumbent_addr) {
-            member.teardown();
+        if let Some(old) = settled.remove(&identity) {
+            settled_by_addr.remove(&old.address);
+            old.member.teardown();
         }
-        by_identity.remove(&identity);
-    } else if by_identity.len() >= B::MAX_PEERS {
-        forget_pending(peers, address);
-        if matches!(origin, Origin::Dialed) {
+    } else if settled.len() >= B::MAX_PEERS {
+        suppressed.insert(address, Instant::now());
+        if dialed {
             backend.on_link_closed(address).await;
         }
         return;
@@ -414,15 +402,15 @@ async fn resolve<B>(
     let member =
         BluetoothPeer::new(identity, source, sink).report_close_to(address, closed.clone());
     let attached = fleet.add(member);
-    peers.insert(
-        address,
-        PeerState::Settled {
-            identity,
+    settled.insert(
+        identity,
+        Settled {
             member: attached,
             keeper,
+            address,
         },
     );
-    by_identity.insert(identity, address);
+    settled_by_addr.insert(address, identity);
 }
 
 async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {
@@ -432,26 +420,20 @@ async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {
     let _ = link.upgrade(lane).await;
 }
 
-fn forget_pending(peers: &mut HashMap<BleAddress, PeerState>, address: BleAddress) {
-    if matches!(
-        peers.get(&address),
-        Some(PeerState::Dialing { .. } | PeerState::Handshaking)
-    ) {
-        peers.remove(&address);
-    }
-}
-
 fn retire(
+    identity: BleIdentity,
     address: BleAddress,
-    peers: &mut HashMap<BleAddress, PeerState>,
-    by_identity: &mut HashMap<BleIdentity, BleAddress>,
+    settled: &mut HashMap<BleIdentity, Settled>,
+    settled_by_addr: &mut HashMap<BleAddress, BleIdentity>,
 ) {
-    if let Some(PeerState::Settled {
-        identity, member, ..
-    }) = peers.remove(&address)
+    if settled
+        .get(&identity)
+        .is_some_and(|entry| entry.address == address)
     {
-        member.teardown();
-        by_identity.remove(&identity);
+        if let Some(entry) = settled.remove(&identity) {
+            settled_by_addr.remove(&entry.address);
+            entry.member.teardown();
+        }
     }
 }
 
@@ -908,16 +890,17 @@ mod tests {
         let (source, sink) = link_a.into_data();
         drop(link_b);
 
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
-        let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
-            .report_close_to(addr, closed_tx.clone());
+        let identity = BleIdentity::new([1u8; 16]);
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
+        let member =
+            BluetoothPeer::new(identity, source, sink).report_close_to(addr, closed_tx.clone());
         tokio::spawn(member.run(idle_seam()));
 
         let reported = tokio::time::timeout(Duration::from_secs(2), closed_rx.recv())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(reported, addr);
+        assert_eq!(reported, (identity, addr));
     }
 
     #[tokio::test]
@@ -927,7 +910,7 @@ mod tests {
         let (source, sink) = link_a.into_data();
         let _keep_peer_alive = link_b;
 
-        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<BleAddress>();
+        let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(BleIdentity, BleAddress)>();
         let member = BluetoothPeer::new(BleIdentity::new([1u8; 16]), source, sink)
             .report_close_to(addr, closed_tx.clone());
         let handle = tokio::spawn(member.run(idle_seam()));
