@@ -16,8 +16,8 @@
 use heapless::Vec as HeaplessVec;
 
 use crate::interfaces::{
-    AnnounceBandwidthCap, EgressCapability, IngressCapability, InterfaceCapabilities,
-    InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
+    AirtimeDutyCycle, AnnounceBandwidthCap, EgressCapability, IngressCapability,
+    InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 
 /// RNode's on-air link header is one byte (`HEADER_L` in the firmware).
@@ -220,17 +220,59 @@ impl Modulation {
     }
 }
 
+/// One percent, in the per-mille the airtime ledger speaks.
+const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
+/// How much projected transmit airtime a duty-limited interface queues before it drops the oldest
+/// frame — the gate's budget on a slow shared medium.
+const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
+
+/// The radio regulatory region — what bounds an interface's transmit airtime. Sub-GHz ISM bands
+/// carry different rules: the EU's 868 MHz band caps airtime at a 1% duty cycle, while the US
+/// 902-928 and Australian bands are dwell-time limited rather than duty-cycled, so they declare no
+/// ceiling here. A starting set — tune per deployment. The region drives only local TX pacing; it
+/// is outside the [`channel_tag`], so two nodes on different duty policies still hear each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Region {
+    /// EU 863-870 MHz: a 1% duty cycle over the hour window.
+    Eu868,
+    /// US 902-928 MHz: dwell-time limited, no duty cycle.
+    Us915,
+    /// Australia 915-928 MHz: dwell-time limited, no duty cycle.
+    Au915,
+    /// Asia 920-925 MHz: a conservative 1% (the rule varies by country).
+    As923,
+    /// No airtime ceiling — bench, testing, or an unregulated deployment.
+    Unlimited,
+}
+
+impl Region {
+    /// The airtime ceiling this region declares — host-enforced by the interface's duty gate — or
+    /// `None` for a region with no duty cycle. The 1% bands cap the hour-window utilization; the
+    /// queue budget bounds the airtime an over-limit interface holds before dropping the oldest.
+    pub const fn duty_cycle(self) -> Option<AirtimeDutyCycle> {
+        match self {
+            Self::Eu868 | Self::As923 => Some(AirtimeDutyCycle {
+                limit_short_per_mille: None,
+                limit_long_per_mille: Some(DUTY_ONE_PERCENT_PER_MILLE),
+                max_queued_airtime_ms: DUTY_QUEUE_BUDGET_MS,
+            }),
+            Self::Us915 | Self::Au915 | Self::Unlimited => None,
+        }
+    }
+}
+
 /// The full radio configuration both endpoints must agree on for a channel. The
 /// channel tag hashes over [`frequency`](Self::frequency) and
 /// [`modulation`](Self::modulation) — the settings that decide *who can hear whom*
-/// — so a change to either re-keys the interface's identity. Transmit power and
-/// preamble are local knobs, deliberately outside the tag.
+/// — so a change to either re-keys the interface's identity. Transmit power,
+/// preamble, and region are local knobs, deliberately outside the tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioProfile {
     pub frequency: Frequency,
     pub modulation: Modulation,
     pub tx_power: TxPower,
     pub preamble: PreambleSymbols,
+    pub region: Region,
 }
 
 impl RadioProfile {
@@ -239,9 +281,9 @@ impl RadioProfile {
     }
 }
 
-/// A sensible US-band LoRa starting point: 915 MHz, SF8 / 125 kHz / 4-5. The
-/// preamble is RNode's firmware default (18 symbols); the transmit power is a
-/// placeholder for the regional profile work.
+/// A sensible US-band LoRa starting point: 915 MHz (dwell-time limited, so no duty cycle),
+/// SF8 / 125 kHz / 4-5. The preamble is RNode's firmware default (18 symbols); transmit power is a
+/// placeholder pending the regional power tables.
 pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     frequency: Frequency::new(915_000_000),
     modulation: Modulation::Lora {
@@ -251,6 +293,7 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     },
     tx_power: TxPower::new(22),
     preamble: PreambleSymbols::new(18),
+    region: Region::Us915,
 };
 
 const MODULATION_TAG_LORA: u8 = 0x00;
@@ -263,7 +306,7 @@ pub const CHANNEL_TAG_CAP: usize = 14;
 /// The channel-identity bytes the interface id hashes over — a canonical encoding
 /// of the profile's frequency and modulation. Two nodes on the same channel derive
 /// the same tag (so they share an interface id); any settings change yields a new
-/// one (so it re-keys). Transmit power and preamble are excluded as local-only.
+/// one (so it re-keys). Transmit power, preamble, and region are excluded as local-only.
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
@@ -424,7 +467,7 @@ pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceConfig {
         hardware_mtu: Some(LORA_MAX_PAYLOAD),
         announce_rate_limit: None,
         announce_bandwidth_cap: AnnounceBandwidthCap::RNS_DEFAULT,
-        airtime_duty_cycle: None,
+        airtime_duty_cycle: profile.region.duty_cycle(),
     }
 }
 
@@ -623,6 +666,42 @@ mod tests {
             Some(DEFAULT_915_PROFILE.nominal_bitrate_bps())
         );
         assert_eq!(d.announce_bandwidth_cap, AnnounceBandwidthCap::RNS_DEFAULT);
+    }
+
+    #[test]
+    fn the_one_percent_regions_cap_the_hour_and_the_americas_declare_no_duty() {
+        let eu = Region::Eu868.duty_cycle().expect("the EU band is duty-limited");
+        assert_eq!(eu.limit_long_per_mille, Some(10), "1% over the hour window");
+        assert_eq!(eu.limit_short_per_mille, None);
+        assert_eq!(Region::As923.duty_cycle(), Region::Eu868.duty_cycle());
+        assert!(
+            Region::Us915.duty_cycle().is_none(),
+            "the US band is dwell-time, not duty-cycled"
+        );
+        assert!(Region::Au915.duty_cycle().is_none());
+        assert!(Region::Unlimited.duty_cycle().is_none());
+    }
+
+    #[test]
+    fn the_descriptor_carries_the_region_duty_cycle() {
+        let mut eu = DEFAULT_915_PROFILE;
+        eu.region = Region::Eu868;
+        let d = descriptor(InterfaceId::new([0x5C; INTERFACE_ID_LEN]), &eu);
+        assert_eq!(d.airtime_duty_cycle, Region::Eu868.duty_cycle());
+        let us = descriptor(InterfaceId::new([0x5C; INTERFACE_ID_LEN]), &DEFAULT_915_PROFILE);
+        assert_eq!(
+            us.airtime_duty_cycle, None,
+            "the US default declares no duty cycle"
+        );
+    }
+
+    #[test]
+    fn region_is_a_local_knob_outside_the_channel_tag() {
+        let mut a = DEFAULT_915_PROFILE;
+        let mut b = DEFAULT_915_PROFILE;
+        a.region = Region::Eu868;
+        b.region = Region::Unlimited;
+        assert_eq!(channel_tag(&a), channel_tag(&b));
     }
 
     proptest! {
