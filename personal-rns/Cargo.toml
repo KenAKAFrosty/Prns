@@ -45,6 +45,10 @@ embassy-contract = ["embassy-seam", "dep:embassy-futures", "dep:embedded-io-asyn
 # AutoInterface worker shell). The fresh interface rebuild covers USB + WiFi-auto; the
 # old LoRa/ESP-NOW radio shells were removed with the device host examples.
 embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:embedded-io-async-07", "dep:log"]
+# An embassy LoRa host: the contract seam + lora-phy driving an SX1262 (or any RadioKind). The
+# run loop is generic over the radio, so it compile-checks off-target like the others. GFSK/GMSK
+# speed mode is not reachable through lora-phy 3.0.1 (LoRa packet engine only); that rides a later path.
+embassy-lora = ["embassy-contract", "dep:lora-phy", "dep:log"]
 # The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) on the reactor
 # seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
 # reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
@@ -187,6 +191,9 @@ log = { version = "0.4", optional = true, default-features = false }
 # u32's 4 GiB. portable-atomic emulates them through critical-section (esp-hal supplies the
 # impl in the firmware binary; native on the host), keeping the counters true u64.
 portable-atomic = { version = "1", optional = true, default-features = false, features = ["critical-section"] }
+# The SX1262 LoRa driver — generic over an embedded-hal-async SPI + GPIO RadioKind, so the run loop
+# stays HAL-agnostic. Version-matched to the proven Heltec V4 bring-up. Only under `embassy-lora`.
+lora-phy = { version = "3.0.1", optional = true, default-features = false }
 
 # OS secret store for the host identity vault (under `keyring`): the platform's
 # own credential manager — Secret Service / kwallet on Linux, Keychain on macOS,
