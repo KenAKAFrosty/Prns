@@ -203,7 +203,11 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
         Some(entry)
     }
 
-    pub fn cull_interface_orphans(&mut self, interface_present: impl Fn(InterfaceId) -> bool) {
+    pub fn cull_interface_orphans(
+        &mut self,
+        interface_present: impl Fn(InterfaceId) -> bool,
+        mut on_culled: impl FnMut(InterfaceId),
+    ) {
         let mut index = 0;
         while index < self.columns.len() {
             let entry = self.columns.entries()[index];
@@ -212,6 +216,8 @@ impl<C: TransportedLinkColumns> TransportedLinks<C> {
             {
                 index += 1;
             } else {
+                on_culled(entry.next_hop_interface);
+                on_culled(entry.received_interface);
                 self.columns.swap_remove(index);
             }
         }
@@ -278,7 +284,7 @@ mod tests {
         on_gone.next_hop_interface = iface(0xEE);
         transported.track(on_gone).unwrap();
 
-        transported.cull_interface_orphans(|id| id != iface(0xEE));
+        transported.cull_interface_orphans(|id| id != iface(0xEE), |_| {});
 
         assert_eq!(transported.len(), 1);
         assert!(transported.entry_for(&LinkId::new([1; 16])).is_some());

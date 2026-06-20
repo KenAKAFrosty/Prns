@@ -33,6 +33,12 @@ impl InterfaceStore {
         }
     }
 
+    pub(crate) fn forget(&self, interface: InterfaceId) {
+        if let Ok(mut map) = self.inner.counts.lock() {
+            map.remove(&interface);
+        }
+    }
+
     pub(crate) fn bump(&self) {
         self.inner
             .epoch

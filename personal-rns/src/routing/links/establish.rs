@@ -306,6 +306,7 @@ impl<S: StorageLayout> EngineState<S> {
                 peer_signing,
             )
             .map_err(|_| WriteLinkRttError::NotPending)?;
+        self.mark_interface_dirty(attached_interface);
         self.routing_table
             .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
         Ok(written)

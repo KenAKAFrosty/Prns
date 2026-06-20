@@ -10,6 +10,7 @@ use crate::interfaces::InterfaceId;
 
 pub trait InterfaceCountSink {
     fn set(&self, interface: InterfaceId, counts: InterfaceCounts);
+    fn forget(&self, interface: InterfaceId);
     fn signal_changed(&self);
 }
 
@@ -51,7 +52,17 @@ impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
 impl<M: RawMutex, const N: usize> InterfaceCountSink for EmbassyInterfaceStore<M, N> {
     fn set(&self, interface: InterfaceId, counts: InterfaceCounts) {
         self.counts.lock(|cell| {
-            let _ = cell.borrow_mut().insert(interface, counts);
+            let stored = cell.borrow_mut().insert(interface, counts);
+            debug_assert!(
+                stored.is_ok(),
+                "EmbassyInterfaceStore capacity N is smaller than the live interface count"
+            );
+        });
+    }
+
+    fn forget(&self, interface: InterfaceId) {
+        self.counts.lock(|cell| {
+            let _ = cell.borrow_mut().remove(&interface);
         });
     }
 

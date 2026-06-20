@@ -663,7 +663,11 @@ async fn run_inner<S, H, M, const NOTIFY: usize, const COMMANDS: usize>(
             let mut dirty = core::mem::take(&mut engine.dirty_interfaces);
             let mut changed = false;
             dirty.drain(|interface| {
-                sink.set(interface, engine.interface_counts(interface));
+                if interfaces.iter().any(|config| config.id == interface) {
+                    sink.set(interface, engine.interface_counts(interface));
+                } else {
+                    sink.forget(interface);
+                }
                 changed = true;
             });
             if changed {
@@ -1121,7 +1125,11 @@ pub async fn run_pooled<
             let mut dirty = core::mem::take(&mut engine.dirty_interfaces);
             let mut changed = false;
             dirty.drain(|interface| {
-                sink.set(interface, engine.interface_counts(interface));
+                if configs.iter().any(|config| config.id == interface) {
+                    sink.set(interface, engine.interface_counts(interface));
+                } else {
+                    sink.forget(interface);
+                }
                 changed = true;
             });
             if changed {

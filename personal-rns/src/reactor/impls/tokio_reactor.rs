@@ -1324,7 +1324,11 @@ async fn run_inner<S, H, J, P>(
             engine.drain_dirty_interfaces(|interface| recompute.push(interface));
             if !recompute.is_empty() {
                 for interface in recompute.drain(..) {
-                    store.set(interface, engine.interface_counts(interface));
+                    if interfaces.iter().any(|config| config.id == interface) {
+                        store.set(interface, engine.interface_counts(interface));
+                    } else {
+                        store.forget(interface);
+                    }
                 }
                 store.bump();
             }

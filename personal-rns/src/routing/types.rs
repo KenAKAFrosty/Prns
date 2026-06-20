@@ -66,5 +66,6 @@ pub enum RouteRemovalCause {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemovedRoute {
     pub destination: crate::wire::DestinationHash,
+    pub receiving_interface: crate::interfaces::InterfaceId,
     pub cause: RouteRemovalCause,
 }

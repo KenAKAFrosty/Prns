@@ -8,12 +8,12 @@ use crate::engine::{
     Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
-use crate::interfaces::{InterfaceConfig, InterfaceId};
+use crate::interfaces::InterfaceConfig;
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
 use crate::routing::RouteResponsiveness;
-use crate::storage::StorageLayout;
+use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN};
 
 impl<S: StorageLayout> EngineState<S> {
@@ -95,6 +95,8 @@ impl<S: StorageLayout> EngineState<S> {
         let transport_id = self.transport_id;
         while let Some(overdue) = self.transported_links.pop_overdue(now) {
             if overdue.validated {
+                self.mark_interface_dirty(overdue.next_hop_interface);
+                self.mark_interface_dirty(overdue.received_interface);
                 continue;
             }
             let has_route = self.routing_table.has_route(&overdue.destination);
@@ -183,17 +185,21 @@ impl<S: StorageLayout> EngineState<S> {
         view: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
+        let dirty = &mut self.dirty_interfaces;
         self.routing_table
             .cull_expired_routes(now, view, &mut |removed| {
+                dirty.mark(removed.receiving_interface);
                 sink(EngineReaction::Journaled(
                     crate::engine::inbound::journal_removal(removed),
                 ));
             });
-        let interface_present = |id: InterfaceId| view.iter().any(|config| config.id == id);
         self.reverse_routes
-            .cull_interface_orphans(interface_present);
-        self.transported_links
-            .cull_interface_orphans(interface_present);
+            .cull_interface_orphans(|id| view.iter().any(|config| config.id == id));
+        let dirty = &mut self.dirty_interfaces;
+        self.transported_links.cull_interface_orphans(
+            |id| view.iter().any(|config| config.id == id),
+            &mut |iface| dirty.mark(iface),
+        );
         WakeSchedules {
             expired_routes: self.route_expiry_wake(view),
             ..WakeSchedules::UNCHANGED
@@ -253,6 +259,47 @@ mod tests {
             crate::engine::LaneWake::Idle,
             "nothing is left to wake for",
         );
+    }
+
+    #[cfg(feature = "tokio-host")]
+    #[test]
+    fn a_dropped_route_marks_its_interface_so_the_destination_count_recomputes() {
+        use crate::engine::test_support::{hx, routable_descriptor, RAW_ANNOUNCE, TEST_ENTROPY};
+        use crate::interfaces::{InboundPacket, InterfaceId};
+
+        let source = InterfaceId::new([0u8; 8]);
+        let mut engine = EngineState::<Cap>::default();
+        let mut raw = hx(RAW_ANNOUNCE);
+        let _ = engine.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: source,
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &[routable_descriptor(source)],
+        );
+
+        let mut on_insert = std::vec::Vec::new();
+        engine.drain_dirty_interfaces(|interface| on_insert.push(interface));
+        assert_eq!(
+            on_insert,
+            std::vec![source],
+            "learning a route marks the interface it arrived on",
+        );
+        assert_eq!(engine.interface_counts(source).destinations, 1);
+
+        let without_source = [routable_descriptor(InterfaceId::new([0xEE; 8]))];
+        engine.cull_expired_routes(InstantMillis(2_000), &without_source, &mut |_| {});
+
+        let mut on_cull = std::vec::Vec::new();
+        engine.drain_dirty_interfaces(|interface| on_cull.push(interface));
+        assert_eq!(
+            on_cull,
+            std::vec![source],
+            "dropping the route re-marks the interface, so the stale count never lingers silently",
+        );
+        assert_eq!(engine.interface_counts(source).destinations, 0);
     }
 
     #[test]

@@ -268,6 +268,7 @@ where
         };
         on_removed(RemovedRoute {
             destination: self.routes.destinations()[i],
+            receiving_interface: self.routes.receiving_interfaces()[i],
             cause: RouteRemovalCause::Evicted,
         });
         self.remove_route(i);
@@ -412,6 +413,7 @@ where
                 };
                 on_removed(RemovedRoute {
                     destination: self.routes.destinations()[i],
+                    receiving_interface,
                     cause,
                 });
                 self.remove_route(i);
@@ -771,6 +773,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(2),
+                receiving_interface: roaming_interface,
                 cause: RouteRemovalCause::Evicted,
             }],
             "the roaming route expires in six hours, nearer death than the full one with a week to live",
@@ -963,6 +966,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(1),
+                receiving_interface: source(),
                 cause: RouteRemovalCause::Evicted,
             }],
             "the victim is the earliest arrival — the route nearest its expiry",
@@ -1074,6 +1078,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(1),
+                receiving_interface: source(),
                 cause: RouteRemovalCause::Evicted,
             }],
         );
@@ -1120,6 +1125,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(1),
+                receiving_interface: source(),
                 cause: RouteRemovalCause::Evicted,
             }],
             "each attempt evicts at most one victim",
@@ -1143,6 +1149,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(2),
+                receiving_interface: source(),
                 cause: RouteRemovalCause::Evicted,
             }],
         );
@@ -1328,14 +1335,17 @@ mod tests {
             std::vec![
                 RemovedRoute {
                     destination: dest(1),
+                    receiving_interface: source(),
                     cause: RouteRemovalCause::Expired,
                 },
                 RemovedRoute {
                     destination: dest(2),
+                    receiving_interface: source(),
                     cause: RouteRemovalCause::Expired,
                 },
                 RemovedRoute {
                     destination: dest(4),
+                    receiving_interface: source(),
                     cause: RouteRemovalCause::Expired,
                 },
             ],
@@ -1454,6 +1464,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(2),
+                receiving_interface: vanishing_interface,
                 cause: RouteRemovalCause::InterfaceGone,
             }],
         );
@@ -1510,6 +1521,7 @@ mod tests {
             removed,
             std::vec![RemovedRoute {
                 destination: dest(2),
+                receiving_interface: vanishing_interface,
                 cause: RouteRemovalCause::InterfaceGone,
             }],
             "the orphan is already due, so the inline cull takes it before eviction is consulted",
@@ -1551,10 +1563,12 @@ mod tests {
             std::vec![
                 RemovedRoute {
                     destination: dest(1),
+                    receiving_interface: source(),
                     cause: RouteRemovalCause::Expired,
                 },
                 RemovedRoute {
                     destination: dest(2),
+                    receiving_interface: source(),
                     cause: RouteRemovalCause::Expired,
                 },
             ],

@@ -21,7 +21,11 @@ impl DirtyInterfaceSet for alloc::collections::BTreeSet<InterfaceId> {
 impl<const N: usize> DirtyInterfaceSet for heapless::Vec<InterfaceId, N> {
     fn mark(&mut self, interface: InterfaceId) {
         if !self.contains(&interface) {
-            let _ = self.push(interface);
+            let pushed = self.push(interface);
+            debug_assert!(
+                pushed.is_ok(),
+                "dirty interface set capacity is smaller than the live interface count"
+            );
         }
     }
 

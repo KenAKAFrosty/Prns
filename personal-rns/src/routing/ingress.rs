@@ -49,7 +49,7 @@ use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TI
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, RouteResponsiveness, UpsertRouteOutcome};
-use crate::storage::StorageLayout;
+use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::units::Rtt;
 use crate::wire::{ContextFlag, IfacFlag, PropagationType};
 use crate::wire::{
@@ -900,6 +900,8 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored;
         };
         let destination = entry.destination;
+        let next_hop_interface = entry.next_hop_interface;
+        let received_interface = entry.received_interface;
         let Some(retained) = self.routing_table.retained_announce_for(&destination) else {
             return IngestPacketOutcome::Ignored;
         };
@@ -915,6 +917,8 @@ impl<S: StorageLayout> EngineState<S> {
         ) else {
             return IngestPacketOutcome::Ignored;
         };
+        self.mark_interface_dirty(next_hop_interface);
+        self.mark_interface_dirty(received_interface);
         self.routing_table
             .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
         IngestPacketOutcome::Forward(PacketToForward {
@@ -1119,6 +1123,7 @@ impl<S: StorageLayout> EngineState<S> {
         {
             return IngestPacketOutcome::Ignored;
         }
+        self.mark_interface_dirty(source_interface);
         let responder_destination = match self.links.phase_for(&link_id) {
             Some(LinkPhase::Active {
                 role: LinkRole::Responder { destination, .. },
@@ -1391,8 +1396,13 @@ impl<S: StorageLayout> EngineState<S> {
 
     fn classify_link_close(&mut self, data: DataPacket<'_>) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::new(*data.destination.as_bytes());
-        let key = match self.links.phase_for(&link_id) {
-            Some(LinkPhase::Active { key, .. } | LinkPhase::Handshake { key, .. }) => key,
+        let (key, attached_interface) = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Active {
+                key,
+                attached_interface,
+                ..
+            }) => (key, Some(*attached_interface)),
+            Some(LinkPhase::Handshake { key, .. }) => (key, None),
             Some(LinkPhase::Pending { .. }) | None => return IngestPacketOutcome::Ignored,
         };
         let Ok(plaintext) = key.open_in_place(data.payload) else {
@@ -1405,6 +1415,9 @@ impl<S: StorageLayout> EngineState<S> {
         self.channels.close(&link_id);
         self.incoming_assemblies.clear(&link_id);
         self.outgoing_assemblies.clear(&link_id);
+        if let Some(interface) = attached_interface {
+            self.mark_interface_dirty(interface);
+        }
         IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 
@@ -1849,6 +1862,11 @@ impl<S: StorageLayout> EngineState<S> {
             return AnnounceIngest::Ignored;
         }
 
+        let previous_interface = self
+            .routing_table
+            .path_row(&announce.destination)
+            .map(|entry| entry.receiving_interface);
+        let dirty = &mut self.dirty_interfaces;
         let outcome = self.routing_table.upsert_route(
             received_hops,
             arrived_at,
@@ -1856,11 +1874,17 @@ impl<S: StorageLayout> EngineState<S> {
             interfaces,
             next_hop,
             &announce,
-            on_removed,
+            &mut |removed| {
+                dirty.mark(removed.receiving_interface);
+                on_removed(removed);
+            },
         );
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
                 self.mark_interface_dirty(source_interface);
+                if let Some(previous) = previous_interface {
+                    self.mark_interface_dirty(previous);
+                }
                 // An announce that answers a discovery we forwarded on a stranger's
                 // behalf is steered straight back to the interface that asked. A path
                 // response is otherwise terminal at us, so without this the answer the
