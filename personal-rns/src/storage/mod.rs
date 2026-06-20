@@ -1,5 +1,7 @@
+mod dirty;
 mod impls;
 
+pub use dirty::DirtyInterfaceSet;
 pub use impls::*;
 
 use crate::crypto::ratchets::SelfRatchetColumns;
@@ -71,4 +73,5 @@ pub trait StorageLayout {
     type IncomingAssemblies: IncomingAssemblyColumns + Default;
     type OutgoingAssemblies: OutgoingAssemblyColumns + Default;
     type Channels: ChannelColumns + Default;
+    type DirtyInterfaces: DirtyInterfaceSet + Default;
 }

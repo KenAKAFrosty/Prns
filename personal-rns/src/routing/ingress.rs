@@ -1860,6 +1860,7 @@ impl<S: StorageLayout> EngineState<S> {
         );
         match outcome {
             UpsertRouteOutcome::Inserted | UpsertRouteOutcome::Updated => {
+                self.mark_interface_dirty(source_interface);
                 // An announce that answers a discovery we forwarded on a stranger's
                 // behalf is steered straight back to the interface that asked. A path
                 // response is otherwise terminal at us, so without this the answer the

@@ -92,7 +92,7 @@ use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
-use crate::storage::StorageLayout;
+use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
 use zeroize::Zeroizing;
 
@@ -243,6 +243,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
     pub(crate) channels: S::Channels,
+    pub(crate) dirty_interfaces: S::DirtyInterfaces,
 }
 
 impl<S: StorageLayout> Default for EngineState<S> {
@@ -276,6 +277,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             incoming_assemblies: IncomingAssemblies::default(),
             outgoing_assemblies: OutgoingAssemblies::default(),
             channels: Default::default(),
+            dirty_interfaces: Default::default(),
         }
     }
 }
@@ -343,6 +345,10 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn transported_links_via(&self, interface: InterfaceId) -> usize {
         self.transported_links.links_via(interface)
+    }
+
+    pub(crate) fn mark_interface_dirty(&mut self, interface: InterfaceId) {
+        self.dirty_interfaces.mark(interface);
     }
 
     pub fn scheduled_announce_count(&self) -> usize {

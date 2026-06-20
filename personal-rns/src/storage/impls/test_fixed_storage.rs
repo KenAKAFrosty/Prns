@@ -110,6 +110,7 @@ impl<
     type InterfacePathRequestLimits =
         FixedInterfacePathRequestLimitColumns<MAX_PENDING_PATH_REQUESTS>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<MAX_PENDING_PATH_REQUESTS>;
+    type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
     type HeldAnnounces = FixedHeldAnnounceColumns<MAX_PENDING_PATH_REQUESTS>;
     type HeldAnnounceAppData =
         PackedAppDataArena<ANNOUNCE_APP_DATA_ARENA_BYTES, MAX_PENDING_PATH_REQUESTS>;

@@ -28,7 +28,9 @@ use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
 use crate::routing::routes::HeapRouteColumns;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
+use crate::interfaces::InterfaceId;
 use crate::storage::StorageLayout;
+use alloc::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GrowableHeap;
@@ -63,6 +65,7 @@ impl StorageLayout for GrowableHeap {
     type IncomingAssemblies = HeapIncomingAssemblyColumns;
     type OutgoingAssemblies = HeapOutgoingAssemblyColumns;
     type Channels = HeapChannelColumns;
+    type DirtyInterfaces = BTreeSet<InterfaceId>;
 }
 
 #[cfg(test)]

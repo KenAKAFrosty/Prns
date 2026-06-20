@@ -86,6 +86,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+    type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
     type HeldAnnounces = FixedHeapHeldAnnounceColumns<64, A>;
     type HeldAnnounceAppData = FixedHeapPackedAppDataArena<8192, 64, A>;
     type AnnounceRates = FixedHeapAnnounceRateColumns<MAX_TRACKED_DESTINATIONS, A>;

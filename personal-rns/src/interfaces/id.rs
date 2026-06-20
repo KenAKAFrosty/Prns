@@ -14,7 +14,7 @@ const CHANNEL_TAG_HASH_LEN: usize = 7;
 /// stores one inline.
 pub const INTERFACE_ID_LEN: usize = 1 + CHANNEL_TAG_HASH_LEN;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InterfaceId([u8; INTERFACE_ID_LEN]);
 
 impl InterfaceId {

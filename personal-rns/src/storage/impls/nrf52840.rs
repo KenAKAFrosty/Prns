@@ -63,6 +63,7 @@ impl StorageLayout for Nrf52840 {
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;
+    type DirtyInterfaces = heapless::Vec<crate::interfaces::InterfaceId, 8>;
     type HeldAnnounces = FixedHeldAnnounceColumns<8>;
     type HeldAnnounceAppData = PackedAppDataArena<1024, 8>;
     type AnnounceRates = FixedAnnounceRateColumns<{ Self::TRACKED_DESTINATIONS }>;
