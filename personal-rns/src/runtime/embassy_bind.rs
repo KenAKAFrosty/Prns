@@ -39,7 +39,7 @@ use crate::wire::DestinationHash;
 
 use super::recipe::PreConfiguredDestination;
 use super::request_router::{RespondToken, RouteSet};
-use super::{PrnsEvent, PrnsRecipe, SendError};
+use super::{InterfaceCountSink, PrnsEvent, PrnsRecipe, SendError};
 
 /// The free-slot sentinel — no real [`CommandId`] reaches `u64::MAX` (the handle mints from zero).
 const NO_AWAITER: u64 = u64::MAX;
@@ -392,6 +392,7 @@ pub struct Prns<
     state: St,
     on_event: F,
     _routes: PhantomData<R>,
+    store: Option<&'static dyn InterfaceCountSink>,
 }
 
 impl<
@@ -487,7 +488,12 @@ where
             state: recipe.app_state,
             on_event: recipe.on_event,
             _routes: PhantomData,
+            store: None,
         }
+    }
+
+    pub fn set_interface_store(&mut self, store: &'static dyn InterfaceCountSink) {
+        self.store = Some(store);
     }
 
     /// The command surface for this node — the embedded twin of `TokioPrnsHandle`. `Copy`, so any task
@@ -538,6 +544,7 @@ where
             state,
             mut on_event,
             _routes,
+            store,
         } = self;
         let reactor = run_pooled(
             &mut engine,
@@ -557,6 +564,7 @@ where
                 on_event(PrnsEvent::from(journaled), &state);
             },
             |_| false,
+            store,
         );
         join(reactor, drive).await;
     }
@@ -580,6 +588,7 @@ where
             state,
             on_event,
             _routes,
+            store,
         } = self;
         run_pooled(
             engine,
@@ -599,6 +608,7 @@ where
                 on_event(PrnsEvent::from(journaled), state);
             },
             |_| false,
+            *store,
         )
         .await;
     }

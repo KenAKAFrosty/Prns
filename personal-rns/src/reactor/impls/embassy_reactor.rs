@@ -937,6 +937,7 @@ pub async fn run_pooled<
     lifecycle: Receiver<'_, M, InterfaceLifecycle, LIFECYCLE>,
     mut on_journaled: impl FnMut(Journaled<'_>),
     mut should_prove: impl FnMut(&ProofRequest) -> bool,
+    store: Option<&dyn InterfaceCountSink>,
 ) where
     S: StorageLayout,
     H: Host,
@@ -1115,6 +1116,17 @@ pub async fn run_pooled<
                     }
                 }
             },
+        }
+        if let Some(sink) = store {
+            let mut dirty = core::mem::take(&mut engine.dirty_interfaces);
+            let mut changed = false;
+            dirty.drain(|interface| {
+                sink.set(interface, engine.interface_counts(interface));
+                changed = true;
+            });
+            if changed {
+                sink.signal_changed();
+            }
         }
     }
 }
@@ -1441,6 +1453,7 @@ mod tests {
                 lifecycle.receiver(),
                 app,
                 |_: &ProofRequest| false,
+                None,
             );
 
             let driver = async {
