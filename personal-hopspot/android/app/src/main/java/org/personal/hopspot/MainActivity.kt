@@ -112,14 +112,20 @@ private class HopspotView(
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onSingleTapUp(e: MotionEvent): Boolean {
-                NativeBridge.nativePostInput(handle, NativeBridge.INPUT_SHORT_PRESS)
+                act(NativeBridge.nativePostInput(handle, NativeBridge.INPUT_SHORT_PRESS))
                 invalidate()
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
-                NativeBridge.nativePostInput(handle, NativeBridge.INPUT_LONG_PRESS)
+                act(NativeBridge.nativePostInput(handle, NativeBridge.INPUT_LONG_PRESS))
                 invalidate()
+            }
+
+            private fun act(action: Int) {
+                if (action == NativeBridge.ACTION_ANNOUNCE) {
+                    NativeBridge.nativeAnnounce()
+                }
             }
         },
     )

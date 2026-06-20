@@ -96,6 +96,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativePostInput(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeAnnounce(
+    _env: JNIEnv,
+    _class: JClass,
+) {
+    crate::engine::announce();
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRender(
     env: JNIEnv,
     _class: JClass,

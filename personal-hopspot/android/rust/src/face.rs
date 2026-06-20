@@ -8,7 +8,7 @@ use personal_rns::interfaces::InterfaceStatus;
 use crate::engine::{classify, ensure_started, interface_snapshots, wifi_status};
 use crate::framebuffer::FrameBuffer;
 
-const MAX_CARDS: usize = 8;
+const MAX_CARDS: usize = 16;
 
 pub struct HopspotFace {
     state: UiState,

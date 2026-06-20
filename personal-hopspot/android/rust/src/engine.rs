@@ -45,6 +45,7 @@ struct Engine {
     bridge: AndroidUsbBridge,
     ble: AndroidBleBridge,
     handle: TokioPrnsHandle,
+    destination: DestinationHash,
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
@@ -59,6 +60,18 @@ pub(crate) fn wifi_status() -> AutoWifiStatus {
 
 pub(crate) fn interface_snapshots() -> std::vec::Vec<InterfaceSnapshot> {
     engine().handle.interface_snapshots()
+}
+
+/// Fire an immediate `lxmf.delivery` announce across every interface — the manual counterpart to the
+/// scheduled [`announce_loop`], driven by the Hopspot's global "Announce" menu item.
+pub(crate) fn announce() {
+    let engine = engine();
+    log::info!("hopspot: manual announce -> lxmf.delivery on every interface");
+    let _ = engine.handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+        destination: engine.destination,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    }));
 }
 
 pub(crate) fn usb_bridge() -> AndroidUsbBridge {
@@ -99,6 +112,7 @@ pub(crate) fn classify(id: InterfaceId, wifi_id: InterfaceId) -> Option<(CardKin
 struct Ready {
     wifi_status: AutoWifiStatus,
     handle: TokioPrnsHandle,
+    destination: DestinationHash,
 }
 
 fn spawn_engine() -> Engine {
@@ -118,6 +132,7 @@ fn spawn_engine() -> Engine {
         bridge,
         ble,
         handle: ready.handle,
+        destination: ready.destination,
     }
 }
 
@@ -217,6 +232,7 @@ fn run_engine(ready_tx: Sender<Ready>, bridge: AndroidUsbBridge, ble: AndroidBle
         let _ = ready_tx.send(Ready {
             wifi_status,
             handle: handle.clone(),
+            destination,
         });
 
         tokio::spawn(announce_loop(handle, destination));

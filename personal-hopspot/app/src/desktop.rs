@@ -747,7 +747,7 @@ fn run_window(handles: WindowHandles) {
                     transported_links: total.transported_links + member_counts.transported_links,
                 }
             });
-        let cards: HVec<Card, 8> = screen::statuses_to_cards(&snapshots, classify, |id| {
+        let cards: HVec<Card, 16> = screen::statuses_to_cards(&snapshots, classify, |id| {
             if id == wifi_id {
                 wifi_counts
             } else {
