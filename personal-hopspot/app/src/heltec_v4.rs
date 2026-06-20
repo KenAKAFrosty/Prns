@@ -20,7 +20,7 @@ use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::join;
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select3, Either3};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
@@ -63,8 +63,8 @@ use personal_rns::reactor::impls::embassy_reactor::{
 };
 use personal_rns::reactor::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::runtime::{
-    CompletionPool, EmbassyPrnsHandle, Fleet, MemberWire, PreConfiguredDestination, Prns,
-    PrnsEvent, PrnsRecipe, ReactorPlumbing,
+    CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, Fleet, MemberWire,
+    PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
 use personal_rns::wire::TransportId;
 
@@ -218,6 +218,11 @@ static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP>
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
+/// Per-interface engine counts the reactor (core 1) pushes into and the render task (core 0) reads —
+/// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
+/// power of two above the interface ceiling, so a live interface's counts never get dropped.
+static INTERFACE_COUNTS: EmbassyInterfaceStore<Mtx, INTERFACE_STORE_CAP> = EmbassyInterfaceStore::new();
+const INTERFACE_STORE_CAP: usize = 32;
 
 /// The engine's entropy: the hardware TRNG blocks until WiFi RF is live (wifi::new enables it, but
 /// the radio is not associated when the engine starts), so entropy is a board-unique software PRNG
@@ -395,6 +400,7 @@ pub async fn run(spawner: Spawner) {
     if wifi.is_some() {
         node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
     }
+    node.set_interface_store(&INTERFACE_COUNTS);
 
     log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
 
@@ -467,6 +473,7 @@ pub async fn run(spawner: Spawner) {
         let mut battery_state = screen::BatteryState::Unknown;
         let mut ticks_to_battery: u8 = 0;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
+        let mut settle_after_draw = false;
         loop {
             if ticks_to_battery == 0 {
                 let mut pin_mv = 0u16;
@@ -492,27 +499,39 @@ pub async fn run(spawner: Spawner) {
                 };
                 ticks_to_battery = RENDER_TICKS_PER_BATTERY;
             }
-            ticks_to_battery -= 1;
 
             let cards = build_cards(
-                &handle,
                 &USB_STATUS,
                 wifi_status.as_ref(),
                 wifi_id,
                 tcp_status,
                 tcp_id,
-            )
-            .await;
+            );
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
             if oled_ok {
                 screen::draw_with_state(&mut display, &cards, battery_state, &ui_state);
                 let _ = display.flush();
             }
+            if settle_after_draw {
+                Timer::after(Duration::from_millis(screen::COALESCE_MS)).await;
+                settle_after_draw = false;
+            }
 
-            match select(render_tick.next(), BUTTON_EVENTS.receive()).await {
-                Either::First(()) => {}
-                Either::Second(event) => match ui_state.handle_input(event, card_count) {
+            match select3(
+                INTERFACE_COUNTS.changed(),
+                BUTTON_EVENTS.receive(),
+                render_tick.next(),
+            )
+            .await
+            {
+                Either3::First(()) => {
+                    settle_after_draw = true;
+                }
+                Either3::Third(()) => {
+                    ticks_to_battery = ticks_to_battery.saturating_sub(1);
+                }
+                Either3::Second(event) => match ui_state.handle_input(event, card_count) {
                     screen::UiAction::Announce => {
                         let _ = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
                             destination: self_destination,
@@ -570,8 +589,7 @@ async fn reactor_core(node: &'static mut S3Node) {
 
 /// Build the card set: the USB host, the WiFi aggregate, and one card per confirmed peer —
 /// classified into USB / WiFi / `Peer <hex>`, the same shape the desktop face renders.
-async fn build_cards(
-    handle: &Handle,
+fn build_cards(
     usb: &EmbassyInterfaceStatus,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_id: Option<InterfaceId>,
@@ -611,7 +629,7 @@ async fn build_cards(
     let mut snapshots: HVec<InterfaceSnapshot, 8> = HVec::new();
     for (status, membership) in &entries {
         let id = status.id();
-        let counts = handle.interface_counts(id).await.unwrap_or_default();
+        let counts = INTERFACE_COUNTS.counts(id);
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             connection: status.connection(),

@@ -9,6 +9,11 @@ pub use screen::{
 
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
 
+/// The faces' redraw-coalescing window, in milliseconds. A burst of engine changes inside this span
+/// folds into one repaint (~30 fps). It bounds how fast a face repaints when things change; it is not
+/// a frame clock — a face wakes on the store's signal and stays idle when nothing moves.
+pub const COALESCE_MS: u64 = 33;
+
 fn liveness(connection: ConnectionState) -> Liveness {
     match connection {
         ConnectionState::Connected | ConnectionState::Degraded => Liveness::Live,

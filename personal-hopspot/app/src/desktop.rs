@@ -73,7 +73,7 @@ const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 /// The simulator panel matches the S3's rotated OLED: 64 wide × 128 tall.
 const PANEL: Size = Size::new(64, 128);
 /// UI repaint cadence — keeps the window responsive and re-reads the live status each frame.
-const FRAME: Duration = Duration::from_millis(33);
+const FRAME: Duration = Duration::from_millis(screen::COALESCE_MS);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
@@ -703,75 +703,88 @@ fn run_window(handles: WindowHandles) {
     let mut ui_state = UiState::new();
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
+    let mut interface_changes = query_handle.interface_store().subscribe();
+    let mut cards: HVec<Card, 16> = HVec::new();
+    let mut needs_redraw = true;
     loop {
-        let snapshots = query_handle.interfaces();
-
-        for status in &snapshots {
-            let connection = status.connection;
-            if last_logged.get(&status.id) != Some(&connection) {
-                println!(
-                    "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
-                    classify(status.id)
-                        .as_ref()
-                        .map_or("?", |(_, label)| label.as_str()),
-                    status.rx_bytes,
-                    status.tx_bytes,
-                );
-                last_logged.insert(status.id, connection);
-            }
-        }
-
-        let cards: HVec<Card, 16> = screen::snapshots_to_cards(&snapshots, classify);
-        let card_count = cards.len();
-        ui_state.sync_card_count(card_count);
-        let long_press = dispatch_long_press_if_ready(
-            &mut active_press,
-            Instant::now(),
-            card_count,
-            &mut ui_state,
-        );
-        let selected = selected_card_id(&ui_state, card_count, &cards);
-        apply_action(long_press, selected);
-
-        screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
-
-        window.update(&display);
         for event in window.events() {
             match event {
                 SimulatorEvent::Quit => return,
                 SimulatorEvent::KeyDown { repeat: false, .. } => {
                     active_press.get_or_insert(press_start(PressSource::Key));
+                    needs_redraw = true;
                 }
                 SimulatorEvent::KeyUp { .. } => {
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Key,
                         Instant::now(),
-                        card_count,
+                        cards.len(),
                         &mut ui_state,
                     );
-                    let selected = selected_card_id(&ui_state, card_count, &cards);
+                    let selected = selected_card_id(&ui_state, cards.len(), &cards);
                     apply_action(released, selected);
+                    needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonDown { .. } => {
                     active_press.get_or_insert(press_start(PressSource::Mouse));
+                    needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonUp { .. } => {
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Mouse,
                         Instant::now(),
-                        card_count,
+                        cards.len(),
                         &mut ui_state,
                     );
-                    let selected = selected_card_id(&ui_state, card_count, &cards);
+                    let selected = selected_card_id(&ui_state, cards.len(), &cards);
                     apply_action(released, selected);
+                    needs_redraw = true;
                 }
                 SimulatorEvent::KeyDown { repeat: true, .. }
                 | SimulatorEvent::MouseWheel { .. }
                 | SimulatorEvent::MouseMove { .. } => {}
             }
         }
+
+        let holding = active_press.is_some();
+        let long_press = dispatch_long_press_if_ready(
+            &mut active_press,
+            Instant::now(),
+            cards.len(),
+            &mut ui_state,
+        );
+        let selected = selected_card_id(&ui_state, cards.len(), &cards);
+        apply_action(long_press, selected);
+
+        if holding || interface_changes.drain_changed() {
+            needs_redraw = true;
+        }
+
+        if needs_redraw {
+            let snapshots = query_handle.interfaces();
+            for status in &snapshots {
+                let connection = status.connection;
+                if last_logged.get(&status.id) != Some(&connection) {
+                    println!(
+                        "HOPSPOT_STATUS interface={} state={connection:?} rx={} tx={}",
+                        classify(status.id)
+                            .as_ref()
+                            .map_or("?", |(_, label)| label.as_str()),
+                        status.rx_bytes,
+                        status.tx_bytes,
+                    );
+                    last_logged.insert(status.id, connection);
+                }
+            }
+            cards = screen::snapshots_to_cards(&snapshots, classify);
+            ui_state.sync_card_count(cards.len());
+            screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
+            window.update(&display);
+            needs_redraw = false;
+        }
+
         std::thread::sleep(FRAME);
     }
 }

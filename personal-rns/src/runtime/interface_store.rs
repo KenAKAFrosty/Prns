@@ -71,6 +71,16 @@ impl Subscription {
     pub async fn changed(&mut self) {
         let _ = self.rx.changed().await;
     }
+
+    /// Non-blocking poll for a sync render loop: `true` if counts moved since the last call, marking
+    /// the change consumed so it reports once. The async [`changed`](Self::changed) is the parked path.
+    pub fn drain_changed(&mut self) -> bool {
+        let moved = self.rx.has_changed().unwrap_or(false);
+        if moved {
+            let _ = self.rx.borrow_and_update();
+        }
+        moved
+    }
 }
 
 #[cfg(test)]
