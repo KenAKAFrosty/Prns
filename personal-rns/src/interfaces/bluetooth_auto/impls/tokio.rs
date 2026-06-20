@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures_util::stream::FuturesUnordered;
@@ -77,6 +77,11 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
     pub fn identity(&self) -> BleIdentity {
         self.identity
     }
+
+    #[must_use]
+    pub fn status(&self) -> TokioInterfaceStatus {
+        self.status.clone()
+    }
 }
 
 impl<Src: BleSource, Snk: BleSink> Interface for BluetoothPeer<Src, Snk> {
@@ -140,6 +145,7 @@ struct Settled {
     member: AttachedInterface,
     keeper: bool,
     address: BleAddress,
+    status: TokioInterfaceStatus,
 }
 
 struct HandshakeDone<L: BleLink> {
@@ -201,7 +207,7 @@ pub struct BluetoothAutoStatus {
 struct BluetoothAutoShared {
     id: InterfaceId,
     up: AtomicBool,
-    peers: AtomicU32,
+    members: Mutex<std::vec::Vec<TokioInterfaceStatus>>,
 }
 
 impl BluetoothAutoStatus {
@@ -210,7 +216,7 @@ impl BluetoothAutoStatus {
             shared: Arc::new(BluetoothAutoShared {
                 id,
                 up: AtomicBool::new(false),
-                peers: AtomicU32::new(0),
+                members: Mutex::new(std::vec::Vec::new()),
             }),
         }
     }
@@ -219,8 +225,10 @@ impl BluetoothAutoStatus {
         self.shared.up.store(true, Ordering::Relaxed);
     }
 
-    fn set_peers(&self, peers: u32) {
-        self.shared.peers.store(peers, Ordering::Relaxed);
+    fn set_members(&self, members: std::vec::Vec<TokioInterfaceStatus>) {
+        if let Ok(mut slot) = self.shared.members.lock() {
+            *slot = members;
+        }
     }
 }
 
@@ -232,7 +240,12 @@ impl InterfaceStatus for BluetoothAutoStatus {
     fn connection(&self) -> ConnectionState {
         if !self.shared.up.load(Ordering::Relaxed) {
             ConnectionState::Initializing
-        } else if self.shared.peers.load(Ordering::Relaxed) > 0 {
+        } else if self
+            .shared
+            .members
+            .lock()
+            .is_ok_and(|members| !members.is_empty())
+        {
             ConnectionState::Connected
         } else {
             ConnectionState::Disconnected
@@ -240,15 +253,30 @@ impl InterfaceStatus for BluetoothAutoStatus {
     }
 
     fn rx_bytes(&self) -> u64 {
-        0
+        self.shared
+            .members
+            .lock()
+            .map(|members| members.iter().map(InterfaceStatus::rx_bytes).sum())
+            .unwrap_or(0)
     }
 
     fn tx_bytes(&self) -> u64 {
-        0
+        self.shared
+            .members
+            .lock()
+            .map(|members| members.iter().map(InterfaceStatus::tx_bytes).sum())
+            .unwrap_or(0)
     }
 
     fn transfer_rates(&self) -> Option<TransferRates> {
-        None
+        let members = self.shared.members.lock().ok()?;
+        members
+            .iter()
+            .filter_map(InterfaceStatus::transfer_rates)
+            .reduce(|acc, rates| TransferRates {
+                rx_bps: acc.rx_bps.saturating_add(rates.rx_bps),
+                tx_bps: acc.tx_bps.saturating_add(rates.tx_bps),
+            })
     }
 }
 
@@ -343,7 +371,7 @@ where
                     backend.on_link_closed(address).await;
                 }
             }
-            status.set_peers(settled.len() as u32);
+            status.set_members(settled.values().map(|peer| peer.status.clone()).collect());
             reconcile_advertising(&mut backend, &mut advertising, settled.len() < B::MAX_PEERS)
                 .await;
         }
@@ -490,6 +518,7 @@ async fn resolve<B>(
     let (source, sink) = link.into_data();
     let member =
         BluetoothPeer::new(identity, source, sink).report_close_to(address, closed.clone());
+    let status = member.status();
     let attached = fleet.add(member);
     settled.insert(
         identity,
@@ -497,6 +526,7 @@ async fn resolve<B>(
             member: attached,
             keeper,
             address,
+            status,
         },
     );
     settled_by_addr.insert(address, identity);
