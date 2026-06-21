@@ -19,7 +19,7 @@ use heapless::Vec as HeaplessVec;
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::rnode_lora::core::{
     self, air_frame_count, encode_air_frame_part, CodingRate, LoRaReassembler, LoraBandwidth,
-    Modulation, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
+    Modulation, PulseShaping, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
     LORA_SINGLE_FRAME_MAX,
 };
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
@@ -48,6 +48,11 @@ const CSMA_CW_MAX: u32 = 15;
 /// After this many backoff restarts on a channel that stays busy, transmit anyway — a stuck or
 /// jammed channel mustn't starve the node forever. ~16 restarts ≈ several seconds of deferral.
 const CSMA_MAX_RESTARTS: u32 = 16;
+/// Hard ceiling on how long one outbound packet may be deferred. The per-window restart counter
+/// can be reset by every received frame, so a relentless RX stream (real, or a misconfigured modem
+/// false-triggering on noise) could otherwise starve the transmitter forever — this guarantees the
+/// packet goes out within a bounded time regardless of how the contention window keeps restarting.
+const CSMA_MAX_DEFER_MS: u64 = 2_500;
 /// RSSI (dBm) at or above which a frame is judged to be on air, so the transmit holds off. Well
 /// over the BW125 noise floor (~-120 dBm), under a desk-adjacent peer (~-40 dBm).
 const CHANNEL_BUSY_DBM: i16 = -95;
@@ -109,54 +114,82 @@ async fn deliver_rx<Seam: InterfaceSeam>(
 /// (set-frequency, set-modulation, …) lands with the reconfigure arc.
 pub type LoRaControl = Signal<CriticalSectionRawMutex, RadioProfile>;
 
-/// Map a profile's LoRa channel onto our `subghz_rf` driver's `init` arguments —
-/// `(frequency_hz, modulation, packet shape, tx power dBm)`. `None` when the profile is GFSK: the
-/// driver's LoRa arm is all that's wired today, so the speed mode waits on its own path.
+/// Map a profile's channel onto our `subghz_rf` driver's `init` arguments —
+/// `(frequency_hz, modulation, packet shape, tx power dBm)`. Both modulation arms are wired: LoRa
+/// drives the chirp modem, GFSK the 2-FSK / speed-mode path.
 fn subghz_params(
     profile: &RadioProfile,
-) -> Option<(u32, subghz_rf::Modulation, subghz_rf::LoraPacket, i8)> {
-    let Modulation::Lora {
-        spreading_factor,
-        bandwidth,
-        coding_rate,
-    } = profile.modulation
-    else {
-        return None;
-    };
-    let spreading_factor = match spreading_factor {
-        SpreadingFactor::Sf5 => subghz_rf::SpreadingFactor::Sf5,
-        SpreadingFactor::Sf6 => subghz_rf::SpreadingFactor::Sf6,
-        SpreadingFactor::Sf7 => subghz_rf::SpreadingFactor::Sf7,
-        SpreadingFactor::Sf8 => subghz_rf::SpreadingFactor::Sf8,
-        SpreadingFactor::Sf9 => subghz_rf::SpreadingFactor::Sf9,
-        SpreadingFactor::Sf10 => subghz_rf::SpreadingFactor::Sf10,
-        SpreadingFactor::Sf11 => subghz_rf::SpreadingFactor::Sf11,
-        SpreadingFactor::Sf12 => subghz_rf::SpreadingFactor::Sf12,
-    };
-    let bandwidth = match bandwidth {
-        LoraBandwidth::Bw125kHz => subghz_rf::Bandwidth::Bw125,
-        LoraBandwidth::Bw250kHz => subghz_rf::Bandwidth::Bw250,
-        LoraBandwidth::Bw500kHz => subghz_rf::Bandwidth::Bw500,
-    };
-    let coding_rate = match coding_rate {
-        CodingRate::Cr45 => subghz_rf::CodingRate::Cr4_5,
-        CodingRate::Cr46 => subghz_rf::CodingRate::Cr4_6,
-        CodingRate::Cr47 => subghz_rf::CodingRate::Cr4_7,
-        CodingRate::Cr48 => subghz_rf::CodingRate::Cr4_8,
-    };
-    let packet = subghz_rf::LoraPacket {
-        preamble_symbols: profile.preamble.count(),
-        explicit_header: true,
-        crc_on: true,
-        invert_iq: false,
-    };
-    Some((
-        profile.frequency.hz(),
-        subghz_rf::Modulation::Lora {
+) -> Option<(u32, subghz_rf::Modulation, subghz_rf::PacketParams, i8)> {
+    let (modulation, packet) = match profile.modulation {
+        Modulation::Lora {
             spreading_factor,
             bandwidth,
             coding_rate,
-        },
+        } => {
+            let spreading_factor = match spreading_factor {
+                SpreadingFactor::Sf5 => subghz_rf::SpreadingFactor::Sf5,
+                SpreadingFactor::Sf6 => subghz_rf::SpreadingFactor::Sf6,
+                SpreadingFactor::Sf7 => subghz_rf::SpreadingFactor::Sf7,
+                SpreadingFactor::Sf8 => subghz_rf::SpreadingFactor::Sf8,
+                SpreadingFactor::Sf9 => subghz_rf::SpreadingFactor::Sf9,
+                SpreadingFactor::Sf10 => subghz_rf::SpreadingFactor::Sf10,
+                SpreadingFactor::Sf11 => subghz_rf::SpreadingFactor::Sf11,
+                SpreadingFactor::Sf12 => subghz_rf::SpreadingFactor::Sf12,
+            };
+            let bandwidth = match bandwidth {
+                LoraBandwidth::Bw125kHz => subghz_rf::Bandwidth::Bw125,
+                LoraBandwidth::Bw250kHz => subghz_rf::Bandwidth::Bw250,
+                LoraBandwidth::Bw500kHz => subghz_rf::Bandwidth::Bw500,
+            };
+            let coding_rate = match coding_rate {
+                CodingRate::Cr45 => subghz_rf::CodingRate::Cr4_5,
+                CodingRate::Cr46 => subghz_rf::CodingRate::Cr4_6,
+                CodingRate::Cr47 => subghz_rf::CodingRate::Cr4_7,
+                CodingRate::Cr48 => subghz_rf::CodingRate::Cr4_8,
+            };
+            (
+                subghz_rf::Modulation::Lora {
+                    spreading_factor,
+                    bandwidth,
+                    coding_rate,
+                },
+                subghz_rf::PacketParams::Lora(subghz_rf::LoraPacket {
+                    preamble_symbols: profile.preamble.count(),
+                    explicit_header: true,
+                    crc_on: true,
+                    invert_iq: false,
+                }),
+            )
+        }
+        Modulation::Gfsk {
+            bitrate,
+            deviation,
+            shaping,
+        } => {
+            let pulse_shape = match shaping {
+                PulseShaping::Off => subghz_rf::PulseShape::None,
+                PulseShaping::GaussianBt03 => subghz_rf::PulseShape::GaussianBt03,
+                PulseShaping::GaussianBt05 => subghz_rf::PulseShape::GaussianBt05,
+                PulseShaping::GaussianBt07 => subghz_rf::PulseShape::GaussianBt07,
+                PulseShaping::GaussianBt10 => subghz_rf::PulseShape::GaussianBt10,
+            };
+            (
+                subghz_rf::Modulation::Gfsk {
+                    bitrate_bps: bitrate.bps(),
+                    fdev_hz: deviation.hz(),
+                    pulse_shape,
+                },
+                subghz_rf::PacketParams::Gfsk(subghz_rf::GfskPacket {
+                    preamble_bits: 32,
+                    crc_on: true,
+                    whitening_on: true,
+                }),
+            )
+        }
+    };
+    Some((
+        profile.frequency.hz(),
+        modulation,
         packet,
         profile.tx_power.dbm(),
     ))
@@ -354,6 +387,9 @@ where
         let mut csma_rng: u32 = 0;
         let mut csma_remaining_ms: u64 = 0;
         let mut csma_restarts: u32 = 0;
+        // When the current outbound packet entered contention — the liveness ceiling bounds the
+        // total deferral against this, so a restart-resetting RX stream can never starve the TX.
+        let mut contend_start = InstantMillis(0);
 
         loop {
             if !status.is_enabled() {
@@ -375,6 +411,30 @@ where
                 // back off again; the window elapsing frame-free, confirmed by a final carrier sense
                 // for a preamble still mid-flight, means the channel is ours.
                 let now = InstantMillis(started.elapsed().as_millis());
+                // Liveness ceiling: once a packet has been deferred past the cap, transmit it now
+                // regardless of RX — a relentless reception stream (real, or a modem false-triggering
+                // on noise) must never starve the transmitter. This is the time-based sibling of the
+                // restart-count escape, immune to the per-frame counter reset.
+                if now.0.saturating_sub(contend_start.0) >= CSMA_MAX_DEFER_MS {
+                    transmit_packet(
+                        &mut radio,
+                        &pending_buf[..len],
+                        &mut seq,
+                        &mut airtime,
+                        &mut throughput,
+                        status,
+                        bitrate_bps,
+                        now,
+                        &mut tx_frame,
+                    )
+                    .await;
+                    if let Err(e) = radio.arm_rx().await {
+                        log::warn!("RNS_LORA RX re-arm after forced tx failed: {e:?}");
+                    }
+                    pending_len = None;
+                    csma_restarts = 0;
+                    continue;
+                }
                 match select(
                     radio.read_frame(&mut rx_buf),
                     Timer::after(Duration::from_millis(csma_remaining_ms)),
@@ -475,6 +535,7 @@ where
                             pending_len = Some(len);
                             csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
                             csma_restarts = 0;
+                            contend_start = now;
                         }
                     }
                     Either4::Third(new_profile) => match subghz_params(&new_profile) {
