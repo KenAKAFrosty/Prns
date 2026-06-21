@@ -3,7 +3,9 @@ use embassy_sync_07::blocking_mutex::raw::NoopRawMutex;
 use esp_radio::ble::controller::BleConnector;
 use heapless_09::Vec as GattVec;
 use personal_rns::interfaces::bluetooth_auto::core::{
-    encode_advertisement, BLE_SERVICE_UUID_BYTES, MAX_ADVERTISEMENT_LEN,
+    encode_advertisement, BleIdentity, Control, Endpoint, Esp32Host, Handshake, HandshakeRole,
+    LinkCapabilities, Local, Outcome, BLE_HW_MTU, BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN,
+    MAX_ADVERTISEMENT_LEN,
 };
 use trouble_host::prelude::*;
 
@@ -23,7 +25,7 @@ fn reticulum_uuid(last: u8) -> Uuid {
     Uuid::from(u128::from_be_bytes(bytes))
 }
 
-pub async fn run(connector: BleConnector<'static>, mac: [u8; 6]) {
+pub async fn run(connector: BleConnector<'static>, mac: [u8; 6], identity: [u8; 16]) {
     let controller = ExternalController::<_, HCI_COMMAND_SLOTS>::new(connector);
     let mut resources: HostResources<DefaultPacketPool, CONNECTIONS, L2CAP_CHANNELS> =
         HostResources::new();
@@ -121,6 +123,15 @@ pub async fn run(connector: BleConnector<'static>, mac: [u8; 6]) {
                 }
             };
             log::info!("ble central connected");
+            let local = Local {
+                identity: BleIdentity::new(identity),
+                endpoint: Endpoint::Esp32(Esp32Host::Esp32),
+                capabilities: LinkCapabilities {
+                    l2cap: None,
+                    link_mtu: BLE_HW_MTU as u16,
+                },
+            };
+            let (mut handshake, _) = Handshake::begin(HandshakeRole::Listener, local, None);
             loop {
                 match connection.next().await {
                     GattConnectionEvent::Disconnected { reason } => {
@@ -129,14 +140,51 @@ pub async fn run(connector: BleConnector<'static>, mac: [u8; 6]) {
                     }
                     GattConnectionEvent::Gatt { event } => {
                         if let GattEvent::Write(write) = &event {
-                            let lane = if write.handle() == control.handle {
-                                "control"
+                            if write.handle() == control.handle {
+                                match Control::decode(write.data()) {
+                                    Some(message) => {
+                                        let reaction = handshake.absorb(message);
+                                        match reaction.outcome {
+                                            Outcome::Settled(peer) => {
+                                                log::info!(
+                                                    "ble handshake settled with {:?}",
+                                                    peer.endpoint
+                                                )
+                                            }
+                                            Outcome::Aborted(reason) => {
+                                                log::warn!("ble handshake aborted: {reason:?}")
+                                            }
+                                            Outcome::Pending => {}
+                                        }
+                                        if let Some(reply) = reaction.reply {
+                                            let mut buf = [0u8; CONTROL_MAX_LEN];
+                                            if let Some(len) = reply.encode(&mut buf) {
+                                                let mut value =
+                                                    GattVec::<u8, GATT_VALUE_CAP>::new();
+                                                let _ = value.extend_from_slice(&buf[..len]);
+                                                match control.notify(&connection, &value).await {
+                                                    Ok(()) => {
+                                                        log::info!(
+                                                            "ble welcome notified ({len} bytes)"
+                                                        )
+                                                    }
+                                                    Err(error) => {
+                                                        log::warn!(
+                                                            "ble welcome notify failed: {error:?}"
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => log::warn!(
+                                        "ble control write undecodable ({} bytes)",
+                                        write.data().len()
+                                    ),
+                                }
                             } else if write.handle() == data.handle {
-                                "data"
-                            } else {
-                                "other"
-                            };
-                            log::info!("ble write on {lane}");
+                                log::info!("ble data write ({} bytes)", write.data().len());
+                            }
                         }
                         match event.accept() {
                             Ok(reply) => reply.send().await,
