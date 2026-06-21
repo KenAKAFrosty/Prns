@@ -304,7 +304,7 @@ fn run_node(
             let snapshot_handle = handle.clone();
             tokio::spawn(
                 SharedInstanceRpcCompat::tcp(rpc_key, rpc_port, handle.clone())
-                    .with_interfaces(move || snapshot_handle.interfaces())
+                    .with_interfaces(move || snapshot_handle.interface_vitals())
                     .run(),
             );
         }
@@ -317,7 +317,7 @@ fn run_node(
                     local_core::DEFAULT_SOCKET_PATH,
                     handle.clone(),
                 )
-                .with_interfaces(move || snapshot_handle.interfaces())
+                .with_interfaces(move || snapshot_handle.interface_vitals())
                 .run(),
             );
         }
@@ -706,6 +706,10 @@ fn run_window(handles: WindowHandles) {
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut needs_redraw = true;
+    // Prime the SDL window before the first `events()` poll: the simulator creates the window
+    // lazily on the first `update()`, and `events()` panics if called before it exists. The loop
+    // enters with `needs_redraw = true`, so the real first frame is drawn immediately below.
+    window.update(&display);
     loop {
         for event in window.events() {
             match event {
