@@ -48,6 +48,14 @@ serialport = { version = "4" }
 tokio-udev = "0.9"
 tokio-stream = "0.1"
 
+# Windows desktop: SDL2 has no system install path the linker finds by default, so instead of
+# prebuilt dev libs + a LIB/PATH env + a shipped SDL2.dll, build SDL2 from source and fold it into
+# the binary. `bundled` compiles it via CMake; `static-link` links it statically. Feature
+# unification means embedded-graphics-simulator's sdl2 picks this up too — one self-contained exe.
+# Version tracks the sdl2 e-g-simulator resolves. Build needs CMake + MSVC on PATH.
+[target.'cfg(target_os = "windows")'.dependencies]
+sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
+
 # Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
 # crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
 # through personal-rns itself.
