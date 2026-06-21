@@ -27,8 +27,6 @@ use crate::interfaces::{
     InterfaceKind, InterfaceStatus, TransferRates,
 };
 use crate::reactor::announce_pacer::{AnnouncePacer, FixedPacerQueue};
-use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
-use crate::storage::DirtyInterfaceSet;
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_due_lane, wait_for_pacer,
 };
@@ -39,6 +37,8 @@ use crate::reactor::interface_seam::{
     InterfaceSeam, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,
 };
 use crate::reactor::Host;
+use crate::runtime::{EmbassyInterfaceStore, InterfaceCountSink};
+use crate::storage::DirtyInterfaceSet;
 use crate::storage::StorageLayout;
 
 /// A [`Host`] backed by embassy's clock and a caller-supplied entropy source. Mirrors the

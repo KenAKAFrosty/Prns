@@ -5,9 +5,10 @@
 //! cheap-clone handle. Each host impls the handle behind this trait (atomics on std, …); the
 //! app's render code reads only the trait, identical across every platform.
 //!
-//! Today it carries the two live facts the interface knows first-hand — its connection and the
-//! bytes it has moved. Route counts (engine state) and rate / last-activity / link counts are
-//! separate, later additions; the UI dummies them until then.
+//! It carries the live facts the interface knows first-hand — its connection, the bytes it has
+//! moved, and its transfer rates once a link declares a bitrate. Engine state, the route and link
+//! counts, stays separate: the runtime joins it with these vitals to mint an [`InterfaceSnapshot`]
+//! that a face renders.
 
 use crate::interfaces::{ConnectionState, InterfaceId};
 
@@ -71,9 +72,10 @@ impl InterfaceVitals {
 }
 
 /// One interface's complete live view: the [`InterfaceVitals`] it owns, the engine counts that ride
-/// over it, and where it sits in the fleet. Only the runtime mints one — it alone holds the status
-/// handle, the count store, and the topology together — so a snapshot can never carry zeroed counts
-/// by accident the way a status-only read could.
+/// over it, and where it sits in the fleet. A host with the runtime registry composes one for the
+/// app (`interfaces()` joins the status handle, the count store, and the membership), while a no_std
+/// face that holds those sources itself composes its own. Zero counts are a valid state, an idle
+/// interface or a face with no engine, not an accident.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceSnapshot {
     pub id: InterfaceId,

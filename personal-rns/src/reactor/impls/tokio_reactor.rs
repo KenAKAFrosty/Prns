@@ -18,7 +18,6 @@ use crate::interfaces::{
     AirtimeUtilization, ConnectionState, InboundPacket, InterfaceConfig, InterfaceId,
     InterfaceKind, InterfaceStatus, TransferRates,
 };
-use crate::runtime::InterfaceStore;
 use crate::reactor::announce_pacer::{AnnouncePacer, HeapPacerQueue};
 use crate::reactor::driver::{
     draw_jitter, fire_due_lane, merge_wake_schedules_delta, wait_for_pacer,
@@ -32,6 +31,7 @@ use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST
 use crate::routing::links::resources::{ResourceCorrelation, ResourceHash, ResourceStrategy};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
+use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 use crate::units::Rtt;
 use crate::wire::DestinationHash;

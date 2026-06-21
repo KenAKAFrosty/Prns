@@ -28,6 +28,12 @@ impl<M: RawMutex, const N: usize> Default for EmbassyInterfaceStore<M, N> {
 impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
     #[must_use]
     pub const fn new() -> Self {
+        const {
+            assert!(
+                N.is_power_of_two(),
+                "EmbassyInterfaceStore N must be a power of two: heapless::FnvIndexMap requires it"
+            )
+        };
         Self {
             counts: Mutex::new(RefCell::new(FnvIndexMap::new())),
             signal: Signal::new(),
@@ -36,12 +42,8 @@ impl<M: RawMutex, const N: usize> EmbassyInterfaceStore<M, N> {
 
     #[must_use]
     pub fn counts(&self, interface: InterfaceId) -> InterfaceCounts {
-        self.counts.lock(|cell| {
-            cell.borrow()
-                .get(&interface)
-                .copied()
-                .unwrap_or_default()
-        })
+        self.counts
+            .lock(|cell| cell.borrow().get(&interface).copied().unwrap_or_default())
     }
 
     pub async fn changed(&self) {

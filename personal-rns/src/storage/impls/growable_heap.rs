@@ -1,5 +1,6 @@
 use crate::crypto::ratchets::HeapSelfRatchetColumns;
 use crate::identity::held::HeapHeldIdentityColumns;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::held::HeapHeldAnnounceColumns;
 use crate::routing::announce::interface_announce_limit::HeapInterfaceAnnounceLimitColumns;
 use crate::routing::announce::rate_limit::HeapAnnounceRateColumns;
@@ -28,7 +29,6 @@ use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
 use crate::routing::routes::HeapRouteColumns;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
-use crate::interfaces::InterfaceId;
 use crate::storage::StorageLayout;
 use alloc::collections::BTreeSet;
 

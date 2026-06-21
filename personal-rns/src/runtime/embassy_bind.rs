@@ -23,9 +23,8 @@ use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget,
-    IssuedCommand, Journaled, Respond, RespondData, SendSingle, SendSingleFailure,
-    SendSinglePayload, Settlement,
+    CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget, IssuedCommand,
+    Journaled, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
@@ -201,7 +200,6 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> EmbassyPrnsHandle<'
             _ => Err(SendError::NodeStopped),
         }
     }
-
 
     /// Answer a request with `body` as a single RESPONSE packet — the request runner's path. Embedded
     /// responds inline, so a `body` past the link MDU is refused here (returns `false`); the host
