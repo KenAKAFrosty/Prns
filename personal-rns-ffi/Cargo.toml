@@ -44,6 +44,25 @@ dispatch2 = "0.3"
 # Mirrors the Linux BlueR backend's diagnostics; visible under RUST_LOG via the example's logger.
 log = "0.4"
 
+# The Windows backend rides WinRT (GATT-only): GattServiceProvider for the peripheral/advertise role
+# and a GATT client for central, projected by the official `windows` crate. The WinRT projections are
+# largely safe COM wrappers, but COM apartment init (CoIncrementMTAUsage) is unsafe FFI, so this whole
+# backend stays quarantined here off the engine's forbid-unsafe surface. The features pull only the
+# Bluetooth/Radio namespaces plus the Foundation + Storage Streams the GATT buffers and async ride on.
+[target.'cfg(target_os = "windows")'.dependencies]
+log = "0.4"
+windows = { version = "0.58", features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Advertisement",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Radios",
+    "Devices_Enumeration",
+    "Foundation",
+    "Foundation_Collections",
+    "Storage_Streams",
+    "Win32_System_Com",
+] }
+
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync"] }
 env_logger = "0.11"

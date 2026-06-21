@@ -55,6 +55,9 @@ tokio-stream = "0.1"
 # Version tracks the sdl2 e-g-simulator resolves. Build needs CMake + MSVC on PATH.
 [target.'cfg(target_os = "windows")'.dependencies]
 sdl2 = { version = "0.38", features = ["bundled", "static-link"] }
+# Native WinRT backend for the BLE auto-interface (GATT-only). Like the macOS backend below, the
+# unsafe/FFI surface lives in personal-rns-ffi, off the engine's forbid-unsafe surface.
+personal-rns-ffi = { path = "../../personal-rns-ffi" }
 
 # Native CoreBluetooth backend for the BLE auto-interface (the unsafe objc2 FFI lives in its own
 # crate, off the engine's forbid-unsafe surface). macOS-only; on Linux the BlueR backend is reached
