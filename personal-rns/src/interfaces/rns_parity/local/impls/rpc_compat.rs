@@ -41,7 +41,7 @@ use tokio::net::UnixListener;
 use super::rpc_value::Value;
 use crate::crypto::{hmac_sha256, hmac_sha256_verify};
 use crate::engine::RpcPathEntry;
-use crate::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot};
+use crate::interfaces::{ConnectionState, InterfaceId, InterfaceVitals};
 use crate::routing::types::NextHop;
 use crate::wire::DestinationHash;
 
@@ -51,9 +51,9 @@ const RNS_INTERFACE_MODE_FULL: i64 = 0x01;
 
 /// A live view of the node's interfaces, assembled on demand from the status handles the app holds
 /// (the same handles the local display reads). The shim calls it to answer `interface_stats`.
-type InterfaceView = Arc<dyn Fn() -> Vec<InterfaceSnapshot> + Send + Sync>;
+type InterfaceView = Arc<dyn Fn() -> Vec<InterfaceVitals> + Send + Sync>;
 
-fn no_interfaces() -> Vec<InterfaceSnapshot> {
+fn no_interfaces() -> Vec<InterfaceVitals> {
     Vec::new()
 }
 
@@ -224,7 +224,7 @@ impl<Q: RpcQuerySource + Clone + Send + Sync + 'static> SharedInstanceRpcCompat<
     #[must_use]
     pub fn with_interfaces(
         mut self,
-        source: impl Fn() -> Vec<InterfaceSnapshot> + Send + Sync + 'static,
+        source: impl Fn() -> Vec<InterfaceVitals> + Send + Sync + 'static,
     ) -> Self {
         self.interfaces = Arc::new(source);
         self
@@ -566,7 +566,7 @@ fn reply_str(dialect: RpcDialect, value: &str) -> Vec<u8> {
 /// IFAC, mode beyond Full) are simply absent, which a stock client reads as "not reported" rather than
 /// a fabricated zero. The legacy pickle dialect gets the well-formed empty map (`{"interfaces": []}`,
 /// `protocol=2`) — non-faulting, and real pickle rows are a follow-up.
-fn reply_interface_stats(dialect: RpcDialect, interfaces: Vec<InterfaceSnapshot>) -> Vec<u8> {
+fn reply_interface_stats(dialect: RpcDialect, interfaces: Vec<InterfaceVitals>) -> Vec<u8> {
     match dialect {
         RpcDialect::Pickle => std::vec![
             0x80, 0x02, 0x7d, 0x71, 0x00, 0x58, 0x0a, 0x00, 0x00, 0x00, b'i', b'n', b't', b'e',
@@ -576,7 +576,7 @@ fn reply_interface_stats(dialect: RpcDialect, interfaces: Vec<InterfaceSnapshot>
     }
 }
 
-fn interface_stats_msgpack(interfaces: &[InterfaceSnapshot]) -> Vec<u8> {
+fn interface_stats_msgpack(interfaces: &[InterfaceVitals]) -> Vec<u8> {
     let mut total_rxb = 0u64;
     let mut total_txb = 0u64;
     let mut total_rxs = 0u64;
@@ -828,7 +828,7 @@ mod tests {
         };
         let view: InterfaceView = Arc::new(|| {
             std::vec![
-                InterfaceSnapshot {
+                InterfaceVitals {
                     id: InterfaceId::new([0x07; 8]),
                     connection: ConnectionState::Connected,
                     rx_bytes: 1234,
@@ -837,15 +837,13 @@ mod tests {
                         rx_bps: 800,
                         tx_bps: 100,
                     }),
-                    links: 2,
                 },
-                InterfaceSnapshot {
+                InterfaceVitals {
                     id: InterfaceId::new([0x09; 8]),
                     connection: ConnectionState::Reconnecting,
                     rx_bytes: 0,
                     tx_bytes: 0,
                     transfer_rates: None,
-                    links: 0,
                 },
             ]
         });

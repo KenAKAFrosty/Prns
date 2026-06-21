@@ -139,7 +139,7 @@ impl TokioPrnsHandle {
         let fleet = self.clone();
         tokio::spawn(
             SharedInstanceRpcCompat::tcp(rpc_key, instance.ports.control, self.clone())
-                .with_interfaces(move || fleet.interfaces())
+                .with_interfaces(move || fleet.interface_vitals())
                 .run(),
         );
         #[cfg(target_os = "linux")]
@@ -151,7 +151,7 @@ impl TokioPrnsHandle {
                     local_core::DEFAULT_SOCKET_PATH,
                     self.clone(),
                 )
-                .with_interfaces(move || fleet.interfaces())
+                .with_interfaces(move || fleet.interface_vitals())
                 .run(),
             );
         }

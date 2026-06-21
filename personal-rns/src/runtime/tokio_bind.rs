@@ -12,14 +12,14 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, EstablishLink,
-    EstablishLinkFailure, IssuedCommand, SendRequestFailure, SendResourceFailure,
-    SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
+    EstablishLinkFailure, IssuedCommand, SendRequestFailure, SendResourceFailure, SendSingle,
+    SendSingleFailure, SendSinglePayload, Settlement,
 };
 #[cfg(feature = "local")]
 use crate::engine::{RpcPathEntry, RpcQuery, RpcQueryResult};
 use crate::interfaces::{
-    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, ReportsStatus,
-    StatusView,
+    InterfaceConfig, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceVitals, Membership,
+    ReportsStatus, StatusView,
 };
 use crate::reactor::impls::tokio_reactor::{
     self, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
@@ -459,6 +459,19 @@ impl TokioPrnsHandle {
             .collect()
     }
 
+    /// Every interface's live [`InterfaceVitals`] on their own — the same per-interface status the
+    /// snapshot carries, without the engine counts [`interfaces`](Self::interfaces) joins on. The
+    /// shared-instance control RPC reports these for `interface_stats`, which is status-only.
+    #[must_use]
+    pub fn interface_vitals(&self) -> std::vec::Vec<InterfaceVitals> {
+        let Ok(map) = self.interfaces.lock() else {
+            return std::vec::Vec::new();
+        };
+        map.values()
+            .flat_map(|registered| (registered.view)())
+            .collect()
+    }
+
     /// Attach an interface supervisor: a node that owns no wire of its own, but runs a discovery loop
     /// and stands up a fleet member per validated connection through the [`Fleet`] handle it is
     /// given. The supervisor itself is no engine interface (no descriptor, no lanes); each member it
@@ -813,7 +826,10 @@ fn register_status(
     }
 }
 
-fn forget_status(interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>, id: InterfaceId) {
+fn forget_status(
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    id: InterfaceId,
+) {
     if let Ok(mut map) = interfaces.lock() {
         map.remove(&id);
     }

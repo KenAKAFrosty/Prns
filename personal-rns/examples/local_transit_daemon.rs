@@ -18,7 +18,7 @@ use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::SharedInstanceRpcCompat;
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
-use personal_rns::interfaces::InterfaceSnapshot;
+use personal_rns::interfaces::InterfaceVitals;
 use personal_rns::runtime::{Diagnostic, Prns, PrnsEvent, PrnsRecipe};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::TransportId;
