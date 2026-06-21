@@ -44,6 +44,9 @@ getrandom = "0.2"
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 tokio-serial = { version = "5" }
 serialport = { version = "4" }
+# Opt-in diagnostics for the host backends' `log` traces (BLE lifecycle, etc.); idle unless RUST_LOG
+# is set, so the default run prints nothing extra.
+env_logger = "0.11"
 
 # Linux hot-plug: udev fires a uevent the instant a serial device is plugged, so the host
 # rescans immediately instead of waiting on its fallback timer. tokio-udev exposes the monitor
