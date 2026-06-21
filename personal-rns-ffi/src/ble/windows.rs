@@ -45,9 +45,9 @@ use windows::Devices::Bluetooth::BluetoothLEDevice;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattCharacteristicProperties,
     GattClientCharacteristicConfigurationDescriptorValue, GattCommunicationStatus,
-    GattDeviceService, GattLocalCharacteristic, GattLocalCharacteristicParameters, GattLocalService,
-    GattProtectionLevel, GattServiceProvider, GattServiceProviderAdvertisingParameters,
-    GattValueChangedEventArgs, GattWriteOption,
+    GattDeviceService, GattLocalCharacteristic, GattLocalCharacteristicParameters,
+    GattLocalService, GattProtectionLevel, GattServiceProvider,
+    GattServiceProviderAdvertisingParameters, GattValueChangedEventArgs, GattWriteOption,
 };
 use windows::Devices::Radios::RadioState;
 use windows::Foundation::TypedEventHandler;
@@ -144,7 +144,9 @@ impl BleLink for WinGattLink {
 
     async fn control_send(&mut self, msg: &Control) -> Result<(), WindowsBleError> {
         let mut buf = [0u8; CONTROL_MAX_LEN];
-        let len = msg.encode(&mut buf).ok_or(WindowsBleError::ControlTooLarge)?;
+        let len = msg
+            .encode(&mut buf)
+            .ok_or(WindowsBleError::ControlTooLarge)?;
         let bytes = buf
             .get(..len)
             .ok_or(WindowsBleError::ControlTooLarge)?
@@ -160,7 +162,11 @@ impl BleLink for WinGattLink {
     }
 
     async fn control_recv(&mut self) -> Result<Control, WindowsBleError> {
-        let control = self.control_rx.recv().await.ok_or(WindowsBleError::Closed)?;
+        let control = self
+            .control_rx
+            .recv()
+            .await
+            .ok_or(WindowsBleError::Closed)?;
         log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
         Ok(control)
     }
@@ -356,15 +362,16 @@ async fn gatt_write(
     bytes: Vec<u8>,
     option: GattWriteOption,
 ) -> Result<(), WindowsBleError> {
-    let status =
-        tokio::task::spawn_blocking(move || -> Result<GattCommunicationStatus, WindowsBleError> {
+    let status = tokio::task::spawn_blocking(
+        move || -> Result<GattCommunicationStatus, WindowsBleError> {
             let buffer = ibuffer_from(&bytes)?;
             Ok(characteristic
                 .WriteValueWithOptionAsync(&buffer, option)?
                 .get()?)
-        })
-        .await
-        .map_err(|_| WindowsBleError::Closed)??;
+        },
+    )
+    .await
+    .map_err(|_| WindowsBleError::Closed)??;
     if status != GattCommunicationStatus::Success {
         return Err(WindowsBleError::WriteFailed);
     }
@@ -481,7 +488,9 @@ fn publish_characteristic(
     parameters.SetCharacteristicProperties(properties)?;
     parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
     parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
-    let result = service.CreateCharacteristicAsync(uuid, &parameters)?.get()?;
+    let result = service
+        .CreateCharacteristicAsync(uuid, &parameters)?
+        .get()?;
     if result.Error()? != BluetoothError::Success {
         return Err(WindowsBleError::ServicePublishFailed);
     }
@@ -543,7 +552,9 @@ fn discover_characteristic(
         .into_iter()
         .next()
         .ok_or(WindowsBleError::DialFailed)?;
-    let chars = service.GetCharacteristicsForUuidAsync(guid_of(uuid))?.get()?;
+    let chars = service
+        .GetCharacteristicsForUuidAsync(guid_of(uuid))?
+        .get()?;
     if chars.Status()? != GattCommunicationStatus::Success {
         return Err(WindowsBleError::DialFailed);
     }
@@ -641,15 +652,16 @@ impl BleBackend for WindowsBleBackend {
             address.octets()
         );
         // The WinRT GATT connect/discover/subscribe are blocking get()s, so run them off the reactor.
-        self.dials.spawn_blocking(move || match connect_blocking(address) {
-            Ok(link) => Some(link),
-            Err(error) => {
-                log::warn!(
-                    "bluetooth: dial to {:02x?} failed ({error:?})",
-                    address.octets()
-                );
-                None
-            }
-        });
+        self.dials
+            .spawn_blocking(move || match connect_blocking(address) {
+                Ok(link) => Some(link),
+                Err(error) => {
+                    log::warn!(
+                        "bluetooth: dial to {:02x?} failed ({error:?})",
+                        address.octets()
+                    );
+                    None
+                }
+            });
     }
 }
