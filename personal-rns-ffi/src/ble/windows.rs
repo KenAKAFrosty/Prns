@@ -3,33 +3,36 @@
 //! GATT-only by mandate: WinRT exposes no app-level L2CAP, so [`arrangement`] pins every Windows
 //! pair to `GattOnly` and `upgrade()` is a permanent no-op. The GATT-data floor carries every
 //! frame; this is a complete, correct backend, not a degraded one. The shared brain (discovery
-//! dedup, orientation, make-before-break) lives in the engine's `BluetoothAuto` supervisor — this
-//! backend only drives the radio and the seam, mirroring `personal-rns-ffi/src/ble/macos.rs`.
+//! dedup, orientation, make-before-break, and the Hello/Welcome handshake) lives in the engine's
+//! `BluetoothAuto` supervisor — this backend only drives the radio and the seam, mirroring
+//! `personal-rns-ffi/src/ble/macos.rs`.
 //!
 //! WinRT activation and async completion need an initialized COM apartment, so a dedicated thread
-//! owns the radio: it joins the process MTA, brings the adapter up, publishes the GATT service, and
-//! parks for the backend's lifetime while WinRT event handlers (which fire on the system threadpool)
-//! post into a tokio channel the async consumer drains — the same callback-world-to-reactor bridge
-//! the macOS backend uses with GCD. The WinRT runtime classes are agile, so the published service +
-//! characteristics are handed back to the async side and driven from there.
+//! joins the process MTA, brings the adapter up, publishes the GATT service, and parks for the
+//! backend's lifetime. WinRT event handlers (which fire on the system threadpool) post into tokio
+//! channels the async consumer drains — the callback-world-to-reactor bridge the macOS backend uses
+//! with GCD. The WinRT runtime classes are agile, so the published service + the dialled GATT client
+//! objects are driven from the async side.
 //!
-//! Built up in steps; this lands power-up + the published GATT service + advertising. The central
-//! watcher (sightings) and the control/data planes arrive in the following steps, hence the reserved
-//! fields below.
-#![allow(dead_code)] // TODO(ble-windows): in-progress backend; drop once scan + link land.
+//! Implemented: power-up, advertise (peripheral role), scan (central role), and the **central** link
+//! — when the supervisor dials a sighted peer we connect, discover the control + data
+//! characteristics, subscribe to their notifications, carry the control handshake, and ride the data
+//! floor. The peripheral-side inbound link (a peer dialling us) is the remaining role.
+#![allow(dead_code)] // TODO(ble-windows): peripheral/inbound role still to land.
 
 use std::sync::mpsc as sync_mpsc;
 use std::time::Duration;
 
 use personal_rns::interfaces::bluetooth_auto::core::{
-    BleAddress, BleUuid, Control, Dialect, L2capPlan, BLE_SERVICE_UUID, NATIVE_CONTROL_UUID,
-    NATIVE_DATA_UUID,
+    fragments_of, BleAddress, BleUuid, Control, Dialect, Fragment, L2capPlan, Reassembler,
+    BLE_HW_MTU, BLE_SERVICE_UUID, CONTROL_MAX_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 use personal_rns::interfaces::bluetooth_auto::seam::{
-    BleBackend, BleEvent, BleLink, BleSink, BleSource,
+    BleBackend, BleEvent, BleLink, BleSink, BleSource, Origin,
 };
 
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
+use tokio::task::JoinSet;
 
 use windows::core::GUID;
 use windows::Devices::Bluetooth::Advertisement::{
@@ -38,17 +41,26 @@ use windows::Devices::Bluetooth::Advertisement::{
 };
 use windows::Devices::Bluetooth::BluetoothAdapter;
 use windows::Devices::Bluetooth::BluetoothError;
+use windows::Devices::Bluetooth::BluetoothLEDevice;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
-    GattCharacteristicProperties, GattLocalCharacteristic, GattLocalCharacteristicParameters,
-    GattLocalService, GattProtectionLevel, GattServiceProvider,
-    GattServiceProviderAdvertisingParameters,
+    GattCharacteristic, GattCharacteristicProperties,
+    GattClientCharacteristicConfigurationDescriptorValue, GattCommunicationStatus,
+    GattDeviceService, GattLocalCharacteristic, GattLocalCharacteristicParameters, GattLocalService,
+    GattProtectionLevel, GattServiceProvider, GattServiceProviderAdvertisingParameters,
+    GattValueChangedEventArgs, GattWriteOption,
 };
 use windows::Devices::Radios::RadioState;
 use windows::Foundation::TypedEventHandler;
+use windows::Storage::Streams::{DataReader, DataWriter, IBuffer};
 use windows::Win32::System::Com::CoIncrementMTAUsage;
 
 /// How long to wait for the radio thread to bring the adapter up before giving up.
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
+/// Per-write GATT-data-floor payload, leaving room for the fragment header under a typical
+/// negotiated ATT MTU (matches the macOS backend's conservative 180).
+const GATT_FRAGMENT_PAYLOAD: usize = 180;
+/// Reassembly ceiling for an inbound frame spread across data-floor fragments.
+const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
 
 #[derive(Debug)]
 pub enum WindowsBleError {
@@ -60,6 +72,8 @@ pub enum WindowsBleError {
     RadioOff,
     /// Publishing the GATT service or one of its characteristics failed.
     ServicePublishFailed,
+    /// A dial could not connect, discover the service, or subscribe to a characteristic.
+    DialFailed,
     /// The radio thread or a channel went away.
     Closed,
     /// The adapter did not come up within [`POWER_ON_TIMEOUT`].
@@ -68,6 +82,8 @@ pub enum WindowsBleError {
     ControlTooLarge,
     /// A data frame exceeded the negotiated link MTU.
     FrameTooLarge,
+    /// A GATT write completed with a non-success status.
+    WriteFailed,
     /// An underlying WinRT call failed.
     Winrt(windows::core::Error),
 }
@@ -90,8 +106,7 @@ struct Radio {
     watcher: BluetoothLEAdvertisementWatcher,
 }
 
-/// Events from the WinRT callback world into the async consumer. Populated by the scan and link
-/// steps; `next_event` already drains it.
+/// Events from the WinRT callback world into the async consumer.
 enum Event {
     Sighting {
         address: BleAddress,
@@ -100,13 +115,18 @@ enum Event {
     Inbound(WinGattLink),
 }
 
-/// One GATT link to a peer — the control connection plus the GATT-data floor. On Windows the floor
-/// is the only data plane (no L2CAP). The radio-side characteristic handles arrive in later steps;
-/// for now the link is the channel scaffold the planes hang off.
+/// One GATT link to a peer — the control connection plus the GATT-data floor (the only data plane on
+/// Windows). This is the central (we-dialled) variant: it holds the peer's control + data
+/// characteristics to write to, and the receivers fed by their notification handlers. The device and
+/// service are held only to keep the GATT connection alive.
 pub struct WinGattLink {
     address: BleAddress,
+    control_char: GattCharacteristic,
+    data_char: GattCharacteristic,
     control_rx: tokio_mpsc::UnboundedReceiver<Control>,
     data_rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
+    _device: BluetoothLEDevice,
+    _service: GattDeviceService,
 }
 
 impl BleLink for WinGattLink {
@@ -122,13 +142,27 @@ impl BleLink for WinGattLink {
         self.address
     }
 
-    async fn control_send(&mut self, _msg: &Control) -> Result<(), WindowsBleError> {
-        // TODO(ble-windows step 4): write the control characteristic (…28e7).
-        Err(WindowsBleError::Closed)
+    async fn control_send(&mut self, msg: &Control) -> Result<(), WindowsBleError> {
+        let mut buf = [0u8; CONTROL_MAX_LEN];
+        let len = msg.encode(&mut buf).ok_or(WindowsBleError::ControlTooLarge)?;
+        let bytes = buf
+            .get(..len)
+            .ok_or(WindowsBleError::ControlTooLarge)?
+            .to_vec();
+        gatt_write(
+            self.control_char.clone(),
+            bytes,
+            GattWriteOption::WriteWithResponse,
+        )
+        .await?;
+        log::debug!("bluetooth: {:02x?} -> {msg:?}", self.address.octets());
+        Ok(())
     }
 
     async fn control_recv(&mut self) -> Result<Control, WindowsBleError> {
-        self.control_rx.recv().await.ok_or(WindowsBleError::Closed)
+        let control = self.control_rx.recv().await.ok_or(WindowsBleError::Closed)?;
+        log::debug!("bluetooth: {:02x?} <- {control:?}", self.address.octets());
+        Ok(control)
     }
 
     async fn upgrade(&mut self, _plan: &L2capPlan) -> Result<(), WindowsBleError> {
@@ -138,26 +172,45 @@ impl BleLink for WinGattLink {
     }
 
     fn into_data(self) -> (WinGattSource, WinGattSink) {
+        // Reassemble inbound data-floor fragments into whole frames on a background task, the same
+        // shape as the macOS GATT floor.
+        let (merged_tx, merged_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+        if let Some(mut inbound_rx) = self.data_rx {
+            tokio::spawn(async move {
+                let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
+                while let Some(message) = inbound_rx.recv().await {
+                    let Some(fragment) = Fragment::decode(&message) else {
+                        continue;
+                    };
+                    if let Some(frame) = reassembler.absorb(&fragment) {
+                        if merged_tx.send(Box::from(frame)).is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+        }
         (
-            WinGattSource { rx: self.data_rx },
+            WinGattSource { inbound: merged_rx },
             WinGattSink {
+                data_char: self.data_char,
                 address: self.address,
             },
         )
     }
 }
 
-/// The receive half of the data floor: reassembled frames arriving on the data characteristic.
+/// The receive half of the data floor: whole frames reassembled from the data characteristic's
+/// notifications.
 pub struct WinGattSource {
-    rx: Option<tokio_mpsc::UnboundedReceiver<Box<[u8]>>>,
+    inbound: tokio_mpsc::UnboundedReceiver<Box<[u8]>>,
 }
 
 impl BleSource for WinGattSource {
     type Error = WindowsBleError;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, WindowsBleError> {
-        let rx = self.rx.as_mut().ok_or(WindowsBleError::Closed)?;
-        let frame = rx.recv().await.ok_or(WindowsBleError::Closed)?;
+        let frame = self.inbound.recv().await.ok_or(WindowsBleError::Closed)?;
         let len = frame.len().min(out.len());
         let dst = out.get_mut(..len).ok_or(WindowsBleError::FrameTooLarge)?;
         let src = frame.get(..len).ok_or(WindowsBleError::FrameTooLarge)?;
@@ -166,19 +219,39 @@ impl BleSource for WinGattSource {
     }
 }
 
-/// The send half of the data floor: fragments a frame across writes to the data characteristic.
+/// The send half of the data floor: fragments a frame across writes to the peer's data
+/// characteristic (write-without-response, the unacknowledged floor).
 pub struct WinGattSink {
+    data_char: GattCharacteristic,
     address: BleAddress,
 }
 
 impl BleSink for WinGattSink {
     type Error = WindowsBleError;
 
-    async fn send_frame(&mut self, _frame: &[u8]) -> Result<(), WindowsBleError> {
-        // TODO(ble-windows step 5): fragment + write the data-floor characteristic (…28e8).
-        Err(WindowsBleError::Closed)
+    async fn send_frame(&mut self, frame: &[u8]) -> Result<(), WindowsBleError> {
+        for fragment in fragments_of(frame, GATT_FRAGMENT_PAYLOAD) {
+            let mut buf = [0u8; GATT_FRAGMENT_PAYLOAD + FRAGMENT_SCRATCH];
+            let len = fragment
+                .encode(&mut buf)
+                .ok_or(WindowsBleError::FrameTooLarge)?;
+            let bytes = buf
+                .get(..len)
+                .ok_or(WindowsBleError::FrameTooLarge)?
+                .to_vec();
+            gatt_write(
+                self.data_char.clone(),
+                bytes,
+                GattWriteOption::WriteWithoutResponse,
+            )
+            .await?;
+        }
+        Ok(())
     }
 }
+
+/// Headroom over the payload for the fragment's 5-byte header when sizing the encode scratch buffer.
+const FRAGMENT_SCRATCH: usize = 8;
 
 /// The Windows native-BLE backend handed to the engine's `BluetoothAuto` supervisor.
 pub struct WindowsBleBackend {
@@ -186,11 +259,13 @@ pub struct WindowsBleBackend {
     _keepalive: sync_mpsc::Sender<()>,
     events: tokio_mpsc::UnboundedReceiver<Event>,
     radio: Radio,
+    /// In-flight central dials; each resolves to the formed link (or `None` on failure).
+    dials: JoinSet<Option<WinGattLink>>,
 }
 
 impl WindowsBleBackend {
-    /// Bring the WinRT adapter up on a dedicated MTA thread, publish the GATT service, and return
-    /// once it is ready to advertise. Fails (so the node runs without BLE) if there is no adapter,
+    /// Bring the WinRT adapter up on a dedicated MTA thread, publish the GATT service + start the
+    /// scanner, and return once ready. Fails (so the node runs without BLE) if there is no adapter,
     /// the radio is off, the peripheral role is unsupported, or the service cannot be published.
     pub async fn new() -> Result<Self, WindowsBleError> {
         // The watcher's Received handler (built in winrt_setup) owns the sending half; the channel
@@ -213,6 +288,7 @@ impl WindowsBleBackend {
                 _keepalive: keepalive,
                 events: events_rx,
                 radio,
+                dials: JoinSet::new(),
             }),
             Ok(Ok(Err(error))) => Err(error),
             Ok(Err(_)) => Err(WindowsBleError::Closed),
@@ -249,6 +325,52 @@ fn guid_of(uuid: BleUuid) -> GUID {
     GUID::from_u128(u128::from_be_bytes(bytes))
 }
 
+/// The 48-bit BLE address WinRT works in `u64`s; the sighting kept the low six bytes big-endian, so
+/// rebuild the same `u64` to reconnect.
+fn address_to_u64(address: BleAddress) -> u64 {
+    let o = address.octets();
+    u64::from_be_bytes([0, 0, o[0], o[1], o[2], o[3], o[4], o[5]])
+}
+
+/// Build a WinRT `IBuffer` holding `bytes`.
+fn ibuffer_from(bytes: &[u8]) -> Result<IBuffer, WindowsBleError> {
+    let writer = DataWriter::new()?;
+    writer.WriteBytes(bytes)?;
+    Ok(writer.DetachBuffer()?)
+}
+
+/// Read a WinRT `IBuffer` into an owned byte vector.
+fn bytes_from(buffer: &IBuffer) -> Result<Vec<u8>, WindowsBleError> {
+    let len = buffer.Length()?;
+    let reader = DataReader::FromBuffer(buffer)?;
+    let mut bytes = std::vec![0u8; len as usize];
+    reader.ReadBytes(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Perform a GATT characteristic write off the async executor. WinRT's `IAsyncOperation` has no
+/// `IntoFuture` in this `windows` version, so the blocking `get()` runs on a `spawn_blocking` thread
+/// (which joins the process MTA), keeping the reactor unblocked while the write completes.
+async fn gatt_write(
+    characteristic: GattCharacteristic,
+    bytes: Vec<u8>,
+    option: GattWriteOption,
+) -> Result<(), WindowsBleError> {
+    let status =
+        tokio::task::spawn_blocking(move || -> Result<GattCommunicationStatus, WindowsBleError> {
+            let buffer = ibuffer_from(&bytes)?;
+            Ok(characteristic
+                .WriteValueWithOptionAsync(&buffer, option)?
+                .get()?)
+        })
+        .await
+        .map_err(|_| WindowsBleError::Closed)??;
+    if status != GattCommunicationStatus::Success {
+        return Err(WindowsBleError::WriteFailed);
+    }
+    Ok(())
+}
+
 /// Build the central scanner: a Received handler that forwards every Prns advertisement as a
 /// `Sighting` (the supervisor does identity-keyed dedup, so the backend forwards raw), filtered at
 /// the OS level to our service UUID so unrelated BLE traffic never wakes the handler.
@@ -280,8 +402,7 @@ fn build_watcher(
     Ok(watcher)
 }
 
-/// Convert a WinRT advertisement-received event into a `Sighting`. WinRT hands the 48-bit address as
-/// a `u64`; we keep its low six bytes big-endian so `dial` can rebuild the same `u64` to reconnect.
+/// Convert a WinRT advertisement-received event into a `Sighting`.
 fn sighting_from(args: &BluetoothLEAdvertisementReceivedEventArgs) -> Option<Event> {
     let address = args.BluetoothAddress().ok()?;
     let bytes = address.to_be_bytes();
@@ -299,9 +420,7 @@ fn sighting_from(args: &BluetoothLEAdvertisementReceivedEventArgs) -> Option<Eve
 /// Run on the radio thread: join the MTA, verify the adapter is a powered-on BLE peripheral, publish
 /// the GATT service (control + data characteristics, write + notify, plain security), and start the
 /// central scanner.
-fn winrt_setup(
-    events_tx: tokio_mpsc::UnboundedSender<Event>,
-) -> Result<Radio, WindowsBleError> {
+fn winrt_setup(events_tx: tokio_mpsc::UnboundedSender<Event>) -> Result<Radio, WindowsBleError> {
     // WinRT factory activation and async completion need an initialized apartment. CoIncrementMTAUsage
     // joins (or starts) the process-wide implicit MTA and keeps it alive for this thread's lifetime
     // with no matching decrement — the right shape for a long-lived radio thread.
@@ -362,13 +481,106 @@ fn publish_characteristic(
     parameters.SetCharacteristicProperties(properties)?;
     parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
     parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
-    let result = service
-        .CreateCharacteristicAsync(uuid, &parameters)?
-        .get()?;
+    let result = service.CreateCharacteristicAsync(uuid, &parameters)?.get()?;
     if result.Error()? != BluetoothError::Success {
         return Err(WindowsBleError::ServicePublishFailed);
     }
     Ok(result.Characteristic()?)
+}
+
+/// Connect to a sighted peer as GATT client: discover our service's control + data characteristics,
+/// subscribe to their notifications, and assemble the central link. Each notification is decoded
+/// (control) or forwarded raw (data) into the link's receivers. Runs on a `spawn_blocking` thread
+/// (joined to the MTA) because the WinRT GATT calls are blocking `get()`s in this `windows` version.
+fn connect_blocking(address: BleAddress) -> Result<WinGattLink, WindowsBleError> {
+    let device = BluetoothLEDevice::FromBluetoothAddressAsync(address_to_u64(address))?.get()?;
+
+    let control_char = discover_characteristic(&device, NATIVE_CONTROL_UUID)?;
+    let data_char = discover_characteristic(&device, NATIVE_DATA_UUID)?;
+    // Both characteristics live on the same service; hold it (and the device) to keep the link up.
+    let service = control_char.Service()?;
+
+    let (control_tx, control_rx) = tokio_mpsc::unbounded_channel::<Control>();
+    subscribe(&control_char, move |bytes| {
+        if let Some(control) = Control::decode(&bytes) {
+            let _ = control_tx.send(control);
+        }
+    })?;
+
+    let (data_tx, data_rx) = tokio_mpsc::unbounded_channel::<Box<[u8]>>();
+    subscribe(&data_char, move |bytes| {
+        let _ = data_tx.send(Box::from(bytes.as_slice()));
+    })?;
+
+    log::debug!(
+        "bluetooth: dialled {:02x?} — control + data characteristics subscribed",
+        address.octets()
+    );
+    Ok(WinGattLink {
+        address,
+        control_char,
+        data_char,
+        control_rx,
+        data_rx: Some(data_rx),
+        _device: device,
+        _service: service,
+    })
+}
+
+/// Discover the first characteristic with `uuid` under our service on the connected device.
+fn discover_characteristic(
+    device: &BluetoothLEDevice,
+    uuid: BleUuid,
+) -> Result<GattCharacteristic, WindowsBleError> {
+    let services = device
+        .GetGattServicesForUuidAsync(guid_of(BLE_SERVICE_UUID))?
+        .get()?;
+    if services.Status()? != GattCommunicationStatus::Success {
+        return Err(WindowsBleError::DialFailed);
+    }
+    let service = services
+        .Services()?
+        .into_iter()
+        .next()
+        .ok_or(WindowsBleError::DialFailed)?;
+    let chars = service.GetCharacteristicsForUuidAsync(guid_of(uuid))?.get()?;
+    if chars.Status()? != GattCommunicationStatus::Success {
+        return Err(WindowsBleError::DialFailed);
+    }
+    chars
+        .Characteristics()?
+        .into_iter()
+        .next()
+        .ok_or(WindowsBleError::DialFailed)
+}
+
+/// Subscribe to a characteristic's notifications, routing each value to `on_value`, then enable the
+/// CCCD so the peer actually notifies.
+fn subscribe<F>(characteristic: &GattCharacteristic, on_value: F) -> Result<(), WindowsBleError>
+where
+    F: Fn(Vec<u8>) + Send + 'static,
+{
+    characteristic.ValueChanged(&TypedEventHandler::new(
+        move |_sender, args: &Option<GattValueChangedEventArgs>| {
+            if let Some(args) = args.as_ref() {
+                if let Ok(buffer) = args.CharacteristicValue() {
+                    if let Ok(bytes) = bytes_from(&buffer) {
+                        on_value(bytes);
+                    }
+                }
+            }
+            Ok(())
+        },
+    ))?;
+    let status = characteristic
+        .WriteClientCharacteristicConfigurationDescriptorAsync(
+            GattClientCharacteristicConfigurationDescriptorValue::Notify,
+        )?
+        .get()?;
+    if status != GattCommunicationStatus::Success {
+        return Err(WindowsBleError::DialFailed);
+    }
+    Ok(())
 }
 
 impl BleBackend for WindowsBleBackend {
@@ -396,23 +608,48 @@ impl BleBackend for WindowsBleBackend {
 
     async fn next_event(&mut self) -> BleEvent<WinGattLink> {
         loop {
-            match self.events.recv().await {
-                Some(Event::Sighting { address, rssi }) => {
-                    log::debug!(
-                        "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
-                        address.octets()
-                    );
-                    return BleEvent::Sighting { address, rssi };
+            let pending_dials = !self.dials.is_empty();
+            tokio::select! {
+                event = self.events.recv() => match event {
+                    Some(Event::Sighting { address, rssi }) => {
+                        log::debug!(
+                            "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
+                            address.octets()
+                        );
+                        return BleEvent::Sighting { address, rssi };
+                    }
+                    Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
+                    // Watcher gone (backend shutting down): nothing more arrives, so park.
+                    None => core::future::pending().await,
+                },
+                Some(joined) = self.dials.join_next(), if pending_dials => {
+                    if let Ok(Some(link)) = joined {
+                        return BleEvent::LinkReady {
+                            link,
+                            origin: Origin::Dialed,
+                            peer_rssi: None,
+                        };
+                    }
                 }
-                Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
-                // Channel closed (no senders yet in this step): nothing more will arrive, so park
-                // rather than spin returning a closed signal the supervisor cannot act on.
-                None => core::future::pending().await,
             }
         }
     }
 
-    async fn dial(&mut self, _address: BleAddress) {
-        // TODO(ble-windows step 4): connect, discover characteristics, build a WinGattLink.
+    async fn dial(&mut self, address: BleAddress) {
+        log::debug!(
+            "bluetooth: dialling {:02x?} over LE (central role)",
+            address.octets()
+        );
+        // The WinRT GATT connect/discover/subscribe are blocking get()s, so run them off the reactor.
+        self.dials.spawn_blocking(move || match connect_blocking(address) {
+            Ok(link) => Some(link),
+            Err(error) => {
+                log::warn!(
+                    "bluetooth: dial to {:02x?} failed ({error:?})",
+                    address.octets()
+                );
+                None
+            }
+        });
     }
 }
