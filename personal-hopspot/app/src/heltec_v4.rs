@@ -324,6 +324,8 @@ pub async fn run(spawner: Spawner) {
         let transport = TransportId::new(*signer.identity_hash().as_bytes());
         (destination, transport)
     };
+    #[cfg(feature = "ble-bringup")]
+    let node_identity: [u8; 16] = *transport_id.as_bytes();
     let seed = self_destination.as_bytes();
     ENTROPY_STATE.store(
         u64::from_le_bytes([
@@ -586,7 +588,7 @@ pub async fn run(spawner: Spawner) {
             join(
                 join(
                     usb_device.run(usb_seam),
-                    crate::ble::run(ble_connector, mac_octets),
+                    crate::ble::run(ble_connector, mac_octets, node_identity),
                 ),
                 render,
             )
