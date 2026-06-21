@@ -41,5 +41,6 @@ Principles & Ethos
 - Newtypes, named enums, all incredibly powerful. We should not be shuffling around opaque bytes, or strings, or loose numbers, any more than we need to (like when the values being opaque *is the point*; that's a different thing)
 - We're high-performance but FP-flavored, as the above implies
 - Names are extremely important
+- Encode principles structurally
 - Comments should be an *exception*, not a rule. Many comments are papering over a bad name or bad API. Every comment should be first treated as a sign that the above principles were violated. If the nature of the comment doesn't apply to the above, then that's probably an indicator the comment is worthwhile.
 - Use the Prns website as our working, malleable target. We are still in the early stages where it is not by any means complete, and we can adjust it as we need to. But otherwise, use it as a reference for "where we're going". 
