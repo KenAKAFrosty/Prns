@@ -209,6 +209,43 @@ fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
     });
 }
 
+/// Stand up the native WinRT BLE auto-interface as a supervised fleet, mirroring the macOS path on
+/// its own task so a slow or off radio never blocks the node coming up. Windows is GATT-only (no
+/// app-level L2CAP), so `LinkCapabilities` advertises no PSM; the GATT-data floor carries every
+/// frame. `WindowsBleBackend::new` brings the adapter up; on failure (no radio, radio off, or the
+/// peripheral role unsupported) it logs and the node runs without BLE.
+#[cfg(target_os = "windows")]
+fn spawn_bluetooth(handle: TokioPrnsHandle, identity_hash: [u8; 16]) {
+    use personal_rns::interfaces::bluetooth_auto::core::{
+        BleIdentity, Endpoint, LinkCapabilities, WinRtHost, BLE_HW_MTU,
+    };
+    use personal_rns::interfaces::bluetooth_auto::impls::tokio::BluetoothAuto;
+    use personal_rns_ffi::ble::windows::WindowsBleBackend;
+
+    let ble_identity = BleIdentity::new(identity_hash);
+    tokio::spawn(async move {
+        match WindowsBleBackend::new().await {
+            Ok(backend) => {
+                handle.supervise(BluetoothAuto::new(
+                    backend,
+                    ble_identity,
+                    Endpoint::WinRt(WinRtHost::Windows),
+                    LinkCapabilities {
+                        l2cap: None,
+                        link_mtu: BLE_HW_MTU as u16,
+                    },
+                ));
+                println!("bluetooth: supervising WinRT (GATT-only)");
+            }
+            Err(error) => {
+                eprintln!(
+                    "bluetooth disabled ({error:?}); check that Bluetooth is on and supported on this machine"
+                );
+            }
+        }
+    });
+}
+
 fn run_node(
     ready_tx: Sender<WindowHandles>,
     identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
@@ -267,7 +304,7 @@ fn run_node(
         let wifi_status = wifi.status();
         handle.supervise(wifi);
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         spawn_bluetooth(handle.clone(), identity_hash);
 
         handle.supervise(LocalServer::new());
