@@ -185,6 +185,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: bash scripts/no-std-esp-build.sh
 
+  windows-desktop:
+    # The Hopspot desktop face is the workspace's cross-platform proving ground, and nothing else in
+    # CI builds on Windows — so a Windows-only break (a path assumption, an OS cfg gate, the SDL2 link)
+    # reaches main unseen. This lane builds and lints it on windows-latest. The firmware half rides the
+    # Xtensa `esp` toolchain (not installable on a stock runner), but the host desktop bin
+    # (`cfg(not(target_arch = "xtensa"))`) is plain std and builds on stable — so pin stable via
+    # RUSTUP_TOOLCHAIN, which overrides the app's `esp` rust-toolchain.toml (the file otherwise wins
+    # over a dtolnay/rustup directory override). The desktop face links SDL2 statically from source on
+    # Windows (sdl2 `bundled` + `static-link`, see the app Cargo.toml + .cargo/config.toml); that build
+    # needs CMake + the MSVC toolchain, both preinstalled on windows-latest.
+    runs-on: windows-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: personal-hopspot/app
+      # Lint + compile parity with the Linux desktop-face step in feature-configs: this is what would
+      # have caught the snapshot-refactor type mismatch that left main non-compiling.
+      - name: clippy — hopspot desktop face (Windows)
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: personal-hopspot/app
+      # Clippy stops before the final link, so it never exercises the static SDL2 link. A real build
+      # does — proving the self-contained, no-DLL Windows binary actually links.
+      - name: build — hopspot desktop face (static SDL2 links)
+        run: cargo build
+        working-directory: personal-hopspot/app
+
   local-interop:
     # Real-RNS interop: the LocalServer shared instance against a stock RNS client, proving the wire
     # matches what Sideband/NomadNet/MeshChat actually speak — not just our own framing. uv installs
