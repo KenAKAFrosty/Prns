@@ -47,6 +47,7 @@ mod op {
     pub const SET_PACKET_PARAMS: u8 = 0x8C;
     pub const SET_BUFFER_BASE_ADDRESS: u8 = 0x8F;
     pub const GET_RX_BUFFER_STATUS: u8 = 0x13;
+    pub const GET_RSSI_INST: u8 = 0x15;
     pub const GET_STATUS: u8 = 0xC0;
     pub const CLEAR_DEVICE_ERRORS: u8 = 0x07;
     pub const SET_STOP_RX_TIMER_ON_PREAMBLE: u8 = 0x9F;
@@ -506,6 +507,16 @@ where
     pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         self.arm_rx().await?;
         self.read_frame(buf).await
+    }
+
+    /// Read the instantaneous channel RSSI in dBm — valid while the radio is in RX (armed by
+    /// [`arm_rx`](Self::arm_rx)). This is the carrier-sense a listen-before-talk transmitter checks:
+    /// a level well above the noise floor means a frame is on air, so it should hold off.
+    pub async fn channel_rssi_dbm(&mut self) -> Result<i16, Error> {
+        let mut buf = [0u8; 2];
+        self.read_command(op::GET_RSSI_INST, &mut buf).await?;
+        // SX1262 datasheet 13.5.3: RssiInst = -RssiInst_byte / 2 dBm.
+        Ok(-(buf[1] as i16) / 2)
     }
 
     async fn standby(&mut self) -> Result<(), Error> {
