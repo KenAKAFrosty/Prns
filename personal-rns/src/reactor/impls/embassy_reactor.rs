@@ -1603,6 +1603,7 @@ mod tests {
                 lifecycle.receiver(),
                 app,
                 |_: &ProofRequest| false,
+                None,
             );
 
             let driver = async {

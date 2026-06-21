@@ -175,7 +175,7 @@ impl<B: BleBackend> BluetoothAuto<B> {
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
     ) -> Self {
-        let status = BluetoothAutoStatus::new(InterfaceId::from_reachability_tag(
+        let status = BluetoothAutoStatus::new(InterfaceId::from_channel_tag(
             InterfaceKind::BluetoothAuto,
             identity.as_bytes(),
         ));
