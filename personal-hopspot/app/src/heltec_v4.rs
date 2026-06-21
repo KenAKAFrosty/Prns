@@ -350,7 +350,10 @@ pub async fn run(spawner: Spawner) {
 
     // The WiFi stack carries both the WiFi-auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
+    #[cfg(not(feature = "ble-bringup"))]
     let wifi_built = build_wifi(&spawner, p.WIFI, mac_octets);
+    #[cfg(feature = "ble-bringup")]
+    let wifi_built: Option<(AutoWifi<'static, MEMBERS>, Stack<'static>)> = None;
     let stack = wifi_built.as_ref().map(|(_, stack)| *stack);
     let wifi = wifi_built.map(|(wifi, _)| wifi);
     let tcp_built = stack.and_then(build_tcp);
@@ -560,6 +563,10 @@ pub async fn run(spawner: Spawner) {
         }
     };
 
+    #[cfg(feature = "ble-bringup")]
+    let ble_connector = esp_radio::ble::controller::BleConnector::new(p.BT, Default::default())
+        .expect("ble connector");
+
     match (wifi, tcp) {
         (Some(wifi), Some((tcp, tcp_seam))) => {
             join(
@@ -575,6 +582,16 @@ pub async fn run(spawner: Spawner) {
             join(join(usb_device.run(usb_seam), wifi.run(fleet)), render).await;
         }
         (None, _) => {
+            #[cfg(feature = "ble-bringup")]
+            join(
+                join(
+                    usb_device.run(usb_seam),
+                    crate::ble::run(ble_connector, mac_octets),
+                ),
+                render,
+            )
+            .await;
+            #[cfg(not(feature = "ble-bringup"))]
             join(usb_device.run(usb_seam), render).await;
         }
     }

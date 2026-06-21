@@ -18,6 +18,10 @@ footprint = []
 # PSRAM storage, hand-wired in-process, measuring pure engine throughput on the S3 silicon and
 # printing a DEVICE_FIREHOSE line over the serial-JTAG log.
 device-firehose = []
+# Temporary native-BLE bring-up mode: pulls in trouble-host + esp-radio's BLE controller and brings
+# the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
+# Off by default, so the production firmware is unchanged.
+ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble"]
 
 [[bin]]
 name = "personal-hopspot-app"
@@ -69,6 +73,13 @@ personal-rns-ffi = { path = "../../personal-rns-ffi" }
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
+# Pure-Rust host BLE stack driving esp-radio's HCI BleConnector. 0.6.0 is the published release whose
+# bt-hci 0.8 agrees with esp-radio 0.18. It depends on embassy-sync 0.7 and heapless 0.9 while the
+# rest of the firmware is on 0.8; the GATT-server macro emits both, so ble.rs pins matching aliases
+# below to feed trouble its own versions across the boundary. Optional, only under `ble-bringup`.
+trouble-host = { version = "0.6.0", optional = true, default-features = false, features = ["peripheral", "gatt", "derive", "default-packet-pool-mtu-255", "log"] }
+embassy-sync-07 = { package = "embassy-sync", version = "0.7", default-features = false, optional = true }
+heapless-09 = { package = "heapless", version = "0.9", default-features = false, optional = true }
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "proto-ipv6", "dhcpv4", "medium-ethernet", "multicast", "tcp", "udp"] }
 static_cell = "2"
 portable-atomic = { version = "1", default-features = false }

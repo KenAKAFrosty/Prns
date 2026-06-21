@@ -7,6 +7,8 @@ extern crate alloc;
 
 #[cfg(all(target_arch = "xtensa", feature = "device-firehose"))]
 mod bench_firehose;
+#[cfg(all(target_arch = "xtensa", feature = "ble-bringup"))]
+mod ble;
 #[cfg(not(target_arch = "xtensa"))]
 mod desktop;
 #[cfg(target_arch = "xtensa")]
