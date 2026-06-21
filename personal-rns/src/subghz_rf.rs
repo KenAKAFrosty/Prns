@@ -152,6 +152,9 @@ pub struct LoraPacket {
 /// The private LoRa network sync word (RNode): 0x1424.
 pub const PRIVATE_SYNC_WORD: u16 = 0x1424;
 
+/// SX1262 LoRa max payload — the on-air length field is a single byte.
+const MAX_LORA_PAYLOAD: usize = 255;
+
 /// Per-board wiring/analog facts the one driver body needs.
 #[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
@@ -192,6 +195,10 @@ pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     modulation: Modulation,
     packet: LoraPacket,
     tx_power_dbm: i8,
+    /// RAM staging for the TX FIFO write — DMA-class SPI can't source a flash-resident
+    /// payload. A field, not a per-call stack local, so it never bloats the `transmit`
+    /// future or the shared node stack.
+    tx_staging: [u8; MAX_LORA_PAYLOAD],
 }
 
 impl<SPI, BUSY, DIO1, RST, DLY> Sx126x<SPI, BUSY, DIO1, RST, DLY>
@@ -230,6 +237,7 @@ where
                 invert_iq: false,
             },
             tx_power_dbm: 14,
+            tx_staging: [0u8; MAX_LORA_PAYLOAD],
         }
     }
 
@@ -284,13 +292,21 @@ where
             .map_err(|_| Error::Spi)
     }
 
-    async fn write_buffer(&mut self, offset: u8, data: &[u8]) -> Result<(), Error> {
+    /// Write the first `len` bytes of the `tx_staging` field into the SX1262 FIFO at offset 0.
+    /// Splits the `spi` / `tx_staging` borrows so the staged payload feeds the transaction
+    /// without an extra copy.
+    async fn write_tx_payload(&mut self, len: usize) -> Result<(), Error> {
         self.wait_busy().await?;
-        let header = [op::WRITE_BUFFER, offset];
-        self.spi
-            .transaction(&mut [Operation::Write(&header), Operation::Write(data)])
-            .await
-            .map_err(|_| Error::Spi)
+        let Self {
+            spi, tx_staging, ..
+        } = self;
+        let header = [op::WRITE_BUFFER, 0x00];
+        spi.transaction(&mut [
+            Operation::Write(&header),
+            Operation::Write(&tx_staging[..len]),
+        ])
+        .await
+        .map_err(|_| Error::Spi)
     }
 
     async fn read_buffer(&mut self, offset: u8, buf: &mut [u8]) -> Result<(), Error> {
@@ -363,7 +379,8 @@ where
             .await?;
         // Image calibration for the 902-928 MHz band.
         self.command(&[op::CALIBRATE_IMAGE, 0xE1, 0xE9]).await?;
-        self.configure().await
+        self.configure().await?;
+        self.route_irqs_and_tune_rx().await
     }
 
     /// Apply the channel config — modulation, frequency, TX power, packet shape — to the
@@ -378,57 +395,15 @@ where
         self.set_rf_frequency().await
     }
 
-    /// Transmit one LoRa frame and wait for TxDone. The channel must already be configured
-    /// (via [`init`](Self::init) / [`configure`](Self::configure)); only the payload length
-    /// is restamped per frame, so this is safe to interleave with [`receive`](Self::receive).
-    pub async fn transmit(&mut self, payload: &[u8]) -> Result<(), Error> {
-        let len = payload.len();
-        if len > 255 {
-            return Err(Error::BufferTooSmall);
-        }
-        // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may
-        // be flash-resident (`&'static`), so stage it through a RAM buffer.
-        let mut scratch = [0u8; 255];
-        scratch[..len].copy_from_slice(payload);
-
-        self.standby().await?;
-        // Modulation / power / frequency / packet shape were set by `configure` and the
-        // chip retains them — only the per-frame payload length changes here.
-        self.set_payload_length(len as u8).await?;
-        self.write_buffer(0x00, &scratch[..len]).await?;
-        let mask = (irq::TX_DONE | irq::TIMEOUT).to_be_bytes();
-        self.command(&[
-            op::SET_DIO_IRQ_PARAMS,
-            mask[0],
-            mask[1],
-            mask[0],
-            mask[1],
-            0,
-            0,
-            0,
-            0,
-        ])
-        .await?;
-        self.clear_irq(irq::ALL).await?;
-        // SetTx with timeout 0 = single shot, no timeout.
-        self.command(&[op::SET_TX, 0x00, 0x00, 0x00]).await?;
-        self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
-        let flags = self.irq_status().await?;
-        self.clear_irq(flags).await?;
-        if flags & irq::TIMEOUT != 0 {
-            return Err(Error::Timeout);
-        }
-        Ok(())
-    }
-
-    /// Listen in continuous RX and return the first frame's length, written into `buf`.
-    /// Blocks until RxDone — wrap in a host-side timeout to bound the listen. `Err(Crc)`
-    /// on a CRC failure, `Err(BufferTooSmall)` if the frame exceeds `buf`.
-    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        self.standby().await?;
-        // Config is retained from `configure`; restamp the RX-side max payload length.
-        self.set_payload_length(0xFF).await?;
-        // Unmask all IRQs onto DIO1; discriminate in software.
+    /// Route IRQs and arm the RX front-end — once, after [`configure`](Self::configure). The
+    /// SX1262 RETAINS all of these across SetStandby / SetTx / SetRx (proven on hardware: a TX
+    /// completes with the IRQ mask set only here, and a read-back showed the boosted RX gain
+    /// holding at 0x96 cycle after cycle), so they belong in [`init`](Self::init), not the
+    /// per-frame path. All IRQs are unmasked onto DIO1 (TxDone / RxDone / CrcErr / Timeout are
+    /// discriminated in software for both directions); the RX preamble timer, symbol timeout,
+    /// and gain take their listening values. Independent of the channel, so a channel change
+    /// re-runs `configure` but not this.
+    async fn route_irqs_and_tune_rx(&mut self) -> Result<(), Error> {
         let all = irq::ALL.to_be_bytes();
         self.command(&[
             op::SET_DIO_IRQ_PARAMS,
@@ -448,6 +423,47 @@ where
         if self.config.rx_boost {
             self.write_register(reg::RX_GAIN, &[0x96]).await?;
         }
+        Ok(())
+    }
+
+    /// Transmit one LoRa frame and wait for TxDone. The channel must already be configured
+    /// (via [`init`](Self::init) / [`configure`](Self::configure)); only the payload length
+    /// is restamped per frame, so this is safe to interleave with [`receive`](Self::receive).
+    pub async fn transmit(&mut self, payload: &[u8]) -> Result<(), Error> {
+        let len = payload.len();
+        if len > MAX_LORA_PAYLOAD {
+            return Err(Error::BufferTooSmall);
+        }
+        // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may
+        // be flash-resident (`&'static`), so stage it through the RAM `tx_staging` field.
+        self.tx_staging[..len].copy_from_slice(payload);
+
+        self.standby().await?;
+        // Modulation / power / frequency / packet shape were set by `configure`, and IRQs by
+        // `route_irqs_and_tune_rx`; the chip retains both. Only the per-frame payload length
+        // and FIFO contents change here.
+        self.set_payload_length(len as u8).await?;
+        self.write_tx_payload(len).await?;
+        self.clear_irq(irq::ALL).await?;
+        // SetTx with timeout 0 = single shot, no timeout.
+        self.command(&[op::SET_TX, 0x00, 0x00, 0x00]).await?;
+        self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
+        let flags = self.irq_status().await?;
+        self.clear_irq(flags).await?;
+        if flags & irq::TIMEOUT != 0 {
+            return Err(Error::Timeout);
+        }
+        Ok(())
+    }
+
+    /// Listen in continuous RX and return the first frame's length, written into `buf`.
+    /// Blocks until RxDone — wrap in a host-side timeout to bound the listen. `Err(Crc)`
+    /// on a CRC failure, `Err(BufferTooSmall)` if the frame exceeds `buf`.
+    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        self.standby().await?;
+        // Channel config, IRQ routing, and RX front-end were all set once in init and the chip
+        // retains them across TX/standby. Only restamp the RX-side max payload length, then arm.
+        self.set_payload_length(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
         // SetRx 0xFFFFFF = continuous.
         self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await?;
@@ -779,9 +795,13 @@ mod tests {
         let n = block_on(radio.receive(&mut buf)).expect("receive");
         assert_eq!(n, 16, "received frame length");
         assert_eq!(&buf[..n], b"PRNS-HELTEC-SMOK");
+        // A second receive: the once-only RX setup must NOT be re-issued — only arming repeats.
+        let n2 = block_on(radio.receive(&mut buf)).expect("receive 2");
+        assert_eq!(n2, 16, "second received frame length");
 
         let cmds = log.borrow();
         let has = |bytes: &[u8]| cmds.iter().any(|c| c.as_slice() == bytes);
+        let count = |bytes: &[u8]| cmds.iter().filter(|c| c.as_slice() == bytes).count();
 
         // init — the channel-defining bytes
         assert!(has(&[0x80, 0x00]), "SetStandby RC");
@@ -796,7 +816,7 @@ mod tests {
         );
         assert!(has(&[0x8F, 0x00, 0x00]), "SetBufferBaseAddress");
         assert!(has(&[0x98, 0xE1, 0xE9]), "CalibrateImage 915 band");
-        // TX
+        // configure (once, in init): modulation / PA / tx params / freq
         assert!(
             has(&[0x8B, 0x08, 0x04, 0x01, 0x00]),
             "SetModulationParams SF8/BW125/CR45/LDRO0"
@@ -804,34 +824,47 @@ mod tests {
         assert!(has(&[0x95, 0x02, 0x02, 0x00, 0x01]), "SetPaConfig 14dBm");
         assert!(has(&[0x8E, 0x16, 0x02]), "SetTxParams power22/ramp40us");
         assert!(
+            has(&[0x86, 0x39, 0x30, 0x00, 0x00]),
+            "SetRfFrequency 915 MHz"
+        );
+        // per-frame: payload-length restamp + arm
+        assert!(
             has(&[0x8C, 0x00, 0x12, 0x00, 16, 0x01, 0x00]),
             "SetPacketParams TX preamble18/explicit/len16/crc"
         );
         assert!(
-            has(&[0x86, 0x39, 0x30, 0x00, 0x00]),
-            "SetRfFrequency 915 MHz"
-        );
-        assert!(
-            has(&[0x08, 0x02, 0x01, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00]),
-            "SetDioIrq TX = TxDone|Timeout"
-        );
-        assert!(has(&[0x83, 0x00, 0x00, 0x00]), "SetTx no-timeout");
-        // RX
-        assert!(
             has(&[0x8C, 0x00, 0x12, 0x00, 0xFF, 0x01, 0x00]),
             "SetPacketParams RX max len"
         );
-        assert!(
-            has(&[0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]),
-            "SetDioIrq RX = all"
-        );
-        assert!(has(&[0x9F, 0x01]), "SetStopRxTimerOnPreamble");
-        assert!(has(&[0xA0, 0x00]), "SetLoRaSymbNumTimeout 0 (continuous)");
-        assert!(has(&[0x0D, 0x08, 0xAC, 0x96]), "RxGain boost");
-        assert!(has(&[0x82, 0xFF, 0xFF, 0xFF]), "SetRx continuous");
         // errata read-modify-writes (mock reads 0x00, bit-2 set -> 0x04 / bits1-4 -> 0x1E)
         assert!(has(&[0x0D, 0x08, 0x89, 0x04]), "TxModulation errata bit2");
         assert!(has(&[0x0D, 0x07, 0x36, 0x04]), "IQPolarity errata bit2");
         assert!(has(&[0x0D, 0x08, 0xD8, 0x1E]), "TxClampCfg errata bits1-4");
+
+        // The optimization, pinned (hardware-proven bidirectional): IRQ routing + RX tuning
+        // issued exactly ONCE in init, never per frame, even across two receives. Only arming
+        // (SetTx / SetRx) repeats.
+        assert_eq!(
+            count(&[0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00]),
+            1,
+            "unified all-IRQ mask set once"
+        );
+        assert_eq!(count(&[0x9F, 0x01]), 1, "SetStopRxTimerOnPreamble once");
+        assert_eq!(count(&[0xA0, 0x00]), 1, "SetLoRaSymbNumTimeout once");
+        assert_eq!(count(&[0x0D, 0x08, 0xAC, 0x96]), 1, "RxGain boost once");
+        assert!(
+            !has(&[0x08, 0x02, 0x01, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00]),
+            "TX no longer re-issues its own IRQ mask"
+        );
+        assert_eq!(
+            count(&[0x83, 0x00, 0x00, 0x00]),
+            1,
+            "SetTx once (one transmit)"
+        );
+        assert_eq!(
+            count(&[0x82, 0xFF, 0xFF, 0xFF]),
+            2,
+            "SetRx armed once per receive (two)"
+        );
     }
 }
