@@ -1,21 +1,20 @@
-//! The embassy SX1262 worker: owns the radio over `lora-phy`, bridges its RX/TX to the reactor
-//! seam, and reconfigures the radio in place when the app signals a new profile. Generic over the
-//! `lora-phy` `RadioKind`, so the same body drives a Heltec V4 (esp-hal SPI) or an nRF SX1262 board
-//! and compile-checks on the host. A reconfigure retunes the silicon and, when it changes the
-//! channel identity, emits a `Retag` so the reactor re-keys the interface in place.
+//! The embassy SX1262 worker: owns the radio over our own `subghz_rf` driver, bridges its RX/TX to
+//! the reactor seam, and reconfigures the radio in place when the app signals a new profile. Generic
+//! over the driver's `embedded-hal-async` SPI + GPIO bounds, so the same body drives a Heltec V4
+//! (esp-hal) or an nRF SX1262 board and compile-checks on the host. A reconfigure retunes the
+//! silicon and, when it changes the channel identity, emits a `Retag` so the reactor re-keys the
+//! interface in place.
 
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::DynamicSender;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
+use embedded_hal::digital::OutputPin;
+use embedded_hal_async::delay::DelayNs;
+use embedded_hal_async::digital::Wait;
+use embedded_hal_async::spi::SpiDevice;
 use heapless::Vec as HeaplessVec;
-use lora_phy::mod_params::{
-    Bandwidth as PhyBandwidth, CodingRate as PhyCodingRate, ModulationParams, PacketParams, RxMode,
-    SpreadingFactor as PhySpreadingFactor,
-};
-use lora_phy::mod_traits::RadioKind;
-use lora_phy::{DelayNs, LoRa};
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::rnode_lora::core::{
@@ -29,12 +28,11 @@ use crate::reactor::duty_gate::{DutyGate, DutyVerdict, FixedDutyQueue};
 use crate::reactor::impls::embassy_reactor::{EmbassyInterfaceStatus, InterfaceLifecycle};
 use crate::reactor::interface_seam::{Interface, InterfaceSeam};
 use crate::reactor::throughput::ThroughputLedger;
+use crate::subghz_rf::{self, Sx126x};
 
 /// How often a serving radio re-checks its enabled gate, so a "Power" toggle from the UI takes
 /// effect within a beat rather than waiting on traffic.
 pub const ENABLED_POLL: Duration = Duration::from_millis(250);
-/// The pause after a failed `prepare_for_rx` before retrying, so a transient radio fault doesn't spin.
-const RX_RETRY_WAIT: Duration = Duration::from_millis(500);
 /// How many held packets the duty gate buffers before dropping the oldest. The region's airtime
 /// budget caps the queue sooner on a slow link, so this only bounds the buffer's memory.
 const DUTY_QUEUE_FRAMES: usize = 4;
@@ -44,18 +42,12 @@ const DUTY_QUEUE_FRAMES: usize = 4;
 /// (set-frequency, set-modulation, …) lands with the reconfigure arc.
 pub type LoRaControl = Signal<CriticalSectionRawMutex, RadioProfile>;
 
-/// The `lora-phy` params one profile resolves to — rebuilt whole on a reconfigure.
-struct RadioParams {
-    modulation: ModulationParams,
-    rx_pkt: PacketParams,
-    tx_pkt: PacketParams,
-}
-
-/// Map a profile's LoRa modulation onto `lora-phy`'s enums. `None` when the profile is GFSK —
-/// lora-phy 3.0.1 drives only the LoRa packet engine, so the speed mode waits on its own path.
-fn phy_lora_params(
+/// Map a profile's LoRa channel onto our `subghz_rf` driver's `init` arguments —
+/// `(frequency_hz, modulation, packet shape, tx power dBm)`. `None` when the profile is GFSK: the
+/// driver's LoRa arm is all that's wired today, so the speed mode waits on its own path.
+fn subghz_params(
     profile: &RadioProfile,
-) -> Option<(PhySpreadingFactor, PhyBandwidth, PhyCodingRate, u32)> {
+) -> Option<(u32, subghz_rf::Modulation, subghz_rf::LoraPacket, i8)> {
     let Modulation::Lora {
         spreading_factor,
         bandwidth,
@@ -64,56 +56,43 @@ fn phy_lora_params(
     else {
         return None;
     };
-    let sf = match spreading_factor {
-        SpreadingFactor::Sf5 => PhySpreadingFactor::_5,
-        SpreadingFactor::Sf6 => PhySpreadingFactor::_6,
-        SpreadingFactor::Sf7 => PhySpreadingFactor::_7,
-        SpreadingFactor::Sf8 => PhySpreadingFactor::_8,
-        SpreadingFactor::Sf9 => PhySpreadingFactor::_9,
-        SpreadingFactor::Sf10 => PhySpreadingFactor::_10,
-        SpreadingFactor::Sf11 => PhySpreadingFactor::_11,
-        SpreadingFactor::Sf12 => PhySpreadingFactor::_12,
+    let spreading_factor = match spreading_factor {
+        SpreadingFactor::Sf5 => subghz_rf::SpreadingFactor::Sf5,
+        SpreadingFactor::Sf6 => subghz_rf::SpreadingFactor::Sf6,
+        SpreadingFactor::Sf7 => subghz_rf::SpreadingFactor::Sf7,
+        SpreadingFactor::Sf8 => subghz_rf::SpreadingFactor::Sf8,
+        SpreadingFactor::Sf9 => subghz_rf::SpreadingFactor::Sf9,
+        SpreadingFactor::Sf10 => subghz_rf::SpreadingFactor::Sf10,
+        SpreadingFactor::Sf11 => subghz_rf::SpreadingFactor::Sf11,
+        SpreadingFactor::Sf12 => subghz_rf::SpreadingFactor::Sf12,
     };
-    let bw = match bandwidth {
-        LoraBandwidth::Bw125kHz => PhyBandwidth::_125KHz,
-        LoraBandwidth::Bw250kHz => PhyBandwidth::_250KHz,
-        LoraBandwidth::Bw500kHz => PhyBandwidth::_500KHz,
+    let bandwidth = match bandwidth {
+        LoraBandwidth::Bw125kHz => subghz_rf::Bandwidth::Bw125,
+        LoraBandwidth::Bw250kHz => subghz_rf::Bandwidth::Bw250,
+        LoraBandwidth::Bw500kHz => subghz_rf::Bandwidth::Bw500,
     };
-    let cr = match coding_rate {
-        CodingRate::Cr45 => PhyCodingRate::_4_5,
-        CodingRate::Cr46 => PhyCodingRate::_4_6,
-        CodingRate::Cr47 => PhyCodingRate::_4_7,
-        CodingRate::Cr48 => PhyCodingRate::_4_8,
+    let coding_rate = match coding_rate {
+        CodingRate::Cr45 => subghz_rf::CodingRate::Cr4_5,
+        CodingRate::Cr46 => subghz_rf::CodingRate::Cr4_6,
+        CodingRate::Cr47 => subghz_rf::CodingRate::Cr4_7,
+        CodingRate::Cr48 => subghz_rf::CodingRate::Cr4_8,
     };
-    Some((sf, bw, cr, profile.frequency.hz()))
-}
-
-fn build_params<RK: RadioKind, DLY: DelayNs>(
-    radio: &mut LoRa<RK, DLY>,
-    profile: &RadioProfile,
-) -> Option<RadioParams> {
-    let (sf, bw, cr, frequency_hz) = phy_lora_params(profile)?;
-    let modulation = radio
-        .create_modulation_params(sf, bw, cr, frequency_hz)
-        .ok()?;
-    let rx_pkt = radio
-        .create_rx_packet_params(
-            profile.preamble.count(),
-            false,
-            LORA_SINGLE_FRAME_MAX as u8,
-            true,
-            false,
-            &modulation,
-        )
-        .ok()?;
-    let tx_pkt = radio
-        .create_tx_packet_params(profile.preamble.count(), false, true, false, &modulation)
-        .ok()?;
-    Some(RadioParams {
-        modulation,
-        rx_pkt,
-        tx_pkt,
-    })
+    let packet = subghz_rf::LoraPacket {
+        preamble_symbols: profile.preamble.count(),
+        explicit_header: true,
+        crc_on: true,
+        invert_iq: false,
+    };
+    Some((
+        profile.frequency.hz(),
+        subghz_rf::Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        },
+        packet,
+        profile.tx_power.dbm(),
+    ))
 }
 
 /// The [`Retag`](InterfaceLifecycle::Retag) a reconfigure to `new_profile` warrants, or `None` when
@@ -148,10 +127,8 @@ fn packet_airtime(packet: &[u8], bitrate_bps: u32) -> u64 {
 /// by the immediate path and the duty gate's release, so a held packet rides out byte-for-byte the
 /// same as an unheld one.
 #[allow(clippy::too_many_arguments)]
-async fn transmit_packet<RK: RadioKind, DLY: DelayNs>(
-    radio: &mut LoRa<RK, DLY>,
-    params: &mut RadioParams,
-    power_dbm: i32,
+async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
+    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
     packet: &[u8],
     seq: &mut u8,
     airtime: &mut AirtimeLedger,
@@ -160,7 +137,13 @@ async fn transmit_packet<RK: RadioKind, DLY: DelayNs>(
     bitrate_bps: u32,
     now: InstantMillis,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
-) {
+) where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
     for index in 0..air_frame_count(packet.len()) {
         let n = match encode_air_frame_part(packet, *seq, index, tx_frame) {
             Ok(n) => n,
@@ -169,19 +152,9 @@ async fn transmit_packet<RK: RadioKind, DLY: DelayNs>(
                 break;
             }
         };
-        if let Err(e) = radio
-            .prepare_for_tx(
-                &params.modulation,
-                &mut params.tx_pkt,
-                power_dbm,
-                &tx_frame[..n],
-            )
-            .await
-        {
-            log::warn!("RNS_LORA prepare_for_tx failed: {e:?}");
-            break;
-        }
-        if let Err(e) = radio.tx().await {
+        // TX power, modulation, and packet shape are held in the radio from `init`; only the
+        // framed payload changes per frame.
+        if let Err(e) = radio.transmit(&tx_frame[..n]).await {
             log::warn!("RNS_LORA tx failed: {e:?}");
             break;
         }
@@ -196,9 +169,9 @@ async fn transmit_packet<RK: RadioKind, DLY: DelayNs>(
 /// One SX1262 spoken as an RNode-compatible LoRa interface. Owns the radio for its whole life; the
 /// `control` signal lets the app retune it live, the `status` handle carries its enable gate and
 /// counters. `tag` is the channel identity the id derived from, recomputed only on a re-key.
-pub struct LoRaInterface<'a, RK: RadioKind, DLY: DelayNs> {
+pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     id: InterfaceId,
-    radio: LoRa<RK, DLY>,
+    radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
     profile: RadioProfile,
     tag: HeaplessVec<u8, CHANNEL_TAG_CAP>,
     control: &'a LoRaControl,
@@ -206,7 +179,7 @@ pub struct LoRaInterface<'a, RK: RadioKind, DLY: DelayNs> {
     retag: DynamicSender<'a, InterfaceLifecycle>,
 }
 
-impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
+impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     /// The id a radio on `profile` will carry — for the caller that stands its
     /// [`EmbassyInterfaceStatus`] up under the same key before building the interface.
     #[must_use]
@@ -216,7 +189,7 @@ impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
 
     #[must_use]
     pub fn new(
-        radio: LoRa<RK, DLY>,
+        radio: Sx126x<SPI, BUSY, DIO1, RST, DLY>,
         profile: RadioProfile,
         control: &'a LoRaControl,
         status: &'a EmbassyInterfaceStatus,
@@ -241,7 +214,14 @@ impl<'a, RK: RadioKind, DLY: DelayNs> LoRaInterface<'a, RK, DLY> {
     }
 }
 
-impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
+impl<SPI, BUSY, DIO1, RST, DLY> Interface for LoRaInterface<'_, SPI, BUSY, DIO1, RST, DLY>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
     const HW_MTU: usize = LORA_MAX_PAYLOAD;
     const KIND: InterfaceKind = InterfaceKind::LoRa;
 
@@ -265,11 +245,19 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
         } = self;
         let mut current_id = id;
 
-        let Some(mut params) = build_params(&mut radio, &profile) else {
+        let Some((frequency_hz, modulation, packet, power_dbm)) = subghz_params(&profile) else {
             log::error!("RNS_LORA unsupported modulation profile; interface offline");
             status.set_connection(ConnectionState::Disconnected);
             return;
         };
+        if let Err(e) = radio
+            .init(frequency_hz, modulation, packet, power_dbm)
+            .await
+        {
+            log::error!("RNS_LORA radio init failed: {e:?}; interface offline");
+            status.set_connection(ConnectionState::Disconnected);
+            return;
+        }
 
         let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
         let mut rx_buf = [0u8; LORA_SINGLE_FRAME_MAX];
@@ -292,25 +280,15 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                 status.set_connection(ConnectionState::Connected);
             }
 
-            if let Err(e) = radio
-                .prepare_for_rx(RxMode::Continuous, &params.modulation, &params.rx_pkt)
-                .await
-            {
-                log::warn!("RNS_LORA prepare_for_rx failed: {e:?}");
-                Timer::after(RX_RETRY_WAIT).await;
-                continue;
-            }
-
             match select4(
-                radio.rx(&params.rx_pkt, &mut rx_buf),
+                radio.receive(&mut rx_buf),
                 seam.next_outbound(),
                 control.wait(),
                 Timer::after(ENABLED_POLL),
             )
             .await
             {
-                Either4::First(Ok((len, _rx_status))) => {
-                    let len = len as usize;
+                Either4::First(Ok(len)) => {
                     let now = InstantMillis(started.elapsed().as_millis());
                     status.add_rx(len as u64);
                     throughput.record_rx(now, len as u64);
@@ -326,7 +304,6 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                 }
                 Either4::Second(outbound) => {
                     let now = InstantMillis(started.elapsed().as_millis());
-                    let power_dbm = profile.tx_power.dbm() as i32;
                     let transmit = match duty_cycle {
                         None => true,
                         Some(duty) => {
@@ -341,8 +318,6 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                     if transmit {
                         transmit_packet(
                             &mut radio,
-                            &mut params,
-                            power_dbm,
                             outbound,
                             &mut seq,
                             &mut airtime,
@@ -355,17 +330,23 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                         .await;
                     }
                 }
-                Either4::Third(new_profile) => match build_params(&mut radio, &new_profile) {
-                    Some(rebuilt) => {
-                        params = rebuilt;
-                        profile = new_profile;
-                        bitrate_bps = profile.nominal_bitrate_bps();
-                        duty_cycle = profile.region.duty_cycle();
-                        if let Some(message) = retag_message(current_id, &profile) {
-                            if let InterfaceLifecycle::Retag { new_id, .. } = &message {
-                                current_id = *new_id;
+                Either4::Third(new_profile) => match subghz_params(&new_profile) {
+                    Some((frequency_hz, modulation, packet, power_dbm)) => {
+                        if let Err(e) = radio
+                            .init(frequency_hz, modulation, packet, power_dbm)
+                            .await
+                        {
+                            log::warn!("RNS_LORA reconfigure init failed: {e:?}");
+                        } else {
+                            profile = new_profile;
+                            bitrate_bps = profile.nominal_bitrate_bps();
+                            duty_cycle = profile.region.duty_cycle();
+                            if let Some(message) = retag_message(current_id, &profile) {
+                                if let InterfaceLifecycle::Retag { new_id, .. } = &message {
+                                    current_id = *new_id;
+                                }
+                                retag.send(message).await;
                             }
-                            retag.send(message).await;
                         }
                     }
                     None => {
@@ -375,7 +356,6 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                 Either4::Fourth(()) => {
                     if let Some(duty) = duty_cycle {
                         let now = InstantMillis(started.elapsed().as_millis());
-                        let power_dbm = profile.tx_power.dbm() as i32;
                         let mut released_packet = [0u8; LORA_MAX_PAYLOAD];
                         loop {
                             let util = airtime.utilization(now);
@@ -391,8 +371,6 @@ impl<RK: RadioKind, DLY: DelayNs> Interface for LoRaInterface<'_, RK, DLY> {
                             if let Some(len) = released_len {
                                 transmit_packet(
                                     &mut radio,
-                                    &mut params,
-                                    power_dbm,
                                     &released_packet[..len],
                                     &mut seq,
                                     &mut airtime,
