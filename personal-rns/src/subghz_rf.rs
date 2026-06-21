@@ -192,9 +192,10 @@ pub enum PacketParams {
 /// The private LoRa network sync word (RNode): 0x1424.
 pub const PRIVATE_SYNC_WORD: u16 = 0x1424;
 
-/// The GFSK sync word (4 bytes) both endpoints must share — a high-autocorrelation pattern,
-/// distinct from the 0x55/0xAA preamble, so noise and foreign in-band energy don't fake a frame.
-pub const GFSK_SYNC_WORD: [u8; 4] = [0x93, 0x0B, 0x51, 0xDE];
+/// The GFSK sync word (8 bytes) both endpoints must share — balanced (32 of 64 bits set), no run
+/// over 4 bits, and far from the 0x55/0xAA preamble, so noise and foreign in-band energy don't fake
+/// a frame. Those properties are asserted by `gfsk_sync_word_is_balanced_with_no_long_runs`.
+pub const GFSK_SYNC_WORD: [u8; 8] = [0x93, 0x0B, 0x51, 0xDE, 0x6C, 0xF4, 0xAE, 0x21];
 
 /// SX1262 max single-frame payload — the on-air length field is a single byte (LoRa and GFSK alike).
 const MAX_LORA_PAYLOAD: usize = 255;
@@ -573,6 +574,12 @@ where
         Ok(-(buf[1] as i16) / 2)
     }
 
+    pub async fn set_frequency(&mut self, freq_hz: u32) -> Result<(), Error> {
+        self.freq_hz = freq_hz;
+        self.standby().await?;
+        self.set_rf_frequency().await
+    }
+
     async fn standby(&mut self) -> Result<(), Error> {
         self.command(&[op::SET_STANDBY, 0x00]).await
     }
@@ -668,7 +675,7 @@ where
                     pre[0],
                     pre[1],
                     0x05, // preamble detector: 16 bits — reject noise / foreign in-band energy
-                    0x20, // sync word length: 32 bits (4 bytes)
+                    0x40, // sync word length: 64 bits (8 bytes)
                     0x00, // address filtering off
                     0x01, // variable-length frame (an explicit length byte)
                     payload_len,
@@ -1073,8 +1080,8 @@ mod tests {
 
         assert!(has(&[0x8A, 0x00]), "SetPacketType GFSK");
         assert!(
-            has(&[0x0D, 0x06, 0xC0, 0x93, 0x0B, 0x51, 0xDE]),
-            "GFSK 4-byte syncword written to 0x06C0"
+            has(&[0x0D, 0x06, 0xC0, 0x93, 0x0B, 0x51, 0xDE, 0x6C, 0xF4, 0xAE, 0x21]),
+            "GFSK 8-byte syncword written to 0x06C0"
         );
         // BR = 1.024e9 / 50000 = 20480 = 0x005000; Fdev = 25000 * 2^25 / 32e6 = 26214 = 0x006666;
         // RX bw for Carson 2*25k+50k=100k -> 117.3 kHz code 0x0B.
@@ -1082,14 +1089,45 @@ mod tests {
             has(&[0x8B, 0x00, 0x50, 0x00, 0x00, 0x0B, 0x00, 0x66, 0x66]),
             "SetModulationParams 50kbps / no-shaping / 117kHz / 25kHz-dev"
         );
-        // GFSK SetPacketParams: preamble 32 bits, 8-bit detector, 24-bit sync, variable len 16,
+        // GFSK SetPacketParams: preamble 32 bits, 16-bit detector, 64-bit sync, variable len 16,
         // CRC on, whitening on.
         assert!(
-            has(&[0x8C, 0x00, 0x20, 0x05, 0x20, 0x00, 0x01, 16, 0x02, 0x01]),
-            "SetPacketParams GFSK preamble32 / det16 / sync32 / var / len16 / crc2 / whiten"
+            has(&[0x8C, 0x00, 0x20, 0x05, 0x40, 0x00, 0x01, 16, 0x02, 0x01]),
+            "SetPacketParams GFSK preamble32 / det16 / sync64 / var / len16 / crc2 / whiten"
         );
         // The LoRa-only commands must NOT appear on the GFSK path.
         assert!(!has(&[0x8A, 0x01]), "no LoRa SetPacketType");
         assert!(!has(&[0xA0, 0x00]), "no LoRa symbol-timeout");
+    }
+
+    #[test]
+    fn gfsk_sync_word_is_balanced_with_no_long_runs() {
+        let total_bits = GFSK_SYNC_WORD.len() * 8;
+        let ones: u32 = GFSK_SYNC_WORD.iter().map(|b| b.count_ones()).sum();
+        assert_eq!(
+            ones as usize,
+            total_bits / 2,
+            "balanced: half ones, half zeros"
+        );
+
+        let bit = |i: usize| (GFSK_SYNC_WORD[i / 8] >> (7 - (i % 8))) & 1;
+        let mut max_run = 1;
+        let mut run = 1;
+        for i in 1..total_bits {
+            if bit(i) == bit(i - 1) {
+                run += 1;
+                max_run = max_run.max(run);
+            } else {
+                run = 1;
+            }
+        }
+        assert!(max_run <= 4, "no run longer than 4 bits (got {max_run})");
+
+        let aa: u32 = GFSK_SYNC_WORD.iter().map(|b| (b ^ 0xAA).count_ones()).sum();
+        let five: u32 = GFSK_SYNC_WORD.iter().map(|b| (b ^ 0x55).count_ones()).sum();
+        assert!(
+            aa >= 24 && five >= 24,
+            "well-separated from the 0x55/0xAA preamble"
+        );
     }
 }

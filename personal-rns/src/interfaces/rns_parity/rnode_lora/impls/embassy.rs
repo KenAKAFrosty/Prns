@@ -18,9 +18,10 @@ use heapless::Vec as HeaplessVec;
 
 use crate::engine::InstantMillis;
 use crate::interfaces::rns_parity::rnode_lora::core::{
-    self, air_frame_count, encode_air_frame_part, CodingRate, LoRaReassembler, LoraBandwidth,
-    Modulation, PulseShaping, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
-    LORA_SINGLE_FRAME_MAX,
+    self, air_frame_count, encode_air_frame_part, CodingRate, HopBand, HopSchedule,
+    LoRaReassembler, LocalClock, LoraBandwidth, Modulation, PulseShaping, RadioProfile,
+    SpreadingFactor, SyncBeacon, CHANNEL_TAG_CAP, DEMO_HOP_COUNT, DEMO_HOP_SPACING_HZ,
+    LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
 use crate::interfaces::{ConnectionState, InterfaceConfig, InterfaceId, InterfaceKind};
 use crate::reactor::airtime::{frame_airtime_us, AirtimeLedger};
@@ -57,6 +58,12 @@ const CSMA_MAX_DEFER_MS: u64 = 2_500;
 /// over the BW125 noise floor (~-120 dBm), under a desk-adjacent peer (~-40 dBm).
 const CHANNEL_BUSY_DBM: i16 = -95;
 
+const DWELL_MS: u64 = 200;
+const BEACON_FILL: u8 = 0xA5;
+const RADIO_CMD_TIMEOUT_MS: u64 = 200;
+const TX_AIRTIME_MARGIN_MS: u64 = 150;
+const RADIO_REINIT_TIMEOUT_MS: u64 = 1_000;
+
 /// One CSMA contention budget: DIFS plus a random `[0, CW_MAX]`-slot backoff, in ms. The channel
 /// must stay clear this long before the frame goes out. The `now`-mix de-phases two un-synced nodes
 /// so they don't pick the same backoff every contest.
@@ -75,7 +82,14 @@ fn csma_budget_ms(rng: &mut u32, now: InstantMillis) -> u64 {
 
 /// Carrier sense: is a frame on air right now? A transient RSSI-read error reads as clear — never
 /// wedge a transmit on an SPI hiccup. Requires the radio armed in RX (the interface always is).
-async fn channel_busy<SPI, BUSY, DIO1, RST, DLY>(
+async fn deadline<F: ::core::future::Future>(timeout_ms: u64, fut: F) -> Option<F::Output> {
+    match select(fut, Timer::after(Duration::from_millis(timeout_ms))).await {
+        Either::First(out) => Some(out),
+        Either::Second(()) => None,
+    }
+}
+
+async fn arm_rx_guarded<SPI, BUSY, DIO1, RST, DLY>(
     radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
 ) -> bool
 where
@@ -85,7 +99,34 @@ where
     RST: OutputPin,
     DLY: DelayNs,
 {
-    matches!(radio.channel_rssi_dbm().await, Ok(rssi) if rssi >= CHANNEL_BUSY_DBM)
+    match deadline(RADIO_CMD_TIMEOUT_MS, radio.arm_rx()).await {
+        Some(Ok(())) => true,
+        Some(Err(e)) => {
+            log::warn!("RNS_LORA arm_rx failed: {e:?}");
+            false
+        }
+        None => {
+            log::warn!("RNS_LORA arm_rx wedged");
+            false
+        }
+    }
+}
+
+async fn channel_busy<SPI, BUSY, DIO1, RST, DLY>(
+    radio: &mut Sx126x<SPI, BUSY, DIO1, RST, DLY>,
+) -> Option<bool>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    match deadline(RADIO_CMD_TIMEOUT_MS, radio.channel_rssi_dbm()).await {
+        Some(Ok(rssi)) => Some(rssi >= CHANNEL_BUSY_DBM),
+        Some(Err(_)) => Some(false),
+        None => None,
+    }
 }
 
 /// Deliver one received frame: count it, update rates, and hand a reassembled packet to the seam.
@@ -94,19 +135,27 @@ where
 async fn deliver_rx<Seam: InterfaceSeam>(
     rx: &[u8],
     now: InstantMillis,
+    hopping: bool,
+    clock: &mut LocalClock,
     status: &EmbassyInterfaceStatus,
     throughput: &mut ThroughputLedger,
     reassembler: &mut LoRaReassembler<LORA_MAX_PAYLOAD>,
     seam: &mut Seam,
-) {
+) -> bool {
     status.add_rx(rx.len() as u64);
     throughput.record_rx(now, rx.len() as u64);
     status.set_transfer_rates(throughput.rates());
     if let Some(packet) = reassembler.feed(rx) {
+        if hopping {
+            if let Some(beacon) = SyncBeacon::decode(packet) {
+                return clock.observe(now.0, &beacon);
+            }
+        }
         if !packet.is_empty() && packet.len() <= LORA_MAX_PAYLOAD {
             seam.next_inbound(packet).await;
         }
     }
+    false
 }
 
 /// The signal the app holds to reconfigure a running radio: it sends a whole new [`RadioProfile`]
@@ -180,7 +229,7 @@ fn subghz_params(
                     pulse_shape,
                 },
                 subghz_rf::PacketParams::Gfsk(subghz_rf::GfskPacket {
-                    preamble_bits: 32,
+                    preamble_bits: 64,
                     crc_on: true,
                     whitening_on: true,
                 }),
@@ -237,7 +286,8 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
     bitrate_bps: u32,
     now: InstantMillis,
     tx_frame: &mut [u8; LORA_SINGLE_FRAME_MAX],
-) where
+) -> bool
+where
     SPI: SpiDevice,
     BUSY: Wait,
     DIO1: Wait,
@@ -254,9 +304,19 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
         };
         // TX power, modulation, and packet shape are held in the radio from `init`; only the
         // framed payload changes per frame.
-        if let Err(e) = radio.transmit(&tx_frame[..n]).await {
-            log::warn!("RNS_LORA tx failed: {e:?}");
-            break;
+        let budget = frame_airtime_us(n, bitrate_bps) / 1_000 + TX_AIRTIME_MARGIN_MS;
+        match deadline(budget, radio.transmit(&tx_frame[..n])).await {
+            Some(Ok(())) => {}
+            Some(Err(e)) => {
+                log::warn!("RNS_LORA tx failed: {e:?}");
+                *seq = seq.wrapping_add(0x10);
+                return false;
+            }
+            None => {
+                log::warn!("RNS_LORA tx wedged past {budget}ms");
+                *seq = seq.wrapping_add(0x10);
+                return false;
+            }
         }
         status.add_tx(n as u64);
         throughput.record_tx(now, n as u64);
@@ -264,6 +324,7 @@ async fn transmit_packet<SPI, BUSY, DIO1, RST, DLY>(
         status.set_airtime(airtime.record_tx(now, frame_airtime_us(n, bitrate_bps)));
     }
     *seq = seq.wrapping_add(0x10);
+    true
 }
 
 /// One SX1262 spoken as an RNode-compatible LoRa interface. Owns the radio for its whole life; the
@@ -277,6 +338,7 @@ pub struct LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
     control: &'a LoRaControl,
     status: &'a EmbassyInterfaceStatus,
     retag: DynamicSender<'a, InterfaceLifecycle>,
+    node_id: u32,
 }
 
 impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY> {
@@ -294,6 +356,7 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
         control: &'a LoRaControl,
         status: &'a EmbassyInterfaceStatus,
         retag: DynamicSender<'a, InterfaceLifecycle>,
+        node_id: u32,
     ) -> Self {
         let tag = core::channel_tag(&profile);
         let id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &tag);
@@ -305,6 +368,7 @@ impl<'a, SPI, BUSY, DIO1, RST, DLY> LoRaInterface<'a, SPI, BUSY, DIO1, RST, DLY>
             control,
             status,
             retag,
+            node_id,
         }
     }
 
@@ -342,6 +406,7 @@ where
             control,
             status,
             retag,
+            node_id,
         } = self;
         let mut current_id = id;
 
@@ -391,6 +456,17 @@ where
         // total deferral against this, so a restart-resetting RX stream can never starve the TX.
         let mut contend_start = InstantMillis(0);
 
+        let hopping = matches!(profile.modulation, Modulation::Gfsk { .. });
+        let id_bytes = current_id.as_bytes();
+        let schedule = HopSchedule::new(
+            HopBand::centered_on(profile.frequency, DEMO_HOP_SPACING_HZ, DEMO_HOP_COUNT),
+            u32::from_le_bytes([id_bytes[0], id_bytes[1], id_bytes[2], id_bytes[3]]),
+        );
+        let mut tuned_phase: u64 = u64::MAX;
+        let mut needs_recovery = false;
+        let mut beacon_buf = [BEACON_FILL; LORA_MAX_PAYLOAD];
+        let mut clock = LocalClock::new(node_id);
+
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
@@ -399,9 +475,31 @@ where
                 }
                 status.set_connection(ConnectionState::Connected);
                 pending_len = None;
-                if let Err(e) = radio.arm_rx().await {
-                    log::warn!("RNS_LORA RX re-arm after enable failed: {e:?}");
+                if !arm_rx_guarded(&mut radio).await {
+                    needs_recovery = true;
                 }
+            }
+
+            if needs_recovery {
+                needs_recovery = false;
+                log::warn!("RNS_LORA radio wedged — re-initializing");
+                if let Some((frequency_hz, modulation, packet, power_dbm)) =
+                    subghz_params(&profile)
+                {
+                    let reinit = deadline(
+                        RADIO_REINIT_TIMEOUT_MS,
+                        radio.init(frequency_hz, modulation, packet, power_dbm),
+                    )
+                    .await;
+                    if matches!(reinit, Some(Ok(()))) {
+                        let _ = arm_rx_guarded(&mut radio).await;
+                    } else {
+                        log::error!("RNS_LORA radio re-init failed; retrying");
+                        needs_recovery = true;
+                        Timer::after(Duration::from_millis(200)).await;
+                    }
+                }
+                tuned_phase = u64::MAX;
             }
 
             if let Some(len) = pending_len {
@@ -416,7 +514,7 @@ where
                 // on noise) must never starve the transmitter. This is the time-based sibling of the
                 // restart-count escape, immune to the per-frame counter reset.
                 if now.0.saturating_sub(contend_start.0) >= CSMA_MAX_DEFER_MS {
-                    transmit_packet(
+                    if !transmit_packet(
                         &mut radio,
                         &pending_buf[..len],
                         &mut seq,
@@ -427,9 +525,12 @@ where
                         now,
                         &mut tx_frame,
                     )
-                    .await;
-                    if let Err(e) = radio.arm_rx().await {
-                        log::warn!("RNS_LORA RX re-arm after forced tx failed: {e:?}");
+                    .await
+                    {
+                        needs_recovery = true;
+                    }
+                    if !arm_rx_guarded(&mut radio).await {
+                        needs_recovery = true;
                     }
                     pending_len = None;
                     csma_restarts = 0;
@@ -442,15 +543,21 @@ where
                 .await
                 {
                     Either::First(Ok(rlen)) => {
-                        deliver_rx(
+                        if deliver_rx(
                             &rx_buf[..rlen],
                             now,
+                            hopping,
+                            &mut clock,
                             status,
                             &mut throughput,
                             &mut reassembler,
                             &mut seam,
                         )
-                        .await;
+                        .await
+                            && clock.phase(now.0, DWELL_MS) != tuned_phase
+                        {
+                            tuned_phase = u64::MAX;
+                        }
                         csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
                         csma_restarts = 0;
                     }
@@ -462,15 +569,20 @@ where
                         // Backoff elapsed frame-free. A final carrier sense catches a frame whose
                         // preamble is mid-flight (no RxDone yet) so we don't transmit over it; the
                         // restart count is bounded so a wedged-busy channel can't starve us forever.
-                        let win = if channel_busy(&mut radio).await {
-                            csma_restarts += 1;
-                            csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
-                            csma_restarts >= CSMA_MAX_RESTARTS
-                        } else {
-                            true
+                        let win = match channel_busy(&mut radio).await {
+                            Some(true) => {
+                                csma_restarts += 1;
+                                csma_remaining_ms = csma_budget_ms(&mut csma_rng, now);
+                                csma_restarts >= CSMA_MAX_RESTARTS
+                            }
+                            Some(false) => true,
+                            None => {
+                                needs_recovery = true;
+                                false
+                            }
                         };
                         if win {
-                            transmit_packet(
+                            if !transmit_packet(
                                 &mut radio,
                                 &pending_buf[..len],
                                 &mut seq,
@@ -481,9 +593,12 @@ where
                                 now,
                                 &mut tx_frame,
                             )
-                            .await;
-                            if let Err(e) = radio.arm_rx().await {
-                                log::warn!("RNS_LORA RX re-arm after tx failed: {e:?}");
+                            .await
+                            {
+                                needs_recovery = true;
+                            }
+                            if !arm_rx_guarded(&mut radio).await {
+                                needs_recovery = true;
                             }
                             pending_len = None;
                             csma_restarts = 0;
@@ -492,25 +607,42 @@ where
                 }
             } else {
                 // IDLE: listen, accept an outbound (airtime-gated), reconfigure, drain the duty queue.
+                let hop_wait = if hopping {
+                    if tuned_phase == u64::MAX {
+                        Duration::from_millis(0)
+                    } else {
+                        let aligned = clock.aligned_ms(started.elapsed().as_millis());
+                        let next_boundary = tuned_phase.saturating_add(1).saturating_mul(DWELL_MS);
+                        Duration::from_millis(next_boundary.saturating_sub(aligned))
+                    }
+                } else {
+                    ENABLED_POLL
+                };
                 match select4(
                     radio.read_frame(&mut rx_buf),
                     seam.next_outbound(),
                     control.wait(),
-                    Timer::after(ENABLED_POLL),
+                    Timer::after(hop_wait),
                 )
                 .await
                 {
                     Either4::First(Ok(len)) => {
                         let now = InstantMillis(started.elapsed().as_millis());
-                        deliver_rx(
+                        if deliver_rx(
                             &rx_buf[..len],
                             now,
+                            hopping,
+                            &mut clock,
                             status,
                             &mut throughput,
                             &mut reassembler,
                             &mut seam,
                         )
-                        .await;
+                        .await
+                            && clock.phase(now.0, DWELL_MS) != tuned_phase
+                        {
+                            tuned_phase = u64::MAX;
+                        }
                     }
                     Either4::First(Err(e)) => {
                         log::warn!("RNS_LORA rx error: {e:?}");
@@ -565,9 +697,53 @@ where
                         }
                     },
                     Either4::Fourth(()) => {
+                        let now = InstantMillis(started.elapsed().as_millis());
+                        if hopping {
+                            let phase = clock.phase(now.0, DWELL_MS);
+                            if phase != tuned_phase {
+                                tuned_phase = phase;
+                                match deadline(
+                                    RADIO_CMD_TIMEOUT_MS,
+                                    radio.set_frequency(schedule.channel_at(phase).hz()),
+                                )
+                                .await
+                                {
+                                    Some(Ok(())) => {}
+                                    Some(Err(e)) => {
+                                        log::warn!("RNS_LORA hop retune failed: {e:?}");
+                                        needs_recovery = true;
+                                    }
+                                    None => {
+                                        log::warn!("RNS_LORA hop retune wedged");
+                                        needs_recovery = true;
+                                    }
+                                }
+                                if !needs_recovery {
+                                    let now = InstantMillis(started.elapsed().as_millis());
+                                    clock.beacon(now.0).encode(&mut beacon_buf);
+                                    if !transmit_packet(
+                                        &mut radio,
+                                        &beacon_buf,
+                                        &mut seq,
+                                        &mut airtime,
+                                        &mut throughput,
+                                        status,
+                                        bitrate_bps,
+                                        now,
+                                        &mut tx_frame,
+                                    )
+                                    .await
+                                    {
+                                        needs_recovery = true;
+                                    }
+                                }
+                                if !arm_rx_guarded(&mut radio).await {
+                                    needs_recovery = true;
+                                }
+                            }
+                        }
                         // Idle tick: release one airtime-cleared held packet into the contender.
                         if let Some(duty) = duty_cycle {
-                            let now = InstantMillis(started.elapsed().as_millis());
                             let util = airtime.utilization(now);
                             let mut released_len = None;
                             gate.release_ready(util, &duty, |bytes| {

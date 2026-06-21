@@ -3,12 +3,13 @@ use esp_bootloader_esp_idf::esp_app_desc;
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, Attenuation};
 use esp_hal::clock::CpuClock;
 use esp_hal::efuse::base_mac_address;
-use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
 use esp_hal::rtc_cntl::Rtc;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
@@ -29,7 +30,8 @@ use embassy_net::{
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::zerocopy_channel;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Delay, Duration, Ticker, Timer};
+use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
 use portable_atomic::{AtomicU64, Ordering};
 use ssd1306::prelude::*;
@@ -47,6 +49,12 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::interfaces::rns_parity::rnode_lora::core::{
+    channel_tag, Deviation, GfskBitrate, Modulation, PulseShaping, TxPower, DEFAULT_915_PROFILE,
+};
+use personal_rns::interfaces::rns_parity::rnode_lora::impls::embassy::{
+    LoRaControl, LoRaInterface,
+};
 use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
@@ -66,6 +74,7 @@ use personal_rns::runtime::{
     CompletionPool, EmbassyInterfaceStore, EmbassyPrnsHandle, Fleet, MemberWire,
     PreConfiguredDestination, Prns, PrnsEvent, PrnsRecipe, ReactorPlumbing,
 };
+use personal_rns::subghz_rf::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_rns::wire::TransportId;
 
 use crate::engine_storage::EngineStorageType;
@@ -126,6 +135,9 @@ const LANE_DEPTH: usize = 1;
 /// Slot 1: the always-on TCP client wire (parallel to USB at slot 0), so the WiFi members never
 /// claim it.
 const TCP_SLOT: usize = 1;
+/// LoRa bring-up borrows the TCP slot for now (TCP is off in this build): the SX1262 interface
+/// lands on slot 1 so it shows as a live card alongside USB.
+const LORA_SLOT: usize = TCP_SLOT;
 const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
 const LIFECYCLE_CAP: usize = 8;
@@ -199,6 +211,9 @@ macro_rules! mk_static {
 /// (core 0) — the engine on core 1 reaches it through the lanes, this `static` is a face-side view.
 static USB_STATUS: EmbassyInterfaceStatus =
     EmbassyInterfaceStatus::new(USB_INTERFACE_ID, ConnectionState::Initializing);
+
+/// The app-held signal that retunes the running LoRa radio (unused until the menu drives it).
+static LORA_CONTROL: LoRaControl = LoRaControl::new();
 
 /// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID);
@@ -308,6 +323,74 @@ pub async fn run(spawner: Spawner) {
         let _ = display.flush();
     }
 
+    // LoRa SX1262 (Heltec V4): SPI2 + FEM bring-up, the same wiring the subghz smoke proved. The
+    // interface lands on the otherwise-idle TCP slot so it shows as a live card; WiFi/TCP stay off.
+    let lora_spi = Spi::new(
+        p.SPI2,
+        SpiConfig::default().with_frequency(Rate::from_mhz(8)),
+    )
+    .expect("lora spi2")
+    .with_sck(p.GPIO9)
+    .with_mosi(p.GPIO10)
+    .with_miso(p.GPIO11)
+    .into_async();
+    let lora_cs = Output::new(p.GPIO8, Level::High, OutputConfig::default());
+    let lora_spi_device = ExclusiveDevice::new(lora_spi, lora_cs, Delay).expect("lora spi device");
+    let lora_reset = Output::new(p.GPIO12, Level::High, OutputConfig::default());
+    let lora_busy = Input::new(p.GPIO13, InputConfig::default());
+    let lora_dio1 = Input::new(p.GPIO14, InputConfig::default());
+    let _lora_pa_pwr = Output::new(p.GPIO7, Level::High, OutputConfig::default());
+    let mut lora_csd = Flex::new(p.GPIO2);
+    lora_csd.apply_input_config(&InputConfig::default());
+    lora_csd.set_input_enable(true);
+    Timer::after(Duration::from_millis(5)).await;
+    let lora_is_kct8103l = lora_csd.is_high();
+    lora_csd.set_output_enable(true);
+    lora_csd.set_high();
+    let _lora_fem_switch = if lora_is_kct8103l {
+        Output::new(p.GPIO5, Level::High, OutputConfig::default())
+    } else {
+        Output::new(p.GPIO46, Level::High, OutputConfig::default())
+    };
+    let lora_radio = Sx126x::new(
+        lora_spi_device,
+        lora_busy,
+        lora_dio1,
+        lora_reset,
+        Delay,
+        BoardConfig {
+            tcxo_voltage: Some(TcxoVoltage::V1_8),
+            use_dcdc: true,
+            rx_boost: true,
+            dio2_as_rf_switch: true,
+        },
+    );
+    let mut lora_profile = DEFAULT_915_PROFILE;
+    lora_profile.modulation = Modulation::Gfsk {
+        bitrate: GfskBitrate::new(300_000),
+        deviation: Deviation::new(75_000),
+        shaping: PulseShaping::GaussianBt05,
+    };
+    lora_profile.tx_power = TxPower::new(22);
+    let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
+    let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
+        EmbassyInterfaceStatus,
+        EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
+    );
+    let lora_node_id = {
+        let mac = base_mac_address();
+        let bytes = mac.as_bytes();
+        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    };
+    let lora = LoRaInterface::new(
+        lora_radio,
+        lora_profile,
+        &LORA_CONTROL,
+        lora_status,
+        LIFECYCLE.dyn_sender(),
+        lora_node_id,
+    );
+
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
     mac_octets.copy_from_slice(&mac.as_bytes()[..6]);
@@ -397,6 +480,7 @@ pub async fn run(spawner: Spawner) {
         HVec::new(),
     ));
     node.activate(0, device_descriptor(USB_INTERFACE_ID));
+    node.activate(LORA_SLOT, lora.descriptor());
     if let Some((tcp, _, _)) = &tcp_built {
         node.activate(TCP_SLOT, tcp.descriptor());
     }
@@ -440,6 +524,15 @@ pub async fn run(spawner: Spawner) {
         let seam = EmbassyInterfaceSeam::new(tcp.id(), in_producer, NOTIFY.sender(), out_consumer);
         (tcp, seam)
     });
+
+    let (lora_in_producer, lora_out_consumer) =
+        iface_halves[LORA_SLOT].take().expect("lora slot half");
+    let lora_seam = EmbassyInterfaceSeam::new(
+        lora_id,
+        lora_in_producer,
+        NOTIFY.sender(),
+        lora_out_consumer,
+    );
 
     // The whole WiFi fleet shares slot 2's one lane: the supervisor funnels every peer's frames
     // through it, tagged by the peer's id, and the reactor demuxes by kind. Members are descriptors,
@@ -508,6 +601,8 @@ pub async fn run(spawner: Spawner) {
 
             let cards = build_cards(
                 &USB_STATUS,
+                lora_status,
+                lora_id,
                 wifi_status.as_ref(),
                 wifi_id,
                 tcp_status,
@@ -552,6 +647,8 @@ pub async fn run(spawner: Spawner) {
                         {
                             if card.id == USB_INTERFACE_ID {
                                 USB_STATUS.set_enabled(!USB_STATUS.is_enabled());
+                            } else if card.id == lora_id {
+                                lora_status.set_enabled(!lora_status.is_enabled());
                             } else if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
                                 if card.id == tcp_id {
                                     tcp.set_enabled(!tcp.is_enabled());
@@ -594,7 +691,7 @@ pub async fn run(spawner: Spawner) {
             )
             .await;
             #[cfg(not(feature = "ble-bringup"))]
-            join(usb_device.run(usb_seam), render).await;
+            join(join(usb_device.run(usb_seam), lora.run(lora_seam)), render).await;
         }
     }
 }
@@ -611,6 +708,8 @@ async fn reactor_core(node: &'static mut S3Node) {
 /// classified into USB / WiFi / `Peer <hex>`, the same shape the desktop face renders.
 fn build_cards(
     usb: &EmbassyInterfaceStatus,
+    lora: &EmbassyInterfaceStatus,
+    lora_id: InterfaceId,
     wifi: Option<&AutoWifiStatus<MEMBERS>>,
     wifi_id: Option<InterfaceId>,
     tcp: Option<&EmbassyInterfaceStatus>,
@@ -620,6 +719,8 @@ fn build_cards(
     let classify = |id: InterfaceId| -> Option<(screen::CardKind, screen::CardLabel)> {
         if id == USB_INTERFACE_ID {
             Some((screen::CardKind::Usb, screen::card_label("USB")))
+        } else if id == lora_id {
+            Some((screen::CardKind::LoRa, screen::card_label("LoRa")))
         } else if Some(id) == wifi_id {
             Some((screen::CardKind::Wifi, screen::card_label("WiFi")))
         } else if Some(id) == tcp_id {
@@ -636,6 +737,7 @@ fn build_cards(
     };
     let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
     let _ = entries.push((usb, Membership::Independent));
+    let _ = entries.push((lora, Membership::Independent));
     if let Some(tcp) = tcp {
         let _ = entries.push((tcp, Membership::Independent));
     }
