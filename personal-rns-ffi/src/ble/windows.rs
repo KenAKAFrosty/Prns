@@ -6,27 +6,39 @@
 //! dedup, orientation, make-before-break) lives in the engine's `BluetoothAuto` supervisor — this
 //! backend only drives the radio and the seam, mirroring `personal-rns-ffi/src/ble/macos.rs`.
 //!
-//! WinRT activation and async completion need an initialized COM apartment, and the projected
-//! objects are not all `Send`/`Sync` in a way tokio likes, so a dedicated thread owns the radio:
-//! it joins the process MTA, brings the adapter up, and parks for the backend's lifetime while
-//! WinRT event handlers (which fire on the system threadpool) post into a tokio channel the async
-//! consumer drains — the same callback-world-to-reactor bridge the macOS backend uses with GCD.
+//! WinRT activation and async completion need an initialized COM apartment, so a dedicated thread
+//! owns the radio: it joins the process MTA, brings the adapter up, publishes the GATT service, and
+//! parks for the backend's lifetime while WinRT event handlers (which fire on the system threadpool)
+//! post into a tokio channel the async consumer drains — the same callback-world-to-reactor bridge
+//! the macOS backend uses with GCD. The WinRT runtime classes are agile, so the published service +
+//! characteristics are handed back to the async side and driven from there.
 //!
-//! Built up in steps; this is the power-up scaffold. The data/control planes and the
-//! advertise/scan roles arrive in the following steps, hence the reserved fields below.
-#![allow(dead_code)] // TODO(ble-windows): in-progress backend; drop once advertise/scan/link land.
+//! Built up in steps; this lands power-up + the published GATT service + advertising. The central
+//! watcher (sightings) and the control/data planes arrive in the following steps, hence the reserved
+//! fields below.
+#![allow(dead_code)] // TODO(ble-windows): in-progress backend; drop once scan + link land.
 
 use std::sync::mpsc as sync_mpsc;
 use std::time::Duration;
 
-use personal_rns::interfaces::bluetooth_auto::core::{BleAddress, Control, Dialect, L2capPlan};
+use personal_rns::interfaces::bluetooth_auto::core::{
+    BleAddress, BleUuid, Control, Dialect, L2capPlan, BLE_SERVICE_UUID, NATIVE_CONTROL_UUID,
+    NATIVE_DATA_UUID,
+};
 use personal_rns::interfaces::bluetooth_auto::seam::{
     BleBackend, BleEvent, BleLink, BleSink, BleSource,
 };
 
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
+use windows::core::GUID;
 use windows::Devices::Bluetooth::BluetoothAdapter;
+use windows::Devices::Bluetooth::GenericAttributeProfile::{
+    GattCharacteristicProperties, GattLocalCharacteristic, GattLocalCharacteristicParameters,
+    GattLocalService, GattProtectionLevel, GattServiceProvider,
+    GattServiceProviderAdvertisingParameters,
+};
+use windows::Devices::Bluetooth::BluetoothError;
 use windows::Devices::Radios::RadioState;
 use windows::Win32::System::Com::CoIncrementMTAUsage;
 
@@ -41,6 +53,8 @@ pub enum WindowsBleError {
     PeripheralRoleUnsupported,
     /// The adapter is present but the radio is switched off (airplane mode / hardware toggle).
     RadioOff,
+    /// Publishing the GATT service or one of its characteristics failed.
+    ServicePublishFailed,
     /// The radio thread or a channel went away.
     Closed,
     /// The adapter did not come up within [`POWER_ON_TIMEOUT`].
@@ -59,8 +73,17 @@ impl From<windows::core::Error> for WindowsBleError {
     }
 }
 
-/// Events from the WinRT callback world into the async consumer. Populated by the advertise/scan and
-/// link steps; `next_event` already drains it.
+/// The published GATT peripheral: the service provider (which advertises) and the two characteristics
+/// the link rides. WinRT runtime classes are agile, so these are driven from the async side after the
+/// radio thread creates them.
+struct Radio {
+    provider: GattServiceProvider,
+    control: GattLocalCharacteristic,
+    data: GattLocalCharacteristic,
+}
+
+/// Events from the WinRT callback world into the async consumer. Populated by the scan and link
+/// steps; `next_event` already drains it.
 enum Event {
     Sighting {
         address: BleAddress,
@@ -154,32 +177,34 @@ pub struct WindowsBleBackend {
     /// Dropping this signals the radio thread to unpark and tear the WinRT objects down.
     _keepalive: sync_mpsc::Sender<()>,
     events: tokio_mpsc::UnboundedReceiver<Event>,
+    radio: Radio,
 }
 
 impl WindowsBleBackend {
-    /// Bring the WinRT adapter up on a dedicated MTA thread and return once it is advertising-capable
-    /// and the radio is on. Fails (so the node runs without BLE) if there is no adapter, the radio is
-    /// off, or the peripheral role is unsupported.
+    /// Bring the WinRT adapter up on a dedicated MTA thread, publish the GATT service, and return
+    /// once it is ready to advertise. Fails (so the node runs without BLE) if there is no adapter,
+    /// the radio is off, the peripheral role is unsupported, or the service cannot be published.
     pub async fn new() -> Result<Self, WindowsBleError> {
-        // The sender stays unused until the advertise/scan steps wire callbacks to it; holding it
-        // keeps the channel open so `next_event` parks rather than seeing an immediate close.
+        // The sender stays unused until the scan/link steps wire callbacks to it; holding it keeps
+        // the channel open so `next_event` parks rather than seeing an immediate close.
         let (_events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
-        let (ready_tx, ready_rx) = oneshot::channel::<Result<(), WindowsBleError>>();
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<Radio, WindowsBleError>>();
 
         std::thread::Builder::new()
             .name("prns-ble-winrt".into())
             .spawn(move || {
-                let _ = ready_tx.send(winrt_power_on());
-                // Park so the MTA (and, in later steps, the WinRT radio objects) outlive setup.
+                let _ = ready_tx.send(winrt_setup());
+                // Park so the MTA stays joined for this process's BLE lifetime.
                 let _ = shutdown_rx.recv();
             })
             .map_err(|_| WindowsBleError::Closed)?;
 
         match tokio::time::timeout(POWER_ON_TIMEOUT, ready_rx).await {
-            Ok(Ok(Ok(()))) => Ok(Self {
+            Ok(Ok(Ok(radio))) => Ok(Self {
                 _keepalive: keepalive,
                 events: events_rx,
+                radio,
             }),
             Ok(Ok(Err(error))) => Err(error),
             Ok(Err(_)) => Err(WindowsBleError::Closed),
@@ -188,8 +213,37 @@ impl WindowsBleBackend {
     }
 }
 
-/// Run on the radio thread: join the MTA and verify the adapter is a powered-on BLE peripheral.
-fn winrt_power_on() -> Result<(), WindowsBleError> {
+/// Map a core [`BleUuid`] to a WinRT [`GUID`]. The core stores 128-bit UUIDs big-endian (RFC-4122
+/// display order), and `from_u128` reads a big-endian value, so `from_be_bytes` lines them up. A
+/// 16-bit UUID expands through the Bluetooth base UUID `0000xxxx-0000-1000-8000-00805F9B34FB`.
+fn guid_of(uuid: BleUuid) -> GUID {
+    let bytes = match uuid {
+        BleUuid::Bit128(bytes) => bytes,
+        BleUuid::Bit16(short) => [
+            0x00,
+            0x00,
+            (short >> 8) as u8,
+            short as u8,
+            0x00,
+            0x00,
+            0x10,
+            0x00,
+            0x80,
+            0x00,
+            0x00,
+            0x80,
+            0x5f,
+            0x9b,
+            0x34,
+            0xfb,
+        ],
+    };
+    GUID::from_u128(u128::from_be_bytes(bytes))
+}
+
+/// Run on the radio thread: join the MTA, verify the adapter is a powered-on BLE peripheral, and
+/// publish the GATT service with its control + data characteristics (write + notify, plain security).
+fn winrt_setup() -> Result<Radio, WindowsBleError> {
     // WinRT factory activation and async completion need an initialized apartment. CoIncrementMTAUsage
     // joins (or starts) the process-wide implicit MTA and keeps it alive for this thread's lifetime
     // with no matching decrement — the right shape for a long-lived radio thread.
@@ -211,8 +265,48 @@ fn winrt_power_on() -> Result<(), WindowsBleError> {
         return Err(WindowsBleError::RadioOff);
     }
 
-    log::info!("bluetooth: WinRT adapter powered on, LE + peripheral role supported");
-    Ok(())
+    let service_result = GattServiceProvider::CreateAsync(guid_of(BLE_SERVICE_UUID))?.get()?;
+    if service_result.Error()? != BluetoothError::Success {
+        return Err(WindowsBleError::ServicePublishFailed);
+    }
+    let provider = service_result.ServiceProvider()?;
+    let service = provider.Service()?;
+
+    // Control + data both write (with and without response) and notify; security stays plain so a
+    // central never triggers a bond/pairing prompt (the macOS learning, mirrored here).
+    let properties = GattCharacteristicProperties::Write
+        | GattCharacteristicProperties::WriteWithoutResponse
+        | GattCharacteristicProperties::Notify;
+    let control = publish_characteristic(&service, guid_of(NATIVE_CONTROL_UUID), properties)?;
+    let data = publish_characteristic(&service, guid_of(NATIVE_DATA_UUID), properties)?;
+
+    log::info!(
+        "bluetooth: WinRT adapter powered on; GATT service published (control + data characteristics)"
+    );
+    Ok(Radio {
+        provider,
+        control,
+        data,
+    })
+}
+
+/// Create one local characteristic on the service with the given UUID and properties, plain security.
+fn publish_characteristic(
+    service: &GattLocalService,
+    uuid: GUID,
+    properties: GattCharacteristicProperties,
+) -> Result<GattLocalCharacteristic, WindowsBleError> {
+    let parameters = GattLocalCharacteristicParameters::new()?;
+    parameters.SetCharacteristicProperties(properties)?;
+    parameters.SetReadProtectionLevel(GattProtectionLevel::Plain)?;
+    parameters.SetWriteProtectionLevel(GattProtectionLevel::Plain)?;
+    let result = service
+        .CreateCharacteristicAsync(uuid, &parameters)?
+        .get()?;
+    if result.Error()? != BluetoothError::Success {
+        return Err(WindowsBleError::ServicePublishFailed);
+    }
+    Ok(result.Characteristic()?)
 }
 
 impl BleBackend for WindowsBleBackend {
@@ -220,8 +314,21 @@ impl BleBackend for WindowsBleBackend {
     type Error = WindowsBleError;
     type Link = WinGattLink;
 
-    async fn set_advertising(&mut self, _enabled: bool) -> Result<(), WindowsBleError> {
-        // TODO(ble-windows step 2): start/stop the GattServiceProvider advertisement.
+    async fn set_advertising(&mut self, enabled: bool) -> Result<(), WindowsBleError> {
+        if enabled {
+            // Connectable + discoverable: WinRT folds the service's 128-bit UUID into the
+            // advertisement automatically when discoverable, so we do not hand-roll the AD bytes.
+            let parameters = GattServiceProviderAdvertisingParameters::new()?;
+            parameters.SetIsConnectable(true)?;
+            parameters.SetIsDiscoverable(true)?;
+            self.radio
+                .provider
+                .StartAdvertisingWithParameters(&parameters)?;
+            log::info!("bluetooth: advertising the Prns service (connectable + discoverable)");
+        } else {
+            self.radio.provider.StopAdvertising()?;
+            log::info!("bluetooth: stopped advertising");
+        }
         Ok(())
     }
 
