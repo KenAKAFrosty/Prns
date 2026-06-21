@@ -32,14 +32,19 @@ use personal_rns::interfaces::bluetooth_auto::seam::{
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use windows::core::GUID;
+use windows::Devices::Bluetooth::Advertisement::{
+    BluetoothLEAdvertisementFilter, BluetoothLEAdvertisementReceivedEventArgs,
+    BluetoothLEAdvertisementWatcher, BluetoothLEScanningMode,
+};
 use windows::Devices::Bluetooth::BluetoothAdapter;
+use windows::Devices::Bluetooth::BluetoothError;
 use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristicProperties, GattLocalCharacteristic, GattLocalCharacteristicParameters,
     GattLocalService, GattProtectionLevel, GattServiceProvider,
     GattServiceProviderAdvertisingParameters,
 };
-use windows::Devices::Bluetooth::BluetoothError;
 use windows::Devices::Radios::RadioState;
+use windows::Foundation::TypedEventHandler;
 use windows::Win32::System::Com::CoIncrementMTAUsage;
 
 /// How long to wait for the radio thread to bring the adapter up before giving up.
@@ -80,6 +85,9 @@ struct Radio {
     provider: GattServiceProvider,
     control: GattLocalCharacteristic,
     data: GattLocalCharacteristic,
+    /// The central-role scanner. Held so it keeps running (and keeps its Received handler — which
+    /// owns the only live sender into the event channel — alive) for the backend's lifetime.
+    watcher: BluetoothLEAdvertisementWatcher,
 }
 
 /// Events from the WinRT callback world into the async consumer. Populated by the scan and link
@@ -185,16 +193,16 @@ impl WindowsBleBackend {
     /// once it is ready to advertise. Fails (so the node runs without BLE) if there is no adapter,
     /// the radio is off, the peripheral role is unsupported, or the service cannot be published.
     pub async fn new() -> Result<Self, WindowsBleError> {
-        // The sender stays unused until the scan/link steps wire callbacks to it; holding it keeps
-        // the channel open so `next_event` parks rather than seeing an immediate close.
-        let (_events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
+        // The watcher's Received handler (built in winrt_setup) owns the sending half; the channel
+        // stays open as long as the watcher lives in `Radio`.
+        let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (ready_tx, ready_rx) = oneshot::channel::<Result<Radio, WindowsBleError>>();
 
         std::thread::Builder::new()
             .name("prns-ble-winrt".into())
             .spawn(move || {
-                let _ = ready_tx.send(winrt_setup());
+                let _ = ready_tx.send(winrt_setup(events_tx));
                 // Park so the MTA stays joined for this process's BLE lifetime.
                 let _ = shutdown_rx.recv();
             })
@@ -241,9 +249,59 @@ fn guid_of(uuid: BleUuid) -> GUID {
     GUID::from_u128(u128::from_be_bytes(bytes))
 }
 
-/// Run on the radio thread: join the MTA, verify the adapter is a powered-on BLE peripheral, and
-/// publish the GATT service with its control + data characteristics (write + notify, plain security).
-fn winrt_setup() -> Result<Radio, WindowsBleError> {
+/// Build the central scanner: a Received handler that forwards every Prns advertisement as a
+/// `Sighting` (the supervisor does identity-keyed dedup, so the backend forwards raw), filtered at
+/// the OS level to our service UUID so unrelated BLE traffic never wakes the handler.
+fn build_watcher(
+    events_tx: tokio_mpsc::UnboundedSender<Event>,
+) -> Result<BluetoothLEAdvertisementWatcher, WindowsBleError> {
+    let watcher = BluetoothLEAdvertisementWatcher::new()?;
+    // Active scanning pulls the scan response too and yields RSSI per sighting.
+    watcher.SetScanningMode(BluetoothLEScanningMode::Active)?;
+
+    let filter = BluetoothLEAdvertisementFilter::new()?;
+    filter
+        .Advertisement()?
+        .ServiceUuids()?
+        .Append(guid_of(BLE_SERVICE_UUID))?;
+    watcher.SetAdvertisementFilter(&filter)?;
+
+    watcher.Received(&TypedEventHandler::new(
+        move |_sender, args: &Option<BluetoothLEAdvertisementReceivedEventArgs>| {
+            if let Some(args) = args.as_ref() {
+                if let Some(sighting) = sighting_from(args) {
+                    // The consumer may be gone (node shutting down); a closed channel is benign.
+                    let _ = events_tx.send(sighting);
+                }
+            }
+            Ok(())
+        },
+    ))?;
+    Ok(watcher)
+}
+
+/// Convert a WinRT advertisement-received event into a `Sighting`. WinRT hands the 48-bit address as
+/// a `u64`; we keep its low six bytes big-endian so `dial` can rebuild the same `u64` to reconnect.
+fn sighting_from(args: &BluetoothLEAdvertisementReceivedEventArgs) -> Option<Event> {
+    let address = args.BluetoothAddress().ok()?;
+    let bytes = address.to_be_bytes();
+    let octets = [bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
+    let rssi = args
+        .RawSignalStrengthInDBm()
+        .ok()
+        .and_then(|dbm| i8::try_from(dbm).ok());
+    Some(Event::Sighting {
+        address: BleAddress::new(octets),
+        rssi,
+    })
+}
+
+/// Run on the radio thread: join the MTA, verify the adapter is a powered-on BLE peripheral, publish
+/// the GATT service (control + data characteristics, write + notify, plain security), and start the
+/// central scanner.
+fn winrt_setup(
+    events_tx: tokio_mpsc::UnboundedSender<Event>,
+) -> Result<Radio, WindowsBleError> {
     // WinRT factory activation and async completion need an initialized apartment. CoIncrementMTAUsage
     // joins (or starts) the process-wide implicit MTA and keeps it alive for this thread's lifetime
     // with no matching decrement — the right shape for a long-lived radio thread.
@@ -280,13 +338,17 @@ fn winrt_setup() -> Result<Radio, WindowsBleError> {
     let control = publish_characteristic(&service, guid_of(NATIVE_CONTROL_UUID), properties)?;
     let data = publish_characteristic(&service, guid_of(NATIVE_DATA_UUID), properties)?;
 
+    let watcher = build_watcher(events_tx)?;
+    watcher.Start()?;
+
     log::info!(
-        "bluetooth: WinRT adapter powered on; GATT service published (control + data characteristics)"
+        "bluetooth: WinRT adapter powered on; GATT service published, scanning for Prns peers"
     );
     Ok(Radio {
         provider,
         control,
         data,
+        watcher,
     })
 }
 
@@ -336,7 +398,11 @@ impl BleBackend for WindowsBleBackend {
         loop {
             match self.events.recv().await {
                 Some(Event::Sighting { address, rssi }) => {
-                    return BleEvent::Sighting { address, rssi }
+                    log::debug!(
+                        "bluetooth: sighted Prns peer {:02x?} rssi={rssi:?}",
+                        address.octets()
+                    );
+                    return BleEvent::Sighting { address, rssi };
                 }
                 Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
                 // Channel closed (no senders yet in this step): nothing more will arrive, so park

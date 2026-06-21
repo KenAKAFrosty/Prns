@@ -154,6 +154,11 @@ struct WindowHandles {
 /// requires it. The node thread hands the window its command handle and status handles back
 /// before the runtime starts running.
 pub fn run() {
+    // Surface the host backends' `log` diagnostics (notably the BLE lifecycle traces) when the
+    // operator opts in via RUST_LOG; silent by default, so the normal run is unchanged. try_init
+    // never panics if a logger is already installed.
+    let _ = env_logger::try_init();
+
     let identity_secret_key = load_identity_secret_key();
 
     let (ready_tx, ready_rx) = mpsc::channel::<WindowHandles>();
