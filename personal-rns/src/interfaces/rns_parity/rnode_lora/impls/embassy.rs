@@ -270,6 +270,14 @@ where
         let mut gate: DutyGate<FixedDutyQueue<DUTY_QUEUE_FRAMES>> = DutyGate::new();
         let started = Instant::now();
         status.set_connection(ConnectionState::Connected);
+        // Arm continuous RX ONCE. The select below waits on `read_frame` without re-arming, so a
+        // poll tick that cancels the read leaves the radio still receiving (the RxDone IRQ latches)
+        // rather than guillotining a long packet mid-air — the difference between hearing a
+        // multi-hundred-ms LoRa announce and never completing one. Re-armed only after a TX or a
+        // reconfigure, which genuinely leave RX.
+        if let Err(e) = radio.arm_rx().await {
+            log::warn!("RNS_LORA initial RX arm failed: {e:?}");
+        }
 
         loop {
             if !status.is_enabled() {
@@ -278,10 +286,13 @@ where
                     Timer::after(ENABLED_POLL).await;
                 }
                 status.set_connection(ConnectionState::Connected);
+                if let Err(e) = radio.arm_rx().await {
+                    log::warn!("RNS_LORA RX re-arm after enable failed: {e:?}");
+                }
             }
 
             match select4(
-                radio.receive(&mut rx_buf),
+                radio.read_frame(&mut rx_buf),
                 seam.next_outbound(),
                 control.wait(),
                 Timer::after(ENABLED_POLL),
@@ -328,6 +339,10 @@ where
                             &mut tx_frame,
                         )
                         .await;
+                        // The TX left the radio in standby; resume listening.
+                        if let Err(e) = radio.arm_rx().await {
+                            log::warn!("RNS_LORA RX re-arm after tx failed: {e:?}");
+                        }
                     }
                 }
                 Either4::Third(new_profile) => match subghz_params(&new_profile) {
@@ -347,6 +362,10 @@ where
                                 }
                                 retag.send(message).await;
                             }
+                            // The re-init left the radio in standby; resume listening.
+                            if let Err(e) = radio.arm_rx().await {
+                                log::warn!("RNS_LORA RX re-arm after reconfigure failed: {e:?}");
+                            }
                         }
                     }
                     None => {
@@ -357,6 +376,7 @@ where
                     if let Some(duty) = duty_cycle {
                         let now = InstantMillis(started.elapsed().as_millis());
                         let mut released_packet = [0u8; LORA_MAX_PAYLOAD];
+                        let mut transmitted = false;
                         loop {
                             let util = airtime.utilization(now);
                             let mut released_len = None;
@@ -381,6 +401,14 @@ where
                                     &mut tx_frame,
                                 )
                                 .await;
+                                transmitted = true;
+                            }
+                        }
+                        // A release exits RX; re-arm only if we transmitted — never on the bare poll
+                        // tick, which must not cancel a frame mid-air.
+                        if transmitted {
+                            if let Err(e) = radio.arm_rx().await {
+                                log::warn!("RNS_LORA RX re-arm after duty release failed: {e:?}");
                             }
                         }
                     }

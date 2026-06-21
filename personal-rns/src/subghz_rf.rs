@@ -456,18 +456,25 @@ where
         Ok(())
     }
 
-    /// Listen in continuous RX and return the first frame's length, written into `buf`.
-    /// Blocks until RxDone — wrap in a host-side timeout to bound the listen. `Err(Crc)`
-    /// on a CRC failure, `Err(BufferTooSmall)` if the frame exceeds `buf`.
-    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+    /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, and enter
+    /// SetRx continuous. The radio then listens until a frame completes; [`read_frame`](Self::read_frame)
+    /// waits for it WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves
+    /// the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight frame — the
+    /// difference between catching a long packet (a multi-hundred-ms LoRa announce) and never seeing
+    /// one. Channel config / IRQ routing / RX front-end persist from init, so this only re-arms.
+    pub async fn arm_rx(&mut self) -> Result<(), Error> {
         self.standby().await?;
-        // Channel config, IRQ routing, and RX front-end were all set once in init and the chip
-        // retains them across TX/standby. Only restamp the RX-side max payload length, then arm.
         self.set_payload_length(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
         // SetRx 0xFFFFFF = continuous.
-        self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await?;
+        self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await
+    }
 
+    /// Wait for one frame on an already-[`arm_rx`](Self::arm_rx)'d radio, written into `buf`. The
+    /// radio stays in continuous RX, so call again for the next frame. `Err(Crc)` on a CRC failure,
+    /// `Err(BufferTooSmall)` if the frame exceeds `buf`. Blocks until RxDone — bound it with a
+    /// host-side timeout/select; cancelling the wait does NOT drop the radio's RX.
+    pub async fn read_frame(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
         loop {
             self.dio1.wait_for_high().await.map_err(|_| Error::Dio1)?;
             let flags = self.irq_status().await?;
@@ -491,6 +498,14 @@ where
                 return Err(Error::Timeout);
             }
         }
+    }
+
+    /// Arm RX and wait for one frame — [`arm_rx`](Self::arm_rx) then [`read_frame`](Self::read_frame).
+    /// Convenient for a request/response or test caller; a continuous listener should `arm_rx` once
+    /// and loop on `read_frame` so the per-frame re-arm never races a long packet's airtime.
+    pub async fn receive(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        self.arm_rx().await?;
+        self.read_frame(buf).await
     }
 
     async fn standby(&mut self) -> Result<(), Error> {
