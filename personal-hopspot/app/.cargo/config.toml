@@ -1,7 +1,7 @@
 # The `esp` toolchain ships host std + rust-src, so it builds both faces. build-std
 # stays target-scoped (not global) so the host build isn't dragged into core/alloc.
 #
-#   cargo desktop          run the desktop window (host: Mac or Linux)
+#   cargo desktop          run the desktop window (host: Mac, Linux, or Windows)
 #   cargo heltec-v4        build the Heltec V4 firmware
 #   cargo heltec-v4-flash  build + flash + monitor (board on USB)
 
@@ -16,6 +16,15 @@ rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "force-frame-pointers"]
 rustflags = ["-L", "/opt/homebrew/lib"]
 [target.x86_64-apple-darwin]
 rustflags = ["-L", "/usr/local/lib"]
+
+# Windows has no system SDL2 the linker finds, so the app's Cargo.toml builds SDL2 from source and
+# links it statically (sdl2 `bundled` + `static-link`) — a self-contained exe, no dev libs, no env,
+# no shipped DLL. The SDL2 source vendored by sdl2-sys declares an old `cmake_minimum_required`, and
+# CMake 4.x dropped compatibility below 3.5; this override lets that old project configure anyway.
+# Harmless on Mac/Linux, which dynamically link the system SDL2 and never run the bundled CMake.
+# Build prereqs on Windows: CMake and the MSVC toolchain on PATH.
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 [alias]
 desktop = "run"
