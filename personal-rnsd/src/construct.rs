@@ -25,7 +25,6 @@ use personal_rns::runtime::TokioPrnsHandle;
 use personal_rns_config::{
     DaemonPlan, DeferReason, PlannedInterface, PlannedMedium, UnappliedSetting,
 };
-use tokio_serial::SerialPortBuilderExt;
 
 const TCP_RECONNECT: Duration = Duration::from_secs(5);
 const SERIAL_RECONNECT: Duration = Duration::from_millis(500);
@@ -101,11 +100,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             let serial = SerialInterface::new(
                 move || {
                     let open_path = open_path.clone();
-                    async move {
-                        tokio_serial::new(&open_path, baud)
-                            .open_native_async()
-                            .map_err(std::io::Error::other)
-                    }
+                    async move { crate::serial::open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
                 device.as_bytes(),
@@ -132,11 +127,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             let kiss = KissInterface::with_settings(
                 move || {
                     let open_path = open_path.clone();
-                    async move {
-                        tokio_serial::new(&open_path, baud)
-                            .open_native_async()
-                            .map_err(std::io::Error::other)
-                    }
+                    async move { crate::serial::open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
                 CONFIGURE_SETTLE,
@@ -167,11 +158,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             let opened = Ax25KissInterface::with_settings(
                 move || {
                     let open_path = open_path.clone();
-                    async move {
-                        tokio_serial::new(&open_path, baud)
-                            .open_native_async()
-                            .map_err(std::io::Error::other)
-                    }
+                    async move { crate::serial::open_host_serial(&open_path, baud) }
                 },
                 SERIAL_RECONNECT,
                 CONFIGURE_SETTLE,
@@ -221,11 +208,7 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
                     let rnode = RNodeInterface::new(
                         move || {
                             let open_path = open_path.clone();
-                            async move {
-                                tokio_serial::new(&open_path, RNODE_BAUD)
-                                    .open_native_async()
-                                    .map_err(std::io::Error::other)
-                            }
+                            async move { crate::serial::open_host_serial(&open_path, RNODE_BAUD) }
                         },
                         RNODE_RECONNECT,
                         radio,
