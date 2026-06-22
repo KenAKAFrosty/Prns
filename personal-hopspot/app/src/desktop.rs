@@ -36,6 +36,7 @@ use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
+use personal_rns::interfaces::rns_parity::rnode_lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};
@@ -635,6 +636,7 @@ fn dispatch_long_press_if_ready(
     active_press: &mut Option<PressStart>,
     now: Instant,
     card_count: usize,
+    selected_kind: Option<CardKind>,
     ui_state: &mut UiState,
 ) -> UiAction {
     let Some(press) = active_press.as_mut() else {
@@ -648,7 +650,7 @@ fn dispatch_long_press_if_ready(
     }
 
     press.long_press_sent = true;
-    ui_state.handle_input(InputEvent::LongPress, card_count)
+    ui_state.handle_input(InputEvent::LongPress, card_count, selected_kind)
 }
 
 fn finish_press(
@@ -656,6 +658,7 @@ fn finish_press(
     source: PressSource,
     released_at: Instant,
     card_count: usize,
+    selected_kind: Option<CardKind>,
     ui_state: &mut UiState,
 ) -> UiAction {
     let Some(press) = active_press.take() else {
@@ -675,7 +678,7 @@ fn finish_press(
     } else {
         InputEvent::ShortPress
     };
-    ui_state.handle_input(event, card_count)
+    ui_state.handle_input(event, card_count, selected_kind)
 }
 
 /// The interface id of the currently focused card, if any — what a "Turn Off/On" toggle acts on.
@@ -684,6 +687,13 @@ fn selected_card_id(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Op
         .selected_card(card_count)
         .and_then(|index| cards.get(index))
         .map(|card| card.id)
+}
+
+fn selected_card_kind(ui_state: &UiState, card_count: usize, cards: &[Card]) -> Option<CardKind> {
+    ui_state
+        .selected_card(card_count)
+        .and_then(|index| cards.get(index))
+        .map(|card| card.kind)
 }
 
 /// Own the SDL2 window: repaint the interfaces' live status as the Hopspot screen until the
@@ -714,35 +724,42 @@ fn run_window(handles: WindowHandles) {
 
     let toggle_usb = usb_status.clone();
     let toggle_tcp = tcp_status.clone();
-    let apply_action = move |action: UiAction, selected_id: Option<InterfaceId>| match action {
-        UiAction::None => {}
-        UiAction::Announce => {
-            if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
-                destination,
-                target: AnnounceTarget::AllInterfaces,
-                app_data: AnnounceAppData::Registered,
-            })) {
-                println!(
-                    "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=manual destination={:02x?}",
-                    id.0,
-                    destination.as_bytes(),
-                );
-            }
-        }
-        UiAction::ToggleSelectedInterface => match selected_id {
-            Some(id) if id == USB_INTERFACE_ID => {
-                toggle_usb.set_enabled(!toggle_usb.is_enabled());
-            }
-            Some(id) if Some(id) == tcp_id => {
-                if let Some(tcp) = &toggle_tcp {
-                    tcp.set_enabled(!tcp.is_enabled());
+    let apply_action =
+        move |action: UiAction,
+              selected_id: Option<InterfaceId>,
+              ui_state: &mut UiState,
+              working_lora_profile: &mut RadioProfile| match action {
+            UiAction::None => {}
+            UiAction::Announce => {
+                if let Some(id) = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                    destination,
+                    target: AnnounceTarget::AllInterfaces,
+                    app_data: AnnounceAppData::Registered,
+                })) {
+                    println!(
+                        "HOPSPOT_TX_ANNOUNCE_NOW id={} kind=manual destination={:02x?}",
+                        id.0,
+                        destination.as_bytes(),
+                    );
                 }
             }
-            _ => {}
-        },
-    };
+            UiAction::ToggleSelectedInterface => match selected_id {
+                Some(id) if id == USB_INTERFACE_ID => {
+                    toggle_usb.set_enabled(!toggle_usb.is_enabled());
+                }
+                Some(id) if Some(id) == tcp_id => {
+                    if let Some(tcp) = &toggle_tcp {
+                        tcp.set_enabled(!tcp.is_enabled());
+                    }
+                }
+                _ => {}
+            },
+            UiAction::OpenLoRaEditor => ui_state.open_lora_editor(*working_lora_profile),
+            UiAction::SetLoRaProfile(profile) => *working_lora_profile = profile,
+        };
 
     let mut ui_state = UiState::new();
+    let mut working_lora_profile = DEFAULT_915_PROFILE;
     let mut active_press: Option<PressStart> = None;
     let mut last_logged: HashMap<InterfaceId, ConnectionState> = HashMap::new();
     let mut interface_changes = query_handle.interface_store().subscribe();
@@ -761,15 +778,17 @@ fn run_window(handles: WindowHandles) {
                     needs_redraw = true;
                 }
                 SimulatorEvent::KeyUp { .. } => {
+                    let selected_kind = selected_card_kind(&ui_state, cards.len(), &cards);
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Key,
                         Instant::now(),
                         cards.len(),
+                        selected_kind,
                         &mut ui_state,
                     );
                     let selected = selected_card_id(&ui_state, cards.len(), &cards);
-                    apply_action(released, selected);
+                    apply_action(released, selected, &mut ui_state, &mut working_lora_profile);
                     needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonDown { .. } => {
@@ -777,15 +796,17 @@ fn run_window(handles: WindowHandles) {
                     needs_redraw = true;
                 }
                 SimulatorEvent::MouseButtonUp { .. } => {
+                    let selected_kind = selected_card_kind(&ui_state, cards.len(), &cards);
                     let released = finish_press(
                         &mut active_press,
                         PressSource::Mouse,
                         Instant::now(),
                         cards.len(),
+                        selected_kind,
                         &mut ui_state,
                     );
                     let selected = selected_card_id(&ui_state, cards.len(), &cards);
-                    apply_action(released, selected);
+                    apply_action(released, selected, &mut ui_state, &mut working_lora_profile);
                     needs_redraw = true;
                 }
                 SimulatorEvent::KeyDown { repeat: true, .. }
@@ -795,14 +816,21 @@ fn run_window(handles: WindowHandles) {
         }
 
         let holding = active_press.is_some();
+        let selected_kind = selected_card_kind(&ui_state, cards.len(), &cards);
         let long_press = dispatch_long_press_if_ready(
             &mut active_press,
             Instant::now(),
             cards.len(),
+            selected_kind,
             &mut ui_state,
         );
         let selected = selected_card_id(&ui_state, cards.len(), &cards);
-        apply_action(long_press, selected);
+        apply_action(
+            long_press,
+            selected,
+            &mut ui_state,
+            &mut working_lora_profile,
+        );
 
         if holding || interface_changes.drain_changed() {
             needs_redraw = true;
@@ -825,6 +853,19 @@ fn run_window(handles: WindowHandles) {
                 }
             }
             cards = screen::snapshots_to_cards(&snapshots, classify);
+            let _ = cards.push(Card {
+                id: InterfaceId::new(*b"lorademo"),
+                kind: CardKind::LoRa,
+                label: screen::card_label("LoRa"),
+                selected: false,
+                liveness: screen::Liveness::Dormant,
+                tx_bytes: 0,
+                rx_bytes: 0,
+                links: 0,
+                destinations: 0,
+                rate_bytes_per_sec: 0,
+                last_activity_secs: None,
+            });
             ui_state.sync_card_count(cards.len());
             screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
             window.update(&display);
@@ -854,6 +895,7 @@ mod tests {
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD - Duration::from_millis(1),
             4,
+            None,
             &mut ui_state,
         );
 
@@ -876,6 +918,7 @@ mod tests {
             &mut active_press,
             started_at + LONG_PRESS_THRESHOLD,
             4,
+            None,
             &mut ui_state,
         );
 
@@ -898,6 +941,7 @@ mod tests {
             &mut active_press,
             started_at + LONG_PRESS_THRESHOLD,
             4,
+            None,
             &mut ui_state,
         );
         finish_press(
@@ -905,6 +949,7 @@ mod tests {
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD + Duration::from_millis(1),
             4,
+            None,
             &mut ui_state,
         );
 
@@ -928,6 +973,7 @@ mod tests {
             PressSource::Key,
             started_at + LONG_PRESS_THRESHOLD,
             4,
+            None,
             &mut ui_state,
         );
 
