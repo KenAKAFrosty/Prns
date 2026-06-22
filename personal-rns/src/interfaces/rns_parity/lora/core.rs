@@ -377,11 +377,7 @@ impl RadioProfile {
 
 pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     frequency: Frequency::new(915_000_000),
-    modulation: Modulation::Lora {
-        spreading_factor: SpreadingFactor::Sf8,
-        bandwidth: LoraBandwidth::Bw125kHz,
-        coding_rate: CodingRate::Cr45,
-    },
+    modulation: ModemPreset::LongFast.modulation(),
     tx_power: TxPower::new(22),
     preamble: PreambleSymbols::new(18),
     region: Region::Us915,
