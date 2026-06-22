@@ -1534,13 +1534,7 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(display: &mut D, selecte
 }
 
 fn lora_region_name(region: Region) -> &'static str {
-    match region {
-        Region::Eu868 => "EU868",
-        Region::Us915 => "US915",
-        Region::Au915 => "AU915",
-        Region::As923 => "AS923",
-        Region::Unlimited => "Open",
-    }
+    region.label()
 }
 
 fn lora_row_label(row: LoRaRow) -> &'static str {
