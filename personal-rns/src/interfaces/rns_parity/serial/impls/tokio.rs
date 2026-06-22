@@ -81,6 +81,7 @@ where
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
             framed_stream::FramedBuffers<
+                framed_stream::HdlcFraming,
                 { core::READ_BUF_LEN },
                 { core::SERIAL_FRAME_LEN },
                 { core::FRAMED_LEN },
@@ -90,6 +91,7 @@ where
             if let Ok(stream) = (self.open)().await {
                 self.status.set_connection(ConnectionState::Connected);
                 framed_stream::serve::<
+                    framed_stream::HdlcFraming,
                     { core::READ_BUF_LEN },
                     { core::SERIAL_FRAME_LEN },
                     { core::FRAMED_LEN },

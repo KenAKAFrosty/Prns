@@ -87,6 +87,7 @@ impl Interface for TcpClientInterface {
         let started = tokio::time::Instant::now();
         let mut buffers: Option<
             framed_stream::FramedBuffers<
+                framed_stream::HdlcFraming,
                 { core::READ_BUF_LEN },
                 { core::FRAME_CAP },
                 { core::FRAMED_LEN },
@@ -100,6 +101,7 @@ impl Interface for TcpClientInterface {
                 tune(&stream);
                 self.status.set_connection(ConnectionState::Connected);
                 framed_stream::serve::<
+                    framed_stream::HdlcFraming,
                     { core::READ_BUF_LEN },
                     { core::FRAME_CAP },
                     { core::FRAMED_LEN },
