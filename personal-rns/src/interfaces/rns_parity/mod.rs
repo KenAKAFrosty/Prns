@@ -4,7 +4,7 @@
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod local;
-pub mod rnode_lora;
+pub mod lora;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod serial;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
