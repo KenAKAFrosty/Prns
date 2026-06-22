@@ -28,6 +28,9 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 use heapless::String as HString;
+use personal_rns::interfaces::rns_parity::rnode_lora::core::{
+    Frequency, Modulation, RadioProfile, Region, TxPower, DEFAULT_915_PROFILE,
+};
 use personal_rns::interfaces::InterfaceId;
 
 const WIDTH: i32 = 64;
@@ -102,14 +105,16 @@ const POWER_MENU_ITEM: usize = 0;
 const USB_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Serial", "Restart", "Back"];
 const WIFI_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Scan", "Channel", "Back"];
 const BLE_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Pair", "Advert", "Back"];
-const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Freq", "Spread", "Back"];
+const LORA_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Tune", "Reset", "Back"];
+const LORA_TUNE_MENU_ITEM: usize = 1;
+const LORA_RESET_MENU_ITEM: usize = 2;
 const ESP_NOW_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Peers", "Channel", "Back"];
 const TCP_MENU_ITEMS: [&str; MENU_ITEM_COUNT] = ["Power", "Peer", "Drop", "Back"];
 
 /// What interface a card represents — the single source for its icon. Add a
 /// variant (and its `match` arm in `draw_interface_icon`) as new interface
 /// kinds land; never a wildcard, so the compiler flags the missing glyph.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CardKind {
     Wifi,
     Usb,
@@ -232,6 +237,8 @@ pub enum UiAction {
     /// Turn the currently selected interface off, or back on if it is already off. The app reads the
     /// selected card's [`id`](Card::id) to know which interface, and flips its enabled state.
     ToggleSelectedInterface,
+    OpenLoRaEditor,
+    SetLoRaProfile(RadioProfile),
 }
 
 /// Lightweight interaction state for the Hopspot card stack.
@@ -249,8 +256,116 @@ pub struct UiState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UiMode {
     Cards,
-    GlobalMenu { selected_item: usize },
-    InterfaceMenu { selected_item: usize },
+    GlobalMenu {
+        selected_item: usize,
+    },
+    InterfaceMenu {
+        selected_item: usize,
+        kind: CardKind,
+    },
+    LoRaEditor {
+        cursor: LoRaRow,
+        editing: bool,
+        profile: RadioProfile,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoRaRow {
+    SpreadingFactor,
+    Bandwidth,
+    CodingRate,
+    Frequency,
+    TxPower,
+    Region,
+    Save,
+}
+
+const LORA_ROWS: [LoRaRow; 7] = [
+    LoRaRow::SpreadingFactor,
+    LoRaRow::Bandwidth,
+    LoRaRow::CodingRate,
+    LoRaRow::Frequency,
+    LoRaRow::TxPower,
+    LoRaRow::Region,
+    LoRaRow::Save,
+];
+
+impl LoRaRow {
+    const FIRST: Self = Self::SpreadingFactor;
+
+    fn next(self) -> Self {
+        match self {
+            Self::SpreadingFactor => Self::Bandwidth,
+            Self::Bandwidth => Self::CodingRate,
+            Self::CodingRate => Self::Frequency,
+            Self::Frequency => Self::TxPower,
+            Self::TxPower => Self::Region,
+            Self::Region => Self::Save,
+            Self::Save => Self::SpreadingFactor,
+        }
+    }
+
+    fn is_save(self) -> bool {
+        matches!(self, Self::Save)
+    }
+}
+
+const LORA_FREQ_STEP_HZ: u32 = 1_000_000;
+const LORA_FREQ_MIN_HZ: u32 = 902_000_000;
+const LORA_FREQ_MAX_HZ: u32 = 928_000_000;
+const LORA_TX_POWER_MIN_DBM: i8 = -9;
+const LORA_TX_POWER_MAX_DBM: i8 = 22;
+
+fn step_lora_row(profile: RadioProfile, row: LoRaRow) -> RadioProfile {
+    let Modulation::Lora {
+        spreading_factor,
+        bandwidth,
+        coding_rate,
+    } = profile.modulation;
+    let mut next = profile;
+    match row {
+        LoRaRow::SpreadingFactor => {
+            next.modulation = Modulation::Lora {
+                spreading_factor: spreading_factor.next(),
+                bandwidth,
+                coding_rate,
+            }
+        }
+        LoRaRow::Bandwidth => {
+            next.modulation = Modulation::Lora {
+                spreading_factor,
+                bandwidth: bandwidth.next(),
+                coding_rate,
+            }
+        }
+        LoRaRow::CodingRate => {
+            next.modulation = Modulation::Lora {
+                spreading_factor,
+                bandwidth,
+                coding_rate: coding_rate.next(),
+            }
+        }
+        LoRaRow::Frequency => {
+            let hz = profile.frequency.hz().saturating_add(LORA_FREQ_STEP_HZ);
+            next.frequency = Frequency::new(if hz > LORA_FREQ_MAX_HZ {
+                LORA_FREQ_MIN_HZ
+            } else {
+                hz
+            });
+        }
+        LoRaRow::TxPower => {
+            let dbm = profile.tx_power.dbm();
+            next.tx_power = TxPower::new(if dbm >= LORA_TX_POWER_MAX_DBM {
+                LORA_TX_POWER_MIN_DBM
+            } else {
+                dbm + 1
+            });
+        }
+        LoRaRow::Region => next.region = profile.region.next(),
+        LoRaRow::Save => {}
+    }
+    next
 }
 
 impl UiState {
@@ -291,10 +406,10 @@ impl UiState {
     /// The selected menu row while any menu is open.
     pub fn menu_selected_item(&self) -> Option<usize> {
         match self.mode {
-            UiMode::Cards => None,
-            UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item } => {
+            UiMode::GlobalMenu { selected_item } | UiMode::InterfaceMenu { selected_item, .. } => {
                 Some(selected_item)
             }
+            UiMode::Cards | UiMode::LoRaEditor { .. } => None,
         }
     }
 
@@ -302,16 +417,24 @@ impl UiState {
     pub fn global_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
             UiMode::GlobalMenu { selected_item } => Some(selected_item),
-            UiMode::Cards | UiMode::InterfaceMenu { .. } => None,
+            UiMode::Cards | UiMode::InterfaceMenu { .. } | UiMode::LoRaEditor { .. } => None,
         }
     }
 
     /// The selected menu row while an interface menu is open.
     pub fn interface_menu_selected_item(&self) -> Option<usize> {
         match self.mode {
-            UiMode::InterfaceMenu { selected_item } => Some(selected_item),
-            UiMode::Cards | UiMode::GlobalMenu { .. } => None,
+            UiMode::InterfaceMenu { selected_item, .. } => Some(selected_item),
+            UiMode::Cards | UiMode::GlobalMenu { .. } | UiMode::LoRaEditor { .. } => None,
         }
+    }
+
+    pub fn open_lora_editor(&mut self, profile: RadioProfile) {
+        self.mode = UiMode::LoRaEditor {
+            cursor: LoRaRow::FIRST,
+            editing: false,
+            profile,
+        };
     }
 
     /// Reconcile selection/window state after the runtime's interface list
@@ -322,13 +445,17 @@ impl UiState {
         self.visible_start = visible_start_for(item_count, self.selected_focus, self.visible_start);
 
         match self.mode {
-            UiMode::Cards | UiMode::GlobalMenu { .. } => {}
+            UiMode::Cards | UiMode::GlobalMenu { .. } | UiMode::LoRaEditor { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(card_count).is_none() => {
                 self.mode = UiMode::Cards;
             }
-            UiMode::InterfaceMenu { selected_item } => {
+            UiMode::InterfaceMenu {
+                selected_item,
+                kind,
+            } => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: selected_item.min(MENU_ITEM_COUNT - 1),
+                    kind,
                 };
             }
         }
@@ -339,8 +466,15 @@ impl UiState {
         }
     }
 
-    /// Apply one single-button event, returning what the app should do about it.
-    pub fn handle_input(&mut self, event: InputEvent, card_count: usize) -> UiAction {
+    /// Apply one single-button event, returning what the app should do about it. `selected_kind` is
+    /// the [`CardKind`] of the currently selected card (the app reads it from the card list), so the
+    /// interface menu can resolve its kind-specific items.
+    pub fn handle_input(
+        &mut self,
+        event: InputEvent,
+        card_count: usize,
+        selected_kind: Option<CardKind>,
+    ) -> UiAction {
         self.sync_card_count(card_count);
         let item_count = focus_item_count(card_count);
         let action = match (event, self.mode) {
@@ -352,8 +486,15 @@ impl UiState {
                 self.mode = UiMode::GlobalMenu { selected_item: 0 };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::Cards) if self.selected_card(card_count).is_some() => {
-                self.mode = UiMode::InterfaceMenu { selected_item: 0 };
+            (InputEvent::LongPress, UiMode::Cards) => {
+                if let Some(kind) = selected_kind {
+                    if self.selected_card(card_count).is_some() {
+                        self.mode = UiMode::InterfaceMenu {
+                            selected_item: 0,
+                            kind,
+                        };
+                    }
+                }
                 UiAction::None
             }
             (InputEvent::ShortPress, UiMode::GlobalMenu { selected_item }) => {
@@ -370,21 +511,86 @@ impl UiState {
                     UiAction::None
                 }
             }
-            (InputEvent::ShortPress, UiMode::InterfaceMenu { selected_item }) => {
+            (
+                InputEvent::ShortPress,
+                UiMode::InterfaceMenu {
+                    selected_item,
+                    kind,
+                },
+            ) => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: (selected_item + 1) % MENU_ITEM_COUNT,
+                    kind,
                 };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::InterfaceMenu { selected_item }) => {
+            (
+                InputEvent::LongPress,
+                UiMode::InterfaceMenu {
+                    selected_item,
+                    kind,
+                },
+            ) => {
                 self.mode = UiMode::Cards;
-                if selected_item == POWER_MENU_ITEM {
-                    UiAction::ToggleSelectedInterface
+                match (kind, selected_item) {
+                    (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
+                    (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
+                    (CardKind::LoRa, LORA_RESET_MENU_ITEM) => {
+                        UiAction::SetLoRaProfile(DEFAULT_915_PROFILE)
+                    }
+                    _ => UiAction::None,
+                }
+            }
+            (
+                InputEvent::ShortPress,
+                UiMode::LoRaEditor {
+                    cursor,
+                    editing,
+                    profile,
+                },
+            ) => {
+                self.mode = if editing {
+                    UiMode::LoRaEditor {
+                        cursor,
+                        editing,
+                        profile: step_lora_row(profile, cursor),
+                    }
                 } else {
+                    UiMode::LoRaEditor {
+                        cursor: cursor.next(),
+                        editing,
+                        profile,
+                    }
+                };
+                UiAction::None
+            }
+            (
+                InputEvent::LongPress,
+                UiMode::LoRaEditor {
+                    cursor,
+                    editing,
+                    profile,
+                },
+            ) => {
+                if editing {
+                    self.mode = UiMode::LoRaEditor {
+                        cursor,
+                        editing: false,
+                        profile,
+                    };
+                    UiAction::None
+                } else if cursor.is_save() {
+                    self.mode = UiMode::Cards;
+                    UiAction::SetLoRaProfile(profile)
+                } else {
+                    self.mode = UiMode::LoRaEditor {
+                        cursor,
+                        editing: true,
+                        profile,
+                    };
                     UiAction::None
                 }
             }
-            (InputEvent::LongPress, UiMode::Cards) => UiAction::None,
         };
         self.sync_card_count(card_count);
         action
@@ -1227,6 +1433,91 @@ fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(display: &mut D, selecte
     }
 }
 
+fn lora_region_name(region: Region) -> &'static str {
+    match region {
+        Region::Eu868 => "EU868",
+        Region::Us915 => "US915",
+        Region::Au915 => "AU915",
+        Region::As923 => "AS923",
+        Region::Unlimited => "Open",
+    }
+}
+
+fn lora_row_label(row: LoRaRow) -> &'static str {
+    match row {
+        LoRaRow::SpreadingFactor => "SF",
+        LoRaRow::Bandwidth => "BW",
+        LoRaRow::CodingRate => "CR",
+        LoRaRow::Frequency => "Freq",
+        LoRaRow::TxPower => "Pwr",
+        LoRaRow::Region => "Reg",
+        LoRaRow::Save => "Save",
+    }
+}
+
+fn lora_row_value(row: LoRaRow, profile: &RadioProfile) -> heapless::String<12> {
+    let Modulation::Lora {
+        spreading_factor,
+        bandwidth,
+        coding_rate,
+    } = profile.modulation;
+    let mut value = heapless::String::new();
+    match row {
+        LoRaRow::SpreadingFactor => {
+            let _ = write!(value, "{}", spreading_factor as u8);
+        }
+        LoRaRow::Bandwidth => {
+            let _ = write!(value, "{}k", bandwidth.hz() / 1000);
+        }
+        LoRaRow::CodingRate => {
+            let _ = write!(value, "4/{}", coding_rate.denominator());
+        }
+        LoRaRow::Frequency => {
+            let _ = write!(value, "{}M", profile.frequency.hz() / 1_000_000);
+        }
+        LoRaRow::TxPower => {
+            let _ = write!(value, "{}dB", profile.tx_power.dbm());
+        }
+        LoRaRow::Region => {
+            let _ = value.push_str(lora_region_name(profile.region));
+        }
+        LoRaRow::Save => {}
+    }
+    value
+}
+
+fn lora_row_text(row: LoRaRow, profile: &RadioProfile, editing: bool) -> heapless::String<16> {
+    let mut text = heapless::String::new();
+    if row.is_save() {
+        let _ = text.push_str("Save");
+        return text;
+    }
+    let label = lora_row_label(row);
+    let value = lora_row_value(row, profile);
+    if editing {
+        let _ = write!(text, "{label} [{value}]");
+    } else {
+        let _ = write!(text, "{label} {value}");
+    }
+    text
+}
+
+const LORA_EDITOR_TOP: i32 = CARD_TOP + 2;
+
+fn draw_lora_editor<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cursor: LoRaRow,
+    editing: bool,
+    profile: &RadioProfile,
+) {
+    for (index, &row) in LORA_ROWS.iter().enumerate() {
+        let y = LORA_EDITOR_TOP + index as i32 * MENU_ITEM_STEP;
+        let selected = row == cursor;
+        let text = lora_row_text(row, profile, selected && editing);
+        draw_menu_item(display, y, &text, selected);
+    }
+}
+
 fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     card: &Card,
@@ -1318,6 +1609,16 @@ pub fn draw_with_state<D: DrawTarget<Color = BinaryColor>>(
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery);
 
+    if let UiMode::LoRaEditor {
+        cursor,
+        editing,
+        profile,
+    } = state.mode
+    {
+        draw_lora_editor(display, cursor, editing, &profile);
+        return;
+    }
+
     if let Some(selected_item) = state.global_menu_selected_item() {
         draw_global_menu(display, selected_item);
         return;
@@ -1392,27 +1693,27 @@ mod tests {
         assert_eq!(state.selected_card(5), None);
         assert_eq!(state.visible_start(5), 0);
 
-        state.handle_input(InputEvent::ShortPress, 5);
+        state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
         assert_eq!(state.selected_card(5), Some(0));
         assert_eq!(state.visible_start(5), 0);
 
-        state.handle_input(InputEvent::ShortPress, 5);
+        state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
         assert_eq!(state.selected_card(5), Some(1));
         assert_eq!(state.visible_start(5), 0);
 
-        state.handle_input(InputEvent::ShortPress, 5);
+        state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
         assert_eq!(state.selected_card(5), Some(2));
         assert_eq!(state.visible_start(5), 2);
 
-        state.handle_input(InputEvent::ShortPress, 5);
+        state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
         assert_eq!(state.selected_card(5), Some(3));
         assert_eq!(state.visible_start(5), 3);
 
-        state.handle_input(InputEvent::ShortPress, 5);
+        state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
         assert_eq!(state.selected_card(5), Some(4));
         assert_eq!(state.visible_start(5), 4);
 
-        state.handle_input(InputEvent::ShortPress, 5);
+        state.handle_input(InputEvent::ShortPress, 5, Some(CardKind::Usb));
         assert!(state.global_selected());
         assert_eq!(state.selected_card(5), None);
         assert_eq!(state.visible_start(5), 0);
@@ -1422,20 +1723,20 @@ mod tests {
     fn long_press_opens_global_menu_and_short_press_cycles_menu_items() {
         let mut state = UiState::new();
 
-        state.handle_input(InputEvent::LongPress, 4);
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
         assert_eq!(state.selected_card(4), None);
         assert_eq!(state.visible_start(4), 0);
         assert_eq!(state.global_menu_selected_item(), Some(0));
         assert_eq!(state.menu_selected_item(), Some(0));
 
-        state.handle_input(InputEvent::ShortPress, 4);
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
         assert_eq!(state.selected_card(4), None);
         assert_eq!(state.global_menu_selected_item(), Some(1));
         assert_eq!(state.menu_selected_item(), Some(1));
 
-        state.handle_input(InputEvent::LongPress, 4);
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
         assert!(state.global_selected());
         assert_eq!(state.menu_selected_item(), None);
@@ -1445,11 +1746,14 @@ mod tests {
     fn long_press_on_the_announce_item_returns_the_announce_action() {
         let mut state = UiState::new();
 
-        assert_eq!(state.handle_input(InputEvent::LongPress, 4), UiAction::None);
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
+            UiAction::None
+        );
         assert_eq!(state.global_menu_selected_item(), Some(ANNOUNCE_MENU_ITEM));
 
         assert_eq!(
-            state.handle_input(InputEvent::LongPress, 4),
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
             UiAction::Announce,
         );
         assert_eq!(state.menu_selected_item(), None);
@@ -1459,33 +1763,56 @@ mod tests {
     #[test]
     fn long_press_on_any_other_menu_item_just_closes_the_menu() {
         let mut state = UiState::new();
-        state.handle_input(InputEvent::LongPress, 4);
-        state.handle_input(InputEvent::ShortPress, 4);
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
-        assert_eq!(state.handle_input(InputEvent::LongPress, 4), UiAction::None);
+        assert_eq!(
+            state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb)),
+            UiAction::None
+        );
         assert_eq!(state.menu_selected_item(), None);
     }
 
     #[test]
     fn long_press_opens_interface_menu_after_card_focus() {
         let mut state = UiState::new();
-        state.handle_input(InputEvent::ShortPress, 4);
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
-        state.handle_input(InputEvent::LongPress, 4);
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
         assert_eq!(state.selected_card(4), Some(0));
         assert_eq!(state.visible_start(4), 0);
         assert_eq!(state.interface_menu_selected_item(), Some(0));
 
-        state.handle_input(InputEvent::ShortPress, 4);
+        state.handle_input(InputEvent::ShortPress, 4, Some(CardKind::Usb));
 
         assert_eq!(state.selected_card(4), Some(0));
         assert_eq!(state.interface_menu_selected_item(), Some(1));
 
-        state.handle_input(InputEvent::LongPress, 4);
+        state.handle_input(InputEvent::LongPress, 4, Some(CardKind::Usb));
 
         assert_eq!(state.selected_card(4), Some(0));
         assert_eq!(state.menu_selected_item(), None);
+    }
+
+    #[test]
+    fn lora_editor_taps_to_a_field_grabs_it_steps_the_value_and_saves() {
+        let mut state = UiState::new();
+        state.open_lora_editor(DEFAULT_915_PROFILE);
+
+        state.handle_input(InputEvent::ShortPress, 1, None);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        state.handle_input(InputEvent::ShortPress, 1, None);
+        state.handle_input(InputEvent::LongPress, 1, None);
+
+        for _ in 0..5 {
+            state.handle_input(InputEvent::ShortPress, 1, None);
+        }
+        let saved = state.handle_input(InputEvent::LongPress, 1, None);
+
+        let expected = step_lora_row(DEFAULT_915_PROFILE, LoRaRow::Bandwidth);
+        assert_eq!(saved, UiAction::SetLoRaProfile(expected));
+        assert_ne!(expected, DEFAULT_915_PROFILE);
     }
 
     #[test]
@@ -1495,7 +1822,7 @@ mod tests {
         display.set_allow_out_of_bounds_drawing(true);
         let cards = [test_card("A"), test_card("B")];
         let mut state = UiState::new();
-        state.handle_input(InputEvent::ShortPress, cards.len());
+        state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
 
         draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -1573,9 +1900,9 @@ mod tests {
         display.set_allow_out_of_bounds_drawing(true);
         let cards = [test_card("A"), test_card("B"), test_card("C")];
         let mut state = UiState::new();
-        state.handle_input(InputEvent::ShortPress, cards.len());
-        state.handle_input(InputEvent::ShortPress, cards.len());
-        state.handle_input(InputEvent::ShortPress, cards.len());
+        state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
 
         draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -1598,7 +1925,7 @@ mod tests {
         display.set_allow_out_of_bounds_drawing(true);
         let cards = [test_card("USB")];
         let mut state = UiState::new();
-        state.handle_input(InputEvent::LongPress, cards.len());
+        state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
 
         draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
@@ -1643,9 +1970,9 @@ mod tests {
             },
         ];
         let mut state = UiState::new();
-        state.handle_input(InputEvent::ShortPress, cards.len());
-        state.handle_input(InputEvent::ShortPress, cards.len());
-        state.handle_input(InputEvent::LongPress, cards.len());
+        state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+        state.handle_input(InputEvent::ShortPress, cards.len(), Some(CardKind::Usb));
+        state.handle_input(InputEvent::LongPress, cards.len(), Some(CardKind::Usb));
 
         draw_with_state(&mut display, &cards, BatteryState::Unknown, &state);
 
