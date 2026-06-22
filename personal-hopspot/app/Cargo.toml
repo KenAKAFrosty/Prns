@@ -73,9 +73,8 @@ personal-rns-ffi = { path = "../../personal-rns-ffi" }
 personal-rns-ffi = { path = "../../personal-rns-ffi" }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "embassy-lora", "external-alloc"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
-embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
 # Pure-Rust host BLE stack driving esp-radio's HCI BleConnector. 0.6.0 is the published release whose
 # bt-hci 0.8 agrees with esp-radio 0.18. It depends on embassy-sync 0.7 and heapless 0.9 while the

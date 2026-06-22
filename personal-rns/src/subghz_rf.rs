@@ -58,8 +58,6 @@ mod op {
 mod reg {
     /// LoRa sync word, high byte (low byte at +1).
     pub const LORA_SYNC_WORD_MSB: u16 = 0x0740;
-    /// GFSK sync word, first of up to 8 consecutive bytes.
-    pub const GFSK_SYNC_WORD_0: u16 = 0x06C0;
     /// TX clamp config — errata 15.2 workaround.
     pub const TX_CLAMP_CONFIG: u16 = 0x08D8;
     /// RX gain — 0x96 for boosted-gain RX.
@@ -133,33 +131,13 @@ pub enum CodingRate {
     Cr4_8 = 0x04,
 }
 
-/// GFSK pulse shaping — the chip's Gaussian-filter BT byte, or none (datasheet table 13-41).
-/// GMSK is `GaussianBt05` paired with a half-bitrate deviation (modulation index 0.5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PulseShape {
-    None = 0x00,
-    GaussianBt03 = 0x08,
-    GaussianBt05 = 0x09,
-    GaussianBt07 = 0x0A,
-    GaussianBt10 = 0x0B,
-}
-
-/// The change point: which packet engine the SX1262 runs. The LoRa arm drives the chirp modem;
-/// the GFSK arm drives the 2-FSK modem (the speed-mode / GMSK path).
+/// The change point. Today only LoRa is driven; the GFSK arm is the reserved seam.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modulation {
     Lora {
         spreading_factor: SpreadingFactor,
         bandwidth: Bandwidth,
         coding_rate: CodingRate,
-    },
-    /// 2-GFSK: on-air bitrate (bps) and frequency deviation (Hz), plus the Gaussian pulse shape.
-    /// The RX bandwidth is derived from those two by Carson's rule, so it is not a separate knob.
-    Gfsk {
-        bitrate_bps: u32,
-        fdev_hz: u32,
-        pulse_shape: PulseShape,
     },
 }
 
@@ -172,32 +150,10 @@ pub struct LoraPacket {
     pub invert_iq: bool,
 }
 
-/// GFSK on-air packet shape: a variable-length frame (an explicit length byte) with the preamble
-/// sized in bits and CRC / data-whitening toggles. The sync word value is the shared
-/// [`GFSK_SYNC_WORD`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GfskPacket {
-    pub preamble_bits: u16,
-    pub crc_on: bool,
-    pub whitening_on: bool,
-}
-
-/// The on-air packet shape, paired with the active [`Modulation`] arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PacketParams {
-    Lora(LoraPacket),
-    Gfsk(GfskPacket),
-}
-
 /// The private LoRa network sync word (RNode): 0x1424.
 pub const PRIVATE_SYNC_WORD: u16 = 0x1424;
 
-/// The GFSK sync word (8 bytes) both endpoints must share — balanced (32 of 64 bits set), no run
-/// over 4 bits, and far from the 0x55/0xAA preamble, so noise and foreign in-band energy don't fake
-/// a frame. Those properties are asserted by `gfsk_sync_word_is_balanced_with_no_long_runs`.
-pub const GFSK_SYNC_WORD: [u8; 8] = [0x93, 0x0B, 0x51, 0xDE, 0x6C, 0xF4, 0xAE, 0x21];
-
-/// SX1262 max single-frame payload — the on-air length field is a single byte (LoRa and GFSK alike).
+/// SX1262 LoRa max payload — the on-air length field is a single byte.
 const MAX_LORA_PAYLOAD: usize = 255;
 
 /// Per-board wiring/analog facts the one driver body needs.
@@ -238,7 +194,7 @@ pub struct Sx126x<SPI, BUSY, DIO1, RST, DLY> {
     config: BoardConfig,
     freq_hz: u32,
     modulation: Modulation,
-    packet: PacketParams,
+    packet: LoraPacket,
     tx_power_dbm: i8,
     /// RAM staging for the TX FIFO write — DMA-class SPI can't source a flash-resident
     /// payload. A field, not a per-call stack local, so it never bloats the `transmit`
@@ -275,12 +231,12 @@ where
                 bandwidth: Bandwidth::Bw125,
                 coding_rate: CodingRate::Cr4_5,
             },
-            packet: PacketParams::Lora(LoraPacket {
+            packet: LoraPacket {
                 preamble_symbols: 8,
                 explicit_header: true,
                 crc_on: true,
                 invert_iq: false,
-            }),
+            },
             tx_power_dbm: 14,
             tx_staging: [0u8; MAX_LORA_PAYLOAD],
         }
@@ -392,7 +348,7 @@ where
         &mut self,
         frequency_hz: u32,
         modulation: Modulation,
-        packet: PacketParams,
+        packet: LoraPacket,
         tx_power_dbm: i8,
     ) -> Result<(), Error> {
         self.freq_hz = frequency_hz;
@@ -417,18 +373,9 @@ where
                 .await?;
             self.command(&[op::CALIBRATE, 0x7F]).await?;
         }
-        match self.modulation {
-            Modulation::Lora { .. } => {
-                self.command(&[op::SET_PACKET_TYPE, 0x01]).await?;
-                self.write_register(reg::LORA_SYNC_WORD_MSB, &PRIVATE_SYNC_WORD.to_be_bytes())
-                    .await?;
-            }
-            Modulation::Gfsk { .. } => {
-                self.command(&[op::SET_PACKET_TYPE, 0x00]).await?;
-                self.write_register(reg::GFSK_SYNC_WORD_0, &GFSK_SYNC_WORD)
-                    .await?;
-            }
-        }
+        self.command(&[op::SET_PACKET_TYPE, 0x01]).await?;
+        self.write_register(reg::LORA_SYNC_WORD_MSB, &PRIVATE_SYNC_WORD.to_be_bytes())
+            .await?;
         self.command(&[op::SET_BUFFER_BASE_ADDRESS, 0x00, 0x00])
             .await?;
         // Image calibration for the 902-928 MHz band.
@@ -473,9 +420,7 @@ where
         .await?;
         self.command(&[op::SET_STOP_RX_TIMER_ON_PREAMBLE, 0x01])
             .await?;
-        if matches!(self.modulation, Modulation::Lora { .. }) {
-            self.command(&[op::SET_LORA_SYMB_NUM_TIMEOUT, 0x00]).await?;
-        }
+        self.command(&[op::SET_LORA_SYMB_NUM_TIMEOUT, 0x00]).await?;
         if self.config.rx_boost {
             self.write_register(reg::RX_GAIN, &[0x96]).await?;
         }
@@ -574,12 +519,6 @@ where
         Ok(-(buf[1] as i16) / 2)
     }
 
-    pub async fn set_frequency(&mut self, freq_hz: u32) -> Result<(), Error> {
-        self.freq_hz = freq_hz;
-        self.standby().await?;
-        self.set_rf_frequency().await
-    }
-
     async fn standby(&mut self) -> Result<(), Error> {
         self.command(&[op::SET_STANDBY, 0x00]).await
     }
@@ -618,32 +557,6 @@ where
                 };
                 self.write_register(reg::TX_MODULATION, &[fixed]).await
             }
-            Modulation::Gfsk {
-                bitrate_bps,
-                fdev_hz,
-                pulse_shape,
-            } => {
-                // BR = 32 * Fxtal / bitrate (Fxtal 32 MHz) = 1.024e9 / bitrate; the low 3 bytes.
-                let br = (1_024_000_000u64 / bitrate_bps.max(1) as u64) as u32;
-                let br = br.to_be_bytes();
-                // Fdev = fdev * 2^25 / Fxtal; the low 3 bytes, same scaling as the carrier.
-                let fdev = (((fdev_hz as u64) << 25) / 32_000_000) as u32;
-                let fdev = fdev.to_be_bytes();
-                let rx_bw = gfsk_rx_bandwidth(bitrate_bps, fdev_hz);
-                // No TxModulation errata here: that is a LoRa-bandwidth workaround.
-                self.command(&[
-                    op::SET_MODULATION_PARAMS,
-                    br[1],
-                    br[2],
-                    br[3],
-                    pulse_shape as u8,
-                    rx_bw,
-                    fdev[1],
-                    fdev[2],
-                    fdev[3],
-                ])
-                .await
-            }
         }
     }
 
@@ -651,56 +564,33 @@ where
     /// `payload_len`. No IQ-polarity errata RMW — [`set_packet_params`](Self::set_packet_params)
     /// applies that once in [`configure`](Self::configure).
     async fn set_payload_length(&mut self, payload_len: u8) -> Result<(), Error> {
-        match self.packet {
-            PacketParams::Lora(p) => {
-                let pre = p.preamble_symbols.to_be_bytes();
-                let header = u8::from(!p.explicit_header);
-                let crc = u8::from(p.crc_on);
-                let iq = u8::from(p.invert_iq);
-                self.command(&[
-                    op::SET_PACKET_PARAMS,
-                    pre[0],
-                    pre[1],
-                    header,
-                    payload_len,
-                    crc,
-                    iq,
-                ])
-                .await
-            }
-            PacketParams::Gfsk(p) => {
-                let pre = p.preamble_bits.to_be_bytes();
-                self.command(&[
-                    op::SET_PACKET_PARAMS,
-                    pre[0],
-                    pre[1],
-                    0x05, // preamble detector: 16 bits — reject noise / foreign in-band energy
-                    0x40, // sync word length: 64 bits (8 bytes)
-                    0x00, // address filtering off
-                    0x01, // variable-length frame (an explicit length byte)
-                    payload_len,
-                    if p.crc_on { 0x02 } else { 0x00 }, // 2-byte CRC: 1/65536 phantom pass-rate
-                    if p.whitening_on { 0x01 } else { 0x00 },
-                ])
-                .await
-            }
-        }
+        let pre = self.packet.preamble_symbols.to_be_bytes();
+        let header = u8::from(!self.packet.explicit_header);
+        let crc = u8::from(self.packet.crc_on);
+        let iq = u8::from(self.packet.invert_iq);
+        self.command(&[
+            op::SET_PACKET_PARAMS,
+            pre[0],
+            pre[1],
+            header,
+            payload_len,
+            crc,
+            iq,
+        ])
+        .await
     }
 
     async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
         self.set_payload_length(payload_len).await?;
-        // IQPolarity errata (DS 15.4) is LoRa-only: set bit 2 unless inverted IQ.
-        if let PacketParams::Lora(p) = self.packet {
-            let mut v = [0u8; 1];
-            self.read_register(reg::IQ_POLARITY, &mut v).await?;
-            let fixed = if p.invert_iq {
-                v[0] & !0x04
-            } else {
-                v[0] | 0x04
-            };
-            self.write_register(reg::IQ_POLARITY, &[fixed]).await?;
-        }
-        Ok(())
+        // IQPolarity errata (DS 15.4): set bit 2 unless inverted IQ.
+        let mut v = [0u8; 1];
+        self.read_register(reg::IQ_POLARITY, &mut v).await?;
+        let fixed = if self.packet.invert_iq {
+            v[0] & !0x04
+        } else {
+            v[0] | 0x04
+        };
+        self.write_register(reg::IQ_POLARITY, &[fixed]).await
     }
 
     async fn set_tx_power(&mut self) -> Result<(), Error> {
@@ -716,45 +606,6 @@ where
         // Ramp 40 us (0x02) for a TX preparation.
         self.command(&[op::SET_TX_PARAMS, tx_power, 0x02]).await
     }
-}
-
-/// GFSK RX double-sideband bandwidth code (datasheet table 13-32): the narrowest setting that
-/// still passes the signal's Carson bandwidth (2·fdev + bitrate). RX-side only — it has no effect
-/// on the transmitted spectrum — but kept honest so a receiver decodes the frame.
-fn gfsk_rx_bandwidth(bitrate_bps: u32, fdev_hz: u32) -> u8 {
-    let needed = 2 * fdev_hz + bitrate_bps;
-    // (Hz, code) ascending.
-    const TABLE: [(u32, u8); 21] = [
-        (4_800, 0x1F),
-        (5_800, 0x17),
-        (7_300, 0x0F),
-        (9_700, 0x1E),
-        (11_700, 0x16),
-        (14_600, 0x0E),
-        (19_500, 0x1D),
-        (23_400, 0x15),
-        (29_300, 0x0D),
-        (39_000, 0x1C),
-        (46_900, 0x14),
-        (58_600, 0x0C),
-        (78_200, 0x1B),
-        (93_800, 0x13),
-        (117_300, 0x0B),
-        (156_200, 0x1A),
-        (187_200, 0x12),
-        (234_300, 0x0A),
-        (312_000, 0x19),
-        (373_600, 0x11),
-        (467_000, 0x09),
-    ];
-    let mut i = 0;
-    while i < TABLE.len() {
-        if TABLE[i].0 >= needed {
-            return TABLE[i].1;
-        }
-        i += 1;
-    }
-    0x09
 }
 
 /// LoRa low-data-rate optimize: on only for the slow SF/BW combos (DS 6.1.4).
@@ -957,12 +808,12 @@ mod tests {
             bandwidth: Bandwidth::Bw125,
             coding_rate: CodingRate::Cr4_5,
         };
-        let packet = PacketParams::Lora(LoraPacket {
+        let packet = LoraPacket {
             preamble_symbols: 18,
             explicit_header: true,
             crc_on: true,
             invert_iq: false,
-        });
+        };
 
         block_on(radio.init(915_000_000, modulation, packet, 14)).expect("init");
         block_on(radio.transmit(b"PRNS-HELTEC-SMOK")).expect("transmit");
@@ -1040,94 +891,6 @@ mod tests {
             count(&[0x82, 0xFF, 0xFF, 0xFF]),
             2,
             "SetRx armed once per receive (two)"
-        );
-    }
-
-    #[test]
-    fn gfsk_command_stream() {
-        let log: Log = Rc::new(RefCell::new(Vec::new()));
-        let board = BoardConfig {
-            tcxo_voltage: Some(TcxoVoltage::V1_8),
-            use_dcdc: true,
-            rx_boost: true,
-            dio2_as_rf_switch: true,
-        };
-        let mut radio = Sx126x::new(
-            MockSpi { log: log.clone() },
-            MockWait,
-            MockWait,
-            MockOut,
-            MockDelay,
-            board,
-        );
-        // 50 kbps, 25 kHz deviation, no pulse shaping (plain 2-FSK).
-        let modulation = Modulation::Gfsk {
-            bitrate_bps: 50_000,
-            fdev_hz: 25_000,
-            pulse_shape: PulseShape::None,
-        };
-        let packet = PacketParams::Gfsk(GfskPacket {
-            preamble_bits: 32,
-            crc_on: true,
-            whitening_on: true,
-        });
-
-        block_on(radio.init(915_000_000, modulation, packet, 14)).expect("init");
-        block_on(radio.transmit(b"PRNS-HELTEC-SMOK")).expect("transmit");
-
-        let cmds = log.borrow();
-        let has = |bytes: &[u8]| cmds.iter().any(|c| c.as_slice() == bytes);
-
-        assert!(has(&[0x8A, 0x00]), "SetPacketType GFSK");
-        assert!(
-            has(&[0x0D, 0x06, 0xC0, 0x93, 0x0B, 0x51, 0xDE, 0x6C, 0xF4, 0xAE, 0x21]),
-            "GFSK 8-byte syncword written to 0x06C0"
-        );
-        // BR = 1.024e9 / 50000 = 20480 = 0x005000; Fdev = 25000 * 2^25 / 32e6 = 26214 = 0x006666;
-        // RX bw for Carson 2*25k+50k=100k -> 117.3 kHz code 0x0B.
-        assert!(
-            has(&[0x8B, 0x00, 0x50, 0x00, 0x00, 0x0B, 0x00, 0x66, 0x66]),
-            "SetModulationParams 50kbps / no-shaping / 117kHz / 25kHz-dev"
-        );
-        // GFSK SetPacketParams: preamble 32 bits, 16-bit detector, 64-bit sync, variable len 16,
-        // CRC on, whitening on.
-        assert!(
-            has(&[0x8C, 0x00, 0x20, 0x05, 0x40, 0x00, 0x01, 16, 0x02, 0x01]),
-            "SetPacketParams GFSK preamble32 / det16 / sync64 / var / len16 / crc2 / whiten"
-        );
-        // The LoRa-only commands must NOT appear on the GFSK path.
-        assert!(!has(&[0x8A, 0x01]), "no LoRa SetPacketType");
-        assert!(!has(&[0xA0, 0x00]), "no LoRa symbol-timeout");
-    }
-
-    #[test]
-    fn gfsk_sync_word_is_balanced_with_no_long_runs() {
-        let total_bits = GFSK_SYNC_WORD.len() * 8;
-        let ones: u32 = GFSK_SYNC_WORD.iter().map(|b| b.count_ones()).sum();
-        assert_eq!(
-            ones as usize,
-            total_bits / 2,
-            "balanced: half ones, half zeros"
-        );
-
-        let bit = |i: usize| (GFSK_SYNC_WORD[i / 8] >> (7 - (i % 8))) & 1;
-        let mut max_run = 1;
-        let mut run = 1;
-        for i in 1..total_bits {
-            if bit(i) == bit(i - 1) {
-                run += 1;
-                max_run = max_run.max(run);
-            } else {
-                run = 1;
-            }
-        }
-        assert!(max_run <= 4, "no run longer than 4 bits (got {max_run})");
-
-        let aa: u32 = GFSK_SYNC_WORD.iter().map(|b| (b ^ 0xAA).count_ones()).sum();
-        let five: u32 = GFSK_SYNC_WORD.iter().map(|b| (b ^ 0x55).count_ones()).sum();
-        assert!(
-            aa >= 24 && five >= 24,
-            "well-separated from the 0x55/0xAA preamble"
         );
     }
 }
