@@ -20,34 +20,19 @@ use crate::interfaces::{
     InterfaceCapabilities, InterfaceConfig, InterfaceId, InterfaceMode, TransportCapability,
 };
 
-/// RNode's on-air link header is one byte (`HEADER_L` in the firmware).
 pub const LORA_HEADER_LEN: usize = 1;
 
-/// The largest single LoRa frame RNode emits — explicit-header LoRa caps one
-/// frame at 255 bytes (RNode `SINGLE_MTU`).
 pub const LORA_SINGLE_FRAME_MAX: usize = 255;
 
 pub const LORA_SINGLE_FRAME_PAYLOAD_MAX: usize = LORA_SINGLE_FRAME_MAX - LORA_HEADER_LEN;
 
-/// The most payload we carry across a single packet's frames — RNode's `MTU`
-/// (508): two frames of [`LORA_SINGLE_FRAME_PAYLOAD_MAX`]. (Reticulum's own MTU
-/// is 500, so real packets always fit; this is the hard ceiling.)
 pub const LORA_MAX_PAYLOAD: usize = 2 * LORA_SINGLE_FRAME_PAYLOAD_MAX;
 
-// RNode header-byte layout (Framing.h): high nibble = sequence, low nibble =
-// flags; bit 0 of the flags marks a frame that is part of a split (multi-frame)
-// packet — set on *every* frame of the split, cleared on a whole-in-one-frame packet.
 const HEADER_SEQUENCE_NIBBLE: u8 = 0xF0;
 const HEADER_FLAG_SPLIT: u8 = 0x01;
 
-/// RNode's hardcoded LoRa sync word (every band) — the classic "private"
-/// network sync ([RNode `sx126x.cpp`](https://github.com/markqvist/RNode_Firmware/blob/1.86/sx126x.cpp)).
-/// lora-phy realizes this by constructing `LoRa` with `enable_public_network = false`.
 pub const RNODE_LORA_SYNC_WORD: u16 = 0x1424;
 
-/// LoRa spreading factor — the chips-per-symbol exponent. The SX1262 supports
-/// SF5–SF12 (RNode/Reticulum stay in SF7–SF12 in practice); higher is longer
-/// range and slower. The discriminant is the factor itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SpreadingFactor {
@@ -76,9 +61,6 @@ impl SpreadingFactor {
     }
 }
 
-/// LoRa signal bandwidth. The three values Reticulum and RNode use in practice;
-/// the SX1262's narrow bandwidths (down to 7.81 kHz) are a mechanical addition
-/// when a profile needs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoraBandwidth {
     Bw125kHz,
@@ -104,8 +86,6 @@ impl LoraBandwidth {
     }
 }
 
-/// LoRa forward-error-correction coding rate `4/(4+n)`. The discriminant is the
-/// denominator (`4/5`..`4/8`), the value the SX1262 and the bitrate formula want.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CodingRate {
@@ -130,7 +110,6 @@ impl CodingRate {
     }
 }
 
-/// Carrier frequency, Hz. The SX1262 PLL covers roughly 150–960 MHz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Frequency(u32);
 
@@ -144,7 +123,6 @@ impl Frequency {
     }
 }
 
-/// Transmit power, dBm. The SX1262 PA covers -9..=22 dBm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TxPower(i8);
 
@@ -158,7 +136,6 @@ impl TxPower {
     }
 }
 
-/// Preamble length in symbols. RNode's firmware default is 18.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreambleSymbols(u16);
 
@@ -172,8 +149,6 @@ impl PreambleSymbols {
     }
 }
 
-/// The on-air modulation, a setting on the [`RadioProfile`]. A change re-keys the
-/// channel's identity through the channel tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modulation {
     Lora {
@@ -184,9 +159,6 @@ pub enum Modulation {
 }
 
 impl Modulation {
-    /// Nominal on-air bitrate, bits per second — the standard LoRa rate
-    /// `SF * BW * 4 / (2^SF * (4+CR))` evaluated in integer arithmetic. Feeds the
-    /// descriptor's bitrate and, with it, the airtime accounting.
     pub const fn nominal_bitrate_bps(self) -> u32 {
         let Self::Lora {
             spreading_factor,
@@ -200,20 +172,11 @@ impl Modulation {
     }
 }
 
-/// One percent, in the per-mille the airtime ledger speaks.
 const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
-/// How much projected transmit airtime a duty-limited interface queues before it drops the oldest
-/// frame — the gate's budget on a slow shared medium.
 const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
 
-/// Ten percent, in the per-mille the airtime ledger speaks.
 const DUTY_TEN_PERCENT_PER_MILLE: u16 = 100;
 
-/// The radio regulatory region — the outer bound on a profile: its frequency band, transmit-power
-/// ceiling, and duty cycle. Picked first in the settings flow, it clamps frequency and power. Region
-/// is a local knob (outside the [`channel_tag`]), so two nodes on different regions still hear each
-/// other as long as their frequency and modulation agree. Bounds follow the global sub-GHz ISM
-/// allocations; the power cap is the SX1262 PA ceiling (the antenna/FEM owns total EIRP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Region {
     Us915,
@@ -292,10 +255,6 @@ impl Region {
         TxPower::new(dbm)
     }
 
-    /// The airtime ceiling this region declares — host-enforced by the interface's duty gate — or
-    /// `None` for a region with no duty cycle. The EU 868 sub-bands cap the hour window at 1%, the
-    /// EU 433 and 869.4-869.65 bands at 10%; the queue budget bounds the held airtime before the
-    /// oldest frame is dropped. Asia-Pacific bands use listen-before-talk in practice, not modeled here.
     pub const fn duty_cycle(self) -> Option<AirtimeDutyCycle> {
         let limit_long_per_mille = match self {
             Self::Eu865 | Self::Eu868 => DUTY_ONE_PERCENT_PER_MILLE,
@@ -344,9 +303,6 @@ impl Region {
     }
 }
 
-/// A named modem preset — a spreading-factor / bandwidth / coding-rate bundle along the range-vs-speed
-/// tradeoff, the Meshtastic-style one-knob the settings flow offers before full custom control. It is
-/// pure UI sugar over the raw modulation; the wire carries only the resulting SF/BW/CR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModemPreset {
     ShortFast,
@@ -404,11 +360,6 @@ impl ModemPreset {
     }
 }
 
-/// The full radio configuration both endpoints must agree on for a channel. The
-/// channel tag hashes over [`frequency`](Self::frequency) and
-/// [`modulation`](Self::modulation) — the settings that decide *who can hear whom*
-/// — so a change to either re-keys the interface's identity. Transmit power,
-/// preamble, and region are local knobs, deliberately outside the tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RadioProfile {
     pub frequency: Frequency,
@@ -424,9 +375,6 @@ impl RadioProfile {
     }
 }
 
-/// A sensible US-band LoRa starting point: 915 MHz (dwell-time limited, so no duty cycle),
-/// SF8 / 125 kHz / 4-5. The preamble is RNode's firmware default (18 symbols); transmit power is a
-/// placeholder pending the regional power tables.
 pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     frequency: Frequency::new(915_000_000),
     modulation: Modulation::Lora {
@@ -441,14 +389,8 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
 
 const MODULATION_TAG_LORA: u8 = 0x00;
 
-/// The channel tag [`channel_tag`] emits: frequency (4) plus the LoRa block
-/// (kind 1 + SF 1 + bandwidth 4 + coding rate 1).
 pub const CHANNEL_TAG_CAP: usize = 11;
 
-/// The channel-identity bytes the interface id hashes over — a canonical encoding
-/// of the profile's frequency and modulation. Two nodes on the same channel derive
-/// the same tag (so they share an interface id); any settings change yields a new
-/// one (so it re-keys). Transmit power, preamble, and region are excluded as local-only.
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
@@ -485,9 +427,6 @@ pub const fn air_frame_count(payload_len: usize) -> usize {
     }
 }
 
-/// The caller transmits frames `0..air_frame_count(payload.len())`, all with the
-/// same `sequence_entropy` so the receiver reassembles them — mirroring RNode,
-/// which picks one `random(256) & 0xF0` per packet and reuses it on each frame.
 pub fn encode_air_frame_part(
     payload: &[u8],
     sequence_entropy: u8,
@@ -498,8 +437,6 @@ pub fn encode_air_frame_part(
         return Err(AirFrameError::PayloadExceedsMax);
     }
     let split = payload.len() > LORA_SINGLE_FRAME_PAYLOAD_MAX;
-    // Clamp so an out-of-range index yields a header-only frame rather than
-    // panicking; the worker only ever passes a valid index.
     let start = (index * LORA_SINGLE_FRAME_PAYLOAD_MAX).min(payload.len());
     let end = (start + LORA_SINGLE_FRAME_PAYLOAD_MAX).min(payload.len());
     let chunk = &payload[start..end];
@@ -521,15 +458,6 @@ pub fn decode_air_frame(frame: &[u8]) -> Option<AirFrame<'_>> {
     })
 }
 
-/// Reassembles RNode's frames back into whole Reticulum packets. A whole-in-one
-/// frame is delivered as-is; a split packet's two frames (same sequence nibble +
-/// the split flag) are concatenated and delivered on the second. Mirrors the
-/// firmware's receive state machine
-/// ([`receive_callback`](https://github.com/markqvist/RNode_Firmware/blob/1.86/RNode_Firmware.ino#L359-L450)):
-/// a non-matching sequence, or a whole frame mid-split, drops the partial.
-///
-/// `CAP` bounds the reassembled packet (size it to the engine MTU); bytes beyond
-/// it are dropped.
 pub struct LoRaReassembler<const CAP: usize> {
     in_progress_sequence: Option<u8>,
     buffer: HeaplessVec<u8, CAP>,
@@ -580,10 +508,6 @@ impl<const CAP: usize> Default for LoRaReassembler<CAP> {
     }
 }
 
-/// The repeating, shared-medium descriptor a LoRa interface declares. The bitrate
-/// is derived from the profile's modulation, never passed independently, so it can
-/// never disagree with the radio. The airtime duty cycle is left unset here — the
-/// gate that enforces it is wired in its own step.
 pub fn descriptor(id: InterfaceId, profile: &RadioProfile) -> InterfaceConfig {
     InterfaceConfig {
         id,
