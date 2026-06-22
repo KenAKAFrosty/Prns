@@ -11,6 +11,10 @@ pub mod local;
 pub mod lora;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod pipe;
+// Host-only: a PC driving a separate RNode modem over USB serial. There is no embedded counterpart
+// (the board-is-the-radio case is `lora`), so this is gated on the host executor alone.
+#[cfg(feature = "tokio-host")]
+pub mod rnode;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod serial;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]

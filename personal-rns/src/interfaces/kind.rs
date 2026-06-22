@@ -32,6 +32,7 @@ pub enum InterfaceKind {
     Kiss = 15,
     Ax25Kiss = 16,
     Pipe = 17,
+    Rnode = 18,
 }
 
 impl InterfaceKind {
@@ -59,6 +60,7 @@ impl InterfaceKind {
             15 => Some(Self::Kiss),
             16 => Some(Self::Ax25Kiss),
             17 => Some(Self::Pipe),
+            18 => Some(Self::Rnode),
             _ => None,
         }
     }

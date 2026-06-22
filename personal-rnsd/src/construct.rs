@@ -13,6 +13,8 @@ use personal_rns::interfaces::rns_parity::ax25_kiss::impls::tokio::Ax25KissInter
 use personal_rns::interfaces::rns_parity::kiss::core::TncConfig;
 use personal_rns::interfaces::rns_parity::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
 use personal_rns::interfaces::rns_parity::pipe::impls::tokio::PipeInterface;
+use personal_rns::interfaces::rns_parity::rnode::core::RadioConfig;
+use personal_rns::interfaces::rns_parity::rnode::impls::tokio::RNodeInterface;
 use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
@@ -27,6 +29,12 @@ use tokio_serial::SerialPortBuilderExt;
 
 const TCP_RECONNECT: Duration = Duration::from_secs(5);
 const SERIAL_RECONNECT: Duration = Duration::from_millis(500);
+/// RNS `RNodeInterface.RECONNECT_WAIT`: an RNode's bring-up handshake is expensive (settle, detect,
+/// configure, validate), so a dropped or absent device is retried on a slower cadence than a bare
+/// serial port.
+const RNODE_RECONNECT: Duration = Duration::from_secs(5);
+/// An RNode's host link is always 115200/8N1 — RNS hardcodes the speed; it is not a config knob.
+const RNODE_BAUD: u32 = 115_200;
 
 /// Stand up every planned interface on `handle`. The runtime tracks each attached interface's status
 /// itself, so nothing is returned for the caller to hold; deferred interfaces and unapplied settings
@@ -182,6 +190,55 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
                 Err(error) => {
                     eprintln!(
                         "RNSD_INTERFACE_FAILED name={name:?} medium=ax25-kiss callsign={callsign} error={error:?}"
+                    );
+                }
+            }
+        }
+        PlannedMedium::Rnode {
+            device,
+            frequency_hz,
+            bandwidth_hz,
+            txpower_dbm,
+            spreading_factor,
+            coding_rate,
+            airtime_limit_short_centi,
+            airtime_limit_long_centi,
+        } => {
+            // Validate the radio against its operating envelope here (as RNS leaves range-checking to
+            // the device): a config the radio cannot accept fails to stand up with a clear reason
+            // rather than opening the port and timing out on validation.
+            match RadioConfig::new(
+                *frequency_hz,
+                *bandwidth_hz,
+                *txpower_dbm,
+                *spreading_factor,
+                *coding_rate,
+                *airtime_limit_short_centi,
+                *airtime_limit_long_centi,
+            ) {
+                Ok(radio) => {
+                    let open_path = device.clone();
+                    let rnode = RNodeInterface::new(
+                        move || {
+                            let open_path = open_path.clone();
+                            async move {
+                                tokio_serial::new(&open_path, RNODE_BAUD)
+                                    .open_native_async()
+                                    .map_err(std::io::Error::other)
+                            }
+                        },
+                        RNODE_RECONNECT,
+                        radio,
+                        device.as_bytes(),
+                    );
+                    handle.add_interface(rnode);
+                    println!(
+                        "RNSD_INTERFACE_UP name={name:?} medium=rnode device={device} freq={frequency_hz} bw={bandwidth_hz} sf={spreading_factor} cr={coding_rate} txpower={txpower_dbm}"
+                    );
+                }
+                Err(error) => {
+                    eprintln!(
+                        "RNSD_INTERFACE_FAILED name={name:?} medium=rnode device={device} error={error:?}"
                     );
                 }
             }
