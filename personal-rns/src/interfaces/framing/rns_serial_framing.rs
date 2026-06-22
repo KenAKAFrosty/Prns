@@ -9,8 +9,7 @@
 //! Reference escape handling:
 //! <https://github.com/markqvist/Reticulum/blob/1.3.1/RNS/Interfaces/SerialInterface.py#L180-L186>
 
-#[cfg(not(feature = "std"))]
-use heapless::Vec as HeaplessVec;
+use super::FrameBuffer;
 
 pub const FLAG: u8 = 0x7E;
 pub const ESC: u8 = 0x7D;
@@ -120,94 +119,6 @@ pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     FrameTooBig,
-}
-
-// Std reactor hosts can keep the same fixed-cap decoder contract while using
-// Vec's optimized bulk copy; no_std targets keep the inline heapless buffer.
-#[cfg(feature = "std")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FrameBuffer<const FRAME_CAP: usize> {
-    bytes: std::vec::Vec<u8>,
-}
-
-#[cfg(feature = "std")]
-impl<const FRAME_CAP: usize> FrameBuffer<FRAME_CAP> {
-    const fn new() -> Self {
-        Self {
-            bytes: std::vec::Vec::new(),
-        }
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    fn clear(&mut self) {
-        self.bytes.clear();
-    }
-
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    const fn capacity(&self) -> usize {
-        FRAME_CAP
-    }
-
-    fn extend_from_slice(&mut self, bytes: &[u8]) -> Result<(), ()> {
-        if bytes.len() > FRAME_CAP.saturating_sub(self.bytes.len()) {
-            return Err(());
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(())
-    }
-
-    fn push(&mut self, byte: u8) -> Result<(), ()> {
-        if self.bytes.len() >= FRAME_CAP {
-            return Err(());
-        }
-        self.bytes.push(byte);
-        Ok(())
-    }
-}
-
-#[cfg(not(feature = "std"))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FrameBuffer<const FRAME_CAP: usize> {
-    bytes: HeaplessVec<u8, FRAME_CAP>,
-}
-
-#[cfg(not(feature = "std"))]
-impl<const FRAME_CAP: usize> FrameBuffer<FRAME_CAP> {
-    const fn new() -> Self {
-        Self {
-            bytes: HeaplessVec::new(),
-        }
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    fn clear(&mut self) {
-        self.bytes.clear();
-    }
-
-    fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    fn capacity(&self) -> usize {
-        self.bytes.capacity()
-    }
-
-    fn extend_from_slice(&mut self, bytes: &[u8]) -> Result<(), ()> {
-        self.bytes.extend_from_slice(bytes)
-    }
-
-    fn push(&mut self, byte: u8) -> Result<(), ()> {
-        self.bytes.push(byte).map_err(|_| ())
-    }
 }
 
 /// The decoder can be plugged into an already-running byte stream: bytes
