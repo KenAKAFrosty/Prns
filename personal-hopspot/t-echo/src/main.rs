@@ -256,18 +256,19 @@ async fn drive_frontlight(mut frontlight: Output<'static>) -> ! {
     }
 }
 
-fn build_cards(lora: &EmbassyInterfaceStatus, lora_id: InterfaceId) -> HVec<hopspot::Card, 4> {
-    let classify = |id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
-        if id == lora_id {
+fn build_cards(lora: &EmbassyInterfaceStatus) -> HVec<hopspot::Card, 4> {
+    let id = lora.id();
+    let classify = |card_id: InterfaceId| -> Option<(hopspot::CardKind, hopspot::CardLabel)> {
+        if card_id == id {
             Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
         } else {
             None
         }
     };
-    let counts = INTERFACE_COUNTS.counts(lora_id);
+    let counts = INTERFACE_COUNTS.counts(id);
     let mut snapshots: HVec<InterfaceSnapshot, 4> = HVec::new();
     let _ = snapshots.push(InterfaceSnapshot {
-        id: lora.id(),
+        id,
         connection: lora.connection(),
         rx_bytes: lora.rx_bytes(),
         tx_bytes: lora.tx_bytes(),
@@ -447,7 +448,7 @@ async fn main(_spawner: Spawner) -> ! {
         loop {
             class.wait_connection().await;
             loop {
-                let counts = INTERFACE_COUNTS.counts(lora_id);
+                let counts = INTERFACE_COUNTS.counts(lora_status.id());
                 let mut line: String<128> = String::new();
                 let _ = write!(
                     line,
@@ -488,7 +489,7 @@ async fn main(_spawner: Spawner) -> ! {
         let mut displayed_hash = 0u64;
         let mut have_displayed = false;
         loop {
-            let cards = build_cards(lora_status, lora_id);
+            let cards = build_cards(lora_status);
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
 
@@ -537,7 +538,7 @@ async fn main(_spawner: Spawner) -> ! {
                                 .selected_card(card_count)
                                 .and_then(|index| cards.get(index))
                             {
-                                if card.id == lora_id {
+                                if card.id == lora_status.id() {
                                     lora_status.set_enabled(!lora_status.is_enabled());
                                 }
                             }
