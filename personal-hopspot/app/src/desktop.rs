@@ -36,7 +36,7 @@ use personal_rns::interfaces::rns_parity::local::impls::rpc_compat::{
     reticulum_storage_dir, rpc_key_from_rns_identity, SharedInstanceRpcCompat,
 };
 use personal_rns::interfaces::rns_parity::local::impls::tokio::LocalServer;
-use personal_rns::interfaces::rns_parity::rnode_lora::core::{RadioProfile, DEFAULT_915_PROFILE};
+use personal_rns::interfaces::rns_parity::lora::core::{RadioProfile, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiStatus};

@@ -17,7 +17,7 @@ use embedded_hal_async::spi::SpiDevice;
 use heapless::Vec as HeaplessVec;
 
 use crate::engine::InstantMillis;
-use crate::interfaces::rns_parity::rnode_lora::core::{
+use crate::interfaces::rns_parity::lora::core::{
     self, air_frame_count, encode_air_frame_part, CodingRate, LoRaReassembler, LoraBandwidth,
     Modulation, RadioProfile, SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD,
     LORA_SINGLE_FRAME_MAX,
