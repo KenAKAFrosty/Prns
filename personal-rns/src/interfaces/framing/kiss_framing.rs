@@ -66,15 +66,26 @@ pub const fn max_encoded_len(payload_len: usize) -> usize {
     3 + 2 * payload_len
 }
 
-/// Frame `input` as a KISS data frame into `output`, returning the byte count written.
-/// `FEND`/`FESC` in the payload are transpose-escaped; the frame opens with `FEND CMD_DATA` and
-/// closes with `FEND`. Fails only if `output` is too small (size it with [`max_encoded_len`]).
+/// Frame `input` as a KISS data frame into `output` — `FEND CMD_DATA <escaped input> FEND`. The
+/// common case; see [`encode_with_command`] for an arbitrary command.
 pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
+    encode_with_command(CMD_DATA, input, output)
+}
+
+/// Frame `input` under an arbitrary KISS `command` into `output` — `FEND command <escaped input>
+/// FEND`, returning the byte count. `FEND`/`FESC` in the payload are transpose-escaped. RNode uses
+/// this for its radio-config commands (frequency, bandwidth, …) as well as data; [`encode`] is the
+/// `CMD_DATA` case. Fails only if `output` is too small (size it with [`max_encoded_len`]).
+pub fn encode_with_command(
+    command: u8,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, EncodeError> {
     if output.len() < 2 {
         return Err(EncodeError::OutputTooSmall);
     }
     output[0] = FEND;
-    output[1] = CMD_DATA;
+    output[1] = command;
     let mut written = 2;
 
     for &byte in input {
@@ -252,6 +263,141 @@ impl<const FRAME_CAP: usize> KissDecoder<FRAME_CAP> {
             byte
         };
 
+        if self.buffer.push(payload_byte).is_err() {
+            self.reset();
+            return Err(DecodeError::FrameTooBig);
+        }
+        Ok(false)
+    }
+}
+
+/// A command-aware KISS deframer for RNode's host protocol. Where [`KissDecoder`] yields only the
+/// payload of `CMD_DATA` frames (masking the port nibble), this yields `(command, payload)` for
+/// *every* frame and keeps the command byte whole — RNode's commands run the full `0x00..=0x90`
+/// range (radio-config echoes, telemetry, detect/version responses, errors), and the host must see
+/// them all. A `FEND` closes the current frame, yields it, and reopens the next, so one frame's
+/// closing delimiter can double as the next frame's opening (as RNode's batched detect query is
+/// written) — single- and double-`FEND` framing both work. A frame whose unescaped payload would
+/// exceed `FRAME_CAP` is rejected with [`DecodeError::FrameTooBig`] and the decoder realigns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KissCommandDecoder<const FRAME_CAP: usize> {
+    buffer: FrameBuffer<FRAME_CAP>,
+    in_frame: bool,
+    command: u8,
+    saw_escape: bool,
+    /// Set when a frame was just yielded; the next fed byte clears the buffer for the frame the
+    /// closing `FEND` reopened, so the yielded payload borrow stays valid until the caller moves on.
+    yielded: bool,
+}
+
+impl<const FRAME_CAP: usize> Default for KissCommandDecoder<FRAME_CAP> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const FRAME_CAP: usize> KissCommandDecoder<FRAME_CAP> {
+    pub const fn new() -> Self {
+        Self {
+            buffer: FrameBuffer::new(),
+            in_frame: false,
+            command: CMD_UNKNOWN,
+            saw_escape: false,
+            yielded: false,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.buffer.clear();
+        self.in_frame = false;
+        self.command = CMD_UNKNOWN;
+        self.saw_escape = false;
+        self.yielded = false;
+    }
+
+    pub fn feed(&mut self, byte: u8) -> Result<Option<(u8, &[u8])>, DecodeError> {
+        if self.feed_one(byte)? {
+            Ok(Some((self.command, self.buffer.as_slice())))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn feed_slice(&mut self, input: &[u8], mut on_frame: impl FnMut(u8, &[u8])) {
+        let mut offset = 0;
+        while offset < input.len() {
+            match self.feed_slice_next(input, &mut offset) {
+                Ok(Some((command, payload))) => on_frame(command, payload),
+                Ok(None) => break,
+                Err(DecodeError::FrameTooBig) => {}
+            }
+        }
+    }
+
+    pub fn feed_slice_next<'a>(
+        &'a mut self,
+        input: &[u8],
+        offset: &mut usize,
+    ) -> Result<Option<(u8, &'a [u8])>, DecodeError> {
+        while *offset < input.len() {
+            let byte = input[*offset];
+            *offset += 1;
+            if self.feed_one(byte)? {
+                return Ok(Some((self.command, self.buffer.as_slice())));
+            }
+        }
+        Ok(None)
+    }
+
+    fn feed_one(&mut self, byte: u8) -> Result<bool, DecodeError> {
+        // The previous call yielded a frame whose closing FEND reopened the next; now that the
+        // borrow is done, clear the buffer for it.
+        if self.yielded {
+            self.yielded = false;
+            self.buffer.clear();
+            self.command = CMD_UNKNOWN;
+            self.saw_escape = false;
+        }
+
+        if byte == FEND {
+            // A FEND closes the current frame (if it read a command) and reopens the next.
+            if self.in_frame && self.command != CMD_UNKNOWN {
+                self.yielded = true;
+                self.in_frame = true;
+                return Ok(true);
+            }
+            self.in_frame = true;
+            self.command = CMD_UNKNOWN;
+            self.saw_escape = false;
+            self.buffer.clear();
+            return Ok(false);
+        }
+
+        // Outside any frame, bytes are noise between frames — drop them; the next FEND re-anchors.
+        if !self.in_frame {
+            return Ok(false);
+        }
+
+        // First byte after the opening FEND is the command, kept whole (no port-nibble mask).
+        if self.command == CMD_UNKNOWN && self.buffer.len() == 0 {
+            self.command = byte;
+            return Ok(false);
+        }
+
+        if byte == FESC {
+            self.saw_escape = true;
+            return Ok(false);
+        }
+        let payload_byte = if self.saw_escape {
+            self.saw_escape = false;
+            match byte {
+                TFEND => FEND,
+                TFESC => FESC,
+                other => other,
+            }
+        } else {
+            byte
+        };
         if self.buffer.push(payload_byte).is_err() {
             self.reset();
             return Err(DecodeError::FrameTooBig);
@@ -468,6 +614,93 @@ mod tests {
                 }
             }
             prop_assert_eq!(frames, std::vec![payload]);
+        }
+    }
+
+    fn decode_all_commands(bytes: &[u8]) -> std::vec::Vec<(u8, std::vec::Vec<u8>)> {
+        let mut decoder: KissCommandDecoder<TEST_FRAME_CAP> = KissCommandDecoder::new();
+        let mut frames = std::vec::Vec::new();
+        for &b in bytes {
+            if let Ok(Some((command, payload))) = decoder.feed(b) {
+                frames.push((command, payload.to_vec()));
+            }
+        }
+        frames
+    }
+
+    #[test]
+    fn encode_with_command_frames_an_arbitrary_command() {
+        let mut out = [0u8; 16];
+        let n = encode_with_command(0x01, &[0x01, 0x02, 0x03, 0x04], &mut out).unwrap();
+        assert_eq!(&out[..n], &[FEND, 0x01, 0x01, 0x02, 0x03, 0x04, FEND]);
+    }
+
+    #[test]
+    fn encode_with_command_escapes_special_bytes_in_the_payload() {
+        let mut out = [0u8; 16];
+        let n = encode_with_command(0x02, &[FEND, FESC], &mut out).unwrap();
+        assert_eq!(&out[..n], &[FEND, 0x02, FESC, TFEND, FESC, TFESC, FEND]);
+    }
+
+    #[test]
+    fn the_command_decoder_yields_the_whole_command_byte_unmasked() {
+        // 0x90 (RNode CMD_ERROR) would mask to 0x10 under the data decoder; the command decoder
+        // keeps it whole, and a port-nibble command like 0x10 is not collapsed to 0x00.
+        assert_eq!(
+            decode_all_commands(&[FEND, 0x90, 0xAB, FEND]),
+            std::vec![(0x90u8, std::vec![0xAB])]
+        );
+        assert_eq!(
+            decode_all_commands(&[FEND, 0x10, 0xAB, FEND]),
+            std::vec![(0x10u8, std::vec![0xAB])]
+        );
+    }
+
+    #[test]
+    fn the_command_decoder_splits_single_fend_separated_frames() {
+        // RNode's batched detect-response shape: one FEND closes a frame and opens the next.
+        let stream = [
+            FEND, 0x08, 0x46, FEND, 0x50, 0x01, 0x34, FEND, 0x48, 0x80, FEND,
+        ];
+        assert_eq!(
+            decode_all_commands(&stream),
+            std::vec![
+                (0x08u8, std::vec![0x46]),
+                (0x50u8, std::vec![0x01, 0x34]),
+                (0x48u8, std::vec![0x80]),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_command_decoder_handles_double_fend_separated_frames() {
+        let stream = [FEND, 0x03, 0x25, FEND, FEND, 0x04, 0x0C, FEND];
+        assert_eq!(
+            decode_all_commands(&stream),
+            std::vec![(0x03u8, std::vec![0x25]), (0x04u8, std::vec![0x0C])]
+        );
+    }
+
+    #[test]
+    fn the_command_decoder_unescapes_payloads() {
+        let stream = [FEND, 0x01, FESC, TFEND, FESC, TFESC, 0x55, FEND];
+        assert_eq!(
+            decode_all_commands(&stream),
+            std::vec![(0x01u8, std::vec![FEND, FESC, 0x55])]
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn a_command_frame_round_trips_through_encode_then_decode(
+            // RNode commands run 0x00..=0x90; this range also stays clear of FEND (0xC0) and FESC
+            // (0xDB) — which an unescaped command byte cannot be — and the CMD_UNKNOWN sentinel.
+            command in 0x00u8..=0x90,
+            payload in prop::collection::vec(any::<u8>(), 0..256),
+        ) {
+            let mut framed = std::vec![0u8; max_encoded_len(payload.len())];
+            let n = encode_with_command(command, &payload, &mut framed).unwrap();
+            prop_assert_eq!(decode_all_commands(&framed[..n]), std::vec![(command, payload)]);
         }
     }
 }
