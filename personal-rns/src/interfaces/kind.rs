@@ -30,6 +30,7 @@ pub enum InterfaceKind {
     BluetoothPeer = 13,
     LoRa = 14,
     Kiss = 15,
+    Ax25Kiss = 16,
 }
 
 impl InterfaceKind {
@@ -55,6 +56,7 @@ impl InterfaceKind {
             13 => Some(Self::BluetoothPeer),
             14 => Some(Self::LoRa),
             15 => Some(Self::Kiss),
+            16 => Some(Self::Ax25Kiss),
             _ => None,
         }
     }
