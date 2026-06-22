@@ -97,6 +97,12 @@ pub enum PlannedMedium {
         callsign: String,
         ssid: u8,
     },
+    /// RNS `PipeInterface`: a subprocess `command` whose stdout/stdin carries HDLC-framed packets,
+    /// respawned `respawn_delay_ms` after it exits.
+    Pipe {
+        command: String,
+        respawn_delay_ms: u64,
+    },
 }
 
 /// An interface this config named that the node will not stand up, and why.
@@ -374,6 +380,20 @@ fn plan_medium(
                 ssid,
             })
         }
+        ReferenceParams::Pipe {
+            command,
+            respawn_delay,
+        } => {
+            let command = command
+                .clone()
+                .ok_or(DeferReason::MissingRequiredField { key: "command" })?;
+            Ok(PlannedMedium::Pipe {
+                command,
+                respawn_delay_ms: respawn_delay
+                    .map(|secs| (secs.max(0.0) * 1000.0) as u64)
+                    .unwrap_or(RNS_PIPE_DEFAULT_RESPAWN_MS),
+            })
+        }
         _ => Err(DeferReason::UnsupportedKind),
     }
 }
@@ -387,6 +407,9 @@ const RNS_KISS_DEFAULT_PREAMBLE_MS: u32 = 350;
 const RNS_KISS_DEFAULT_TXTAIL_MS: u32 = 20;
 const RNS_KISS_DEFAULT_PERSISTENCE: u8 = 64;
 const RNS_KISS_DEFAULT_SLOTTIME_MS: u32 = 20;
+
+/// RNS `PipeInterface` default respawn delay: 5 seconds.
+const RNS_PIPE_DEFAULT_RESPAWN_MS: u64 = 5_000;
 
 fn common_unapplied(interface: &ReferenceInterface) -> Vec<UnappliedSetting> {
     let mut unapplied = Vec::new();
@@ -662,6 +685,43 @@ mod tests {
         assert_eq!(
             no_ssid.deferred[0].why,
             DeferReason::MissingRequiredField { key: "ssid" }
+        );
+    }
+
+    #[test]
+    fn a_pipe_plans_with_its_command_and_the_default_respawn_delay() {
+        let plan = plan_of(
+            "[interfaces]\n[[Subprocess]]\ntype = PipeInterface\nenabled = Yes\ncommand = nc -l 4242\n",
+        );
+        assert_eq!(
+            named(&plan, "Subprocess").medium,
+            PlannedMedium::Pipe {
+                command: "nc -l 4242".to_string(),
+                respawn_delay_ms: 5_000,
+            }
+        );
+    }
+
+    #[test]
+    fn a_pipe_respawn_delay_is_read_in_seconds() {
+        let plan = plan_of(
+            "[interfaces]\n[[Subprocess]]\ntype = PipeInterface\nenabled = Yes\ncommand = prog\nrespawn_delay = 2.5\n",
+        );
+        assert_eq!(
+            named(&plan, "Subprocess").medium,
+            PlannedMedium::Pipe {
+                command: "prog".to_string(),
+                respawn_delay_ms: 2_500,
+            }
+        );
+    }
+
+    #[test]
+    fn a_pipe_without_a_command_defers_with_the_missing_key() {
+        let plan = plan_of("[interfaces]\n[[Subprocess]]\ntype = PipeInterface\nenabled = Yes\n");
+        assert_eq!(
+            plan.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "command" }
         );
     }
 

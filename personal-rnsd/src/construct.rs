@@ -12,6 +12,7 @@ use core::time::Duration;
 use personal_rns::interfaces::rns_parity::ax25_kiss::impls::tokio::Ax25KissInterface;
 use personal_rns::interfaces::rns_parity::kiss::core::TncConfig;
 use personal_rns::interfaces::rns_parity::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
+use personal_rns::interfaces::rns_parity::pipe::impls::tokio::PipeInterface;
 use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
@@ -181,6 +182,31 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
                 Err(error) => {
                     eprintln!(
                         "RNSD_INTERFACE_FAILED name={name:?} medium=ax25-kiss callsign={callsign} error={error:?}"
+                    );
+                }
+            }
+        }
+        PlannedMedium::Pipe {
+            command,
+            respawn_delay_ms,
+        } => {
+            let respawn = Duration::from_millis(*respawn_delay_ms);
+            match shlex::split(command) {
+                Some(argv) if !argv.is_empty() => {
+                    let pipe = PipeInterface::new(
+                        move || {
+                            let argv = argv.clone();
+                            async move { crate::pipe::spawn(&argv).await }
+                        },
+                        respawn,
+                        command.as_bytes(),
+                    );
+                    handle.add_interface(pipe);
+                    println!("RNSD_INTERFACE_UP name={name:?} medium=pipe command={command:?}");
+                }
+                _ => {
+                    eprintln!(
+                        "RNSD_INTERFACE_FAILED name={name:?} medium=pipe command={command:?} error=could not parse command into arguments"
                     );
                 }
             }

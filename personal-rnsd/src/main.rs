@@ -17,6 +17,7 @@
 mod cli;
 mod construct;
 mod identity;
+mod pipe;
 mod splash;
 
 use core::time::Duration;
