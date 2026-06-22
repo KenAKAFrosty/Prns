@@ -79,11 +79,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Interface for LocalClientInterface<S> {
         let mut throughput = ThroughputLedger::new();
         let started = tokio::time::Instant::now();
         let mut buffers = framed_stream::FramedBuffers::<
+            framed_stream::HdlcFraming,
             { core::READ_BUF_LEN },
             { core::FRAME_CAP },
             { core::FRAMED_LEN },
         >::new();
         framed_stream::serve::<
+            framed_stream::HdlcFraming,
             { core::READ_BUF_LEN },
             { core::FRAME_CAP },
             { core::FRAMED_LEN },
