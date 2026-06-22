@@ -98,47 +98,6 @@ impl CodingRate {
     }
 }
 
-/// SX1262 GFSK pulse shaping — the Gaussian filter's BT product, or none. A
-/// discrete chip option, so an enum, not a float. GMSK is the `GaussianBt05` case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PulseShaping {
-    Off = 0,
-    GaussianBt03 = 1,
-    GaussianBt05 = 2,
-    GaussianBt07 = 3,
-    GaussianBt10 = 4,
-}
-
-/// GFSK on-air bitrate, bits per second. The SX1262 spans 0.6–300 kbps; the
-/// "speed mode" we build toward targets 300k.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GfskBitrate(u32);
-
-impl GfskBitrate {
-    pub const fn new(bps: u32) -> Self {
-        Self(bps)
-    }
-
-    pub const fn bps(self) -> u32 {
-        self.0
-    }
-}
-
-/// FSK frequency deviation, Hz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Deviation(u32);
-
-impl Deviation {
-    pub const fn new(hz: u32) -> Self {
-        Self(hz)
-    }
-
-    pub const fn hz(self) -> u32 {
-        self.0
-    }
-}
-
 /// Carrier frequency, Hz. The SX1262 PLL covers roughly 150–960 MHz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Frequency(u32);
@@ -181,9 +140,8 @@ impl PreambleSymbols {
     }
 }
 
-/// The on-air modulation, a setting on the [`RadioProfile`]. Flipping between
-/// LoRa and GFSK is the same kind of change as nudging a spreading factor — both
-/// re-key the channel's identity through the channel tag.
+/// The on-air modulation, a setting on the [`RadioProfile`]. A change re-keys the
+/// channel's identity through the channel tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modulation {
     Lora {
@@ -191,32 +149,22 @@ pub enum Modulation {
         bandwidth: LoraBandwidth,
         coding_rate: CodingRate,
     },
-    Gfsk {
-        bitrate: GfskBitrate,
-        deviation: Deviation,
-        shaping: PulseShaping,
-    },
 }
 
 impl Modulation {
-    /// Nominal on-air bitrate, bits per second. For LoRa, the standard rate
-    /// `SF * BW * 4 / (2^SF * (4+CR))` evaluated in integer arithmetic; for GFSK,
-    /// the configured rate verbatim. Feeds the descriptor's bitrate and, with it,
-    /// the airtime accounting.
+    /// Nominal on-air bitrate, bits per second — the standard LoRa rate
+    /// `SF * BW * 4 / (2^SF * (4+CR))` evaluated in integer arithmetic. Feeds the
+    /// descriptor's bitrate and, with it, the airtime accounting.
     pub const fn nominal_bitrate_bps(self) -> u32 {
-        match self {
-            Self::Lora {
-                spreading_factor,
-                bandwidth,
-                coding_rate,
-            } => {
-                let sf = spreading_factor as u32;
-                let bandwidth_hz = bandwidth.hz();
-                let coding_denominator = coding_rate as u32;
-                (sf * bandwidth_hz * 4) / ((1u32 << sf) * coding_denominator)
-            }
-            Self::Gfsk { bitrate, .. } => bitrate.bps(),
-        }
+        let Self::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        } = self;
+        let sf = spreading_factor as u32;
+        let bandwidth_hz = bandwidth.hz();
+        let coding_denominator = coding_rate as u32;
+        (sf * bandwidth_hz * 4) / ((1u32 << sf) * coding_denominator)
     }
 }
 
@@ -296,137 +244,11 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     region: Region::Us915,
 };
 
-pub const DEMO_HOP_SPACING_HZ: u32 = 500_000;
-pub const DEMO_HOP_COUNT: u32 = 50;
-
-pub struct HopBand {
-    base: Frequency,
-    spacing_hz: u32,
-    count: u32,
-}
-
-impl HopBand {
-    pub const fn new(base: Frequency, spacing_hz: u32, count: u32) -> Self {
-        Self {
-            base,
-            spacing_hz,
-            count,
-        }
-    }
-
-    pub const fn centered_on(center: Frequency, spacing_hz: u32, count: u32) -> Self {
-        let base = center.hz().saturating_sub((count / 2) * spacing_hz);
-        Self::new(Frequency::new(base), spacing_hz, count)
-    }
-
-    pub const fn count(&self) -> u32 {
-        self.count
-    }
-
-    pub const fn channel(&self, index: u32) -> Frequency {
-        let count = if self.count == 0 { 1 } else { self.count };
-        Frequency::new(self.base.hz() + (index % count) * self.spacing_hz)
-    }
-}
-
-pub struct HopSchedule {
-    band: HopBand,
-    seed: u32,
-}
-
-impl HopSchedule {
-    pub const fn new(band: HopBand, seed: u32) -> Self {
-        Self { band, seed }
-    }
-
-    pub fn channel_at(&self, phase: u64) -> Frequency {
-        let mixed = mix64(phase ^ (((self.seed as u64) << 32) | (self.seed as u64)));
-        let count = self.band.count().max(1) as u64;
-        self.band.channel((mixed % count) as u32)
-    }
-}
-
-fn mix64(mut x: u64) -> u64 {
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
-}
-
-pub const SYNC_BEACON_MAGIC: [u8; 2] = *b"PH";
-pub const SYNC_BEACON_LEN: usize = 14;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SyncBeacon {
-    pub clock_ms: u64,
-    pub node_id: u32,
-}
-
-impl SyncBeacon {
-    pub fn encode(&self, out: &mut [u8]) -> usize {
-        if out.len() < SYNC_BEACON_LEN {
-            return 0;
-        }
-        out[0..2].copy_from_slice(&SYNC_BEACON_MAGIC);
-        out[2..10].copy_from_slice(&self.clock_ms.to_be_bytes());
-        out[10..14].copy_from_slice(&self.node_id.to_be_bytes());
-        SYNC_BEACON_LEN
-    }
-
-    pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < SYNC_BEACON_LEN || bytes[..2] != SYNC_BEACON_MAGIC {
-            return None;
-        }
-        Some(Self {
-            clock_ms: u64::from_be_bytes(bytes[2..10].try_into().ok()?),
-            node_id: u32::from_be_bytes(bytes[10..14].try_into().ok()?),
-        })
-    }
-}
-
-pub struct LocalClock {
-    offset_ms: i64,
-    node_id: u32,
-}
-
-impl LocalClock {
-    pub const fn new(node_id: u32) -> Self {
-        Self {
-            offset_ms: 0,
-            node_id,
-        }
-    }
-
-    pub fn aligned_ms(&self, now_ms: u64) -> u64 {
-        (now_ms as i64 + self.offset_ms).max(0) as u64
-    }
-
-    pub fn phase(&self, now_ms: u64, dwell_ms: u64) -> u64 {
-        self.aligned_ms(now_ms) / dwell_ms.max(1)
-    }
-
-    pub fn beacon(&self, now_ms: u64) -> SyncBeacon {
-        SyncBeacon {
-            clock_ms: self.aligned_ms(now_ms),
-            node_id: self.node_id,
-        }
-    }
-
-    pub fn observe(&mut self, now_ms: u64, beacon: &SyncBeacon) -> bool {
-        if beacon.node_id > self.node_id {
-            self.offset_ms = beacon.clock_ms as i64 - now_ms as i64;
-            true
-        } else {
-            false
-        }
-    }
-}
-
 const MODULATION_TAG_LORA: u8 = 0x00;
-const MODULATION_TAG_GFSK: u8 = 0x01;
 
-/// The widest channel tag [`channel_tag`] emits: frequency (4) plus the
-/// GFSK block (kind 1 + bitrate 4 + deviation 4 + shaping 1).
-pub const CHANNEL_TAG_CAP: usize = 14;
+/// The channel tag [`channel_tag`] emits: frequency (4) plus the LoRa block
+/// (kind 1 + SF 1 + bandwidth 4 + coding rate 1).
+pub const CHANNEL_TAG_CAP: usize = 11;
 
 /// The channel-identity bytes the interface id hashes over — a canonical encoding
 /// of the profile's frequency and modulation. Two nodes on the same channel derive
@@ -435,28 +257,15 @@ pub const CHANNEL_TAG_CAP: usize = 14;
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
     let _ = tag.extend_from_slice(&profile.frequency.hz().to_be_bytes());
-    match profile.modulation {
-        Modulation::Lora {
-            spreading_factor,
-            bandwidth,
-            coding_rate,
-        } => {
-            let _ = tag.push(MODULATION_TAG_LORA);
-            let _ = tag.push(spreading_factor as u8);
-            let _ = tag.extend_from_slice(&bandwidth.hz().to_be_bytes());
-            let _ = tag.push(coding_rate as u8);
-        }
-        Modulation::Gfsk {
-            bitrate,
-            deviation,
-            shaping,
-        } => {
-            let _ = tag.push(MODULATION_TAG_GFSK);
-            let _ = tag.extend_from_slice(&bitrate.bps().to_be_bytes());
-            let _ = tag.extend_from_slice(&deviation.hz().to_be_bytes());
-            let _ = tag.push(shaping as u8);
-        }
-    }
+    let Modulation::Lora {
+        spreading_factor,
+        bandwidth,
+        coding_rate,
+    } = profile.modulation;
+    let _ = tag.push(MODULATION_TAG_LORA);
+    let _ = tag.push(spreading_factor as u8);
+    let _ = tag.extend_from_slice(&bandwidth.hz().to_be_bytes());
+    let _ = tag.push(coding_rate as u8);
     tag
 }
 
@@ -734,146 +543,6 @@ mod tests {
             coding_rate: CodingRate::Cr45,
         };
         assert_eq!(fast.nominal_bitrate_bps(), 21875);
-    }
-
-    #[test]
-    fn gfsk_nominal_bitrate_is_its_configured_rate() {
-        let speed = Modulation::Gfsk {
-            bitrate: GfskBitrate::new(300_000),
-            deviation: Deviation::new(75_000),
-            shaping: PulseShaping::GaussianBt05,
-        };
-        assert_eq!(speed.nominal_bitrate_bps(), 300_000);
-    }
-
-    #[test]
-    fn hop_band_channels_are_evenly_spaced_and_wrap() {
-        let band = HopBand::new(Frequency::new(914_000_000), 500_000, 5);
-        assert_eq!(band.channel(0).hz(), 914_000_000);
-        assert_eq!(band.channel(4).hz(), 916_000_000);
-        assert_eq!(band.channel(5).hz(), 914_000_000);
-        assert_eq!(band.count(), 5);
-    }
-
-    #[test]
-    fn hop_band_centered_brackets_the_center() {
-        let band = HopBand::centered_on(Frequency::new(915_000_000), 500_000, 5);
-        assert_eq!(band.channel(0).hz(), 914_000_000);
-        assert_eq!(band.channel(2).hz(), 915_000_000);
-        assert_eq!(band.channel(4).hz(), 916_000_000);
-    }
-
-    #[test]
-    fn hop_schedule_is_deterministic_per_seed_and_stays_in_band() {
-        let a = HopSchedule::new(
-            HopBand::centered_on(Frequency::new(915_000_000), 500_000, 5),
-            0x1357_9bdf,
-        );
-        let b = HopSchedule::new(
-            HopBand::centered_on(Frequency::new(915_000_000), 500_000, 5),
-            0x1357_9bdf,
-        );
-        for phase in 0..512u64 {
-            let f = a.channel_at(phase).hz();
-            assert!((914_000_000..=916_000_000).contains(&f));
-            assert_eq!(f, b.channel_at(phase).hz());
-        }
-    }
-
-    #[test]
-    fn hop_schedule_uses_every_lane_over_time() {
-        let schedule = HopSchedule::new(
-            HopBand::centered_on(Frequency::new(915_000_000), 500_000, 5),
-            0xABCD_1234,
-        );
-        let mut seen = [false; 5];
-        for phase in 0..1000u64 {
-            let idx = ((schedule.channel_at(phase).hz() - 914_000_000) / 500_000) as usize;
-            seen[idx] = true;
-        }
-        assert!(seen.iter().all(|&s| s), "every lane is visited over time");
-    }
-
-    #[test]
-    fn sync_beacon_round_trips_and_leaves_the_payload_tail() {
-        let beacon = SyncBeacon {
-            clock_ms: 0x0123_4567_89AB_CDEF,
-            node_id: 0x89AB_CDEF,
-        };
-        let mut buf = [0xA5u8; 64];
-        assert_eq!(beacon.encode(&mut buf), SYNC_BEACON_LEN);
-        assert_eq!(SyncBeacon::decode(&buf), Some(beacon));
-        assert_eq!(buf[SYNC_BEACON_LEN], 0xA5, "tail untouched");
-    }
-
-    #[test]
-    fn sync_beacon_rejects_foreign_or_short_frames() {
-        let mut buf = [0u8; 64];
-        buf[..2].copy_from_slice(b"XX");
-        assert_eq!(SyncBeacon::decode(&buf), None);
-        assert_eq!(SyncBeacon::decode(&[0u8; 4]), None);
-    }
-
-    #[test]
-    fn follower_locks_onto_leader_and_leader_ignores_follower() {
-        let dwell = 500u64;
-        let mut leader = LocalClock::new(0xAAAA_AAAA);
-        let mut follower = LocalClock::new(0x1111_1111);
-        let leader_now = 123_456u64;
-        let follower_now = 777u64;
-
-        let from_leader = leader.beacon(leader_now);
-        assert!(
-            follower.observe(follower_now, &from_leader),
-            "lower id adopts the higher id's clock"
-        );
-        assert_eq!(
-            follower.aligned_ms(follower_now),
-            leader.aligned_ms(leader_now),
-            "the whole clock aligns, not just the phase number"
-        );
-        assert_eq!(
-            follower.phase(follower_now, dwell),
-            leader.phase(leader_now, dwell),
-            "phases match the instant the follower locks"
-        );
-
-        let from_follower = follower.beacon(follower_now);
-        assert!(
-            !leader.observe(leader_now, &from_follower),
-            "higher id never adopts a lower id"
-        );
-
-        let dt = 4_321u64;
-        assert_eq!(
-            follower.phase(follower_now + dt, dwell),
-            leader.phase(leader_now + dt, dwell),
-            "they stay matched as both clocks advance"
-        );
-    }
-
-    #[test]
-    fn synced_boards_land_on_the_same_channel_over_time() {
-        let dwell = 500u64;
-        let schedule = HopSchedule::new(
-            HopBand::centered_on(Frequency::new(915_000_000), 500_000, 5),
-            0xCAFE,
-        );
-        let leader = LocalClock::new(0xFFFF_FFFF);
-        let mut follower = LocalClock::new(0x0000_0001);
-        let leader_now = 50_000u64;
-        let follower_now = 333u64;
-        follower.observe(follower_now, &leader.beacon(leader_now));
-
-        for dt in [0u64, 250, 500, 1_234, 9_999] {
-            let leader_ch = schedule
-                .channel_at(leader.phase(leader_now + dt, dwell))
-                .hz();
-            let follower_ch = schedule
-                .channel_at(follower.phase(follower_now + dt, dwell))
-                .hz();
-            assert_eq!(leader_ch, follower_ch, "co-channel at +{dt}ms after lock");
-        }
     }
 
     #[test]
