@@ -9,6 +9,7 @@
 
 use core::time::Duration;
 
+use personal_rns::interfaces::rns_parity::ax25_kiss::impls::tokio::Ax25KissInterface;
 use personal_rns::interfaces::rns_parity::kiss::core::TncConfig;
 use personal_rns::interfaces::rns_parity::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
 use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
@@ -135,6 +136,54 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             );
             handle.add_interface(kiss);
             println!("RNSD_INTERFACE_UP name={name:?} medium=kiss device={device} baud={baud}");
+        }
+        PlannedMedium::Ax25Kiss {
+            device,
+            baud,
+            preamble_ms,
+            txtail_ms,
+            persistence,
+            slottime_ms,
+            callsign,
+            ssid,
+        } => {
+            let baud = *baud;
+            let open_path = device.clone();
+            let tnc = TncConfig {
+                preamble_ms: *preamble_ms,
+                txtail_ms: *txtail_ms,
+                persistence: *persistence,
+                slottime_ms: *slottime_ms,
+            };
+            let opened = Ax25KissInterface::with_settings(
+                move || {
+                    let open_path = open_path.clone();
+                    async move {
+                        tokio_serial::new(&open_path, baud)
+                            .open_native_async()
+                            .map_err(std::io::Error::other)
+                    }
+                },
+                SERIAL_RECONNECT,
+                CONFIGURE_SETTLE,
+                tnc,
+                callsign,
+                *ssid,
+                device.as_bytes(),
+            );
+            match opened {
+                Ok(ax25) => {
+                    handle.add_interface(ax25);
+                    println!(
+                        "RNSD_INTERFACE_UP name={name:?} medium=ax25-kiss device={device} callsign={callsign} ssid={ssid}"
+                    );
+                }
+                Err(error) => {
+                    eprintln!(
+                        "RNSD_INTERFACE_FAILED name={name:?} medium=ax25-kiss callsign={callsign} error={error:?}"
+                    );
+                }
+            }
         }
     }
 }

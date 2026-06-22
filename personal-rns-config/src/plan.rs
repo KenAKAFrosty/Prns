@@ -85,6 +85,18 @@ pub enum PlannedMedium {
         persistence: u8,
         slottime_ms: u32,
     },
+    /// RNS `AX25KISSInterface`: a KISS TNC carrying AX.25 UI frames, sourced from `callsign`/`ssid`.
+    /// The callsign/SSID are validated when the interface is constructed, as RNS does.
+    Ax25Kiss {
+        device: String,
+        baud: u32,
+        preamble_ms: u32,
+        txtail_ms: u32,
+        persistence: u8,
+        slottime_ms: u32,
+        callsign: String,
+        ssid: u8,
+    },
 }
 
 /// An interface this config named that the node will not stand up, and why.
@@ -321,6 +333,45 @@ fn plan_medium(
                     .map(|p| p.min(u8::MAX as u32) as u8)
                     .unwrap_or(RNS_KISS_DEFAULT_PERSISTENCE),
                 slottime_ms: slottime.unwrap_or(RNS_KISS_DEFAULT_SLOTTIME_MS),
+            })
+        }
+        ReferenceParams::Ax25Kiss {
+            port,
+            speed,
+            databits,
+            parity,
+            stopbits,
+            flow_control,
+            preamble,
+            txtail,
+            persistence,
+            slottime,
+            callsign,
+            ssid,
+        } => {
+            let device = port
+                .clone()
+                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
+            let callsign = callsign
+                .clone()
+                .ok_or(DeferReason::MissingRequiredField { key: "callsign" })?;
+            let ssid = ssid.ok_or(DeferReason::MissingRequiredField { key: "ssid" })?;
+            note_present(unapplied, "databits", databits.is_some());
+            note_present(unapplied, "parity", parity.is_some());
+            note_present(unapplied, "stopbits", stopbits.is_some());
+            // Flow-control TX gating is not yet honored by the host AX.25 interface.
+            note_present(unapplied, "flow_control", flow_control.is_some());
+            Ok(PlannedMedium::Ax25Kiss {
+                device,
+                baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
+                preamble_ms: preamble.unwrap_or(RNS_KISS_DEFAULT_PREAMBLE_MS),
+                txtail_ms: txtail.unwrap_or(RNS_KISS_DEFAULT_TXTAIL_MS),
+                persistence: persistence
+                    .map(|p| p.min(u8::MAX as u32) as u8)
+                    .unwrap_or(RNS_KISS_DEFAULT_PERSISTENCE),
+                slottime_ms: slottime.unwrap_or(RNS_KISS_DEFAULT_SLOTTIME_MS),
+                callsign,
+                ssid,
             })
         }
         _ => Err(DeferReason::UnsupportedKind),
@@ -573,6 +624,45 @@ mod tests {
         assert!(tnc
             .unapplied
             .contains(&UnappliedSetting::MediumOption("id_interval")));
+    }
+
+    #[test]
+    fn an_ax25_tnc_plans_with_its_callsign_ssid_and_tnc_defaults() {
+        let plan = plan_of(
+            "[interfaces]\n[[Packet]]\ntype = AX25KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
+             callsign = N0CALL\nssid = 2\n",
+        );
+        assert_eq!(
+            named(&plan, "Packet").medium,
+            PlannedMedium::Ax25Kiss {
+                device: "/dev/ttyUSB0".to_string(),
+                baud: RNS_DEFAULT_SERIAL_BAUD,
+                preamble_ms: 350,
+                txtail_ms: 20,
+                persistence: 64,
+                slottime_ms: 20,
+                callsign: "N0CALL".to_string(),
+                ssid: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn an_ax25_tnc_without_a_callsign_or_ssid_defers_with_the_missing_key() {
+        let no_call = plan_of(
+            "[interfaces]\n[[Packet]]\ntype = AX25KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\nssid = 0\n",
+        );
+        assert_eq!(
+            no_call.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "callsign" }
+        );
+        let no_ssid = plan_of(
+            "[interfaces]\n[[Packet]]\ntype = AX25KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\ncallsign = N0CALL\n",
+        );
+        assert_eq!(
+            no_ssid.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "ssid" }
+        );
     }
 
     #[test]
