@@ -384,23 +384,31 @@ impl CustomRow {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FreqRow {
+    Channel,
     Mhz,
     Khz,
     Save,
     Back,
 }
 
-const FREQ_ROWS: [FreqRow; 4] = [FreqRow::Mhz, FreqRow::Khz, FreqRow::Save, FreqRow::Back];
+const FREQ_ROWS: [FreqRow; 5] = [
+    FreqRow::Channel,
+    FreqRow::Mhz,
+    FreqRow::Khz,
+    FreqRow::Save,
+    FreqRow::Back,
+];
 
 impl FreqRow {
-    const FIRST: Self = Self::Mhz;
+    const FIRST: Self = Self::Channel;
 
     fn next(self) -> Self {
         match self {
+            Self::Channel => Self::Mhz,
             Self::Mhz => Self::Khz,
             Self::Khz => Self::Save,
             Self::Save => Self::Back,
-            Self::Back => Self::Mhz,
+            Self::Back => Self::Channel,
         }
     }
 
@@ -540,6 +548,39 @@ fn bump_freq(profile: RadioProfile, place: FreqPlace) -> RadioProfile {
     next
 }
 
+fn channel_bandwidth_hz(profile: &RadioProfile) -> u32 {
+    let Modulation::Lora { bandwidth, .. } = profile.modulation;
+    bandwidth.hz()
+}
+
+fn channel_count(profile: &RadioProfile) -> u32 {
+    let (low, high) = profile.region.band();
+    ((high - low) / channel_bandwidth_hz(profile)).max(1)
+}
+
+fn channel_center_hz(profile: &RadioProfile, channel: u32) -> u32 {
+    let (low, _) = profile.region.band();
+    let bandwidth = channel_bandwidth_hz(profile);
+    low + bandwidth / 2 + channel * bandwidth
+}
+
+fn current_channel(profile: &RadioProfile) -> u32 {
+    let (low, _) = profile.region.band();
+    let hz = profile.frequency.hz();
+    if hz <= low {
+        0
+    } else {
+        ((hz - low) / channel_bandwidth_hz(profile)).min(channel_count(profile) - 1)
+    }
+}
+
+fn step_freq_channel(profile: RadioProfile) -> RadioProfile {
+    let next_channel = (current_channel(&profile) + 1) % channel_count(&profile);
+    let mut next = profile;
+    next.frequency = Frequency::new(channel_center_hz(&profile, next_channel));
+    next
+}
+
 fn advance_freq_place(profile: RadioProfile, place: FreqPlace) -> FreqStep {
     match place.next_within_row() {
         Some(next_place) => FreqStep::Place(next_place),
@@ -571,7 +612,11 @@ fn lora_editor_tap(screen: LoRaScreen, profile: RadioProfile) -> (LoRaScreen, Ra
                 LoRaScreen::Frequency { cursor, edit },
                 bump_freq(profile, place),
             ),
-            _ => (
+            EditMode::Field => (
+                LoRaScreen::Frequency { cursor, edit },
+                step_freq_channel(profile),
+            ),
+            EditMode::Browsing => (
                 LoRaScreen::Frequency {
                     cursor: cursor.next(),
                     edit,
@@ -661,7 +706,14 @@ fn lora_frequency_hold(cursor: FreqRow, edit: EditMode, profile: RadioProfile) -
                 profile,
             },
         },
-        _ => match cursor {
+        EditMode::Field => LoRaHold::Stay {
+            screen: LoRaScreen::Frequency {
+                cursor,
+                edit: EditMode::Browsing,
+            },
+            profile,
+        },
+        EditMode::Browsing => match cursor {
             FreqRow::Save => LoRaHold::Commit(profile),
             FreqRow::Back => LoRaHold::Stay {
                 screen: LoRaScreen::Preset {
@@ -669,7 +721,14 @@ fn lora_frequency_hold(cursor: FreqRow, edit: EditMode, profile: RadioProfile) -
                 },
                 profile,
             },
-            _ => LoRaHold::Stay {
+            FreqRow::Channel => LoRaHold::Stay {
+                screen: LoRaScreen::Frequency {
+                    cursor,
+                    edit: EditMode::Field,
+                },
+                profile,
+            },
+            FreqRow::Mhz | FreqRow::Khz => LoRaHold::Stay {
                 screen: LoRaScreen::Frequency {
                     cursor,
                     edit: match cursor.freq_first_place() {
@@ -1984,6 +2043,15 @@ fn lora_freq_row_text(
         _ => None,
     };
     match row {
+        FreqRow::Channel => {
+            let channel = current_channel(profile);
+            if selected && matches!(edit, EditMode::Field) {
+                let _ = write!(text, "Ch [{channel}]");
+            } else {
+                let count = channel_count(profile);
+                let _ = write!(text, "Ch {channel}/{count}");
+            }
+        }
         FreqRow::Mhz => {
             let value = lora_freq_mhz_text(hz, active_place);
             let _ = write!(text, "MHz {value}");
@@ -2389,7 +2457,7 @@ mod tests {
         assert_eq!(
             lora_screen(&state),
             LoRaScreen::Frequency {
-                cursor: FreqRow::Mhz,
+                cursor: FreqRow::Channel,
                 edit: EditMode::Browsing,
             }
         );
@@ -2397,6 +2465,29 @@ mod tests {
             lora_working_profile(&state).modulation,
             ModemPreset::ShortFast.modulation()
         );
+    }
+
+    #[test]
+    fn the_channel_row_cycles_to_the_next_band_channel_center() {
+        let mut state = UiState::new();
+        state.open_lora_editor(DEFAULT_915_PROFILE);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 2);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        assert_eq!(
+            lora_screen(&state),
+            LoRaScreen::Frequency {
+                cursor: FreqRow::Channel,
+                edit: EditMode::Browsing,
+            }
+        );
+        state.handle_input(InputEvent::LongPress, 1, None);
+        state.handle_input(InputEvent::ShortPress, 1, None);
+
+        let hz = lora_working_profile(&state).frequency.hz();
+        let (low, _) = Region::Us915.band();
+        assert_eq!((hz - low - 125_000) % 250_000, 0);
+        assert_eq!(hz, 915_375_000);
     }
 
     #[test]
@@ -2409,11 +2500,11 @@ mod tests {
         assert_eq!(
             lora_screen(&state),
             LoRaScreen::Frequency {
-                cursor: FreqRow::Mhz,
+                cursor: FreqRow::Channel,
                 edit: EditMode::Browsing,
             }
         );
-        tap(&mut state, 1);
+        tap(&mut state, 2);
         state.handle_input(InputEvent::LongPress, 1, None);
         tap(&mut state, 6);
         state.handle_input(InputEvent::LongPress, 1, None);
@@ -2439,7 +2530,7 @@ mod tests {
         state.handle_input(InputEvent::LongPress, 1, None);
         tap(&mut state, 2);
         state.handle_input(InputEvent::LongPress, 1, None);
-        tap(&mut state, 3);
+        tap(&mut state, 4);
         assert_eq!(
             lora_screen(&state),
             LoRaScreen::Frequency {
