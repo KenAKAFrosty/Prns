@@ -9,6 +9,8 @@
 
 use core::time::Duration;
 
+use personal_rns::interfaces::rns_parity::kiss::core::TncConfig;
+use personal_rns::interfaces::rns_parity::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
 use personal_rns::interfaces::rns_parity::serial::impls::tokio::SerialInterface;
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
@@ -100,6 +102,39 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
             );
             handle.add_interface(serial);
             println!("RNSD_INTERFACE_UP name={name:?} medium=serial device={device} baud={baud}");
+        }
+        PlannedMedium::Kiss {
+            device,
+            baud,
+            preamble_ms,
+            txtail_ms,
+            persistence,
+            slottime_ms,
+        } => {
+            let baud = *baud;
+            let open_path = device.clone();
+            let tnc = TncConfig {
+                preamble_ms: *preamble_ms,
+                txtail_ms: *txtail_ms,
+                persistence: *persistence,
+                slottime_ms: *slottime_ms,
+            };
+            let kiss = KissInterface::with_settings(
+                move || {
+                    let open_path = open_path.clone();
+                    async move {
+                        tokio_serial::new(&open_path, baud)
+                            .open_native_async()
+                            .map_err(std::io::Error::other)
+                    }
+                },
+                SERIAL_RECONNECT,
+                CONFIGURE_SETTLE,
+                tnc,
+                device.as_bytes(),
+            );
+            handle.add_interface(kiss);
+            println!("RNSD_INTERFACE_UP name={name:?} medium=kiss device={device} baud={baud}");
         }
     }
 }

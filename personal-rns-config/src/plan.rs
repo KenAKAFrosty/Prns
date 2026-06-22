@@ -75,6 +75,16 @@ pub enum PlannedMedium {
     Udp { listen: String, forward: String },
     /// RNS `SerialInterface`: a serial device at `baud`.
     Serial { device: String, baud: u32 },
+    /// RNS `KISSInterface`: a KISS TNC on a serial device at `baud`, with the CSMA/timing config
+    /// written to the TNC at startup (the millisecond values as the operator gave them).
+    Kiss {
+        device: String,
+        baud: u32,
+        preamble_ms: u32,
+        txtail_ms: u32,
+        persistence: u8,
+        slottime_ms: u32,
+    },
 }
 
 /// An interface this config named that the node will not stand up, and why.
@@ -90,7 +100,7 @@ pub struct DeferredInterface {
 pub enum DeferReason {
     /// The interface was not enabled (RNS skips an interface unless it is explicitly enabled).
     Disabled,
-    /// Prns has no host medium for this interface type yet (LoRa/RNode, KISS, Pipe, I2P, Backbone, …).
+    /// Prns has no host medium for this interface type yet (LoRa/RNode, Pipe, I2P, Backbone, …).
     UnsupportedKind,
     /// A field the medium needs to be constructed was absent.
     MissingRequiredField { key: &'static str },
@@ -277,11 +287,55 @@ fn plan_medium(
                 baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
             })
         }
+        ReferenceParams::Kiss {
+            port,
+            speed,
+            databits,
+            parity,
+            stopbits,
+            flow_control,
+            preamble,
+            txtail,
+            persistence,
+            slottime,
+            id_callsign,
+            id_interval,
+        } => {
+            let device = port
+                .clone()
+                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
+            note_present(unapplied, "databits", databits.is_some());
+            note_present(unapplied, "parity", parity.is_some());
+            note_present(unapplied, "stopbits", stopbits.is_some());
+            // Flow-control TX gating and station-ID beaconing are not yet honored by the host KISS
+            // interface; surface them rather than pretend they took effect.
+            note_present(unapplied, "flow_control", flow_control.is_some());
+            note_present(unapplied, "id_callsign", id_callsign.is_some());
+            note_present(unapplied, "id_interval", id_interval.is_some());
+            Ok(PlannedMedium::Kiss {
+                device,
+                baud: speed.unwrap_or(RNS_DEFAULT_SERIAL_BAUD),
+                preamble_ms: preamble.unwrap_or(RNS_KISS_DEFAULT_PREAMBLE_MS),
+                txtail_ms: txtail.unwrap_or(RNS_KISS_DEFAULT_TXTAIL_MS),
+                persistence: persistence
+                    .map(|p| p.min(u8::MAX as u32) as u8)
+                    .unwrap_or(RNS_KISS_DEFAULT_PERSISTENCE),
+                slottime_ms: slottime.unwrap_or(RNS_KISS_DEFAULT_SLOTTIME_MS),
+            })
+        }
         _ => Err(DeferReason::UnsupportedKind),
     }
 }
 
 const RNS_DEFAULT_SERIAL_BAUD: u32 = 9_600;
+
+/// RNS `KISSInterface` TNC defaults, mirrored from `rns_parity::kiss::core` (kept in this crate so
+/// the config planner stays independent of the interface crate): 350 ms preamble, 20 ms TX-tail,
+/// persistence 64, 20 ms slot time.
+const RNS_KISS_DEFAULT_PREAMBLE_MS: u32 = 350;
+const RNS_KISS_DEFAULT_TXTAIL_MS: u32 = 20;
+const RNS_KISS_DEFAULT_PERSISTENCE: u8 = 64;
+const RNS_KISS_DEFAULT_SLOTTIME_MS: u32 = 20;
 
 fn common_unapplied(interface: &ReferenceInterface) -> Vec<UnappliedSetting> {
     let mut unapplied = Vec::new();
@@ -470,6 +524,55 @@ mod tests {
                 baud: 115200,
             }
         );
+    }
+
+    #[test]
+    fn a_kiss_tnc_plans_on_its_serial_device_with_reference_tnc_defaults() {
+        let plan = plan_of(
+            "[interfaces]\n[[TNC]]\ntype = KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\nspeed = 115200\n",
+        );
+        assert_eq!(
+            named(&plan, "TNC").medium,
+            PlannedMedium::Kiss {
+                device: "/dev/ttyUSB0".to_string(),
+                baud: 115200,
+                preamble_ms: 350,
+                txtail_ms: 20,
+                persistence: 64,
+                slottime_ms: 20,
+            }
+        );
+    }
+
+    #[test]
+    fn a_kiss_tnc_carries_configured_timing_and_notes_what_it_cannot_honor() {
+        let plan = plan_of(
+            "[interfaces]\n[[TNC]]\ntype = KISSInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
+             preamble = 150\ntxtail = 50\npersistence = 200\nslottime = 30\nflow_control = Yes\n\
+             id_callsign = N0CALL\nid_interval = 600\n",
+        );
+        let tnc = named(&plan, "TNC");
+        assert_eq!(
+            tnc.medium,
+            PlannedMedium::Kiss {
+                device: "/dev/ttyUSB0".to_string(),
+                baud: RNS_DEFAULT_SERIAL_BAUD,
+                preamble_ms: 150,
+                txtail_ms: 50,
+                persistence: 200,
+                slottime_ms: 30,
+            }
+        );
+        // Flow-control gating and station-ID beaconing are parsed but not yet honored by the host.
+        assert!(tnc
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("flow_control")));
+        assert!(tnc
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("id_callsign")));
+        assert!(tnc
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("id_interval")));
     }
 
     #[test]
