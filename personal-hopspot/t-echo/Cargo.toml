@@ -12,13 +12,13 @@ name = "t-echo"
 path = "src/main.rs"
 
 [dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-lora"] }
 personal-hopspot-ui = { path = "../ui", default-features = false }
 
 embedded-graphics = "0.8"
 epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
 embedded-hal = "1.0"
-embedded-hal-bus = { version = "0.3", default-features = false }
+embedded-hal-bus = { version = "0.3", features = ["async"] }
 
 cortex-m = { version = "0.7", features = ["inline-asm", "critical-section-single-core"] }
 cortex-m-rt = "0.7"
@@ -39,6 +39,6 @@ codegen-units = 1
 debug = 2
 debug-assertions = false
 incremental = false
-lto = "fat"
+lto = "thin"
 opt-level = "s"
 overflow-checks = false
