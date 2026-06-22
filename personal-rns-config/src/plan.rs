@@ -103,6 +103,21 @@ pub enum PlannedMedium {
         command: String,
         respawn_delay_ms: u64,
     },
+    /// RNS `RNodeInterface`: a LoRa RNode driven over a USB-serial KISS link, configured to a radio
+    /// channel at bring-up. The radio parameters are required; the airtime locks are the wire-scaled
+    /// `int(percent * 100)` values, absent when unconfigured. Range validation happens at
+    /// construction (as RNS leaves it to the device's echo-back), so the plan only carries the
+    /// values; an out-of-range radio fails to stand up rather than deferring.
+    Rnode {
+        device: String,
+        frequency_hz: u64,
+        bandwidth_hz: u32,
+        txpower_dbm: i16,
+        spreading_factor: u8,
+        coding_rate: u8,
+        airtime_limit_short_centi: Option<u16>,
+        airtime_limit_long_centi: Option<u16>,
+    },
 }
 
 /// An interface this config named that the node will not stand up, and why.
@@ -380,6 +395,52 @@ fn plan_medium(
                 ssid,
             })
         }
+        ReferenceParams::Rnode {
+            port,
+            radio,
+            flow_control,
+            id_callsign,
+            id_interval,
+            airtime_limit_short,
+            airtime_limit_long,
+        } => {
+            let device = port
+                .clone()
+                .ok_or(DeferReason::MissingRequiredField { key: "port" })?;
+            let frequency_hz = radio
+                .frequency
+                .ok_or(DeferReason::MissingRequiredField { key: "frequency" })?;
+            let bandwidth_hz = radio
+                .bandwidth
+                .ok_or(DeferReason::MissingRequiredField { key: "bandwidth" })?;
+            let spreading_factor =
+                radio
+                    .spreadingfactor
+                    .ok_or(DeferReason::MissingRequiredField {
+                        key: "spreadingfactor",
+                    })?;
+            let coding_rate = radio
+                .codingrate
+                .ok_or(DeferReason::MissingRequiredField { key: "codingrate" })?;
+            let txpower_dbm = radio
+                .txpower
+                .ok_or(DeferReason::MissingRequiredField { key: "txpower" })?;
+            // Flow-control TX gating and station-ID beaconing are not yet honored by the host RNode
+            // interface; surface them rather than pretend they took effect.
+            note_present(unapplied, "flow_control", flow_control.is_some());
+            note_present(unapplied, "id_callsign", id_callsign.is_some());
+            note_present(unapplied, "id_interval", id_interval.is_some());
+            Ok(PlannedMedium::Rnode {
+                device,
+                frequency_hz,
+                bandwidth_hz,
+                txpower_dbm,
+                spreading_factor,
+                coding_rate,
+                airtime_limit_short_centi: airtime_limit_short.map(pct_to_centi),
+                airtime_limit_long_centi: airtime_limit_long.map(pct_to_centi),
+            })
+        }
         ReferenceParams::Pipe {
             command,
             respawn_delay,
@@ -410,6 +471,12 @@ const RNS_KISS_DEFAULT_SLOTTIME_MS: u32 = 20;
 
 /// RNS `PipeInterface` default respawn delay: 5 seconds.
 const RNS_PIPE_DEFAULT_RESPAWN_MS: u64 = 5_000;
+
+/// An RNode airtime-limit percentage as the wire-scaled value RNS sends: `int(percent * 100)`,
+/// clamped to the two-byte width the device command carries.
+fn pct_to_centi(percent: f64) -> u16 {
+    (percent.max(0.0) * 100.0).min(f64::from(u16::MAX)) as u16
+}
 
 fn common_unapplied(interface: &ReferenceInterface) -> Vec<UnappliedSetting> {
     let mut unapplied = Vec::new();
@@ -747,18 +814,81 @@ mod tests {
 
     #[test]
     fn an_unconstructible_kind_defers_as_unsupported() {
-        let plan = plan_of(
-            "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n",
-        );
+        let plan =
+            plan_of("[interfaces]\n[[Mesh]]\ntype = WeaveInterface\nenabled = Yes\nport = 4242\n");
         assert!(plan.interfaces.is_empty());
         assert_eq!(
             plan.deferred[0],
             DeferredInterface {
-                name: "Radio".to_string(),
-                type_name: "RNodeInterface".to_string(),
+                name: "Mesh".to_string(),
+                type_name: "WeaveInterface".to_string(),
                 why: DeferReason::UnsupportedKind,
             }
         );
+    }
+
+    #[test]
+    fn an_rnode_plans_with_its_radio_channel_and_scales_its_airtime_locks() {
+        let plan = plan_of(
+            "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
+             frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
+             codingrate = 5\nairtime_limit_short = 1.5\nairtime_limit_long = 5.0\n",
+        );
+        assert_eq!(
+            named(&plan, "Radio").medium,
+            PlannedMedium::Rnode {
+                device: "/dev/ttyUSB0".to_string(),
+                frequency_hz: 868_000_000,
+                bandwidth_hz: 125_000,
+                txpower_dbm: 7,
+                spreading_factor: 8,
+                coding_rate: 5,
+                airtime_limit_short_centi: Some(150),
+                airtime_limit_long_centi: Some(500),
+            }
+        );
+    }
+
+    #[test]
+    fn an_rnode_without_a_radio_field_defers_with_the_missing_key() {
+        let no_freq = plan_of(
+            "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
+             bandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\ncodingrate = 5\n",
+        );
+        assert!(no_freq.interfaces.is_empty());
+        assert_eq!(
+            no_freq.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "frequency" }
+        );
+        let no_sf = plan_of(
+            "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
+             frequency = 868000000\nbandwidth = 125000\ntxpower = 7\ncodingrate = 5\n",
+        );
+        assert_eq!(
+            no_sf.deferred[0].why,
+            DeferReason::MissingRequiredField {
+                key: "spreadingfactor"
+            }
+        );
+    }
+
+    #[test]
+    fn an_rnode_surfaces_flow_control_and_beaconing_as_unapplied() {
+        let plan = plan_of(
+            "[interfaces]\n[[Radio]]\ntype = RNodeInterface\nenabled = Yes\nport = /dev/ttyUSB0\n\
+             frequency = 868000000\nbandwidth = 125000\ntxpower = 7\nspreadingfactor = 8\n\
+             codingrate = 5\nflow_control = Yes\nid_callsign = N0CALL\nid_interval = 600\n",
+        );
+        let radio = named(&plan, "Radio");
+        assert!(radio
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("flow_control")));
+        assert!(radio
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("id_callsign")));
+        assert!(radio
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("id_interval")));
     }
 
     #[test]
