@@ -91,7 +91,7 @@ where
 /// must never wrap a card's numbers); the 32-bit esp32s3 has no native 64-bit atomic, so
 /// `portable-atomic` carries them through critical-section.
 pub struct EmbassyInterfaceStatus {
-    id: InterfaceId,
+    id: AtomicU64,
     connection: AtomicU8,
     rx: AtomicU64,
     tx: AtomicU64,
@@ -107,7 +107,7 @@ impl EmbassyInterfaceStatus {
     #[must_use]
     pub const fn new(id: InterfaceId, connection: ConnectionState) -> Self {
         Self {
-            id,
+            id: AtomicU64::new(u64::from_be_bytes(*id.as_bytes())),
             connection: AtomicU8::new(connection.as_u8()),
             rx: AtomicU64::new(0),
             tx: AtomicU64::new(0),
@@ -119,6 +119,11 @@ impl EmbassyInterfaceStatus {
 
     pub fn set_connection(&self, connection: ConnectionState) {
         self.connection.store(connection.as_u8(), Ordering::Relaxed);
+    }
+
+    pub fn set_id(&self, id: InterfaceId) {
+        self.id
+            .store(u64::from_be_bytes(*id.as_bytes()), Ordering::Relaxed);
     }
 
     /// Turn this interface off or back on from the application. The driver reads
@@ -157,7 +162,7 @@ impl EmbassyInterfaceStatus {
 
 impl InterfaceStatus for EmbassyInterfaceStatus {
     fn id(&self) -> InterfaceId {
-        self.id
+        InterfaceId::new(self.id.load(Ordering::Relaxed).to_be_bytes())
     }
 
     fn connection(&self) -> ConnectionState {

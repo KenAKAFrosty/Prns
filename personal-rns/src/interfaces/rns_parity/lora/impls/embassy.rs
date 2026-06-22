@@ -487,6 +487,7 @@ where
                                 if let Some(message) = retag_message(current_id, &profile) {
                                     if let InterfaceLifecycle::Retag { new_id, .. } = &message {
                                         current_id = *new_id;
+                                        status.set_id(*new_id);
                                     }
                                     retag.send(message).await;
                                 }

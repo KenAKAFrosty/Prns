@@ -58,7 +58,8 @@ use personal_rns::interfaces::substrate::EmbassyTimebase;
 use personal_rns::interfaces::usb_auto::core::device_descriptor;
 use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::{
-    ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, MacAddress, Membership,
+    ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
+    Membership,
 };
 use personal_rns::reactor::grant::FrameSlot;
 use personal_rns::reactor::impls::embassy_reactor::{
@@ -585,7 +586,7 @@ pub async fn run(spawner: Spawner) {
                 tcp_status,
                 tcp_id,
                 lora_status,
-                lora_id,
+                lora_status.id(),
             );
             let card_count = cards.len();
             ui_state.sync_card_count(card_count);
@@ -631,7 +632,7 @@ pub async fn run(spawner: Spawner) {
                             {
                                 if card.id == USB_INTERFACE_ID {
                                     USB_STATUS.set_enabled(!USB_STATUS.is_enabled());
-                                } else if card.id == lora_id {
+                                } else if card.id == lora_status.id() {
                                     lora_status.set_enabled(!lora_status.is_enabled());
                                 } else if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
                                     if card.id == tcp_id {
