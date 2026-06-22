@@ -9,7 +9,7 @@ use panic_halt as _;
 
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{select, select3, Either, Either3};
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
@@ -92,6 +92,7 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(650);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 const FULL_REFRESH_INTERVAL: u32 = 20;
 const FRONTLIGHT_HOLD: Duration = Duration::from_secs(8);
+const STATS_POLL: Duration = Duration::from_millis(1000);
 
 type Mtx = CriticalSectionRawMutex;
 type EngineStorageType = storage::TechoStorage;
@@ -153,6 +154,25 @@ fn seeded_entropy(bytes: &mut [u8]) {
 }
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
+
+fn frame_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+async fn write_serial<'d, D: embassy_usb::driver::Driver<'d>>(
+    class: &mut CdcAcmClass<'d, D>,
+    bytes: &[u8],
+) -> Result<(), embassy_usb::driver::EndpointError> {
+    for chunk in bytes.chunks(60) {
+        class.write_packet(chunk).await?;
+    }
+    Ok(())
+}
 
 fn techo_secret_key() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
@@ -440,7 +460,7 @@ async fn main(_spawner: Spawner) -> ! {
                     counts.destinations,
                     counts.links,
                 );
-                if class.write_packet(line.as_bytes()).await.is_err() {
+                if write_serial(&mut class, line.as_bytes()).await.is_err() {
                     break;
                 }
                 Timer::after(Duration::from_millis(1000)).await;
@@ -465,7 +485,8 @@ async fn main(_spawner: Spawner) -> ! {
         let mut ui_state = hopspot::UiState::new();
         let mut working_lora_profile = DEFAULT_915_PROFILE;
         let mut since_full = 0u32;
-        let mut force_full = true;
+        let mut displayed_hash = 0u64;
+        let mut have_displayed = false;
         loop {
             let cards = build_cards(lora_status, lora_id);
             let card_count = cards.len();
@@ -478,17 +499,27 @@ async fn main(_spawner: Spawner) -> ! {
                 hopspot::BatteryState::Unknown,
                 &ui_state,
             );
-            if force_full || since_full >= FULL_REFRESH_INTERVAL {
-                let _ = epd.full_update(panel.buffer());
-                since_full = 0;
-                force_full = false;
-            } else {
-                let _ = epd.partial_update(panel.buffer());
+            let hash = frame_hash(panel.buffer());
+            if !have_displayed || hash != displayed_hash {
+                if !have_displayed || since_full >= FULL_REFRESH_INTERVAL {
+                    let _ = epd.full_update(panel.buffer());
+                    since_full = 0;
+                } else {
+                    let _ = epd.partial_update(panel.buffer());
+                }
+                since_full += 1;
+                displayed_hash = hash;
+                have_displayed = true;
             }
-            since_full += 1;
 
-            match select(BUTTON_EVENTS.receive(), INTERFACE_COUNTS.changed()).await {
-                Either::First(event) => {
+            match select3(
+                BUTTON_EVENTS.receive(),
+                INTERFACE_COUNTS.changed(),
+                Timer::after(STATS_POLL),
+            )
+            .await
+            {
+                Either3::First(event) => {
                     let selected_kind = ui_state
                         .selected_card(card_count)
                         .and_then(|index| cards.get(index))
@@ -521,7 +552,8 @@ async fn main(_spawner: Spawner) -> ! {
                         hopspot::UiAction::None => {}
                     }
                 }
-                Either::Second(()) => {}
+                Either3::Second(()) => {}
+                Either3::Third(()) => {}
             }
         }
     };
