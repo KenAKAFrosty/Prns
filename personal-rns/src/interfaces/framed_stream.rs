@@ -137,6 +137,7 @@ where
 /// drain the seam and frame outbound onto the wire. Returns on any IO error so the caller
 /// can reconnect. The deframer and buffers are the caller's [`FramedBuffers`], reset on entry and
 /// reused across reconnects. The framing `F` is the same the buffers were minted with.
+#[allow(clippy::too_many_arguments)]
 pub async fn serve<
     F,
     const READ_LEN: usize,

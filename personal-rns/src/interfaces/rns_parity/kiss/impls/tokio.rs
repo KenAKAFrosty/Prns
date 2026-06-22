@@ -90,11 +90,10 @@ impl<Open> KissInterface<Open> {
 /// RNS `configure_device` sends before the link carries traffic. Returns the stream's IO error so
 /// the run loop can treat a TNC that vanished mid-config as a dropped connection and reconnect.
 async fn configure_tnc<S: AsyncWrite + Unpin>(stream: &mut S, tnc: &TncConfig) -> io::Result<()> {
-    let mut frame = [0u8; 4];
     for (command, value) in tnc.command_sequence() {
-        let n = kiss_framing::encode_command(command, value, &mut frame)
-            .expect("a four-byte KISS command frame fits a four-byte buffer");
-        stream.write_all(&frame[..n]).await?;
+        stream
+            .write_all(&kiss_framing::command_frame(command, value))
+            .await?;
     }
     Ok(())
 }

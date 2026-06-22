@@ -113,19 +113,13 @@ pub fn encode(input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
     Ok(written)
 }
 
-/// Build a TNC-config frame (`FEND command value FEND`) into `output`. KISS config commands —
-/// TX-delay, persistence, slot-time, TX-tail, etc. — carry a single value byte and are written to
-/// the TNC at startup, never delivered to the stack. Returns the byte count; fails if `output` is
-/// smaller than 4 bytes.
-pub fn encode_command(command: u8, value: u8, output: &mut [u8]) -> Result<usize, EncodeError> {
-    if output.len() < 4 {
-        return Err(EncodeError::OutputTooSmall);
-    }
-    output[0] = FEND;
-    output[1] = command;
-    output[2] = value;
-    output[3] = FEND;
-    Ok(4)
+/// Build a TNC-config frame — `FEND command value FEND`. KISS config commands (TX-delay,
+/// persistence, slot time, TX-tail, …) carry a single value byte and are written to the TNC at
+/// startup, never delivered to the stack. The frame is always exactly four bytes: the value is not
+/// escaped, matching RNS, whose config values are clamped well below the delimiter bytes.
+#[must_use]
+pub fn command_frame(command: u8, value: u8) -> [u8; 4] {
+    [FEND, command, value, FEND]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,9 +336,10 @@ mod tests {
 
     #[test]
     fn command_frame_wraps_a_single_value() {
-        let mut out = [0u8; 4];
-        let n = encode_command(CMD_TXDELAY, 0x05, &mut out).unwrap();
-        assert_eq!(&out[..n], &[FEND, CMD_TXDELAY, 0x05, FEND]);
+        assert_eq!(
+            command_frame(CMD_TXDELAY, 0x05),
+            [FEND, CMD_TXDELAY, 0x05, FEND]
+        );
     }
 
     #[test]
