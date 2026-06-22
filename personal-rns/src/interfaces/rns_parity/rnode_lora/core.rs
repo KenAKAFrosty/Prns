@@ -206,48 +206,201 @@ const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
 /// frame — the gate's budget on a slow shared medium.
 const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
 
-/// The radio regulatory region — what bounds an interface's transmit airtime. Sub-GHz ISM bands
-/// carry different rules: the EU's 868 MHz band caps airtime at a 1% duty cycle, while the US
-/// 902-928 and Australian bands are dwell-time limited rather than duty-cycled, so they declare no
-/// ceiling here. A starting set — tune per deployment. The region drives only local TX pacing; it
-/// is outside the [`channel_tag`], so two nodes on different duty policies still hear each other.
+/// Ten percent, in the per-mille the airtime ledger speaks.
+const DUTY_TEN_PERCENT_PER_MILLE: u16 = 100;
+
+/// The radio regulatory region — the outer bound on a profile: its frequency band, transmit-power
+/// ceiling, and duty cycle. Picked first in the settings flow, it clamps frequency and power. Region
+/// is a local knob (outside the [`channel_tag`]), so two nodes on different regions still hear each
+/// other as long as their frequency and modulation agree. Bounds follow the global sub-GHz ISM
+/// allocations; the power cap is the SX1262 PA ceiling (the antenna/FEM owns total EIRP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Region {
-    /// EU 863-870 MHz: a 1% duty cycle over the hour window.
-    Eu868,
-    /// US 902-928 MHz: dwell-time limited, no duty cycle.
     Us915,
-    /// Australia 915-928 MHz: dwell-time limited, no duty cycle.
     Au915,
-    /// Asia 920-925 MHz: a conservative 1% (the rule varies by country).
+    Eu433,
+    Eu865,
+    Eu868,
+    Eu869,
     As923,
-    /// No airtime ceiling — bench, testing, or an unregulated deployment.
+    In865,
+    Cn470,
+    Kr920,
+    Jp920,
     Unlimited,
 }
 
 impl Region {
-    /// The airtime ceiling this region declares — host-enforced by the interface's duty gate — or
-    /// `None` for a region with no duty cycle. The 1% bands cap the hour-window utilization; the
-    /// queue budget bounds the airtime an over-limit interface holds before dropping the oldest.
-    pub const fn duty_cycle(self) -> Option<AirtimeDutyCycle> {
+    pub const ALL: [Region; 12] = [
+        Self::Us915,
+        Self::Au915,
+        Self::Eu433,
+        Self::Eu865,
+        Self::Eu868,
+        Self::Eu869,
+        Self::As923,
+        Self::In865,
+        Self::Cn470,
+        Self::Kr920,
+        Self::Jp920,
+        Self::Unlimited,
+    ];
+
+    pub const fn band(self) -> (u32, u32) {
         match self {
-            Self::Eu868 | Self::As923 => Some(AirtimeDutyCycle {
-                limit_short_per_mille: None,
-                limit_long_per_mille: Some(DUTY_ONE_PERCENT_PER_MILLE),
-                max_queued_airtime_ms: DUTY_QUEUE_BUDGET_MS,
-            }),
-            Self::Us915 | Self::Au915 | Self::Unlimited => None,
+            Self::Us915 => (902_000_000, 928_000_000),
+            Self::Au915 => (915_000_000, 928_000_000),
+            Self::Eu433 => (433_050_000, 434_790_000),
+            Self::Eu865 => (865_000_000, 868_000_000),
+            Self::Eu868 => (868_000_000, 868_600_000),
+            Self::Eu869 => (869_400_000, 869_650_000),
+            Self::As923 => (920_000_000, 925_000_000),
+            Self::In865 => (865_000_000, 867_000_000),
+            Self::Cn470 => (470_000_000, 510_000_000),
+            Self::Kr920 => (920_000_000, 923_000_000),
+            Self::Jp920 => (920_800_000, 927_800_000),
+            Self::Unlimited => (150_000_000, 960_000_000),
+        }
+    }
+
+    pub const fn default_frequency(self) -> Frequency {
+        let hz = match self {
+            Self::Us915 => 915_000_000,
+            Self::Au915 => 921_500_000,
+            Self::Eu433 => 433_900_000,
+            Self::Eu865 => 866_500_000,
+            Self::Eu868 => 868_300_000,
+            Self::Eu869 => 869_500_000,
+            Self::As923 => 922_500_000,
+            Self::In865 => 866_000_000,
+            Self::Cn470 => 490_000_000,
+            Self::Kr920 => 921_500_000,
+            Self::Jp920 => 922_000_000,
+            Self::Unlimited => 915_000_000,
+        };
+        Frequency::new(hz)
+    }
+
+    pub const fn max_tx_power(self) -> TxPower {
+        let dbm = match self {
+            Self::Us915 | Self::Au915 | Self::In865 | Self::Eu869 | Self::Unlimited => 22,
+            Self::Cn470 => 19,
+            Self::As923 | Self::Jp920 => 16,
+            Self::Eu865 | Self::Eu868 | Self::Kr920 => 14,
+            Self::Eu433 => 12,
+        };
+        TxPower::new(dbm)
+    }
+
+    /// The airtime ceiling this region declares — host-enforced by the interface's duty gate — or
+    /// `None` for a region with no duty cycle. The EU 868 sub-bands cap the hour window at 1%, the
+    /// EU 433 and 869.4-869.65 bands at 10%; the queue budget bounds the held airtime before the
+    /// oldest frame is dropped. Asia-Pacific bands use listen-before-talk in practice, not modeled here.
+    pub const fn duty_cycle(self) -> Option<AirtimeDutyCycle> {
+        let limit_long_per_mille = match self {
+            Self::Eu865 | Self::Eu868 => DUTY_ONE_PERCENT_PER_MILLE,
+            Self::Eu433 | Self::Eu869 => DUTY_TEN_PERCENT_PER_MILLE,
+            _ => return None,
+        };
+        Some(AirtimeDutyCycle {
+            limit_short_per_mille: None,
+            limit_long_per_mille: Some(limit_long_per_mille),
+            max_queued_airtime_ms: DUTY_QUEUE_BUDGET_MS,
+        })
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Us915 => "US915",
+            Self::Au915 => "AU915",
+            Self::Eu433 => "EU433",
+            Self::Eu865 => "EU865",
+            Self::Eu868 => "EU868",
+            Self::Eu869 => "EU869",
+            Self::As923 => "AS923",
+            Self::In865 => "IN865",
+            Self::Cn470 => "CN470",
+            Self::Kr920 => "KR920",
+            Self::Jp920 => "JP920",
+            Self::Unlimited => "Open",
         }
     }
 
     pub const fn next(self) -> Self {
         match self {
-            Self::Eu868 => Self::Us915,
             Self::Us915 => Self::Au915,
-            Self::Au915 => Self::As923,
-            Self::As923 => Self::Unlimited,
-            Self::Unlimited => Self::Eu868,
+            Self::Au915 => Self::Eu433,
+            Self::Eu433 => Self::Eu865,
+            Self::Eu865 => Self::Eu868,
+            Self::Eu868 => Self::Eu869,
+            Self::Eu869 => Self::As923,
+            Self::As923 => Self::In865,
+            Self::In865 => Self::Cn470,
+            Self::Cn470 => Self::Kr920,
+            Self::Kr920 => Self::Jp920,
+            Self::Jp920 => Self::Unlimited,
+            Self::Unlimited => Self::Us915,
         }
+    }
+}
+
+/// A named modem preset — a spreading-factor / bandwidth / coding-rate bundle along the range-vs-speed
+/// tradeoff, the Meshtastic-style one-knob the settings flow offers before full custom control. It is
+/// pure UI sugar over the raw modulation; the wire carries only the resulting SF/BW/CR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModemPreset {
+    ShortFast,
+    MediumFast,
+    LongFast,
+    LongSlow,
+}
+
+impl ModemPreset {
+    pub const ALL: [ModemPreset; 4] = [
+        Self::ShortFast,
+        Self::MediumFast,
+        Self::LongFast,
+        Self::LongSlow,
+    ];
+
+    pub const fn modulation(self) -> Modulation {
+        match self {
+            Self::ShortFast => Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf7,
+                bandwidth: LoraBandwidth::Bw250kHz,
+                coding_rate: CodingRate::Cr45,
+            },
+            Self::MediumFast => Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf9,
+                bandwidth: LoraBandwidth::Bw250kHz,
+                coding_rate: CodingRate::Cr45,
+            },
+            Self::LongFast => Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf11,
+                bandwidth: LoraBandwidth::Bw250kHz,
+                coding_rate: CodingRate::Cr45,
+            },
+            Self::LongSlow => Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf12,
+                bandwidth: LoraBandwidth::Bw125kHz,
+                coding_rate: CodingRate::Cr48,
+            },
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ShortFast => "ShortFast",
+            Self::MediumFast => "MediumFast",
+            Self::LongFast => "LongFast",
+            Self::LongSlow => "LongSlow",
+        }
+    }
+
+    pub fn matching(modulation: Modulation) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|preset| preset.modulation() == modulation)
     }
 }
 
@@ -608,11 +761,44 @@ mod tests {
         }
         assert_eq!(cr, CodingRate::Cr45);
 
-        let mut region = Region::Eu868;
-        for _ in 0..5 {
+        let mut region = Region::Us915;
+        for _ in 0..Region::ALL.len() {
             region = region.next();
         }
-        assert_eq!(region, Region::Eu868);
+        assert_eq!(region, Region::Us915);
+    }
+
+    #[test]
+    fn every_region_default_frequency_sits_inside_its_band_and_within_the_radio_pa() {
+        for region in Region::ALL {
+            let (lo, hi) = region.band();
+            let default = region.default_frequency().hz();
+            assert!(
+                (lo..=hi).contains(&default),
+                "{}: default {default} outside band {lo}..={hi}",
+                region.label()
+            );
+            assert!(
+                region.max_tx_power().dbm() <= 22,
+                "{}: power cap above the SX1262 PA",
+                region.label()
+            );
+        }
+    }
+
+    #[test]
+    fn modem_presets_round_trip_through_their_modulation() {
+        for preset in ModemPreset::ALL {
+            assert_eq!(ModemPreset::matching(preset.modulation()), Some(preset));
+        }
+        assert_eq!(ModemPreset::LongFast.modulation().nominal_bitrate_bps(), {
+            Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf11,
+                bandwidth: LoraBandwidth::Bw250kHz,
+                coding_rate: CodingRate::Cr45,
+            }
+            .nominal_bitrate_bps()
+        });
     }
 
     #[test]
@@ -662,18 +848,31 @@ mod tests {
     }
 
     #[test]
-    fn the_one_percent_regions_cap_the_hour_and_the_americas_declare_no_duty() {
-        let eu = Region::Eu868
-            .duty_cycle()
-            .expect("the EU band is duty-limited");
-        assert_eq!(eu.limit_long_per_mille, Some(10), "1% over the hour window");
-        assert_eq!(eu.limit_short_per_mille, None);
-        assert_eq!(Region::As923.duty_cycle(), Region::Eu868.duty_cycle());
+    fn region_duty_cycles_follow_the_eu_subband_rules() {
+        let eu868 = Region::Eu868.duty_cycle().expect("EU 868 is duty-limited");
+        assert_eq!(
+            eu868.limit_long_per_mille,
+            Some(10),
+            "1% over the hour window"
+        );
+        assert_eq!(eu868.limit_short_per_mille, None);
+        assert_eq!(
+            Region::Eu433
+                .duty_cycle()
+                .expect("EU 433 is duty-limited")
+                .limit_long_per_mille,
+            Some(100),
+            "10% over the hour window"
+        );
+        assert_eq!(
+            Region::Eu869.duty_cycle().unwrap().limit_long_per_mille,
+            Some(100)
+        );
         assert!(
             Region::Us915.duty_cycle().is_none(),
             "the US band is dwell-time, not duty-cycled"
         );
-        assert!(Region::Au915.duty_cycle().is_none());
+        assert!(Region::As923.duty_cycle().is_none());
         assert!(Region::Unlimited.duty_cycle().is_none());
     }
 
