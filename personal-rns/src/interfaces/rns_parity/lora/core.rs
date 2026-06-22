@@ -281,7 +281,7 @@ impl Region {
             Self::Cn470 => "CN470",
             Self::Kr920 => "KR920",
             Self::Jp920 => "JP920",
-            Self::Unlimited => "Open",
+            Self::Unlimited => "Custom",
         }
     }
 

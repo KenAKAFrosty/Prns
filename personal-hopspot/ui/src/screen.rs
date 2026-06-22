@@ -273,6 +273,7 @@ enum UiMode {
 enum LoRaScreen {
     Region { cursor: usize },
     Preset { cursor: usize },
+    Frequency { cursor: FreqRow, edit: EditMode },
     Custom { cursor: CustomRow, edit: EditMode },
 }
 
@@ -376,6 +377,37 @@ impl CustomRow {
         match self {
             Self::FreqMhz => Some(FreqPlace::Hundreds),
             Self::FreqKhz => Some(FreqPlace::Tenths),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FreqRow {
+    Mhz,
+    Khz,
+    Save,
+    Back,
+}
+
+const FREQ_ROWS: [FreqRow; 4] = [FreqRow::Mhz, FreqRow::Khz, FreqRow::Save, FreqRow::Back];
+
+impl FreqRow {
+    const FIRST: Self = Self::Mhz;
+
+    fn next(self) -> Self {
+        match self {
+            Self::Mhz => Self::Khz,
+            Self::Khz => Self::Save,
+            Self::Save => Self::Back,
+            Self::Back => Self::Mhz,
+        }
+    }
+
+    fn freq_first_place(self) -> Option<FreqPlace> {
+        match self {
+            Self::Mhz => Some(FreqPlace::Hundreds),
+            Self::Khz => Some(FreqPlace::Tenths),
             _ => None,
         }
     }
@@ -497,6 +529,29 @@ fn preset_cursor_for(modulation: Modulation) -> usize {
         .unwrap_or(0)
 }
 
+enum FreqStep {
+    Place(FreqPlace),
+    Done(RadioProfile),
+}
+
+fn bump_freq(profile: RadioProfile, place: FreqPlace) -> RadioProfile {
+    let mut next = profile;
+    next.frequency = Frequency::new(bump_freq_place(profile.frequency.hz(), place));
+    next
+}
+
+fn advance_freq_place(profile: RadioProfile, place: FreqPlace) -> FreqStep {
+    match place.next_within_row() {
+        Some(next_place) => FreqStep::Place(next_place),
+        None => {
+            let mut next = profile;
+            next.frequency =
+                Frequency::new(clamp_freq_to_region(profile.frequency.hz(), profile.region));
+            FreqStep::Done(next)
+        }
+    }
+}
+
 fn lora_editor_tap(screen: LoRaScreen, profile: RadioProfile) -> (LoRaScreen, RadioProfile) {
     match screen {
         LoRaScreen::Region { cursor } => (
@@ -511,6 +566,19 @@ fn lora_editor_tap(screen: LoRaScreen, profile: RadioProfile) -> (LoRaScreen, Ra
             },
             profile,
         ),
+        LoRaScreen::Frequency { cursor, edit } => match edit {
+            EditMode::Freq { place } => (
+                LoRaScreen::Frequency { cursor, edit },
+                bump_freq(profile, place),
+            ),
+            _ => (
+                LoRaScreen::Frequency {
+                    cursor: cursor.next(),
+                    edit,
+                },
+                profile,
+            ),
+        },
         LoRaScreen::Custom { cursor, edit } => match edit {
             EditMode::Browsing => (
                 LoRaScreen::Custom {
@@ -523,11 +591,10 @@ fn lora_editor_tap(screen: LoRaScreen, profile: RadioProfile) -> (LoRaScreen, Ra
                 LoRaScreen::Custom { cursor, edit },
                 step_custom_row(profile, cursor),
             ),
-            EditMode::Freq { place } => {
-                let mut next = profile;
-                next.frequency = Frequency::new(bump_freq_place(profile.frequency.hz(), place));
-                (LoRaScreen::Custom { cursor, edit }, next)
-            }
+            EditMode::Freq { place } => (
+                LoRaScreen::Custom { cursor, edit },
+                bump_freq(profile, place),
+            ),
         },
     }
 }
@@ -549,7 +616,13 @@ fn lora_editor_hold(screen: LoRaScreen, profile: RadioProfile) -> LoRaHold {
         }
         LoRaScreen::Preset { cursor } => {
             match PRESET_CHOICES[cursor.min(PRESET_CHOICES.len() - 1)] {
-                PresetChoice::Preset(preset) => LoRaHold::Commit(apply_preset(profile, preset)),
+                PresetChoice::Preset(preset) => LoRaHold::Stay {
+                    screen: LoRaScreen::Frequency {
+                        cursor: FreqRow::FIRST,
+                        edit: EditMode::Browsing,
+                    },
+                    profile: apply_preset(profile, preset),
+                },
                 PresetChoice::Custom => LoRaHold::Stay {
                     screen: LoRaScreen::Custom {
                         cursor: CustomRow::FIRST,
@@ -565,7 +638,48 @@ fn lora_editor_hold(screen: LoRaScreen, profile: RadioProfile) -> LoRaHold {
                 },
             }
         }
+        LoRaScreen::Frequency { cursor, edit } => lora_frequency_hold(cursor, edit, profile),
         LoRaScreen::Custom { cursor, edit } => lora_custom_hold(cursor, edit, profile),
+    }
+}
+
+fn lora_frequency_hold(cursor: FreqRow, edit: EditMode, profile: RadioProfile) -> LoRaHold {
+    match edit {
+        EditMode::Freq { place } => match advance_freq_place(profile, place) {
+            FreqStep::Place(next_place) => LoRaHold::Stay {
+                screen: LoRaScreen::Frequency {
+                    cursor,
+                    edit: EditMode::Freq { place: next_place },
+                },
+                profile,
+            },
+            FreqStep::Done(profile) => LoRaHold::Stay {
+                screen: LoRaScreen::Frequency {
+                    cursor,
+                    edit: EditMode::Browsing,
+                },
+                profile,
+            },
+        },
+        _ => match cursor {
+            FreqRow::Save => LoRaHold::Commit(profile),
+            FreqRow::Back => LoRaHold::Stay {
+                screen: LoRaScreen::Preset {
+                    cursor: preset_cursor_for(profile.modulation),
+                },
+                profile,
+            },
+            _ => LoRaHold::Stay {
+                screen: LoRaScreen::Frequency {
+                    cursor,
+                    edit: match cursor.freq_first_place() {
+                        Some(place) => EditMode::Freq { place },
+                        None => EditMode::Browsing,
+                    },
+                },
+                profile,
+            },
+        },
     }
 }
 
@@ -597,26 +711,21 @@ fn lora_custom_hold(cursor: CustomRow, edit: EditMode, profile: RadioProfile) ->
             },
             profile,
         },
-        EditMode::Freq { place } => match place.next_within_row() {
-            Some(next_place) => LoRaHold::Stay {
+        EditMode::Freq { place } => match advance_freq_place(profile, place) {
+            FreqStep::Place(next_place) => LoRaHold::Stay {
                 screen: LoRaScreen::Custom {
                     cursor,
                     edit: EditMode::Freq { place: next_place },
                 },
                 profile,
             },
-            None => {
-                let mut next = profile;
-                next.frequency =
-                    Frequency::new(clamp_freq_to_region(profile.frequency.hz(), profile.region));
-                LoRaHold::Stay {
-                    screen: LoRaScreen::Custom {
-                        cursor,
-                        edit: EditMode::Browsing,
-                    },
-                    profile: next,
-                }
-            }
+            FreqStep::Done(profile) => LoRaHold::Stay {
+                screen: LoRaScreen::Custom {
+                    cursor,
+                    edit: EditMode::Browsing,
+                },
+                profile,
+            },
         },
     }
 }
@@ -1862,6 +1971,51 @@ fn draw_lora_custom<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
+fn lora_freq_row_text(
+    row: FreqRow,
+    edit: EditMode,
+    selected: bool,
+    profile: &RadioProfile,
+) -> heapless::String<16> {
+    let mut text = heapless::String::new();
+    let hz = profile.frequency.hz();
+    let active_place = match edit {
+        EditMode::Freq { place } if selected => Some(place),
+        _ => None,
+    };
+    match row {
+        FreqRow::Mhz => {
+            let value = lora_freq_mhz_text(hz, active_place);
+            let _ = write!(text, "MHz {value}");
+        }
+        FreqRow::Khz => {
+            let value = lora_freq_khz_text(hz, active_place);
+            let _ = write!(text, "kHz {value}");
+        }
+        FreqRow::Save => {
+            let _ = text.push_str("Save");
+        }
+        FreqRow::Back => {
+            let _ = text.push_str("Back");
+        }
+    }
+    text
+}
+
+fn draw_lora_frequency<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    cursor: FreqRow,
+    edit: EditMode,
+    profile: &RadioProfile,
+) {
+    for (slot, &row) in FREQ_ROWS.iter().enumerate() {
+        let y = LORA_EDITOR_TOP + slot as i32 * MENU_ITEM_STEP;
+        let selected = row == cursor;
+        let text = lora_freq_row_text(row, edit, selected, profile);
+        draw_lora_list_row(display, y, &text, selected);
+    }
+}
+
 fn draw_lora_editor<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     screen: LoRaScreen,
@@ -1870,6 +2024,9 @@ fn draw_lora_editor<D: DrawTarget<Color = BinaryColor>>(
     match screen {
         LoRaScreen::Region { cursor } => draw_lora_region_picker(display, cursor),
         LoRaScreen::Preset { cursor } => draw_lora_preset_picker(display, cursor),
+        LoRaScreen::Frequency { cursor, edit } => {
+            draw_lora_frequency(display, cursor, edit, profile)
+        }
         LoRaScreen::Custom { cursor, edit } => draw_lora_custom(display, cursor, edit, profile),
     }
 }
@@ -2221,17 +2378,77 @@ mod tests {
     }
 
     #[test]
-    fn choosing_a_named_preset_commits_with_that_modulation() {
+    fn choosing_a_named_preset_applies_it_then_opens_the_frequency_step() {
         let mut state = UiState::new();
         state.open_lora_editor(DEFAULT_915_PROFILE);
         state.handle_input(InputEvent::LongPress, 1, None);
         tap(&mut state, 2);
-        let committed = state.handle_input(InputEvent::LongPress, 1, None);
+        let action = state.handle_input(InputEvent::LongPress, 1, None);
 
+        assert_eq!(action, UiAction::None);
+        assert_eq!(
+            lora_screen(&state),
+            LoRaScreen::Frequency {
+                cursor: FreqRow::Mhz,
+                edit: EditMode::Browsing,
+            }
+        );
+        assert_eq!(
+            lora_working_profile(&state).modulation,
+            ModemPreset::ShortFast.modulation()
+        );
+    }
+
+    #[test]
+    fn the_frequency_step_dials_a_channel_then_saves_with_the_preset() {
+        let mut state = UiState::new();
+        state.open_lora_editor(DEFAULT_915_PROFILE);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 2);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        assert_eq!(
+            lora_screen(&state),
+            LoRaScreen::Frequency {
+                cursor: FreqRow::Mhz,
+                edit: EditMode::Browsing,
+            }
+        );
+        tap(&mut state, 1);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 6);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 2);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 5);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        assert_eq!(lora_working_profile(&state).frequency.hz(), 915_625_000);
+
+        tap(&mut state, 1);
+        let committed = state.handle_input(InputEvent::LongPress, 1, None);
         let mut expected = DEFAULT_915_PROFILE;
         expected.modulation = ModemPreset::ShortFast.modulation();
+        expected.frequency = Frequency::new(915_625_000);
         assert_eq!(committed, UiAction::SetLoRaProfile(expected));
         assert_eq!(state.mode, UiMode::Cards);
+    }
+
+    #[test]
+    fn back_from_the_frequency_step_returns_to_the_preset_list() {
+        let mut state = UiState::new();
+        state.open_lora_editor(DEFAULT_915_PROFILE);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 2);
+        state.handle_input(InputEvent::LongPress, 1, None);
+        tap(&mut state, 3);
+        assert_eq!(
+            lora_screen(&state),
+            LoRaScreen::Frequency {
+                cursor: FreqRow::Back,
+                edit: EditMode::Browsing,
+            }
+        );
+        state.handle_input(InputEvent::LongPress, 1, None);
+        assert!(matches!(lora_screen(&state), LoRaScreen::Preset { .. }));
     }
 
     fn open_custom(state: &mut UiState) {
@@ -2513,6 +2730,10 @@ mod tests {
             },
             LoRaScreen::Preset {
                 cursor: PRESET_CHOICES.len() - 1,
+            },
+            LoRaScreen::Frequency {
+                cursor: FreqRow::Back,
+                edit: EditMode::Browsing,
             },
             LoRaScreen::Custom {
                 cursor: CustomRow::Back,
