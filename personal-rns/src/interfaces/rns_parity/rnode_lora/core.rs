@@ -61,6 +61,21 @@ pub enum SpreadingFactor {
     Sf12 = 12,
 }
 
+impl SpreadingFactor {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Sf5 => Self::Sf6,
+            Self::Sf6 => Self::Sf7,
+            Self::Sf7 => Self::Sf8,
+            Self::Sf8 => Self::Sf9,
+            Self::Sf9 => Self::Sf10,
+            Self::Sf10 => Self::Sf11,
+            Self::Sf11 => Self::Sf12,
+            Self::Sf12 => Self::Sf5,
+        }
+    }
+}
+
 /// LoRa signal bandwidth. The three values Reticulum and RNode use in practice;
 /// the SX1262's narrow bandwidths (down to 7.81 kHz) are a mechanical addition
 /// when a profile needs them.
@@ -79,6 +94,14 @@ impl LoraBandwidth {
             Self::Bw500kHz => 500_000,
         }
     }
+
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Bw125kHz => Self::Bw250kHz,
+            Self::Bw250kHz => Self::Bw500kHz,
+            Self::Bw500kHz => Self::Bw125kHz,
+        }
+    }
 }
 
 /// LoRa forward-error-correction coding rate `4/(4+n)`. The discriminant is the
@@ -95,6 +118,15 @@ pub enum CodingRate {
 impl CodingRate {
     pub const fn denominator(self) -> u8 {
         self as u8
+    }
+
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Cr45 => Self::Cr46,
+            Self::Cr46 => Self::Cr47,
+            Self::Cr47 => Self::Cr48,
+            Self::Cr48 => Self::Cr45,
+        }
     }
 }
 
@@ -205,6 +237,16 @@ impl Region {
                 max_queued_airtime_ms: DUTY_QUEUE_BUDGET_MS,
             }),
             Self::Us915 | Self::Au915 | Self::Unlimited => None,
+        }
+    }
+
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Eu868 => Self::Us915,
+            Self::Us915 => Self::Au915,
+            Self::Au915 => Self::As923,
+            Self::As923 => Self::Unlimited,
+            Self::Unlimited => Self::Eu868,
         }
     }
 }
@@ -543,6 +585,34 @@ mod tests {
             coding_rate: CodingRate::Cr45,
         };
         assert_eq!(fast.nominal_bitrate_bps(), 21875);
+    }
+
+    #[test]
+    fn each_setting_cycles_through_all_its_values_and_returns_to_start() {
+        let mut sf = SpreadingFactor::Sf5;
+        for _ in 0..8 {
+            sf = sf.next();
+        }
+        assert_eq!(sf, SpreadingFactor::Sf5);
+        assert_eq!(SpreadingFactor::Sf12.next(), SpreadingFactor::Sf5);
+
+        let mut bw = LoraBandwidth::Bw125kHz;
+        for _ in 0..3 {
+            bw = bw.next();
+        }
+        assert_eq!(bw, LoraBandwidth::Bw125kHz);
+
+        let mut cr = CodingRate::Cr45;
+        for _ in 0..4 {
+            cr = cr.next();
+        }
+        assert_eq!(cr, CodingRate::Cr45);
+
+        let mut region = Region::Eu868;
+        for _ in 0..5 {
+            region = region.next();
+        }
+        assert_eq!(region, Region::Eu868);
     }
 
     #[test]

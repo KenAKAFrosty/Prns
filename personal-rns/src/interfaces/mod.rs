@@ -17,7 +17,6 @@ mod status;
 pub mod bluetooth_auto;
 #[cfg(feature = "tokio-host")]
 pub mod framed_stream;
-#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod rns_parity;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod usb_auto;
