@@ -11,6 +11,8 @@ examples/*/target/
 dhat-heap.json
 benchmarks/target/
 benchmarks/reference/.venv/
+# Dedicated venv for the rns 1.3.5 reference (oracle tests)
+/.venv-rns-1.3.5/
 **/__pycache__/
 # cargo-mutants run artifacts (mutants.out + the rotated mutants.out.old)
 /mutants.out*/
