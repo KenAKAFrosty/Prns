@@ -10,6 +10,8 @@ pub mod kiss;
 pub mod local;
 pub mod lora;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod pipe;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod serial;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod tcp;
