@@ -39,13 +39,7 @@ where
     RST: OutputPin,
     DELAY: DelayNs,
 {
-    pub fn new(
-        spi: SPI,
-        busy: BUSY,
-        dc: DC,
-        rst: RST,
-        delay: DELAY,
-    ) -> Result<Self, SPI::Error> {
+    pub fn new(spi: SPI, busy: BUSY, dc: DC, rst: RST, delay: DELAY) -> Result<Self, SPI::Error> {
         let mut driver = Self {
             spi,
             busy,
