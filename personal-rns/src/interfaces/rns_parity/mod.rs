@@ -3,6 +3,8 @@
 //! Reticulum counterpart and live at the `interfaces` root.
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
+pub mod kiss;
+#[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod local;
 pub mod lora;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
