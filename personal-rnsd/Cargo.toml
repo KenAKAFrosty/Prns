@@ -30,6 +30,7 @@ tokio-host = [
     "dep:tokio",
     "dep:tokio-serial",
     "dep:clap",
+    "dep:shlex",
 ]
 fixture-identity = []
 
@@ -41,10 +42,12 @@ personal-rns-config = { path = "../personal-rns-config" }
 # The async runtime + async USB-serial transport (tokio-host only). tokio-serial wraps the
 # port as an AsyncRead+AsyncWrite stream for the reactor's serial interface; default-features
 # off drops the libudev enumeration dep — we open ports by path, never enumerate.
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process"], optional = true }
 tokio-serial = { version = "5", default-features = false, optional = true }
 # The daemon's command-line front door (tokio-host only): typed args, --help, --version.
 clap = { version = "4", features = ["derive"], optional = true }
+# Shell-style splitting of a PipeInterface command into argv, matching RNS's shlex.split.
+shlex = { version = "1", optional = true }
 # OS CSPRNG for the daemon's node identity (main's load_identity_secret_key) —
 # the same source RNS uses (`os.urandom`).
 getrandom = "0.2"
