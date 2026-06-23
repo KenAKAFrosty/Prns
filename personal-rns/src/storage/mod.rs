@@ -33,6 +33,7 @@ use crate::routing::path_requests::seen::SeenPathRequestColumns;
 use crate::routing::request_handlers::RequestHandlerColumns;
 use crate::routing::reverse_routes::ReverseRouteColumns;
 use crate::routing::routes::RouteColumns;
+use crate::routing::tunnel::registry::TunnelColumns;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationColumns;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +59,7 @@ pub trait StorageLayout {
     type PendingPathRequests: PendingPathRequestColumns + Default;
     type RecentPathRequests: RecentPathRequestColumns + Default;
     type SeenPathRequests: SeenPathRequestColumns + Default;
+    type Tunnels: TunnelColumns + Default;
     type DiscoveryPathRequests: DiscoveryPathRequestColumns + Default;
     type InterfacePathRequestLimits: InterfacePathRequestLimitColumns + Default;
     type InterfaceAnnounceLimits: InterfaceAnnounceLimitColumns + Default;

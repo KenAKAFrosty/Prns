@@ -1,0 +1,61 @@
+use alloc::vec::Vec;
+
+use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
+use crate::routing::tunnel::registry::TunnelColumns;
+use crate::routing::tunnel::TunnelId;
+use crate::storage::ColumnsFull;
+
+pub const DEFAULT_MAX_TUNNELS: usize = 1024;
+
+#[derive(Debug, Default)]
+pub struct HeapTunnelColumns {
+    tunnel_ids: Vec<TunnelId>,
+    interfaces: Vec<InterfaceId>,
+    expiries: Vec<InstantMillis>,
+}
+
+impl TunnelColumns for HeapTunnelColumns {
+    fn capacity(&self) -> usize {
+        DEFAULT_MAX_TUNNELS
+    }
+    fn len(&self) -> usize {
+        self.tunnel_ids.len()
+    }
+
+    fn tunnel_ids(&self) -> &[TunnelId] {
+        &self.tunnel_ids
+    }
+    fn interfaces(&self) -> &[InterfaceId] {
+        &self.interfaces
+    }
+    fn expiries(&self) -> &[InstantMillis] {
+        &self.expiries
+    }
+
+    fn set_row(&mut self, i: usize, interface: InterfaceId, expires: InstantMillis) {
+        self.interfaces[i] = interface;
+        self.expiries[i] = expires;
+    }
+
+    fn push(
+        &mut self,
+        tunnel_id: TunnelId,
+        interface: InterfaceId,
+        expires: InstantMillis,
+    ) -> Result<(), ColumnsFull> {
+        if self.tunnel_ids.len() >= DEFAULT_MAX_TUNNELS {
+            return Err(ColumnsFull);
+        }
+        self.tunnel_ids.push(tunnel_id);
+        self.interfaces.push(interface);
+        self.expiries.push(expires);
+        Ok(())
+    }
+
+    fn swap_remove(&mut self, i: usize) {
+        self.tunnel_ids.swap_remove(i);
+        self.interfaces.swap_remove(i);
+        self.expiries.swap_remove(i);
+    }
+}

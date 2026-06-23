@@ -186,13 +186,17 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let dirty = &mut self.dirty_interfaces;
-        self.routing_table
-            .cull_expired_routes(now, view, &mut |removed| {
+        self.routing_table.cull_expired_routes_with_tunnels(
+            now,
+            view,
+            &self.tunnels,
+            &mut |removed| {
                 dirty.mark(removed.receiving_interface);
                 sink(EngineReaction::Journaled(
                     crate::engine::inbound::journal_removal(removed),
                 ));
-            });
+            },
+        );
         self.reverse_routes
             .cull_interface_orphans(|id| view.iter().any(|config| config.id == id));
         let dirty = &mut self.dirty_interfaces;
