@@ -27,7 +27,7 @@ use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
     run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
-    SendResourceHostCommand, SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+    SendResourceHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::delivery::Delivery;
@@ -48,7 +48,8 @@ use personal_rns::storage::Esp32S3 as NodeStorage;
 use personal_rns::storage::GrowableHeap as NodeStorage;
 use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
-use tokio::sync::{mpsc, oneshot};
+use tokio::io::AsyncRead;
+use tokio::sync::mpsc;
 
 const TCP_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBE; 8]);
 const RELAY_SECOND_INTERFACE_ID: InterfaceId = InterfaceId::new([0xBF; 8]);
@@ -437,16 +438,20 @@ async fn scenario_main() {
         chain_node(&addr).await;
         return;
     }
-    // The single- and link-firehose endpoints ride the high-level runtime. Request joins them on the
-    // shared-instance bus through `routes!` and the request/respond handle; resource and churn still
-    // hand-roll the reactor below for the node-to-node perf path, resource because the responder-side
-    // resource strategy is not yet a recipe knob.
+    // The single-, link-, channel-, and resource-firehose endpoints ride the high-level runtime: the
+    // resource responder opens its accept gate through the recipe's `resource_strategy`, the way every
+    // recipe destination does. Request and churn still hand-roll the reactor below for the node-to-node
+    // perf path.
     if matches!(
         manifest.profile.mechanism.as_str(),
         "single" | "link" | "channel" | "links-breadth"
     ) && (!manifest.profile.tunnel || role == "responder")
     {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
+        return;
+    }
+    if manifest.profile.mechanism == "resource" && shared_instance_port().is_none() {
+        run_resource_endpoint(&manifest, &role, &addr, duration).await;
         return;
     }
     if let Some(port) = shared_instance_port() {
@@ -486,7 +491,7 @@ async fn scenario_main() {
             .register_request_handler(&destination, REQUEST_PATH, RequestPolicy::AllowAll)
             .expect("registers the bench handler");
     }
-    if matches!(manifest.profile.mechanism.as_str(), "resource" | "churn") && role == "responder" {
+    if manifest.profile.mechanism == "churn" && role == "responder" {
         assert!(engine.set_default_resource_strategy(
             &destination,
             ResourceStrategy::Accept {
@@ -660,15 +665,6 @@ async fn scenario_main() {
                     event_rx,
                 )
                 .await;
-            } else if manifest.profile.mechanism == "resource" {
-                respond_resource(
-                    destination,
-                    announce_every,
-                    initiators,
-                    command_tx,
-                    event_rx,
-                )
-                .await;
             } else {
                 panic!(
                     "mechanism {:?} is not a hand-rolled responder",
@@ -713,8 +709,6 @@ async fn scenario_main() {
                 initiate_churn(&manifest.profile, duration, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "request" {
                 initiate_request(&manifest.profile, duration, command_tx, event_rx).await;
-            } else if manifest.profile.mechanism == "resource" {
-                initiate_resource(&manifest.profile, duration, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "single" {
                 initiate_single(&manifest.profile, duration, command_tx, event_rx).await;
             } else {
@@ -1537,6 +1531,244 @@ where
     }
 }
 
+async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let initiators = manifest.profile.initiator_count;
+    let resource_strategy = if role == "responder" {
+        ResourceStrategy::Accept {
+            max_uncompressed_len: 128 * 1024 * 1024,
+            accept_compressed: false,
+        }
+    } else {
+        ResourceStrategy::AcceptNone
+    };
+    let single = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy,
+    };
+    let destination = single
+        .destination_hash()
+        .expect("the bench destination name is valid");
+
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let on_event = move |event: PrnsEvent<'_>, _state: &()| {
+        let mapped = match event {
+            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                Some(Event::Heard(destination))
+            }
+            PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+            PrnsEvent::Message(Message::Resource { data, .. }) => Some(Event::ResourceIn(data.len())),
+            PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled { total_size, .. }) => {
+                Some(Event::ResourceIn(total_size as usize))
+            }
+            _ => None,
+        };
+        if let Some(event) = mapped {
+            let _ = event_tx.send(event);
+        }
+    };
+
+    if role == "responder" {
+        let (node, bound) = build_responder_node(single, on_event, manifest, addr, None).await;
+        let commands = node.handle();
+        println!("READY role=responder addr={bound}");
+        let firehose = respond_resource_runtime(
+            destination,
+            announce_every,
+            duration,
+            initiators,
+            &commands,
+            event_rx,
+        );
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = firehose => {}
+        }
+    } else if role == "initiator" {
+        let node = build_initiator_node(single, on_event, manifest, addr).await;
+        let commands = node.handle();
+        println!("READY role=initiator");
+        let firehose = async {
+            initiate_resource_runtime(&manifest.profile, duration, &commands, event_rx).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
+        }
+    } else {
+        panic!("unknown role {role:?}");
+    }
+}
+
+async fn respond_resource_runtime(
+    destination: DestinationHash,
+    announce_every: Duration,
+    duration: Duration,
+    initiator_count: usize,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let mut links_up = 0usize;
+    let mut closed_links = 0usize;
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
+    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    let mut received = 0u64;
+    let mut payload_bytes = 0u64;
+    loop {
+        tokio::select! {
+            _ = announce.tick(), if announcing => {
+                if commands
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep_until(report_at) => {
+                println!("RESULT received={received} payload_bytes={payload_bytes}");
+                return;
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::LinkUp) => {
+                        links_up += 1;
+                        if links_up >= initiator_count {
+                            announcing = false;
+                        }
+                    }
+                    Some(Event::ResourceIn(bytes)) => {
+                        received += 1;
+                        payload_bytes += bytes as u64;
+                    }
+                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
+                        closed_links += 1;
+                    }
+                    Some(Event::Closed) | None => {
+                        println!("RESULT received={received} payload_bytes={payload_bytes}");
+                        return;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+struct CyclingSource<'a> {
+    block: &'a [u8],
+    pos: usize,
+    remaining: usize,
+}
+
+impl<'a> CyclingSource<'a> {
+    fn new(block: &'a [u8], total_len: usize) -> Self {
+        Self {
+            block,
+            pos: 0,
+            remaining: total_len,
+        }
+    }
+}
+
+impl AsyncRead for CyclingSource<'_> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        while this.remaining > 0 && buf.remaining() > 0 {
+            if this.pos == this.block.len() {
+                this.pos = 0;
+            }
+            let take = this
+                .remaining
+                .min(buf.remaining())
+                .min(this.block.len() - this.pos);
+            buf.put_slice(&this.block[this.pos..this.pos + take]);
+            this.pos += take;
+            this.remaining -= take;
+        }
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+async fn initiate_resource_runtime(
+    profile: &Profile,
+    duration: Duration,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+    let link_id = commands
+        .establish_link(destination)
+        .await
+        .expect("link establishes");
+    let block = incompressible_payload(MAX_EFFICIENT_SIZE);
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut sent = 0u64;
+    let mut settled = 0u64;
+    let mut failures = 0u64;
+    let mut payload_bytes = 0u64;
+    let mut transfer_ms: Vec<u64> = Vec::new();
+    while tokio::time::Instant::now() < deadline {
+        let len = sizes.next_len();
+        sent += 1;
+        let transfer_started = tokio::time::Instant::now();
+        match commands
+            .send_resource(link_id, len as u64, CyclingSource::new(&block, len))
+            .await
+        {
+            Ok(()) => {
+                settled += 1;
+                payload_bytes += len as u64;
+                transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
+            }
+            Err(_) => failures += 1,
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis().max(1) as u64;
+    commands.close_link(link_id);
+    transfer_ms.sort_unstable();
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT sent={sent} settled={settled} failures={failures} \
+         payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
+         goodput_bytes_per_sec={:.0} goodput_mbits_per_sec={:.2} \
+         transfer_p50_ms={:.0} transfer_p99_ms={:.0} build={BUILD_PROFILE}",
+        payload_bytes as f64 / seconds,
+        payload_bytes as f64 * 8.0 / seconds / 1_000_000.0,
+        percentile(&transfer_ms, 0.50),
+        percentile(&transfer_ms, 0.99),
+    );
+}
+
 /// The proving end: announce on a cadence (ProveAll proves every single inside the
 /// engine), count delivered payload bytes, and report once the firehose has been quiet —
 /// singles have no teardown to signal the end with, so silence after traffic is it.
@@ -2138,209 +2370,6 @@ async fn initiate_channel(
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
         died_marker(died),
-    );
-}
-
-/// The accepting end: announce until the link arrives, open the strategy
-/// gate for it, count every hash-proved transfer, and report when the
-/// initiator closes the link.
-async fn respond_resource(
-    destination: DestinationHash,
-    announce_every: Duration,
-    initiator_count: usize,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let mut links_up = 0usize;
-    let mut closed_links = 0usize;
-    let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(announce_every);
-    let mut announcing = true;
-    let mut received = 0u64;
-    let mut payload_bytes = 0u64;
-    loop {
-        tokio::select! {
-            _ = announce.tick(), if announcing => {
-                let command = IssuedCommand {
-                    id: CommandId(next_id),
-                    command: EngineCommand::AnnounceNow(AnnounceNow {
-                        destination,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    }),
-                };
-                next_id += 1;
-                if commands.send(HostCommand::Engine(command)).is_err() {
-                    return;
-                }
-            }
-            event = events.recv() => {
-                match event {
-                    Some(Event::LinkUp) => {
-                        links_up += 1;
-                        if links_up >= initiator_count {
-                            announcing = false;
-                        }
-                    }
-                    Some(Event::ResourceIn(bytes)) => {
-                        received += 1;
-                        payload_bytes += bytes as u64;
-                    }
-                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
-                        closed_links += 1;
-                    }
-                    Some(Event::Closed) | None => {
-                        println!("RESULT received={received} payload_bytes={payload_bytes}");
-                        return;
-                    }
-                    Some(_) => {}
-                }
-            }
-        }
-    }
-}
-
-/// The measuring end: establish one link, then send maximum-size resources
-/// back to back — one at a time, the protocol's own rule — until the
-/// wall-time elapses. Goodput from the settled transfers; per-transfer wall
-/// time measured locally.
-async fn initiate_resource(
-    profile: &Profile,
-    duration: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let destination = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Heard(destination) => break destination,
-            _ => {}
-        }
-    };
-    commands
-        .send(HostCommand::Engine(IssuedCommand {
-            id: CommandId(1),
-            command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        }))
-        .expect("reactor alive");
-    let link_id = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
-                break established.link_id;
-            }
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
-                panic!("link refused: {failure:?}");
-            }
-            _ => {}
-        }
-    };
-    // One segment's worth of source bytes is all the initiator ever holds: every segment reads at
-    // most MAX_EFFICIENT_SIZE, and the bytes are incompressible and proved per segment, so the same
-    // buffer feeds every segment of every transfer. A real sender streams from a file the same way.
-    let scratch: Arc<[u8]> = incompressible_payload(
-        profile
-            .payload_max
-            .max(profile.payload_len)
-            .min(MAX_EFFICIENT_SIZE),
-    )
-    .into();
-    let mut sizes = SizeSequence::new(
-        profile.size_seed,
-        profile.payload_min,
-        profile.payload_max,
-        profile.payload_len,
-    );
-    let started = tokio::time::Instant::now();
-    let deadline = started + duration;
-    let mut next_id = 2u64;
-    let mut sent = 0u64;
-    let mut settled = 0u64;
-    let mut failures = 0u64;
-    let mut settled_bytes = 0u64;
-    let mut transfer_ms: Vec<u64> = Vec::new();
-    while tokio::time::Instant::now() < deadline {
-        let len = sizes.next_len();
-        let transfer_started = tokio::time::Instant::now();
-        sent += 1;
-        // One logical resource of `len` bytes, sent as MAX_EFFICIENT_SIZE segments — the
-        // host half of TokioPrnsHandle::send_resource, awaiting each segment's proof before the
-        // next so the engine holds one segment at a time. A payload at or under one segment
-        // is a single unsplit transfer.
-        let total_segments = (len as u64).div_ceil(MAX_EFFICIENT_SIZE as u64).max(1);
-        let mut remaining = len;
-        let mut transfer_ok = true;
-        for segment_index in 1..=total_segments {
-            let this_segment = remaining.min(MAX_EFFICIENT_SIZE);
-            remaining -= this_segment;
-            next_id += 1;
-            let id = CommandId(next_id);
-            let (completion, settled_rx) = oneshot::channel();
-            commands
-                .send(HostCommand::SendResourceSegment(
-                    SendResourceSegmentHostCommand {
-                        id,
-                        link_id,
-                        data: HostResourcePayload::shared_prefix(
-                            Arc::clone(&scratch),
-                            this_segment,
-                        )
-                        .expect("profile size stays within scratch"),
-                        request_id: None,
-                        segment_index,
-                        total_segments,
-                        total_data_size: len as u64,
-                        completion,
-                    },
-                ))
-                .expect("reactor alive");
-            match settled_rx.await {
-                Ok(Settlement::SendResource(Ok(()))) => {}
-                Ok(Settlement::SendResource(Err(failure))) => {
-                    eprintln!("transfer failed: {failure:?}");
-                    transfer_ok = false;
-                    break;
-                }
-                Ok(_) | Err(_) => {
-                    transfer_ok = false;
-                    break;
-                }
-            }
-        }
-        if transfer_ok {
-            settled += 1;
-            settled_bytes += len as u64;
-            transfer_ms.push(transfer_started.elapsed().as_millis() as u64);
-        } else {
-            failures += 1;
-        }
-    }
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-
-    commands
-        .send(HostCommand::Engine(IssuedCommand {
-            id: CommandId(next_id + 1),
-            command: EngineCommand::CloseLink(CloseLink { link_id }),
-        }))
-        .expect("reactor alive");
-    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
-    loop {
-        match tokio::time::timeout_at(close_deadline, events.recv()).await {
-            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
-            Ok(Some(_)) => {}
-        }
-    }
-
-    transfer_ms.sort_unstable();
-    let payload_bytes = settled_bytes;
-    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
-    println!(
-        "RESULT sent={sent} settled={settled} failures={failures} \
-         payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
-         goodput_bytes_per_sec={:.0} goodput_mbits_per_sec={:.2} \
-         transfer_p50_ms={:.0} transfer_p99_ms={:.0} build={BUILD_PROFILE}",
-        payload_bytes as f64 / seconds,
-        payload_bytes as f64 * 8.0 / seconds / 1_000_000.0,
-        percentile(&transfer_ms, 0.50),
-        percentile(&transfer_ms, 0.99),
     );
 }
 
