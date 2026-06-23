@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{sync::Arc, time::Duration};
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, EngineCommand, EngineState,
-    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, Respond, RespondData, SendChannel,
-    SendChannelBody, SendChannelFailure, SendLink, SendLinkPayload, SendRequest, SendRequestData,
-    SendSingle, SendSinglePayload, Settlement,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, EngineCommand, EngineState,
+    EstablishLink, IssuedCommand, Journaled, RatchetPolicy, SendChannel, SendChannelBody,
+    SendChannelFailure, SendLink, SendLinkPayload, SendRequest, SendRequestData, SendSingle,
+    SendSinglePayload, Settlement,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -26,18 +26,17 @@ use personal_rns::interfaces::rns_parity::udp::core as udp_core;
 use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
-    run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
-    SendResourceHostCommand, TokioHost, TokioInterfaceSeam,
+    run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, TokioHost, TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
-use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::{ResourceStrategy, MAX_EFFICIENT_SIZE};
-use personal_rns::routing::links::LinkId;
-use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
+use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::routing::ProofStrategy;
-use personal_rns::runtime::request_router::{Decline, RequestContext, RequestRoute, RoutePolicy};
+use personal_rns::runtime::request_router::{
+    Decline, RequestContext, RequestRoute, RoutePolicy, RouteSet,
+};
 use personal_rns::runtime::{
     Diagnostic, InstancePorts, LocalInstance, Message, OnExisting, PreConfiguredDestination, Prns,
     PrnsEvent, PrnsRecipe, Role, TokioPrnsHandle,
@@ -287,11 +286,6 @@ enum Event {
     Delivered(usize),
     LinkUp,
     ResourceIn(usize),
-    Request {
-        link_id: LinkId,
-        request_id: RequestId,
-        wanted: usize,
-    },
     Response(usize),
     Closed,
 }
@@ -312,12 +306,6 @@ fn begin_msgpack_bin(payload_len: usize, framed: &mut Vec<u8>) {
         framed.push(0xC5);
         framed.extend_from_slice(&(payload_len as u16).to_be_bytes());
     }
-}
-
-fn msgpack_bin_into<'a>(payload: &[u8], framed: &'a mut Vec<u8>) -> &'a [u8] {
-    begin_msgpack_bin(payload.len(), framed);
-    framed.extend_from_slice(payload);
-    framed.as_slice()
 }
 
 fn msgpack_bin_payload(framed: &[u8]) -> &[u8] {
@@ -438,10 +426,10 @@ async fn scenario_main() {
         chain_node(&addr).await;
         return;
     }
-    // The single-, link-, channel-, and resource-firehose endpoints ride the high-level runtime: the
-    // resource responder opens its accept gate through the recipe's `resource_strategy`, the way every
-    // recipe destination does. Request and churn still hand-roll the reactor below for the node-to-node
-    // perf path.
+    // Every contestant endpoint rides the high-level runtime: single/link/channel/links-breadth here,
+    // resource/request/churn below (resource opens its accept gate through the recipe's
+    // `resource_strategy`, request serves through a `routes!` handler). The only path still hand-rolled
+    // is the tunnel-route-survival probe — harness instrumentation, not a drop-your-binary contestant.
     if matches!(
         manifest.profile.mechanism.as_str(),
         "single" | "link" | "channel" | "links-breadth"
@@ -452,6 +440,14 @@ async fn scenario_main() {
     }
     if manifest.profile.mechanism == "resource" && shared_instance_port().is_none() {
         run_resource_endpoint(&manifest, &role, &addr, duration).await;
+        return;
+    }
+    if manifest.profile.mechanism == "request" && shared_instance_port().is_none() {
+        run_request_endpoint(&manifest, &role, &addr, duration).await;
+        return;
+    }
+    if manifest.profile.mechanism == "churn" && shared_instance_port().is_none() {
+        run_churn_endpoint(&manifest, &role, &addr, duration).await;
         return;
     }
     if let Some(port) = shared_instance_port() {
@@ -473,256 +469,13 @@ async fn scenario_main() {
         }
     }
 
-    let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
-    let node = engine.held_identity_hashes()[0];
-    let destination = engine
-        .register_single_destination(
-            &node,
-            "bench",
-            &[&manifest.name],
-            b"",
-            ProofStrategy::ProveAll,
-            RatchetPolicy::NoRatchets,
-        )
-        .expect("registers the bench destination");
-
-    if manifest.profile.mechanism == "request" && role == "responder" {
-        engine
-            .register_request_handler(&destination, REQUEST_PATH, RequestPolicy::AllowAll)
-            .expect("registers the bench handler");
-    }
-    if manifest.profile.mechanism == "churn" && role == "responder" {
-        assert!(engine.set_default_resource_strategy(
-            &destination,
-            ResourceStrategy::Accept {
-                max_uncompressed_len: 128 * 1024 * 1024,
-                accept_compressed: false,
-            },
-        ));
-    }
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
-    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
-    let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
-    let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
-    let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx.clone(), out_rx);
-    let extra_listener_count = if role == "responder"
-        && manifest.profile.wire != "udp"
-        && manifest.profile.topology != "relay"
-    {
-        manifest.profile.initiator_count.saturating_sub(1)
+    if manifest.profile.mechanism == "single" && role == "initiator" {
+        run_tunnel_probe(&manifest, &addr, duration).await;
     } else {
-        0
-    };
-    let mut egress_lanes = vec![(TCP_INTERFACE_ID, out_tx)];
-    let mut extra_listeners = Vec::new();
-    for index in 0..extra_listener_count {
-        let id = fanin_listener_id(index);
-        let (extra_in_tx, extra_in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
-        let (extra_out_tx, extra_out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
-        egress_lanes.push((id, extra_out_tx));
-        extra_listeners.push((
-            id,
-            TokioInterfaceSeam::new(id, extra_in_tx, notify_tx.clone(), extra_out_rx),
-            extra_in_rx,
-        ));
-    }
-    let egress = Egress::new(egress_lanes);
-    let mut interfaces = match manifest.profile.wire.as_str() {
-        "udp" => vec![udp_core::descriptor(
-            TCP_INTERFACE_ID,
-            udp_core::UDP_BITRATE_GUESS_BPS,
-        )],
-        _ => vec![tcp_core::descriptor(
-            TCP_INTERFACE_ID,
-            tcp_core::TCP_BITRATE_GUESS_BPS,
-        )],
-    };
-    for (id, _, _) in &extra_listeners {
-        interfaces.push(tcp_core::descriptor(*id, tcp_core::TCP_BITRATE_GUESS_BPS));
-    }
-
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
-    let journal = move |journaled: Journaled<'_>| match journaled {
-        Journaled::AnnounceHeard { destination, .. } => {
-            let _ = event_tx.send(Event::Heard(destination));
-        }
-        Journaled::CommandSettled { id, settlement } => {
-            let _ = event_tx.send(Event::Settled(id, settlement));
-        }
-        Journaled::Delivered(Delivery::Single(delivery)) => {
-            let _ = event_tx.send(Event::Delivered(delivery.plaintext.len()));
-        }
-        Journaled::Delivered(Delivery::Link(delivery)) => {
-            let _ = event_tx.send(Event::Delivered(delivery.plaintext.len()));
-        }
-        Journaled::LinkClosed { .. } => {
-            let _ = event_tx.send(Event::Closed);
-        }
-        Journaled::LinkEstablished(_) => {
-            let _ = event_tx.send(Event::LinkUp);
-        }
-        Journaled::ResourceReceived { data, .. } => {
-            let _ = event_tx.send(Event::ResourceIn(data.len()));
-        }
-        Journaled::ResourceAssembled { total_size, .. } => {
-            let _ = event_tx.send(Event::ResourceIn(total_size as usize));
-        }
-        Journaled::RequestReceived {
-            link_id,
-            request_id,
-            data,
-            ..
-        } => {
-            let wanted = msgpack_bin_payload(data)
-                .get(..2)
-                .map(|len| u16::from_be_bytes([len[0], len[1]]) as usize)
-                .unwrap_or(0);
-            let _ = event_tx.send(Event::Request {
-                link_id,
-                request_id,
-                wanted,
-            });
-        }
-        Journaled::ResponseReceived { data, .. } => {
-            let _ = event_tx.send(Event::Response(msgpack_bin_payload(data).len()));
-        }
-        _ => {}
-    };
-
-    match role.as_str() {
-        "responder" => {
-            let mut in_lanes = vec![(TCP_INTERFACE_ID, in_rx)];
-            let bound = if manifest.profile.topology == "relay" {
-                let interface = TcpClientInterface::new_with_id(
-                    TCP_INTERFACE_ID,
-                    addr.clone(),
-                    tcp_core::TCP_BITRATE_GUESS_BPS,
-                    Duration::from_millis(100),
-                );
-                tokio::spawn(interface.run(seam));
-                addr.clone()
-            } else if manifest.profile.wire == "udp" {
-                let (local, peer) = udp_halves(&addr);
-                let interface = UdpInterface::bind_with_id(
-                    TCP_INTERFACE_ID,
-                    local,
-                    peer,
-                    udp_core::UDP_BITRATE_GUESS_BPS,
-                )
-                .await
-                .expect("binds the scenario port");
-                tokio::spawn(interface.run(seam));
-                addr.clone()
-            } else {
-                let interface = BenchTcpListener::bind_with_id(
-                    TCP_INTERFACE_ID,
-                    addr.as_str(),
-                    tcp_core::TCP_BITRATE_GUESS_BPS,
-                )
-                .await
-                .expect("binds the scenario port");
-                let bound = interface.local_addr().expect("bound address");
-                tokio::spawn(interface.run(seam));
-                let mut addresses = bound.to_string();
-                for (id, extra_seam, extra_in_rx) in extra_listeners.drain(..) {
-                    let extra = BenchTcpListener::bind_with_id(
-                        id,
-                        "127.0.0.1:0",
-                        tcp_core::TCP_BITRATE_GUESS_BPS,
-                    )
-                    .await
-                    .expect("binds an extra listener");
-                    let extra_bound = extra.local_addr().expect("bound address");
-                    tokio::spawn(extra.run(extra_seam));
-                    in_lanes.push((id, extra_in_rx));
-                    addresses.push('+');
-                    addresses.push_str(&extra_bound.to_string());
-                }
-                addresses
-            };
-            tokio::spawn(run(
-                engine,
-                interfaces,
-                vec![],
-                TokioHost::new(),
-                notify_rx,
-                in_lanes,
-                command_rx,
-                egress,
-                journal,
-            ));
-            println!("READY role=responder addr={bound}");
-            let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
-            let initiators = manifest.profile.initiator_count;
-            if manifest.profile.mechanism == "churn" {
-                respond_churn(destination, announce_every, command_tx, event_rx).await;
-            } else if manifest.profile.mechanism == "request" {
-                respond_request(
-                    destination,
-                    announce_every,
-                    initiators,
-                    command_tx,
-                    event_rx,
-                )
-                .await;
-            } else {
-                panic!(
-                    "mechanism {:?} is not a hand-rolled responder",
-                    manifest.profile.mechanism
-                );
-            }
-        }
-        "initiator" => {
-            if manifest.profile.wire == "udp" {
-                let (local, peer) = udp_halves(&addr);
-                let interface = UdpInterface::bind_with_id(
-                    TCP_INTERFACE_ID,
-                    local,
-                    peer,
-                    udp_core::UDP_BITRATE_GUESS_BPS,
-                )
-                .await
-                .expect("binds the scenario port");
-                tokio::spawn(interface.run(seam));
-            } else {
-                let interface = TcpClientInterface::new_with_id(
-                    TCP_INTERFACE_ID,
-                    addr.clone(),
-                    tcp_core::TCP_BITRATE_GUESS_BPS,
-                    Duration::from_millis(100),
-                );
-                tokio::spawn(interface.run(seam));
-            }
-            tokio::spawn(run(
-                engine,
-                interfaces,
-                vec![],
-                TokioHost::new(),
-                notify_rx,
-                vec![(TCP_INTERFACE_ID, in_rx)],
-                command_rx,
-                egress,
-                journal,
-            ));
-            println!("READY role=initiator");
-            if manifest.profile.mechanism == "churn" {
-                initiate_churn(&manifest.profile, duration, command_tx, event_rx).await;
-            } else if manifest.profile.mechanism == "request" {
-                initiate_request(&manifest.profile, duration, command_tx, event_rx).await;
-            } else if manifest.profile.mechanism == "single" {
-                initiate_single(&manifest.profile, duration, command_tx, event_rx).await;
-            } else {
-                panic!(
-                    "mechanism {:?} is not a hand-rolled initiator",
-                    manifest.profile.mechanism
-                );
-            }
-            // Close settlement is engine-state, not wire-state: give the egress lane a
-            // beat to flush the close frame, or the responder only learns via its 10s
-            // stale reaper.
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        other => panic!("unknown role {other:?} — {usage}"),
+        panic!(
+            "mechanism {:?} role {:?} has no orchestrate endpoint",
+            manifest.profile.mechanism, role
+        );
     }
 }
 
@@ -735,8 +488,7 @@ async fn scenario_main() {
 /// role's own firehose loop, which speaks to the node through the cloned [`TokioPrnsHandle`] handle.
 ///
 /// `Prns::new` stands the engine up on `GrowableHeap`; the `fixed-storage` (`Esp32S3`) residence is
-/// not yet a `Prns` knob, so the firehose endpoints always measure heap storage. The hand-rolled
-/// request/resource/churn paths still honor `NodeStorage`.
+/// not yet a `Prns` knob, so the firehose endpoints always measure heap storage.
 async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
     let mechanism = manifest.profile.mechanism.as_str();
     let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
@@ -798,7 +550,10 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
                 build_bus_client_node(single, on_event),
                 "shared".to_string(),
             ),
-            None => build_responder_node(single, on_event, manifest, addr, transport).await,
+            None => {
+                build_responder_node(single, (), routes![], on_event, manifest, addr, transport)
+                    .await
+            }
         };
         let commands = node.handle();
         if let Some(port) = shared_port {
@@ -1404,15 +1159,18 @@ async fn run_resource_fanout_bus_client(
 /// READY address line comes back beside it (the server address, plus fan-in listeners joined by
 /// `+`). The interface kind differs per branch, but `Prns::new` erases it, so every arm yields the
 /// same node type.
-async fn build_responder_node<F>(
+async fn build_responder_node<St, R, F>(
     single: PreConfiguredDestination<'static>,
+    app_state: St,
+    routes: R,
     on_event: F,
     manifest: &Manifest,
     addr: &str,
     transport: Option<TransportId>,
-) -> (Prns<(), (), F, NodeStorage>, String)
+) -> (Prns<St, R, F, NodeStorage>, String)
 where
-    F: FnMut(PrnsEvent<'_>, &()),
+    R: RouteSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
 {
     if manifest.profile.topology == "relay" {
         let client = TcpClientInterface::new_with_id(
@@ -1424,9 +1182,9 @@ where
         let node = Prns::new(PrnsRecipe {
             transport,
             pre_configured_destinations: [single],
-            app_state: (),
+            app_state,
             storage: NodeStorage::default(),
-            routes: routes![],
+            routes,
             on_event,
             interfaces: interfaces![client],
         });
@@ -1444,9 +1202,9 @@ where
         let node = Prns::new(PrnsRecipe {
             transport,
             pre_configured_destinations: [single],
-            app_state: (),
+            app_state,
             storage: NodeStorage::default(),
-            routes: routes![],
+            routes,
             on_event,
             interfaces: interfaces![udp],
         });
@@ -1473,9 +1231,9 @@ where
         let node = Prns::new(PrnsRecipe {
             transport,
             pre_configured_destinations: [single],
-            app_state: (),
+            app_state,
             storage: NodeStorage::default(),
-            routes: routes![],
+            routes,
             on_event,
             interfaces: servers,
         });
@@ -1565,7 +1323,9 @@ async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, dura
             }
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
             PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
-            PrnsEvent::Message(Message::Resource { data, .. }) => Some(Event::ResourceIn(data.len())),
+            PrnsEvent::Message(Message::Resource { data, .. }) => {
+                Some(Event::ResourceIn(data.len()))
+            }
             PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled { total_size, .. }) => {
                 Some(Event::ResourceIn(total_size as usize))
             }
@@ -1577,7 +1337,8 @@ async fn run_resource_endpoint(manifest: &Manifest, role: &str, addr: &str, dura
     };
 
     if role == "responder" {
-        let (node, bound) = build_responder_node(single, on_event, manifest, addr, None).await;
+        let (node, bound) =
+            build_responder_node(single, (), routes![], on_event, manifest, addr, None).await;
         let commands = node.handle();
         println!("READY role=responder addr={bound}");
         let firehose = respond_resource_runtime(
@@ -1767,6 +1528,686 @@ async fn initiate_resource_runtime(
         percentile(&transfer_ms, 0.50),
         percentile(&transfer_ms, 0.99),
     );
+}
+
+struct RequestServer {
+    served: Arc<AtomicU64>,
+    response_bytes: Arc<AtomicU64>,
+    scratch: Arc<Vec<u8>>,
+}
+
+struct BenchSizedRequestRoute;
+
+impl RequestRoute<RequestServer> for BenchSizedRequestRoute {
+    const PATH: &'static str = REQUEST_PATH;
+    const POLICY: RoutePolicy = RoutePolicy::AllowAll;
+    async fn handle(mut cx: RequestContext<'_, RequestServer>) -> Result<(), Decline> {
+        let wanted = msgpack_bin_payload(cx.data)
+            .get(..2)
+            .map(|len| u16::from_be_bytes([len[0], len[1]]) as usize)
+            .unwrap_or(0)
+            .min(cx.state.scratch.len());
+        let mut framed = Vec::with_capacity(wanted + 3);
+        begin_msgpack_bin(wanted, &mut framed);
+        framed.extend_from_slice(&cx.state.scratch[..wanted]);
+        cx.state.served.fetch_add(1, Ordering::Relaxed);
+        cx.state
+            .response_bytes
+            .fetch_add(wanted as u64, Ordering::Relaxed);
+        cx.respond(&framed)
+    }
+}
+
+async fn run_request_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let initiators = manifest.profile.initiator_count;
+    let single = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
+    };
+    let destination = single
+        .destination_hash()
+        .expect("the bench destination name is valid");
+
+    if role == "responder" {
+        let served = Arc::new(AtomicU64::new(0));
+        let response_bytes = Arc::new(AtomicU64::new(0));
+        let app_state = RequestServer {
+            served: Arc::clone(&served),
+            response_bytes: Arc::clone(&response_bytes),
+            scratch: Arc::new(incompressible_payload(512)),
+        };
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+        let on_event = move |event: PrnsEvent<'_>, _state: &RequestServer| {
+            let mapped = match event {
+                PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+                PrnsEvent::Diagnostic(Diagnostic::LinkClosed { .. }) => Some(Event::Closed),
+                _ => None,
+            };
+            if let Some(event) = mapped {
+                let _ = event_tx.send(event);
+            }
+        };
+        let (node, bound) = build_responder_node(
+            single,
+            app_state,
+            routes![BenchSizedRequestRoute],
+            on_event,
+            manifest,
+            addr,
+            None,
+        )
+        .await;
+        let commands = node.handle();
+        println!("READY role=responder addr={bound}");
+        let firehose = respond_request_runtime(
+            destination,
+            announce_every,
+            duration,
+            initiators,
+            &served,
+            &response_bytes,
+            &commands,
+            event_rx,
+        );
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = firehose => {}
+        }
+    } else if role == "initiator" {
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+        let on_event = move |event: PrnsEvent<'_>, _state: &()| {
+            let mapped = match event {
+                PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                    Some(Event::Heard(destination))
+                }
+                PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
+                    Some(Event::Settled(id, settlement))
+                }
+                PrnsEvent::Message(Message::Response { data, .. }) => {
+                    Some(Event::Response(msgpack_bin_payload(data).len()))
+                }
+                _ => None,
+            };
+            if let Some(event) = mapped {
+                let _ = event_tx.send(event);
+            }
+        };
+        let node = build_initiator_node(single, on_event, manifest, addr).await;
+        let commands = node.handle();
+        println!("READY role=initiator");
+        let firehose = async {
+            initiate_request_runtime(&manifest.profile, duration, &commands, event_rx).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
+        }
+    } else {
+        panic!("unknown role {role:?}");
+    }
+}
+
+async fn respond_request_runtime(
+    destination: DestinationHash,
+    announce_every: Duration,
+    duration: Duration,
+    initiator_count: usize,
+    served: &AtomicU64,
+    response_bytes: &AtomicU64,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let mut links_up = 0usize;
+    let mut closed_links = 0usize;
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
+    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    loop {
+        tokio::select! {
+            _ = announce.tick(), if announcing => {
+                if commands
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep_until(report_at) => {
+                println!(
+                    "RESULT served={} response_bytes={}",
+                    served.load(Ordering::Relaxed),
+                    response_bytes.load(Ordering::Relaxed)
+                );
+                return;
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::LinkUp) => {
+                        links_up += 1;
+                        if links_up >= initiator_count {
+                            announcing = false;
+                        }
+                    }
+                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
+                        closed_links += 1;
+                    }
+                    Some(Event::Closed) | None => {
+                        println!(
+                            "RESULT served={} response_bytes={}",
+                            served.load(Ordering::Relaxed),
+                            response_bytes.load(Ordering::Relaxed)
+                        );
+                        return;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn initiate_request_runtime(
+    profile: &Profile,
+    duration: Duration,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+    let link_id = commands
+        .establish_link(destination)
+        .await
+        .expect("link establishes");
+
+    let scratch = incompressible_payload(profile.request_max.max(2));
+    let mut request_sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.request_min.max(2),
+        profile.request_max,
+        profile.request_min.max(2),
+    );
+    let mut response_sizes = SizeSequence::new(
+        profile.size_seed ^ 0xA5A5_A5A5_A5A5_A5A5,
+        profile.response_min,
+        profile.response_max,
+        profile.response_min,
+    );
+    let path_hash = RequestPathHash::of(REQUEST_PATH);
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut sent = 0u64;
+    let mut delivered = 0u64;
+    let mut delivered_after_reconnect = 0u64;
+    let reconnect_after = Duration::from_millis(profile.reconnect_at_ms.saturating_add(1000));
+    let mut timeouts = 0u64;
+    let mut in_flight = 0usize;
+    let mut request_bytes = 0u64;
+    let mut response_bytes = 0u64;
+    let mut rtts: Vec<u64> = Vec::new();
+    let mut framed = Vec::with_capacity(profile.request_max + 3);
+    let mut send_one = |in_flight: &mut usize, sent: &mut u64| {
+        let request_len = request_sizes.next_len();
+        let wanted = response_sizes.next_len() as u16;
+        begin_msgpack_bin(request_len, &mut framed);
+        framed.extend_from_slice(&wanted.to_be_bytes());
+        framed.extend_from_slice(&scratch[..request_len - 2]);
+        request_bytes += request_len as u64;
+        if commands
+            .issue(EngineCommand::SendRequest(SendRequest {
+                link_id,
+                path_hash,
+                data: SendRequestData::from_slice(&framed).expect("request fits"),
+            }))
+            .is_some()
+        {
+            *sent += 1;
+            *in_flight += 1;
+        }
+    };
+
+    for _ in 0..profile.window {
+        send_one(&mut in_flight, &mut sent);
+    }
+    let drain_deadline = deadline + DRAIN_GRACE;
+    let failure_streak_limit = failure_streak_limit(profile.window);
+    let mut failure_streak = 0u64;
+    let mut died = false;
+    while in_flight > 0 {
+        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
+        let Ok(Some(event)) = event else { break };
+        match event {
+            Event::Settled(_, Settlement::SendRequest(result)) => {
+                in_flight -= 1;
+                match result {
+                    Ok(receipt) => {
+                        failure_streak = 0;
+                        delivered += 1;
+                        if profile.reconnect_at_ms > 0 && started.elapsed() > reconnect_after {
+                            delivered_after_reconnect += 1;
+                        }
+                        rtts.push(receipt.rtt.millis());
+                    }
+                    Err(_) => {
+                        timeouts += 1;
+                        failure_streak += 1;
+                    }
+                }
+                if !died && failure_streak >= failure_streak_limit {
+                    died = true;
+                    eprintln!("DIED mechanism=request failure_streak={failure_streak}");
+                }
+                if !died && tokio::time::Instant::now() < deadline {
+                    send_one(&mut in_flight, &mut sent);
+                }
+            }
+            Event::Response(bytes) => {
+                response_bytes += bytes as u64;
+            }
+            _ => {}
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    commands.close_link(link_id);
+    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
+    loop {
+        match tokio::time::timeout_at(close_deadline, events.recv()).await {
+            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+
+    rtts.sort_unstable();
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    let reconnect_field = if profile.reconnect_at_ms > 0 {
+        format!(" delivered_after_reconnect={delivered_after_reconnect}")
+    } else {
+        String::new()
+    };
+    println!(
+        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+         request_bytes={request_bytes} response_bytes={response_bytes} \
+         elapsed_ms={elapsed_ms} requests_per_sec={:.1} \
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}{reconnect_field} build={BUILD_PROFILE}",
+        delivered as f64 / seconds,
+        percentile(&rtts, 0.50),
+        percentile(&rtts, 0.99),
+        died_marker(died),
+    );
+}
+
+async fn run_churn_endpoint(manifest: &Manifest, role: &str, addr: &str, duration: Duration) {
+    let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
+    let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let announce_every = Duration::from_millis(manifest.profile.announce_every_ms);
+    let resource_strategy = if role == "responder" {
+        ResourceStrategy::Accept {
+            max_uncompressed_len: 128 * 1024 * 1024,
+            accept_compressed: false,
+        }
+    } else {
+        ResourceStrategy::AcceptNone
+    };
+    let single = PreConfiguredDestination::Single {
+        app_name: "bench",
+        aspects,
+        identity: fresh_identity(),
+        announce_app_data: b"",
+        proof: ProofStrategy::ProveAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy,
+    };
+    let destination = single
+        .destination_hash()
+        .expect("the bench destination name is valid");
+
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let on_event = move |event: PrnsEvent<'_>, _state: &()| {
+        let mapped = match event {
+            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                Some(Event::Heard(destination))
+            }
+            PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement }) => {
+                Some(Event::Settled(id, settlement))
+            }
+            PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(_)) => Some(Event::LinkUp),
+            PrnsEvent::Message(Message::Delivered(Delivery::Single(delivery))) => {
+                Some(Event::Delivered(delivery.plaintext.len()))
+            }
+            PrnsEvent::Message(Message::Delivered(Delivery::Link(delivery))) => {
+                Some(Event::Delivered(delivery.plaintext.len()))
+            }
+            PrnsEvent::Message(Message::Resource { data, .. }) => {
+                Some(Event::ResourceIn(data.len()))
+            }
+            PrnsEvent::Diagnostic(Diagnostic::ResourceAssembled { total_size, .. }) => {
+                Some(Event::ResourceIn(total_size as usize))
+            }
+            _ => None,
+        };
+        if let Some(event) = mapped {
+            let _ = event_tx.send(event);
+        }
+    };
+
+    if role == "responder" {
+        let (node, bound) =
+            build_responder_node(single, (), routes![], on_event, manifest, addr, None).await;
+        let commands = node.handle();
+        println!("READY role=responder addr={bound}");
+        let firehose =
+            respond_churn_runtime(destination, announce_every, duration, &commands, event_rx);
+        tokio::select! {
+            () = node.run() => unreachable!("the responder's run loop returned"),
+            () = firehose => {}
+        }
+    } else if role == "initiator" {
+        let node = build_initiator_node(single, on_event, manifest, addr).await;
+        let commands = node.handle();
+        println!("READY role=initiator");
+        let firehose = async {
+            initiate_churn_runtime(&manifest.profile, duration, &commands, event_rx).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        tokio::select! {
+            () = node.run() => unreachable!("the initiator's run loop returned"),
+            () = firehose => {}
+        }
+    } else {
+        panic!("unknown role {role:?}");
+    }
+}
+
+async fn respond_churn_runtime(
+    destination: DestinationHash,
+    announce_every: Duration,
+    duration: Duration,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let mut announce = tokio::time::interval(announce_every);
+    let mut announcing = true;
+    let mut idle = tokio::time::interval(Duration::from_millis(200));
+    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    let mut received = 0u64;
+    let mut payload_bytes = 0u64;
+    let mut last_delivery: Option<tokio::time::Instant> = None;
+    loop {
+        tokio::select! {
+            _ = announce.tick(), if announcing => {
+                if commands
+                    .issue(EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }))
+                    .is_none()
+                {
+                    return;
+                }
+            }
+            _ = idle.tick() => {
+                if last_delivery.is_some_and(|at| at.elapsed() > QUIET_AFTER_TRAFFIC) {
+                    println!("RESULT received={received} payload_bytes={payload_bytes}");
+                    return;
+                }
+            }
+            _ = tokio::time::sleep_until(report_at) => {
+                println!("RESULT received={received} payload_bytes={payload_bytes}");
+                return;
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::LinkUp) => {
+                        announcing = false;
+                    }
+                    Some(Event::Delivered(bytes)) | Some(Event::ResourceIn(bytes)) => {
+                        received += 1;
+                        payload_bytes += bytes as u64;
+                        last_delivery = Some(tokio::time::Instant::now());
+                    }
+                    None => return,
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn initiate_churn_runtime(
+    profile: &Profile,
+    duration: Duration,
+    commands: &TokioPrnsHandle,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+
+    let scratch = incompressible_payload(profile.file_max.max(profile.page_max));
+    let mut sizes = SizeSequence::new(profile.size_seed, 0, 0, 1);
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let mut cycles = 0u64;
+    let mut failures = 0u64;
+    let mut commands_moved = 0u64;
+    let mut pages_moved = 0u64;
+    let mut files_moved = 0u64;
+    let mut payload_bytes = 0u64;
+    let mut establish_ms: Vec<u64> = Vec::new();
+    let mut cycle_ms: Vec<u64> = Vec::new();
+    let mut close_ms: Vec<u64> = Vec::new();
+    let mut transfer_ms_by_band: [Vec<u64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut failure_streak = 0u64;
+    let mut died = false;
+
+    'churn: while tokio::time::Instant::now() < deadline {
+        let cycle_started = tokio::time::Instant::now();
+        let Some(establish_id) =
+            commands.issue(EngineCommand::EstablishLink(EstablishLink { destination }))
+        else {
+            break;
+        };
+        let link_id = loop {
+            match events.recv().await {
+                Some(Event::Settled(id, Settlement::EstablishLink(result)))
+                    if id == establish_id =>
+                {
+                    match result {
+                        Ok(established) => break established.link_id,
+                        Err(_) => {
+                            failures += 1;
+                            failure_streak += 1;
+                            if failure_streak >= CHURN_FAILURE_STREAK_LIMIT {
+                                died = true;
+                                eprintln!("DIED mechanism=churn failure_streak={failure_streak}");
+                                break 'churn;
+                            }
+                            continue 'churn;
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => break 'churn,
+            }
+        };
+        establish_ms.push(cycle_started.elapsed().as_millis() as u64);
+
+        let (band, len) = roll_band(&mut sizes, profile);
+        let transfer_started = tokio::time::Instant::now();
+        let moved = match band {
+            Band::Command => {
+                let Some(transfer_id) = commands.issue(EngineCommand::SendLink(SendLink {
+                    link_id,
+                    payload: SendLinkPayload::from_slice(&scratch[..len]).expect("command fits"),
+                })) else {
+                    break;
+                };
+                loop {
+                    match events.recv().await {
+                        Some(Event::Settled(id, Settlement::SendLink(result)))
+                            if id == transfer_id =>
+                        {
+                            break result.is_ok();
+                        }
+                        Some(_) => {}
+                        None => break 'churn,
+                    }
+                }
+            }
+            Band::Page | Band::File => commands
+                .send_resource(link_id, len as u64, &scratch[..len])
+                .await
+                .is_ok(),
+        };
+        let transfer_elapsed = transfer_started.elapsed().as_millis() as u64;
+        if moved {
+            failure_streak = 0;
+            payload_bytes += len as u64;
+            let band_index = match band {
+                Band::Command => {
+                    commands_moved += 1;
+                    0
+                }
+                Band::Page => {
+                    pages_moved += 1;
+                    1
+                }
+                Band::File => {
+                    files_moved += 1;
+                    2
+                }
+            };
+            transfer_ms_by_band[band_index].push(transfer_elapsed);
+        } else {
+            failures += 1;
+            failure_streak += 1;
+        }
+
+        let close_started = tokio::time::Instant::now();
+        commands.close_link(link_id);
+        loop {
+            match events.recv().await {
+                Some(Event::Settled(_, Settlement::CloseLink(_))) => break,
+                Some(_) => {}
+                None => break 'churn,
+            }
+        }
+        close_ms.push(close_started.elapsed().as_millis() as u64);
+        if moved {
+            cycles += 1;
+            cycle_ms.push(cycle_started.elapsed().as_millis() as u64);
+        }
+        if !died && failure_streak >= CHURN_FAILURE_STREAK_LIMIT {
+            died = true;
+            eprintln!("DIED mechanism=churn failure_streak={failure_streak}");
+            break;
+        }
+    }
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    establish_ms.sort_unstable();
+    cycle_ms.sort_unstable();
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    println!(
+        "RESULT cycles={cycles} failures={failures} commands={commands_moved} \
+         pages={pages_moved} files={files_moved} payload_bytes={payload_bytes} \
+         elapsed_ms={elapsed_ms} cycles_per_sec={:.1} \
+         establish_p50_ms={:.0} establish_p99_ms={:.0} \
+         cycle_p50_ms={:.0} cycle_p99_ms={:.0}{}",
+        cycles as f64 / seconds,
+        percentile(&establish_ms, 0.50),
+        percentile(&establish_ms, 0.99),
+        percentile(&cycle_ms, 0.50),
+        percentile(&cycle_ms, 0.99),
+        died_marker(died),
+    );
+
+    let [mut command_ms, mut page_ms, mut file_ms] = transfer_ms_by_band;
+    let establish_line = phase_line("establish", &mut establish_ms);
+    let close_line = phase_line("close", &mut close_ms);
+    let command_line = phase_line("transfer_command", &mut command_ms);
+    let page_line = phase_line("transfer_page", &mut page_ms);
+    let file_line = phase_line("transfer_file", &mut file_ms);
+    eprintln!(
+        "PHASES {establish_line} | {close_line} | {command_line} | {page_line} | {file_line}"
+    );
+}
+
+async fn run_tunnel_probe(manifest: &Manifest, addr: &str, duration: Duration) {
+    let mut engine = EngineState::<NodeStorage>::new(fresh_identity());
+    let node = engine.held_identity_hashes()[0];
+    let _destination = engine
+        .register_single_destination(
+            &node,
+            "bench",
+            &[&manifest.name],
+            b"",
+            ProofStrategy::ProveAll,
+            RatchetPolicy::NoRatchets,
+        )
+        .expect("registers the bench destination");
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx, out_rx);
+    let egress = Egress::new(vec![(TCP_INTERFACE_ID, out_tx)]);
+    let interfaces = vec![tcp_core::descriptor(
+        TCP_INTERFACE_ID,
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+    )];
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+    let journal = move |journaled: Journaled<'_>| match journaled {
+        Journaled::AnnounceHeard { destination, .. } => {
+            let _ = event_tx.send(Event::Heard(destination));
+        }
+        Journaled::CommandSettled { id, settlement } => {
+            let _ = event_tx.send(Event::Settled(id, settlement));
+        }
+        _ => {}
+    };
+    let interface = TcpClientInterface::new_with_id(
+        TCP_INTERFACE_ID,
+        addr.to_string(),
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+        Duration::from_millis(100),
+    );
+    tokio::spawn(interface.run(seam));
+    tokio::spawn(run(
+        engine,
+        interfaces,
+        vec![],
+        TokioHost::new(),
+        notify_rx,
+        vec![(TCP_INTERFACE_ID, in_rx)],
+        command_rx,
+        egress,
+        journal,
+    ));
+    println!("READY role=initiator");
+    initiate_single(&manifest.profile, duration, command_tx, event_rx).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 /// The proving end: announce on a cadence (ProveAll proves every single inside the
@@ -2373,238 +2814,6 @@ async fn initiate_channel(
     );
 }
 
-/// The serving end of the RPC shape: a registered handler answers every
-/// allowed request with exactly the byte count the request named — the
-/// realistic query/answer pattern, sizes varied by the initiator.
-async fn respond_request(
-    destination: DestinationHash,
-    announce_every: Duration,
-    initiator_count: usize,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let mut links_up = 0usize;
-    let mut closed_links = 0usize;
-    let scratch = incompressible_payload(512);
-    let mut framed = Vec::with_capacity(scratch.len() + 3);
-    let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(announce_every);
-    let mut announcing = true;
-    let mut served = 0u64;
-    let mut response_bytes = 0u64;
-    loop {
-        tokio::select! {
-            _ = announce.tick(), if announcing => {
-                let command = IssuedCommand {
-                    id: CommandId(next_id),
-                    command: EngineCommand::AnnounceNow(AnnounceNow {
-                        destination,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    }),
-                };
-                next_id += 1;
-                if commands.send(HostCommand::Engine(command)).is_err() {
-                    return;
-                }
-            }
-            event = events.recv() => {
-                match event {
-                    Some(Event::LinkUp) => {
-                        links_up += 1;
-                        if links_up >= initiator_count {
-                            announcing = false;
-                        }
-                    }
-                    Some(Event::Request { link_id, request_id, wanted }) => {
-                        next_id += 1;
-                        let wanted = wanted.min(scratch.len());
-                        let framed = msgpack_bin_into(&scratch[..wanted], &mut framed);
-                        let respond = IssuedCommand {
-                            id: CommandId(next_id),
-                            command: EngineCommand::Respond(Respond {
-                                link_id,
-                                request_id,
-                                data: RespondData::from_slice(framed).expect("response fits"),
-                            }),
-                        };
-                        if commands.send(HostCommand::Engine(respond)).is_err() {
-                            return;
-                        }
-                        served += 1;
-                        response_bytes += wanted as u64;
-                    }
-                    Some(Event::Closed) if closed_links + 1 < initiator_count => {
-                        closed_links += 1;
-                    }
-                    Some(Event::Closed) | None => {
-                        println!("RESULT served={served} response_bytes={response_bytes}");
-                        return;
-                    }
-                    Some(_) => {}
-                }
-            }
-        }
-    }
-}
-
-/// The asking end: one link, then `window` requests in flight until the
-/// wall-time elapses — each request a varied size, each naming a varied
-/// response size it wants back. Latency from the settled receipts.
-async fn initiate_request(
-    profile: &Profile,
-    duration: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let destination = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Heard(destination) => break destination,
-            _ => {}
-        }
-    };
-    commands
-        .send(HostCommand::Engine(IssuedCommand {
-            id: CommandId(1),
-            command: EngineCommand::EstablishLink(EstablishLink { destination }),
-        }))
-        .expect("reactor alive");
-    let link_id = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Ok(established))) => {
-                break established.link_id;
-            }
-            Event::Settled(CommandId(1), Settlement::EstablishLink(Err(failure))) => {
-                panic!("link refused: {failure:?}");
-            }
-            _ => {}
-        }
-    };
-
-    let scratch = incompressible_payload(profile.request_max.max(2));
-    let mut request_sizes = SizeSequence::new(
-        profile.size_seed,
-        profile.request_min.max(2),
-        profile.request_max,
-        profile.request_min.max(2),
-    );
-    let mut response_sizes = SizeSequence::new(
-        profile.size_seed ^ 0xA5A5_A5A5_A5A5_A5A5,
-        profile.response_min,
-        profile.response_max,
-        profile.response_min,
-    );
-    let path_hash = RequestPathHash::of(REQUEST_PATH);
-    let started = tokio::time::Instant::now();
-    let deadline = started + duration;
-    let mut next_id = 2u64;
-    let mut sent = 0u64;
-    let mut delivered = 0u64;
-    let mut delivered_after_reconnect = 0u64;
-    let reconnect_after = Duration::from_millis(profile.reconnect_at_ms.saturating_add(1000));
-    let mut timeouts = 0u64;
-    let mut in_flight = 0usize;
-    let mut request_bytes = 0u64;
-    let mut response_bytes = 0u64;
-    let mut rtts: Vec<u64> = Vec::new();
-    let mut framed = Vec::with_capacity(profile.request_max + 3);
-    let mut send_one = |in_flight: &mut usize, sent: &mut u64, next_id: &mut u64| {
-        let request_len = request_sizes.next_len();
-        let wanted = response_sizes.next_len() as u16;
-        begin_msgpack_bin(request_len, &mut framed);
-        framed.extend_from_slice(&wanted.to_be_bytes());
-        framed.extend_from_slice(&scratch[..request_len - 2]);
-        request_bytes += request_len as u64;
-        let command = IssuedCommand {
-            id: CommandId(*next_id),
-            command: EngineCommand::SendRequest(SendRequest {
-                link_id,
-                path_hash,
-                data: SendRequestData::from_slice(&framed).expect("request fits"),
-            }),
-        };
-        *next_id += 1;
-        *sent += 1;
-        *in_flight += 1;
-        commands.send(HostCommand::Engine(command)).is_ok()
-    };
-
-    for _ in 0..profile.window {
-        send_one(&mut in_flight, &mut sent, &mut next_id);
-    }
-    let drain_deadline = deadline + DRAIN_GRACE;
-    let failure_streak_limit = failure_streak_limit(profile.window);
-    let mut failure_streak = 0u64;
-    let mut died = false;
-    while in_flight > 0 {
-        let event = tokio::time::timeout_at(drain_deadline, events.recv()).await;
-        let Ok(Some(event)) = event else { break };
-        match event {
-            Event::Settled(_, Settlement::SendRequest(result)) => {
-                in_flight -= 1;
-                match result {
-                    Ok(receipt) => {
-                        failure_streak = 0;
-                        delivered += 1;
-                        if profile.reconnect_at_ms > 0 && started.elapsed() > reconnect_after {
-                            delivered_after_reconnect += 1;
-                        }
-                        rtts.push(receipt.rtt.millis());
-                    }
-                    Err(_) => {
-                        timeouts += 1;
-                        failure_streak += 1;
-                    }
-                }
-                if !died && failure_streak >= failure_streak_limit {
-                    died = true;
-                    eprintln!("DIED mechanism=request failure_streak={failure_streak}");
-                }
-                if !died && tokio::time::Instant::now() < deadline {
-                    send_one(&mut in_flight, &mut sent, &mut next_id);
-                }
-            }
-            Event::Response(bytes) => {
-                response_bytes += bytes as u64;
-            }
-            _ => {}
-        }
-    }
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-
-    commands
-        .send(HostCommand::Engine(IssuedCommand {
-            id: CommandId(next_id + 1),
-            command: EngineCommand::CloseLink(CloseLink { link_id }),
-        }))
-        .expect("reactor alive");
-    let close_deadline = tokio::time::Instant::now() + DRAIN_GRACE;
-    loop {
-        match tokio::time::timeout_at(close_deadline, events.recv()).await {
-            Ok(Some(Event::Settled(_, Settlement::CloseLink(_)))) | Ok(None) | Err(_) => break,
-            Ok(Some(_)) => {}
-        }
-    }
-
-    rtts.sort_unstable();
-    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
-    let reconnect_field = if profile.reconnect_at_ms > 0 {
-        format!(" delivered_after_reconnect={delivered_after_reconnect}")
-    } else {
-        String::new()
-    };
-    println!(
-        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
-         request_bytes={request_bytes} response_bytes={response_bytes} \
-         elapsed_ms={elapsed_ms} requests_per_sec={:.1} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}{reconnect_field} build={BUILD_PROFILE}",
-        delivered as f64 / seconds,
-        percentile(&rtts, 0.50),
-        percentile(&rtts, 0.99),
-        died_marker(died),
-    );
-}
-
 /// A pure transport node: no destinations, no app — just the engine with its
 /// transport identity, standing between two endpoints on two server
 /// interfaces. Everything it does (announce rebroadcast with the transport
@@ -2790,8 +2999,12 @@ async fn tunnel_relay_node(manifest: &Manifest) {
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_b_tx, in_b_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let (out_b_tx, out_b_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
-    let seam_b =
-        TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in_b_tx, notify_tx.clone(), out_b_rx);
+    let seam_b = TokioInterfaceSeam::new(
+        RELAY_SECOND_INTERFACE_ID,
+        in_b_tx,
+        notify_tx.clone(),
+        out_b_rx,
+    );
     let egress = Egress::new(vec![(RELAY_SECOND_INTERFACE_ID, out_b_tx)]);
     let interfaces = vec![tcp_core::descriptor(
         RELAY_SECOND_INTERFACE_ID,
@@ -2930,253 +3143,6 @@ async fn chain_node(upstream: &str) {
     ));
     println!("READY role=chain addr={addr}");
     std::future::pending::<()>().await;
-}
-
-/// The serving end of session churn: every fresh link gets the strategy gate
-/// opened, every delivery counted, and the report comes when the churn has
-/// been quiet — closed links are the cycle's normal end, not the run's.
-async fn respond_churn(
-    destination: DestinationHash,
-    announce_every: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let mut next_id = 1u64;
-    let mut announce = tokio::time::interval(announce_every);
-    let mut announcing = true;
-    let mut idle = tokio::time::interval(Duration::from_millis(200));
-    let mut received = 0u64;
-    let mut payload_bytes = 0u64;
-    let mut last_delivery: Option<tokio::time::Instant> = None;
-    loop {
-        tokio::select! {
-            _ = announce.tick(), if announcing => {
-                let command = IssuedCommand {
-                    id: CommandId(next_id),
-                    command: EngineCommand::AnnounceNow(AnnounceNow {
-                        destination,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    }),
-                };
-                next_id += 1;
-                if commands.send(HostCommand::Engine(command)).is_err() {
-                    return;
-                }
-            }
-            _ = idle.tick() => {
-                if last_delivery.is_some_and(|at| at.elapsed() > QUIET_AFTER_TRAFFIC) {
-                    println!("RESULT received={received} payload_bytes={payload_bytes}");
-                    return;
-                }
-            }
-            event = events.recv() => {
-                match event {
-                    Some(Event::LinkUp) => {
-                        announcing = false;
-                    }
-                    Some(Event::Delivered(bytes)) | Some(Event::ResourceIn(bytes)) => {
-                        received += 1;
-                        payload_bytes += bytes as u64;
-                        last_delivery = Some(tokio::time::Instant::now());
-                    }
-                    None => return,
-                    Some(_) => {}
-                }
-            }
-        }
-    }
-}
-
-/// The churning end: hear the announce once, then live whole sessions back
-/// to back — establish, move one banded payload (command sends on the link,
-/// pages and files as resources), tear down. The product is sessions per
-/// second and where the time goes.
-async fn initiate_churn(
-    profile: &Profile,
-    duration: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let destination = loop {
-        match events.recv().await.expect("reactor alive") {
-            Event::Heard(destination) => break destination,
-            _ => {}
-        }
-    };
-
-    let scratch: Arc<[u8]> = incompressible_payload(profile.file_max.max(profile.page_max)).into();
-    let mut sizes = SizeSequence::new(profile.size_seed, 0, 0, 1);
-    let started = tokio::time::Instant::now();
-    let deadline = started + duration;
-    let mut next_id = 1u64;
-    let mut cycles = 0u64;
-    let mut failures = 0u64;
-    let mut commands_moved = 0u64;
-    let mut pages_moved = 0u64;
-    let mut files_moved = 0u64;
-    let mut payload_bytes = 0u64;
-    let mut establish_ms: Vec<u64> = Vec::new();
-    let mut cycle_ms: Vec<u64> = Vec::new();
-    let mut close_ms: Vec<u64> = Vec::new();
-    let mut transfer_ms_by_band: [Vec<u64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-    let mut failure_streak = 0u64;
-    let mut died = false;
-
-    'churn: while tokio::time::Instant::now() < deadline {
-        let cycle_started = tokio::time::Instant::now();
-        next_id += 1;
-        let establish_id = CommandId(next_id);
-        commands
-            .send(HostCommand::Engine(IssuedCommand {
-                id: establish_id,
-                command: EngineCommand::EstablishLink(EstablishLink { destination }),
-            }))
-            .expect("reactor alive");
-        let link_id = loop {
-            match events.recv().await.expect("reactor alive") {
-                Event::Settled(id, Settlement::EstablishLink(result)) if id == establish_id => {
-                    match result {
-                        Ok(established) => break established.link_id,
-                        Err(_) => {
-                            failures += 1;
-                            failure_streak += 1;
-                            if failure_streak >= CHURN_FAILURE_STREAK_LIMIT {
-                                died = true;
-                                eprintln!("DIED mechanism=churn failure_streak={failure_streak}");
-                                break 'churn;
-                            }
-                            continue 'churn;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        };
-        establish_ms.push(cycle_started.elapsed().as_millis() as u64);
-
-        let (band, len) = roll_band(&mut sizes, profile);
-        let transfer_started = tokio::time::Instant::now();
-        next_id += 1;
-        let transfer_id = CommandId(next_id);
-        let moved = match band {
-            Band::Command => {
-                commands
-                    .send(HostCommand::Engine(IssuedCommand {
-                        id: transfer_id,
-                        command: EngineCommand::SendLink(SendLink {
-                            link_id,
-                            payload: SendLinkPayload::from_slice(&scratch[..len])
-                                .expect("command fits"),
-                        }),
-                    }))
-                    .expect("reactor alive");
-                loop {
-                    match events.recv().await.expect("reactor alive") {
-                        Event::Settled(id, Settlement::SendLink(result)) if id == transfer_id => {
-                            break result.is_ok();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Band::Page | Band::File => {
-                commands
-                    .send(HostCommand::SendResource(SendResourceHostCommand {
-                        id: transfer_id,
-                        link_id,
-                        data: HostResourcePayload::shared_prefix(Arc::clone(&scratch), len)
-                            .expect("profile size stays within scratch"),
-                        compressed_candidate: None,
-                        request_id: None,
-                    }))
-                    .expect("reactor alive");
-                loop {
-                    match events.recv().await.expect("reactor alive") {
-                        Event::Settled(id, Settlement::SendResource(result))
-                            if id == transfer_id =>
-                        {
-                            break result.is_ok();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        };
-        let transfer_elapsed = transfer_started.elapsed().as_millis() as u64;
-        if moved {
-            failure_streak = 0;
-            payload_bytes += len as u64;
-            match band {
-                Band::Command => commands_moved += 1,
-                Band::Page => pages_moved += 1,
-                Band::File => files_moved += 1,
-            }
-            let band_index = match band {
-                Band::Command => 0,
-                Band::Page => 1,
-                Band::File => 2,
-            };
-            transfer_ms_by_band[band_index].push(transfer_elapsed);
-        } else {
-            failures += 1;
-            failure_streak += 1;
-        }
-
-        let close_started = tokio::time::Instant::now();
-        next_id += 1;
-        let close_id = CommandId(next_id);
-        commands
-            .send(HostCommand::Engine(IssuedCommand {
-                id: close_id,
-                command: EngineCommand::CloseLink(CloseLink { link_id }),
-            }))
-            .expect("reactor alive");
-        loop {
-            match events.recv().await.expect("reactor alive") {
-                Event::Settled(id, Settlement::CloseLink(_)) if id == close_id => break,
-                _ => {}
-            }
-        }
-        close_ms.push(close_started.elapsed().as_millis() as u64);
-        if moved {
-            cycles += 1;
-            cycle_ms.push(cycle_started.elapsed().as_millis() as u64);
-        }
-        if !died && failure_streak >= CHURN_FAILURE_STREAK_LIMIT {
-            died = true;
-            eprintln!("DIED mechanism=churn failure_streak={failure_streak}");
-            break;
-        }
-    }
-    let elapsed_ms = started.elapsed().as_millis() as u64;
-
-    establish_ms.sort_unstable();
-    cycle_ms.sort_unstable();
-    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
-    println!(
-        "RESULT cycles={cycles} failures={failures} commands={commands_moved} \
-         pages={pages_moved} files={files_moved} payload_bytes={payload_bytes} \
-         elapsed_ms={elapsed_ms} cycles_per_sec={:.1} \
-         establish_p50_ms={:.0} establish_p99_ms={:.0} \
-         cycle_p50_ms={:.0} cycle_p99_ms={:.0}{}",
-        cycles as f64 / seconds,
-        percentile(&establish_ms, 0.50),
-        percentile(&establish_ms, 0.99),
-        percentile(&cycle_ms, 0.50),
-        percentile(&cycle_ms, 0.99),
-        died_marker(died),
-    );
-
-    let [mut command_ms, mut page_ms, mut file_ms] = transfer_ms_by_band;
-    let establish_line = phase_line("establish", &mut establish_ms);
-    let close_line = phase_line("close", &mut close_ms);
-    let command_line = phase_line("transfer_command", &mut command_ms);
-    let page_line = phase_line("transfer_page", &mut page_ms);
-    let file_line = phase_line("transfer_file", &mut file_ms);
-    eprintln!(
-        "PHASES {establish_line} | {close_line} | {command_line} | {page_line} | {file_line}"
-    );
 }
 
 const CHURN_FAILURE_STREAK_LIMIT: u64 = 64;
