@@ -185,6 +185,7 @@ impl<S: StorageLayout> EngineState<S> {
         view: &[InterfaceConfig],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
+        self.tunnels.expire(now);
         let dirty = &mut self.dirty_interfaces;
         self.routing_table.cull_expired_routes_with_tunnels(
             now,
