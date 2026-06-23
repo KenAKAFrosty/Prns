@@ -10,6 +10,9 @@
 use core::time::Duration;
 
 use personal_rns::interfaces::rns_parity::ax25_kiss::impls::tokio::Ax25KissInterface;
+use personal_rns::interfaces::rns_parity::backbone::client::BackboneClientInterface;
+use personal_rns::interfaces::rns_parity::backbone::core as backbone_core;
+use personal_rns::interfaces::rns_parity::backbone::server::BackboneServer;
 use personal_rns::interfaces::rns_parity::kiss::core::TncConfig;
 use personal_rns::interfaces::rns_parity::kiss::impls::tokio::{KissInterface, CONFIGURE_SETTLE};
 use personal_rns::interfaces::rns_parity::pipe::impls::tokio::PipeInterface;
@@ -225,6 +228,38 @@ async fn stand_up(handle: &TokioPrnsHandle, interface: &PlannedInterface) {
                     );
                 }
             }
+        }
+        PlannedMedium::Backbone { bind } => {
+            // Wire-identical to a TCP server, under the Backbone kind. The listener's default pipe
+            // claim is the reference's gigabit `BackboneInterface.BITRATE_GUESS`.
+            let bitrate = interface
+                .bitrate_bps
+                .unwrap_or(backbone_core::BACKBONE_BITRATE_GUESS_BPS);
+            match BackboneServer::bind(bind.clone(), bitrate).await {
+                Ok(server) => {
+                    handle.supervise(server);
+                    println!("RNSD_INTERFACE_UP name={name:?} medium=backbone bind={bind}");
+                }
+                Err(error) => {
+                    eprintln!(
+                        "RNSD_INTERFACE_FAILED name={name:?} medium=backbone bind={bind} error={error}"
+                    );
+                }
+            }
+        }
+        PlannedMedium::BackboneClient { host, port } => {
+            // Wire-identical to a TCP client, under the Backbone kind. The connector's default pipe
+            // claim is the reference's 100 Mbps `BackboneClientInterface.BITRATE_GUESS`.
+            let target = format!("{host}:{port}");
+            let bitrate = interface
+                .bitrate_bps
+                .unwrap_or(backbone_core::BACKBONE_CLIENT_BITRATE_GUESS_BPS);
+            handle.add_interface(BackboneClientInterface::new(
+                target.clone(),
+                bitrate,
+                TCP_RECONNECT,
+            ));
+            println!("RNSD_INTERFACE_UP name={name:?} medium=backbone-client target={target}");
         }
         PlannedMedium::Pipe {
             command,
