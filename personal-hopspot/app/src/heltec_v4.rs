@@ -6,15 +6,12 @@ use esp_hal::efuse::base_mac_address;
 use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
-use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
 use esp_hal::rtc_cntl::Rtc;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::system::Stack as CpuStack;
 use esp_hal::time::Rate;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
-use esp_hal::Async;
 use esp_println::println;
 
 use core::fmt::Write as _;
@@ -55,8 +52,6 @@ use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
 use personal_rns::interfaces::rns_parity::wifi_auto::core as wifi_core;
 use personal_rns::interfaces::rns_parity::wifi_auto::{AutoWifi, AutoWifiShared, AutoWifiStatus};
 use personal_rns::interfaces::substrate::EmbassyTimebase;
-use personal_rns::interfaces::usb_auto::core::device_descriptor;
-use personal_rns::interfaces::usb_auto::impls::embassy::UsbAutoDevice;
 use personal_rns::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus, MacAddress,
     Membership,
@@ -276,7 +271,7 @@ pub async fn run(spawner: Spawner) {
     let p = esp_hal::init(config);
 
     esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(size: 56 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 56 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
@@ -316,6 +311,8 @@ pub async fn run(spawner: Spawner) {
         screen::splash(&mut display, "Personal Hopspot");
         let _ = display.flush();
     }
+
+    USB_STATUS.set_enabled(false);
 
     let mac = base_mac_address();
     let mut mac_octets = [0u8; 6];
@@ -458,7 +455,6 @@ pub async fn run(spawner: Spawner) {
         host,
         HVec::new(),
     ));
-    node.activate(0, device_descriptor(USB_INTERFACE_ID));
     if let Some((tcp, _, _)) = &tcp_built {
         node.activate(TCP_SLOT, tcp.descriptor());
     }
@@ -487,16 +483,6 @@ pub async fn run(spawner: Spawner) {
                 })
         },
     );
-
-    let (usb_in_producer, usb_out_consumer) = iface_halves[0].take().expect("slot 0 half");
-    let usb_seam = EmbassyInterfaceSeam::new(
-        USB_INTERFACE_ID,
-        usb_in_producer,
-        NOTIFY.sender(),
-        usb_out_consumer,
-    );
-    let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
-    let usb_device = usb_device(usb_rx, usb_tx);
 
     let (lora_in_producer, lora_out_consumer) =
         iface_halves[LORA_SLOT].take().expect("lora slot half");
@@ -659,30 +645,30 @@ pub async fn run(spawner: Spawner) {
     let ble_connector = esp_radio::ble::controller::BleConnector::new(p.BT, Default::default())
         .expect("ble connector");
 
-    let usb_lora = join(usb_device.run(usb_seam), lora.run(lora_seam));
+    let lora_run = lora.run(lora_seam);
     match (wifi, tcp) {
         (Some(wifi), Some((tcp, tcp_seam))) => {
             join(
-                join(usb_lora, join(wifi.run(fleet), tcp.run(tcp_seam))),
+                join(lora_run, join(wifi.run(fleet), tcp.run(tcp_seam))),
                 render,
             )
             .await;
         }
         (Some(wifi), None) => {
-            join(join(usb_lora, wifi.run(fleet)), render).await;
+            join(join(lora_run, wifi.run(fleet)), render).await;
         }
         (None, _) => {
             #[cfg(feature = "ble-bringup")]
             join(
                 join(
-                    usb_lora,
+                    lora_run,
                     crate::ble::run(ble_connector, mac_octets, node_identity),
                 ),
                 render,
             )
             .await;
             #[cfg(not(feature = "ble-bringup"))]
-            join(usb_lora, render).await;
+            join(lora_run, render).await;
         }
     }
 }
@@ -756,30 +742,6 @@ fn build_cards(
         });
     }
     screen::snapshots_to_cards(&snapshots, classify)
-}
-
-/// The board's concrete USB-auto device over the serial-jtag halves, reporting into [`USB_STATUS`].
-fn usb_device(
-    rx: UsbSerialJtagRx<'static, Async>,
-    tx: UsbSerialJtagTx<'static, Async>,
-) -> UsbAutoDevice<
-    'static,
-    UsbSerialJtagRx<'static, Async>,
-    UsbSerialJtagTx<'static, Async>,
-    impl FnMut() -> bool,
-> {
-    let mut last_sof = 0u16;
-    let host_present = move || {
-        let frame = USB_DEVICE::regs()
-            .fram_num()
-            .read()
-            .sof_frame_index()
-            .bits();
-        let advanced = frame != last_sof;
-        last_sof = frame;
-        advanced
-    };
-    UsbAutoDevice::new(USB_INTERFACE_ID, rx, tx, &USB_STATUS, host_present)
 }
 
 /// Stand the TCP client up from [`HOPSPOT_TCP_TARGET`] over the WiFi `stack`: parse its `ip:port`
