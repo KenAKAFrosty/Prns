@@ -594,6 +594,9 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                 ));
             }
+            IngestPacketOutcome::TunnelObserved { expires } => {
+                wake_schedule_changes.expired_routes = LaneWake::AtMost(expires);
+            }
             IngestPacketOutcome::Ignored => {}
         }
         wake_schedule_changes
