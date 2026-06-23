@@ -75,6 +75,7 @@ const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 const PANEL: Size = Size::new(64, 128);
 /// UI repaint cadence — keeps the window responsive and re-reads the live status each frame.
 const FRAME: Duration = Duration::from_millis(screen::COALESCE_MS);
+const LIVE_REFRESH: Duration = Duration::from_millis(250);
 /// Presses at or above this duration enter the long-press path.
 const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(650);
 
@@ -769,6 +770,7 @@ fn run_window(handles: WindowHandles) {
     let mut interface_changes = query_handle.interface_store().subscribe();
     let mut cards: HVec<Card, 16> = HVec::new();
     let mut needs_redraw = true;
+    let mut last_redraw = Instant::now();
     // Prime the SDL window before the first `events()` poll: the simulator creates the window
     // lazily on the first `update()`, and `events()` panics if called before it exists. The loop
     // enters with `needs_redraw = true`, so the real first frame is drawn immediately below.
@@ -836,7 +838,7 @@ fn run_window(handles: WindowHandles) {
             &mut working_lora_profile,
         );
 
-        if holding || interface_changes.drain_changed() {
+        if holding || interface_changes.drain_changed() || last_redraw.elapsed() >= LIVE_REFRESH {
             needs_redraw = true;
         }
 
@@ -874,6 +876,7 @@ fn run_window(handles: WindowHandles) {
             screen::draw_with_state(&mut display, &cards, BatteryState::Unknown, &ui_state);
             window.update(&display);
             needs_redraw = false;
+            last_redraw = Instant::now();
         }
 
         std::thread::sleep(FRAME);
