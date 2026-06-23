@@ -85,7 +85,9 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
 
     let probe = async move {
         let (mut socket, _) = listener.accept().await.expect("the node connects");
-        let frame = first_frame(&mut socket).await.expect("the node sends a frame");
+        let frame = first_frame(&mut socket)
+            .await
+            .expect("the node sends a frame");
         assert_eq!(
             frame.len(),
             HEADER_MIN_LEN + SYNTHESIZE_PAYLOAD_LEN,
