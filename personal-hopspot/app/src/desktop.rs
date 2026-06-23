@@ -302,6 +302,10 @@ fn run_node(
         );
         let usb_status = usb.status();
         handle.add_interface(usb);
+        if std::env::var_os("HOPSPOT_USB_OFF").is_some() {
+            usb_status.set_enabled(false);
+            println!("usb: added but starting disabled (HOPSPOT_USB_OFF set)");
+        }
 
         #[cfg(target_os = "linux")]
         spawn_hotplug_watcher(rescan.clone());
