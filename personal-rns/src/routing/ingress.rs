@@ -46,6 +46,9 @@ use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty
 use crate::routing::proof::{LinkProofOwed, ProofIngest, ProofObligation, ProofOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::reverse_routes::{ReverseRouteEntry, DEFAULT_REVERSE_ROUTE_TIMEOUT_MS};
+use crate::routing::tunnel::{
+    parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
+};
 use crate::routing::upstream_app_destinations::{ProofStrategy, UpstreamAppDestinationKind};
 use crate::routing::NextHop;
 use crate::routing::{DropCause, RemovedRoute, RouteResponsiveness, UpsertRouteOutcome};
@@ -720,6 +723,11 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_at,
                         interfaces,
                     );
+                }
+                if data.destination == TUNNEL_SYNTHESIZE_DESTINATION
+                    && data.destination_type == DestinationType::Plain
+                {
+                    return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
                 }
                 let not_for_upstream_app = self
                     .upstream_app_destinations
@@ -1600,6 +1608,31 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
+    fn ingest_tunnel_synthesize<'p>(
+        &mut self,
+        data: &DataPacket<'_>,
+        source_interface: InterfaceId,
+        now: InstantMillis,
+    ) -> IngestPacketOutcome<'p> {
+        let Some(verified) = parse_synthesize_payload(data.payload) else {
+            return IngestPacketOutcome::Ignored;
+        };
+        let expires = InstantMillis(now.0.saturating_add(TUNNEL_TIMEOUT_MS));
+        match self
+            .tunnels
+            .observe_synthesize(verified.tunnel_id, source_interface, expires)
+        {
+            TunnelTransition::Established | TunnelTransition::Refreshed => {}
+            TunnelTransition::Reappeared { previous_interface } => {
+                self.routing_table
+                    .repoint_routes(previous_interface, source_interface, now);
+                self.mark_interface_dirty(previous_interface);
+                self.mark_interface_dirty(source_interface);
+            }
+        }
+        IngestPacketOutcome::Ignored
+    }
+
     fn ingest_path_request<'p>(
         &mut self,
         data: &DataPacket<'_>,
@@ -1867,11 +1900,12 @@ impl<S: StorageLayout> EngineState<S> {
             .path_row(&announce.destination)
             .map(|entry| entry.receiving_interface);
         let dirty = &mut self.dirty_interfaces;
-        let outcome = self.routing_table.upsert_route(
+        let outcome = self.routing_table.upsert_route_with_tunnels(
             received_hops,
             arrived_at,
             source_interface,
             interfaces,
+            &self.tunnels,
             next_hop,
             &announce,
             &mut |removed| {

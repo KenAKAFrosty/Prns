@@ -34,6 +34,7 @@ use crate::routing::path_requests::seen::FixedSeenPathRequestColumns;
 use crate::routing::request_handlers::FixedRequestHandlerColumns;
 use crate::routing::reverse_routes::FixedReverseRouteColumns;
 use crate::routing::routes::{route_index_buckets, FixedHeapRouteColumns};
+use crate::routing::tunnel::FixedTunnelColumns;
 use crate::routing::upstream_app_destinations::FixedUpstreamAppDestinationColumns;
 use crate::storage::StorageLayout;
 
@@ -83,6 +84,7 @@ impl<A: Allocator + Default> StorageLayout for Esp32S3<A> {
     type PendingPathRequests = FixedPendingPathRequestColumns<8>;
     type RecentPathRequests = FixedRecentPathRequestColumns<8>;
     type SeenPathRequests = FixedSeenPathRequestColumns<8>;
+    type Tunnels = FixedTunnelColumns<0>;
     type DiscoveryPathRequests = FixedDiscoveryPathRequestColumns<8>;
     type InterfacePathRequestLimits = FixedInterfacePathRequestLimitColumns<8>;
     type InterfaceAnnounceLimits = FixedInterfaceAnnounceLimitColumns<8>;

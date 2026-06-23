@@ -90,6 +90,7 @@ use crate::routing::path_requests::recent::RecentPathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
+use crate::routing::tunnel::Tunnels;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::RoutingTable;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
@@ -228,6 +229,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) pending_path_requests: PendingPathRequests<S::PendingPathRequests>,
     pub(crate) recent_path_requests: RecentPathRequests<S::RecentPathRequests>,
     pub(crate) seen_path_requests: SeenPathRequests<S::SeenPathRequests>,
+    pub(crate) tunnels: Tunnels<S::Tunnels>,
     pub(crate) discovery_path_requests: DiscoveryPathRequests<S::DiscoveryPathRequests>,
     pub(crate) interface_path_request_limits:
         InterfacePathRequestLimits<S::InterfacePathRequestLimits>,
@@ -263,6 +265,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             pending_path_requests: PendingPathRequests::default(),
             recent_path_requests: RecentPathRequests::default(),
             seen_path_requests: SeenPathRequests::default(),
+            tunnels: Tunnels::default(),
             discovery_path_requests: DiscoveryPathRequests::default(),
             interface_path_request_limits: InterfacePathRequestLimits::default(),
             interface_announce_limits: InterfaceAnnounceLimits::default(),
@@ -437,7 +440,10 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {
-        LaneWake::from_deadline(self.routing_table.soonest_route_expiry(view))
+        LaneWake::from_deadline(
+            self.routing_table
+                .soonest_route_expiry_with_tunnels(view, &self.tunnels),
+        )
     }
 
     /// Probe every reactor-scheduled lane fresh into a [`WakeSchedules`]. This is the full

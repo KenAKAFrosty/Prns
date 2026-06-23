@@ -28,6 +28,7 @@ use crate::routing::path_requests::seen::HeapSeenPathRequestColumns;
 use crate::routing::request_handlers::HeapRequestHandlerColumns;
 use crate::routing::reverse_routes::HeapReverseRouteColumns;
 use crate::routing::routes::HeapRouteColumns;
+use crate::routing::tunnel::HeapTunnelColumns;
 use crate::routing::upstream_app_destinations::HeapUpstreamAppDestinationColumns;
 use crate::storage::StorageLayout;
 use alloc::collections::BTreeSet;
@@ -50,6 +51,7 @@ impl StorageLayout for GrowableHeap {
     type PendingPathRequests = HeapPendingPathRequestColumns;
     type RecentPathRequests = HeapRecentPathRequestColumns;
     type SeenPathRequests = HeapSeenPathRequestColumns;
+    type Tunnels = HeapTunnelColumns;
     type DiscoveryPathRequests = HeapDiscoveryPathRequestColumns;
     type InterfacePathRequestLimits = HeapInterfacePathRequestLimitColumns;
     type InterfaceAnnounceLimits = HeapInterfaceAnnounceLimitColumns;
