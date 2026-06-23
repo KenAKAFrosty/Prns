@@ -4,6 +4,11 @@
 
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod ax25_kiss;
+// Host-only TCP backbone link (RNS BackboneInterface / BackboneClientInterface), wire-identical to
+// `tcp` and reusing its core. Gated on the `tcp` feature alone — there is no embedded backbone, and
+// unlike the reference it is not Linux-gated (tokio's reactor replaces RNS's epoll backend).
+#[cfg(feature = "tcp")]
+pub mod backbone;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]
 pub mod kiss;
 #[cfg(any(feature = "tokio-host", feature = "embassy-contract"))]

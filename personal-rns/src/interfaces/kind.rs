@@ -33,6 +33,9 @@ pub enum InterfaceKind {
     Ax25Kiss = 16,
     Pipe = 17,
     Rnode = 18,
+    BackboneServer = 19,
+    BackboneServerPeer = 20,
+    BackboneClient = 21,
 }
 
 impl InterfaceKind {
@@ -61,6 +64,9 @@ impl InterfaceKind {
             16 => Some(Self::Ax25Kiss),
             17 => Some(Self::Pipe),
             18 => Some(Self::Rnode),
+            19 => Some(Self::BackboneServer),
+            20 => Some(Self::BackboneServerPeer),
+            21 => Some(Self::BackboneClient),
             _ => None,
         }
     }
@@ -75,6 +81,7 @@ impl InterfaceKind {
             Self::AutoWifi => Some(Self::WifiPeer),
             Self::LocalServer => Some(Self::LocalClient),
             Self::TcpServer => Some(Self::TcpServerPeer),
+            Self::BackboneServer => Some(Self::BackboneServerPeer),
             Self::BluetoothAuto => Some(Self::BluetoothPeer),
             _ => None,
         }
@@ -91,6 +98,7 @@ impl InterfaceKind {
             Self::WifiPeer => Some(Self::AutoWifi),
             Self::LocalClient => Some(Self::LocalServer),
             Self::TcpServerPeer => Some(Self::TcpServer),
+            Self::BackboneServerPeer => Some(Self::BackboneServer),
             Self::BluetoothPeer => Some(Self::BluetoothAuto),
             _ => None,
         }
@@ -115,6 +123,33 @@ mod tests {
             Some(InterfaceKind::LocalClient)
         );
         assert_eq!(InterfaceKind::LocalClient.member_kind(), None);
+    }
+
+    #[test]
+    fn a_backbone_server_supervises_backbone_peers() {
+        assert_eq!(
+            InterfaceKind::from_u8(19),
+            Some(InterfaceKind::BackboneServer)
+        );
+        assert_eq!(
+            InterfaceKind::from_u8(20),
+            Some(InterfaceKind::BackboneServerPeer)
+        );
+        assert_eq!(
+            InterfaceKind::from_u8(21),
+            Some(InterfaceKind::BackboneClient)
+        );
+        assert_eq!(
+            InterfaceKind::BackboneServer.member_kind(),
+            Some(InterfaceKind::BackboneServerPeer)
+        );
+        assert_eq!(
+            InterfaceKind::BackboneServerPeer.supervisor_kind(),
+            Some(InterfaceKind::BackboneServer)
+        );
+        // The outbound connector is a 1:1 interface, like TcpClient — it owns no fleet.
+        assert_eq!(InterfaceKind::BackboneClient.member_kind(), None);
+        assert_eq!(InterfaceKind::BackboneClient.supervisor_kind(), None);
     }
 
     #[test]

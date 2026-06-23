@@ -118,6 +118,13 @@ pub enum PlannedMedium {
         airtime_limit_short_centi: Option<u16>,
         airtime_limit_long_centi: Option<u16>,
     },
+    /// RNS `BackboneInterface`: the listening end of a TCP backbone link, accepting peers on `bind`
+    /// (`ip:port`). Wire-identical to [`TcpServer`](Self::TcpServer) — a high-throughput transport-node
+    /// listener; unlike the reference it is not Linux-gated (tokio replaces RNS's epoll backend).
+    Backbone { bind: String },
+    /// RNS `BackboneClientInterface`: dial one backbone peer. Wire-identical to
+    /// [`TcpClient`](Self::TcpClient).
+    BackboneClient { host: String, port: u16 },
 }
 
 /// An interface this config named that the node will not stand up, and why.
@@ -133,7 +140,7 @@ pub struct DeferredInterface {
 pub enum DeferReason {
     /// The interface was not enabled (RNS skips an interface unless it is explicitly enabled).
     Disabled,
-    /// Prns has no host medium for this interface type yet (LoRa/RNode, Pipe, I2P, Backbone, …).
+    /// Prns has no host medium for this interface type yet (I2P, RNodeMulti, Weave).
     UnsupportedKind,
     /// A field the medium needs to be constructed was absent.
     MissingRequiredField { key: &'static str },
@@ -454,6 +461,52 @@ fn plan_medium(
                     .map(|secs| (secs.max(0.0) * 1000.0) as u64)
                     .unwrap_or(RNS_PIPE_DEFAULT_RESPAWN_MS),
             })
+        }
+        ReferenceParams::Backbone {
+            listen_ip,
+            listen_port,
+            target_host,
+            target_port,
+            port,
+            device,
+            prefer_ipv6,
+            i2p_tunneled,
+            connect_timeout,
+            max_reconnect_tries,
+        } => {
+            // RNS collapses `BackboneInterface` (the listener) and `BackboneClientInterface` (the
+            // outbound connector) into one config shape; the type name is the role. Backbone is
+            // wire-identical to TCP, so each role maps to the matching TCP-shaped medium under its own
+            // Backbone kind. `prefer_ipv6` is parsed but not honored — construction binds/dials the
+            // address as given rather than re-ordering a hostname's resolved families.
+            note_present(unapplied, "prefer_ipv6", prefer_ipv6.is_some());
+            if interface.type_name == "BackboneClientInterface" {
+                let host = target_host
+                    .clone()
+                    .ok_or(DeferReason::MissingRequiredField { key: "target_host" })?;
+                let port =
+                    target_port.ok_or(DeferReason::MissingRequiredField { key: "target_port" })?;
+                note_present(unapplied, "i2p_tunneled", i2p_tunneled.is_some());
+                note_present(unapplied, "connect_timeout", connect_timeout.is_some());
+                note_present(
+                    unapplied,
+                    "max_reconnect_tries",
+                    max_reconnect_tries.is_some(),
+                );
+                Ok(PlannedMedium::BackboneClient { host, port })
+            } else {
+                // The `BackboneInterface` listener: `port` overrides `listen_port` for the bind port
+                // (RNS `if port != None: bindport = port`); `listen_ip` defaults to all-interfaces.
+                // Binding to a named kernel interface (`device`) is not yet supported on the host.
+                let bind_port = (*port)
+                    .or(*listen_port)
+                    .ok_or(DeferReason::MissingRequiredField { key: "listen_port" })?;
+                let ip = listen_ip.as_deref().unwrap_or("0.0.0.0");
+                note_present(unapplied, "device", device.is_some());
+                Ok(PlannedMedium::Backbone {
+                    bind: format!("{ip}:{bind_port}"),
+                })
+            }
         }
         _ => Err(DeferReason::UnsupportedKind),
     }
@@ -790,6 +843,112 @@ mod tests {
             plan.deferred[0].why,
             DeferReason::MissingRequiredField { key: "command" }
         );
+    }
+
+    #[test]
+    fn a_backbone_listener_plans_on_its_bind_address() {
+        let plan = plan_of(
+            "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\n\
+             listen_ip = 0.0.0.0\nlisten_port = 4242\n",
+        );
+        assert_eq!(
+            named(&plan, "Spine").medium,
+            PlannedMedium::Backbone {
+                bind: "0.0.0.0:4242".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_backbone_listener_defaults_its_ip_and_lets_port_override_listen_port() {
+        // `listen_ip` absent → all-interfaces; `port` present → it wins over `listen_port`, mirroring
+        // RNS's `if port != None: bindport = port`.
+        let plan = plan_of(
+            "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\n\
+             listen_port = 4242\nport = 5959\n",
+        );
+        assert_eq!(
+            named(&plan, "Spine").medium,
+            PlannedMedium::Backbone {
+                bind: "0.0.0.0:5959".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_backbone_client_plans_on_its_target() {
+        let plan = plan_of(
+            "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\n\
+             target_host = spine.example.com\ntarget_port = 4242\n",
+        );
+        assert_eq!(
+            named(&plan, "Uplink").medium,
+            PlannedMedium::BackboneClient {
+                host: "spine.example.com".to_string(),
+                port: 4242,
+            }
+        );
+    }
+
+    #[test]
+    fn a_backbone_listener_without_a_port_defers_with_the_missing_key() {
+        let plan = plan_of(
+            "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\nlisten_ip = 0.0.0.0\n",
+        );
+        assert!(plan.interfaces.is_empty());
+        assert_eq!(
+            plan.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "listen_port" }
+        );
+    }
+
+    #[test]
+    fn a_backbone_client_without_a_target_defers_with_the_missing_key() {
+        let no_host = plan_of(
+            "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_port = 4242\n",
+        );
+        assert_eq!(
+            no_host.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "target_host" }
+        );
+        let no_port = plan_of(
+            "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\ntarget_host = spine\n",
+        );
+        assert_eq!(
+            no_port.deferred[0].why,
+            DeferReason::MissingRequiredField { key: "target_port" }
+        );
+    }
+
+    #[test]
+    fn a_backbone_interface_surfaces_unhonored_options_rather_than_dropping_them() {
+        let listener = plan_of(
+            "[interfaces]\n[[Spine]]\ntype = BackboneInterface\nenabled = Yes\n\
+             listen_port = 4242\ndevice = eth0\nprefer_ipv6 = Yes\n",
+        );
+        let spine = named(&listener, "Spine");
+        assert!(spine
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("device")));
+        assert!(spine
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("prefer_ipv6")));
+
+        let client = plan_of(
+            "[interfaces]\n[[Uplink]]\ntype = BackboneClientInterface\nenabled = Yes\n\
+             target_host = spine\ntarget_port = 4242\ni2p_tunneled = Yes\nconnect_timeout = 10\n\
+             max_reconnect_tries = 3\n",
+        );
+        let uplink = named(&client, "Uplink");
+        assert!(uplink
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("i2p_tunneled")));
+        assert!(uplink
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("connect_timeout")));
+        assert!(uplink
+            .unapplied
+            .contains(&UnappliedSetting::MediumOption("max_reconnect_tries")));
     }
 
     #[test]
