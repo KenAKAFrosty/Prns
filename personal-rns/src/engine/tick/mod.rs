@@ -698,7 +698,10 @@ mod tests {
             }
         });
         assert_eq!(state.scheduled_announce_count(), 1);
-        assert!(!rebroadcast.is_empty(), "the fire emitted a rebroadcast to echo back");
+        assert!(
+            !rebroadcast.is_empty(),
+            "the fire emitted a rebroadcast to echo back"
+        );
 
         let echo = |state: &mut EngineState<Cap>, now: u64| -> LaneWake {
             let mut bytes = rebroadcast.clone();
