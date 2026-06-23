@@ -70,7 +70,11 @@ mod tests {
         state.set_transport_id(crate::engine::test_support::TEST_TRANSPORT_ID);
         let mut buf = [0u8; 256];
         assert!(state
-            .write_tunnel_synthesize(InterfaceId::new([0x01; 8]), &[0u8; RANDOM_HASH_LEN], &mut buf)
+            .write_tunnel_synthesize(
+                InterfaceId::new([0x01; 8]),
+                &[0u8; RANDOM_HASH_LEN],
+                &mut buf
+            )
             .is_none());
     }
 
@@ -79,7 +83,11 @@ mod tests {
         let state: EngineState<Cap> = EngineState::<Cap>::default();
         let mut buf = [0u8; 256];
         assert!(state
-            .write_tunnel_synthesize(InterfaceId::new([0x01; 8]), &[0u8; RANDOM_HASH_LEN], &mut buf)
+            .write_tunnel_synthesize(
+                InterfaceId::new([0x01; 8]),
+                &[0u8; RANDOM_HASH_LEN],
+                &mut buf
+            )
             .is_none());
     }
 }
