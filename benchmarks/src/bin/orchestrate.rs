@@ -838,6 +838,14 @@ fn file_results(
         ));
         rows.push(row(Axis::Energy, "relay_cpu_seconds", Some(relay.cpu_seconds), "s"));
     }
+    if let Some(after_reconnect) = field(result, "delivered_after_reconnect") {
+        rows.push(row(
+            Axis::Conformance,
+            "route_survived",
+            Some(f64::from(after_reconnect > 0.0)),
+            "bool",
+        ));
+    }
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
         let net_joules = raw_joules - idle_watts * wall_seconds;
         let measurable = net_joules > 0.0;
@@ -961,6 +969,12 @@ fn file_results(
             "SUMMARY relay cpu={:.2}s peak_rss={:.1}MiB",
             relay.cpu_seconds,
             relay.peak_rss_bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
+    if let Some(after_reconnect) = field(result, "delivered_after_reconnect") {
+        println!(
+            "SUMMARY tunnel route_survived={} delivered_after_reconnect={after_reconnect:.0}",
+            after_reconnect > 0.0,
         );
     }
     if args.pin {

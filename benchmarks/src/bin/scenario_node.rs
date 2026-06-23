@@ -25,8 +25,8 @@ use personal_rns::interfaces::rns_parity::udp::core as udp_core;
 use personal_rns::interfaces::rns_parity::udp::impls::tokio::UdpInterface;
 use personal_rns::interfaces::{InterfaceConfig, InterfaceId, InterfaceKind, ReportsStatus};
 use personal_rns::reactor::impls::tokio_reactor::{
-    run, tokio_grant_lane, Egress, HostCommand, HostResourcePayload, SendResourceHostCommand,
-    SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
+    run, tokio_grant_lane, AddInterfaceCommand, Egress, HostCommand, HostResourcePayload,
+    SendResourceHostCommand, SendResourceSegmentHostCommand, TokioHost, TokioInterfaceSeam,
 };
 use personal_rns::reactor::interface_seam::{Interface, InterfaceSeam, MAX_WIRE_FRAME_LEN};
 use personal_rns::routing::delivery::Delivery;
@@ -164,6 +164,10 @@ struct Profile {
     size_seed: u64,
     #[serde(default = "default_topology")]
     topology: String,
+    #[serde(default)]
+    tunnel: bool,
+    #[serde(default)]
+    reconnect_at_ms: u64,
     #[serde(default)]
     command_share: usize,
     #[serde(default)]
@@ -421,7 +425,11 @@ async fn scenario_main() {
     // Relay and chain are pure-transport topologies with no destination of their own — the
     // recipe does not model them, so they keep their own hand-roll.
     if role == "relay" {
-        relay_node(&manifest).await;
+        if manifest.profile.tunnel {
+            tunnel_relay_node(&manifest).await;
+        } else {
+            relay_node(&manifest).await;
+        }
         return;
     }
     if role == "chain" {
@@ -435,7 +443,8 @@ async fn scenario_main() {
     if matches!(
         manifest.profile.mechanism.as_str(),
         "single" | "link" | "channel" | "links-breadth"
-    ) {
+    ) && !manifest.profile.tunnel
+    {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
         return;
     }
@@ -485,11 +494,21 @@ async fn scenario_main() {
             },
         ));
     }
+    if manifest.profile.tunnel && role == "responder" {
+        engine
+            .set_transport_identity(&node)
+            .expect("the node holds its own identity to sign tunnel synthesizes");
+    }
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx.clone(), out_rx);
+    let seam = if manifest.profile.tunnel && role == "responder" {
+        seam.with_commands(command_tx.clone())
+    } else {
+        seam
+    };
     let extra_listener_count = if role == "responder"
         && manifest.profile.wire != "udp"
         && manifest.profile.topology != "relay"
@@ -659,6 +678,8 @@ async fn scenario_main() {
                     event_rx,
                 )
                 .await;
+            } else if manifest.profile.mechanism == "single" {
+                respond_single(destination, announce_every, duration, command_tx, event_rx).await;
             } else {
                 panic!(
                     "mechanism {:?} is not a hand-rolled responder",
@@ -705,6 +726,8 @@ async fn scenario_main() {
                 initiate_request(&manifest.profile, duration, command_tx, event_rx).await;
             } else if manifest.profile.mechanism == "resource" {
                 initiate_resource(&manifest.profile, duration, command_tx, event_rx).await;
+            } else if manifest.profile.mechanism == "single" {
+                initiate_single(&manifest.profile, duration, command_tx, event_rx).await;
             } else {
                 panic!(
                     "mechanism {:?} is not a hand-rolled initiator",
@@ -2456,6 +2479,8 @@ async fn initiate_request(
     let mut next_id = 2u64;
     let mut sent = 0u64;
     let mut delivered = 0u64;
+    let mut delivered_after_reconnect = 0u64;
+    let reconnect_after = Duration::from_millis(profile.reconnect_at_ms.saturating_add(1000));
     let mut timeouts = 0u64;
     let mut in_flight = 0usize;
     let mut request_bytes = 0u64;
@@ -2500,6 +2525,9 @@ async fn initiate_request(
                     Ok(receipt) => {
                         failure_streak = 0;
                         delivered += 1;
+                        if profile.reconnect_at_ms > 0 && started.elapsed() > reconnect_after {
+                            delivered_after_reconnect += 1;
+                        }
                         rtts.push(receipt.rtt.millis());
                     }
                     Err(_) => {
@@ -2539,11 +2567,16 @@ async fn initiate_request(
 
     rtts.sort_unstable();
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    let reconnect_field = if profile.reconnect_at_ms > 0 {
+        format!(" delivered_after_reconnect={delivered_after_reconnect}")
+    } else {
+        String::new()
+    };
     println!(
         "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
          request_bytes={request_bytes} response_bytes={response_bytes} \
          elapsed_ms={elapsed_ms} requests_per_sec={:.1} \
-         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{} build={BUILD_PROFILE}",
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{}{reconnect_field} build={BUILD_PROFILE}",
         delivered as f64 / seconds,
         percentile(&rtts, 0.50),
         percentile(&rtts, 0.99),
@@ -2611,6 +2644,259 @@ async fn relay_node(manifest: &Manifest) {
     ));
     println!("READY role=relay addr={addr_a}>{addr_b}");
     std::future::pending::<()>().await;
+}
+
+async fn respond_single(
+    destination: DestinationHash,
+    announce_every: Duration,
+    duration: Duration,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let mut announce = tokio::time::interval(announce_every);
+    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
+    let mut next_id = 1u64;
+    let mut delivered = 0u64;
+    let mut payload_bytes = 0u64;
+    loop {
+        tokio::select! {
+            _ = announce.tick(), if delivered == 0 => {
+                let command = IssuedCommand {
+                    id: CommandId(next_id),
+                    command: EngineCommand::AnnounceNow(AnnounceNow {
+                        destination,
+                        target: AnnounceTarget::AllInterfaces,
+                        app_data: AnnounceAppData::Registered,
+                    }),
+                };
+                next_id += 1;
+                if commands.send(HostCommand::Engine(command)).is_err() {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep_until(report_at) => {
+                println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
+                return;
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::Delivered(bytes)) => {
+                        delivered += 1;
+                        payload_bytes += bytes as u64;
+                    }
+                    None => return,
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn initiate_single(
+    profile: &Profile,
+    duration: Duration,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    mut events: mpsc::UnboundedReceiver<Event>,
+) {
+    let destination = loop {
+        match events.recv().await.expect("reactor alive") {
+            Event::Heard(destination) => break destination,
+            _ => {}
+        }
+    };
+
+    let scratch = incompressible_payload(profile.payload_max.max(profile.payload_len).max(1));
+    let mut sizes = SizeSequence::new(
+        profile.size_seed,
+        profile.payload_min,
+        profile.payload_max,
+        profile.payload_len,
+    );
+    let started = tokio::time::Instant::now();
+    let deadline = started + duration;
+    let drain_until = deadline + DRAIN_GRACE;
+    let reconnect_after_ms = profile.reconnect_at_ms.saturating_add(1000);
+    // Time-paced, not window-on-settle: a burst loss at the reconnect would otherwise fill the
+    // window with stuck sends and stall the firehose before it can prove post-repoint delivery. A
+    // short local timeout reaps the lost sends so fresh ones keep flowing.
+    const LOCAL_TIMEOUT_MS: u64 = 5_000;
+    const OUTSTANDING_CAP: usize = 256;
+    let mut send_tick = tokio::time::interval(Duration::from_millis(25));
+    let mut sweep = tokio::time::interval(Duration::from_millis(200));
+    let mut next_id = 1u64;
+    let mut sent = 0u64;
+    let mut delivered = 0u64;
+    let mut delivered_after_reconnect = 0u64;
+    let mut timeouts = 0u64;
+    let mut rtts: Vec<u64> = Vec::new();
+    let mut outstanding: std::collections::HashMap<u64, u64> = std::collections::HashMap::new();
+    loop {
+        tokio::select! {
+            _ = send_tick.tick() => {
+                if tokio::time::Instant::now() < deadline && outstanding.len() < OUTSTANDING_CAP {
+                    let len = sizes.next_len();
+                    let id = next_id;
+                    next_id += 1;
+                    let command = IssuedCommand {
+                        id: CommandId(id),
+                        command: EngineCommand::SendSingle(SendSingle {
+                            destination,
+                            payload: SendSinglePayload::from_slice(&scratch[..len])
+                                .expect("payload fits"),
+                        }),
+                    };
+                    if commands.send(HostCommand::Engine(command)).is_ok() {
+                        outstanding.insert(id, started.elapsed().as_millis() as u64);
+                        sent += 1;
+                    }
+                }
+            }
+            _ = sweep.tick() => {
+                let now_ms = started.elapsed().as_millis() as u64;
+                outstanding.retain(|_, send_ms| {
+                    if now_ms.saturating_sub(*send_ms) > LOCAL_TIMEOUT_MS {
+                        timeouts += 1;
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            _ = tokio::time::sleep_until(drain_until) => {
+                break;
+            }
+            event = events.recv() => {
+                match event {
+                    Some(Event::Settled(CommandId(id), Settlement::SendSingle(result))) => {
+                        if let Some(send_ms) = outstanding.remove(&id) {
+                            match result {
+                                Ok(receipt) => {
+                                    delivered += 1;
+                                    if profile.reconnect_at_ms > 0 && send_ms > reconnect_after_ms {
+                                        delivered_after_reconnect += 1;
+                                    }
+                                    rtts.push(receipt.rtt.millis());
+                                }
+                                Err(_) => timeouts += 1,
+                            }
+                        }
+                    }
+                    None => break,
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    timeouts += outstanding.len() as u64;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+
+    rtts.sort_unstable();
+    let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
+    let reconnect_field = if profile.reconnect_at_ms > 0 {
+        format!(" delivered_after_reconnect={delivered_after_reconnect}")
+    } else {
+        String::new()
+    };
+    println!(
+        "RESULT sent={sent} delivered={delivered} timeouts={timeouts} \
+         elapsed_ms={elapsed_ms} delivered_per_sec={:.1} \
+         rtt_p50_ms={:.0} rtt_p99_ms={:.0}{reconnect_field} build={BUILD_PROFILE}",
+        delivered as f64 / seconds,
+        percentile(&rtts, 0.50),
+        percentile(&rtts, 0.99),
+    );
+}
+
+async fn tunnel_relay_node(manifest: &Manifest) {
+    let engine = EngineState::<NodeStorage>::new(fresh_identity());
+    let reconnect_at = Duration::from_millis(manifest.profile.reconnect_at_ms);
+
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (in_b_tx, in_b_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let (out_b_tx, out_b_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+    let seam_b =
+        TokioInterfaceSeam::new(RELAY_SECOND_INTERFACE_ID, in_b_tx, notify_tx.clone(), out_b_rx);
+    let egress = Egress::new(vec![(RELAY_SECOND_INTERFACE_ID, out_b_tx)]);
+    let interfaces = vec![tcp_core::descriptor(
+        RELAY_SECOND_INTERFACE_ID,
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+    )];
+
+    let client_side = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the client side");
+    let addr_a = client_side.local_addr().expect("bound address");
+    let peer_side = BenchTcpListener::bind_with_id(
+        RELAY_SECOND_INTERFACE_ID,
+        "127.0.0.1:0",
+        tcp_core::TCP_BITRATE_GUESS_BPS,
+    )
+    .await
+    .expect("binds the peer side");
+    let addr_b = peer_side.local_addr().expect("bound address");
+
+    tokio::spawn(peer_side.run(seam_b));
+    tokio::spawn(tunnel_client_side(
+        client_side,
+        command_tx.clone(),
+        notify_tx,
+        reconnect_at,
+    ));
+    tokio::spawn(run(
+        engine,
+        interfaces,
+        vec![],
+        TokioHost::new(),
+        notify_rx,
+        vec![(RELAY_SECOND_INTERFACE_ID, in_b_rx)],
+        command_rx,
+        egress,
+        |_: Journaled<'_>| {},
+    ));
+    println!("READY role=relay addr={addr_a}>{addr_b}");
+    std::future::pending::<()>().await;
+}
+
+async fn tunnel_client_side(
+    listener: tokio::net::TcpListener,
+    commands: mpsc::UnboundedSender<HostCommand>,
+    notify_tx: mpsc::UnboundedSender<InterfaceId>,
+    reconnect_at: Duration,
+) {
+    let mut connection_index = 0u32;
+    loop {
+        let Ok((stream, peer)) = listener.accept().await else {
+            return;
+        };
+        tune(&stream);
+        let tag = format!("{peer}#{connection_index}").into_bytes();
+        let id = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, &tag);
+        let descriptor = tcp_core::descriptor(id, tcp_core::TCP_BITRATE_GUESS_BPS);
+        let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+        let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
+        let seam = TokioInterfaceSeam::new(id, in_tx, notify_tx.clone(), out_rx);
+        if commands
+            .send(HostCommand::AddInterface(AddInterfaceCommand {
+                descriptor,
+                inbound: in_rx,
+                egress: out_tx,
+            }))
+            .is_err()
+        {
+            return;
+        }
+        let connection =
+            TcpServerConnection::new(tag, stream, tcp_core::TCP_BITRATE_GUESS_BPS).run(seam);
+        let task = tokio::spawn(connection);
+        if connection_index == 0 {
+            tokio::spawn(async move {
+                tokio::time::sleep(reconnect_at).await;
+                task.abort();
+            });
+        }
+        connection_index += 1;
+    }
 }
 
 /// A pure transport node in a trunk: listen for the next hop downstream, dial the

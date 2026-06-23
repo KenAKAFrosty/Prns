@@ -1,0 +1,21 @@
+{
+  "name": "tunnel-route-survival",
+  "version": 1,
+  "description": "A relay holds the route to a client's destination and re-points it across the client's reconnect from the client's tunnel synthesize, with no re-announce. The relay's tunnel handling is the subject under test. The client (responder) connects through the relay, announces its destination once (it stops announcing the moment the peer reaches it), and emits a tunnel synthesize on every connect; the peer (initiator) sends a windowed firehose of SINGLE packets at that destination through the relay the whole run, each proved end-to-end. Singles are forwarded purely by the destination route the tunnel re-points (a link would ride the relay's link table, which RNS handle_tunnel restores no more than ours does). Mid-run the relay drops the client's socket; the client auto-reconnects on a fresh relay-side interface and re-synthesizes the same tunnel, and the relay re-homes the warm route so the peer's singles keep settling with no re-announce.",
+  "roles": [
+    "relay",
+    "responder",
+    "initiator"
+  ],
+  "profile": {
+    "mechanism": "single",
+    "topology": "relay",
+    "tunnel": true,
+    "reconnect_at_ms": 5000,
+    "payload_min": 60,
+    "payload_max": 200,
+    "window": 8,
+    "duration_ms": 15000
+  },
+  "conformance": "After the relay drops the client's socket at reconnect_at_ms, the client reconnects on a fresh relay-side interface and re-synthesizes its tunnel; the relay re-points the warm route to the client's destination with no re-announce, so the peer's singles keep settling across the reconnect. route_survived holds when the peer proves singles after the reconnect (delivered_after_reconnect > 0); sent == delivered + timeouts + raced still holds for accounting."
+}
