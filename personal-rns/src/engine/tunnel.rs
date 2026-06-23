@@ -1,6 +1,7 @@
 use crate::crypto::sha256;
 use crate::engine::EngineState;
 use crate::identity::{IdentityHash, IdentitySigner};
+use crate::interfaces::InterfaceId;
 use crate::routing::tunnel::{
     assemble_synthesize_payload, synthesize_signed_region, write_synthesize_wire_packet,
     PUBLIC_KEY_LEN, RANDOM_HASH_LEN,
@@ -10,7 +11,7 @@ use crate::storage::StorageLayout;
 impl<S: StorageLayout> EngineState<S> {
     pub fn write_tunnel_synthesize(
         &self,
-        channel_tag: &[u8],
+        interface: InterfaceId,
         random_hash: &[u8; RANDOM_HASH_LEN],
         buf: &mut [u8],
     ) -> Option<usize> {
@@ -23,7 +24,7 @@ impl<S: StorageLayout> EngineState<S> {
         public_key[..32].copy_from_slice(signer.encryption_public_key().as_bytes());
         public_key[32..].copy_from_slice(signer.signing_public_key().as_bytes());
 
-        let interface_hash = sha256(channel_tag);
+        let interface_hash = sha256(interface.as_bytes());
         let region = synthesize_signed_region(&public_key, &interface_hash, random_hash);
         let signature = signer.sign(&region);
         let payload = assemble_synthesize_payload(&region, &signature);
@@ -36,6 +37,7 @@ mod tests {
     use crate::crypto::sha256;
     use crate::engine::test_support::{fixed_secret_key, Cap};
     use crate::engine::EngineState;
+    use crate::interfaces::InterfaceId;
     use crate::routing::tunnel::{
         parse_synthesize_payload, INTERFACE_HASH_LEN, RANDOM_HASH_LEN, SYNTHESIZE_PAYLOAD_LEN,
     };
@@ -47,18 +49,18 @@ mod tests {
         let held = state.hold_identity(fixed_secret_key()).unwrap();
         state.set_transport_identity(&held).unwrap();
 
-        let channel_tag = b"hub.example.com:4965";
+        let interface = InterfaceId::new([0xC1; 8]);
         let random = [0x11u8; RANDOM_HASH_LEN];
         let mut buf = [0u8; 256];
         let n = state
-            .write_tunnel_synthesize(channel_tag, &random, &mut buf)
+            .write_tunnel_synthesize(interface, &random, &mut buf)
             .expect("a held transport identity can synthesize");
         assert_eq!(n, HEADER_MIN_LEN + SYNTHESIZE_PAYLOAD_LEN);
 
         let verified = parse_synthesize_payload(&buf[HEADER_MIN_LEN..n])
             .expect("the packet we signed verifies against the key it carries");
         let mut interface_hash = [0u8; INTERFACE_HASH_LEN];
-        interface_hash.copy_from_slice(&sha256(channel_tag));
+        interface_hash.copy_from_slice(&sha256(interface.as_bytes()));
         assert_eq!(verified.interface_hash, interface_hash);
     }
 
@@ -68,7 +70,7 @@ mod tests {
         state.set_transport_id(crate::engine::test_support::TEST_TRANSPORT_ID);
         let mut buf = [0u8; 256];
         assert!(state
-            .write_tunnel_synthesize(b"hub:1", &[0u8; RANDOM_HASH_LEN], &mut buf)
+            .write_tunnel_synthesize(InterfaceId::new([0x01; 8]), &[0u8; RANDOM_HASH_LEN], &mut buf)
             .is_none());
     }
 
@@ -77,7 +79,7 @@ mod tests {
         let state: EngineState<Cap> = EngineState::<Cap>::default();
         let mut buf = [0u8; 256];
         assert!(state
-            .write_tunnel_synthesize(b"hub:1", &[0u8; RANDOM_HASH_LEN], &mut buf)
+            .write_tunnel_synthesize(InterfaceId::new([0x01; 8]), &[0u8; RANDOM_HASH_LEN], &mut buf)
             .is_none());
     }
 }
