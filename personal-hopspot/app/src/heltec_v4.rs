@@ -133,11 +133,12 @@ const COMMANDS_CAP: usize = 8;
 const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
-/// Core 1 runs *only* the engine reactor: its future (with the constructed engine) lives in the
-/// task pool, so this is just the per-poll execution stack — the run-time ingest crypto's frames.
-/// The one-time engine *construction* (the big, dalek-heavy transient) happens on core 0's
-/// guarded main-task stack instead, so core 1 stays small.
-const CORE1_STACK_BYTES: usize = 64 * 1024;
+/// Core 1's stack carries *both* the one-time engine *construction* (the big, dalek-heavy
+/// transient) and the per-poll ingest crypto the reactor runs afterward — never at once, since
+/// construction returns before the reactor loop, so it is sized for the construction peak and the
+/// reactor reuses that space. Core 0's main-task stack only drives its I/O + screen loop, so it
+/// stays far shallower.
+const CORE1_STACK_BYTES: usize = 96 * 1024;
 
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
@@ -260,18 +261,18 @@ fn log_heap_footprint(label: &str) {
     println!("{}", esp_alloc::HEAP.stats());
 }
 
-/// Platform bring-up on core 0, where the heavy lifting lives: the OLED, the identity crypto, the
-/// whole engine *construction* (its dalek-heavy transient wants the guarded main-task stack), and
-/// all the I/O (USB-auto + WiFi-auto). The built node then rides to core 1, which runs only the
-/// reactor on a small stack — true parallelism (engine ⊥ I/O) over the cross-core lane channels.
-/// Never returns: this frame is core 0's I/O + screen drive.
+/// Platform bring-up on core 0: the OLED, the self-identity crypto, the radios + WiFi/TCP, and the
+/// I/O run-loops + screen. The engine is built *and* owned by core 1 — it constructs the node on
+/// its own stack (the dalek-heavy transient) then runs the reactor there, so core 0 never touches
+/// the node. True parallelism (engine ⊥ I/O) over the cross-core lane channels. Never returns:
+/// this frame is core 0's I/O + screen drive.
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
 
     esp_println::logger::init_logger_from_env();
-    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 56 * 1024);
+    esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 70 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
@@ -431,43 +432,29 @@ pub async fn run(spawner: Spawner) {
         handle,
     );
     let host = EmbassyHost::new_with_timebase(timebase, seeded_entropy as fn(&mut [u8]));
-    static NODE: StaticCell<S3Node> = StaticCell::new();
-    let node: &'static mut S3Node = NODE.init(Prns::new(
-        PrnsRecipe {
-            transport: Some(transport_id),
-            pre_configured_destinations: [PreConfiguredDestination::Single {
-                resource_strategy:
-                    personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
-                app_name: "lxmf",
-                aspects: &["delivery"],
-                identity: secret_key,
-                announce_app_data: ANNOUNCE_APP_DATA,
-                proof: personal_rns::routing::ProofStrategy::ProveAll,
-                ratchet: RatchetPolicy::Ratcheted,
-            }],
-            app_state: (),
-            storage: EngineStorageType::default(),
-            routes: personal_rns::routes![],
-            interfaces: personal_rns::interfaces![],
-            on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
-        },
-        plumbing,
-        host,
-        HVec::new(),
-    ));
-    if let Some((tcp, _, _)) = &tcp_built {
-        node.activate(TCP_SLOT, tcp.descriptor());
-    }
-    node.activate(LORA_SLOT, lora.descriptor());
-    // The WiFi supervisor's one shared lane: keyed by its AutoWifi id, every WifiPeer member routes
-    // to it by kind. Registered before the node moves to core 1; members add their descriptors at
-    // runtime through the fleet, never another lane.
-    if wifi.is_some() {
-        node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
-    }
-    node.set_interface_store(&INTERFACE_COUNTS);
 
-    log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
+    let recipe = PrnsRecipe {
+        transport: Some(transport_id),
+        pre_configured_destinations: [PreConfiguredDestination::Single {
+            resource_strategy:
+                personal_rns::routing::links::resources::ResourceStrategy::AcceptNone,
+            app_name: "lxmf",
+            aspects: &["delivery"],
+            identity: secret_key,
+            announce_app_data: ANNOUNCE_APP_DATA,
+            proof: personal_rns::routing::ProofStrategy::ProveAll,
+            ratchet: RatchetPolicy::Ratcheted,
+        }],
+        app_state: (),
+        storage: EngineStorageType::default(),
+        routes: personal_rns::routes![],
+        interfaces: personal_rns::interfaces![],
+        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
+    };
+
+    let lora_cfg = lora.descriptor();
+    let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
+    let has_wifi = wifi.is_some();
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(
@@ -475,6 +462,19 @@ pub async fn run(spawner: Spawner) {
         sw_int.software_interrupt1,
         core1_stack,
         move || {
+            static NODE: StaticCell<S3Node> = StaticCell::new();
+            let node: &'static mut S3Node =
+                NODE.init_with(|| Prns::new(recipe, plumbing, host, HVec::new()));
+            if let Some(cfg) = tcp_cfg {
+                node.activate(TCP_SLOT, cfg);
+            }
+            node.activate(LORA_SLOT, lora_cfg);
+            if has_wifi {
+                node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
+            }
+            node.set_interface_store(&INTERFACE_COUNTS);
+            log_heap_footprint("post-construction (engine columns boxed into PSRAM)");
+
             static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
             EXECUTOR
                 .init(esp_rtos::embassy::Executor::new())
