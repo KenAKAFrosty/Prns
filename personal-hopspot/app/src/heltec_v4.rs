@@ -26,6 +26,7 @@ use embassy_net::{
 };
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use embassy_time::{Delay, Duration, Ticker, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -35,8 +36,11 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use static_cell::{ConstStaticCell, StaticCell};
 
+#[cfg(not(feature = "ble-bringup"))]
 use esp_radio::wifi::scan::ScanConfig;
+#[cfg(not(feature = "ble-bringup"))]
 use esp_radio::wifi::sta::StationConfig;
+#[cfg(not(feature = "ble-bringup"))]
 use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, Interface as WifiStaDevice, WifiController,
 };
@@ -46,6 +50,8 @@ use personal_rns::engine::{
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+#[cfg(feature = "ble-bringup")]
+use personal_rns::interfaces::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::rns_parity::lora::core::{channel_tag, DEFAULT_915_PROFILE};
 use personal_rns::interfaces::rns_parity::lora::impls::embassy::{LoRaControl, LoRaInterface};
 use personal_rns::interfaces::rns_parity::tcp::client::embassy::TcpClient;
@@ -128,9 +134,9 @@ const LANE_DEPTH: usize = 1;
 /// claim it.
 const TCP_SLOT: usize = 1;
 const LORA_SLOT: usize = 3;
-const NOTIFY_CAP: usize = 16;
+pub const NOTIFY_CAP: usize = 16;
 const COMMANDS_CAP: usize = 8;
-const LIFECYCLE_CAP: usize = 8;
+pub const LIFECYCLE_CAP: usize = 8;
 const COMPLETIONS_CAP: usize = 4;
 
 /// Core 1's stack carries *both* the one-time engine *construction* (the big, dalek-heavy
@@ -206,6 +212,15 @@ static USB_STATUS: EmbassyInterfaceStatus =
 /// The WiFi supervisor's shared aggregate + per-peer status (written + read on core 0).
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_FLEET_ID);
 
+/// Under `ble-bringup` the BLE supervisor reuses the (WiFi-free) fleet slot 2, keyed by its own kind
+/// so `BluetoothPeer` members route to it. The radio carries one connection, so one member slot.
+#[cfg(feature = "ble-bringup")]
+pub const BLE_MEMBERS: usize = 1;
+#[cfg(feature = "ble-bringup")]
+const BLE_FLEET_ID: InterfaceId =
+    InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
+#[cfg(feature = "ble-bringup")]
+static BLE_SHARED: BluetoothAutoShared<BLE_MEMBERS> = BluetoothAutoShared::new(BLE_FLEET_ID);
 static LORA_CONTROL: LoRaControl = LoRaControl::new();
 
 /// The reactor's pool: one inbound + one outbound grant ring per slot, split at boot into the
@@ -221,6 +236,9 @@ static OUT_CH: [StaticCell<LaneChannel>; IFACES] = [const { StaticCell::new() };
 static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
+/// The reactor's outbound-commit wake for the fleet lane: the egress (core 1) signals it on every
+/// commit so the supervisor's drain is roused across the core boundary (the outbound mirror of `NOTIFY`).
+static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
 /// Per-interface engine counts the reactor (core 1) pushes into and the render task (core 0) reads —
@@ -351,57 +369,68 @@ pub async fn run(spawner: Spawner) {
         let in_ch = IN_CH[slot].init(zerocopy_channel::Channel::new(IN_BUF[slot].take()));
         let (in_producer, in_consumer) = embassy_grant_lane(in_ch);
         let out_ch = OUT_CH[slot].init(zerocopy_channel::Channel::new(OUT_BUF[slot].take()));
-        let (out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        let (mut out_producer, out_consumer) = embassy_grant_lane(out_ch);
+        if slot == WIFI_FLEET_SLOT {
+            out_producer.set_outbound_wake(&OUTBOUND_WAKE);
+        }
         let _ = inbound.push((FREE_SLOT, in_consumer));
         let _ = egress_lanes.push((FREE_SLOT, out_producer));
         iface_halves[slot] = Some((in_producer, out_consumer));
     }
 
-    let lora_spi = Spi::new(
-        p.SPI2,
-        SpiConfig::default().with_frequency(Rate::from_mhz(8)),
-    )
-    .expect("lora spi2")
-    .with_sck(p.GPIO9)
-    .with_mosi(p.GPIO10)
-    .with_miso(p.GPIO11)
-    .into_async();
-    let lora_cs = Output::new(p.GPIO8, Level::High, OutputConfig::default());
-    let lora_spi_device = ExclusiveDevice::new(lora_spi, lora_cs, Delay).expect("lora spi device");
-    let lora_reset = Output::new(p.GPIO12, Level::High, OutputConfig::default());
-    let lora_busy = Input::new(p.GPIO13, InputConfig::default());
-    let lora_dio1 = Input::new(p.GPIO14, InputConfig::default());
-    let _lora_pa_pwr = Output::new(p.GPIO7, Level::High, OutputConfig::default());
-    let mut lora_csd = Flex::new(p.GPIO2);
-    lora_csd.apply_input_config(&InputConfig::default());
-    lora_csd.set_input_enable(true);
-    let lora_is_kct8103l = lora_csd.is_high();
-    lora_csd.set_output_enable(true);
-    lora_csd.set_high();
-    let _lora_fem_switch = if lora_is_kct8103l {
-        Output::new(p.GPIO5, Level::High, OutputConfig::default())
-    } else {
-        Output::new(p.GPIO46, Level::High, OutputConfig::default())
+    // LoRa is held fully offline under `ble-bringup` (radio uninitialized, interface unbuilt) so the
+    // BLE data-plane bring-up has no confounding second radio/interface. Only the cheap id + status
+    // are kept so the card list renders a (perpetually-initializing) LoRa tile.
+    #[cfg(not(feature = "ble-bringup"))]
+    let lora_radio = {
+        let lora_spi = Spi::new(
+            p.SPI2,
+            SpiConfig::default().with_frequency(Rate::from_mhz(8)),
+        )
+        .expect("lora spi2")
+        .with_sck(p.GPIO9)
+        .with_mosi(p.GPIO10)
+        .with_miso(p.GPIO11)
+        .into_async();
+        let lora_cs = Output::new(p.GPIO8, Level::High, OutputConfig::default());
+        let lora_spi_device =
+            ExclusiveDevice::new(lora_spi, lora_cs, Delay).expect("lora spi device");
+        let lora_reset = Output::new(p.GPIO12, Level::High, OutputConfig::default());
+        let lora_busy = Input::new(p.GPIO13, InputConfig::default());
+        let lora_dio1 = Input::new(p.GPIO14, InputConfig::default());
+        let _lora_pa_pwr = Output::new(p.GPIO7, Level::High, OutputConfig::default());
+        let mut lora_csd = Flex::new(p.GPIO2);
+        lora_csd.apply_input_config(&InputConfig::default());
+        lora_csd.set_input_enable(true);
+        let lora_is_kct8103l = lora_csd.is_high();
+        lora_csd.set_output_enable(true);
+        lora_csd.set_high();
+        let _lora_fem_switch = if lora_is_kct8103l {
+            Output::new(p.GPIO5, Level::High, OutputConfig::default())
+        } else {
+            Output::new(p.GPIO46, Level::High, OutputConfig::default())
+        };
+        Sx126x::new(
+            lora_spi_device,
+            lora_busy,
+            lora_dio1,
+            lora_reset,
+            Delay,
+            BoardConfig {
+                tcxo_voltage: Some(TcxoVoltage::V1_8),
+                use_dcdc: true,
+                rx_boost: true,
+                dio2_as_rf_switch: true,
+            },
+        )
     };
-    let lora_radio = Sx126x::new(
-        lora_spi_device,
-        lora_busy,
-        lora_dio1,
-        lora_reset,
-        Delay,
-        BoardConfig {
-            tcxo_voltage: Some(TcxoVoltage::V1_8),
-            use_dcdc: true,
-            rx_boost: true,
-            dio2_as_rf_switch: true,
-        },
-    );
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = InterfaceId::from_channel_tag(InterfaceKind::LoRa, &channel_tag(&lora_profile));
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
     );
+    #[cfg(not(feature = "ble-bringup"))]
     let lora = LoRaInterface::new(
         lora_radio,
         lora_profile,
@@ -452,10 +481,14 @@ pub async fn run(spawner: Spawner) {
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
 
+    #[cfg(not(feature = "ble-bringup"))]
     let lora_cfg = lora.descriptor();
     let tcp_cfg = tcp_built.as_ref().map(|(t, _, _)| t.descriptor());
     let has_wifi = wifi.is_some();
 
+    // The engine is built and run on core 1: its stack carries the dalek-heavy construction transient
+    // and then the reactor reuses that space (see `CORE1_STACK_BYTES`). Core 0 keeps only its I/O +
+    // screen loop.
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     esp_rtos::start_second_core(
         p.CPU_CTRL,
@@ -468,7 +501,11 @@ pub async fn run(spawner: Spawner) {
             if let Some(cfg) = tcp_cfg {
                 node.activate(TCP_SLOT, cfg);
             }
+            #[cfg(not(feature = "ble-bringup"))]
             node.activate(LORA_SLOT, lora_cfg);
+            #[cfg(feature = "ble-bringup")]
+            node.activate_fleet(WIFI_FLEET_SLOT, BLE_FLEET_ID);
+            #[cfg(not(feature = "ble-bringup"))]
             if has_wifi {
                 node.activate_fleet(WIFI_FLEET_SLOT, WIFI_FLEET_ID);
             }
@@ -484,14 +521,17 @@ pub async fn run(spawner: Spawner) {
         },
     );
 
-    let (lora_in_producer, lora_out_consumer) =
-        iface_halves[LORA_SLOT].take().expect("lora slot half");
-    let lora_seam = EmbassyInterfaceSeam::new(
-        lora_id,
-        lora_in_producer,
-        NOTIFY.sender(),
-        lora_out_consumer,
-    );
+    #[cfg(not(feature = "ble-bringup"))]
+    let lora_seam = {
+        let (lora_in_producer, lora_out_consumer) =
+            iface_halves[LORA_SLOT].take().expect("lora slot half");
+        EmbassyInterfaceSeam::new(
+            lora_id,
+            lora_in_producer,
+            NOTIFY.sender(),
+            lora_out_consumer,
+        )
+    };
 
     let tcp = tcp_built.map(|(tcp, _, _)| {
         let (in_producer, out_consumer) = iface_halves[TCP_SLOT].take().expect("tcp slot half");
@@ -510,6 +550,7 @@ pub async fn run(spawner: Spawner) {
             inbound: wifi_in_producer,
             outbound: wifi_out_consumer,
             notify: NOTIFY.sender(),
+            outbound_wake: &OUTBOUND_WAKE,
         },
         LIFECYCLE.sender(),
     );
@@ -537,6 +578,8 @@ pub async fn run(spawner: Spawner) {
         let mut vbat_ema_mv: u32 = 0;
         let mut battery_state = screen::BatteryState::Unknown;
         let mut ticks_to_battery: u8 = 0;
+        #[cfg(feature = "ble-bringup")]
+        let mut ble_announce_ticks: u8 = 0;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         loop {
@@ -597,6 +640,19 @@ pub async fn run(spawner: Spawner) {
                 }
                 Either3::Third(()) => {
                     ticks_to_battery = ticks_to_battery.saturating_sub(1);
+                    #[cfg(feature = "ble-bringup")]
+                    {
+                        ble_announce_ticks += 1;
+                        if ble_announce_ticks >= 60 {
+                            ble_announce_ticks = 0;
+                            let issued = handle.issue(EngineCommand::AnnounceNow(AnnounceNow {
+                                destination: self_destination,
+                                target: AnnounceTarget::AllInterfaces,
+                                app_data: AnnounceAppData::Registered,
+                            }));
+                            log::info!("hopspot: auto-announce issued={}", issued.is_some());
+                        }
+                    }
                 }
                 Either3::Second(event) => {
                     let selected_kind = ui_state
@@ -645,30 +701,32 @@ pub async fn run(spawner: Spawner) {
     let ble_connector = esp_radio::ble::controller::BleConnector::new(p.BT, Default::default())
         .expect("ble connector");
 
-    let lora_run = lora.run(lora_seam);
-    match (wifi, tcp) {
-        (Some(wifi), Some((tcp, tcp_seam))) => {
-            join(
-                join(lora_run, join(wifi.run(fleet), tcp.run(tcp_seam))),
-                render,
-            )
-            .await;
-        }
-        (Some(wifi), None) => {
-            join(join(lora_run, wifi.run(fleet)), render).await;
-        }
-        (None, _) => {
-            #[cfg(feature = "ble-bringup")]
-            join(
+    #[cfg(feature = "ble-bringup")]
+    {
+        let _ = (wifi, tcp, has_wifi);
+        join(
+            crate::ble::run(ble_connector, mac_octets, node_identity, fleet, &BLE_SHARED),
+            render,
+        )
+        .await;
+    }
+    #[cfg(not(feature = "ble-bringup"))]
+    {
+        let lora_run = lora.run(lora_seam);
+        match (wifi, tcp) {
+            (Some(wifi), Some((tcp, tcp_seam))) => {
                 join(
-                    lora_run,
-                    crate::ble::run(ble_connector, mac_octets, node_identity),
-                ),
-                render,
-            )
-            .await;
-            #[cfg(not(feature = "ble-bringup"))]
-            join(lora_run, render).await;
+                    join(lora_run, join(wifi.run(fleet), tcp.run(tcp_seam))),
+                    render,
+                )
+                .await;
+            }
+            (Some(wifi), None) => {
+                join(join(lora_run, wifi.run(fleet)), render).await;
+            }
+            (None, _) => {
+                join(lora_run, render).await;
+            }
         }
     }
 }
@@ -693,6 +751,8 @@ fn build_cards(
     lora_id: InterfaceId,
 ) -> HVec<screen::Card, 8> {
     use personal_rns::interfaces::InterfaceStatus;
+    #[cfg(feature = "ble-bringup")]
+    let ble = BluetoothAutoStatus::new(&BLE_SHARED);
     let classify = |id: InterfaceId| -> Option<(screen::CardKind, screen::CardLabel)> {
         if id == USB_INTERFACE_ID {
             Some((screen::CardKind::Usb, screen::card_label("USB")))
@@ -706,6 +766,10 @@ fn build_cards(
                 screen::tcp_card_label(HOPSPOT_TCP_TARGET),
             ))
         } else {
+            #[cfg(feature = "ble-bringup")]
+            if id == BLE_FLEET_ID {
+                return Some((screen::CardKind::Ble, screen::card_label("BLE")));
+            }
             let bytes = id.as_bytes();
             let mut label = screen::CardLabel::new();
             let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
@@ -722,6 +786,14 @@ fn build_cards(
         let supervisor_id = wifi.id();
         let _ = entries.push((wifi, Membership::Independent));
         for member in wifi.members() {
+            let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+        }
+    }
+    #[cfg(feature = "ble-bringup")]
+    {
+        let supervisor_id = ble.id();
+        let _ = entries.push((&ble, Membership::Independent));
+        for member in ble.members() {
             let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
     }
@@ -778,6 +850,7 @@ fn build_tcp(
     Some((tcp, status, id))
 }
 
+#[cfg(not(feature = "ble-bringup"))]
 /// Bring the WiFi stack up in station mode and hand back the supervisor. `None` with no SSID (the
 /// board then runs USB-only). Spawns the net runner + the connect/reconnect loop on core 0.
 fn build_wifi(
@@ -847,6 +920,7 @@ fn build_wifi(
     ))
 }
 
+#[cfg(not(feature = "ble-bringup"))]
 /// Drive the embassy-net stack forever (the link/neighbor/socket machinery), on core 0.
 #[embassy_executor::task]
 async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
@@ -855,6 +929,7 @@ async fn net_task(mut runner: Runner<'static, WifiStaDevice<'static>>) -> ! {
 
 /// Join the configured network in station mode and hold the association up, reconnecting on drop.
 ///
+#[cfg(not(feature = "ble-bringup"))]
 /// A mesh (e.g. eero) hands the same SSID out on many BSSIDs across its nodes and bands and bridges
 /// multicast between them unreliably, so a station left to roam can land on a node that never
 /// receives the discovery group. To avoid that, this scans first and pins to the strongest BSSID

@@ -9,7 +9,13 @@ description = "Personal Hopspot: one source, two targets (the Linux debug window
 resolver = "2"
 
 [features]
-default = []
+default = ["radio-wifi"]
+# esp-radio's WiFi controller + the firmware's WiFi station/mesh stack. On by default (the production
+# firmware). `ble-bringup` builds with `--no-default-features` to leave it OFF, keeping the radio
+# BLE-only as a minimal isolated bring-up build (smaller, fewer moving parts while the native-BLE data
+# plane is proven). This is a bring-up convenience, not a coexistence requirement: WiFi+BLE coex is
+# supported, and the data-plane freezes once blamed on coex were a cross-core async-correctness bug.
+radio-wifi = ["esp-radio/wifi"]
 fixture-identity = []
 # Diagnostics: a pre-frame boot line reporting the engine's static SRAM footprint and
 # free heap, with a settle delay so a USB-serial-JTAG monitor catches it past re-enumeration.
@@ -21,7 +27,7 @@ device-firehose = []
 # Temporary native-BLE bring-up mode: pulls in trouble-host + esp-radio's BLE controller and brings
 # the radio up as Bluetooth in isolation (WiFi off), proving the stack before WiFi+BLE coexistence.
 # Off by default, so the production firmware is unchanged.
-ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble"]
+ble-bringup = ["dep:trouble-host", "dep:embassy-sync-07", "dep:heapless-09", "esp-radio/ble", "personal-rns/embassy-bluetooth"]
 
 [[bin]]
 name = "personal-hopspot-app"
@@ -76,7 +82,7 @@ personal-rns-ffi = { path = "../../personal-rns-ffi" }
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["embassy-contract", "embassy-wifi", "embassy-lora", "external-alloc"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal-bus = { version = "0.3", features = ["async"] }
-esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "wifi", "unstable", "esp-alloc"] }
+esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }
 # Pure-Rust host BLE stack driving esp-radio's HCI BleConnector. 0.6.0 is the published release whose
 # bt-hci 0.8 agrees with esp-radio 0.18. It depends on embassy-sync 0.7 and heapless 0.9 while the
 # rest of the firmware is on 0.8; the GATT-server macro emits both, so ble.rs pins matching aliases

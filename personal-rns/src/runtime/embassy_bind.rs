@@ -599,6 +599,7 @@ pub struct MemberWire<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: us
     pub inbound: EmbassyGrantProducer<'static, M, SLOT>,
     pub outbound: EmbassyGrantConsumer<'static, M, SLOT>,
     pub notify: Sender<'static, M, InterfaceId, NOTIFY>,
+    pub outbound_wake: &'static Signal<M, ()>,
 }
 
 /// A supervisor's lever onto the node's reactor — the embedded twin of the host `Fleet`, minus the
@@ -669,8 +670,9 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
     /// fleet broadcast the supervisor fans across the members the [`FanTarget`] selects. The frame
     /// is copied out (sized `OUT`, the medium's frame ceiling) rather than borrowed, so the returned
     /// value owns nothing of the fleet — that lets it ride a `select` arm beside the supervisor's
-    /// other fleet uses without a borrow clash. The prior peek is released first, so each frame is
-    /// carried exactly once.
+    /// other fleet uses without a borrow clash. The prior peek is released first, and the copied
+    /// slot is released before returning, so the depth-1 lane is free for the reactor's next frame
+    /// the instant this one is in hand, and each frame is carried exactly once.
     pub async fn next_outbound<const OUT: usize>(
         &mut self,
     ) -> (InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>) {
@@ -680,7 +682,33 @@ impl<M: RawMutex + 'static, const SLOT: usize, const NOTIFY: usize, const LIFECY
         let fan = slot.fan;
         let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
         let _ = bytes.extend_from_slice(slot.frame());
+        self.wire.outbound.release();
         (id, fan, bytes)
+    }
+
+    /// Park until the reactor commits an outbound frame onto this fleet's shared lane. The reactor
+    /// signals this on every commit, so a supervisor waiting here is roused across the task boundary
+    /// without depending on the lane's own consumer waker — the inbound funnel's mirror image. On
+    /// wake, drain with [`try_next_outbound`](Self::try_next_outbound) until it yields `None`.
+    pub async fn outbound_ready(&self) {
+        self.wire.outbound_wake.wait().await;
+    }
+
+    /// Take the next outbound frame without parking — `None` when the lane is momentarily empty. The
+    /// copy/release contract matches [`next_outbound`](Self::next_outbound): the slot is freed before
+    /// returning, so the depth-1 lane refills at once and each frame is carried exactly once. The
+    /// signal-then-drain pair ([`outbound_ready`](Self::outbound_ready) then this in a loop) replaces
+    /// awaiting the lane directly, so several frames committed before the supervisor runs all flush.
+    pub fn try_next_outbound<const OUT: usize>(
+        &mut self,
+    ) -> Option<(InterfaceId, Option<FanTarget>, HeaplessVec<u8, OUT>)> {
+        let slot = self.wire.outbound.try_peek()?;
+        let id = slot.interface_id;
+        let fan = slot.fan;
+        let mut bytes: HeaplessVec<u8, OUT> = HeaplessVec::new();
+        let _ = bytes.extend_from_slice(slot.frame());
+        self.wire.outbound.release();
+        Some((id, fan, bytes))
     }
 }
 
@@ -816,6 +844,86 @@ mod tests {
         std::boxed::Box::leak(std::boxed::Box::new(value))
     }
 
+    #[test]
+    fn next_outbound_releases_the_copied_grant_so_the_depth_one_lane_refills() {
+        use crate::reactor::grant::AnyGrantProducer;
+
+        let (inbound, _inbound_rx) = leaked_grant_lane::<SLOT>(1);
+        let (mut outbound_tx, outbound) = leaked_grant_lane::<SLOT>(1);
+        let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
+        let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
+        let mut fleet: Fleet<Mtx, SLOT, 1, 1> = Fleet::new(
+            MemberWire {
+                inbound,
+                outbound,
+                notify: notify.sender(),
+                outbound_wake: leak(Signal::new()),
+            },
+            lifecycle.sender(),
+        );
+
+        assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"one"));
+        let (_, fan, frame) = block_on(fleet.next_outbound::<SLOT>());
+        assert_eq!(fan, Some(FanTarget::All));
+        assert_eq!(frame.as_slice(), b"one");
+
+        assert!(
+            outbound_tx.try_fill_frame_fan(FanTarget::All, b"two"),
+            "the depth-1 lane must accept the next frame the instant next_outbound copied the last"
+        );
+        let (_, fan, frame) = block_on(fleet.next_outbound::<SLOT>());
+        assert_eq!(fan, Some(FanTarget::All));
+        assert_eq!(frame.as_slice(), b"two");
+    }
+
+    /// A supervisor parking on [`outbound_ready`](Fleet::outbound_ready) is roused when the reactor
+    /// commits a frame, then drains it with [`try_next_outbound`](Fleet::try_next_outbound) — the
+    /// outbound mirror of the inbound `notify` funnel. Without the commit's signal a supervisor with
+    /// no other traffic to wake it would park forever beside a full lane, which is the bug this
+    /// dedicated wake fixes: the lane's own consumer waker did not rouse the cross-task drain.
+    #[test]
+    fn an_outbound_commit_wakes_the_supervisor_and_try_next_outbound_drains() {
+        use crate::reactor::grant::AnyGrantProducer;
+
+        let (inbound, _inbound_rx) = leaked_grant_lane::<SLOT>(1);
+        let (mut outbound_tx, outbound) = leaked_grant_lane::<SLOT>(1);
+        let wake: &'static Signal<Mtx, ()> = leak(Signal::new());
+        outbound_tx.set_outbound_wake(wake);
+        let notify: &'static Channel<Mtx, InterfaceId, 1> = leak(Channel::new());
+        let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 1> = leak(Channel::new());
+        let mut fleet: Fleet<Mtx, SLOT, 1, 1> = Fleet::new(
+            MemberWire {
+                inbound,
+                outbound,
+                notify: notify.sender(),
+                outbound_wake: wake,
+            },
+            lifecycle.sender(),
+        );
+
+        assert!(
+            fleet.try_next_outbound::<SLOT>().is_none(),
+            "an empty lane drains to nothing"
+        );
+
+        assert!(outbound_tx.try_fill_frame_fan(FanTarget::All, b"hi"));
+        block_on(with_timeout(
+            Duration::from_millis(50),
+            fleet.outbound_ready(),
+        ))
+        .expect("the commit must signal the outbound wake");
+
+        let (_, fan, frame) = fleet
+            .try_next_outbound::<SLOT>()
+            .expect("the committed frame drains after the wake");
+        assert_eq!(fan, Some(FanTarget::All));
+        assert_eq!(frame.as_slice(), b"hi");
+        assert!(
+            fleet.try_next_outbound::<SLOT>().is_none(),
+            "the depth-1 lane is empty once drained"
+        );
+    }
+
     /// A supervisor stands one peer up through its [`Fleet`] on a node built from a recipe, feeds an
     /// announce in over the member's wire, and the node hears it — then tears the peer back down.
     /// The whole high-level embassy path end to end: `Prns::new` over a recipe, `run` joining the
@@ -857,6 +965,7 @@ mod tests {
                 inbound: in_producer,
                 outbound: out_consumer,
                 notify: notify.sender(),
+                outbound_wake: leak(Signal::new()),
             },
             lifecycle.sender(),
         );

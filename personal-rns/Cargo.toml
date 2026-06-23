@@ -49,6 +49,13 @@ embassy-wifi = ["embassy-contract", "dep:embassy-net", "dep:embedded-io-async-07
 # generic over the driver's embedded-hal-async SPI/GPIO bounds, so it compile-checks off-target like
 # the others. GFSK/GMSK speed mode rides the driver's reserved arm on a later path.
 embassy-lora = ["embassy-contract", "dep:log"]
+# An embassy native-Bluetooth host: just the contract seam (select + the channel mutex + atomics),
+# enough for the supervisor that drives a board's `BleBackend` bridge. The radio stack (trouble-host
+# over esp-radio) lives in the board crate behind its own feature, so this compile-checks off-target.
+embassy-bluetooth = ["embassy-contract", "log"]
+# A debug-logging gate: pulls the `log` facade so the engine/reactor can emit diagnostic traces on
+# hosts that have a logger (the embedded esp-println one). Off in production builds.
+log = ["dep:log"]
 # The plug-and-play WiFi/LAN auto-interface (RNS AutoInterface parity) on the reactor
 # seam: the tokio host plus tokio's own UDP, socket2 (IPv6 multicast egress + address
 # reuse), and if-addrs (the chosen NIC's real link-local + index). Opt-in, so tokio
