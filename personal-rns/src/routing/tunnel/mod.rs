@@ -242,4 +242,103 @@ mod tests {
             Err(EgressSerializeError::BufferTooShort)
         );
     }
+
+    fn synthesize_wire(seed: u8) -> std::vec::Vec<u8> {
+        let secret = Ed25519SecretKey::new([seed; 32]);
+        let signing_public = ed25519_public_key(&secret);
+        let mut public_key = [0u8; PUBLIC_KEY_LEN];
+        public_key[..32].copy_from_slice(&[seed ^ 0x5A; 32]);
+        public_key[32..].copy_from_slice(&signing_public.0);
+        let interface_hash = [0x9Du8; INTERFACE_HASH_LEN];
+        let random = [0x42u8; RANDOM_HASH_LEN];
+        let region = synthesize_signed_region(&public_key, &interface_hash, &random);
+        let signature = ed25519_sign(&secret, &region);
+        let payload = assemble_synthesize_payload(&region, &signature);
+        let mut buf = std::vec![0u8; HEADER_MIN_LEN + SYNTHESIZE_PAYLOAD_LEN];
+        let n = write_synthesize_wire_packet(&payload, &mut buf).expect("frames");
+        buf.truncate(n);
+        buf
+    }
+
+    #[test]
+    fn a_tunnel_keeps_routes_warm_through_a_disconnect_and_repoints_them_on_reconnect() {
+        use crate::engine::test_support::{
+            hx, routable_descriptor, transporting_node, RAW_ANNOUNCE, TEST_ENTROPY,
+        };
+        use crate::engine::InstantMillis;
+        use crate::interfaces::{InboundPacket, InterfaceConfig, InterfaceId};
+
+        let mut relay = transporting_node();
+        let dest = DestinationHash::new(hx("16f8a6d3f7d7c5b6f106d293804d7314").try_into().unwrap());
+        let first_conn = InterfaceId::new([0xC1; 8]);
+        let view = [routable_descriptor(first_conn)];
+
+        let mut announce = hx(RAW_ANNOUNCE);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: first_conn,
+                bytes: &mut announce,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        assert_eq!(
+            relay
+                .routing_table
+                .path_row(&dest)
+                .expect("the announce taught a route")
+                .receiving_interface,
+            first_conn,
+        );
+
+        let mut synth = synthesize_wire(0xAB);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: first_conn,
+                bytes: &mut synth,
+            },
+            TEST_ENTROPY,
+            &view,
+        );
+        assert!(relay.tunnels.warm_until(first_conn).is_some());
+
+        let no_view: [InterfaceConfig; 0] = [];
+        let _ = relay.cull_expired_routes(InstantMillis(3_000), &no_view, &mut |_| {});
+        assert!(
+            relay.routing_table.path_row(&dest).is_some(),
+            "the route stays warm while the tunnel is dormant",
+        );
+
+        let second_conn = InterfaceId::new([0xC2; 8]);
+        let second_view = [routable_descriptor(second_conn)];
+        let mut synth_again = synthesize_wire(0xAB);
+        let _ = relay.ingest_packet(
+            InboundPacket {
+                arrived_at: InstantMillis(4_000),
+                source_interface: second_conn,
+                bytes: &mut synth_again,
+            },
+            TEST_ENTROPY,
+            &second_view,
+        );
+        assert_eq!(
+            relay
+                .routing_table
+                .path_row(&dest)
+                .expect("the route survived the gap")
+                .receiving_interface,
+            second_conn,
+            "the warm route re-points onto the reconnected interface",
+        );
+
+        let past = InstantMillis(4_000 + TUNNEL_TIMEOUT_MS + 1);
+        let _ = relay.cull_expired_routes(past, &no_view, &mut |_| {});
+        assert!(
+            relay.routing_table.path_row(&dest).is_none(),
+            "once the tunnel times out the route finally falls due",
+        );
+        assert!(relay.tunnels.is_empty());
+    }
 }

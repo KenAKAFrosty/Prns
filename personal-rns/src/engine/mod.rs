@@ -8,6 +8,7 @@ mod scheduled;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tick;
+mod tunnel;
 
 #[cfg(feature = "alloc")]
 pub use commands::RpcPathEntry;
@@ -440,10 +441,14 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn route_expiry_wake(&self, view: &[InterfaceConfig]) -> LaneWake {
-        LaneWake::from_deadline(
-            self.routing_table
-                .soonest_route_expiry_with_tunnels(view, &self.tunnels),
-        )
+        let routes = self
+            .routing_table
+            .soonest_route_expiry_with_tunnels(view, &self.tunnels);
+        let earliest = match (routes, self.tunnels.soonest_expiry()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        LaneWake::from_deadline(earliest)
     }
 
     /// Probe every reactor-scheduled lane fresh into a [`WakeSchedules`]. This is the full
