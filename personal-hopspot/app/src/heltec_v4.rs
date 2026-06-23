@@ -137,7 +137,7 @@ const COMPLETIONS_CAP: usize = 4;
 /// task pool, so this is just the per-poll execution stack — the run-time ingest crypto's frames.
 /// The one-time engine *construction* (the big, dalek-heavy transient) happens on core 0's
 /// guarded main-task stack instead, so core 1 stays small.
-const CORE1_STACK_BYTES: usize = 32 * 1024;
+const CORE1_STACK_BYTES: usize = 64 * 1024;
 
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
