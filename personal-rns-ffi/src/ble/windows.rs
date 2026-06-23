@@ -68,6 +68,8 @@ const POWER_ON_TIMEOUT: Duration = Duration::from_secs(35);
 const ADAPTER_ATTEMPTS: usize = 12;
 /// Delay between adapter-acquisition attempts.
 const ADAPTER_RETRY_DELAY: Duration = Duration::from_secs(2);
+const DIAL_DISCOVERY_ATTEMPTS: usize = 4;
+const DIAL_DISCOVERY_RETRY_DELAY: Duration = Duration::from_millis(400);
 /// Per-write GATT-data-floor payload, leaving room for the fragment header under a typical
 /// negotiated ATT MTU (matches the macOS backend's conservative 180).
 const GATT_FRAGMENT_PAYLOAD: usize = 180;
@@ -699,8 +701,27 @@ fn connect_blocking(address: BleAddress) -> Result<WinGattLink, WindowsBleError>
         },
     ))?;
 
-    let control_char = discover_characteristic(&device, NATIVE_CONTROL_UUID)?;
-    let data_char = discover_characteristic(&device, NATIVE_DATA_UUID)?;
+    let (control_char, data_char) = {
+        let mut attempt = 1;
+        loop {
+            let discovered =
+                discover_characteristic(&device, NATIVE_CONTROL_UUID).and_then(|control| {
+                    Ok((control, discover_characteristic(&device, NATIVE_DATA_UUID)?))
+                });
+            match discovered {
+                Ok(pair) => break pair,
+                Err(error) if attempt < DIAL_DISCOVERY_ATTEMPTS => {
+                    log::debug!(
+                        "bluetooth: discovery attempt {attempt}/{DIAL_DISCOVERY_ATTEMPTS} for {:02x?} failed ({error:?}); retrying",
+                        address.octets()
+                    );
+                    attempt += 1;
+                    std::thread::sleep(DIAL_DISCOVERY_RETRY_DELAY);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    };
     // Both characteristics live on the same service; hold it (and the device) to keep the link up.
     let service = control_char.Service()?;
 
