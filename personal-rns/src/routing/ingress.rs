@@ -430,6 +430,9 @@ pub enum IngestPacketOutcome<'p> {
         attached_interface: InterfaceId,
         arrived_on: InterfaceId,
     },
+    TunnelObserved {
+        expires: InstantMillis,
+    },
     Ignored,
 }
 
@@ -1630,7 +1633,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.mark_interface_dirty(source_interface);
             }
         }
-        IngestPacketOutcome::Ignored
+        IngestPacketOutcome::TunnelObserved { expires }
     }
 
     fn ingest_path_request<'p>(
