@@ -279,6 +279,19 @@ fn log_heap_footprint(label: &str) {
     println!("{}", esp_alloc::HEAP.stats());
 }
 
+const DCACHE_FREE_BASE: usize = 0x3FCF_0000;
+const DCACHE_FREE_LEN: usize = 32 * 1024;
+
+fn reclaim_dcache_region() {
+    unsafe {
+        esp_alloc::HEAP.add_region(esp_alloc::HeapRegion::new(
+            DCACHE_FREE_BASE as *mut u8,
+            DCACHE_FREE_LEN,
+            esp_alloc::MemoryCapability::Internal.into(),
+        ));
+    }
+}
+
 /// Platform bring-up on core 0: the OLED, the self-identity crypto, the radios + WiFi/TCP, and the
 /// I/O run-loops + screen. The engine is built *and* owned by core 1 — it constructs the node on
 /// its own stack (the dalek-heavy transient) then runs the reactor there, so core 0 never touches
@@ -292,6 +305,7 @@ pub async fn run(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 70 * 1024);
     esp_alloc::psram_allocator!(p.PSRAM, esp_hal::psram);
+    reclaim_dcache_region();
     let timg0 = TimerGroup::new(p.TIMG0);
     let sw_int = SoftwareInterruptControl::new(p.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
