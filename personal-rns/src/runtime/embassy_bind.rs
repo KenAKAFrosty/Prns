@@ -26,6 +26,7 @@ use crate::engine::{
     CloseLink, CommandId, Delivered, EngineCommand, EngineState, FanTarget, IssuedCommand,
     Journaled, Respond, RespondData, SendSingle, SendSingleFailure, SendSinglePayload, Settlement,
 };
+use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceConfig, InterfaceId};
 use crate::reactor::grant::{GrantConsumer, GrantProducer};
 use crate::reactor::impls::embassy_reactor::{
@@ -404,9 +405,6 @@ where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
         let mut engine = EngineState::<S>::default();
-        if let Some(id) = recipe.transport {
-            engine.set_transport_id(id);
-        }
         for destination in recipe.pre_configured_destinations {
             match destination {
                 PreConfiguredDestination::Plain { app_name, aspects } => {
@@ -443,6 +441,13 @@ where
                         }
                     }
                 }
+            }
+        }
+
+        if let Some(id) = recipe.transport {
+            let identity = IdentityHash::new(*id.as_bytes());
+            if engine.set_transport_identity(&identity).is_err() {
+                engine.set_transport_id(id);
             }
         }
 
