@@ -443,6 +443,7 @@ struct Args {
     scenario: String,
     initiator: String,
     responder: String,
+    relay: String,
     duration_ms: Option<u64>,
     pin: bool,
 }
@@ -452,6 +453,7 @@ fn parse_args() -> Args {
         scenario: "single-firehose".into(),
         initiator: "self".into(),
         responder: "self".into(),
+        relay: "self".into(),
         duration_ms: None,
         pin: true,
     };
@@ -460,6 +462,7 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--initiator" => args.initiator = argv.next().expect("impl name"),
             "--responder" => args.responder = argv.next().expect("impl name"),
+            "--relay" => args.relay = argv.next().expect("impl name"),
             "--duration-ms" => {
                 args.duration_ms = Some(argv.next().and_then(|v| v.parse().ok()).expect("ms"));
             }
@@ -525,7 +528,11 @@ fn main() {
     let manifest_json: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&manifest).expect("reads the manifest"))
             .expect("parses the manifest");
-    run_interop(&args, &manifest_json, &manifest);
+    if manifest_json["profile"]["topology"].as_str() == Some("relay") {
+        run_relay_interop(&args, &manifest_json, &manifest);
+    } else {
+        run_interop(&args, &manifest_json, &manifest);
+    }
 }
 
 /// Spawn one process per role over localhost TCP/UDP and collect delivery,
@@ -533,10 +540,6 @@ fn main() {
 /// <responder>` pairing key; `--unpinned` prints without filing.
 fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::path::Path) {
     let wire = manifest_json["profile"]["wire"].as_str().unwrap_or("tcp");
-    assert!(
-        manifest_json["profile"]["topology"].as_str().unwrap_or("direct") != "relay",
-        "three-role relayed scenarios are not orchestrated yet — drive the relay,          responder, and initiator processes directly (the relay's READY line carries          both endpoint addresses as a>b)",
-    );
     let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
 
     let initiator_impl = implementation(&args.initiator);
@@ -638,31 +641,74 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
 
     let initiator_metrics = initiator.finalize();
     let responder_metrics = responder.finalize();
-    let initiator_cpu = initiator_metrics.cpu_seconds;
-    let initiator_rss = initiator_metrics.peak_rss_bytes;
-    let responder_cpu = responder_metrics.cpu_seconds;
-    let responder_rss = responder_metrics.peak_rss_bytes;
+
+    file_results(
+        args,
+        version,
+        &pairing_slug,
+        &pairing_label,
+        CollectedRun {
+            result: &result,
+            responder_result: &responder_result,
+            wire_line: wire_line.as_deref(),
+            energy,
+            idle_watts,
+            initiator: initiator_metrics,
+            responder: responder_metrics,
+            relay: None,
+        },
+    );
+}
+
+struct CollectedRun<'a> {
+    result: &'a str,
+    responder_result: &'a str,
+    wire_line: Option<&'a str>,
+    energy: Option<(f64, f64)>,
+    idle_watts: Option<f64>,
+    initiator: RoleMetrics,
+    responder: RoleMetrics,
+    relay: Option<RoleMetrics>,
+}
+
+fn file_results(
+    args: &Args,
+    version: u32,
+    pairing_slug: &str,
+    pairing_label: &str,
+    run: CollectedRun<'_>,
+) {
+    let result = run.result;
+    let responder_result = run.responder_result;
+    let wire_line = run.wire_line;
+    let energy = run.energy;
+    let idle_watts = run.idle_watts;
+    let initiator_cpu = run.initiator.cpu_seconds;
+    let initiator_rss = run.initiator.peak_rss_bytes;
+    let responder_cpu = run.responder.cpu_seconds;
+    let responder_rss = run.responder.peak_rss_bytes;
+    let relay = run.relay;
 
     // The scenarios speak per-mechanism vocabularies for the same three
     // facts: what went out (sent/cycles), what the initiator saw settle
     // (delivered/settled/cycles), and what the responder counted
     // (delivered/received/served).
-    let sent = field(&result, "sent")
-        .or_else(|| field(&result, "cycles"))
+    let sent = field(result, "sent")
+        .or_else(|| field(result, "cycles"))
         .unwrap_or(0.0);
-    let delivered = field(&result, "delivered")
-        .or_else(|| field(&result, "settled"))
-        .or_else(|| field(&result, "cycles"))
+    let delivered = field(result, "delivered")
+        .or_else(|| field(result, "settled"))
+        .or_else(|| field(result, "cycles"))
         .unwrap_or(0.0);
-    let timeouts = field(&result, "timeouts")
-        .or_else(|| field(&result, "failures"))
+    let timeouts = field(result, "timeouts")
+        .or_else(|| field(result, "failures"))
         .unwrap_or(f64::NAN);
-    let raced = field(&result, "raced").unwrap_or(0.0);
-    let responder_delivered = field(&responder_result, "delivered")
-        .or_else(|| field(&responder_result, "received"))
-        .or_else(|| field(&responder_result, "served"))
+    let raced = field(result, "raced").unwrap_or(0.0);
+    let responder_delivered = field(responder_result, "delivered")
+        .or_else(|| field(responder_result, "received"))
+        .or_else(|| field(responder_result, "served"))
         .unwrap_or(0.0);
-    let died = field(&result, "died").unwrap_or(0.0) > 0.0;
+    let died = field(result, "died").unwrap_or(0.0) > 0.0;
     if died {
         eprintln!(
             "verdict: the initiator declared the responder DEAD mid-run — conformance filed, \
@@ -703,7 +749,7 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     let row = |axis: Axis, metric: &str, value: Option<f64>, unit: &str| ResultRow {
         scenario: args.scenario.clone(),
         scenario_version: version,
-        implementation: pairing_label.clone(),
+        implementation: pairing_label.to_string(),
         commit: stamp.commit.clone(),
         toolchain: stamp.toolchain.clone(),
         host: stamp.host.clone(),
@@ -714,15 +760,15 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         device_id: stamp.device_id,
         submitter_id: stamp.submitter_id,
     };
-    let elapsed_seconds = field(&result, "elapsed_ms")
+    let elapsed_seconds = field(result, "elapsed_ms")
         .map(|ms| ms / 1_000.0)
         .filter(|seconds| *seconds > 0.0);
-    let delivered_per_sec = field(&result, "delivered_per_sec")
-        .or_else(|| field(&result, "requests_per_sec"))
-        .or_else(|| field(&result, "cycles_per_sec"))
+    let delivered_per_sec = field(result, "delivered_per_sec")
+        .or_else(|| field(result, "requests_per_sec"))
+        .or_else(|| field(result, "cycles_per_sec"))
         .or_else(|| elapsed_seconds.map(|seconds| delivered / seconds));
-    let rtt_p50_ms = field(&result, "rtt_p50_ms").or_else(|| field(&result, "transfer_p50_ms"));
-    let rtt_p99_ms = field(&result, "rtt_p99_ms").or_else(|| field(&result, "transfer_p99_ms"));
+    let rtt_p50_ms = field(result, "rtt_p50_ms").or_else(|| field(result, "transfer_p50_ms"));
+    let rtt_p99_ms = field(result, "rtt_p99_ms").or_else(|| field(result, "transfer_p99_ms"));
 
     let mut rows = vec![
         row(
@@ -750,7 +796,7 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(
             Axis::Throughput,
             "goodput_bytes_per_sec",
-            field(&result, "goodput_bytes_per_sec").filter(|_| !died && perf_valid),
+            field(result, "goodput_bytes_per_sec").filter(|_| !died && perf_valid),
             "B/s",
         ),
         row(
@@ -783,6 +829,15 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         row(Axis::Energy, "initiator_cpu_seconds", Some(initiator_cpu), "s"),
         row(Axis::Energy, "responder_cpu_seconds", Some(responder_cpu), "s"),
     ];
+    if let Some(relay) = &relay {
+        rows.push(row(
+            Axis::Memory,
+            "relay_peak_rss_bytes",
+            Some(relay.peak_rss_bytes as f64).filter(|_| perf_valid),
+            "bytes",
+        ));
+        rows.push(row(Axis::Energy, "relay_cpu_seconds", Some(relay.cpu_seconds), "s"));
+    }
     if let (Some((raw_joules, wall_seconds)), Some(idle_watts)) = (energy, idle_watts) {
         let net_joules = raw_joules - idle_watts * wall_seconds;
         let measurable = net_joules > 0.0;
@@ -858,10 +913,10 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     if let Some(wire_line) = &wire_line {
         let wire_total = field(wire_line, "a_to_b_bytes").unwrap_or(0.0)
             + field(wire_line, "b_to_a_bytes").unwrap_or(0.0);
-        let payload = field(&result, "payload_bytes").or_else(|| {
+        let payload = field(result, "payload_bytes").or_else(|| {
             match (
-                field(&result, "request_bytes"),
-                field(&result, "response_bytes"),
+                field(result, "request_bytes"),
+                field(result, "response_bytes"),
             ) {
                 (Some(requests), Some(responses)) => Some(requests + responses),
                 _ => None,
@@ -901,8 +956,15 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
         initiator_rss as f64 / (1024.0 * 1024.0),
         responder_rss as f64 / (1024.0 * 1024.0),
     );
+    if let Some(relay) = &relay {
+        println!(
+            "SUMMARY relay cpu={:.2}s peak_rss={:.1}MiB",
+            relay.cpu_seconds,
+            relay.peak_rss_bytes as f64 / (1024.0 * 1024.0),
+        );
+    }
     if args.pin {
-        write_rows(&stamp.host, &args.scenario, &pairing_slug, &rows);
+        write_rows(&stamp.host, &args.scenario, pairing_slug, &rows);
         println!(
             "SUMMARY rows filed under results/{}/{}/{pairing_slug}.jsonl",
             stamp.host, args.scenario,
@@ -910,4 +972,97 @@ fn run_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &std::p
     } else {
         println!("UNPINNED run: rows printed, not filed (re-run without --unpinned to file)");
     }
+}
+
+fn run_relay_interop(args: &Args, manifest_json: &serde_json::Value, manifest: &Path) {
+    let version = manifest_json["version"].as_u64().unwrap_or(1) as u32;
+    let initiator_impl = implementation(&args.initiator);
+    let responder_impl = implementation(&args.responder);
+    let relay_impl = implementation(&args.relay);
+    let mechanism = manifest_json["profile"]["mechanism"].as_str().unwrap_or("single");
+    if let Some(reason) = unsupported_pairing(&initiator_impl, &responder_impl, mechanism) {
+        println!(
+            "SKIP scenario={} relay={} initiator={} responder={} reason={reason}",
+            args.scenario, relay_impl.label, initiator_impl.label, responder_impl.label,
+        );
+        return;
+    }
+
+    let endpoints_are_self = args.initiator == "self" && args.responder == "self";
+    let pairing_slug = if endpoints_are_self {
+        relay_impl.slug.to_string()
+    } else {
+        format!(
+            "{}--{}--{}",
+            relay_impl.slug, initiator_impl.slug, responder_impl.slug
+        )
+    };
+    let pairing_label = if endpoints_are_self {
+        format!("{} (relay)", relay_impl.label)
+    } else {
+        format!(
+            "{} (relay) {}/{}",
+            relay_impl.label, initiator_impl.label, responder_impl.label
+        )
+    };
+
+    let node = |subject: &Implementation| {
+        subject
+            .interop_command()
+            .unwrap_or_else(|| panic!("implementation {:?} fields no interop node", subject.name))
+    };
+
+    let meter = PowerMeter::detect();
+    if meter.is_none() {
+        println!("{}", energy_unavailable_hint());
+    }
+    let idle_watts = meter
+        .as_ref()
+        .map(|m| m.idle_watts(Duration::from_millis(1500)));
+    let bracket = meter.as_ref().map(|m| m.start());
+
+    let mut relay = spawn_role(node(&relay_impl), manifest, "relay", "127.0.0.1:0", args);
+    let relay_ready = await_line(&relay, "READY", Duration::from_secs(10));
+    let endpoints = relay_ready
+        .split_whitespace()
+        .find_map(|kv| kv.strip_prefix("addr="))
+        .expect("relay READY carries addr=<side_a>><side_b>");
+    let (addr_a, addr_b) = endpoints
+        .split_once('>')
+        .expect("relay READY addr is <side_a>><side_b>");
+
+    let responder = spawn_role(node(&responder_impl), manifest, "responder", addr_a, args);
+    await_line(&responder, "READY", Duration::from_secs(10));
+    let initiator = spawn_role(node(&initiator_impl), manifest, "initiator", addr_b, args);
+
+    let scenario_duration_ms = args
+        .duration_ms
+        .or_else(|| manifest_json["profile"]["duration_ms"].as_u64())
+        .unwrap_or(10_000);
+    let window = Duration::from_millis(scenario_duration_ms + 30_000);
+    let result = await_line(&initiator, "RESULT", window);
+    let responder_result = await_line(&responder, "RESULT", Duration::from_secs(10));
+
+    let energy = bracket.map(|b| b.finish());
+    let initiator_metrics = initiator.finalize();
+    let responder_metrics = responder.finalize();
+    let _ = relay.child.kill();
+    let relay_metrics = relay.finalize();
+
+    file_results(
+        args,
+        version,
+        &pairing_slug,
+        &pairing_label,
+        CollectedRun {
+            result: &result,
+            responder_result: &responder_result,
+            wire_line: None,
+            energy,
+            idle_watts,
+            initiator: initiator_metrics,
+            responder: responder_metrics,
+            relay: Some(relay_metrics),
+        },
+    );
 }
