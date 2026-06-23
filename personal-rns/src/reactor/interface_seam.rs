@@ -50,6 +50,8 @@ pub trait InterfaceSeam {
     /// The next frame owed to this interface's wire, borrowed in place from
     /// its outbound lane; the borrow releases on the following call.
     async fn next_outbound(&mut self) -> &[u8];
+
+    async fn request_tunnel_synthesis(&mut self) {}
 }
 
 #[allow(async_fn_in_trait)]

@@ -638,7 +638,8 @@ where
     let depth = lane_depth_for(slot_cap);
     let (in_producer, in_consumer) = tokio_grant_lane(slot_cap, depth);
     let (out_producer, out_consumer) = tokio_grant_lane(slot_cap, depth);
-    let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer);
+    let seam = TokioInterfaceSeam::new(id, in_producer, notify_tx.clone(), out_consumer)
+        .with_commands(commands.clone());
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
         Box::new(move || Box::pin(interface.run(seam)));
     let _ = commands.send(HostCommand::AddInterface(AddInterfaceCommand {
@@ -843,6 +844,7 @@ fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: Int
 
 struct TokioAttach {
     notify_tx: UnboundedSender<InterfaceId>,
+    command_tx: UnboundedSender<HostCommand>,
     interfaces: std::vec::Vec<InterfaceConfig>,
     inbound: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
     egress_lanes: std::vec::Vec<(InterfaceId, TokioGrantProducer)>,
@@ -860,7 +862,8 @@ impl InterfaceAttach for TokioAttach {
         self.interfaces.push(descriptor);
         self.inbound.push((id, in_consumer));
         self.egress_lanes.push((id, out_producer));
-        let seam = TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer);
+        let seam = TokioInterfaceSeam::new(id, in_producer, self.notify_tx.clone(), out_consumer)
+            .with_commands(self.command_tx.clone());
         self.runs.push(Box::pin(interface.run(seam)));
     }
 }
@@ -956,6 +959,7 @@ where
 
         let mut attach = TokioAttach {
             notify_tx,
+            command_tx: handle.commands.clone(),
             interfaces: std::vec::Vec::new(),
             inbound: std::vec::Vec::new(),
             egress_lanes: std::vec::Vec::new(),

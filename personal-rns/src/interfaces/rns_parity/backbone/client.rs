@@ -104,6 +104,7 @@ impl Interface for BackboneClientInterface {
             if let Ok(Ok(stream)) = connected {
                 tune(&stream);
                 self.status.set_connection(ConnectionState::Connected);
+                seam.request_tunnel_synthesis().await;
                 framed_stream::serve::<
                     framed_stream::HdlcFraming,
                     { core::READ_BUF_LEN },

@@ -202,6 +202,7 @@ pub struct TokioInterfaceSeam {
     inbound: TokioGrantProducer,
     notify: UnboundedSender<InterfaceId>,
     outbound: TokioGrantConsumer,
+    commands: Option<UnboundedSender<HostCommand>>,
 }
 
 impl TokioInterfaceSeam {
@@ -217,7 +218,14 @@ impl TokioInterfaceSeam {
             inbound,
             notify,
             outbound,
+            commands: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_commands(mut self, commands: UnboundedSender<HostCommand>) -> Self {
+        self.commands = Some(commands);
+        self
     }
 }
 
@@ -231,6 +239,12 @@ impl InterfaceSeam for TokioInterfaceSeam {
     async fn next_outbound(&mut self) -> &[u8] {
         self.outbound.release();
         self.outbound.peek().await.frame()
+    }
+
+    async fn request_tunnel_synthesis(&mut self) {
+        if let Some(commands) = &self.commands {
+            let _ = commands.send(HostCommand::SynthesizeTunnel { interface: self.id });
+        }
     }
 }
 
@@ -488,6 +502,9 @@ pub enum HostCommand {
     /// routing to it (its run loop is stopped separately on the interface driver).
     RemoveInterface {
         id: InterfaceId,
+    },
+    SynthesizeTunnel {
+        interface: InterfaceId,
     },
     /// Register a byte-stream reader's inbound sink: the run loop routes channel messages of the
     /// reserved stream type on this link and id to it, suppressing them from the app event stream.
@@ -1259,6 +1276,28 @@ async fn run_inner<S, H, J, P>(
                         wake_schedules = engine.wake_schedules(&interfaces);
                         WakeSchedules::UNCHANGED
                     }
+                    HostCommand::SynthesizeTunnel { interface } => {
+                        let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
+                        host.fill_entropy(&mut random_hash);
+                        let mut buf = [0u8; 256];
+                        if let Some(len) =
+                            engine.write_tunnel_synthesize(interface, &random_hash, &mut buf)
+                        {
+                            route_reaction(
+                                EngineReaction::Directive(Directive::Send {
+                                    target: interface,
+                                    bytes: &buf[..len],
+                                }),
+                                &egress,
+                                &ifacs,
+                                &mut pacers,
+                                &mut wire_scratch,
+                                now,
+                                &mut journaled_sink!(),
+                            );
+                        }
+                        WakeSchedules::UNCHANGED
+                    }
                     HostCommand::RegisterStreamReader {
                         link_id,
                         stream_id,
@@ -1529,6 +1568,35 @@ mod tests {
     use crate::reactor::interface_seam::Interface;
     use crate::reactor::interface_seam::MAX_WIRE_FRAME_LEN;
     use crate::wire::{PacketType, WirePacketHeader};
+
+    #[tokio::test]
+    async fn the_seam_signals_a_synthesize_request_carrying_its_interface_id() {
+        let id = InterfaceId::new([0xC7; 8]);
+        let (in_producer, _in_consumer) = tokio_grant_lane(64, 2);
+        let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+        let mut seam =
+            TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer).with_commands(cmd_tx);
+
+        seam.request_tunnel_synthesis().await;
+
+        let got = cmd_rx
+            .try_recv()
+            .expect("a synthesize request reached the reactor");
+        assert!(matches!(got, HostCommand::SynthesizeTunnel { interface } if interface == id));
+    }
+
+    #[tokio::test]
+    async fn a_seam_without_a_command_channel_drops_the_synthesize_request() {
+        let id = InterfaceId::new([0xC8; 8]);
+        let (in_producer, _in_consumer) = tokio_grant_lane(64, 2);
+        let (_out_producer, out_consumer) = tokio_grant_lane(64, 2);
+        let (notify_tx, _notify_rx) = mpsc::unbounded_channel();
+        let mut seam = TokioInterfaceSeam::new(id, in_producer, notify_tx, out_consumer);
+
+        seam.request_tunnel_synthesis().await;
+    }
     use tokio::sync::mpsc;
 
     #[test]
