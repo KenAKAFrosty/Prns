@@ -95,12 +95,18 @@ fn external_node(impl_dir: &str, binary: &str) -> std::path::PathBuf {
 /// streams a line at a time.
 fn reference_python(script: &str) -> Command {
     let reference = Path::new(env!("CARGO_MANIFEST_DIR")).join("reference");
-    let venv_python = reference.join(".venv").join("bin").join("python");
-    let python: OsString = if venv_python.exists() {
-        venv_python.into_os_string()
-    } else {
-        OsString::from("python3")
-    };
+    let python: OsString = std::env::var_os("RNS_REFERENCE_PYTHON")
+        .filter(|p| Path::new(p).exists())
+        .or_else(|| {
+            [
+                reference.join(".venv").join("bin").join("python"),
+                reference.join(".venv").join("Scripts").join("python.exe"),
+            ]
+            .into_iter()
+            .find(|p| p.exists())
+            .map(|p| p.into_os_string())
+        })
+        .unwrap_or_else(|| OsString::from("python3"));
     let mut c = Command::new(python);
     c.arg("-u");
     c.arg(reference.join(script));
