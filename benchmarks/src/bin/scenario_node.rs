@@ -16,7 +16,8 @@ use personal_rns::engine::{
     SendChannelBody, SendChannelFailure, SendLink, SendLinkPayload, SendRequest, SendRequestData,
     SendSingle, SendSinglePayload, Settlement,
 };
-use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::identity::in_memory::InMemoryNodeIdentity;
+use personal_rns::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_parity::tcp::client::tokio::TcpClientInterface;
 use personal_rns::interfaces::rns_parity::tcp::core as tcp_core;
 use personal_rns::interfaces::rns_parity::tcp::server::tokio::TcpServerConnection;
@@ -45,7 +46,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::Esp32S3 as NodeStorage;
 #[cfg(not(feature = "fixed-storage"))]
 use personal_rns::storage::GrowableHeap as NodeStorage;
-use personal_rns::wire::DestinationHash;
+use personal_rns::wire::{DestinationHash, TransportId};
 use personal_rns::{interfaces, routes};
 use tokio::sync::{mpsc, oneshot};
 
@@ -443,7 +444,7 @@ async fn scenario_main() {
     if matches!(
         manifest.profile.mechanism.as_str(),
         "single" | "link" | "channel" | "links-breadth"
-    ) && !manifest.profile.tunnel
+    ) && (!manifest.profile.tunnel || role == "responder")
     {
         run_runtime_endpoint(&manifest, &role, &addr, duration).await;
         return;
@@ -494,21 +495,11 @@ async fn scenario_main() {
             },
         ));
     }
-    if manifest.profile.tunnel && role == "responder" {
-        engine
-            .set_transport_identity(&node)
-            .expect("the node holds its own identity to sign tunnel synthesizes");
-    }
     let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
     let (in_tx, in_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let (out_tx, out_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, LANE_DEPTH);
     let seam = TokioInterfaceSeam::new(TCP_INTERFACE_ID, in_tx, notify_tx.clone(), out_rx);
-    let seam = if manifest.profile.tunnel && role == "responder" {
-        seam.with_commands(command_tx.clone())
-    } else {
-        seam
-    };
     let extra_listener_count = if role == "responder"
         && manifest.profile.wire != "udp"
         && manifest.profile.topology != "relay"
@@ -678,8 +669,6 @@ async fn scenario_main() {
                     event_rx,
                 )
                 .await;
-            } else if manifest.profile.mechanism == "single" {
-                respond_single(destination, announce_every, duration, command_tx, event_rx).await;
             } else {
                 panic!(
                     "mechanism {:?} is not a hand-rolled responder",
@@ -763,10 +752,15 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
     // long as its `run` loop is driven, so the manifest-derived aspect is promoted to 'static.
     let aspect: &'static str = Box::leak(manifest.name.clone().into_boxed_str());
     let aspects: &'static [&'static str] = Box::leak(Box::new([aspect]));
+    let identity_secret = fresh_identity();
+    let transport = (manifest.profile.tunnel && role == "responder").then(|| {
+        let hash = InMemoryNodeIdentity::from_secret_key_bytes(&identity_secret).identity_hash();
+        TransportId::new(*hash.as_bytes())
+    });
     let single = PreConfiguredDestination::Single {
         app_name: "bench",
         aspects,
-        identity: fresh_identity(),
+        identity: identity_secret,
         announce_app_data: b"",
         proof: ProofStrategy::ProveAll,
         ratchet: RatchetPolicy::NoRatchets,
@@ -810,7 +804,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
                 build_bus_client_node(single, on_event),
                 "shared".to_string(),
             ),
-            None => build_responder_node(single, on_event, manifest, addr).await,
+            None => build_responder_node(single, on_event, manifest, addr, transport).await,
         };
         let commands = node.handle();
         if let Some(port) = shared_port {
@@ -833,7 +827,7 @@ async fn run_runtime_endpoint(manifest: &Manifest, role: &str, addr: &str, durat
                 )
                 .await;
             } else {
-                respond(destination, announce_every, &commands, event_rx).await;
+                respond(destination, announce_every, duration, &commands, event_rx).await;
             }
         };
         tokio::select! {
@@ -1421,6 +1415,7 @@ async fn build_responder_node<F>(
     on_event: F,
     manifest: &Manifest,
     addr: &str,
+    transport: Option<TransportId>,
 ) -> (Prns<(), (), F, NodeStorage>, String)
 where
     F: FnMut(PrnsEvent<'_>, &()),
@@ -1433,7 +1428,7 @@ where
             Duration::from_millis(100),
         );
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
@@ -1453,7 +1448,7 @@ where
         .await
         .expect("binds the scenario port");
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
@@ -1482,7 +1477,7 @@ where
             servers.push(extra);
         }
         let node = Prns::new(PrnsRecipe {
-            transport: None,
+            transport,
             pre_configured_destinations: [single],
             app_state: (),
             storage: NodeStorage::default(),
@@ -1548,14 +1543,14 @@ where
 async fn respond(
     destination: DestinationHash,
     announce_every: Duration,
+    duration: Duration,
     commands: &TokioPrnsHandle,
     mut events: mpsc::UnboundedReceiver<Event>,
 ) {
     let mut announce = tokio::time::interval(announce_every);
-    let mut idle = tokio::time::interval(Duration::from_millis(200));
+    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
     let mut delivered = 0u64;
     let mut payload_bytes = 0u64;
-    let mut last_delivery: Option<tokio::time::Instant> = None;
     loop {
         tokio::select! {
             _ = announce.tick(), if delivered == 0 => {
@@ -1570,18 +1565,15 @@ async fn respond(
                     return;
                 }
             }
-            _ = idle.tick() => {
-                if last_delivery.is_some_and(|at| at.elapsed() > QUIET_AFTER_TRAFFIC) {
-                    println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
-                    return;
-                }
+            _ = tokio::time::sleep_until(report_at) => {
+                println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
+                return;
             }
             event = events.recv() => {
                 match event {
                     Some(Event::Delivered(bytes)) => {
                         delivered += 1;
                         payload_bytes += bytes as u64;
-                        last_delivery = Some(tokio::time::Instant::now());
                     }
                     None => return,
                     Some(_) => {}
@@ -2644,52 +2636,6 @@ async fn relay_node(manifest: &Manifest) {
     ));
     println!("READY role=relay addr={addr_a}>{addr_b}");
     std::future::pending::<()>().await;
-}
-
-async fn respond_single(
-    destination: DestinationHash,
-    announce_every: Duration,
-    duration: Duration,
-    commands: mpsc::UnboundedSender<HostCommand>,
-    mut events: mpsc::UnboundedReceiver<Event>,
-) {
-    let mut announce = tokio::time::interval(announce_every);
-    let report_at = tokio::time::Instant::now() + duration + DRAIN_GRACE;
-    let mut next_id = 1u64;
-    let mut delivered = 0u64;
-    let mut payload_bytes = 0u64;
-    loop {
-        tokio::select! {
-            _ = announce.tick(), if delivered == 0 => {
-                let command = IssuedCommand {
-                    id: CommandId(next_id),
-                    command: EngineCommand::AnnounceNow(AnnounceNow {
-                        destination,
-                        target: AnnounceTarget::AllInterfaces,
-                        app_data: AnnounceAppData::Registered,
-                    }),
-                };
-                next_id += 1;
-                if commands.send(HostCommand::Engine(command)).is_err() {
-                    return;
-                }
-            }
-            _ = tokio::time::sleep_until(report_at) => {
-                println!("RESULT delivered={delivered} payload_bytes={payload_bytes}");
-                return;
-            }
-            event = events.recv() => {
-                match event {
-                    Some(Event::Delivered(bytes)) => {
-                        delivered += 1;
-                        payload_bytes += bytes as u64;
-                    }
-                    None => return,
-                    Some(_) => {}
-                }
-            }
-        }
-    }
 }
 
 async fn initiate_single(
