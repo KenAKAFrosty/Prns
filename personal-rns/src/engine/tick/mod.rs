@@ -670,4 +670,78 @@ mod tests {
         );
         assert_eq!(lane, LaneWake::Idle, "no rebroadcasts remain after the cap");
     }
+
+    #[test]
+    fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
+        let mut raw = hx(RAW_ANNOUNCE);
+        let mut state = transporting_node();
+        let target = InterfaceId::new([0xFE; 8]);
+        let view = [routable_descriptor(target)];
+
+        let arrival = InstantMillis(1_000);
+        let _ = state.ingest_packet(
+            InboundPacket {
+                arrived_at: arrival,
+                source_interface: InterfaceId::new([0u8; 8]),
+                bytes: &mut raw,
+            },
+            TEST_ENTROPY,
+            &transporting_view(),
+        );
+        assert_eq!(state.scheduled_announce_count(), 1);
+
+        let first_due = InstantMillis(arrival.0 + DEFAULT_REBROADCAST_JITTER_WINDOW_MS + 1);
+        let mut rebroadcast = std::vec::Vec::new();
+        let _ = state.fire_due_scheduled_announces(first_due, &view, &mut |reaction| {
+            if let EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) = reaction {
+                rebroadcast = bytes.to_vec();
+            }
+        });
+        assert_eq!(state.scheduled_announce_count(), 1);
+        assert!(!rebroadcast.is_empty(), "the fire emitted a rebroadcast to echo back");
+
+        let echo = |state: &mut EngineState<Cap>, now: u64| -> LaneWake {
+            let mut bytes = rebroadcast.clone();
+            state
+                .ingest_packet_into(
+                    InboundPacket {
+                        arrived_at: InstantMillis(now),
+                        source_interface: InterfaceId::new([0u8; 8]),
+                        bytes: &mut bytes,
+                    },
+                    TEST_ENTROPY,
+                    &transporting_view(),
+                    InstantMillis(now),
+                    &mut |bytes: &mut [u8]| bytes.fill(0),
+                    &mut |_| false,
+                    &mut |_| {},
+                )
+                .scheduled_announces
+        };
+
+        let echo_at = first_due.0 + 1;
+        let _ = echo(&mut state, echo_at);
+        assert_eq!(
+            state.scheduled_announce_count(),
+            1,
+            "the first echo only counts the peer rebroadcast",
+        );
+
+        let second = echo(&mut state, echo_at + 1);
+        assert_eq!(
+            state.scheduled_announce_count(),
+            0,
+            "the second echo reaches the peer cap and cancels the pending rebroadcast",
+        );
+        assert_eq!(
+            second,
+            LaneWake::Idle,
+            "an ignored echo that empties the queue reports Idle, not a stale Unchanged",
+        );
+        assert_eq!(
+            second,
+            state.scheduled_announces_wake(),
+            "the ingest delta agrees with a full wake recompute (no reactor drift)",
+        );
+    }
 }

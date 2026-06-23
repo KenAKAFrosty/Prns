@@ -107,8 +107,8 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         wake.held_announce_release = self.held_announce_release_wake();
+        wake.scheduled_announces = self.scheduled_announces_wake();
         if released_any {
-            wake.scheduled_announces = self.scheduled_announces_wake();
             wake.path_request_timeout = self.path_request_timeout_wake();
             wake.expired_routes = self.route_expiry_wake(view);
         }
@@ -176,7 +176,9 @@ impl<S: StorageLayout> EngineState<S> {
                     .existing_route_for(&accepted.destination, view)
                     .map_or(LaneWake::Unchanged, |route| LaneWake::AtMost(route.expires));
             }
-            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {}
+            IngestPacketOutcome::Announce(AnnounceIngest::Ignored) => {
+                wake_schedule_changes.scheduled_announces = self.scheduled_announces_wake();
+            }
             IngestPacketOutcome::Announce(AnnounceIngest::Held) => {
                 wake_schedule_changes.held_announce_release = self.held_announce_release_wake();
             }
